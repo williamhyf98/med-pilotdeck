@@ -1,0 +1,24 @@
+{
+  "name": "med-tools",
+  "version": "0.2.1",
+  "description": "Medical MCP tools: unified multi-source parse (301 suffixes) + local G9-V-Med (27B) report, with GPT-5.5 fallback",
+  "skills": "skills",
+  "mcpServers": {
+    "med-tools": {
+      "command": "${pilotHome}/plugins/med-tools/run.sh",
+      "args": [],
+      "timeoutMs": 300000,
+      "env": {
+        "MED_VLM_API_BASE": "http://127.0.0.1:8030/v1",
+        "MED_VLM_MODEL": "G9-V-Med",
+        "MED_VLM_API_KEY": "EMPTY",
+        "MED_VLM_MAX_TOKENS": "8192",
+        "MED_VLM_FALLBACK_ENABLED": "1",
+        "MED_VLM_FALLBACK_API_BASE": "https://llm-center.modelbest.co/llm/v1",
+        "MED_VLM_FALLBACK_MODEL": "gpt-5.5",
+        "MED_VLM_FALLBACK_API_KEY": "sk-93d9e9eb721e5bbbe94e2e8d2d1b8922",
+        "MED_VLM_FALLBACK_MAX_TOKENS": "8192"
+      }
+    }
+  }
+}

@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+.med-tools-derived/
+*.egg-info/
+.pytest_cache/

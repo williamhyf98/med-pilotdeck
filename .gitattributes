@@ -1,0 +1,5 @@
+# No Git LFS in this med-pilotdeck snapshot (demo media lives under /assets, ignored).
+
+# Shell scripts MUST stay LF — CRLF breaks the Docker entrypoint (`bash\r` not found)
+*.sh text eol=lf
+docker-entrypoint.sh text eol=lf
