@@ -1,5 +1,8 @@
-# No Git LFS in this med-pilotdeck snapshot (demo media lives under /assets, ignored).
-
+# No Git LFS in this med-pilotdeck snapshot (demo media lives under /assets, ignored),
+# EXCEPT the two oversized medical RAG data files that exceed GitHub's 100 MB limit.
+* text=auto
 # Shell scripts MUST stay LF — CRLF breaks the Docker entrypoint (`bash\r` not found)
 *.sh text eol=lf
 docker-entrypoint.sh text eol=lf
+products/medical-integration/data/rag/embedding/*.npy filter=lfs diff=lfs merge=lfs -text
+products/medical-integration/data/rag/output/corpus/*.jsonl filter=lfs diff=lfs merge=lfs -text
