@@ -1,6 +1,7 @@
 import type { AgentTurnResult } from "../../agent/index.js";
 import type { AgentStatusMessageInput } from "../../session/transcript/TranscriptWriter.js";
 import type { AgentRunMode } from "../../agent/protocol/input.js";
+import type { AgentTurnOverrides } from "../../agent/profile/types.js";
 import type {
   CronCreateInput,
   CronCreateResult,
@@ -105,6 +106,10 @@ export type GatewaySubmitTurnInput = {
   canPrompt?: boolean;
   runId?: string;
   maxTurns?: number;
+  /** Id of a server-loaded agent profile (for example from a plugin manifest). */
+  profile?: string;
+  /** Per-turn controls. Endpoint URLs, credentials and system prompts are intentionally absent. */
+  turnOverrides?: AgentTurnOverrides;
   /** Hard wall-clock limit for this turn. The gateway aborts and closes the session when exceeded. */
   timeoutMs?: number;
   telemetry?: {

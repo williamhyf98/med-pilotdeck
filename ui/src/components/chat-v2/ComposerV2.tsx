@@ -75,9 +75,9 @@ export type ComposerV2Props = {
   medicalFolderInputRef?: RefObject<HTMLInputElement | null>;
   onMedicalFolderInputChange?: (event: ChangeEvent<HTMLInputElement>) => void;
   attachedImages: File[];
+  onRemoveImage: (index: number) => void;
   attachedMedicalFolder?: AttachedMedicalFolder | null;
   onRemoveMedicalFolder?: () => void;
-  onRemoveImage: (index: number) => void;
   documentReferences: ContentReference[];
   onRemoveDocumentReference: (id: string) => void;
   onOpenDocumentReference?: (filePath: string) => void;
@@ -139,6 +139,10 @@ export type ComposerV2Props = {
   sendByCtrlEnter?: boolean;
 
   chromeless?: boolean;
+  headerSlot?: ReactNode;
+  footerStartSlot?: ReactNode;
+  footerEndSlot?: ReactNode;
+  chromeMode?: 'default' | 'medical';
 };
 
 type ContextStatus = {
@@ -317,9 +321,9 @@ export default function ComposerV2({
   medicalFolderInputRef,
   onMedicalFolderInputChange,
   attachedImages,
+  onRemoveImage,
   attachedMedicalFolder = null,
   onRemoveMedicalFolder,
-  onRemoveImage,
   documentReferences,
   onRemoveDocumentReference,
   onOpenDocumentReference,
@@ -361,6 +365,10 @@ export default function ComposerV2({
   planModeAvailable = true,
   onPlanExecutionApproved,
   chromeless = false,
+  headerSlot,
+  footerStartSlot,
+  footerEndSlot,
+  chromeMode = 'default',
 }: ComposerV2Props) {
   const { t } = useTranslation('chat');
   const [isContextPopoverOpen, setIsContextPopoverOpen] = useState(false);
@@ -472,7 +480,10 @@ export default function ComposerV2({
         {!hasBlockingPermissionPanel ? (
           <form
             onSubmit={onSubmit as (event: FormEvent<HTMLFormElement>) => void}
-            className="pd-composer-container relative"
+            className={cn(
+              'pd-composer-container relative',
+              chromeMode === 'medical' && 'pd-composer--medical',
+            )}
           >
             {attachedImages.length > 0 || documentReferences.length > 0 || attachedMedicalFolder ? (
               <div className="pd-composer-attachment-panel mb-2 overflow-hidden rounded-lg border border-neutral-200 bg-neutral-50 p-2 dark:border-neutral-800 dark:bg-neutral-900">
@@ -576,6 +587,9 @@ export default function ComposerV2({
               )}
             >
               <input {...getInputProps()} />
+              {headerSlot ? (
+                <div className="pd-composer-header-slot">{headerSlot}</div>
+              ) : null}
 
               <CommandMenu
                 commands={filteredCommands}
@@ -623,6 +637,9 @@ export default function ComposerV2({
 
                 <div className="pd-composer-control-row flex flex-wrap items-center gap-x-2 gap-y-1 px-1 pt-1">
                   <div className="pd-composer-toolbar-left flex min-w-0 flex-1 flex-wrap items-center gap-0.5">
+                    {footerStartSlot ? (
+                      <div className="pd-composer-footer-start">{footerStartSlot}</div>
+                    ) : null}
                     <div
                       className="relative mr-1"
                       onBlur={(event) => {
@@ -902,8 +919,11 @@ export default function ComposerV2({
                   ) : null}
 
                   <div className="pd-composer-toolbar-right ml-auto flex shrink-0 items-center gap-1">
+                    {footerEndSlot ? (
+                      <div className="pd-composer-footer-end">{footerEndSlot}</div>
+                    ) : null}
                     <div
-                      className="relative"
+                      className="pd-composer-context-control relative"
                       onBlur={(event) => {
                         const nextTarget = event.relatedTarget as Node | null;
                         if (!nextTarget || !event.currentTarget.contains(nextTarget)) {
@@ -979,7 +999,7 @@ export default function ComposerV2({
                     </div>
 
                     <div
-                      className="relative"
+                      className="pd-composer-thinking-control relative"
                       onBlur={(event) => {
                         const nextTarget = event.relatedTarget as Node | null;
                         if (!nextTarget || !event.currentTarget.contains(nextTarget)) {

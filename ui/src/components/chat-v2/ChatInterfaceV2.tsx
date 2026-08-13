@@ -63,6 +63,20 @@ function ChatInterfaceV2({
   forceWelcome,
   onExitWelcome,
   compact = false,
+  modelOverride,
+  profileOverride,
+  thinkingModeOverride,
+  turnOverrides,
+  attachmentFilesOverride,
+  onAttachmentFilesConsumed,
+  commandPrefix,
+  composerPlaceholder,
+  welcomeTitle,
+  welcomeDescription,
+  composerHeader,
+  composerFooterStart,
+  composerFooterEnd,
+  composerChrome = 'default',
 }: ChatInterfaceProps) {
   const { t } = useTranslation('chat');
   const { tasksEnabled: _tasksEnabled, isTaskMasterInstalled: _isTaskMasterInstalled } =
@@ -94,12 +108,24 @@ function ChatInterfaceV2({
 
   const {
     model,
+    setModel,
     permissionMode,
     setPermissionMode: setPermissionModeRaw,
     thinkingModelContext,
     pendingPermissionRequests,
     setPendingPermissionRequests,
   } = useChatProviderState({ selectedSession });
+
+  useEffect(() => {
+    const nextModel = modelOverride?.trim();
+    if (!nextModel || nextModel === model) return;
+    setModel(nextModel);
+    try {
+      localStorage.setItem('pilotdeck-model', nextModel);
+    } catch {
+      // The active chat still uses the in-memory override.
+    }
+  }, [model, modelOverride, setModel]);
 
   const thinkingModeAvailability = React.useMemo(
     () => getThinkingModeAvailability(thinkingModelContext),
@@ -201,11 +227,6 @@ function ChatInterfaceV2({
     renderInputWithMentions,
     selectFile,
     attachedImages,
-    attachedMedicalFolder,
-    clearAttachedMedicalFolder,
-    openMedicalFolderPicker,
-    medicalFolderInputRef,
-    handleMedicalFolderInputChange,
     setAttachedImages,
     documentReferences,
     removeDocumentReference,
@@ -231,11 +252,17 @@ function ChatInterfaceV2({
     isBusySendQueued,
     isBusySendConfirmed,
     cancelBusySendQueue,
+    attachedMedicalFolder,
+    clearAttachedMedicalFolder,
+    openMedicalFolderPicker,
+    medicalFolderInputRef,
+    handleMedicalFolderInputChange,
   } = useChatComposerState({
     selectedProject,
     selectedSession,
     currentSessionId,
     model,
+    profileOverride,
     runMode,
     permissionMode: effectivePermissionMode,
     basePermissionMode: permissionMode,
@@ -266,10 +293,19 @@ function ChatInterfaceV2({
     setIsUserScrolledUp,
     pendingPermissionRequests,
     setPendingPermissionRequests,
+    commandPrefix,
+    turnOverrides,
+    attachmentFilesOverride,
+    onAttachmentFilesConsumed,
     referenceOnlyPrompt: t('documentReferences.defaultPrompt', {
       defaultValue: 'Please answer based on the document selection I quoted.',
     }) as string,
   });
+
+  useEffect(() => {
+    if (!thinkingModeOverride || thinkingModeOverride === thinkingMode) return;
+    setThinkingMode(thinkingModeOverride);
+  }, [setThinkingMode, thinkingMode, thinkingModeOverride]);
 
   const handlePlanExecutionApproved = useCallback(() => {
     setRunMode('agent');
@@ -498,7 +534,7 @@ function ChatInterfaceV2({
   ) : (
     <ComposerV2
       input={input}
-      placeholder={t('composer.placeholder', {
+      placeholder={composerPlaceholder || t('composer.placeholder', {
         defaultValue: 'Tell PilotDeck what you want to get done…',
       }) as string}
       textareaRef={textareaRef}
@@ -518,8 +554,6 @@ function ChatInterfaceV2({
       medicalFolderInputRef={medicalFolderInputRef}
       onMedicalFolderInputChange={handleMedicalFolderInputChange}
       attachedImages={attachedImages}
-      attachedMedicalFolder={attachedMedicalFolder}
-      onRemoveMedicalFolder={clearAttachedMedicalFolder}
       onRemoveImage={(index) =>
         setAttachedImages((previous) =>
           previous.filter((_, currentIndex) => currentIndex !== index),
@@ -527,6 +561,8 @@ function ChatInterfaceV2({
       }
       documentReferences={documentReferences}
       onRemoveDocumentReference={removeDocumentReference}
+      attachedMedicalFolder={attachedMedicalFolder}
+      onRemoveMedicalFolder={clearAttachedMedicalFolder}
         onOpenDocumentReference={onFileOpen ? (filePath) => onFileOpen(filePath) : undefined}
       uploadingImages={uploadingImages}
       imageErrors={imageErrors}
@@ -567,6 +603,10 @@ function ChatInterfaceV2({
       onPlanExecutionApproved={handlePlanExecutionApproved}
       sendByCtrlEnter={sendByCtrlEnter}
       chromeless={isWelcomeMode && !compact}
+      headerSlot={composerHeader}
+      footerStartSlot={composerFooterStart}
+      footerEndSlot={composerFooterEnd}
+      chromeMode={composerChrome}
     />
   );
   const composerSlot = (
@@ -598,19 +638,24 @@ function ChatInterfaceV2({
       );
     }
     return (
-      <div className="flex h-full flex-col bg-white dark:bg-neutral-950">
-        <div className="flex flex-1 flex-col items-center justify-center px-6">
-          <div className="w-full max-w-[720px]">
-            <h1 className="mb-8 text-center text-[26px] font-medium tracking-tight text-neutral-900 dark:text-neutral-100">
-              {selectedProject
+      <div className="pd-chat-welcome flex h-full flex-col bg-white dark:bg-neutral-950">
+        <div className="pd-chat-welcome-body flex min-h-0 flex-1 flex-col items-center justify-center px-6">
+          <div className="pd-chat-welcome-column w-full max-w-[720px]">
+            <h1 className="pd-chat-welcome-title mb-8 text-center text-[26px] font-medium tracking-tight text-neutral-900 dark:text-neutral-100">
+              {welcomeTitle || (selectedProject
                 ? t('welcome.greetingWithProject', {
                     project: projectName,
                     defaultValue: `What's on the plan today?`,
                   })
                 : t('welcome.noProject', {
                     defaultValue: 'Pick a project from the sidebar to get started',
-                  })}
+                  }))}
             </h1>
+            {welcomeDescription ? (
+              <p className="pd-chat-welcome-description text-center text-[13px] leading-6 text-neutral-500 dark:text-neutral-400">
+                {welcomeDescription}
+              </p>
+            ) : null}
             {composerSlot}
           </div>
         </div>

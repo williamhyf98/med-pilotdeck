@@ -4,6 +4,15 @@ import type { MultimodalConstraints } from "./multimodal.js";
 
 export type ModelProtocol = "anthropic" | "openai" | "openai-responses" | "google";
 
+export type CanonicalSamplingParameter =
+  | "topP"
+  | "topK"
+  | "minP"
+  | "presencePenalty"
+  | "frequencyPenalty"
+  | "repetitionPenalty"
+  | "seed";
+
 export type CanonicalRole = "user" | "assistant";
 
 export type CanonicalTextBlock = {
@@ -215,6 +224,13 @@ export type CanonicalModelRequest = {
   toolChoice?: CanonicalToolChoice;
   maxOutputTokens?: number;
   temperature?: number;
+  topP?: number;
+  topK?: number;
+  minP?: number;
+  presencePenalty?: number;
+  frequencyPenalty?: number;
+  repetitionPenalty?: number;
+  seed?: number;
   thinking?: CanonicalThinkingConfig;
   stream?: boolean;
   metadata?: Record<string, unknown>;
@@ -308,6 +324,12 @@ export type ProviderConfig = {
   headers: Record<string, string>;
   /** Arbitrary fields merged into every request body (e.g. OpenRouter provider preferences). */
   extraBody?: Record<string, unknown>;
+  /**
+   * Server-side opt-ins for protocol extensions. Standard protocol parameters
+   * are enabled automatically; this list is needed for fields such as
+   * OpenRouter's `min_p` and `repetition_penalty`.
+   */
+  supportedRequestParameters?: CanonicalSamplingParameter[];
   retry?: ProviderRetryConfig;
   models: Record<string, ModelDefinition>;
 };

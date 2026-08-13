@@ -38,7 +38,6 @@ export function parsePluginMcpServers(
       continue;
     }
     const v = value as Record<string, unknown>;
-    const timeoutMs = parseTimeoutMs(v.timeoutMs ?? v.callTimeoutMs);
     const command = typeof v.command === "string" ? expandMcpString(v.command) : undefined;
     if (command && command.length > 0) {
       servers.push({
@@ -51,7 +50,6 @@ export function parsePluginMcpServers(
         env: isStringRecord(v.env) ? expandStringRecord(v.env as Record<string, string>) : undefined,
         cwd: typeof v.cwd === "string" ? expandMcpString(v.cwd) : undefined,
         perSession: v.perSession === true ? true : undefined,
-        timeoutMs,
       });
       continue;
     }
@@ -66,7 +64,6 @@ export function parsePluginMcpServers(
         transport: "streamable_http",
         url: expandMcpString(url),
         headers: isStringRecord(v.headers) ? expandStringRecord(v.headers as Record<string, string>) : undefined,
-        timeoutMs,
       });
       continue;
     }
@@ -81,17 +78,4 @@ function isStringRecord(v: unknown): boolean {
     if (typeof value !== "string") return false;
   }
   return true;
-}
-
-function parseTimeoutMs(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-    return Math.floor(value);
-  }
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value.trim());
-    if (Number.isFinite(parsed) && parsed > 0) {
-      return Math.floor(parsed);
-    }
-  }
-  return undefined;
 }

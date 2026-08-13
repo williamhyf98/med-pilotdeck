@@ -77,6 +77,10 @@ export class AgentSession {
       messages: this.state.messages,
       input,
       maxTurns: submitOptions.maxTurns,
+      ...(submitOptions.profile !== undefined ? { profile: submitOptions.profile } : {}),
+      ...(submitOptions.turnOverrides !== undefined
+        ? { turnOverrides: submitOptions.turnOverrides }
+        : {}),
       runMode: submitOptions.runMode,
       permissionMode: submitOptions.permissionMode,
       allowedReadFiles: submitOptions.allowedReadFiles,

@@ -57,6 +57,22 @@ export function normalizeStreamEvent(
     return normalizeOpenAIResponsesStreamEvent(raw, state.openaiResponses);
   }
 
+  if (
+    protocol === "openai"
+    && raw
+    && typeof raw === "object"
+    && !Array.isArray(raw)
+    && typeof (raw as { type?: unknown }).type === "string"
+    && ((raw as { type: string }).type === "error"
+      || (raw as { type: string }).type.startsWith("response."))
+  ) {
+    // Some OpenAI-compatible gateways expose `/chat/completions` but stream
+    // Responses API events. Detect the wire shape rather than discarding all
+    // deltas under the configured Chat Completions protocol.
+    state.openaiResponses ??= createOpenAIResponsesStreamState();
+    return normalizeOpenAIResponsesStreamEvent(raw, state.openaiResponses);
+  }
+
   state.openai ??= createOpenAIStreamState();
   return normalizeOpenAIStreamEvent(raw, state.openai);
 }

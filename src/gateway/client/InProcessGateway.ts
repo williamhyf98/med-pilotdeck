@@ -448,6 +448,8 @@ export class InProcessGateway implements Gateway {
           {
             turnId: runId,
             maxTurns: input.maxTurns,
+            ...(input.profile !== undefined ? { profile: input.profile } : {}),
+            ...(input.turnOverrides !== undefined ? { turnOverrides: input.turnOverrides } : {}),
             runMode,
             permissionMode,
             basePermissionMode,
@@ -2004,19 +2006,6 @@ async function attachmentsToContentBlocks(
   const diagnostics: string[] = [];
 
   for (const att of attachments) {
-    // Folder uploads: never inline bytes; keep the same diagnostics shape as
-    // non-whitelist extensions (e.g. .dcm) so the agent still sees path-only files.
-    if (att.metadata?.skipContentInline === true) {
-      if (att.path) {
-        const ext = extname(resolve(att.path)).toLowerCase();
-        const displayExt = ext || "(none)";
-        diagnostics.push(
-          `File extension ${displayExt} is not in the inline text whitelist; skipped. If this is plain text, use read_file with the exact path; otherwise convert it before inspection.`,
-        );
-      }
-      continue;
-    }
-
     if (att.type === "image" && att.content && att.mimeType) {
       blocks.push({
         type: "image",

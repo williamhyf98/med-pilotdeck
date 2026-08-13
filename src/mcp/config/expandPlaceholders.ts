@@ -1,25 +1,14 @@
 import { homedir } from "node:os";
-import { resolve } from "node:path";
-
-function resolveExpandPilotHome(): string {
-  const raw = process.env.PILOT_HOME;
-  if (!raw) return resolve(homedir(), ".pilotdeck");
-  if (raw === "~") return homedir();
-  if (raw.startsWith("~/") || raw.startsWith("~\\")) return resolve(homedir(), raw.slice(2));
-  return resolve(raw);
-}
 
 /**
  * Expand MCP config placeholders in a single string:
  * - `${env:NAME}` → process.env[NAME] (fallback empty string)
- * - `${pilotHome}` → active PilotDeck home (`PILOT_HOME`, else `~/.pilotdeck`)
  * - `${userHome}` → user home directory
  * - `~/` or `~\` prefix → user home directory (kept for backward compat)
  */
 export function expandMcpString(value: string): string {
   let result = value
     .replace(/\$\{env:([^}]+)\}/g, (_m, name: string) => process.env[name] ?? "")
-    .replace(/\$\{pilotHome\}/g, () => resolveExpandPilotHome())
     .replace(/\$\{userHome\}/g, process.env.HOME ?? process.env.USERPROFILE ?? homedir());
   if (result.startsWith("~/") || result.startsWith("~\\")) {
     result = homedir() + result.slice(1);

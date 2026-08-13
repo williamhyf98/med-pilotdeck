@@ -39,6 +39,7 @@ import {
 import type {
   ChatAttachment,
   ChatMessage,
+  ChatTurnOverrides,
   PendingPermissionRequest,
   PermissionGrantResult,
   PermissionMode,
@@ -61,6 +62,7 @@ interface UseChatComposerStateArgs {
   selectedSession: ProjectSession | null;
   currentSessionId: string | null;
   model: string;
+  profileOverride?: string;
   permissionMode: PermissionMode | string;
   basePermissionMode?: PermissionMode | string;
   runMode?: string;
@@ -96,6 +98,10 @@ interface UseChatComposerStateArgs {
   pendingPermissionRequests: PendingPermissionRequest[];
   setPendingPermissionRequests: Dispatch<SetStateAction<PendingPermissionRequest[]>>;
   referenceOnlyPrompt?: string;
+  commandPrefix?: string;
+  turnOverrides?: ChatTurnOverrides;
+  attachmentFilesOverride?: File[];
+  onAttachmentFilesConsumed?: () => void;
 }
 
 interface MentionableFile {
@@ -186,6 +192,7 @@ export function useChatComposerState({
   selectedSession,
   currentSessionId,
   model,
+  profileOverride,
   permissionMode,
   basePermissionMode,
   runMode,
@@ -217,6 +224,10 @@ export function useChatComposerState({
   pendingPermissionRequests,
   setPendingPermissionRequests,
   referenceOnlyPrompt = 'Please answer based on the document selection I quoted.',
+  commandPrefix,
+  turnOverrides,
+  attachmentFilesOverride,
+  onAttachmentFilesConsumed,
 }: UseChatComposerStateArgs) {
   const draftStorageKey = selectedProject
     ? getDraftInputStorageKey(selectedProject.name, selectedSession?.id)
@@ -251,6 +262,7 @@ export function useChatComposerState({
   const activeDraftStorageKeyRef = useRef(draftStorageKey);
   const queuedBusySendRef = useRef(false);
   const queuedBusySendConfirmedRef = useRef(false);
+  const consumedAttachmentFilesRef = useRef<File[] | undefined>(undefined);
   const queuedBusySendSnapshotRef = useRef<QueuedBusySendSnapshot | null>(null);
   const pendingSessionGrantResolversRef = useRef(new Map<string, (result: PermissionGrantResult) => void>());
 
@@ -837,6 +849,16 @@ export function useChatComposerState({
     }
   }, [handleMedicalFolderFiles, syncQueuedBusySendSnapshot]);
 
+  useEffect(() => {
+    if (
+      !attachmentFilesOverride?.length
+      || consumedAttachmentFilesRef.current === attachmentFilesOverride
+    ) return;
+    consumedAttachmentFilesRef.current = attachmentFilesOverride;
+    handleImageFiles(attachmentFilesOverride);
+    onAttachmentFilesConsumed?.();
+  }, [attachmentFilesOverride, handleImageFiles, onAttachmentFilesConsumed]);
+
   const handlePaste = useCallback(
     (event: ClipboardEvent<HTMLTextAreaElement>) => {
       const items = Array.from(event.clipboardData.items);
@@ -988,7 +1010,11 @@ export function useChatComposerState({
         || (submitAttachedImages.length > 0
           ? 'Please review the attached file(s).'
           : (hasDocumentReferences ? referenceOnlyPrompt : 'Please review the attached file(s).'));
+      const normalizedCommandPrefix = commandPrefix?.trim();
       let messageContent = userVisibleInput;
+      const syntheticMessages = normalizedCommandPrefix
+        ? [{ text: normalizedCommandPrefix, purpose: 'medical_task_context' }]
+        : undefined;
 
       // Pin the target session before any await so attachment upload cannot
       // race with a sidebar session switch and leak the optimistic bubble.
@@ -1175,7 +1201,10 @@ export function useChatComposerState({
         permissionMode,
         basePermissionMode,
         model,
+        profile: profileOverride,
         thinking: thinkingModeToConfig(effectiveThinkingMode),
+        turnOverrides,
+        syntheticMessages,
         sessionSummary,
         images: uploadedImages,
         attachments: agentAttachments,
@@ -1201,14 +1230,16 @@ export function useChatComposerState({
     },
     [
       selectedSession,
-    attachedImages,
-    documentReferences,
+      attachedImages,
+      documentReferences,
       model,
+      profileOverride,
       currentSessionId,
       executeCommand,
       isLoading,
       isBusySendQueued,
       canAbortSession,
+      commandPrefix,
       onSessionActive,
       onSessionActivityBump,
       onSessionProcessing,
@@ -1230,6 +1261,7 @@ export function useChatComposerState({
       slashCommands,
       thinkingMode,
       thinkingModeAvailability,
+      turnOverrides,
       referenceOnlyPrompt,
     ],
   );
@@ -1431,8 +1463,6 @@ export function useChatComposerState({
     setInput('');
     inputValueRef.current = '';
     setDocumentReferences([]);
-    setAttachedImages([]);
-    setImageErrors(new Map());
     cancelBusySendQueue();
     resetCommandMenuState();
     if (textareaRef.current) {
@@ -1642,14 +1672,6 @@ export function useChatComposerState({
     renderInputWithMentions,
     selectFile,
     attachedImages,
-    attachedMedicalFolder,
-    clearAttachedMedicalFolder,
-    openMedicalFolderPicker,
-    medicalFolderInputRef,
-    handleMedicalFolderInputChange: (event: ChangeEvent<HTMLInputElement>) => {
-      handleMedicalFolderFiles(event.currentTarget.files);
-      event.currentTarget.value = '';
-    },
     setAttachedImages: (value: SetStateAction<File[]>) => {
       setAttachedImages((previous) => {
         const next = typeof value === 'function'
@@ -1691,6 +1713,14 @@ export function useChatComposerState({
     isBusySendQueued,
     isBusySendConfirmed,
     cancelBusySendQueue,
+    attachedMedicalFolder,
+    clearAttachedMedicalFolder,
+    openMedicalFolderPicker,
+    medicalFolderInputRef,
+    handleMedicalFolderInputChange: (event: ChangeEvent<HTMLInputElement>) => {
+      handleMedicalFolderFiles(event.currentTarget.files);
+      event.currentTarget.value = '';
+    },
   };
 }
 

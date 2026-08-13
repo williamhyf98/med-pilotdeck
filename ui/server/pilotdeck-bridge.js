@@ -65,6 +65,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const GENERAL_HOME = resolvePilotHome(process.env);
+const TRUSTED_GATEWAY_TURN_OPTIONS = Symbol('pilotdeck.trustedGatewayTurnOptions');
 
 const GATEWAY_URL =
     process.env.PILOTDECK_GATEWAY_URL || 'ws://127.0.0.1:18789/ws';
@@ -434,6 +435,91 @@ function normalizeRunMode(value) {
     if (value === undefined || value === null || value === '') return undefined;
     if (value === 'agent' || value === 'plan' || value === 'ask') return value;
     return 'agent';
+}
+
+export function createTrustedGatewayTurnOptions(options = {}) {
+    return {
+        ...options,
+        [TRUSTED_GATEWAY_TURN_OPTIONS]: true,
+    };
+}
+
+// Server-owned constrained surfaces (for example the medical API) can
+// select a server-loaded profile and narrow model-visible tools. The symbol
+// marker cannot be supplied by a JSON/WebSocket client.
+export function getGatewayTurnSafetyOverrides(options) {
+    const trusted = options?.[TRUSTED_GATEWAY_TURN_OPTIONS] === true;
+    const result = {};
+    const turnOverrides = {};
+
+    const selectedModel = typeof options?.model === 'string' ? options.model.trim() : '';
+    const separator = selectedModel.indexOf('/');
+    if (separator > 0 && separator < selectedModel.length - 1) {
+        turnOverrides.provider = selectedModel.slice(0, separator);
+        turnOverrides.model = selectedModel.slice(separator + 1);
+    }
+    if (options?.thinking && typeof options.thinking === 'object' && !Array.isArray(options.thinking)) {
+        turnOverrides.thinking = options.thinking;
+    }
+    if (options?.turnOverrides && typeof options.turnOverrides === 'object' && !Array.isArray(options.turnOverrides)) {
+        for (const key of [
+            'maxOutputTokens',
+            'temperature',
+            'topP',
+            'topK',
+            'minP',
+            'presencePenalty',
+            'frequencyPenalty',
+            'repetitionPenalty',
+            'seed',
+        ]) {
+            if (typeof options.turnOverrides[key] === 'number' && Number.isFinite(options.turnOverrides[key])) {
+                turnOverrides[key] = options.turnOverrides[key];
+            }
+        }
+    }
+    if (
+        typeof options?.profile === 'string'
+        && /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/.test(options.profile.trim())
+    ) {
+        result.profile = options.profile.trim();
+    }
+    if (Array.isArray(options?.syntheticMessages)) {
+        const syntheticMessages = options.syntheticMessages
+            .slice(0, 4)
+            .flatMap((entry) => {
+                if (!entry || typeof entry !== 'object') return [];
+                const text = typeof entry.text === 'string' ? entry.text.trim().slice(0, 4_000) : '';
+                if (!text) return [];
+                const purpose = typeof entry.purpose === 'string'
+                    && /^[a-zA-Z0-9_.:-]{1,64}$/.test(entry.purpose)
+                    ? entry.purpose
+                    : 'channel_hint';
+                return [{ text, purpose }];
+            });
+        if (syntheticMessages.length > 0) result.syntheticMessages = syntheticMessages;
+    }
+
+    if (trusted) {
+        if (options.turnOverrides && typeof options.turnOverrides === 'object' && !Array.isArray(options.turnOverrides)) {
+            Object.assign(turnOverrides, options.turnOverrides);
+        }
+        if (Number.isInteger(options.maxTurns) && options.maxTurns > 0) {
+            result.maxTurns = options.maxTurns;
+        }
+        if (Number.isFinite(options.timeoutMs) && options.timeoutMs > 0) {
+            result.timeoutMs = options.timeoutMs;
+        }
+    }
+
+    if (options?.disableTools === true) {
+        result.canPrompt = false;
+        turnOverrides.allowedTools = [];
+    }
+    if (Object.keys(turnOverrides).length > 0) {
+        result.turnOverrides = turnOverrides;
+    }
+    return result;
 }
 
 function resolvePermissionMode(options) {
@@ -1155,10 +1241,10 @@ export async function runChatViaGateway(
             runMode,
             mode: resolvedMode,
             runId,
-            ...(options?.thinking ? { thinking: options.thinking } : {}),
             ...(basePermissionMode ? { basePermissionMode } : {}),
             ...(attachments.length > 0 ? { attachments } : {}),
             ...(options.workspaceCwd ? { workspaceCwd: options.workspaceCwd } : {}),
+            ...getGatewayTurnSafetyOverrides(options),
         });
 
         let sawTurnCompleted = false;

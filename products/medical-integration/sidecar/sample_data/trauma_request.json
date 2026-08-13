@@ -1,0 +1,21 @@
+{
+  "scene": "人工构造训练场景，不对应真实人员",
+  "stage": "野战分类场",
+  "description": "合成描述：信息不完整，用于验证 prompt 结构。",
+  "prompt_style": "eval",
+  "images": [
+    {
+      "image_id": "synthetic-image-001",
+      "category": "injury",
+      "label": "人工占位图",
+      "index": 0
+    },
+    {
+      "image_id": "synthetic-image-002",
+      "category": "xray",
+      "label": "人工占位图",
+      "index": 1
+    }
+  ]
+}
+

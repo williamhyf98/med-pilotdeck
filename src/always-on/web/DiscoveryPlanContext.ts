@@ -11,6 +11,7 @@
  */
 
 import { promises as fs } from "node:fs";
+import { homedir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import {
@@ -19,7 +20,6 @@ import {
   toTimestampValue,
   truncateText,
 } from "./DiscoveryPlanStatus.js";
-import { resolvePilotHome } from "../../pilot/paths.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -181,7 +181,7 @@ async function walkDirectory(rootDir: string, visit: (path: string) => Promise<v
 }
 
 async function collectMemorySignals(projectName: string) {
-  const projectStoreDir = join(resolvePilotHome(), "projects", projectName);
+  const projectStoreDir = join(homedir(), ".pilotdeck", "projects", projectName);
   const candidates: { entryPath: string; modifiedAt: string }[] = [];
 
   await walkDirectory(projectStoreDir, async (entryPath) => {

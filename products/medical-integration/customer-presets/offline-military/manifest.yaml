@@ -1,0 +1,55 @@
+schemaVersion: 1
+
+customer:
+  id: "offline-military"
+  displayName: "离线战创伤交付版"
+
+branding:
+  productName: "九格医学辅助平台"
+  dialogueName: "九格医学对话助手"
+  traumaName: "九格创伤救治助手"
+  organizationName: null
+  logoAsset: null
+
+features:
+  dialogue: true
+  medTrauma: true
+  reportInterpretation: true
+  medicinePackageRecognition: true
+  deepSearch: true
+  tableDigitization: true
+  attachmentIngestion: true
+  dicomPreview: true
+  ecgPreview: true
+  gallery3d: true
+  volume: true
+  m3d: false
+  feishu: false
+
+profiles:
+  defaultDialogue: "medical-general"
+  report: "medical-report"
+  trauma: "war-trauma-assessment"
+  deepSearch: "medical-deep-search"
+
+knowledge:
+  enabledCorpora:
+    - "war-trauma"
+  defaultCorpus: "war-trauma"
+  corpusVersion: "b507f26"
+
+security:
+  crossSessionMemory: false
+  publicWebSearch: false
+  externalTelemetry: false
+  requireHumanReview: true
+  phiStorage: "temporary-ttl"
+  dicomBurnedInClearanceRequired: true
+
+deployment:
+  offlineLevel: "L2"
+  medicalSidecarUrl: "http://127.0.0.1:8765/"
+  medicalMcpUrl: "http://127.0.0.1:8766/mcp"
+  composeFile: "docker-compose.medical.yml"
+
+# 模型 Endpoint、API Key、飞书 Secret、真实数据路径和 PHI 配置不得写入本文件。

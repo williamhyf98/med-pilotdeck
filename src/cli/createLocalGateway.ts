@@ -1054,6 +1054,16 @@ class ProjectRuntimeRegistry {
       eventEmitter: eventBuf.emitter,
       drainEvents: eventBuf.drain,
       tokenAccounting: runtime.tokenAccounting,
+      profileRegistry: runtime.pluginRuntime.profiles(),
+      isModelAvailable: (provider, model) =>
+        runtime.snapshot.config.model.providers[provider]?.models[model] !== undefined,
+      getModelMultimodal: (provider, model) => {
+        try {
+          return runtime.model.getMultimodal(provider, model);
+        } catch {
+          return undefined;
+        }
+      },
       getModelMaxContextTokens: (provider, model) => resolveRoutedModelMaxContextTokens({
         modelRuntime: runtime.model,
         agentModel: runtime.snapshot.config.agent.model,

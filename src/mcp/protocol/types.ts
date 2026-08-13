@@ -18,19 +18,12 @@ export type PilotDeckMcpServerSpec =
        * client closes.
        */
       perSession?: boolean;
-      /**
-       * Per-server tool-call timeout in milliseconds. When omitted, falls
-       * back to `PILOTDECK_MCP_TOOL_TIMEOUT_MS` (default 60000).
-       */
-      timeoutMs?: number;
     }
   | {
       id: string;
       transport: "streamable_http";
       url: string;
       headers?: Record<string, string>;
-      /** Per-server tool-call timeout in milliseconds. */
-      timeoutMs?: number;
     };
 
 export type PilotDeckMcpToolAnnotations = {

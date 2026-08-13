@@ -1,5 +1,6 @@
 import { createDecipheriv, createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type { CronResultDelivery } from "../../../cron/index.js";
 import type { ChannelAttachment, Gateway } from "../../../gateway/index.js";
@@ -19,7 +20,6 @@ import {
 import { FeishuSessionMapper, type FeishuSessionMapperState } from "./FeishuSessionMapper.js";
 import { type FeishuLiveCardActivityKind } from "./feishu-render.js";
 import { createVisibleErrorStatusDetail } from "../../../status/agentStatus.js";
-import { resolvePilotHome } from "../../../pilot/paths.js";
 
 let Lark: any = null;
 let larkLoadAttempted = false;
@@ -155,7 +155,7 @@ export class FeishuChannel implements ChannelAdapter {
   private readonly elicitation = new ImElicitationHelper();
   private readonly permissions = new ImPermissionHelper();
   private readonly attachmentStore = new ImAttachmentStore({
-    rootDir: join(resolvePilotHome(), "im-attachments"),
+    rootDir: join(homedir(), ".pilotdeck", "im-attachments"),
     channelKey: "feishu",
     maxBytes: FEISHU_MAX_ATTACHMENT_BYTES,
     fetchTimeoutMs: FEISHU_ATTACHMENT_FETCH_TIMEOUT_MS,

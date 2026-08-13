@@ -108,6 +108,7 @@ import projectsRoutes, { WORKSPACES_ROOT, validateWorkspacePath } from './routes
 import userRoutes from './routes/user.js';
 import pluginsRoutes from './routes/plugins.js';
 import messagesRoutes from './routes/messages.js';
+import medicalRoutes from './routes/medical.js';
 import { closeMemoryServices, startMemoryScheduler, stopMemoryScheduler } from './services/memoryService.js';
 import { createNormalizedMessage } from './pilotdeck-message.js';
 import { startEnabledPluginServers, stopAllPlugins, getPluginPort } from './utils/plugin-process-manager.js';
@@ -456,9 +457,21 @@ const wss = new WebSocketServer({
 app.locals.wss = wss;
 
 app.use(cors({ exposedHeaders: ['X-Refreshed-Token'] }));
+
+function isMedicalApiRequest(req) {
+    const requestPath = String(req.originalUrl || req.url || '').split('?', 1)[0];
+    return requestPath === '/api/medical' || requestPath.startsWith('/api/medical/');
+}
+
 app.use(express.json({
     limit: '50mb',
     type: (req) => {
+        // Medical routes apply their own substantially smaller parser limit.
+        // Skipping the broad UI parser here prevents a medical request from
+        // being accepted at 50 MB before its route-level policy runs.
+        if (isMedicalApiRequest(req)) {
+            return false;
+        }
         // Skip multipart/form-data requests (for file uploads like images)
         const contentType = req.headers['content-type'] || '';
         if (contentType.includes('multipart/form-data')) {
@@ -467,7 +480,15 @@ app.use(express.json({
         return contentType.includes('json');
     }
 }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(express.urlencoded({
+    limit: '50mb',
+    extended: true,
+    type: (req) => {
+        if (isMedicalApiRequest(req)) return false;
+        const contentType = req.headers['content-type'] || '';
+        return contentType.includes('application/x-www-form-urlencoded');
+    },
+}));
 
 // Public health check endpoint (no authentication required)
 app.get('/health', (req, res) => {
@@ -483,6 +504,10 @@ app.use('/api', validateApiKey);
 
 // Authentication routes (public)
 app.use('/api/auth', authRoutes);
+
+// Medical UI API (protected). Chat and trauma generation are both adapted
+// through pilotdeck-bridge; the router owns stricter request-size limits.
+app.use('/api/medical', authenticateToken, medicalRoutes);
 
 // Projects API Routes (protected)
 app.use('/api/projects', authenticateToken, projectsRoutes);

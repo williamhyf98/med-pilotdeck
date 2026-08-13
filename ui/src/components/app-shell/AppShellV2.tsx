@@ -92,11 +92,18 @@ const isUnreadWorthyMessage = (message: unknown): boolean => {
 // outer chrome (sidebar + breadcrumb header per prototype/shadcn.html).
 export default function AppShellV2() {
   const navigate = useNavigate();
-  // Match the four V2 URL shapes and hoist params up. A single wildcard route
-  // owns this shell so state survives every URL transition.
+  // Match the project/session and immersive medical URL shapes. A single
+  // wildcard route owns this shell so state survives every URL transition.
   const matchProjectChat = useMatch('/p/:projectName/c/:sessionId');
   const matchProject = useMatch('/p/:projectName');
   const matchLegacySession = useMatch('/session/:sessionId');
+  const matchMedicalDialogue = useMatch('/medical/dialogue');
+  const matchMedicalTrauma = useMatch('/medical/med-trauma');
+  const medicalRouteTab: AppTab | null = matchMedicalDialogue
+    ? 'medical-dialogue'
+    : matchMedicalTrauma
+      ? 'medical-trauma'
+      : null;
   const projectNameParam =
     matchProjectChat?.params.projectName ?? matchProject?.params.projectName ?? undefined;
   const sessionId =
@@ -152,6 +159,16 @@ export default function AppShellV2() {
     isMobile,
     activeSessions,
   });
+
+  useEffect(() => {
+    if (medicalRouteTab) {
+      if (activeTab !== medicalRouteTab) setActiveTab(medicalRouteTab);
+      return;
+    }
+    if (activeTab === 'medical-dialogue' || activeTab === 'medical-trauma') {
+      setActiveTab('chat');
+    }
+  }, [activeTab, medicalRouteTab, setActiveTab]);
 
   const misroutedFileFromUrl = useMemo(() => {
     if (!sessionId) return null;
@@ -213,13 +230,21 @@ export default function AppShellV2() {
     const target = chooseDefaultProject(sidebarSharedProps.projects);
     if (!target) return;
     handleProjectSelect(target);
-    navigate(`/p/${encodeURIComponent(target.name)}`, { replace: true });
+    navigate(
+      medicalRouteTab === 'medical-trauma'
+        ? '/medical/med-trauma'
+        : medicalRouteTab === 'medical-dialogue'
+          ? '/medical/dialogue'
+          : `/p/${encodeURIComponent(target.name)}`,
+      { replace: true },
+    );
     didDefaultProjectRef.current = true;
   }, [
     isLoadingProjects,
     selectedProject,
     projectNameParam,
     sessionId,
+    medicalRouteTab,
     sidebarSharedProps.projects,
     handleProjectSelect,
     navigate,
@@ -505,6 +530,12 @@ export default function AppShellV2() {
       fallbackSession?: ProjectSession,
       options?: SessionNavigationOptions,
     ) => {
+      const preservedMedicalPath =
+        options?.preserveActiveTab && activeTab === 'medical-dialogue'
+          ? '/medical/dialogue'
+          : options?.preserveActiveTab && activeTab === 'medical-trauma'
+            ? '/medical/med-trauma'
+            : null;
       setUnreadSessionIds((previous) => {
         if (!previous.has(sessId)) return previous;
         const next = new Set(previous);
@@ -522,15 +553,24 @@ export default function AppShellV2() {
       } else {
         navigate(`/session/${sessId}`);
       }
+      if (preservedMedicalPath) {
+        navigate(preservedMedicalPath, { replace: true });
+      }
       if (!options?.preserveActiveTab) {
         setActiveTab('chat');
       }
     },
-    [handleProjectSelect, handleSessionSelect, navigate, selectedProject?.name, setActiveTab],
+    [activeTab, handleProjectSelect, handleSessionSelect, navigate, selectedProject?.name, setActiveTab],
   );
 
   const handleSelectTab = useCallback(
     (tab: AppTab) => {
+      if (tab === 'medical-dialogue' || tab === 'medical-trauma') {
+        setActiveTab(tab);
+        setSidebarOpen(false);
+        navigate(tab === 'medical-trauma' ? '/medical/med-trauma' : '/medical/dialogue');
+        return;
+      }
       // `home` is retained only for old persisted state / links. The Agent
       // surface now owns both the welcome/new-session state and transcripts.
       if (tab === 'home') {
@@ -544,27 +584,41 @@ export default function AppShellV2() {
         setActiveTab('chat');
         return;
       }
+      if (activeTab === 'medical-dialogue' || activeTab === 'medical-trauma') {
+        const target = selectedProject
+          ? `/p/${encodeURIComponent(selectedProject.name)}`
+          : '/';
+        navigate(target);
+      }
       setActiveTab(tab);
     },
-    [navigate, selectedProject, setActiveTab, setSelectedSession],
+    [activeTab, navigate, selectedProject, setActiveTab, setSelectedSession, setSidebarOpen],
   );
 
   const handleStartNewSession = useCallback(
     (project: Project | null, options?: SessionNavigationOptions) => {
+      const preservedMedicalPath =
+        options?.preserveActiveTab && activeTab === 'medical-dialogue'
+          ? '/medical/dialogue'
+          : options?.preserveActiveTab && activeTab === 'medical-trauma'
+            ? '/medical/med-trauma'
+            : null;
+      const nextTab = options?.preserveActiveTab ? activeTab : 'chat';
       if (project) {
         handleNewSession(project);
-        navigate(`/p/${encodeURIComponent(project.name)}`);
-        setActiveTab(options?.preserveActiveTab ? 'files' : 'chat');
+        navigate(preservedMedicalPath || `/p/${encodeURIComponent(project.name)}`);
+        setActiveTab(nextTab);
       } else if (selectedProject) {
         handleNewSession(selectedProject);
-        setActiveTab(options?.preserveActiveTab ? 'files' : 'chat');
+        if (preservedMedicalPath) navigate(preservedMedicalPath);
+        setActiveTab(nextTab);
       } else {
         // No project context yet — land on /, MainContent's empty state
         // will prompt the user to create or pick a project.
         navigate('/');
       }
     },
-    [handleNewSession, navigate, selectedProject, setActiveTab],
+    [activeTab, handleNewSession, navigate, selectedProject, setActiveTab],
   );
 
   // Wrap the two session-lifecycle callbacks coming out of useSessionProtection
@@ -618,8 +672,8 @@ export default function AppShellV2() {
       <ConnectionBanner />
       <div className="flex min-h-0 flex-1">
       {!isMobile ? (
-        desktopSidebarOpen ? sidebar : null
-      ) : (
+        !medicalRouteTab && desktopSidebarOpen ? sidebar : null
+      ) : !medicalRouteTab ? (
         <div
           className={`fixed inset-0 z-50 flex transition-opacity duration-150 ease-out ${
             sidebarOpen ? 'visible opacity-100' : 'invisible opacity-0'
@@ -640,7 +694,7 @@ export default function AppShellV2() {
             {sidebar}
           </div>
         </div>
-      )}
+      ) : null}
 
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <MainAreaV2
@@ -666,7 +720,12 @@ export default function AppShellV2() {
           onReplaceTemporarySession={handleReplaceTemporarySession}
           onNavigateToSession={(sid: string) => {
             setSelectedSession((prev) => prev?.id === sid ? prev : { id: sid } as ProjectSession);
-            navigate(`/session/${sid}`);
+            navigate(
+              activeTab === 'medical-dialogue'
+                ? '/medical/dialogue'
+                : `/session/${sid}`,
+              { replace: activeTab === 'medical-dialogue' },
+            );
           }}
           onStartNewSession={handleStartNewSession}
           onSelectSession={handleSelectSession}
@@ -680,7 +739,7 @@ export default function AppShellV2() {
               navigate(`/p/${encodeURIComponent(target.name)}`);
             }
           }}
-          isSidebarCollapsed={!isMobile && !desktopSidebarOpen}
+          isSidebarCollapsed={!isMobile && !desktopSidebarOpen && !medicalRouteTab}
           onOpenSidebar={onOpenDesktopSidebar}
           externalMessageUpdate={externalMessageUpdate}
           misroutedFileFromUrl={misroutedFileFromUrl}

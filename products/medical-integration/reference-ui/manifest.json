@@ -1,0 +1,77 @@
+{
+    "VERSION":  "b507f26",
+    "purpose":  "visual-contract-baseline-only",
+    "productionRuntimeIntegrated":  false,
+    "sourceHost":  "node12",
+    "sourceRoot":  "/local_data/huojianfan/med-integration-offline-military/static",
+    "selection":  {
+                      "requestedPaths":  [
+                                             "static/dialogue/index.html",
+                                             "static/dialogue/assets/**",
+                                             "static/med-trauma/index.html",
+                                             "static/med-trauma/assets/**"
+                                         ],
+                      "transitiveHtmlAssets":  [
+                                                   "static/dialogue/logo_g9.png",
+                                                   "static/med-trauma/logo_g9.png"
+                                               ],
+                      "excluded":  [
+                                       "**/data/**",
+                                       "**/war_trauma/**",
+                                       "**/config/**",
+                                       "**/*.config.*",
+                                       "**/*.map"
+                                   ],
+                      "sourceMapsFound":  false
+                  },
+    "files":  [
+                  {
+                      "sourcePath":  "/local_data/huojianfan/med-integration-offline-military/static/dialogue/assets/index-BW8AVeiE.js",
+                      "destinationPath":  "dialogue/assets/index-BW8AVeiE.js",
+                      "size":  1453566,
+                      "sha256":  "f3d301d9992d7dca85a0a9db556cf0df231655753a6dfe67f5f00dc678220262"
+                  },
+                  {
+                      "sourcePath":  "/local_data/huojianfan/med-integration-offline-military/static/dialogue/assets/index-CGDa1j-E.css",
+                      "destinationPath":  "dialogue/assets/index-CGDa1j-E.css",
+                      "size":  22286,
+                      "sha256":  "92f8c3818c25c8bfb9a80af7ab9585e0019066cf13fe308c2e4b8e99927b8a8c"
+                  },
+                  {
+                      "sourcePath":  "/local_data/huojianfan/med-integration-offline-military/static/dialogue/index.html",
+                      "destinationPath":  "dialogue/index.html",
+                      "size":  503,
+                      "sha256":  "6eedf005ed8f323f1ee3baf4ee36638a9f88cccf63085cb3790b7f2cda709c74"
+                  },
+                  {
+                      "sourcePath":  "/local_data/huojianfan/med-integration-offline-military/static/dialogue/logo_g9.png",
+                      "destinationPath":  "dialogue/logo_g9.png",
+                      "size":  68881,
+                      "sha256":  "845dafffa177de38de4e13b275900030576423a4271d310f0a438474ba767528"
+                  },
+                  {
+                      "sourcePath":  "/local_data/huojianfan/med-integration-offline-military/static/med-trauma/assets/index-DHgnLu_R.css",
+                      "destinationPath":  "med-trauma/assets/index-DHgnLu_R.css",
+                      "size":  46848,
+                      "sha256":  "5f4e5e5756a86fc5b9d6c74ffd2d6465c33fd53f8fd698fb91ad975db0e391be"
+                  },
+                  {
+                      "sourcePath":  "/local_data/huojianfan/med-integration-offline-military/static/med-trauma/assets/index-DtPnNa9I.js",
+                      "destinationPath":  "med-trauma/assets/index-DtPnNa9I.js",
+                      "size":  789799,
+                      "sha256":  "c4a69e35e4563bdde446191f4ae5d2d74c0045da95402395c6c57a0087ea3e71"
+                  },
+                  {
+                      "sourcePath":  "/local_data/huojianfan/med-integration-offline-military/static/med-trauma/index.html",
+                      "destinationPath":  "med-trauma/index.html",
+                      "size":  512,
+                      "sha256":  "94f3ac0f7e21c5707232f81599713e58cf342c8bd679f382b057750382b603f9"
+                  },
+                  {
+                      "sourcePath":  "/local_data/huojianfan/med-integration-offline-military/static/med-trauma/logo_g9.png",
+                      "destinationPath":  "med-trauma/logo_g9.png",
+                      "size":  68881,
+                      "sha256":  "845dafffa177de38de4e13b275900030576423a4271d310f0a438474ba767528"
+                  }
+              ]
+}

@@ -6,30 +6,16 @@ import { hashText } from "./utils/id.js";
 export const GENERAL_PROJECT_META_DIR = "GeneralProjects";
 export const GENERAL_PROJECT_MEMORY_DIR = "Project";
 export const GENERAL_FEEDBACK_MEMORY_DIR = "Feedback";
+export const GENERAL_WORKSPACE_DIR = join(homedir(), ".pilotdeck");
 export const EXTERNAL_RECORD_PREFIX = "external:" as const;
 export const EXTERNAL_PROJECT_PREFIX = "external-project:" as const;
-
-/** Resolve the "general" workspace root (`PILOT_HOME`, else `~/.pilotdeck`). */
-export function getGeneralWorkspaceDir(): string {
-  return process.env.PILOT_HOME
-    ? resolve(process.env.PILOT_HOME)
-    : join(homedir(), ".pilotdeck");
-}
-
-/**
- * Kept for API compatibility. Prefer `getGeneralWorkspaceDir()` when `PILOT_HOME`
- * may be set after module load — this snapshot is resolved on first property read
- * via the getter below in JS builds; in TS source treat as dynamic helper.
- * @deprecated Use getGeneralWorkspaceDir()
- */
-export const GENERAL_WORKSPACE_DIR = getGeneralWorkspaceDir();
 
 export function normalizeWorkspacePath(workspacePath: string): string {
   return resolve(workspacePath);
 }
 
 export function isGeneralWorkspaceDir(workspaceDir: string): boolean {
-  return normalizeWorkspacePath(workspaceDir) === normalizeWorkspacePath(getGeneralWorkspaceDir());
+  return normalizeWorkspacePath(workspaceDir) === normalizeWorkspacePath(GENERAL_WORKSPACE_DIR);
 }
 
 export function getWorkspaceMemoryMode(workspaceDir: string): WorkspaceMemoryMode {
