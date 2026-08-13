@@ -18,12 +18,22 @@ export type PilotDeckMcpServerSpec =
        * client closes.
        */
       perSession?: boolean;
+      /**
+       * Per-server call timeout in milliseconds (plugin `mcp.json`). When set,
+       * `McpRuntime` prefers it over the global `callTimeoutMs` default.
+       */
+      timeoutMs?: number;
     }
   | {
       id: string;
       transport: "streamable_http";
       url: string;
       headers?: Record<string, string>;
+      /**
+       * Per-server call timeout in milliseconds (plugin `mcp.json`). When set,
+       * `McpRuntime` prefers it over the global `callTimeoutMs` default.
+       */
+      timeoutMs?: number;
     };
 
 export type PilotDeckMcpToolAnnotations = {
