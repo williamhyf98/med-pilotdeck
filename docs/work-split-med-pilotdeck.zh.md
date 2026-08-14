@@ -228,8 +228,8 @@ curl 济南可达的 :8030/v1/models
 plugins/med-tools/
   data/
     rag/
-      corpus/...jsonl          # 自 war_trauma_books_chunks.jsonl 迁入
-      embedding/...npy         # 自 war_trauma_books_embedding.npy 迁入
+      corpus/war_trauma_books_chunks.jsonl
+      embedding/war_trauma_books_embedding.npy
       manifest.json            # corpus_id、sha256、dim、license、相对路径（无绝对路径）
   server/
     rag_*.py                   # 加载 / 词法或向量检索（可简化自 product rag）
@@ -242,6 +242,7 @@ plugins/med-tools/
   README.md                    # 更新工具列表与数据布局
 ```
 
+> 注：`products/medical-integration/data/rag/` 旧副本已删除；唯一语料在 `plugins/med-tools/data/rag/`。
 **建议新增 MCP 工具：**
 
 
@@ -292,11 +293,13 @@ product 六阶段 = **每次只针对当前救治环节之一**，不是一条 q
 
 ### 5.6 W3 验收标准
 
-- [ ] `plugins/med-tools/data/rag` 自包含；代码无 `products/medical-integration` 依赖  
-- [ ] 纯文本：Agent 能调 RAG 并引用 sources  
+- [x] `plugins/med-tools/data/rag` 自包含；代码无 `products/medical-integration` 依赖  
+- [x] 纯文本：Agent 能调 RAG 并引用 sources（单测 + 本机向量检索冒烟通过；对话端到端待联调）  
 - [ ] 带图：主模型描述 → RAG → 主模型方案（工具内不写描述）  
 - [ ] `start-local.sh` 场景下工具注册成功  
-- [ ] product / sidecar / 医疗 UI **未**被本任务重新启用
+- [x] product / sidecar / 医疗 UI **未**被本任务重新启用
+
+> 2026-08-14：已在 `feat/add-plugins` 落地语料拷贝、`med_trauma_rag_*`、Skill `med-trauma-assist`、单测与直连 embedding 冒烟。
 
 ---
 
@@ -424,3 +427,5 @@ product 六阶段 = **每次只针对当前救治环节之一**，不是一条 q
 |---|---|---|
 | 2026-08-14 | 协作起草 | 首版：四项工作、实现方式、默认假设与待确认项 |
 | 2026-08-14 | 修订 | 拍板 Q1–Q5：全医疗 UI 下线；济南=Agent+G9+tools 测速质量；主模型描述再 RAG；语料进插件 data |
+| 2026-08-14 | W3 落地 | `feat/add-plugins`：med-tools 纳入 RAG 语料 + `med_trauma_rag_query/status` + Skill；embedding 直连冒烟通过 |
+| 2026-08-14 | 语料去重 | 删除 `products/.../data/rag` 大文件副本；唯一语料在 `plugins/med-tools/data/rag/` |

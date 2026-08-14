@@ -40,10 +40,12 @@ rag:
   max_dimension: 16384
   corpus_id: "war-trauma"
   version: "b507f26"
-  corpus_path: "rag/output/corpus/war_trauma_books_chunks.jsonl"
-  embedding_path: "rag/embedding/war_trauma_books_embedding.npy"
-  corpus_sha256: "47b8dba80215f94dfd4021b318f6451bdd59d1fb81ac374f486cf9f141ce2a5e"
-  embedding_sha256: "8d55d77fbe3c45081e51ec9d096824552340b94bed7141904b138605b6bdf331"
+  # Corpus relocated to plugins/med-tools/data/rag/ (see that plugin's manifest.json).
+  # Sidecar RAG is frozen/disabled for this product package.
+  corpus_path: null
+  embedding_path: null
+  corpus_sha256: ""
+  embedding_sha256: ""
   embedding_model: "remote-2048d-artifact"
   license_id: "user-confirmed-authorized-2026-08-06"
 

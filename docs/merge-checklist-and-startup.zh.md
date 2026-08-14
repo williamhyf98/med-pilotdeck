@@ -34,7 +34,7 @@
 - **`products/medical-integration/`**(228 文件,约 295MB):
   - 配置:`config/medical.yaml`、`medical.example.yaml`、`pilotdeck.example.yaml`
   - 客户预设:`customer-presets/`(`_template`、`offline-military` 九格医学辅助平台)
-  - 数据:`data/med-trauma/`(战伤评估集,约 120 例图像 + compare_eval_demo10)、`data/rag/`(语料 jsonl 1.6 万条 + npy 嵌入)
+  - 数据:`data/med-trauma/`(战伤评估集,约 120 例图像 + compare_eval_demo10)；战创伤 RAG 语料已迁至 `plugins/med-tools/data/rag/`（不再放在 `products/.../data/rag/`）
   - `plugins/medical-tools/`(4 agents + 4 commands)、`profiles/`(4 个画像)、`skills/`(8 个医疗技能)、`sidecar/`(Python 医学 API/MCP)、`reference-ui/`、`fixtures/`、`docker-compose.medical.yml`、改动清单文档
 - **医疗 UI**:`ui/src/features/medical/`(35 文件:dialogue/imaging/table/trauma/eval/translation)
 - **医疗服务端**:`ui/server/routes/medical*.js`(5)、`ui/server/services/medical*.js`(10)、`ui/e2e/medical-*.spec.mjs`(3)
@@ -69,10 +69,10 @@
 | `shared/catalogProviders.ts(+test)` | 取 A + B 的 `modelListRequiresApiKey`、moonshot 模型并集(k2.6/k1.5/k2.7-code/k2.7-code-highspeed/k3) |
 
 ### 大文件与 LFS
-- `products/medical-integration/data/rag/embedding/war_trauma_books_embedding.npy`(130MB)
-- `products/medical-integration/data/rag/output/corpus/war_trauma_books_chunks.jsonl`(112MB)
-- 两者均超 GitHub 100MB 硬限制,已配置窄范围 Git LFS(253MB 对象已上传到 GitHub)
-- **克隆/拉取本仓库需安装 git-lfs**,否则这两个文件是 130 字节指针
+- `plugins/med-tools/data/rag/embedding/war_trauma_books_embedding.npy`(130MB)
+- `plugins/med-tools/data/rag/corpus/war_trauma_books_chunks.jsonl`(112MB)
+- 两者均超 GitHub 100MB 硬限制,已配置窄范围 Git LFS（原 `products/medical-integration/data/rag/` 副本已删除，避免重复上传）
+- **克隆/拉取本仓库需安装 git-lfs**,否则这两个文件是指针 stub
 
 ### 排除的产物(未入库)
 `pilotdeck.tar`(440MB 备份)、`dist/`、`node_modules/`、`.pilotdeck/`(运行目录)、`.claude/settings.local.json`、sidecar 的 `__pycache__`/`*.egg-info`/`*.pyc`

@@ -21,6 +21,8 @@ Do this:
    - If `report` is non-empty: **paste `report` verbatim** (原样展示). Do not rewrite / compress / re-outline. At most 1–2 short lines before/after noting model name and whether `fallback_used` is true.
    - If `report` is empty and `agent_continue` is true: **do not stop**. Use `summary`, `png_paths`, `warnings`, and `vlm_error` to continue the medical interpretation with the **main agent model**, following the same structured Chinese report sections expected by med-tools. Clearly state that G9 was unavailable and this is a main-agent fallback reading.
 
+与 `med-trauma-assist` 的边界：战创伤**救治方案辅助**（描述 → RAG → 方案）走 `med-trauma-assist`；本 Skill 专注附件解析与结构化报告。
+
 ## Chat attachments
 
 Folder upload and paperclip multi-file upload use the **same** attachment path:

@@ -67,7 +67,7 @@ med-integration-offline-military/
 │   └── trauma-backend/    ← Python FastAPI（独立战创伤研判）
 ├── gateway/
 │   └── gateway.mjs        ← Node.js 反向代理（无认证）
-├── data/rag/              ← 《中华战创伤学》11 卷语料
+├── data/rag/              ← 已迁至 plugins/med-tools/data/rag/（本目录仅留说明）
 │   ├── output/corpus/     ← 16,540 chunks JSONL
 │   └── embedding/         ← 135 MB NPY 向量矩阵
 ├── runtime/               ← 嵌入式 Python/Node 运行时（conda-pack）

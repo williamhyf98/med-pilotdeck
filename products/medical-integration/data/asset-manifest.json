@@ -56,10 +56,11 @@
   "groups": [
     {
       "name": "rag",
-      "status": "copied/verified",
+      "status": "relocated-to-med-tools",
       "fileCount": 2,
       "sourceBytes": 252728492,
-      "deliveredBytes": 252728492
+      "deliveredBytes": 252728492,
+      "note": "See plugins/med-tools/data/rag/"
     },
     {
       "name": "compare_eval_demo10",
@@ -78,32 +79,34 @@
   ],
   "files": [
     {
-      "relativePath": "rag/embedding/war_trauma_books_embedding.npy",
-      "remoteRelativePath": "data/rag/embedding/war_trauma_books_embedding.npy",
+      "relativePath": "(relocated) plugins/med-tools/data/rag/embedding/war_trauma_books_embedding.npy",
+      "remoteRelativePath": "plugins/med-tools/data/rag/embedding/war_trauma_books_embedding.npy",
       "sourceSizeBytes": 135495808,
       "remoteSha256": "8d55d77fbe3c45081e51ec9d096824552340b94bed7141904b138605b6bdf331",
       "copiedSourceSha256": "8d55d77fbe3c45081e51ec9d096824552340b94bed7141904b138605b6bdf331",
-      "sourceVerified": true,
-      "deliveredSizeBytes": 135495808,
+      "sourceVerified": false,
+      "deliveredSizeBytes": 0,
       "deliveredSha256": "8d55d77fbe3c45081e51ec9d096824552340b94bed7141904b138605b6bdf331",
       "sanitized": false,
       "sanitizationPlanned": false,
-      "status": "copied/verified",
-      "group": "rag"
+      "status": "relocated-to-med-tools",
+      "group": "rag",
+      "note": "Moved out of products/medical-integration/data/rag; canonical copy lives under plugins/med-tools/data/rag/"
     },
     {
-      "relativePath": "rag/output/corpus/war_trauma_books_chunks.jsonl",
-      "remoteRelativePath": "data/rag/output/corpus/war_trauma_books_chunks.jsonl",
+      "relativePath": "(relocated) plugins/med-tools/data/rag/corpus/war_trauma_books_chunks.jsonl",
+      "remoteRelativePath": "plugins/med-tools/data/rag/corpus/war_trauma_books_chunks.jsonl",
       "sourceSizeBytes": 117232684,
       "remoteSha256": "47b8dba80215f94dfd4021b318f6451bdd59d1fb81ac374f486cf9f141ce2a5e",
       "copiedSourceSha256": "47b8dba80215f94dfd4021b318f6451bdd59d1fb81ac374f486cf9f141ce2a5e",
-      "sourceVerified": true,
-      "deliveredSizeBytes": 117232684,
+      "sourceVerified": false,
+      "deliveredSizeBytes": 0,
       "deliveredSha256": "47b8dba80215f94dfd4021b318f6451bdd59d1fb81ac374f486cf9f141ce2a5e",
       "sanitized": false,
       "sanitizationPlanned": false,
-      "status": "copied/verified",
-      "group": "rag"
+      "status": "relocated-to-med-tools",
+      "group": "rag",
+      "note": "Moved out of products/medical-integration/data/rag; canonical copy lives under plugins/med-tools/data/rag/"
     },
     {
       "relativePath": "med-trauma/compare_eval_demo10/cases/wse_0771.json",

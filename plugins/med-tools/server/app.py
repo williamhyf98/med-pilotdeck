@@ -33,7 +33,11 @@ mcp = FastMCP(
         "(falls back to the main agent model when G9 is unavailable). "
         "If report is non-empty, show it verbatim. "
         "If report is empty and agent_continue=true, continue the medical "
-        "interpretation yourself using summary/png_paths."
+        "interpretation yourself using summary/png_paths. "
+        "For war-trauma care assistance: the main model first describes injuries "
+        "(especially from images), then call med_trauma_rag_query for evidence, "
+        "then the main model writes the care plan from returned chunks "
+        "(tools never generate the final care plan)."
     ),
 )
 
@@ -368,7 +372,59 @@ def med_tools_health() -> str:
     if not info["primary_ok"] and not info["fallback_ok"]:
         info["ok"] = False
 
+    try:
+        from .rag import rag_status
+
+        info["rag"] = rag_status(validate=False)
+    except Exception as exc:  # noqa: BLE001
+        info["rag"] = {"ready": False, "reason": f"{type(exc).__name__}: {exc}"}
+
     return json.dumps(info, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def med_trauma_rag_status(validate: bool = False) -> str:
+    """Report war-trauma RAG corpus readiness (rows, dimension, mode hints).
+
+    Args:
+        validate: If true, load and SHA-256-check corpus/embedding artifacts now.
+    """
+    from .rag import rag_status
+
+    payload = rag_status(validate=bool(validate))
+    payload["tool"] = "med_trauma_rag_status"
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def med_trauma_rag_query(
+    query: str,
+    top_k: int = 3,
+    min_score: float = 0.35,
+    prefer_lexical: bool = False,
+) -> str:
+    """Retrieve war-trauma textbook evidence chunks for the main agent.
+
+    Returns evidence only (`chunks` + sources). The PilotDeck main model must
+    write the care plan. Prefer this after describing an injury image in text,
+    or directly when the user already provided a clear text query.
+
+    Args:
+        query: Chinese/English search text (injury description or keywords).
+        top_k: Number of chunks to return (1–8, default 3).
+        min_score: Minimum cosine score for vector mode (ignored on lexical fallback).
+        prefer_lexical: Force deterministic lexical search (no embedding call).
+    """
+    from .rag import query_rag
+
+    payload = query_rag(
+        query=query,
+        top_k=top_k,
+        min_score=min_score,
+        prefer_lexical=prefer_lexical,
+    )
+    payload["tool"] = "med_trauma_rag_query"
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 def main() -> None:
