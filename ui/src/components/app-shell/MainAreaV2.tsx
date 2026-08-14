@@ -47,6 +47,11 @@ type Tab = { id: AppTab; labelKey: string; icon: LucideIcon };
 // Files is the only primary work mode; the remaining management dashboards
 // live behind the compact overflow trigger and open beside the conversation.
 const FILES_TAB: Tab = { id: 'files', labelKey: 'tabs.files', icon: Folder };
+// Medical workspace tabs are hidden from the shell toolbar (2026-08-14):
+// the medical product moved to the Agent main page + med-tools plugin. The
+// pages, routes and tab logic stay in place so flipping this flag back to
+// true restores the buttons without any further change.
+const MEDICAL_TABS_VISIBLE = false;
 const MEDICAL_TABS: Tab[] = [
   { id: 'medical-dialogue', labelKey: 'medical.dialogue', icon: HeartPulse },
   { id: 'medical-trauma', labelKey: 'medical.trauma', icon: ShieldPlus },
@@ -373,40 +378,42 @@ function MainAreaV2Content(props: MainAreaV2Props) {
             <span>{t(FILES_TAB.labelKey)}</span>
           </button>
 
-          <div
-            className="mx-1 flex items-center rounded-lg border border-cyan-500/15 bg-cyan-500/[0.04] p-0.5 dark:border-cyan-400/15"
-            aria-label="医疗工作台"
-          >
-            {MEDICAL_TABS.map((tab) => {
-              const Icon = tab.icon;
-              const active = displayActiveTab === tab.id;
-              const label = t(tab.labelKey, {
-                defaultValue: tab.id === 'medical-trauma' ? 'Med-trauma' : 'Dialogue',
-              });
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  aria-pressed={active}
-                  title={label}
-                  onClick={() => {
-                    setDashboardMenuOpen(false);
-                    chatHistorySearch.closeSearch();
-                    setActiveTab(active ? 'chat' : tab.id);
-                  }}
-                  className={cn(
-                    'inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium transition-colors',
-                    active
-                      ? 'bg-cyan-600 text-white shadow-sm dark:bg-cyan-500 dark:text-neutral-950'
-                      : 'text-cyan-800 hover:bg-cyan-500/10 dark:text-cyan-200 dark:hover:bg-cyan-400/10',
-                  )}
-                >
-                  <Icon className="h-3.5 w-3.5" strokeWidth={1.8} />
-                  <span className="hidden 2xl:inline">{label}</span>
-                </button>
-              );
-            })}
-          </div>
+          {MEDICAL_TABS_VISIBLE && (
+            <div
+              className="mx-1 flex items-center rounded-lg border border-cyan-500/15 bg-cyan-500/[0.04] p-0.5 dark:border-cyan-400/15"
+              aria-label="医疗工作台"
+            >
+              {MEDICAL_TABS.map((tab) => {
+                const Icon = tab.icon;
+                const active = displayActiveTab === tab.id;
+                const label = t(tab.labelKey, {
+                  defaultValue: tab.id === 'medical-trauma' ? 'Med-trauma' : 'Dialogue',
+                });
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    aria-pressed={active}
+                    title={label}
+                    onClick={() => {
+                      setDashboardMenuOpen(false);
+                      chatHistorySearch.closeSearch();
+                      setActiveTab(active ? 'chat' : tab.id);
+                    }}
+                    className={cn(
+                      'inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium transition-colors',
+                      active
+                        ? 'bg-cyan-600 text-white shadow-sm dark:bg-cyan-500 dark:text-neutral-950'
+                        : 'text-cyan-800 hover:bg-cyan-500/10 dark:text-cyan-200 dark:hover:bg-cyan-400/10',
+                    )}
+                  >
+                    <Icon className="h-3.5 w-3.5" strokeWidth={1.8} />
+                    <span className="hidden 2xl:inline">{label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           <div ref={dashboardMenuRef} className="relative">
             {activeDashboardTab && ActiveDashboardIcon ? (

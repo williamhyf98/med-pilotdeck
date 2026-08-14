@@ -9,7 +9,7 @@
       "args": [],
       "timeoutMs": 300000,
       "env": {
-        "MED_VLM_API_BASE": "http://127.0.0.1:8030/v1",
+        "MED_VLM_API_BASE": "http://10.31.112.13:8030/v1",
         "MED_VLM_MODEL": "G9-V-Med",
         "MED_VLM_API_KEY": "EMPTY",
         "MED_VLM_MAX_TOKENS": "8192",
