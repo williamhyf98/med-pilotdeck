@@ -5,7 +5,7 @@
   "skills": "skills",
   "mcpServers": {
     "med-tools": {
-      "command": "${pilotHome}/plugins/med-tools/run.sh",
+      "command": "${env:PILOT_HOME}/plugins/med-tools/run.sh",
       "args": [],
       "timeoutMs": 300000,
       "env": {
