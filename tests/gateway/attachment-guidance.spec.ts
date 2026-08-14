@@ -67,6 +67,31 @@ test("registered Office attachments are still described as not directly inspecta
         await rm(root, { recursive: true, force: true });
     }
 });
+test("inline web images retain their staged path in agent guidance", async () => {
+    const imagePath = join(tmpdir(), "pilotdeck-inline-trauma.jpg");
+    let capturedInput;
+    const gateway = createGateway((input) => {
+        capturedInput = input;
+    });
+    for await (const _event of gateway.submitTurn({
+        sessionKey: "session-image",
+        channelKey: "web",
+        message: "generate a trauma care plan",
+        attachments: [{
+                type: "image",
+                path: imagePath,
+                name: "trauma.jpg",
+                mimeType: "image/jpeg",
+                content: Buffer.from("image-bytes").toString("base64"),
+            }],
+    })) {
+        // Drain the stream so the fake session receives the canonical input.
+    }
+    const text = inputText(capturedInput);
+    assert.match(text, /Registered attachment files in this session/);
+    assert.match(text, /trauma\.jpg/);
+    assert.match(text, new RegExp(imagePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
 function createGateway(onInput) {
     const router = new SessionRouter({
         idleSweepIntervalMs: 0,

@@ -169,6 +169,26 @@ test("parsePluginMcpServers expands ${env:*} in streamable_http headers", () => 
         delete process.env.PILOTDECK_TEST_AUTH;
     }
 });
+test("parsePluginMcpServers keeps per-server timeoutMs", () => {
+    const { servers } = parsePluginMcpServers({
+        slowServer: {
+            command: "node",
+            timeoutMs: 300000,
+        },
+        httpServer: {
+            url: "https://mcp.example.com/mcp",
+            timeoutMs: 120000,
+        },
+        badTimeout: {
+            command: "node",
+            timeoutMs: "300000",
+        },
+    });
+    assert.equal(servers.length, 3);
+    assert.equal(servers.find((s) => s.id === "slowServer")?.timeoutMs, 300000);
+    assert.equal(servers.find((s) => s.id === "httpServer")?.timeoutMs, 120000);
+    assert.equal(servers.find((s) => s.id === "badTimeout")?.timeoutMs, undefined);
+});
 test("user config and plugin config resolve same placeholders consistently", () => {
     process.env.PILOTDECK_TEST_CONSISTENCY = "same_value";
     try {

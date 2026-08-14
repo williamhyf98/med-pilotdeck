@@ -1,7 +1,7 @@
 # med-tools (PilotDeck plugin)
 
 MCP plugin that adds **multi-source medical parsing**, local **G9-V-Med** reports,
-and **war-trauma RAG** (textbook evidence for the main Agent) to PilotDeck.
+**war-trauma RAG Q&A**, and **six-stage formal care plans** to PilotDeck.
 
 ## Tools
 
@@ -10,14 +10,37 @@ and **war-trauma RAG** (textbook evidence for the main Agent) to PilotDeck.
 | `med_parse_medical` | Parse medical file/folder + G9 report |
 | `med_tools_health` | VLM / deps / RAG summary |
 | `med_trauma_rag_status` | Corpus readiness (rows, dim, sha) |
-| `med_trauma_rag_query` | Retrieve war-trauma chunks (vector or lexical-fallback) |
+| `med_trauma_rag_query` | Retrieve war-trauma chunks for **knowledge Q&A** |
+| `med_trauma_stage_plan` | Formal **six-stage** care plan (G9 + GPT fallback) |
 
 Wire names in chat: `mcp__med-tools__<tool>`.
 
+## Skill × Tool（当前用法：无注册 Profile）
+
+主 Agent 页面**不选 Profile**；靠 Skill description 自行分流。  
+`agents/medical-assistant.md` 仅作设计留存（`plugin.json` 里 `"agents": []`，不加载）。
+
+```text
+用户
+  │
+  ├─【解读附件】── Skill med-medical
+  │                  └─ med_parse_medical → report 原样展示
+  │
+  ├─【战创伤知识点问答】── Skill med-trauma-assist
+  │                  └─ med_trauma_rag_query → 主模型作答（可附简短要点）
+  │
+  ├─【正式分阶段救治方案】── Skill med-trauma-stage-plan
+  │                  ├─ (可选) med_parse_medical 并入可见伤情
+  │                  └─ med_trauma_stage_plan → care_plan 原样展示
+  │
+  └─【纯问答】────── 主模型直接答
+```
+
 Skills:
 
-- `med-medical` — parse attachments / show `report` verbatim
-- `med-trauma-assist` — describe (main model) → RAG → care plan (main model)
+- `med-medical` — 附件解读；`report` 原样展示
+- `med-trauma-assist` — RAG 知识点问答；非正式五段方案
+- `med-trauma-stage-plan` — 六阶段正式方案；`care_plan` 原样展示
 
 ## Primary tool: `med_parse_medical`
 
@@ -32,7 +55,7 @@ Directory batches default to `max_items=64` (max 64); truncated folders surface 
 
 Supported suffixes: `.cda .xml .json .xml1 .txt .md .markdown .pdf .png .jpg .jpeg .bmp .dcm .dicom .ecg .wfdb .hea .dat .atr .qrs .edf .scp`
 
-## War-trauma RAG
+## War-trauma RAG（知识点问答）
 
 Self-contained under `data/rag/` (no `products/` runtime dependency):
 
@@ -43,13 +66,24 @@ data/rag/
   embedding/war_trauma_books_embedding.npy  # LFS, shape (16540, 2048)
 ```
 
-Flow (方案 A):
+Flow for **Skill `med-trauma-assist`**:
 
-1. Main model writes a short injury description (especially for images).
-2. Call `med_trauma_rag_query(query=...)`.
-3. Main model writes the assistive care plan from `chunks` (tools do **not** generate the plan).
+1. Call `med_trauma_rag_query(query=...)`.
+2. Main model answers the knowledge question from `chunks` (brief tips OK).
+3. Formal five-section plans use **`med_trauma_stage_plan`**, not this path.
 
 If the embedding service is down, the tool uses **lexical-fallback** and sets `mode` accordingly.
+
+## Formal six-stage care plan
+
+Tool `med_trauma_stage_plan(stage, injury_text, image_paths?)`:
+
+1. One stage per call among 伤员发生地 / 野战分类场 / 收容处置组 / 重伤救治组 / 手术组 / 洗消组.
+2. Plugin builds the fixed prompt (stage-specific 【任务要求】 + five sections + multi-image rules).
+3. Calls G9-V-Med; GPT fallback inside the plugin when G9 fails.
+4. Agent shows `care_plan` **verbatim** (same rule as `report` on parse).
+
+Ordinary injury photos go in `image_paths` for G9 to read. DICOM/PDF: prefer `med_parse_medical` first, fold report/summary into `injury_text`. RAG is **not** required.
 
 ## Setup
 
@@ -106,5 +140,11 @@ from server.rag import rag_status, query_rag
 print(rag_status(validate=True))
 print(query_rag(query='战创伤现场大出血止血', top_k=3)['mode'],
       query_rag(query='战创伤现场大出血止血', top_k=3)['chunk_count'])
+"
+
+.venv/bin/python -c "
+from server.trauma_stage_plan import build_user_prompt, normalize_stage
+assert normalize_stage('发生地') == '伤员发生地'
+print(build_user_prompt(stage='伤员发生地', injury_text='右大腿贯通伤', has_images=False)[:200])
 "
 ```

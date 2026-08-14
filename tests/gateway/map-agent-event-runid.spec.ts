@@ -32,3 +32,24 @@ test("mapAgentEvent propagates runId to streaming lifecycle boundaries", () => {
     assert.equal(failed[0]?.type, "error");
     assert.equal(failed[0]?.runId, runId);
 });
+
+test("mapAgentEvent projects direct tool text progress into assistant deltas", () => {
+    const events = mapAgentEvent({
+        type: "tool_progress",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        toolCallId: "call-1",
+        toolName: "mcp__med-tools__med_trauma_stage_plan",
+        message: "G9 stream",
+        metadata: {
+            channel: "assistant_text_delta",
+            text: "一、图像/影像判读",
+        },
+        createdAt: new Date().toISOString(),
+    }, "run-1");
+    assert.deepEqual(events, [{
+        type: "assistant_text_delta",
+        text: "一、图像/影像判读",
+        runId: "run-1",
+    }]);
+});

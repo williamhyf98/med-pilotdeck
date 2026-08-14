@@ -1641,6 +1641,48 @@ export class AgentLoop {
         yield { type: "tool_results_projected", sessionId: input.sessionId, turnId: input.turnId, message: appended };
         await input.onDurableMessage?.(appended);
       }
+      const directFinalResult = pairedResults.length === 1
+        ? pairedResults.find((result) =>
+            result.type === "success"
+            && typeof result.metadata?.directFinalAssistantText === "string"
+            && result.metadata.directFinalAssistantText.trim().length > 0
+          )
+        : undefined;
+      if (directFinalResult?.type === "success") {
+        const directText = String(directFinalResult.metadata?.directFinalAssistantText ?? "");
+        const directMessage: CanonicalMessage = {
+          role: "assistant",
+          content: [{ type: "text", text: directText }],
+          metadata: {
+            directToolOutput: true,
+            generationOwner: String(directFinalResult.metadata?.generationOwner ?? "tool"),
+            toolCallId: directFinalResult.toolCallId,
+            toolName: directFinalResult.toolName,
+          },
+        };
+        messages.push(directMessage);
+        finalMessage = directMessage;
+        yield {
+          type: "assistant_message",
+          sessionId: input.sessionId,
+          turnId: input.turnId,
+          message: directMessage,
+        };
+        await input.onDurableMessage?.(directMessage);
+        const result = this.createTurnResult(input, {
+          type: "success",
+          stopReason: "completed",
+          usage,
+          permissionDenials,
+          turns: turnCount,
+          startedAt,
+          finalMessage,
+          structuredOutput,
+        });
+        await captureTurn(false);
+        yield { type: "turn_completed", sessionId: input.sessionId, turnId: input.turnId, result };
+        return { result, messages };
+      }
       if (
         singleToolPass
         && !singleToolPassCompleted
@@ -2219,6 +2261,7 @@ export class AgentLoop {
       messageId: input.turnId,
       cwd: this.config.cwd,
       abortSignal: input.abortSignal,
+      progress: (event) => this.dependencies.eventEmitter?.(event),
       subagentTimeoutMs: this.config.subagentTimeoutMs,
       toolAliases: this.config.toolAliases,
       ...(execution.allowedTools !== undefined || execution.deniedTools !== undefined

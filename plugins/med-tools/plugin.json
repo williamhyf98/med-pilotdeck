@@ -1,8 +1,9 @@
 {
   "name": "med-tools",
-  "version": "0.3.0",
-  "description": "Medical MCP tools: multi-source parse + G9-V-Med reports + war-trauma RAG evidence for the main Agent",
+  "version": "0.4.0",
+  "description": "Medical MCP tools: parse + G9 reports + war-trauma RAG Q&A + six-stage care plans; Skills drive routing (no registered agent profile)",
   "skills": "skills",
+  "agents": [],
   "mcpServers": {
     "med-tools": {
       "command": "${env:PILOT_HOME}/plugins/med-tools/run.sh",

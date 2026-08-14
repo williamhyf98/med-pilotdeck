@@ -1049,6 +1049,7 @@ export function useChatComposerState({
 
       let uploadedImages: unknown[] = [];
       let uploadedFiles: UploadedAttachmentFile[] = [];
+      let uploadedImagePathFiles: UploadedAttachmentFile[] = [];
       const filesToUpload: File[] = [...submitAttachedImages];
       // If this send includes any folder-picked file, force the whole attachment
       // batch to path-only (no content/image inline) — same diagnostics path as .dcm.
@@ -1095,6 +1096,15 @@ export function useChatComposerState({
           } else {
             uploadedImages = serverImages;
             uploadedFiles = serverFiles;
+            uploadedImagePathFiles = serverImages
+              .map((image: UploadedAttachmentFile & { data?: string }) => ({
+                name: image.name,
+                path: image.path,
+                size: image.size,
+                mimeType: image.mimeType,
+                relativePath: image.relativePath,
+              }))
+              .filter((file: UploadedAttachmentFile) => Boolean(file.path));
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Unknown error';
@@ -1113,7 +1123,11 @@ export function useChatComposerState({
         .filter((image): image is NonNullable<typeof image> => Boolean(image));
       uploadedImages = [...uploadedImages, ...referenceImages];
       const documentReferenceAttachments = submitDocumentReferences.map(contentReferenceToAttachment);
-      messageContent = `${messageContent}${buildAttachmentPathNote(uploadedFiles)}${formatContentReferencePromptBlock(submitDocumentReferences)}`;
+      const agentVisibleUploadedFiles = [
+        ...uploadedFiles,
+        ...uploadedImagePathFiles,
+      ];
+      messageContent = `${messageContent}${buildAttachmentPathNote(agentVisibleUploadedFiles)}${formatContentReferencePromptBlock(submitDocumentReferences)}`;
 
       const agentAttachments: ChatAttachment[] = [
         ...uploadedFiles.map((file) => ({

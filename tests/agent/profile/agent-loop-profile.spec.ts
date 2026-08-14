@@ -292,6 +292,97 @@ test("single-tool-pass profiles close tools after the first successful retrieval
   assert.deepEqual(requests, [["read_file"], []]);
 });
 
+test("direct-final tool output completes without a second agent model call", async () => {
+  const toolName = "mcp__med-tools__med_trauma_stage_plan";
+  const tools = new ToolRegistry();
+  tools.register(fakeTool(toolName));
+  let modelCalls = 0;
+  const router = {
+    invalidateSticky: () => ({ orchestrating: false }),
+    async decide(input: any) {
+      return {
+        provider: input.request.provider,
+        model: input.request.model,
+        scenarioType: "explicit",
+        isSubagent: false,
+        orchestrating: false,
+        resolvedFrom: "explicit",
+        mutations: {},
+      };
+    },
+    async *execute() {
+      modelCalls += 1;
+      yield { type: "message_start", role: "assistant" };
+      yield {
+        type: "tool_call_end",
+        toolCall: { id: "call-plan", name: toolName, input: {} },
+      };
+      yield { type: "message_end", finishReason: "tool_call" };
+    },
+    async *stream() {
+      yield { type: "message_end", finishReason: "stop" };
+    },
+  };
+  const config: AgentRuntimeConfig = {
+    provider: "openai",
+    model: "default-model",
+    cwd: process.cwd(),
+    permissionMode: "bypassPermissions",
+    permissionContext: createDefaultPermissionContext({
+      cwd: process.cwd(),
+      mode: "bypassPermissions",
+      bypassAvailable: true,
+      canPrompt: false,
+    }),
+  };
+  const directText = "一、图像/影像判读\n创伤图像所见。";
+  const durable: any[] = [];
+  const loop = new AgentLoop(config, {
+    router,
+    tools: {
+      registry: tools,
+      scheduler: {
+        async executeAll(calls: any[]) {
+          const now = new Date().toISOString();
+          return calls.map((call) => ({
+            type: "success" as const,
+            toolCallId: call.id,
+            toolName: call.name,
+            content: [{ type: "text", text: directText }],
+            data: { ok: true, care_plan: directText },
+            metadata: {
+              directFinalAssistantText: directText,
+              generationOwner: "plugin-vlm",
+            },
+            startedAt: now,
+            completedAt: now,
+          }));
+        },
+      },
+    },
+  } as any);
+
+  const events = [];
+  for await (const event of loop.run({
+    sessionId: "session-direct-plan",
+    turnId: "turn-direct-plan",
+    messages: [{ role: "user", content: [{ type: "text", text: "生成方案" }] }],
+    onDurableMessage: (message) => {
+      durable.push(message);
+    },
+  })) {
+    events.push(event);
+  }
+
+  assert.equal(modelCalls, 1);
+  const finalAssistant = events.filter((event) => event.type === "assistant_message").at(-1);
+  const finalBlock = finalAssistant?.message.content[0];
+  assert.equal(finalBlock?.type, "text");
+  assert.equal(finalBlock?.type === "text" ? finalBlock.text : undefined, directText);
+  assert.equal(events.at(-1)?.type, "turn_completed");
+  assert.equal(durable.at(-1)?.metadata?.directToolOutput, true);
+});
+
 test("tool runtime enforces profile policy even for direct or nested calls", async () => {
   const tools = new ToolRegistry();
   let executed = false;

@@ -429,3 +429,5 @@ product 六阶段 = **每次只针对当前救治环节之一**，不是一条 q
 | 2026-08-14 | 修订 | 拍板 Q1–Q5：全医疗 UI 下线；济南=Agent+G9+tools 测速质量；主模型描述再 RAG；语料进插件 data |
 | 2026-08-14 | W3 落地 | `feat/add-plugins`：med-tools 纳入 RAG 语料 + `med_trauma_rag_query/status` + Skill；embedding 直连冒烟通过 |
 | 2026-08-14 | 语料去重 | 删除 `products/.../data/rag` 大文件副本；唯一语料在 `plugins/med-tools/data/rag/` |
+| 2026-08-14 | Skill/Agent | 协作图写入两 Skill；`medical-assistant` Profile md 保留但不注册（`agents: []`），主页面靠 Skill 自行分流 |
+| 2026-08-14 | 方案拆分 | RAG 问答=`med-trauma-assist`；正式六阶段方案=`med-trauma-stage-plan` + `med_trauma_stage_plan`（插件内 G9，原样展示 care_plan） |

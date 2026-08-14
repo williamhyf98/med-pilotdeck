@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 
 from .parsers import SUPPORTED_SUFFIXES, collect_medical_files, parse_medical_file
 from .vlm_client import analyze_medical_with_vlm, get_vlm_config
@@ -34,10 +34,10 @@ mcp = FastMCP(
         "If report is non-empty, show it verbatim. "
         "If report is empty and agent_continue=true, continue the medical "
         "interpretation yourself using summary/png_paths. "
-        "For war-trauma care assistance: the main model first describes injuries "
-        "(especially from images), then call med_trauma_rag_query for evidence, "
-        "then the main model writes the care plan from returned chunks "
-        "(tools never generate the final care plan)."
+        "For war-trauma knowledge Q&A: call med_trauma_rag_query, then the main "
+        "model answers from chunks (brief tips OK; not the formal five-section plan). "
+        "For a formal six-stage graded care plan: call med_trauma_stage_plan "
+        "(G9 inside the plugin; show care_plan verbatim)."
     ),
 )
 
@@ -81,7 +81,7 @@ def _cap_summary(text: str, limit: int = 12_000) -> str:
     return text[:limit].rstrip() + "\n…[已截断]"
 
 
-def _run_medical_parse(
+def _prepare_medical_parse(
     *,
     path: str,
     max_items: int = 64,
@@ -89,6 +89,11 @@ def _run_medical_parse(
     skip_vlm: bool = False,
     tool_name: str = "med_parse_medical",
 ) -> Dict[str, Any]:
+    """Parse phase only (no VLM). Returns the base payload plus VLM inputs.
+
+    The returned dict carries a private ``_vlm`` key describing whether the VLM
+    should run and with what summary/images. Callers strip it before returning.
+    """
     root = _resolve_path(path)
     derived_dir = _resolve_derived_dir(root)
     max_items = max(1, min(int(max_items or 64), 64))
@@ -213,22 +218,30 @@ def _run_medical_parse(
 
     if skip_vlm:
         payload["vlm_error"] = "skipped"
+        payload["_vlm"] = {"run": False}
         return payload
 
     if not combined_summary.strip() and not unique_pngs:
         payload["vlm_error"] = "parse failed; skipped VLM"
+        payload["_vlm"] = {"run": False}
         return payload
 
-    vlm = analyze_medical_with_vlm(
-        system_prompt=_load_prompt(prefer_medical=True),
-        summary=combined_summary,
-        png_paths=unique_pngs,
-        max_images=max(1, min(max(len(unique_pngs), 1), max_frames * max(1, len(items)))),
-        require_images=False,
-    )
+    payload["_vlm"] = {
+        "run": True,
+        "summary": combined_summary,
+        "png_paths": unique_pngs,
+        "max_images": max(1, min(max(len(unique_pngs), 1), max_frames * max(1, len(items)))),
+    }
+    return payload
+
+
+def _apply_vlm_result(payload: Dict[str, Any], vlm: Dict[str, Any]) -> Dict[str, Any]:
     payload["vlm_ok"] = bool(vlm.get("ok"))
     payload["vlm_error"] = str(vlm.get("error") or "")
     payload["report"] = str(vlm.get("report") or "")
+    # `ok` marks a directly-usable report so the runtime can finalize the turn
+    # with the streamed text (mirrors med_trauma_stage_plan's contract).
+    payload["ok"] = bool(vlm.get("ok")) and bool(payload["report"].strip())
     payload["model"] = vlm.get("model")
     payload["api_base"] = vlm.get("api_base")
     payload["fallback_used"] = bool(vlm.get("fallback_used"))
@@ -248,9 +261,79 @@ def _run_medical_parse(
     return payload
 
 
-@mcp.tool()
-def med_parse_medical(
+def _run_medical_parse(
+    *,
     path: str,
+    max_items: int = 64,
+    max_frames: int = 8,
+    skip_vlm: bool = False,
+    tool_name: str = "med_parse_medical",
+) -> Dict[str, Any]:
+    """Blocking parse + non-streaming VLM report (used by tests / fallback callers)."""
+    payload = _prepare_medical_parse(
+        path=path,
+        max_items=max_items,
+        max_frames=max_frames,
+        skip_vlm=skip_vlm,
+        tool_name=tool_name,
+    )
+    vlm_plan = payload.pop("_vlm", {"run": False})
+    if not vlm_plan.get("run"):
+        return payload
+
+    vlm = analyze_medical_with_vlm(
+        system_prompt=_load_prompt(prefer_medical=True),
+        summary=vlm_plan["summary"],
+        png_paths=vlm_plan["png_paths"],
+        max_images=vlm_plan["max_images"],
+        require_images=False,
+    )
+    return _apply_vlm_result(payload, vlm)
+
+
+async def _run_medical_parse_stream(
+    *,
+    path: str,
+    on_text: Callable[[str], Awaitable[None]],
+    max_items: int = 64,
+    max_frames: int = 8,
+    skip_vlm: bool = False,
+    tool_name: str = "med_parse_medical",
+) -> Dict[str, Any]:
+    """Parse then stream the G9 report through ``on_text`` (with GPT fallback)."""
+    from .vlm_client import analyze_medical_with_vlm_stream
+
+    payload = _prepare_medical_parse(
+        path=path,
+        max_items=max_items,
+        max_frames=max_frames,
+        skip_vlm=skip_vlm,
+        tool_name=tool_name,
+    )
+    vlm_plan = payload.pop("_vlm", {"run": False})
+    if not vlm_plan.get("run"):
+        return payload
+
+    vlm = await analyze_medical_with_vlm_stream(
+        system_prompt=_load_prompt(prefer_medical=True),
+        summary=vlm_plan["summary"],
+        on_text=on_text,
+        png_paths=vlm_plan["png_paths"],
+        max_images=vlm_plan["max_images"],
+        require_images=False,
+    )
+    payload = _apply_vlm_result(payload, vlm)
+    if vlm.get("streamed"):
+        payload["streamed"] = True
+    if vlm.get("stream_interrupted"):
+        payload["stream_interrupted"] = True
+    return payload
+
+
+@mcp.tool()
+async def med_parse_medical(
+    path: str,
+    ctx: Context,
     max_items: int = 64,
     max_frames: int = 8,
     skip_vlm: bool = False,
@@ -270,19 +353,42 @@ def med_parse_medical(
     If `report` is empty and `agent_continue` is true, continue the medical
     interpretation yourself with the main agent using summary/png_paths.
 
+    The G9 report streams live to the chat while it is generated; on success the
+    runtime shows `report` directly, so do not paste it again.
+
     Args:
         path: Absolute or relative path to a medical file or folder.
         max_items: Max files to parse from a directory (default 64, max 64).
         max_frames: Max DICOM frames / images per file for VLM (default 8).
         skip_vlm: If true, only parse; do not call the 27B model.
     """
-    payload = _run_medical_parse(
+    streamed_chars = 0
+    pending_chunks: List[str] = []
+
+    async def flush_text() -> None:
+        nonlocal streamed_chars
+        text = "".join(pending_chunks)
+        if not text:
+            return
+        pending_chunks.clear()
+        streamed_chars += len(text)
+        await ctx.report_progress(progress=streamed_chars, message=text)
+
+    async def emit_text(text: str) -> None:
+        pending_chunks.append(text)
+        buffered = "".join(pending_chunks)
+        if len(buffered) >= 24 or "\n" in buffered:
+            await flush_text()
+
+    payload = await _run_medical_parse_stream(
         path=path,
+        on_text=emit_text,
         max_items=max_items,
         max_frames=max_frames,
         skip_vlm=skip_vlm,
         tool_name="med_parse_medical",
     )
+    await flush_text()
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -403,14 +509,14 @@ def med_trauma_rag_query(
     min_score: float = 0.35,
     prefer_lexical: bool = False,
 ) -> str:
-    """Retrieve war-trauma textbook evidence chunks for the main agent.
+    """Retrieve war-trauma textbook evidence for Q&A (not the formal stage plan).
 
-    Returns evidence only (`chunks` + sources). The PilotDeck main model must
-    write the care plan. Prefer this after describing an injury image in text,
-    or directly when the user already provided a clear text query.
+    Returns evidence only (`chunks` + sources). The PilotDeck main model answers
+    the knowledge question and may add brief disposition tips. For a formal
+    five-section graded care plan, use med_trauma_stage_plan instead.
 
     Args:
-        query: Chinese/English search text (injury description or keywords).
+        query: Chinese/English search text (concept / keywords / injury question).
         top_k: Number of chunks to return (1–8, default 3).
         min_score: Minimum cosine score for vector mode (ignored on lexical fallback).
         prefer_lexical: Force deterministic lexical search (no embedding call).
@@ -424,6 +530,70 @@ def med_trauma_rag_query(
         prefer_lexical=prefer_lexical,
     )
     payload["tool"] = "med_trauma_rag_query"
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def med_trauma_stage_plan(
+    stage: str,
+    injury_text: str,
+    ctx: Context,
+    image_paths: Optional[List[str]] = None,
+    max_images: int = 8,
+) -> str:
+    """Generate a formal six-stage war-trauma graded care plan via G9-V-Med.
+
+    One stage per call. Plugin builds the fixed Chinese prompt (stage-specific
+    task + five output sections + multi-image reading rules), calls on-box
+    G9-V-Med, and falls back to GPT inside the plugin when G9 fails.
+
+    Agent presentation rule (important):
+    If `care_plan` is non-empty, show it VERBATIM (do not rewrite).
+    If `care_plan` is empty and `agent_continue` is true, write the five-section
+    plan yourself and state that G9/fallback failed.
+
+    Args:
+        stage: One of 伤员发生地 / 野战分类场 / 收容处置组 / 重伤救治组 / 手术组 / 洗消组.
+        injury_text: Visible injury narrative for 【可见伤情】. Prefer the user's
+            compliant description verbatim; otherwise rewrite user text into a proper
+            injury narrative. Fold med_parse_medical report/summary here when present.
+            Do NOT invent image findings from photos in the Agent — pass photos via
+            image_paths so G9 reads them.
+        image_paths: Optional absolute paths to ordinary injury photos for G9.
+        max_images: Max images to send (default 8, max 16).
+    """
+    from .trauma_stage_plan import generate_stage_plan_stream
+
+    streamed_chars = 0
+    pending_chunks: List[str] = []
+
+    async def flush_text() -> None:
+        nonlocal streamed_chars
+        text = "".join(pending_chunks)
+        if not text:
+            return
+        pending_chunks.clear()
+        streamed_chars += len(text)
+        await ctx.report_progress(
+            progress=streamed_chars,
+            message=text,
+        )
+
+    async def emit_text(text: str) -> None:
+        pending_chunks.append(text)
+        buffered = "".join(pending_chunks)
+        if len(buffered) >= 24 or "\n" in buffered:
+            await flush_text()
+
+    payload = await generate_stage_plan_stream(
+        stage=stage,
+        injury_text=injury_text,
+        image_paths=image_paths,
+        max_images=max_images,
+        on_text=emit_text,
+    )
+    await flush_text()
+    payload["tool"] = "med_trauma_stage_plan"
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 

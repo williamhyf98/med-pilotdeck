@@ -1343,6 +1343,11 @@ function mapAgentEventForTurn(event: AgentEvent, runId: string): GatewayEvent[] 
       return [{ type: "model_request_started", model: event.model, provider: event.provider }];
     case "model_event":
       return mapModelEvent(event.event, runId);
+    case "tool_progress":
+      return event.metadata?.channel === "assistant_text_delta"
+        && typeof event.metadata.text === "string"
+        ? [{ type: "assistant_text_delta", text: event.metadata.text }]
+        : [];
     case "tool_calls_detected":
       return event.calls.map((call) => ({
         type: "tool_call_started",
@@ -1917,7 +1922,9 @@ function buildAttachmentPathNote(
 
   for (const attachment of attachments) {
     if (!attachment.path) continue;
-    const normalized = safeAllowedAttachmentPath(attachment.path, allowedReadFiles);
+    const resolvedPath = resolve(attachment.path);
+    const normalized = safeAllowedAttachmentPath(attachment.path, allowedReadFiles)
+      ?? (directContentPaths.has(resolvedPath) ? resolvedPath : undefined);
     if (!normalized) continue;
     if (seen.has(normalized)) continue;
     seen.add(normalized);

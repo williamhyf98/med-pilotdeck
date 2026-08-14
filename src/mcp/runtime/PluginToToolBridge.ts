@@ -78,9 +78,37 @@ function buildToolDefinition(
         );
       }
       try {
+        const directFinalField = directStreamFinalField(spec.serverId, spec.toolName);
+        const directStream = directFinalField !== undefined;
+        let streamedText = "";
+        const emitDelta = (chunk: string): void => {
+          if (!chunk || !context.progress) return;
+          streamedText += chunk;
+          context.progress({
+            type: "tool_progress",
+            sessionId: context.sessionId,
+            turnId: context.turnId,
+            toolCallId: context.currentToolCallId ?? "",
+            toolName: spec.wireName,
+            message: `plugin stream: ${chunk.length} chars`,
+            metadata: {
+              channel: "assistant_text_delta",
+              text: chunk,
+              modelOwner: "plugin-vlm",
+            },
+            createdAt: new Date().toISOString(),
+          });
+        };
         const { content, isError } = await client.callTool(spec.toolName, input, {
           signal: context.abortSignal,
           timeoutMs: options.callTimeoutMs,
+          ...(directStream && context.progress
+            ? {
+                onProgress: (progress: { progress: number; total?: number; message?: string }) => {
+                  if (typeof progress.message === "string") emitDelta(progress.message);
+                },
+              }
+            : {}),
         });
         if (isError === true) {
           throw new PilotDeckToolRuntimeError(
@@ -89,11 +117,32 @@ function buildToolDefinition(
             { content },
           );
         }
+        const parsedPayload = directStream ? extractJsonTextPayload(content) : undefined;
+        const finalText = parsedPayload?.ok === true
+          && directFinalField
+          && typeof parsedPayload[directFinalField] === "string"
+          ? (parsedPayload[directFinalField] as string)
+          : "";
+        // Reconcile: if streaming under-delivered (e.g. sanitized final differs),
+        // emit the missing suffix so the bubble matches the persisted answer.
+        if (finalText && context.progress) {
+          if (streamedText.length === 0) {
+            emitDelta(finalText);
+          } else if (finalText.startsWith(streamedText)) {
+            emitDelta(finalText.slice(streamedText.length));
+          }
+        }
         return {
           content: marshalMcpContent(content, client.spec.transport === "stdio" ? client.spec.cwd : undefined),
-          data: content,
+          data: parsedPayload ?? content,
           metadata: {
             mcp: { serverId: spec.serverId, toolName: spec.toolName, wireName: spec.wireName },
+            ...(finalText
+              ? {
+                  directFinalAssistantText: finalText,
+                  generationOwner: "plugin-vlm",
+                }
+              : {}),
           },
         };
       } catch (err) {
@@ -121,6 +170,39 @@ function buildToolDefinition(
       }
     },
   };
+}
+
+/**
+ * Tools whose plugin already generates the user-facing answer with its own
+ * model (G9-V-Med) and streams it via MCP progress. For these, the bridge
+ * projects streamed chunks into the assistant bubble and hands the final field
+ * to the agent loop so the turn finalizes without a second main-model call.
+ */
+const DIRECT_STREAM_FINAL_FIELDS: Record<string, Record<string, string>> = {
+  "med-tools": {
+    med_trauma_stage_plan: "care_plan",
+    med_parse_medical: "report",
+  },
+};
+
+function directStreamFinalField(serverId: string, toolName: string): string | undefined {
+  return DIRECT_STREAM_FINAL_FIELDS[serverId]?.[toolName];
+}
+
+function extractJsonTextPayload(raw: unknown): Record<string, unknown> | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  for (const block of raw as McpContentBlock[]) {
+    if (block?.type !== "text" || typeof block.text !== "string") continue;
+    try {
+      const parsed = JSON.parse(block.text);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Not every MCP text result is JSON.
+    }
+  }
+  return undefined;
 }
 
 type McpContentBlock = { type: string; [key: string]: unknown };
