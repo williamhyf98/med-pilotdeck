@@ -1116,4 +1116,31 @@
       max-width: 100%;
     }
   }
+
+  /*
+   * Keep the composer usable when many attachments are selected. The
+   * attachment list gets its own bounded scroll area while the prompt input
+   * and send controls remain visible. ComposerV2 is shared by the welcome and
+   * active-chat layouts, so this applies consistently to both.
+   */
+  .pd-composer-container .pd-composer-attachment-panel {
+    max-height: min(15rem, 35vh);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+
+  /*
+   * Sent messages keep the same bounded attachment area as the composer, so a
+   * bubble with many files/images never pushes the conversation out of view.
+   * File cards and image previews scroll independently.
+   */
+  .pd-message-attachment-scroll {
+    max-height: min(15rem, 35vh);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
 }

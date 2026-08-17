@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   ChangeEvent,
   ClipboardEvent,
@@ -376,6 +376,7 @@ export default function ComposerV2({
   const [isRunModeMenuOpen, setIsRunModeMenuOpen] = useState(false);
   const [isPermissionMenuOpen, setIsPermissionMenuOpen] = useState(false);
   const permissionSelectorDisabled = runMode === 'plan';
+  const attachmentPanelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (permissionSelectorDisabled) {
@@ -394,6 +395,24 @@ export default function ComposerV2({
   const hasUploadingImages = uploadingImages.size > 0;
   const attachmentLimitError = imageErrors.get(MAX_ATTACHMENTS_ERROR_KEY);
   const medicalFolderWarning = imageErrors.get(MEDICAL_FOLDER_WARNING_KEY);
+
+  // Option B: after any attachment-area change, keep the panel scrolled to the
+  // bottom so newly added chips / hard-fail red copy remain visible.
+  useEffect(() => {
+    const panel = attachmentPanelRef.current;
+    if (!panel) return;
+    const frame = requestAnimationFrame(() => {
+      panel.scrollTop = panel.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [
+    attachedImages,
+    documentReferences,
+    attachedMedicalFolder,
+    attachmentLimitError,
+    medicalFolderWarning,
+  ]);
+
   const disabled = !hasDraftContent || isSubmitPending || hasUploadingImages;
   const showAbortButton = isLoading && canAbortSession && !hasDraftContent;
   const sendTitle = isSubmitPending || hasUploadingImages
@@ -485,8 +504,11 @@ export default function ComposerV2({
               chromeMode === 'medical' && 'pd-composer--medical',
             )}
           >
-            {attachedImages.length > 0 || documentReferences.length > 0 || attachedMedicalFolder ? (
-              <div className="pd-composer-attachment-panel mb-2 overflow-hidden rounded-lg border border-neutral-200 bg-neutral-50 p-2 dark:border-neutral-800 dark:bg-neutral-900">
+            {attachedImages.length > 0 || documentReferences.length > 0 || attachedMedicalFolder || attachmentLimitError || medicalFolderWarning ? (
+              <div
+                ref={attachmentPanelRef}
+                className="pd-composer-attachment-panel mb-2 rounded-lg border border-neutral-200 bg-neutral-50 p-2 dark:border-neutral-800 dark:bg-neutral-900"
+              >
                 <div className="flex flex-wrap gap-2">
                   {attachedMedicalFolder ? (
                     <div className="inline-flex max-w-full items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[12px] text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-100">
@@ -535,7 +557,7 @@ export default function ComposerV2({
                   ))}
                 </div>
                 {attachmentLimitError ? (
-                  <div className="mt-2 text-xs text-amber-600 dark:text-amber-300">
+                  <div className="mt-2 text-xs text-red-600 dark:text-red-400">
                     {attachmentLimitError}
                   </div>
                 ) : null}

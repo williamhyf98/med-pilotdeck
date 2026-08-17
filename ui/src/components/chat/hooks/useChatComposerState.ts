@@ -21,6 +21,11 @@ import {
   MEDICAL_FOLDER_MAX_FILES,
   collectMedicalFilesFromDataTransfer,
   collectMedicalFilesFromFileList,
+  formatAttachmentLimitErrors,
+  totalFileBytes,
+  validateAttachmentBatch,
+  ensureUploadFailedMessage,
+  type CollectMedicalFolderResult,
   type MedicalFolderEntry,
 } from '../utils/medicalFolderUpload';
 import {
@@ -171,19 +176,30 @@ export function shouldCycleRunModeOnKeyDown(
 
 export type AttachmentAddResult = {
   files: File[];
-  droppedCount: number;
+  accepted: boolean;
+  errors: string[];
 };
 
+/** Cumulative hard-fail add: on limit violation, keep current files unchanged. */
 export function addAttachmentFiles(
   currentFiles: File[],
   incomingFiles: File[],
   maxAttachments = MAX_ATTACHMENTS,
 ): AttachmentAddResult {
-  const mergedFiles = [...currentFiles, ...incomingFiles];
-
+  const validation = validateAttachmentBatch({
+    existingCount: currentFiles.length,
+    existingBytes: totalFileBytes(currentFiles),
+    incoming: incomingFiles.map((file) => ({ name: file.name, size: file.size })),
+    maxFiles: maxAttachments,
+    maxFileBytes: MAX_ATTACHMENT_SIZE_BYTES,
+  });
+  if (!validation.ok) {
+    return { files: currentFiles, accepted: false, errors: validation.errors };
+  }
   return {
-    files: mergedFiles.slice(0, maxAttachments),
-    droppedCount: Math.max(0, mergedFiles.length - maxAttachments),
+    files: [...currentFiles, ...incomingFiles],
+    accepted: true,
+    errors: [],
   };
 }
 
@@ -727,48 +743,57 @@ export function useChatComposerState({
   }, []);
 
   const applyMedicalFolderCollection = useCallback((
-    result: ReturnType<typeof collectMedicalFilesFromFileList>,
+    result: CollectMedicalFolderResult,
   ) => {
-    const warningText = result.warnings.join('；');
-    setImageErrors((previous) => {
-      const next = new Map(previous);
-      if (warningText) next.set(MEDICAL_FOLDER_WARNING_KEY, warningText);
-      else next.delete(MEDICAL_FOLDER_WARNING_KEY);
-      next.delete(MAX_ATTACHMENTS_ERROR_KEY);
-      return next;
-    });
+    const softWarningText = result.warnings.join('；');
 
-    if (result.entries.length === 0) {
-      if (!warningText) {
-        setImageErrors((previous) => {
-          const next = new Map(previous);
-          next.set(MEDICAL_FOLDER_WARNING_KEY, '所选内容中没有可解析的医学资料');
-          return next;
-        });
-      }
+    if (result.entries.length === 0 && !result.scanOverflow) {
+      setImageErrors((previous) => {
+        const next = new Map(previous);
+        next.delete(MAX_ATTACHMENTS_ERROR_KEY);
+        if (softWarningText) next.set(MEDICAL_FOLDER_WARNING_KEY, softWarningText);
+        else next.set(MEDICAL_FOLDER_WARNING_KEY, '所选内容中没有可解析的医学资料');
+        return next;
+      });
       return;
     }
 
-    // Treat folder picks as ordinary multi-file attachments (same path as paperclip),
-    // but mark them so upload/gateway never inline content (path + diagnostics only).
-    const files = result.entries.map((entry) => entry.file);
-    for (const file of files) {
-      folderOriginFilesRef.current.add(file);
-    }
     setAttachedImages((previous) => {
-      const addResult = addAttachmentFiles(previous, files);
-      if (addResult.droppedCount > 0) {
+      const validation = validateAttachmentBatch({
+        existingCount: previous.length,
+        existingBytes: totalFileBytes(previous),
+        incoming: result.entries.map((entry) => ({
+          name: entry.relativePath || entry.file.name,
+          size: entry.file.size,
+        })),
+        scanOverflow: result.scanOverflow,
+      });
+
+      if (!validation.ok) {
         setImageErrors((previousErrors) => {
           const next = new Map(previousErrors);
-          next.set(
-            MAX_ATTACHMENTS_ERROR_KEY,
-            `Only the first ${MAX_ATTACHMENTS} attachments were added; ${addResult.droppedCount} file${addResult.droppedCount === 1 ? '' : 's'} skipped.`,
-          );
+          next.set(MAX_ATTACHMENTS_ERROR_KEY, formatAttachmentLimitErrors(validation.errors));
+          if (softWarningText) next.set(MEDICAL_FOLDER_WARNING_KEY, softWarningText);
+          else next.delete(MEDICAL_FOLDER_WARNING_KEY);
           return next;
         });
+        return previous;
       }
-      syncQueuedBusySendSnapshot({ attachedImages: addResult.files });
-      return addResult.files;
+
+      const files = result.entries.map((entry) => entry.file);
+      for (const file of files) {
+        folderOriginFilesRef.current.add(file);
+      }
+      setImageErrors((previousErrors) => {
+        const next = new Map(previousErrors);
+        next.delete(MAX_ATTACHMENTS_ERROR_KEY);
+        if (softWarningText) next.set(MEDICAL_FOLDER_WARNING_KEY, softWarningText);
+        else next.delete(MEDICAL_FOLDER_WARNING_KEY);
+        return next;
+      });
+      const merged = [...previous, ...files];
+      syncQueuedBusySendSnapshot({ attachedImages: merged });
+      return merged;
     });
   }, [syncQueuedBusySendSnapshot]);
 
@@ -802,51 +827,27 @@ export function useChatComposerState({
       return;
     }
 
-    const validFiles = files.filter((file) => {
-      try {
-        if (!file || typeof file !== 'object') {
-          console.warn('Invalid file object:', file);
-          return false;
-        }
+    if (files.length === 0) return;
 
-        if (typeof file.size !== 'number' || file.size > MAX_ATTACHMENT_SIZE_BYTES) {
-          const fileName = file.name || 'Unknown file';
-          setImageErrors((previous) => {
-            const next = new Map(previous);
-            next.set(fileName, `File too large (max ${Math.round(MAX_ATTACHMENT_SIZE_BYTES / (1024 * 1024))}MB)`);
-            return next;
-          });
-          return false;
-        }
-
-        return true;
-      } catch (error) {
-        console.error('Error validating file:', error, file);
-        return false;
+    setAttachedImages((previous) => {
+      const addResult = addAttachmentFiles(previous, files);
+      if (!addResult.accepted) {
+        setImageErrors((previousErrors) => {
+          const next = new Map(previousErrors);
+          next.set(MAX_ATTACHMENTS_ERROR_KEY, formatAttachmentLimitErrors(addResult.errors));
+          return next;
+        });
+        return previous;
       }
-    });
-
-    setImageErrors((previous) => {
-      if (!previous.has(MAX_ATTACHMENTS_ERROR_KEY)) return previous;
-      const next = new Map(previous);
-      next.delete(MAX_ATTACHMENTS_ERROR_KEY);
-      return next;
-    });
-
-    if (validFiles.length > 0) {
-      setAttachedImages((previous) => {
-        const result = addAttachmentFiles(previous, validFiles);
-        if (result.droppedCount > 0) {
-          setImageErrors((previousErrors) => {
-            const next = new Map(previousErrors);
-            next.set(MAX_ATTACHMENTS_ERROR_KEY, `Only the first ${MAX_ATTACHMENTS} attachments were added; ${result.droppedCount} file${result.droppedCount === 1 ? '' : 's'} skipped.`);
-            return next;
-          });
-        }
-        syncQueuedBusySendSnapshot({ attachedImages: result.files });
-        return result.files;
+      setImageErrors((previousErrors) => {
+        if (!previousErrors.has(MAX_ATTACHMENTS_ERROR_KEY)) return previousErrors;
+        const next = new Map(previousErrors);
+        next.delete(MAX_ATTACHMENTS_ERROR_KEY);
+        return next;
       });
-    }
+      syncQueuedBusySendSnapshot({ attachedImages: addResult.files });
+      return addResult.files;
+    });
   }, [handleMedicalFolderFiles, syncQueuedBusySendSnapshot]);
 
   useEffect(() => {
@@ -891,14 +892,15 @@ export function useChatComposerState({
   );
 
   const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
-    maxSize: MAX_ATTACHMENT_SIZE_BYTES,
+    // Hard size/count checks run in validateAttachmentBatch so a single oversized
+    // file rejects the whole drop instead of silently accepting the rest.
     multiple: true,
     onDrop: (acceptedFiles, _fileRejections, event) => {
       const dataTransfer = (event as DragEvent | undefined)?.dataTransfer;
       void (async () => {
         if (dataTransfer) {
           const collected = await collectMedicalFilesFromDataTransfer(dataTransfer);
-          if (collected.hasDirectory && collected.entries.length > 0) {
+          if (collected.hasDirectory || collected.entries.length > 0 || collected.scanOverflow) {
             applyMedicalFolderCollection(collected);
             return;
           }
@@ -1075,7 +1077,14 @@ export function useChatComposerState({
           });
 
           if (!response.ok) {
-            throw new Error('Failed to upload attachments');
+            let serverMessage = '';
+            try {
+              const payload = await response.json();
+              serverMessage = typeof payload?.error === 'string' ? payload.error : '';
+            } catch {
+              serverMessage = await response.text().catch(() => '');
+            }
+            throw new Error(serverMessage || '附件上传失败，请稍后重试');
           }
 
           const result = await response.json();
@@ -1107,11 +1116,11 @@ export function useChatComposerState({
               .filter((file: UploadedAttachmentFile) => Boolean(file.path));
           }
         } catch (error) {
-          const message = error instanceof Error ? error.message : 'Unknown error';
+          const message = error instanceof Error ? error.message : '未知错误';
           console.error('Attachment upload failed:', error);
           addMessage({
             type: 'error',
-            content: `Failed to upload attachments: ${message}`,
+            content: ensureUploadFailedMessage(message),
             timestamp: new Date(),
           }, submitTargetSessionId);
           return;

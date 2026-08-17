@@ -2133,20 +2133,24 @@ const uploadFilesHandler = async (req, res) => {
             }
         }),
         limits: {
-            fileSize: 64 * 1024 * 1024, // 64MB limit (aligned with chat medical folder upload)
-            files: 64 // Max 64 files at once (folder uploads)
+            fileSize: ATTACHMENT_UPLOAD_MAX_FILE_BYTES,
+            files: ATTACHMENT_UPLOAD_MAX_FILES,
         }
     });
 
     // Use multer middleware
-    uploadMiddleware.array('files', 64)(req, res, async (err) => {
+    uploadMiddleware.array('files', ATTACHMENT_UPLOAD_MAX_FILES)(req, res, async (err) => {
         if (err) {
             console.error('Multer error:', err);
             if (err.code === 'LIMIT_FILE_SIZE') {
-                return res.status(400).json({ error: 'File too large. Maximum size is 64MB.' });
+                return res.status(400).json({
+                    error: `上传失败：单文件大小超过 ${formatUploadSizeMb(ATTACHMENT_UPLOAD_MAX_FILE_BYTES)}MB。请去掉超大文件或拆成多批后再上传。`,
+                });
             }
             if (err.code === 'LIMIT_FILE_COUNT') {
-                return res.status(400).json({ error: 'Too many files. Maximum is 64 files.' });
+                return res.status(400).json({
+                    error: `上传失败：文件数量超过上限 ${ATTACHMENT_UPLOAD_MAX_FILES}。请减少文件数量或拆成多批后再上传。`,
+                });
             }
             return res.status(500).json({ error: err.message });
         }
@@ -2175,6 +2179,12 @@ const uploadFilesHandler = async (req, res) => {
 
             if (!req.files || req.files.length === 0) {
                 return res.status(400).json({ error: 'No files provided' });
+            }
+
+            const batchError = validateUploadedFileBatch(req.files);
+            if (batchError) {
+                await cleanupUploadedTempFiles(req.files);
+                return res.status(400).json({ error: batchError });
             }
 
             // Get project root
@@ -2966,6 +2976,44 @@ const CHAT_ATTACHMENT_IMAGE_MIMES = new Set([
     'image/svg+xml',
 ]);
 
+const ATTACHMENT_UPLOAD_MAX_FILES = 64;
+const ATTACHMENT_UPLOAD_MAX_FILE_BYTES = 64 * 1024 * 1024;
+const ATTACHMENT_UPLOAD_MAX_BATCH_BYTES = 256 * 1024 * 1024;
+
+function formatUploadSizeMb(bytes) {
+    return Math.round(Number(bytes || 0) / (1024 * 1024));
+}
+
+/** Server-side mirror of frontend hard upload limits (count / per-file / batch). */
+function validateUploadedFileBatch(files) {
+    const list = Array.isArray(files) ? files : [];
+    const errors = [];
+    if (list.length > ATTACHMENT_UPLOAD_MAX_FILES) {
+        errors.push(`文件数量 ${list.length} 超过上限 ${ATTACHMENT_UPLOAD_MAX_FILES}`);
+    }
+    const oversized = list.filter((file) => Number(file?.size || 0) > ATTACHMENT_UPLOAD_MAX_FILE_BYTES);
+    if (oversized.length > 0) {
+        const names = oversized
+            .slice(0, 3)
+            .map((file) => `“${path.basename(String(file.originalname || file.name || '未命名文件'))}”`)
+            .join('、');
+        const more = oversized.length > 3 ? ` 等 ${oversized.length} 个` : '';
+        errors.push(`单文件大小超过 ${formatUploadSizeMb(ATTACHMENT_UPLOAD_MAX_FILE_BYTES)}MB：${names}${more}`);
+    }
+    const totalBytes = list.reduce((sum, file) => sum + Number(file?.size || 0), 0);
+    if (totalBytes > ATTACHMENT_UPLOAD_MAX_BATCH_BYTES) {
+        errors.push(
+            `附件总大小 ${formatUploadSizeMb(totalBytes)}MB 超过上限 ${formatUploadSizeMb(ATTACHMENT_UPLOAD_MAX_BATCH_BYTES)}MB`,
+        );
+    }
+    if (errors.length === 0) return null;
+    return `上传失败：${errors.join('；')}。请减少文件数量、去掉超大文件或拆成多批后再上传。`;
+}
+
+async function cleanupUploadedTempFiles(files) {
+    await Promise.all((files || []).map((file) => fsPromises.unlink(file.path).catch(() => {})));
+}
+
 function sanitizeAttachmentFilename(name, fallback = 'attachment') {
     const baseName = path.basename(String(name || fallback));
     const sanitized = baseName
@@ -3084,10 +3132,10 @@ app.post('/api/projects/:projectName/upload-attachments', authenticateToken, asy
         multerUpload = multer({
             storage,
             limits: {
-                fileSize: 64 * 1024 * 1024,
-                files: 64,
+                fileSize: ATTACHMENT_UPLOAD_MAX_FILE_BYTES,
+                files: ATTACHMENT_UPLOAD_MAX_FILES,
             },
-        }).array('attachments', 64);
+        }).array('attachments', ATTACHMENT_UPLOAD_MAX_FILES);
     } catch (error) {
         console.error('Error configuring attachment upload:', error);
         return res.status(500).json({ error: 'Internal server error' });
@@ -3095,11 +3143,27 @@ app.post('/api/projects/:projectName/upload-attachments', authenticateToken, asy
 
     multerUpload(req, res, async (err) => {
         if (err) {
+            if (err.code === 'LIMIT_FILE_SIZE') {
+                return res.status(400).json({
+                    error: `上传失败：单文件大小超过 ${formatUploadSizeMb(ATTACHMENT_UPLOAD_MAX_FILE_BYTES)}MB。请去掉超大文件或拆成多批后再上传。`,
+                });
+            }
+            if (err.code === 'LIMIT_FILE_COUNT') {
+                return res.status(400).json({
+                    error: `上传失败：文件数量超过上限 ${ATTACHMENT_UPLOAD_MAX_FILES}。请减少文件数量或拆成多批后再上传。`,
+                });
+            }
             return res.status(400).json({ error: err.message });
         }
 
         if (!req.files || req.files.length === 0) {
             return res.status(400).json({ error: 'No attachments provided' });
+        }
+
+        const batchError = validateUploadedFileBatch(req.files);
+        if (batchError) {
+            await cleanupUploadedTempFiles(req.files);
+            return res.status(400).json({ error: batchError });
         }
 
         let attachmentDir = null;

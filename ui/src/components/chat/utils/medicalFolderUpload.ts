@@ -11,6 +11,8 @@ export const MEDICAL_FOLDER_MAX_FILES = 64;
 export const MEDICAL_FOLDER_MAX_DEPTH = 8;
 export const MEDICAL_FOLDER_MAX_FILE_BYTES = 64 * 1024 * 1024;
 export const MEDICAL_FOLDER_MAX_BATCH_BYTES = 256 * 1024 * 1024;
+/** Safety cap while walking huge trees; exceeding this fails the hard count check. */
+export const MEDICAL_FOLDER_SCAN_CAP = 512;
 
 export type MedicalFolderEntry = {
   file: File;
@@ -21,11 +23,103 @@ export type CollectMedicalFolderResult = {
   entries: MedicalFolderEntry[];
   hasDirectory: boolean;
   rootName: string | null;
+  /** Soft warnings only (unsupported types, deep paths). */
   warnings: string[];
   unsupportedCount: number;
-  overflowCount: number;
-  oversizedCount: number;
+  /** True when more medical files existed than MEDICAL_FOLDER_SCAN_CAP. */
+  scanOverflow: boolean;
 };
+
+export type AttachmentBatchValidation = {
+  ok: boolean;
+  errors: string[];
+};
+
+export function formatSizeMb(bytes: number): number {
+  return Math.round(bytes / (1024 * 1024));
+}
+
+export function totalFileBytes(files: ArrayLike<{ size: number }> | { size: number }[]): number {
+  return Array.from(files as ArrayLike<{ size: number }>).reduce(
+    (sum, file) => sum + (typeof file.size === 'number' ? file.size : 0),
+    0,
+  );
+}
+
+/**
+ * Hard limits for composer / Files uploads.
+ * Count and batch size are evaluated against existing + incoming (cumulative).
+ * Any single incoming file over the per-file cap fails the whole batch.
+ */
+export function validateAttachmentBatch(options: {
+  existingCount?: number;
+  existingBytes?: number;
+  incoming: Array<{ name?: string; size: number }>;
+  scanOverflow?: boolean;
+  maxFiles?: number;
+  maxFileBytes?: number;
+  maxBatchBytes?: number;
+}): AttachmentBatchValidation {
+  const maxFiles = options.maxFiles ?? MEDICAL_FOLDER_MAX_FILES;
+  const maxFileBytes = options.maxFileBytes ?? MEDICAL_FOLDER_MAX_FILE_BYTES;
+  const maxBatchBytes = options.maxBatchBytes ?? MEDICAL_FOLDER_MAX_BATCH_BYTES;
+  const existingCount = Math.max(0, options.existingCount ?? 0);
+  const existingBytes = Math.max(0, options.existingBytes ?? 0);
+  const incoming = options.incoming || [];
+  const errors: string[] = [];
+
+  if (options.scanOverflow) {
+    errors.push(
+      `可选医学文件过多（扫描超过 ${MEDICAL_FOLDER_SCAN_CAP} 个），单次最多 ${maxFiles} 个，请缩小范围后重试`,
+    );
+  }
+
+  const totalCount = existingCount + incoming.length;
+  if (totalCount > maxFiles) {
+    errors.push(
+      `文件数量 ${totalCount} 超过上限 ${maxFiles}`
+        + (existingCount > 0 ? `（已选 ${existingCount} 个，本次拟添加 ${incoming.length} 个）` : ''),
+    );
+  }
+
+  const oversized = incoming.filter((file) => typeof file.size === 'number' && file.size > maxFileBytes);
+  if (oversized.length > 0) {
+    const names = oversized
+      .slice(0, 3)
+      .map((file) => `“${safeFilename(file.name || '未命名文件')}”`)
+      .join('、');
+    const more = oversized.length > 3 ? ` 等 ${oversized.length} 个` : '';
+    errors.push(
+      `单文件大小超过 ${formatSizeMb(maxFileBytes)}MB：${names}${more}`,
+    );
+  }
+
+  const incomingBytes = totalFileBytes(incoming);
+  const totalBytes = existingBytes + incomingBytes;
+  if (totalBytes > maxBatchBytes) {
+    errors.push(
+      `附件总大小 ${formatSizeMb(totalBytes)}MB 超过上限 ${formatSizeMb(maxBatchBytes)}MB`
+        + (existingBytes > 0
+          ? `（已选 ${formatSizeMb(existingBytes)}MB，本次 ${formatSizeMb(incomingBytes)}MB）`
+          : ''),
+    );
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
+export function formatAttachmentLimitErrors(errors: string[]): string {
+  if (errors.length === 0) return '';
+  return `上传失败：${errors.join('；')}。请减少文件数量、去掉超大文件或拆成多批后再上传。`;
+}
+
+/** Ensure server/network failure copy also leads with 上传失败. */
+export function ensureUploadFailedMessage(message: string): string {
+  const text = String(message || '').trim();
+  if (!text) return '上传失败：请稍后重试。';
+  if (text.startsWith('上传失败')) return text;
+  return `上传失败：${text}`;
+}
 
 function safeFilename(value: string): string {
   const parts = String(value || '').split(/[\\/]/);
@@ -105,13 +199,10 @@ type CollectionState = {
   warnings: string[];
   warningKeys: Set<string>;
   unsupportedCount: number;
-  oversizedCount: number;
+  scanOverflow: boolean;
   hasDirectory: boolean;
-  maxFiles: number;
   maxDepth: number;
-  maxFileBytes: number;
-  maxBatchBytes: number;
-  batchBytes: number;
+  scanCap: number;
 };
 
 function addWarning(state: CollectionState, key: string, text: string) {
@@ -131,29 +222,11 @@ function addCollectedFile(state: CollectionState, file: File, relativePath: stri
     state.unsupportedCount += 1;
     return;
   }
-  if (file.size > state.maxFileBytes) {
-    state.oversizedCount += 1;
-    addWarning(
-      state,
-      `size:${normalized}`,
-      `已跳过超大文件“${safeFilename(normalized)}”（单文件上限 ${Math.round(state.maxFileBytes / (1024 * 1024))}MB）`,
-    );
-    return;
-  }
-  if (state.batchBytes + file.size > state.maxBatchBytes) {
-    addWarning(
-      state,
-      'batch-size',
-      `单批总大小超过 ${Math.round(state.maxBatchBytes / (1024 * 1024))}MB，其余文件已跳过`,
-    );
-    return;
-  }
-  if (state.entries.length >= state.maxFiles) {
-    addWarning(state, 'file-limit', `单批最多 ${state.maxFiles} 个医学文件，其余已跳过`);
+  if (state.entries.length >= state.scanCap) {
+    state.scanOverflow = true;
     return;
   }
   state.entries.push({ file, relativePath: normalized });
-  state.batchBytes += file.size;
 }
 
 async function walkFileSystemEntry(
@@ -186,12 +259,12 @@ async function walkFileSystemEntry(
   }
 
   const reader = entry.createReader();
-  while (state.entries.length < state.maxFiles) {
+  while (!state.scanOverflow) {
     const children = await readDirectoryEntries(reader);
     if (children.length === 0) break;
     for (const child of children) {
       await walkFileSystemEntry(child, relativePath, state);
-      if (state.entries.length >= state.maxFiles) break;
+      if (state.scanOverflow) break;
     }
   }
 }
@@ -204,87 +277,62 @@ function inferRootName(entries: MedicalFolderEntry[]): string | null {
   return allShare ? first : null;
 }
 
-/** Normalize a FileList / File[] from webkitdirectory or multi-file picker. */
-export function collectMedicalFilesFromFileList(
-  files: ArrayLike<File> | File[],
-  options?: { treatAsFolder?: boolean },
-): CollectMedicalFolderResult {
-  const list = Array.from(files || []);
-  const state: CollectionState = {
+function createCollectionState(hasDirectory: boolean): CollectionState {
+  return {
     entries: [],
     warnings: [],
     warningKeys: new Set(),
     unsupportedCount: 0,
-    oversizedCount: 0,
-    hasDirectory: Boolean(options?.treatAsFolder),
-    maxFiles: MEDICAL_FOLDER_MAX_FILES,
+    scanOverflow: false,
+    hasDirectory,
     maxDepth: MEDICAL_FOLDER_MAX_DEPTH,
-    maxFileBytes: MEDICAL_FOLDER_MAX_FILE_BYTES,
-    maxBatchBytes: MEDICAL_FOLDER_MAX_BATCH_BYTES,
-    batchBytes: 0,
+    scanCap: MEDICAL_FOLDER_SCAN_CAP,
   };
+}
 
-  const beforeLimit = list.filter((file) => {
-    const withPath = file as File & { webkitRelativePath?: string };
-    const relative = withPath.webkitRelativePath || file.name;
-    if (withPath.webkitRelativePath) state.hasDirectory = true;
-    return true;
-  });
-
-  let overflowCount = 0;
-  for (const file of beforeLimit) {
-    const withPath = file as File & { webkitRelativePath?: string };
-    const relative = withPath.webkitRelativePath || file.name;
-    const before = state.entries.length;
-    addCollectedFile(state, file, relative);
-    if (before === state.entries.length && isMedicalAttachmentFilename(relative) && file.size <= state.maxFileBytes) {
-      // skipped due to batch/file limit
-      if (state.warningKeys.has('file-limit') || state.warningKeys.has('batch-size')) {
-        overflowCount += 1;
-      }
-    }
-  }
-
+function finalizeCollection(state: CollectionState): CollectMedicalFolderResult {
   if (state.unsupportedCount > 0) {
     addWarning(state, 'unsupported', `已跳过 ${state.unsupportedCount} 个暂不支持的文件`);
   }
-  if (state.oversizedCount > 0) {
-    addWarning(state, 'oversized-summary', `已跳过 ${state.oversizedCount} 个超大文件`);
-  }
-
   return {
     entries: state.entries,
     hasDirectory: state.hasDirectory,
     rootName: inferRootName(state.entries),
     warnings: state.warnings,
     unsupportedCount: state.unsupportedCount,
-    overflowCount,
-    oversizedCount: state.oversizedCount,
+    scanOverflow: state.scanOverflow,
   };
+}
+
+/** Normalize a FileList / File[] from webkitdirectory or multi-file picker. */
+export function collectMedicalFilesFromFileList(
+  files: ArrayLike<File> | File[],
+  options?: { treatAsFolder?: boolean },
+): CollectMedicalFolderResult {
+  const list = Array.from(files || []);
+  const state = createCollectionState(Boolean(options?.treatAsFolder));
+
+  for (const file of list) {
+    const withPath = file as File & { webkitRelativePath?: string };
+    const relative = withPath.webkitRelativePath || file.name;
+    if (withPath.webkitRelativePath) state.hasDirectory = true;
+    addCollectedFile(state, file, relative);
+  }
+
+  return finalizeCollection(state);
 }
 
 /** Collect medical files from a drag-and-drop DataTransfer (supports folders). */
 export async function collectMedicalFilesFromDataTransfer(
   dataTransfer: DataTransfer | null | undefined,
 ): Promise<CollectMedicalFolderResult> {
-  const state: CollectionState = {
-    entries: [],
-    warnings: [],
-    warningKeys: new Set(),
-    unsupportedCount: 0,
-    oversizedCount: 0,
-    hasDirectory: false,
-    maxFiles: MEDICAL_FOLDER_MAX_FILES,
-    maxDepth: MEDICAL_FOLDER_MAX_DEPTH,
-    maxFileBytes: MEDICAL_FOLDER_MAX_FILE_BYTES,
-    maxBatchBytes: MEDICAL_FOLDER_MAX_BATCH_BYTES,
-    batchBytes: 0,
-  };
+  const state = createCollectionState(false);
 
   const items = Array.from(dataTransfer?.items || []) as DataTransferItemWithEntry[];
   const entries = items
     .map((item) => (typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null))
-    .filter((entry): entry is FileSystemEntryLike => Boolean(entry));
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+    .map((entry) => entry as unknown as FileSystemEntryLike);
 
   if (entries.length > 0) {
     for (const entry of entries) {
@@ -294,24 +342,7 @@ export async function collectMedicalFilesFromDataTransfer(
     return collectMedicalFilesFromFileList(Array.from(dataTransfer?.files || []));
   }
 
-  if (state.unsupportedCount > 0) {
-    addWarning(state, 'unsupported', `已跳过 ${state.unsupportedCount} 个暂不支持的文件`);
-  }
-  if (state.oversizedCount > 0) {
-    addWarning(state, 'oversized-summary', `已跳过 ${state.oversizedCount} 个超大文件`);
-  }
-
-  return {
-    entries: state.entries,
-    hasDirectory: state.hasDirectory,
-    rootName: inferRootName(state.entries),
-    warnings: state.warnings,
-    unsupportedCount: state.unsupportedCount,
-    overflowCount: state.warningKeys.has('file-limit') || state.warningKeys.has('batch-size')
-      ? Math.max(0, state.unsupportedCount === 0 ? 1 : 0)
-      : 0,
-    oversizedCount: state.oversizedCount,
-  };
+  return finalizeCollection(state);
 }
 
 export function stripCommonRootPrefix(relativePaths: string[]): {

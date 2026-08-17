@@ -55,6 +55,8 @@ Directory batches default to `max_items=64` (max 64); truncated folders surface 
 
 Supported suffixes: `.cda .xml .json .xml1 .txt .md .markdown .pdf .png .jpg .jpeg .bmp .dcm .dicom .ecg .wfdb .hea .dat .atr .qrs .edf .scp`
 
+**详细流程（中文）**：见 [`docs/med-parse-medical-flow.zh.md`](docs/med-parse-medical-flow.zh.md)（Skill 路由、本地解析分支、Python 依赖、G9 流式、输入输出契约、流程图；含可选演进 MinerU 备忘，未接入）。
+
 ## War-trauma RAG（知识点问答）
 
 Self-contained under `data/rag/` (no `products/` runtime dependency):
