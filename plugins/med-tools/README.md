@@ -70,9 +70,10 @@ data/rag/
 
 Flow for **Skill `med-trauma-assist`**:
 
-1. Call `med_trauma_rag_query(query=...)`.
-2. Main model answers the knowledge question from `chunks` (brief tips OK).
-3. Formal five-section plans use **`med_trauma_stage_plan`**, not this path.
+1. Rewrite a self-contained retrieval `query` using the current user turn plus up to the last 5 user turns and any needed assistant conclusions (do not paste raw chat history into embedding).
+2. Call `med_trauma_rag_query(query=...)`.
+3. Main model answers the knowledge question from `chunks` (brief tips OK).
+4. Formal five-section plans use **`med_trauma_stage_plan`**, not this path.
 
 If the embedding service is down, the tool uses **lexical-fallback** and sets `mode` accordingly.
 
