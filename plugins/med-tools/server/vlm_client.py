@@ -1,7 +1,8 @@
 """Call local G9-V-Med (OpenAI-compatible) for medical multimodal reports.
 
 When the primary medical VLM is down, optionally fall back to the main agent
-model (GPT-5.5 by default) so medical tasks still produce a report.
+model from PilotDeck config (`agent.model` in pilotdeck.yaml) so medical tasks
+still produce a report. Explicit ``MED_VLM_FALLBACK_*`` env vars still win.
 """
 
 from __future__ import annotations
@@ -10,16 +11,24 @@ import base64
 import json
 import mimetypes
 import os
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import httpx
 
+try:
+    import yaml
+except ImportError:  # pragma: no cover - optional until setup.sh installs PyYAML
+    yaml = None  # type: ignore[assignment]
+
 
 DEFAULT_API_BASE = "http://127.0.0.1:8030/v1"
 DEFAULT_MODEL = "G9-V-Med"
-DEFAULT_FALLBACK_API_BASE = "https://llm-center.modelbest.co/llm/v1"
-DEFAULT_FALLBACK_MODEL = "gpt-5.5"
+# Fallback LLM defaults are empty on purpose: resolve from pilotdeck.yaml
+# ``agent.model`` (+ matching ``model.providers`` url/apiKey) unless env overrides.
+DEFAULT_FALLBACK_API_BASE = ""
+DEFAULT_FALLBACK_MODEL = ""
 
 
 def _env(name: str, default: str = "") -> str:
@@ -31,17 +40,118 @@ def _truthy(name: str, default: str = "1") -> bool:
     return _env(name, default).lower() in {"1", "true", "yes", "on"}
 
 
+def _pilotdeck_config_candidates() -> List[Path]:
+    candidates: List[Path] = []
+    pilot_home = _env("PILOT_HOME")
+    if pilot_home:
+        candidates.append(Path(pilot_home) / "pilotdeck.yaml")
+    # Repo-local home when developing without exporting PILOT_HOME into MCP.
+    plugin_root = Path(__file__).resolve().parents[1]
+    repo_root = plugin_root.parent.parent
+    candidates.append(repo_root / ".pilotdeck-home" / "pilotdeck.yaml")
+    home = Path.home()
+    candidates.append(home / ".pilotdeck" / "pilotdeck.yaml")
+    # Deduplicate while preserving order.
+    seen: set[str] = set()
+    ordered: List[Path] = []
+    for path in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(path)
+    return ordered
+
+
+def _split_provider_model(ref: str) -> tuple[str, str]:
+    value = (ref or "").strip()
+    if not value:
+        return "", ""
+    if "/" in value:
+        provider, _, model = value.partition("/")
+        return provider.strip(), model.strip()
+    return "", value
+
+
+@lru_cache(maxsize=4)
+def _load_main_agent_llm_from_pilotdeck(config_path: str = "") -> Optional[Dict[str, str]]:
+    """Read main-agent LLM settings from pilotdeck.yaml.
+
+    Uses ``agent.model`` (``provider/modelId``) and the matching entry under
+    ``model.providers.<provider>`` for url / apiKey.
+    """
+    if yaml is None:
+        return None
+    paths = [Path(config_path)] if config_path else _pilotdeck_config_candidates()
+    for path in paths:
+        if not path.is_file():
+            continue
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            continue
+        if not isinstance(raw, dict):
+            continue
+        agent = raw.get("agent") if isinstance(raw.get("agent"), dict) else {}
+        agent_ref = str(agent.get("model") or "").strip()
+        if not agent_ref:
+            continue
+        provider_id, model_id = _split_provider_model(agent_ref)
+        if not model_id:
+            continue
+        providers = raw.get("model") if isinstance(raw.get("model"), dict) else {}
+        providers = providers.get("providers") if isinstance(providers.get("providers"), dict) else {}
+        provider_cfg: Dict[str, Any] = {}
+        if provider_id and isinstance(providers.get(provider_id), dict):
+            provider_cfg = providers[provider_id]
+        elif not provider_id:
+            # Bare model id: find the first provider that declares it.
+            for candidate in providers.values():
+                if not isinstance(candidate, dict):
+                    continue
+                models = candidate.get("models")
+                if isinstance(models, dict) and model_id in models:
+                    provider_cfg = candidate
+                    break
+        api_base = str(provider_cfg.get("url") or provider_cfg.get("apiBase") or "").strip()
+        api_key = str(provider_cfg.get("apiKey") or provider_cfg.get("api_key") or "").strip()
+        return {
+            "agent_ref": agent_ref,
+            "model": model_id,
+            "api_base": api_base.rstrip("/"),
+            "api_key": api_key,
+            "config_path": str(path),
+        }
+    return None
+
+
 def get_vlm_config() -> Dict[str, str]:
+    main_agent = _load_main_agent_llm_from_pilotdeck() or {}
+    fallback_model = _env("MED_VLM_FALLBACK_MODEL", main_agent.get("model") or DEFAULT_FALLBACK_MODEL)
+    fallback_api_base = _env(
+        "MED_VLM_FALLBACK_API_BASE",
+        main_agent.get("api_base") or DEFAULT_FALLBACK_API_BASE,
+    ).rstrip("/")
+    fallback_api_key = _env(
+        "MED_VLM_FALLBACK_API_KEY",
+        main_agent.get("api_key") or "",
+    )
     return {
         "api_base": _env("MED_VLM_API_BASE", DEFAULT_API_BASE).rstrip("/"),
         "model": _env("MED_VLM_MODEL", DEFAULT_MODEL),
         "api_key": _env("MED_VLM_API_KEY", "EMPTY"),
         "fallback_enabled": "1" if _truthy("MED_VLM_FALLBACK_ENABLED", "1") else "0",
-        "fallback_api_base": _env(
-            "MED_VLM_FALLBACK_API_BASE", DEFAULT_FALLBACK_API_BASE
-        ).rstrip("/"),
-        "fallback_model": _env("MED_VLM_FALLBACK_MODEL", DEFAULT_FALLBACK_MODEL),
-        "fallback_api_key": _env("MED_VLM_FALLBACK_API_KEY", ""),
+        "fallback_api_base": fallback_api_base,
+        "fallback_model": fallback_model,
+        "fallback_api_key": fallback_api_key,
+        "fallback_source": (
+            "env"
+            if _env("MED_VLM_FALLBACK_MODEL")
+            or _env("MED_VLM_FALLBACK_API_BASE")
+            or _env("MED_VLM_FALLBACK_API_KEY")
+            else ("pilotdeck.yaml" if main_agent else "unset")
+        ),
+        "fallback_agent_ref": main_agent.get("agent_ref") or "",
     }
 
 
@@ -55,7 +165,10 @@ def get_fallback_vlm_config() -> Optional[Dict[str, str]]:
         primary = cfg["api_key"]
         if primary and primary.upper() not in {"EMPTY", "NONE", "NULL"}:
             api_key = primary
-    if not api_key or not cfg["fallback_api_base"] or not cfg["fallback_model"]:
+    if not cfg["fallback_api_base"] or not cfg["fallback_model"]:
+        return None
+    # Local OpenAI-compatible servers often use placeholder keys such as EMPTY.
+    if not api_key:
         return None
     return {
         "api_base": cfg["fallback_api_base"],
@@ -275,7 +388,7 @@ def chat_vlm(
     require_images: bool = False,
     empty_continue_hint: str = "请主 Agent 根据已有摘要与图像继续完成任务。",
 ) -> Dict[str, Any]:
-    """Call G9-V-Med first; on failure optionally fall back to GPT-5.5.
+    """Call G9-V-Med first; on failure optionally fall back to the main agent model.
 
     Returns the usual med-tools VLM payload with ``report`` holding assistant text.
     """
@@ -606,7 +719,7 @@ def analyze_medical_with_vlm(
     timeout_s: float = 180.0,
     require_images: bool = False,
 ) -> Dict[str, Any]:
-    """Call G9-V-Med first; on failure optionally fall back to GPT-5.5."""
+    """Call G9-V-Med first; on failure optionally fall back to the main agent model."""
     cfg = get_vlm_config()
     paths = [p for p in (png_paths or []) if p]
     if require_images and not paths:
@@ -676,7 +789,7 @@ async def analyze_medical_with_vlm_stream(
     timeout_s: float = 180.0,
     require_images: bool = False,
 ) -> Dict[str, Any]:
-    """Streaming counterpart of ``analyze_medical_with_vlm`` (G9 → GPT fallback)."""
+    """Streaming counterpart of ``analyze_medical_with_vlm`` (G9 → main-agent fallback)."""
     cfg = get_vlm_config()
     paths = [p for p in (png_paths or []) if p]
     if not (summary or "").strip() and not paths:

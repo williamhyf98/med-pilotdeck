@@ -13,7 +13,7 @@
 工具做两件事：
 
 1. **本地解析**：按后缀抽取摘要 / 元数据 / 预览图
-2. **VLM 报告**：把摘要 + 预览图送给 G9-V-Med（失败可回退 GPT），流式直出到聊天，并作为本轮最终答案
+2. **VLM 报告**：把摘要 + 预览图送给 G9-V-Med（失败可回退到 `pilotdeck.yaml` 配置的主 Agent 模型），流式直出到聊天，并作为本轮最终答案
 
 Skill `med-medical` 本身不解析文件，只规定：看到医学附件就调这个工具，不要自己 `read_file`。
 
@@ -64,7 +64,7 @@ flowchart TD
   G -->|是| H[返回 JSON: summary/png_paths<br/>report 空]
   G -->|否| I[analyze_medical_with_vlm_stream]
   I --> J[G9-V-Med SSE 流式]
-  J -->|失败且 fallback 开| K[GPT-5.5 回退]
+  J -->|失败且 fallback 开| K[主 Agent 模型回退]
   J --> L[ctx.report_progress 吐字]
   K --> L
   L --> M[PluginToToolBridge<br/>assistant_text_delta]
@@ -230,7 +230,7 @@ flowchart LR
 2. `build_medical_user_content`：摘要文本 + 预览图 **base64 data URL**（有 `png_paths` 时才追加 `image_url`；**其他 ECG 占位无预览图，不会走多模态看波形**）
 3. `httpx` 调 OpenAI 兼容接口：
   - 主：`MED_VLM_API_BASE`（如济南 G9 `http://10.31.112.13:8030/v1`）  
-  - 备：`MED_VLM_FALLBACK_*`（GPT-5.5）
+  - 备：`MED_VLM_FALLBACK_*`（未设置时读 `pilotdeck.yaml` 的 `agent.model` 及对应 provider）
 4. **流式**：SSE delta → `on_text` → `ctx.report_progress` → 前端气泡
 5. 最终 JSON：`report`、`ok`、`vlm_ok`、`fallback_used`、`agent_continue`、`png_paths`、`summary`、`items`…
 
@@ -260,7 +260,7 @@ flowchart LR
 | 包                 | 角色                                                                              |
 | ----------------- | ------------------------------------------------------------------------------- |
 | **mcp** (FastMCP) | MCP 工具服务                                                                        |
-| **httpx**         | 调 G9 / GPT /（RAG 时）embedding                                                    |
+| **httpx**         | 调 G9 / 主 Agent 回退模型 /（RAG 时）embedding                                                    |
 | **pydicom**       | DICOM                                                                           |
 | **Pillow**        | 图像缩放、DICOM/PDF/WFDB 预览 PNG                                                      |
 | **numpy**         | DICOM 像素、WFDB 波形                                                                |
@@ -302,7 +302,7 @@ flowchart LR
 | `png_paths`      | 派生预览绝对路径                                   |
 | `report`         | 结构化中文报告（流式同源）                              |
 | `ok` / `vlm_ok`  | 是否有可用报告 / VLM 是否成功                         |
-| `fallback_used`  | 是否走了 GPT 回退                                |
+| `fallback_used`  | 是否走了主 Agent 模型回退                                |
 | `agent_continue` | 是否需要主 Agent 续写                             |
 | `warnings`       | 截断、缺依赖、单文件失败等                              |
 
@@ -320,7 +320,7 @@ flowchart LR
 | `server/app.py`               | MCP 工具入口、流式 progress |
 | `server/parsers.py`           | 多源本地解析               |
 | `server/dicom_parse.py`       | DICOM 专用解析           |
-| `server/vlm_client.py`        | G9 / GPT 调用与流式       |
+| `server/vlm_client.py`        | G9 / 主 Agent 回退调用与流式       |
 | `prompts/medical_read.md`     | 报告系统提示词              |
 | `plugin.json`                 | MCP 与环境变量            |
 | `requirements.txt`            | Python 依赖            |

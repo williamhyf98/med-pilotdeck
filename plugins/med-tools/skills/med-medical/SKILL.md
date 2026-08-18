@@ -1,6 +1,6 @@
 ---
 name: med-medical
-description: Parse medical attachments (DICOM, PDF reports, report screenshots, CDA/XML, lab text, JSON, ECG/WFDB) via med-tools MCP. Prefer local G9-V-Med report; if unavailable, use GPT-5.5 fallback report or continue with the main agent. Use whenever the user uploads or points to medical imaging, reports, documents, labs, or ECG files — including a whole folder of mixed formats.
+description: Parse medical attachments (DICOM, PDF reports, report screenshots, CDA/XML, lab text, JSON, ECG/WFDB) via med-tools MCP. Prefer local G9-V-Med report; if unavailable, use the configured main agent model as fallback report or continue with the main agent. Use whenever the user uploads or points to medical imaging, reports, documents, labs, or ECG files — including a whole folder of mixed formats.
 ---
 
 # Medical multi-source (med-tools)
@@ -16,7 +16,7 @@ Do this:
 
 1. Call **`mcp__med-tools__med_parse_medical`** (unified entry).
 2. Pass `path` as an absolute path when possible (file **or** directory).
-3. Do **not** open these with `read_file` / ad-hoc parsing yourself — the tool parses locally and prefers on-box **G9-V-Med** (`:8030`). If G9 is down, the tool may fall back to the main agent model (GPT-5.5) inside the plugin.
+3. Do **not** open these with `read_file` / ad-hoc parsing yourself — the tool parses locally and prefers on-box **G9-V-Med** (`:8030`). If G9 is down, the tool may fall back to the **configured main agent model** (from `pilotdeck.yaml` `agent.model`, unless `MED_VLM_FALLBACK_*` overrides) inside the plugin.
 4. After the tool returns JSON:
    - If `report` is non-empty: it was **streamed live to the chat and saved as the final answer by the runtime**. Do **not** paste it again or rewrite it. Do not call the tool before writing any preamble — leading text would merge into the streamed report. (Legacy behavior: verbatim display still holds if streaming is unavailable.)
    - If `report` is empty and `agent_continue` is true: **do not stop**. Use `summary`, `png_paths`, `warnings`, and `vlm_error` to continue the medical interpretation with the **main agent model**, following the same structured Chinese report sections expected by med-tools. Clearly state that G9 was unavailable and this is a main-agent fallback reading.
