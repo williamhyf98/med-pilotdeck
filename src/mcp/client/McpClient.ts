@@ -231,7 +231,11 @@ export class McpClient {
   async callTool(
     toolName: string,
     args: unknown,
-    options: { signal?: AbortSignal; timeoutMs?: number } = {},
+    options: {
+      signal?: AbortSignal;
+      timeoutMs?: number;
+      onProgress?: (progress: { progress: number; total?: number; message?: string }) => void;
+    } = {},
   ): Promise<{ content: unknown; isError?: boolean }> {
     await this.start();
     if (!this.client) {
@@ -245,6 +249,7 @@ export class McpClient {
         {
           timeout: timeoutMs,
           signal: options.signal,
+          ...(options.onProgress ? { onprogress: options.onProgress } : {}),
         },
       ),
     );

@@ -243,6 +243,11 @@ export type PilotDeckToolRuntimeContext = {
    * used only when the emitted name is not already registered.
    */
   toolAliases?: Record<string, string>;
+  /** Per-turn server-validated tool scope. Enforced for nested calls too. */
+  toolPolicy?: {
+    allowedTools?: string[];
+    deniedTools?: string[];
+  };
   permissionMode: PermissionMode;
   permissionContext: PermissionContext;
   auditRecorder?: PilotDeckToolAuditRecorder;

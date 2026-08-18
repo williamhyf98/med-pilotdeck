@@ -1,0 +1,33 @@
+# 安全覆盖示例：合并到已有 ~/.pilotdeck/pilotdeck.yaml。
+# 这不是完整 PilotDeck 配置；模型 Provider 和凭据必须由部署方在 PilotDeck 中单独管理。
+schemaVersion: 1
+
+gateway:
+  bindAddress: "127.0.0.1"
+
+# 医疗工作流默认关闭跨会话记忆；医疗 Profile 还会逐轮强制 memoryPolicy: disabled。
+memory:
+  enabled: false
+  provider: "edgeclaw"
+  captureStrategy: "last_turn"
+  includeAssistant: false
+
+# 默认不允许医疗工作流向公网搜索。
+tools:
+  webSearch:
+    enabled: false
+
+# 军用/医疗离线环境默认不外发遥测。
+telemetry:
+  enabled: false
+
+# 将下列结构合并到部署方已批准的 Provider；不要把密钥写入此示例。
+# 表格 OCR 和战创伤视觉研判只接受真实声明 image 能力的模型。
+# model:
+#   providers:
+#     approved-provider:
+#       models:
+#         approved-vision-model:
+#           multimodal:
+#             input: [text, image]
+

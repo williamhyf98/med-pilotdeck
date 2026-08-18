@@ -1,14 +1,29 @@
+import type { ReactNode } from 'react';
 import type {
   Project,
   ProjectSession,
   SessionProvider,
 } from '../../../types/app';
 import type { ContentReference } from '../../../types/contentReference';
+import type { ThinkingModeId } from '../constants/thinkingModes';
 
 export type Provider = SessionProvider;
 
 export type PermissionMode = 'default' | 'bypassPermissions' | 'plan';
 export type ChatRunMode = 'agent' | 'plan' | 'ask';
+
+export interface ChatTurnOverrides {
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  minP?: number;
+  maxOutputTokens?: number;
+  presencePenalty?: number;
+  frequencyPenalty?: number;
+  repetitionPenalty?: number;
+  seed?: number;
+  metadata?: Record<string, string | number | boolean>;
+}
 
 export interface ChatImage {
   data: string;
@@ -279,4 +294,20 @@ export interface ChatInterfaceProps {
   // Files workbench: render a quieter, narrow-panel empty state and keep the
   // composer docked to the bottom instead of using the large welcome hero.
   compact?: boolean;
+  // Optional workspace-level overrides used by native feature surfaces while
+  // retaining the same Gateway-backed chat implementation.
+  modelOverride?: string;
+  profileOverride?: string;
+  thinkingModeOverride?: ThinkingModeId;
+  turnOverrides?: ChatTurnOverrides;
+  attachmentFilesOverride?: File[];
+  onAttachmentFilesConsumed?: () => void;
+  commandPrefix?: string;
+  composerPlaceholder?: string;
+  welcomeTitle?: string;
+  welcomeDescription?: string;
+  composerHeader?: ReactNode;
+  composerFooterStart?: ReactNode;
+  composerFooterEnd?: ReactNode;
+  composerChrome?: 'default' | 'medical';
 }

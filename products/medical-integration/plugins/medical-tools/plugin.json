@@ -1,0 +1,20 @@
+{
+  "name": "medical-tools",
+  "version": "0.1.0",
+  "description": "医疗附件、RAG、OCR/诊疗契约、Gallery/Volume 与 M3D localhost adapter 的 MCP 工具。",
+  "agents": "agents",
+  "commands": "commands",
+  "mcpServers": {
+    "medical-sidecar": {
+      "url": "http://127.0.0.1:8766/mcp",
+      "instructions": "仅将此服务用于结构化医疗工具调用。它不调用生成模型、不接收 LLM API Key、不替代临床判断。检索来源、附件 hash、prompt 版本和 warnings 必须保留；unavailable 不得改写为成功；PHI 默认不得持久化。"
+    }
+  },
+  "settings": {
+    "generationOwner": "pilotdeck",
+    "localhostOnly": true,
+    "memoryDefault": "disabled",
+    "publicWebDefault": "disabled"
+  }
+}
+

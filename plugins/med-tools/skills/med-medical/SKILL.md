@@ -18,8 +18,10 @@ Do this:
 2. Pass `path` as an absolute path when possible (file **or** directory).
 3. Do **not** open these with `read_file` / ad-hoc parsing yourself — the tool parses locally and prefers on-box **G9-V-Med** (`:8030`). If G9 is down, the tool may fall back to the main agent model (GPT-5.5) inside the plugin.
 4. After the tool returns JSON:
-   - If `report` is non-empty: **paste `report` verbatim** (原样展示). Do not rewrite / compress / re-outline. At most 1–2 short lines before/after noting model name and whether `fallback_used` is true.
+   - If `report` is non-empty: it was **streamed live to the chat and saved as the final answer by the runtime**. Do **not** paste it again or rewrite it. Do not call the tool before writing any preamble — leading text would merge into the streamed report. (Legacy behavior: verbatim display still holds if streaming is unavailable.)
    - If `report` is empty and `agent_continue` is true: **do not stop**. Use `summary`, `png_paths`, `warnings`, and `vlm_error` to continue the medical interpretation with the **main agent model**, following the same structured Chinese report sections expected by med-tools. Clearly state that G9 was unavailable and this is a main-agent fallback reading.
+
+边界：战创伤**知识点问答** → `med-trauma-assist`（RAG）；**规定格式六阶段救治方案** → `med-trauma-stage-plan`（G9，原样展示 `care_plan`）；本 Skill 专注附件解析与结构化报告。
 
 ## Chat attachments
 

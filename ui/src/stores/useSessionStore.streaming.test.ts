@@ -279,6 +279,58 @@ describe('turn-scoped server reconciliation', () => {
     )).toEqual([]);
   });
 
+  it('dedupes the optimistic user row when history keeps the attachment note', () => {
+    // Server history stores the agent-facing input (typed text + attachment
+    // note); the optimistic bubble stores only what the user typed.
+    const localUser = textMessage(
+      'local_1786708301909_ab12cd',
+      '请帮我分析这张x光图',
+      '2026-05-28T00:00:01.000Z',
+      { role: 'user' },
+    );
+    const serverUser = textMessage(
+      'a2f1b6c4-0000-4000-8000-000000000001',
+      '请帮我分析这张x光图\n\n[Files attached by user and available for reading in the project:]\n'
+        + '- 1-wse_0820_02_xray.jpeg: /tmp/chat-attachments/1-wse_0820_02_xray.jpeg\n'
+        + '[End files attached by user]\n',
+      '2026-05-28T00:00:02.000Z',
+      { role: 'user', turnId: 'run-current', runId: 'run-current' },
+    );
+    const serverAnswer = textMessage(
+      'a2f1b6c4-0000-4000-8000-000000000002',
+      '【资料概况】胸片一张。',
+      '2026-05-28T00:00:20.000Z',
+      { turnId: 'run-current', runId: 'run-current' },
+    );
+
+    expect(isRealtimeMessageRepresentedOnServer(localUser, [serverUser, serverAnswer])).toBe(true);
+    expect(computeMerged([serverUser, serverAnswer], [localUser]).map((m) => m.id)).toEqual([
+      serverUser.id,
+      serverAnswer.id,
+    ]);
+  });
+
+  it('still keeps an optimistic user row that history has not persisted yet', () => {
+    const localUser = textMessage(
+      'local_1786708301909_ab12cd',
+      '另一个问题',
+      '2026-05-28T00:00:01.000Z',
+      { role: 'user' },
+    );
+    const serverUser = textMessage(
+      'a2f1b6c4-0000-4000-8000-000000000001',
+      '请帮我分析这张x光图',
+      '2026-05-28T00:00:02.000Z',
+      { role: 'user', turnId: 'run-previous', runId: 'run-previous' },
+    );
+
+    expect(isRealtimeMessageRepresentedOnServer(localUser, [serverUser])).toBe(false);
+    expect(computeMerged([serverUser], [localUser]).map((m) => m.id)).toEqual([
+      serverUser.id,
+      localUser.id,
+    ]);
+  });
+
   it('keeps a live compact boundary until history persists it, then dedupes it', () => {
     const liveBoundary: NormalizedMessage = {
       id: 'live-compact',

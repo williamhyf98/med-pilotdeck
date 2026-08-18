@@ -1,0 +1,77 @@
+name: pilotdeck-medical
+
+services:
+  pilotdeck:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: pilotdeck-medical:latest
+    ports:
+      - "3001:3001"
+    volumes:
+      - pilotdeck-home:/root/.pilotdeck
+      - ./data:/app/products/medical-integration/data:ro
+      - ./plugins/medical-tools:/root/.pilotdeck/plugins/medical-tools:ro
+      # Create and review the host file before enabling this read-only mount.
+      # - ${PILOTDECK_CONFIG:-${HOME}/.pilotdeck/pilotdeck.yaml}:/root/.pilotdeck/pilotdeck.yaml:ro
+    environment:
+      NODE_ENV: production
+      PILOT_HOME: /root/.pilotdeck
+      SERVER_PORT: "3001"
+      PILOTDECK_GATEWAY_PORT: "18789"
+      PILOTDECK_MEDICAL_DATA_ROOT: /app/products/medical-integration/data
+      PILOTDECK_MEDICAL_SIDECAR_URL: http://127.0.0.1:8765/
+      PILOTDECK_MEDICAL_SIDECAR_ALLOWED_PORTS: "8765"
+      # Mount a reviewed pilotdeck.yaml below, or provide the normal
+      # PILOTDECK_MODEL / PILOTDECK_API_URL / PILOTDECK_API_KEY variables.
+      # PILOTDECK_MODEL: provider/model
+      # PILOTDECK_API_URL: https://approved-model-endpoint.example/v1
+      # PILOTDECK_API_KEY: set-through-a-secret-store
+    restart: unless-stopped
+
+  medical-api:
+    build:
+      context: ./sidecar
+      dockerfile: Dockerfile
+    image: pilotdeck-medical-sidecar:latest
+    network_mode: "service:pilotdeck"
+    depends_on:
+      pilotdeck:
+        condition: service_started
+    volumes:
+      - ./config/medical.yaml:/medical/config/medical.yaml:ro
+      - ./data:/medical/data:ro
+    command:
+      - medical-sidecar-api
+      - --config
+      - /medical/config/medical.yaml
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  medical-mcp:
+    image: pilotdeck-medical-sidecar:latest
+    network_mode: "service:pilotdeck"
+    depends_on:
+      pilotdeck:
+        condition: service_started
+      medical-api:
+        condition: service_healthy
+    volumes:
+      - ./config/medical.yaml:/medical/config/medical.yaml:ro
+      - ./data:/medical/data:ro
+    command:
+      - medical-sidecar-mcp
+      - --config
+      - /medical/config/medical.yaml
+    restart: unless-stopped
+
+volumes:
+  pilotdeck-home:

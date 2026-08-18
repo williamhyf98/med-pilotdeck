@@ -10,6 +10,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { SessionProvider } from '../types/app';
 import { authenticatedFetch, readAgentStatusErrorFromResponse } from '../utils/api';
+import { parseUserAttachmentNote } from '../components/chat/utils/attachmentNotes';
 
 // ─── NormalizedMessage (mirrors server/adapters/types.js) ────────────────────
 
@@ -252,6 +253,15 @@ function getSameTurnServerCandidates(
   return serverMessages.filter((message) => getMessageTurnId(message) === realtimeTurnId);
 }
 
+/**
+ * The optimistic bubble stores only what the user typed, while server history
+ * stores the agent-facing input (typed text plus attachment/reference notes).
+ * Compare the rendered text so attachments do not defeat dedupe.
+ */
+function normalizeUserVisibleText(content?: string): string {
+  return normalizeRealtimeText(parseUserAttachmentNote(content ?? '').content);
+}
+
 function isConfirmedUserMessageDuplicate(
   realtimeMessage: NormalizedMessage,
   serverMessages: NormalizedMessage[],
@@ -264,7 +274,7 @@ function isConfirmedUserMessageDuplicate(
     return false;
   }
 
-  const realtimeText = normalizeRealtimeText(realtimeMessage.content);
+  const realtimeText = normalizeUserVisibleText(realtimeMessage.content);
   if (!realtimeText) return false;
 
   const realtimeTimestamp = parseTimestampMs(realtimeMessage.timestamp);
@@ -274,7 +284,7 @@ function isConfirmedUserMessageDuplicate(
       return false;
     }
 
-    if (normalizeRealtimeText(serverMessage.content) !== realtimeText) {
+    if (normalizeUserVisibleText(serverMessage.content) !== realtimeText) {
       return false;
     }
 

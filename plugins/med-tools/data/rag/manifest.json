@@ -1,0 +1,17 @@
+{
+  "corpus_id": "war-trauma",
+  "name": "战创伤教材",
+  "version": "b507f26",
+  "license_id": "user-confirmed-authorized-2026-08-06",
+  "embedding_model": "remote-2048d-artifact",
+  "dimension": 2048,
+  "row_count": 16540,
+  "corpus_path": "corpus/war_trauma_books_chunks.jsonl",
+  "embedding_path": "embedding/war_trauma_books_embedding.npy",
+  "corpus_sha256": "47b8dba80215f94dfd4021b318f6451bdd59d1fb81ac374f486cf9f141ce2a5e",
+  "embedding_sha256": "8d55d77fbe3c45081e51ec9d096824552340b94bed7141904b138605b6bdf331",
+  "default_top_k": 3,
+  "max_top_k": 8,
+  "default_min_score": 0.35,
+  "notes": "Canonical self-contained RAG for med-tools. Paths are relative to this manifest's parent directory (plugins/med-tools/data/rag). Former products/medical-integration/data/rag copy removed."
+}

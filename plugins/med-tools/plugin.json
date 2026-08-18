@@ -1,15 +1,16 @@
 {
   "name": "med-tools",
-  "version": "0.2.1",
-  "description": "Medical MCP tools: unified multi-source parse (301 suffixes) + local G9-V-Med (27B) report, with GPT-5.5 fallback",
+  "version": "0.4.0",
+  "description": "Medical MCP tools: parse + G9 reports + war-trauma RAG Q&A + six-stage care plans; Skills drive routing (no registered agent profile)",
   "skills": "skills",
+  "agents": [],
   "mcpServers": {
     "med-tools": {
-      "command": "${pilotHome}/plugins/med-tools/run.sh",
+      "command": "${env:PILOT_HOME}/plugins/med-tools/run.sh",
       "args": [],
       "timeoutMs": 300000,
       "env": {
-        "MED_VLM_API_BASE": "http://127.0.0.1:8030/v1",
+        "MED_VLM_API_BASE": "http://10.31.112.13:8030/v1",
         "MED_VLM_MODEL": "G9-V-Med",
         "MED_VLM_API_KEY": "EMPTY",
         "MED_VLM_MAX_TOKENS": "8192",
@@ -17,7 +18,12 @@
         "MED_VLM_FALLBACK_API_BASE": "https://llm-center.modelbest.co/llm/v1",
         "MED_VLM_FALLBACK_MODEL": "gpt-5.5",
         "MED_VLM_FALLBACK_API_KEY": "sk-93d9e9eb721e5bbbe94e2e8d2d1b8922",
-        "MED_VLM_FALLBACK_MAX_TOKENS": "8192"
+        "MED_VLM_FALLBACK_MAX_TOKENS": "8192",
+        "MED_EMBEDDING_API_BASE": "http://10.31.112.13:65507/v1",
+        "MED_EMBEDDING_ENDPOINT": "http://10.31.112.13:65507/v1/embeddings",
+        "MED_EMBEDDING_MODEL": "qwen3-vl-embedding",
+        "MED_EMBEDDING_API_KEY": "EMPTY",
+        "MED_EMBEDDING_DIMENSION": "2048"
       }
     }
   }

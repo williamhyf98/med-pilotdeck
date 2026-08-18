@@ -1,0 +1,2 @@
+"""Medical attachment ingestion contracts."""
+

@@ -6,6 +6,7 @@ import { buildModelRequest } from "../request/buildModelRequest.js";
 import { validateModelRequest } from "../request/validateModelRequest.js";
 import type {
   CanonicalModelEvent,
+  CanonicalModelResponse,
   CanonicalModelRequest,
   ModelConfig,
   ModelProtocol,
@@ -121,7 +122,7 @@ export async function complete(
     }
 
     const raw = await response.json();
-    return parseModelResponse(provider.protocol, raw, provider.id);
+    return parseModelResponse(detectResponseProtocol(provider.protocol, raw), raw, provider.id);
   }
 
   throw new Error("complete() exhausted all retry attempts without a result.");
@@ -213,6 +214,17 @@ export async function* streamModel(
       return;
     }
 
+    const responseContentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    if (process.env.PILOTDECK_DEBUG_STREAM_SHAPE === "1") {
+      console.log(`[model-debug] stream content-type=${responseContentType || "(missing)"}`);
+    }
+    if (responseContentType.includes("application/json")) {
+      const raw = await safeReadJson(response);
+      const completed = parseModelResponse(detectResponseProtocol(provider.protocol, raw), raw, provider.id);
+      yield* canonicalResponseToEvents(completed);
+      return;
+    }
+
     const state = createStreamNormalizerState(provider.protocol);
     let streamCompleted = false;
     let sawCompletionSentinel = false;
@@ -226,6 +238,9 @@ export async function* streamModel(
         if (sseEvent.type === "done") {
           sawCompletionSentinel = true;
           continue;
+        }
+        if (process.env.PILOTDECK_DEBUG_STREAM_SHAPE === "1") {
+          console.log(`[model-debug] stream event shape=${JSON.stringify(summarizeStreamShape(sseEvent.data))}`);
         }
         for (const event of normalizeStreamEvent(provider.protocol, sseEvent.data, state)) {
           if (event.type === "message_end") {
@@ -241,7 +256,30 @@ export async function* streamModel(
       }
       streamGuard.checkDuration();
       if (!sawCompletionSentinel) {
-        throw new IncompleteStreamError();
+        const partial = checkpoint.get();
+        if (process.env.PILOTDECK_DEBUG_STREAM_SHAPE === "1") {
+          console.log(
+            `[model-debug] incomplete stream checkpoint=${JSON.stringify({
+              textChars: partial.partialText.length,
+              tokensReceived: partial.tokensReceived,
+              hasToolCalls: partial.hasToolCalls,
+              incompleteToolCalls: partial.incompleteToolCalls,
+            })}`,
+          );
+        }
+        if (partial.hasToolCalls && partial.incompleteToolCalls === 0) {
+          yield { type: "message_end", finishReason: "tool_call" };
+          sawCompletionSentinel = true;
+        } else if (partial.partialText.trim().length > 0 && !partial.hasToolCalls) {
+          // Some otherwise OpenAI-compatible servers close a valid text stream
+          // without emitting `[DONE]` or a final finish_reason chunk. Preserve
+          // completed text, but never accept an EOF while a tool call may be
+          // incomplete.
+          yield { type: "message_end", finishReason: "stop" };
+          sawCompletionSentinel = true;
+        } else {
+          throw new IncompleteStreamError();
+        }
       }
       streamCompleted = true;
     } catch (error) {
@@ -263,6 +301,25 @@ export async function* streamModel(
         emitModelRetryProgress(options, retryReasonForThrownError(error), attempt, maxRetries, delayMs, provider, currentRequest.model);
         await delay(delayMs, options.signal);
         continue;
+      }
+
+      if (
+        error instanceof IncompleteStreamError
+        && attempt >= maxRetries
+        && checkpoint.get().tokensReceived > 0
+        && !checkpoint.get().hasToolCalls
+      ) {
+        // A subset of Responses-compatible gateways can terminate a stream
+        // after reasoning events without an output item. Fall back once to a
+        // non-streaming request so the user receives a final answer rather
+        // than internal reasoning or an opaque completion-sentinel error.
+        const completed = await complete(
+          { ...currentRequest, stream: false },
+          config,
+          options,
+        );
+        yield* canonicalResponseToEvents(completed);
+        return;
       }
 
       throw error;
@@ -709,6 +766,68 @@ async function safeReadJson(response: Response): Promise<unknown> {
   }
 }
 
+function* canonicalResponseToEvents(
+  response: CanonicalModelResponse,
+): Iterable<CanonicalModelEvent> {
+  yield { type: "message_start", role: "assistant", raw: response.raw };
+  for (const block of response.content) {
+    if (block.type === "text") {
+      if (block.text) yield { type: "text_delta", text: block.text, raw: response.raw };
+    } else if (block.type === "thinking") {
+      if (block.text) {
+        yield {
+          type: "thinking_delta",
+          text: block.text,
+          signature: block.signature,
+          reasoningContent: block.reasoningContent,
+          raw: response.raw,
+        };
+      }
+    } else if (block.type === "tool_call") {
+      yield { type: "tool_call_start", id: block.id, name: block.name, raw: response.raw };
+      yield { type: "tool_call_end", toolCall: block, raw: response.raw };
+    }
+  }
+  if (response.usage) yield { type: "usage", usage: response.usage, raw: response.raw };
+  yield { type: "message_end", finishReason: response.finishReason, raw: response.raw };
+}
+
+function detectResponseProtocol(protocol: ModelProtocol, raw: unknown): ModelProtocol {
+  if (
+    protocol === "openai"
+    && isExpectedProviderResponseShape("openai-responses", raw)
+  ) {
+    return "openai-responses";
+  }
+  return protocol;
+}
+
+function summarizeStreamShape(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { type: Array.isArray(value) ? "array" : typeof value };
+  }
+  const record = value as Record<string, unknown>;
+  const choices = Array.isArray(record.choices) ? record.choices : [];
+  const firstChoice = choices[0] && typeof choices[0] === "object"
+    ? choices[0] as Record<string, unknown>
+    : undefined;
+  const delta = firstChoice?.delta && typeof firstChoice.delta === "object"
+    ? firstChoice.delta as Record<string, unknown>
+    : undefined;
+  const message = firstChoice?.message && typeof firstChoice.message === "object"
+    ? firstChoice.message as Record<string, unknown>
+    : undefined;
+  return {
+    keys: Object.keys(record).sort(),
+    eventType: typeof record.type === "string" ? record.type : null,
+    choiceCount: choices.length,
+    choiceKeys: firstChoice ? Object.keys(firstChoice).sort() : [],
+    deltaKeys: delta ? Object.keys(delta).sort() : [],
+    messageKeys: message ? Object.keys(message).sort() : [],
+    finishReason: typeof firstChoice?.finish_reason === "string" ? firstChoice.finish_reason : null,
+  };
+}
+
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = LITELLM_DEFAULT_REQUEST_TIMEOUT_MS;
 
 class StreamIdleTimeoutError extends Error {
@@ -774,7 +893,7 @@ async function* readServerSentEvents(
       }
 
       buffer += decoder.decode(value, { stream: true });
-      const chunks = buffer.split(/\n\n/);
+      const chunks = buffer.split(/\r?\n\r?\n/);
       buffer = chunks.pop() ?? "";
 
       for (const chunk of chunks) {
@@ -794,12 +913,21 @@ async function* readServerSentEvents(
 }
 
 function* parseServerSentEventChunk(chunk: string): Iterable<ServerSentEvent> {
-  const dataLines = chunk
-    .split(/\n/)
+  const lines = chunk.split(/\r?\n/);
+  const dataLines = lines
     .filter((line) => line.startsWith("data:"))
     .map((line) => line.slice("data:".length).trim());
 
-  for (const data of dataLines) {
+  // A few local OpenAI-compatible gateways advertise event-stream but emit
+  // newline-delimited JSON without the SSE `data:` prefix. Accept only
+  // complete JSON-looking lines; comments/event fields remain ignored.
+  const payloadLines = dataLines.length > 0
+    ? dataLines
+    : lines
+      .map((line) => line.trim())
+      .filter((line) => line === "[DONE]" || line.startsWith("{") || line.startsWith("["));
+
+  for (const data of payloadLines) {
     if (!data) {
       continue;
     }

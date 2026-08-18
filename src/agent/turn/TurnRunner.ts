@@ -14,6 +14,8 @@ import type { SessionMetadataStore } from "../../session/metadata/SessionMetadat
 import type { SessionTitleGenerator } from "../../session/title/SessionTitleGenerator.js";
 import { createVisibleErrorStatusDetail } from "../../status/agentStatus.js";
 import { FileArtifactCollector, type FileArtifact } from "../../session/artifacts/index.js";
+import type { AgentTurnOverrides } from "../profile/types.js";
+import { sanitizeAgentTurnMetadata } from "../profile/validation.js";
 
 export type TurnRunnerOptions = {
   sessionId: string;
@@ -21,6 +23,8 @@ export type TurnRunnerOptions = {
   messages: CanonicalMessage[];
   input: AgentInput;
   maxTurns?: number;
+  profile?: string;
+  turnOverrides?: AgentTurnOverrides;
   runMode?: AgentRunMode;
   permissionMode?: PermissionMode;
   allowedReadFiles?: string[];
@@ -194,6 +198,10 @@ export class TurnRunner {
           turnId: options.turnId,
           messages,
           maxTurns: options.maxTurns,
+          ...(options.profile !== undefined ? { profile: options.profile } : {}),
+          ...(options.turnOverrides !== undefined
+            ? { turnOverrides: options.turnOverrides }
+            : {}),
           runMode: options.runMode,
           permissionMode: options.permissionMode,
           allowedReadFiles: options.allowedReadFiles,
@@ -429,6 +437,15 @@ function acceptedInputMetadata(options: TurnRunnerOptions): Record<string, unkno
   const metadata: Record<string, unknown> = {};
   if (options.permissionMode) {
     metadata.permissionMode = options.permissionMode;
+  }
+  if (options.profile) {
+    metadata.agentProfile = options.profile;
+  }
+  if (options.turnOverrides?.metadata) {
+    metadata.turnMetadata = sanitizeAgentTurnMetadata(
+      options.turnOverrides.metadata,
+      "turnOverrides.metadata",
+    );
   }
   if (options.runMode) {
     metadata.runMode = options.runMode;

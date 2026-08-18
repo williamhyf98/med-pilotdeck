@@ -66,6 +66,9 @@ fi
 ensure_node22
 assert_no_share
 
+# Medical MCP (G9-V-Med) can take >60s for a full trauma stage plan.
+export PILOTDECK_MCP_TOOL_TIMEOUT_MS="${PILOTDECK_MCP_TOOL_TIMEOUT_MS:-300000}"
+
 if already_running; then
   exit 0
 fi
@@ -79,6 +82,7 @@ echo "    home:  ${PILOT_HOME}"
 echo "    node:  $(command -v node) ($(node -v))"
 echo "    log:   ${LOG_FILE}"
 echo "    ports: server=${SERVER_PORT:-3001} gateway=${PILOTDECK_GATEWAY_PORT:-18789} vite=${VITE_PORT:-5173}"
+echo "    mcp timeout: ${PILOTDECK_MCP_TOOL_TIMEOUT_MS}ms"
 
 # Foreground mode when user passes --fg
 if [[ "${1:-}" == "--fg" ]]; then

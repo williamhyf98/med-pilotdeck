@@ -1,7 +1,22 @@
 export type SessionProvider = 'claude' | 'cursor' | 'codex' | 'gemini' | 'pilotdeck';
 export type ProjectSessionKind = 'background_task';
 
-export type AppTab = 'home' | 'chat' | 'always-on' | 'cron' | 'files' | 'shell' | 'git' | 'tasks' | 'memory' | 'skills' | 'preview' | 'dashboard' | `plugin:${string}`;
+export type AppTab =
+  | 'home'
+  | 'chat'
+  | 'always-on'
+  | 'cron'
+  | 'files'
+  | 'shell'
+  | 'git'
+  | 'tasks'
+  | 'memory'
+  | 'skills'
+  | 'preview'
+  | 'dashboard'
+  | 'medical-dialogue'
+  | 'medical-trauma'
+  | `plugin:${string}`;
 
 export type AlwaysOnSessionTarget =
   | {

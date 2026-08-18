@@ -45,12 +45,14 @@ export { resolvePluginDirectories } from "./plugins/discovery/PluginDirectoryRes
 export { discoverPluginPaths, type DiscoveredPluginPath } from "./plugins/discovery/discoverLocalPlugins.js";
 export { discoverBuiltinPlugins } from "./plugins/discovery/discoverBuiltinPlugins.js";
 export { loadPluginFromPath } from "./plugins/loading/PluginLoader.js";
+export { loadPluginAgentProfiles } from "./plugins/loading/PluginAgentProfileLoader.js";
 export { loadPluginHooks } from "./plugins/loading/PluginHookLoader.js";
 export { getPluginCommandName, loadPluginCommands, type LoadedPluginCommand } from "./plugins/loading/PluginCommandLoader.js";
 export {
   PluginRuntime,
   type PluginRuntimeOptions,
   type PluginRefreshResult,
+  type PluginContributionSnapshot,
   type PilotDeckMcpInstructionEntry,
   type PilotDeckMcpServerStaticSpec,
 } from "./plugins/runtime/PluginRuntime.js";

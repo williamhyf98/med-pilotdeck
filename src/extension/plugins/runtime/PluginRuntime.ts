@@ -1,6 +1,7 @@
 import { resolvePluginDirectories } from "../discovery/PluginDirectoryResolver.js";
 import { discoverPluginPaths, discoverSkillPaths } from "../discovery/discoverLocalPlugins.js";
 import { loadPluginFromPath, loadSkillFromPath } from "../loading/PluginLoader.js";
+import { loadPluginAgentProfiles } from "../loading/PluginAgentProfileLoader.js";
 import { loadPluginHooks } from "../loading/PluginHookLoader.js";
 import type { LoadedPluginCommand } from "../loading/PluginCommandLoader.js";
 import type { PilotDeckLoadedPlugin } from "../protocol/plugin.js";
@@ -8,6 +9,11 @@ import { PluginRegistry } from "./PluginRegistry.js";
 import { truncateMcpInstructionString } from "./truncateMcpString.js";
 import type { PilotDeckHooksSettings } from "../../hooks/protocol/settings.js";
 import type { PilotDeckCustomRouter } from "../../../router/customRouter/customRouter.js";
+import {
+  ProfileRegistry,
+  type AgentProfile,
+  type AgentProfileResolver,
+} from "../../../agent/index.js";
 
 /**
  * Static MCP server contribution shape callers can rely on. Manifests load
@@ -69,6 +75,7 @@ export type PluginMcpInstruction = {
 export type PluginContributionSnapshot = {
   plugins: PilotDeckLoadedPlugin[];
   commands: PluginCommandContribution[];
+  agents: AgentProfile[];
   skills: PluginSkillContribution[];
   outputStyles: LoadedPluginCommand[];
   hooks: PilotDeckHooksSettings;
@@ -79,11 +86,20 @@ export type PluginContributionSnapshot = {
 
 export class PluginRuntime {
   private readonly registry = new PluginRegistry();
+  private readonly agentProfileRegistry = new ProfileRegistry();
 
   constructor(private readonly options: PluginRuntimeOptions) {}
 
   snapshot(): PilotDeckLoadedPlugin[] {
     return this.registry.list();
+  }
+
+  profiles(): AgentProfileResolver {
+    return this.agentProfileRegistry;
+  }
+
+  getAllAgentProfiles(): AgentProfile[] {
+    return this.agentProfileRegistry.list();
   }
 
   mcpServers(): Record<string, unknown> {
@@ -134,6 +150,7 @@ export class PluginRuntime {
     return {
       plugins,
       commands: plugins.flatMap((plugin) => (plugin.commands ?? []).map((command) => toCommandContribution(plugin, command))),
+      agents: this.getAllAgentProfiles(),
       skills: collectSkillContributions(plugins),
       outputStyles: plugins.flatMap((plugin) => plugin.outputStyles ?? []),
       hooks: loadPluginHooks(plugins),
@@ -229,12 +246,28 @@ export class PluginRuntime {
         discoveredSkills.map((s) => loadSkillFromPath(s.path, s.source).catch(() => undefined)),
       ),
     ]);
+    const builtinPlugins = await Promise.all(
+      enabledBuiltinPlugins(
+        this.options.builtinPlugins ?? [],
+        this.options.builtinPluginsEnabled ?? {},
+      ).map(async (plugin) => {
+        if (plugin.agents) return plugin;
+        const agents = await loadPluginAgentProfiles({
+          pluginName: plugin.name,
+          pluginPath: plugin.path,
+          source: plugin.source,
+          configured: plugin.manifest.agents,
+        }).catch(() => []);
+        return { ...plugin, agents };
+      }),
+    );
     const plugins = [
-      ...enabledBuiltinPlugins(this.options.builtinPlugins ?? [], this.options.builtinPluginsEnabled ?? {}),
+      ...builtinPlugins,
       ...loaded.filter(isLoadedPlugin),
       ...loadedSkills.filter(isLoadedPlugin),
     ];
     this.registry.replaceAll(plugins);
+    this.agentProfileRegistry.replaceAll(plugins.flatMap((plugin) => plugin.agents ?? []));
     return {
       previous,
       next: plugins,

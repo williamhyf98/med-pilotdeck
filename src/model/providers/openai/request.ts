@@ -16,6 +16,7 @@ import { cleanSchemaForGoogle, normalizeGoogleToolSchema } from "../google/schem
 import { normalizeOpenAISchema } from "./schema.js";
 import { resolveThinkingPlan, throwIfUnsupportedThinkingPlan } from "../../thinking/registry.js";
 import { formatToolResultReferenceText } from "../toolResultReferenceText.js";
+import { supportsSamplingParameter } from "../../request/samplingParameterSupport.js";
 
 export type OpenAIRequestBody = {
   model: string;
@@ -24,6 +25,13 @@ export type OpenAIRequestBody = {
   tools?: OpenAITool[];
   tool_choice?: unknown;
   temperature?: number;
+  top_p?: number;
+  top_k?: number;
+  min_p?: number;
+  presence_penalty?: number;
+  frequency_penalty?: number;
+  repetition_penalty?: number;
+  seed?: number;
   stream?: boolean;
   metadata?: Record<string, unknown>;
   reasoning?: { effort?: string };
@@ -68,7 +76,9 @@ export function buildOpenAIRequest(
   provider?: ProviderConfig,
 ): OpenAIRequestBody {
   const googleOpenAICompatible = isGoogleOpenAICompatibleProvider(provider);
-  const thinkingPlan = resolveThinkingPlan(request.thinking, provider ?? { id: "openai", protocol: "openai", url: "", apiKey: "", headers: {}, models: {} }, model);
+  const effectiveProvider = provider
+    ?? { id: "openai", protocol: "openai" as const, url: "", apiKey: "", headers: {}, models: {} };
+  const thinkingPlan = resolveThinkingPlan(request.thinking, effectiveProvider, model);
   throwIfUnsupportedThinkingPlan(thinkingPlan, request);
   const messages = repairOpenAIToolPairing(
     request.messages.flatMap((message, messageIndex) => toOpenAIMessages(message, messageIndex)),
@@ -84,6 +94,30 @@ export function buildOpenAIRequest(
     tools: request.tools?.map((tool) => toOpenAITool(tool, googleOpenAICompatible)),
     tool_choice: toOpenAIToolChoice(request.toolChoice),
     temperature: thinkingPlan.omitTemperature ? undefined : request.temperature,
+    ...(request.topP !== undefined && supportsSamplingParameter(effectiveProvider, "topP")
+      ? { top_p: request.topP }
+      : {}),
+    ...(request.topK !== undefined && supportsSamplingParameter(effectiveProvider, "topK")
+      ? { top_k: request.topK }
+      : {}),
+    ...(request.minP !== undefined && supportsSamplingParameter(effectiveProvider, "minP")
+      ? { min_p: request.minP }
+      : {}),
+    ...(request.presencePenalty !== undefined
+      && supportsSamplingParameter(effectiveProvider, "presencePenalty")
+      ? { presence_penalty: request.presencePenalty }
+      : {}),
+    ...(request.frequencyPenalty !== undefined
+      && supportsSamplingParameter(effectiveProvider, "frequencyPenalty")
+      ? { frequency_penalty: request.frequencyPenalty }
+      : {}),
+    ...(request.repetitionPenalty !== undefined
+      && supportsSamplingParameter(effectiveProvider, "repetitionPenalty")
+      ? { repetition_penalty: request.repetitionPenalty }
+      : {}),
+    ...(request.seed !== undefined && supportsSamplingParameter(effectiveProvider, "seed")
+      ? { seed: request.seed }
+      : {}),
     stream: request.stream,
     metadata: request.metadata
       ? Object.fromEntries(

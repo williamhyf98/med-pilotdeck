@@ -12,6 +12,7 @@ import { messageContent } from "../../protocol/clone.js";
 import { normalizeOpenAISchema } from "../openai/schema.js";
 import { resolveThinkingPlan, throwIfUnsupportedThinkingPlan } from "../../thinking/registry.js";
 import { formatToolResultReferenceText } from "../toolResultReferenceText.js";
+import { supportsSamplingParameter } from "../../request/samplingParameterSupport.js";
 
 export type OpenAIResponsesRequestBody = {
   model: string;
@@ -20,6 +21,7 @@ export type OpenAIResponsesRequestBody = {
   max_output_tokens: number;
   stream?: boolean;
   temperature?: number;
+  top_p?: number;
   metadata?: Record<string, unknown>;
   tools?: OpenAIResponsesTool[];
   tool_choice?: unknown;
@@ -70,7 +72,9 @@ export function buildOpenAIResponsesRequest(
   model: ModelDefinition,
   _provider?: ProviderConfig,
 ): OpenAIResponsesRequestBody {
-  const thinkingPlan = resolveThinkingPlan(request.thinking, _provider ?? { id: "openai", protocol: "openai-responses", url: "", apiKey: "", headers: {}, models: {} }, model);
+  const effectiveProvider = _provider
+    ?? { id: "openai", protocol: "openai-responses" as const, url: "", apiKey: "", headers: {}, models: {} };
+  const thinkingPlan = resolveThinkingPlan(request.thinking, effectiveProvider, model);
   throwIfUnsupportedThinkingPlan(thinkingPlan, request);
   const body: OpenAIResponsesRequestBody = {
     model: request.model,
@@ -80,6 +84,9 @@ export function buildOpenAIResponsesRequest(
     tools: request.tools?.map(toResponsesTool),
     tool_choice: toResponsesToolChoice(request.toolChoice),
     temperature: request.temperature,
+    ...(request.topP !== undefined && supportsSamplingParameter(effectiveProvider, "topP")
+      ? { top_p: request.topP }
+      : {}),
     stream: request.stream,
     metadata: request.metadata
       ? Object.fromEntries(

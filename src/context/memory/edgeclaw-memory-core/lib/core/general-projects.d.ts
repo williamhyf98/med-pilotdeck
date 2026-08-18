@@ -2,14 +2,9 @@ import type { WorkspaceMemoryMode } from "./types.js";
 export declare const GENERAL_PROJECT_META_DIR = "GeneralProjects";
 export declare const GENERAL_PROJECT_MEMORY_DIR = "Project";
 export declare const GENERAL_FEEDBACK_MEMORY_DIR = "Feedback";
+export declare const GENERAL_WORKSPACE_DIR: string;
 export declare const EXTERNAL_RECORD_PREFIX: "external:";
 export declare const EXTERNAL_PROJECT_PREFIX: "external-project:";
-/** Resolve the "general" workspace root (`PILOT_HOME`, else `~/.pilotdeck`). */
-export declare function getGeneralWorkspaceDir(): string;
-/**
- * @deprecated Use getGeneralWorkspaceDir()
- */
-export declare const GENERAL_WORKSPACE_DIR: string;
 export declare function normalizeWorkspacePath(workspacePath: string): string;
 export declare function isGeneralWorkspaceDir(workspaceDir: string): boolean;
 export declare function getWorkspaceMemoryMode(workspaceDir: string): WorkspaceMemoryMode;

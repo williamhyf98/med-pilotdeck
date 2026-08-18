@@ -1,5 +1,6 @@
 import type { CanonicalContentBlock } from "../../model/index.js";
 import type { PermissionMode, PermissionRuleSet } from "../../permission/index.js";
+import type { AgentTurnOverrides } from "../profile/types.js";
 
 export type AgentRunMode = "agent" | "plan" | "ask";
 
@@ -10,6 +11,10 @@ export type AgentInput =
 export type AgentSubmitOptions = {
   turnId?: string;
   maxTurns?: number;
+  /** Server-registered profile id selected for this turn. */
+  profile?: string;
+  /** Strictly validated execution controls; cannot contain credentials or system context. */
+  turnOverrides?: AgentTurnOverrides;
   metadata?: Record<string, unknown>;
   runMode?: AgentRunMode;
   permissionMode?: PermissionMode;

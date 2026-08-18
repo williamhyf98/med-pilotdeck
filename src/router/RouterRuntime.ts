@@ -351,8 +351,13 @@ export function createRouterRuntime(
       },
     };
 
-    const custom = await resolveCustom(inputWithUsage);
     const scenarioOutcome = decideScenario(inputWithUsage, config.scenarios ?? {} as any);
+    // A server-validated per-turn provider/model selection is authoritative.
+    // Custom/token-saving routers still handle every non-explicit turn.
+    const custom = scenarioOutcome.scenarioType === "explicit"
+      && inputWithUsage.metadata?.serverValidatedModelOverride === true
+      ? undefined
+      : await resolveCustom(inputWithUsage);
 
     let scenarioType: RouterScenarioType = scenarioOutcome.scenarioType;
     const previousStickySelection = (input.metadata?.previousProvider && input.metadata.previousModel)

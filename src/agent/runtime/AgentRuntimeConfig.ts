@@ -1,6 +1,7 @@
 import type { CanonicalThinkingConfig, CanonicalToolChoice, MultimodalConstraints } from "../../model/index.js";
 import type { PermissionContext, PermissionMode } from "../../permission/index.js";
 import type { AgentRunMode } from "../protocol/input.js";
+import type { AgentToolPolicy } from "../profile/types.js";
 
 export type AgentRuntimeConfig = {
   provider: string;
@@ -11,8 +12,17 @@ export type AgentRuntimeConfig = {
   systemPrompt?: string;
   maxOutputTokens?: number;
   temperature?: number;
+  topP?: number;
+  topK?: number;
+  minP?: number;
+  presencePenalty?: number;
+  frequencyPenalty?: number;
+  repetitionPenalty?: number;
+  seed?: number;
   thinking?: CanonicalThinkingConfig;
   toolChoice?: CanonicalToolChoice;
+  /** Inherited server-side ceiling used when this config forks a subagent. */
+  toolPolicy?: AgentToolPolicy;
   /** Optional model/provider-specific aliases for emitted tool names. */
   toolAliases?: Record<string, string>;
   /** Optional text tool-call format hint for self-correction prompts. */

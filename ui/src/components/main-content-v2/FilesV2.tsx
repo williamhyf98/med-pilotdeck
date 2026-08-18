@@ -33,6 +33,11 @@ import {
   ADD_WORKSPACE_FILE_MENTION_EVENT,
   getWorkspaceRelativePath,
 } from '../../utils/workspaceFileMention';
+import {
+  ensureUploadFailedMessage,
+  formatAttachmentLimitErrors,
+  validateAttachmentBatch,
+} from '../chat/utils/medicalFolderUpload';
 
 type FilesV2Props = {
   selectedProject: Project | null;
@@ -135,6 +140,7 @@ export default function FilesV2({
   }, []);
 
   const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+  const [uploadNoticeTone, setUploadNoticeTone] = useState<'success' | 'error'>('success');
 
   useEffect(() => {
     if (!uploadMenuOpen) return;
@@ -422,6 +428,21 @@ export default function FilesV2({
       });
       const isFolderUpload = relativePaths.some((path) => path.includes('/'));
 
+      const validation = validateAttachmentBatch({
+        existingCount: 0,
+        existingBytes: 0,
+        incoming: fileArray.map((file, index) => ({
+          name: relativePaths[index] || file.name,
+          size: file.size,
+        })),
+      });
+      if (!validation.ok) {
+        setUploadMenuOpen(false);
+        setUploadNoticeTone('error');
+        setUploadNotice(formatAttachmentLimitErrors(validation.errors));
+        return;
+      }
+
       const formData = new FormData();
       formData.append('targetPath', '');
       formData.append('relativePaths', JSON.stringify(relativePaths));
@@ -435,10 +456,17 @@ export default function FilesV2({
         setUploadNotice(null);
         const response = await api.uploadFiles(selectedProject.name, formData);
         if (!response.ok) {
-          const errorText = await response.text().catch(() => '');
+          let errorText = '';
+          try {
+            const payload = await response.json();
+            errorText = typeof payload?.error === 'string' ? payload.error : '';
+          } catch {
+            errorText = await response.text().catch(() => '');
+          }
           throw new Error(errorText || `Upload failed: ${response.status}`);
         }
         await refreshFiles();
+        setUploadNoticeTone('success');
         if (isFolderUpload) {
           const rootName = relativePaths[0]?.split('/')[0] || 'folder';
           setUploadNotice(
@@ -452,10 +480,15 @@ export default function FilesV2({
         }
       } catch (error) {
         console.error('Failed to upload files:', error);
+        setUploadNoticeTone('error');
         setUploadNotice(
-          t('fileTree.uploadFailed', {
-            defaultValue: 'Upload failed. Please try again.',
-          }) as string,
+          ensureUploadFailedMessage(
+            error instanceof Error && error.message
+              ? error.message
+              : (t('fileTree.uploadFailed', {
+                  defaultValue: 'Upload failed. Please try again.',
+                }) as string),
+          ),
         );
       } finally {
         setUploadingProject(false);
@@ -729,12 +762,24 @@ export default function FilesV2({
       </div>
 
       {uploadNotice ? (
-        <div className="mx-3 mb-1 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100">
+        <div
+          className={cn(
+            'mx-3 mb-1 rounded-md border px-2.5 py-1.5 text-[11px]',
+            uploadNoticeTone === 'error'
+              ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-100'
+              : 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100',
+          )}
+        >
           <div className="flex items-start gap-2">
             <span className="min-w-0 flex-1">{uploadNotice}</span>
             <button
               type="button"
-              className="shrink-0 text-emerald-700/80 hover:text-emerald-900 dark:text-emerald-200/80 dark:hover:text-emerald-100"
+              className={cn(
+                'shrink-0',
+                uploadNoticeTone === 'error'
+                  ? 'text-red-700/80 hover:text-red-900 dark:text-red-200/80 dark:hover:text-red-100'
+                  : 'text-emerald-700/80 hover:text-emerald-900 dark:text-emerald-200/80 dark:hover:text-emerald-100',
+              )}
               onClick={() => setUploadNotice(null)}
               aria-label="Dismiss"
             >

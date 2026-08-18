@@ -11,12 +11,14 @@ import {
   GOOGLE_DEFAULT_MULTIMODAL,
 } from "../providers/google/defaults.js";
 import type {
+  CanonicalSamplingParameter,
   ModelConfig,
   ModelDefinition,
   ModelProtocol,
   ProviderConfig,
   ProviderRetryConfig,
 } from "../protocol/canonical.js";
+import { CANONICAL_SAMPLING_PARAMETERS } from "../request/samplingParameterSupport.js";
 import { mergeCapabilities, type ModelCapabilities } from "../protocol/capabilities.js";
 import { ModelConfigError } from "../protocol/errors.js";
 import {
@@ -99,6 +101,10 @@ function parseProvider(providerId: string, rawProvider: unknown, env?: Credentia
   for (const [modelId, rawModel] of Object.entries(provider.models)) {
     models[modelId] = parseModelDefinition(modelId, protocol, rawModel, providerId);
   }
+  const supportedRequestParameters = parseSupportedRequestParameters(
+    provider.supportedRequestParameters,
+    protocol,
+  );
 
   return {
     id: providerId,
@@ -108,6 +114,7 @@ function parseProvider(providerId: string, rawProvider: unknown, env?: Credentia
     timeoutMs: readOptionalPositiveNumber(provider.timeoutMs, "timeoutMs"),
     headers: readStringRecord(provider.headers, "headers"),
     extraBody: isRecord(provider.extraBody) ? (provider.extraBody as Record<string, unknown>) : undefined,
+    ...(supportedRequestParameters ? { supportedRequestParameters } : {}),
     retry: parseRetryConfig(provider.retry),
     models,
   };
@@ -368,6 +375,30 @@ function readStringArray(value: unknown, key: string): string[] | undefined {
   }
 
   return value;
+}
+
+function parseSupportedRequestParameters(
+  value: unknown,
+  protocol: ModelProtocol,
+): CanonicalSamplingParameter[] | undefined {
+  const values = readStringArray(value, "supportedRequestParameters");
+  if (!values) return undefined;
+  if (protocol !== "openai" && values.length > 0) {
+    throw new ModelConfigError(
+      "invalid_config_value",
+      "supportedRequestParameters is currently limited to openai-compatible providers.",
+    );
+  }
+  const supported = new Set<string>(CANONICAL_SAMPLING_PARAMETERS);
+  for (const parameter of values) {
+    if (!supported.has(parameter)) {
+      throw new ModelConfigError(
+        "invalid_config_value",
+        `supportedRequestParameters contains unsupported parameter ${parameter}.`,
+      );
+    }
+  }
+  return [...new Set(values)] as CanonicalSamplingParameter[];
 }
 
 function parseImageDetail(value: unknown): MultimodalConstraints["imageDetail"] {

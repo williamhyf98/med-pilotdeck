@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=75,<82"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pilotdeck-medical-sidecar"
+version = "0.1.0"
+description = "Local-only medical contracts and MCP tools for PilotDeck"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.30,<1",
+  "mcp>=1.12,<2",
+  "PyYAML>=6.0,<7",
+]
+
+[project.optional-dependencies]
+formats = [
+  "numpy>=2.0,<3",
+  "Pillow>=10,<13",
+  "PyMuPDF>=1.24,<2",
+  "pydicom>=3.0,<4",
+  "wfdb>=4.2,<5",
+  "nibabel>=5.3,<6",
+  "scipy>=1.13,<2",
+]
+test = []
+
+[project.scripts]
+medical-sidecar-api = "medical_sidecar.api.__main__:main"
+medical-sidecar-mcp = "medical_sidecar.mcp.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["medical_sidecar*"]
+namespaces = true
+
+[tool.unittest]
+start-directory = "tests"
+

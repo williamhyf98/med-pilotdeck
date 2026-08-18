@@ -597,7 +597,7 @@ function saveWeixinCredentials(creds: {
   botToken: string;
   accountId: string;
 }): void {
-  mkdirSync(PILOT_HOME, { recursive: true });
+  mkdirSync(join(homedir(), ".pilotdeck"), { recursive: true });
   writeFileSync(WEIXIN_CREDS_PATH, JSON.stringify(creds, null, 2), "utf-8");
 }
 

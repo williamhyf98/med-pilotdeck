@@ -2,6 +2,10 @@ import type { CanonicalModelRequest, ModelConfig, ModelDefinition, ProviderConfi
 import { messageContent } from "../protocol/clone.js";
 import { ModelRequestError } from "../protocol/errors.js";
 import { assertContentSupported } from "../protocol/multimodal.js";
+import {
+  requestedSamplingParameters,
+  supportsSamplingParameter,
+} from "./samplingParameterSupport.js";
 
 export type ResolvedModelRequest = {
   provider: ProviderConfig;
@@ -38,6 +42,16 @@ export function validateModelRequest(
 
   if (request.tools?.length && !model.capabilities.supportsToolUse) {
     throw new ModelRequestError("unsupported_tool_use", `Model ${request.model} does not support tools.`);
+  }
+
+  for (const parameter of requestedSamplingParameters(request)) {
+    if (!supportsSamplingParameter(provider, parameter)) {
+      throw new ModelRequestError(
+        "unsupported_request_parameter",
+        `Provider ${request.provider} (${provider.protocol}) does not support ${parameter}.`,
+        { provider: request.provider, protocol: provider.protocol, parameter },
+      );
+    }
   }
 
   for (const message of request.messages) {

@@ -294,7 +294,7 @@ function MessageRowV2({
                 </div>
               ) : null}
               {fileAttachments.length > 0 ? (
-                <div className={formattedContent ? 'mb-2' : undefined}>
+                <div className={cn('pd-message-attachment-scroll', formattedContent && 'mb-2')}>
                   <UserAttachmentCards
                     attachments={fileAttachments}
                     project={selectedProject}
@@ -303,7 +303,12 @@ function MessageRowV2({
                 </div>
               ) : null}
               {messageImages.length > 0 ? (
-                <div className={formattedContent ? 'mb-2 grid grid-cols-1 gap-2' : 'grid grid-cols-1 gap-2'}>
+                <div
+                  className={cn(
+                    'pd-message-attachment-scroll grid grid-cols-1 gap-2',
+                    formattedContent && 'mb-2',
+                  )}
+                >
                   {messageImages.map((image, index) => (
                     <button
                       type="button"

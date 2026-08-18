@@ -50,6 +50,7 @@ export class ToolRuntime {
                 readFileState: runtimeContext.readFileState,
                 writeSnapshots: runtimeContext.writeSnapshots,
                 executeTool: runtimeContext.executeTool,
+                toolPolicy: runtimeContext.toolPolicy,
               });
             },
         };
@@ -74,6 +75,22 @@ export class ToolRuntime {
         call.name,
         "tool_not_found",
         `Tool ${call.name} does not exist.`,
+        startedAt,
+        runtimeContext,
+      );
+    }
+
+    const allowedTools = runtimeContext.toolPolicy?.allowedTools;
+    const deniedTools = runtimeContext.toolPolicy?.deniedTools;
+    if (
+      (allowedTools !== undefined && !allowedTools.includes(tool.name))
+      || deniedTools?.includes(tool.name)
+    ) {
+      return this.errorResult(
+        call.id,
+        tool.name,
+        "permission_denied",
+        `Tool ${tool.name} is not allowed by the active agent profile.`,
         startedAt,
         runtimeContext,
       );

@@ -76,6 +76,8 @@ export type RouterDecisionInput = {
     lastUsage?: RouterDecisionInputUsageHint;
     explicitProvider?: string;
     explicitModel?: string;
+    /** True only for provider/model pairs validated at the server execution boundary. */
+    serverValidatedModelOverride?: boolean;
     /** Tier from the previous turn; fed to the judge for context-aware classification. */
     previousTier?: string;
     previousProvider?: string;

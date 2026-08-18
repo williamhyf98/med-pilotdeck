@@ -179,7 +179,7 @@ export class DefaultContextRuntime implements ContextRuntime {
     });
 
     const parts = [...prompt.parts];
-    if (this.memoryAttachmentBuilder) {
+    if (this.memoryAttachmentBuilder && input.memoryPolicy !== "disabled") {
       const memory = await this.memoryAttachmentBuilder.build({
         query: extractRecentUserText(projection.messages) ?? "",
         sessionId: input.sessionId,

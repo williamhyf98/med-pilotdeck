@@ -1,9 +1,86 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    createTrustedGatewayTurnOptions,
     gatewayEventToFrames,
+    getGatewayTurnSafetyOverrides,
     isGatewayUnavailableError,
 } from './pilotdeck-bridge.js';
+
+describe('getGatewayTurnSafetyOverrides', () => {
+    it('converts the one-way disable flag into a no-tools Gateway turn', () => {
+        expect(getGatewayTurnSafetyOverrides({ disableTools: true })).toEqual({
+            canPrompt: false,
+            turnOverrides: { allowedTools: [] },
+        });
+    });
+
+    it('does not forward caller-provided tool policy objects', () => {
+        expect(getGatewayTurnSafetyOverrides({
+            turnOverrides: { allowedTools: ['read_file'] },
+        })).toEqual({});
+    });
+
+    it('forwards bounded model controls but strips caller tool policy and metadata', () => {
+        expect(getGatewayTurnSafetyOverrides({
+            turnOverrides: {
+                temperature: 0.2,
+                topP: 0.9,
+                maxOutputTokens: 2048,
+                allowedTools: ['bash'],
+                metadata: { hidden: true },
+            },
+        })).toEqual({
+            turnOverrides: {
+                temperature: 0.2,
+                topP: 0.9,
+                maxOutputTokens: 2048,
+            },
+        });
+    });
+
+    it('forwards registered model and thinking controls without exposing endpoints', () => {
+        expect(getGatewayTurnSafetyOverrides({
+            model: 'openai/medical-model',
+            profile: 'medical:general',
+            thinking: { enabled: true, mode: 'medium' },
+            syntheticMessages: [{
+                text: 'trusted UI task context',
+                purpose: 'medical_task_context',
+            }],
+        })).toEqual({
+            profile: 'medical:general',
+            syntheticMessages: [{
+                text: 'trusted UI task context',
+                purpose: 'medical_task_context',
+            }],
+            turnOverrides: {
+                provider: 'openai',
+                model: 'medical-model',
+                thinking: { enabled: true, mode: 'medium' },
+            },
+        });
+    });
+
+    it('accepts profile and narrowed tool policy only from server-owned options', () => {
+        const trusted = createTrustedGatewayTurnOptions({
+            profile: 'medical:trauma',
+            turnOverrides: {
+                allowedTools: ['mcp__medical__rag'],
+                metadata: { task: 'trauma-analysis' },
+            },
+            maxTurns: 1,
+        });
+        expect(getGatewayTurnSafetyOverrides(trusted)).toEqual({
+            profile: 'medical:trauma',
+            maxTurns: 1,
+            turnOverrides: {
+                allowedTools: ['mcp__medical__rag'],
+                metadata: { task: 'trauma-analysis' },
+            },
+        });
+    });
+});
 
 describe('gatewayEventToFrames agent status errors', () => {
     it('maps tool result detail availability to a mergeable tool_result frame', () => {

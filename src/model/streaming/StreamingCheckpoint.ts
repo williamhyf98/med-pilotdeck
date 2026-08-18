@@ -4,6 +4,7 @@ export interface StreamingCheckpoint {
   partialText: string;
   tokensReceived: number;
   hasToolCalls: boolean;
+  incompleteToolCalls: number;
 }
 
 /**
@@ -17,7 +18,9 @@ export class StreamingCheckpointManager {
     partialText: "",
     tokensReceived: 0,
     hasToolCalls: false,
+    incompleteToolCalls: 0,
   };
+  private readonly openToolCallIds = new Set<string>();
 
   onEvent(event: CanonicalModelEvent): void {
     switch (event.type) {
@@ -29,8 +32,18 @@ export class StreamingCheckpointManager {
         this.checkpoint.tokensReceived++;
         break;
       case "tool_call_start":
+        this.openToolCallIds.add(event.id);
+        this.checkpoint.incompleteToolCalls = this.openToolCallIds.size;
+        this.checkpoint.hasToolCalls = true;
+        this.checkpoint.tokensReceived++;
+        break;
       case "tool_call_delta":
+        this.checkpoint.hasToolCalls = true;
+        this.checkpoint.tokensReceived++;
+        break;
       case "tool_call_end":
+        this.openToolCallIds.delete(event.toolCall.id);
+        this.checkpoint.incompleteToolCalls = this.openToolCallIds.size;
         this.checkpoint.hasToolCalls = true;
         this.checkpoint.tokensReceived++;
         break;
@@ -46,6 +59,12 @@ export class StreamingCheckpointManager {
   }
 
   reset(): void {
-    this.checkpoint = { partialText: "", tokensReceived: 0, hasToolCalls: false };
+    this.openToolCallIds.clear();
+    this.checkpoint = {
+      partialText: "",
+      tokensReceived: 0,
+      hasToolCalls: false,
+      incompleteToolCalls: 0,
+    };
   }
 }
