@@ -288,6 +288,10 @@ function truncateToolText(text: string, max = 48): string {
 }
 
 function getToolStepTargetMeta(message: ChatMessage): { target: string; context: string } {
+  const skillName = getToolInputString(message, 'skillName');
+  if (skillName) {
+    return { target: truncateToolText(skillName, 40), context: '' };
+  }
   const filePath =
     getToolInputString(message, 'file_path') ||
     getToolInputString(message, 'path');
