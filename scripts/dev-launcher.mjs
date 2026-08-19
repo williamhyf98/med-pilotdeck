@@ -32,6 +32,21 @@ ensureWritableTmpDir();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
+const pilotHome = process.env.PILOT_HOME || join(repoRoot, '.pilotdeck-home');
+
+// Keep direct `npm run dev` and scripts/start-local.sh on the same state/config
+// directory. Also ensure local model traffic bypasses any inherited HTTP proxy.
+process.env.PILOT_HOME = pilotHome;
+process.env.PILOTDECK_CONFIG_DIR = process.env.PILOTDECK_CONFIG_DIR || pilotHome;
+
+const localNoProxyHosts = ['127.0.0.1', 'localhost', '10.31.112.13'];
+const inheritedNoProxy = process.env.NO_PROXY || process.env.no_proxy || '';
+const noProxy = [...new Set([
+  ...inheritedNoProxy.split(',').map((entry) => entry.trim()).filter(Boolean),
+  ...localNoProxyHosts,
+])].join(',');
+process.env.NO_PROXY = noProxy;
+process.env.no_proxy = noProxy;
 
 function readYamlPortConfig() {
   const home = process.env.PILOT_HOME || join(homedir(), '.pilotdeck');

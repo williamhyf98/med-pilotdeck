@@ -20,8 +20,8 @@
  * Skip the whole step via $PILOTDECK_SKIP_BOOTSTRAP=1.
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const SENTINEL_API_KEY = 'PLACEHOLDER_RUN_ONBOARDING_TO_REPLACE';
 
@@ -113,7 +113,8 @@ cron:
 
 function resolvePilotHome() {
   if (process.env.PILOT_HOME) return process.env.PILOT_HOME;
-  return join(homedir(), '.pilotdeck');
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  return join(repoRoot, '.pilotdeck-home');
 }
 
 const DEFAULT_ADAPTERS_SNIPPET = `
