@@ -4,6 +4,7 @@ Pillow>=10.0.0
 numpy>=1.24.0
 httpx>=0.27.0
 pypdf>=4.0.0
+PyYAML>=6.0.0
 # Optional (degraded parsing if missing):
 # pymupdf>=1.24.0
 # wfdb>=4.1.0

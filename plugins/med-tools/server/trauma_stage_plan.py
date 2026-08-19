@@ -1,4 +1,4 @@
-"""Six-stage war-trauma graded-care plan via G9-V-Med (+ GPT fallback)."""
+"""Six-stage war-trauma graded-care plan via G9-V-Med (+ main-agent fallback)."""
 
 from __future__ import annotations
 
@@ -219,7 +219,7 @@ def generate_stage_plan(
     max_images: int = 8,
     timeout_s: float = 180.0,
 ) -> Dict[str, Any]:
-    """Build prompts and call G9 (with GPT fallback). Returns JSON-serializable dict."""
+    """Build prompts and call G9 (with main-agent fallback). Returns JSON-serializable dict."""
     canonical = normalize_stage(stage)
     paths = [p for p in _normalize_image_paths(image_paths) if Path(p).is_file()]
     max_images = max(1, min(int(max_images or 8), 16))

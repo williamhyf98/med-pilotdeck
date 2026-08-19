@@ -300,7 +300,7 @@ async def _run_medical_parse_stream(
     skip_vlm: bool = False,
     tool_name: str = "med_parse_medical",
 ) -> Dict[str, Any]:
-    """Parse then stream the G9 report through ``on_text`` (with GPT fallback)."""
+    """Parse then stream the G9 report through ``on_text`` (with main-agent fallback)."""
     from .vlm_client import analyze_medical_with_vlm_stream
 
     payload = _prepare_medical_parse(
@@ -408,6 +408,8 @@ def med_tools_health() -> str:
             "fallback_enabled": cfg["fallback_enabled"],
             "fallback_api_base": cfg["fallback_api_base"],
             "fallback_model": cfg["fallback_model"],
+            "fallback_source": cfg.get("fallback_source", "unset"),
+            "fallback_agent_ref": cfg.get("fallback_agent_ref", ""),
         },
         "supported_suffixes": sorted(SUPPORTED_SUFFIXES),
         "pydicom": False,
@@ -545,7 +547,7 @@ async def med_trauma_stage_plan(
 
     One stage per call. Plugin builds the fixed Chinese prompt (stage-specific
     task + five output sections + multi-image reading rules), calls on-box
-    G9-V-Med, and falls back to GPT inside the plugin when G9 fails.
+    G9-V-Med, and falls back to the configured main agent model when G9 fails.
 
     Agent presentation rule (important):
     If `care_plan` is non-empty, show it VERBATIM (do not rewrite).

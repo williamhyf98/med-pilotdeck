@@ -11,7 +11,7 @@ MCP plugin that adds **multi-source medical parsing**, local **G9-V-Med** report
 | `med_tools_health` | VLM / deps / RAG summary |
 | `med_trauma_rag_status` | Corpus readiness (rows, dim, sha) |
 | `med_trauma_rag_query` | Retrieve war-trauma chunks for **knowledge Q&A** |
-| `med_trauma_stage_plan` | Formal **six-stage** care plan (G9 + GPT fallback) |
+| `med_trauma_stage_plan` | Formal **six-stage** care plan (G9 + main-agent fallback) |
 
 Wire names in chat: `mcp__med-tools__<tool>`.
 
@@ -70,9 +70,10 @@ data/rag/
 
 Flow for **Skill `med-trauma-assist`**:
 
-1. Call `med_trauma_rag_query(query=...)`.
-2. Main model answers the knowledge question from `chunks` (brief tips OK).
-3. Formal five-section plans use **`med_trauma_stage_plan`**, not this path.
+1. Rewrite a self-contained retrieval `query` using the current user turn plus up to the last 5 user turns and any needed assistant conclusions (do not paste raw chat history into embedding).
+2. Call `med_trauma_rag_query(query=...)`.
+3. Main model answers the knowledge question from `chunks` (brief tips OK).
+4. Formal five-section plans use **`med_trauma_stage_plan`**, not this path.
 
 If the embedding service is down, the tool uses **lexical-fallback** and sets `mode` accordingly.
 
@@ -82,7 +83,7 @@ Tool `med_trauma_stage_plan(stage, injury_text, image_paths?)`:
 
 1. One stage per call among 伤员发生地 / 野战分类场 / 收容处置组 / 重伤救治组 / 手术组 / 洗消组.
 2. Plugin builds the fixed prompt (stage-specific 【任务要求】 + five sections + multi-image rules).
-3. Calls G9-V-Med; GPT fallback inside the plugin when G9 fails.
+3. Calls G9-V-Med; falls back to the configured main agent model inside the plugin when G9 fails.
 4. Agent shows `care_plan` **verbatim** (same rule as `report` on parse).
 
 Ordinary injury photos go in `image_paths` for G9 to read. DICOM/PDF: prefer `med_parse_medical` first, fold report/summary into `injury_text`. RAG is **not** required.
@@ -114,16 +115,22 @@ Restart PilotDeck (or reload plugins) after changing `plugin.json` env.
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `MED_VLM_API_BASE` | `http://127.0.0.1:8030/v1` | OpenAI-compatible VLM base |
-| `MED_VLM_MODEL` | `G9-V-Med` | VLM model id |
+| `MED_VLM_API_BASE` | `http://127.0.0.1:8030/v1` | OpenAI-compatible **G9** VLM base |
+| `MED_VLM_MODEL` | `G9-V-Med` | Primary medical VLM model id |
 | `MED_VLM_API_KEY` | `EMPTY` | Bearer token if required |
 | `MED_VLM_MAX_TOKENS` | `8192` | Max generation tokens |
+| `MED_VLM_FALLBACK_ENABLED` | `1` | Enable fallback when G9 fails |
+| `MED_VLM_FALLBACK_MODEL` | *(from `pilotdeck.yaml` `agent.model`)* | Fallback model id; env overrides config |
+| `MED_VLM_FALLBACK_API_BASE` | *(from matching provider `url`)* | Fallback OpenAI-compatible base |
+| `MED_VLM_FALLBACK_API_KEY` | *(from matching provider `apiKey`)* | Fallback API key |
 | `MED_EMBEDDING_API_BASE` | `http://127.0.0.1:65507/v1` | Embedding OpenAI-compatible base |
 | `MED_EMBEDDING_ENDPOINT` | `{API_BASE}/embeddings` | Full embeddings URL |
 | `MED_EMBEDDING_MODEL` | `qwen3-vl-embedding` | Embedding model id |
 | `MED_EMBEDDING_DIMENSION` | `2048` | Expected vector dim |
 | `MED_RAG_MANIFEST` | `<plugin>/data/rag/manifest.json` | Override manifest path (tests) |
 | `MED_DICOM_DERIVED_DIR` / `MED_DERIVED_DIR` | `<parent>/.med-tools-derived` | Preview/PNG output dir |
+
+When `MED_VLM_FALLBACK_*` are unset, med-tools reads `$PILOT_HOME/pilotdeck.yaml` (then `.pilotdeck-home/pilotdeck.yaml` / `~/.pilotdeck/pilotdeck.yaml`) and uses `agent.model` plus that provider's `url` / `apiKey`.
 
 Optional Python deps (degraded if missing): `pymupdf`, `wfdb`.
 

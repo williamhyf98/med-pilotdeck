@@ -1,6 +1,6 @@
 ---
 name: med-trauma-stage-plan
-description: Formal six-stage war-trauma graded care plan via med_trauma_stage_plan (G9 inside plugin, GPT fallback). Use when the user wants a structured care plan for one of 伤员发生地/野战分类场/收容处置组/重伤救治组/手术组/洗消组. Paste care_plan verbatim. Not for textbook Q&A (use med-trauma-assist) or attachment-only reading (use med-medical).
+description: Formal six-stage war-trauma graded care plan via med_trauma_stage_plan (G9 inside plugin, main-agent-model fallback). Use when the user wants a structured care plan for one of 伤员发生地/野战分类场/收容处置组/重伤救治组/手术组/洗消组. Paste care_plan verbatim. Not for textbook Q&A (use med-trauma-assist) or attachment-only reading (use med-medical).
 ---
 
 # 战创伤分阶段正式救治方案（med-tools）
@@ -54,7 +54,7 @@ G9 生成完整五段方案通常 **60–120 秒**，但正文会在 G9 生成�
 | 字段 | 含义 |
 |------|------|
 | `care_plan` | 五段正式方案；成功时由运行时直接保存为最终回答 |
-| `fallback_used` | 是否走了插件内 GPT 回退 |
+| `fallback_used` | 是否走了插件内主 Agent 模型回退 |
 | `agent_continue` | 双失败时为 true，主 Agent 按五段格式补写并说明失败 |
 
 五段输出（由工具内 prompt 约束，勿改写）：
