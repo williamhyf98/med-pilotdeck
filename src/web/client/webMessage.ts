@@ -109,6 +109,8 @@ export type WebMessage = {
   sequence?: number;
   toolCallId?: string;
   toolName?: string;
+  /** Raw tool-call input preview (JSON string) shown by hosts in tool bubbles. */
+  toolInput?: string;
   requestId?: string;
   ok?: boolean;
   text?: string;
@@ -291,8 +293,21 @@ export function applyWebGatewayEvent(
         toolCallId: event.toolCallId,
         toolName: normalizeToolDisplayName(event.name),
         text: event.argsPreview,
+        toolInput: event.argsPreview,
         source: "live",
       };
+      if (event.name === "read_skill" && typeof event.argsPreview === "string") {
+        // Surface WHICH skill the model invoked instead of a raw JSON blob.
+        try {
+          const parsed = JSON.parse(event.argsPreview) as Record<string, unknown>;
+          const skillName = typeof parsed.skillName === "string" ? parsed.skillName.trim() : "";
+          if (skillName) {
+            message.text = `read_skill: ${skillName}`;
+          }
+        } catch {
+          /* keep raw argsPreview */
+        }
+      }
       return {
         ...state,
         messages: [...state.messages, message],

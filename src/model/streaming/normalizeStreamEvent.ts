@@ -24,7 +24,7 @@ export type StreamNormalizerState = {
   openaiResponses?: OpenAIResponsesStreamState;
 };
 
-export function createStreamNormalizerState(protocol: ModelProtocol): StreamNormalizerState {
+export function createStreamNormalizerState(protocol: ModelProtocol, modelId?: string): StreamNormalizerState {
   if (protocol === "anthropic") {
     return { anthropic: createAnthropicStreamState() };
   }
@@ -34,7 +34,10 @@ export function createStreamNormalizerState(protocol: ModelProtocol): StreamNorm
   if (protocol === "openai-responses") {
     return { openaiResponses: createOpenAIResponsesStreamState() };
   }
-  return { openai: createOpenAIStreamState() };
+  // Qwen3-style models stream reasoning inline in `content`, ending with a
+  // bare `</think>`; hold text back so it can be reclassified as thinking.
+  const holdBackInlineThink = /qwen|thinking|qwq|qvq/i.test(modelId ?? "");
+  return { openai: createOpenAIStreamState({ holdBackInlineThink }) };
 }
 
 export function normalizeStreamEvent(

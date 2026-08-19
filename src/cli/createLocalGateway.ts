@@ -162,6 +162,13 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
   const baseEnv = options.env ?? process.env;
   const projectRoot = resolve(options.projectRoot ?? process.cwd());
   const pilotHome = options.pilotHome ?? resolvePilotHome(baseEnv);
+  // Plugin manifests reference `${env:PILOT_HOME}` (e.g. med-tools MCP
+  // server command); export the resolved home into the process env so
+  // placeholder expansion sees it even when the gateway was started
+  // without PILOT_HOME set (plain `npm run dev`). On Windows use forward
+  // slashes: MSYS bash strips backslashes from arguments, turning
+  // `C:\Users\...\run.sh` into `C:Users.../run.sh`.
+  process.env.PILOT_HOME = process.platform === "win32" ? pilotHome.replace(/\\/gu, "/") : pilotHome;
   const env = options.pilotHome ? { ...baseEnv, PILOT_HOME: pilotHome } : baseEnv;
   const builtinSkillsRoot = resolveBuiltinSkillsRoot(options.builtinSkillsRoot, env);
   const legacySkillMigration = migrateLegacyBundledSkillCopies({ pilotHome, builtinSkillsRoot });
@@ -714,7 +721,12 @@ class ProjectRuntimeRegistry {
     const tools = createBuiltinRegistry({
       backgroundTasks: { runtime: backgroundTasks },
       readSkill: {
-        loader: (name) => pluginRuntime.loadSkillPrompt(name),
+        loader: (name) => {
+          const info = pluginRuntime.getAllSkills().find((entry) => entry.name === name);
+          // Runtime visibility: which skill the model actually invoked.
+          console.log(`[skill] read_skill invoked: ${name}${info ? ` (${info.path})` : ""}`);
+          return pluginRuntime.loadSkillPrompt(name);
+        },
         lister: () => pluginRuntime.getAllSkills(),
       },
       // Pass the YAML-configured web-search provider through to the built-in

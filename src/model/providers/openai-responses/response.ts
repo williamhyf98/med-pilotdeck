@@ -7,6 +7,7 @@ import type {
 } from "../../protocol/canonical.js";
 import { ModelProviderError } from "../../protocol/errors.js";
 import { normalizeOpenAIUsage } from "../../response/normalizeUsage.js";
+import { extractLastJsonObject } from "./stream.js";
 
 type ToolCallIdState = {
   baseId: string;
@@ -95,14 +96,21 @@ function toCanonicalToolCall(
       input = JSON.parse(jsonrepair(rawArguments));
       console.warn(`[openai-responses] repaired invalid JSON for tool call (len=${rawArguments.length})`);
     } catch {
-      throw new ModelProviderError({
-        provider,
-        protocol: "openai-responses",
-        code: "invalid_tool_arguments",
-        message: "OpenAI Responses tool call arguments are not valid JSON.",
-        retryable: true,
-        raw: item,
-      });
+      // vLLM emits the concatenation of all calls' argument objects in some
+      // function_call items; the last balanced object belongs to this call.
+      const extracted = extractLastJsonObject(rawArguments);
+      if (extracted === undefined) {
+        throw new ModelProviderError({
+          provider,
+          protocol: "openai-responses",
+          code: "invalid_tool_arguments",
+          message: "OpenAI Responses tool call arguments are not valid JSON.",
+          retryable: true,
+          raw: item,
+        });
+      }
+      input = extracted;
+      console.warn(`[openai-responses] extracted last JSON object for tool call (len=${rawArguments.length})`);
     }
   }
 

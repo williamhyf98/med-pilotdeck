@@ -225,7 +225,7 @@ export async function* streamModel(
       return;
     }
 
-    const state = createStreamNormalizerState(provider.protocol);
+    const state = createStreamNormalizerState(provider.protocol, currentRequest.model);
     let streamCompleted = false;
     let sawCompletionSentinel = false;
 
