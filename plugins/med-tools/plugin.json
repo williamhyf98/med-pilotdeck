@@ -6,8 +6,8 @@
   "agents": [],
   "mcpServers": {
     "med-tools": {
-      "command": "${env:PILOT_HOME}/plugins/med-tools/run.sh",
-      "args": [],
+      "command": "node",
+      "args": ["${env:PILOT_HOME}/plugins/med-tools/run-mcp.cjs"],
       "timeoutMs": 300000,
       "env": {
         "MED_VLM_API_BASE": "http://10.31.112.13:8030/v1",

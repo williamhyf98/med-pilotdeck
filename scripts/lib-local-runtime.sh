@@ -68,7 +68,28 @@ ensure_project_pilot_home() {
   local med_src="${PILOTDECK_ROOT}/plugins/med-tools"
   local med_link="${PILOT_HOME_DIR}/plugins/med-tools"
   if [[ -d "$med_src" ]]; then
-    ln -sfn "$med_src" "$med_link"
+    case "$(uname -s)" in
+      MINGW*|MSYS*|CYGWIN*)
+        # Windows: `ln -s` needs dev mode and otherwise silently deep-copies
+        # the plugin (~400MB). Use a directory junction (no admin needed).
+        if [[ -L "$med_link" || -d "$med_link" ]]; then
+          rm -rf "$med_link"
+        fi
+        local win_med_link win_med_src
+        win_med_link="$(cygpath -w "$med_link")"
+        win_med_src="$(cygpath -w "$med_src")"
+        if powershell -NoProfile -Command "New-Item -ItemType Junction -Path '${win_med_link}' -Target '${win_med_src}' | Out-Null" 2>/dev/null \
+          && [[ -f "$med_link/plugin.json" ]]; then
+          :
+        else
+          echo "warn: junction failed for med-tools; falling back to copy" >&2
+          cp -r "$med_src" "$med_link"
+        fi
+        ;;
+      *)
+        ln -sfn "$med_src" "$med_link"
+        ;;
+    esac
   fi
 }
 

@@ -155,6 +155,17 @@ export const TOOL_CONFIGS: Record<string, ToolDisplayConfig> = {
   // FILE OPERATION TOOLS
   // ============================================================================
 
+  read_skill: {
+    input: {
+      type: 'one-line',
+      label: 'read_skill',
+      getValue: (input) => (input && typeof input.skillName === 'string' ? input.skillName : ''),
+    },
+    result: {
+      hidden: true,
+    },
+  },
+
   Read: {
     input: {
       type: 'one-line',

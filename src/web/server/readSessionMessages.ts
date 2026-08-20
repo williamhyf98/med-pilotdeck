@@ -619,6 +619,8 @@ function flushBlock(
         toolCallId: block.id,
         toolName: block.name,
         payload: block.input,
+        // Hosts display this raw input (e.g. read_skill's skillName).
+        toolInput: typeof block.input === "string" ? block.input : JSON.stringify(block.input),
         source: "history",
       });
       return;
