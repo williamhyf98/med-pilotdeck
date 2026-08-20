@@ -1,6 +1,6 @@
 ---
 name: med-trauma-assist
-description: War-trauma knowledge Q&A via med-tools RAG. Use for textbook/concept questions (e.g. 四级救治是哪四级、现场大出血怎么止血). Rewrite the retrieval query with recent dialogue context when needed, call med_trauma_rag_query, then answer with the main model; brief disposition tips OK. NOT the formal five-section six-stage care plan — that is med-trauma-stage-plan.
+description: 通过 med-tools RAG 进行战创伤知识点问答。用于教材/概念类问题（例如四级救治是哪四级、现场大出血怎么止血）。必要时结合近轮对话改写检索 query，调用 med_trauma_rag_query，再用主模型作答；可附简短处置要点。不是正式五段六阶段救治方案——那是 med-trauma-stage-plan。
 ---
 
 # 战创伤 RAG 问答（med-tools）

@@ -1,8 +1,8 @@
-# JavaScript builder API
+# JavaScript 构建器 API
 
-Use one executable `.mjs` builder. The builder exports a default async function and returns an ExcelJS workbook or `{ workbook, requirements }`.
+使用一个可执行的 `.mjs` 构建器。构建器导出默认异步函数，并返回 ExcelJS 工作簿或 `{ workbook, requirements }`。
 
-## Builder contract
+## 构建器约定
 
 ```js
 export default async function build({
@@ -19,14 +19,14 @@ export default async function build({
     : createWorkbook();
   const requirements = { requiredSheets: ["Summary"] };
 
-  // Modify the workbook here.
+  // 在此修改工作簿。
   return { workbook, requirements };
 }
 ```
 
-Use `createWorkbook()` for a new XLSX. It initializes workbook metadata and requests full calculation. Use `loadWorkbook(inputPath)` for `.xlsx`, `.csv`, or `.tsv` input.
+新建 XLSX 时使用 `createWorkbook()`。它会初始化工作簿元数据并请求完整计算。对于 `.xlsx`、`.csv` 或 `.tsv` 输入，使用 `loadWorkbook(inputPath)`。
 
-## Create worksheets
+## 创建工作表
 
 ```js
 const sheet = workbook.addWorksheet("Summary", {
@@ -40,11 +40,11 @@ const sheet = workbook.addWorksheet("Summary", {
 });
 ```
 
-Create all sheets referenced by formulas before assigning those formulas.
+在赋值公式之前，创建公式所引用的全部工作表。
 
-## Write blocks of values
+## 写入成块的值
 
-Prefer arrays and row blocks over scattered one-cell writes:
+优先使用数组和行块，而不是分散的单单元格写入：
 
 ```js
 sheet.addRows([
@@ -54,11 +54,11 @@ sheet.addRows([
 ]);
 ```
 
-Use real JavaScript numbers, booleans, and `Date` objects. Keep identifiers such as ZIP codes and SKUs as strings.
+使用真正的 JavaScript 数字、布尔值和 `Date` 对象。将 ZIP 码和 SKU 等标识符保持为字符串。
 
-## Write formulas
+## 写入公式
 
-ExcelJS formula strings do not start with `=`:
+ExcelJS 公式字符串不以 `=` 开头：
 
 ```js
 sheet.getCell("D2").value = {
@@ -72,9 +72,9 @@ sheet.getCell("B8").value = {
 };
 ```
 
-The placeholder `result` is removed before LibreOffice recalculation. Do not treat it as a verified result.
+占位符 `result` 会在 LibreOffice 重新计算之前被移除。不要把它当作已核验的结果。
 
-## Format cells
+## 设置单元格格式
 
 ```js
 sheet.getCell("A1").font = {
@@ -90,9 +90,9 @@ sheet.getColumn("A").width = 24;
 sheet.getRow(1).height = 28;
 ```
 
-ARGB colors contain alpha plus RGB, normally `FF` followed by six hexadecimal digits.
+ARGB 颜色包含 alpha 加 RGB，通常是 `FF` 后跟六位十六进制数字。
 
-Never assign one reusable object to `cell.style` across a range. ExcelJS style objects are mutable and may be shared by reference; changing one cell's number format later can silently turn unrelated numbers into dates. Use the helpers, which clone styles per cell:
+切勿将同一个可复用对象赋给某个范围内的 `cell.style`。ExcelJS 样式对象是可变的，并且可能按引用共享；稍后更改一个单元格的数字格式，可能在无声中把无关数字变成日期。使用会按单元格克隆样式的辅助函数：
 
 ```js
 helpers.applyStyle(sheet, "A3:E20", {
@@ -103,7 +103,7 @@ helpers.setNumberFormat(sheet, "B4:C20", '¥#,##0');
 helpers.setNumberFormat(sheet, "D4:D20", "0.0%");
 ```
 
-Apply the bundled header baseline when no stronger style exists:
+当没有更强样式时，应用捆绑的表头基线：
 
 ```js
 helpers.styleHeader(sheet, "A3:D3");
@@ -115,9 +115,9 @@ helpers.applyChineseTypography(sheet, {
 });
 ```
 
-Do not use `autoFitColumns` to restyle an established workbook unless the requested edit needs it.
+除非所要求的编辑需要，否则不要用 `autoFitColumns` 重新样式化既有工作簿。
 
-## Tables and filters
+## 表格与筛选
 
 ```js
 sheet.addRows([
@@ -131,9 +131,9 @@ helpers.addTableFromRange(sheet, {
 });
 ```
 
-Use unique table names. Do not overlap tables.
+使用唯一的表格名称。不要让表格重叠。
 
-## Data validation
+## 数据验证
 
 ```js
 helpers.addListValidation(sheet, "F4:F100", ["On Track", "At Risk", "Blocked"], {
@@ -141,9 +141,9 @@ helpers.addListValidation(sheet, "F4:F100", ["On Track", "At Risk", "Blocked"], 
 });
 ```
 
-Prefer a hidden or clearly labeled source range for long validation lists.
+对于较长的验证列表，优先使用隐藏或清晰标注的源范围。
 
-## Conditional formatting
+## 条件格式
 
 ```js
 helpers.addConditionalFormatting(sheet, {
@@ -157,13 +157,13 @@ helpers.addConditionalFormatting(sheet, {
 });
 ```
 
-Use conditional formatting for states that must respond to future edits.
+对必须响应后续编辑的状态使用条件格式。
 
-Use `formulae` (plural) for `expression` and `cellIs` rules. The build preflight rejects `formula` before ExcelJS serialization and reports the worksheet, range, and rule index.
+对 `expression` 和 `cellIs` 规则使用 `formulae`（复数）。构建预检会在 ExcelJS 序列化之前拒绝 `formula`，并报告工作表、范围和规则索引。
 
-## Native charts
+## 原生图表
 
-Use a native chart instead of inserting a rendered SVG or PNG:
+使用原生图表，而不是插入已渲染的 SVG 或 PNG：
 
 ```js
 helpers.addNativeChart(workbook, {
@@ -177,21 +177,21 @@ helpers.addNativeChart(workbook, {
 });
 ```
 
-Supported types are `line`, `column`, and `bar`. Add the chart to `requirements.json`; the audit must confirm its native OOXML part and source ranges.
+支持的类型为 `line`、`column` 和 `bar`。将图表加入 `requirements.json`；审计必须确认其原生 OOXML 部件和源范围。
 
-## Comments and sources
+## 批注与来源
 
-ExcelJS supports legacy cell notes:
+ExcelJS 支持旧式单元格备注：
 
 ```js
 sheet.getCell("B3").note = "Source: https://example.com/data";
 ```
 
-For row-wise researched data, include a visible source URL column instead of hiding all provenance in notes.
+对于按行研究的数据，包含可见的来源 URL 列，而不是把所有出处都藏在备注中。
 
-## CSV and TSV
+## CSV 和 TSV
 
-Load delimited input without unwanted type conversion. Encoding defaults to automatic UTF-8/GB18030 detection:
+加载分隔输入时不要进行不需要的类型转换。编码默认为自动 UTF-8/GB18030 检测：
 
 ```js
 const workbook = await loadDelimited(inputPath, {
@@ -201,11 +201,11 @@ const workbook = await loadDelimited(inputPath, {
 });
 ```
 
-Return a workbook and choose `.csv` or `.tsv` as the `build --out` extension. The first worksheet is exported unless `--sheet` is specified. Formulas export their calculated result because delimited files cannot store formulas.
+返回工作簿，并将 `build --out` 扩展名选为 `.csv` 或 `.tsv`。除非指定 `--sheet`，否则导出第一个工作表。公式导出其计算结果，因为分隔文件无法存储公式。
 
-## Common commands
+## 常用命令
 
-Keep every builder, candidate, conversion, render, and report under the turn work directory. Only `FINAL_XLSX` is user-facing.
+将每个构建器、候选文件、转换、渲染和报告都放在本轮工作目录下。只有 `FINAL_XLSX` 面向用户。
 
 ```bash
 WORKSPACE="${PILOTDECK_WORK_DIR:-$PWD/.pilotdeck/work/manual/<task-slug>}/spreadsheets"

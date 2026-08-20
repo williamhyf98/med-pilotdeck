@@ -56,6 +56,8 @@ export type SkillManagerOptions = {
   pilotHome: string;
   /** Read-only skills shipped with the active PilotDeck build. */
   builtinSkillsRoot?: string;
+  /** Read-only medical skills shipped with plugins/med-tools. */
+  medicalSkillsRoot?: string;
   /**
    * "General chat" cwds we treat as not-a-real-project. Defaults to
    * `pilotHome` (~/.pilotdeck). When the caller passes a `projectKey`
@@ -76,12 +78,16 @@ export type SkillManagerOptions = {
 export class SkillManager {
   private readonly pilotHome: string;
   private readonly builtinSkillsRootPath: string | null;
+  private readonly medicalSkillsRootPath: string | null;
   private readonly generalCwdPaths: string[];
 
   constructor(options: SkillManagerOptions) {
     this.pilotHome = resolve(options.pilotHome);
     this.builtinSkillsRootPath = options.builtinSkillsRoot
       ? resolve(options.builtinSkillsRoot)
+      : null;
+    this.medicalSkillsRootPath = options.medicalSkillsRoot
+      ? resolve(options.medicalSkillsRoot)
       : null;
     const defaults = [this.pilotHome];
     this.generalCwdPaths = (options.generalCwdPaths ?? defaults).map((p) => resolve(p));
@@ -102,6 +108,13 @@ export class SkillManager {
     return this.builtinSkillsRootPath;
   }
 
+  private medicalSkillsRoot(): string {
+    if (!this.medicalSkillsRootPath) {
+      throw new SkillManagerError("not_configured", "Medical skills root is not configured.");
+    }
+    return this.medicalSkillsRootPath;
+  }
+
   private projectSkillsRoot(projectRoot: string): string {
     return getPilotExtensionPaths(projectRoot, this.pilotHome).projectSkillsDir;
   }
@@ -116,6 +129,9 @@ export class SkillManager {
     if (scope === "builtin") {
       return this.builtinSkillsRoot();
     }
+    if (scope === "medical") {
+      return this.medicalSkillsRoot();
+    }
     if (scope === "project") {
       if (!projectKey || this.isGeneralCwd(projectKey)) {
         throw new SkillManagerError(
@@ -129,10 +145,12 @@ export class SkillManager {
   }
 
   private assertMutableScope(scope: SkillScope): void {
-    if (scope === "builtin") {
+    if (scope === "builtin" || scope === "medical") {
       throw new SkillManagerError(
         "read_only",
-        "Built-in skills are read-only. Create a user or project override to edit this skill.",
+        scope === "medical"
+          ? "Medical skills are read-only."
+          : "Built-in skills are read-only. Create a user or project override to edit this skill.",
       );
     }
   }
@@ -164,6 +182,10 @@ export class SkillManager {
       ? await listSkillsIn(this.projectSkillsRoot(effectiveProject), "project")
       : [];
 
+    const medicalSkills = this.medicalSkillsRootPath
+      ? await listSkillsIn(this.medicalSkillsRootPath, "medical")
+      : [];
+
     const builtinSlugs = new Set(builtinSkills.map((skill) => skill.slug));
     const userSlugs = new Set(userSkills.map((skill) => skill.slug));
     const projectSlugs = new Set(projectSkills.map((skill) => skill.slug));
@@ -186,6 +208,7 @@ export class SkillManager {
         ...skill,
         ...(builtinSlugs.has(skill.slug) ? { overridesBuiltin: true } : {}),
       })),
+      medical: medicalSkills,
       projectPath: effectiveProject,
     };
   }
@@ -612,7 +635,7 @@ async function readSkillMeta(skillDir: string, scope: SkillScope): Promise<Skill
     skillFile,
     skillDir,
     scope,
-    readonly: scope === "builtin",
+    readonly: scope === "builtin" || scope === "medical",
     mtime,
   };
 }

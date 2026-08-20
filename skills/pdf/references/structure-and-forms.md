@@ -1,27 +1,27 @@
-# PDF Structure and Forms
+# PDF 结构与表单
 
-Read this before merging, splitting, rotating, editing metadata, or filling a PDF form.
+在合并、拆分、旋转、编辑元数据或填写 PDF 表单之前阅读本文。
 
-## Structural edits
+## 结构性编辑
 
-- Page operations change the PDF object structure; they do not reflow text like a word processor.
-- Preserve the input and write a distinct output.
-- Inspect page count, media boxes, rotation, metadata, encryption, annotations, and AcroForm fields before editing.
-- After merging, verify source order, total page count, page-size changes, bookmarks or forms that may not survive, and all rendered pages.
-- After splitting, name outputs deterministically and confirm the requested page selection is one-based.
-- Rotation must be a multiple of 90 degrees. Render rotated pages to catch crop-box and orientation issues.
+- 页面操作会改变 PDF 对象结构；它们不会像文字处理器那样重排文本。
+- 保留输入，并写入不同的输出。
+- 编辑前检查页数、media boxes、旋转、元数据、加密、批注和 AcroForm 字段。
+- 合并后，核验源顺序、总页数、页面尺寸变化、可能无法保留的书签或表单，以及所有已渲染页面。
+- 拆分后，以确定性方式命名输出，并确认所要求的页面选择是从 1 开始的。
+- 旋转必须是 90 度的倍数。渲染旋转后的页面，以发现 crop-box 和方向问题。
 
-## Forms
+## 表单
 
-- `forms-inspect` targets AcroForm fields. XFA and proprietary dynamic forms are not supported by the bundled workflow.
-- Use the exact field names returned by inspection. Store fill values in a JSON object and keep sensitive values in the task scratch directory.
-- Filling fields can update values without guaranteeing a correct visual appearance in every viewer. Render the filled result and inspect all affected pages.
-- Checkbox and choice values are PDF-specific. Use the exported options/states rather than guessing.
-- Do not alter digital signatures or claim that a modified PDF remains signed. Editing a signed PDF usually invalidates its signature.
+- `forms-inspect` 针对 AcroForm 字段。捆绑工作流不支持 XFA 和专有动态表单。
+- 使用检查返回的精确字段名。将填写值存放在 JSON 对象中，并将敏感值保存在任务临时目录中。
+- 填写字段可以更新值，但不能保证在每个阅读器中视觉外观都正确。渲染填写结果并检查所有受影响的页面。
+- 复选框和选择值是 PDF 特有的。使用导出的选项/状态，而不是猜测。
+- 不要改动数字签名，也不要声称已修改的 PDF 仍保持签名有效。编辑已签名 PDF 通常会使签名失效。
 
-## Content extraction limitations
+## 内容提取的限制
 
-- PDF text order is reconstructed from positioned glyphs and may differ from visual reading order.
-- Table detection is heuristic. Validate extracted rows against the rendered page before using them for calculations or decisions.
-- An image-only page can be visually valid while yielding no text. OCR is a separate workflow.
-- Redaction is not the same as drawing an opaque rectangle. Do not claim content is securely redacted without a dedicated redaction implementation and verification that underlying text and objects were removed.
+- PDF 文本顺序是从定位字形重建的，可能与视觉阅读顺序不同。
+- 表格检测是启发式的。在将提取的行用于计算或决策之前，对照已渲染页面进行核验。
+- 纯图像页在视觉上可以有效，但可能提取不到任何文本。OCR 是单独的工作流。
+- 涂黑遮盖并不等于绘制不透明矩形。没有专用的涂黑实现、且未验证底层文本和对象已被移除时，不要声称内容已被安全涂黑。

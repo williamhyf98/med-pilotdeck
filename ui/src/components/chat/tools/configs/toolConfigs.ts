@@ -112,41 +112,6 @@ export function getSearchToolResultFileCount(result: unknown): number {
   return getSearchToolResultFiles(result).length;
 }
 
-function medicalToolConfig(
-  title: string,
-  getValue: (input: any) => string,
-): ToolDisplayConfig {
-  return {
-    input: {
-      type: 'one-line',
-      icon: 'activity',
-      label: title,
-      getValue,
-      action: 'none',
-      wrapText: true,
-      colorScheme: {
-        primary: 'text-cyan-800 dark:text-cyan-200',
-        secondary: 'text-cyan-600 dark:text-cyan-300',
-        background: 'bg-cyan-500/5',
-        border: 'border-cyan-500/25',
-        icon: 'text-cyan-600 dark:text-cyan-300',
-      },
-    },
-    result: {
-      type: 'collapsible',
-      title,
-      defaultOpen: false,
-      contentType: 'text',
-      getContentProps: (result) => ({
-        content: typeof result === 'string'
-          ? result
-          : JSON.stringify(result?.data ?? result?.content ?? result, null, 2),
-        format: 'code',
-      }),
-    },
-  };
-}
-
 export const TOOL_CONFIGS: Record<string, ToolDisplayConfig> = {
   // ============================================================================
   // COMMAND TOOLS
@@ -762,35 +727,6 @@ export const TOOL_CONFIGS: Record<string, ToolDisplayConfig> = {
       }),
     }
   },
-
-  'mcp__medical-sidecar__medical_sidecar_prepare_attachments': medicalToolConfig(
-    '医疗附件解析',
-    (input) => `${Array.isArray(input?.attachments) ? input.attachments.length : 0} 个附件`,
-  ),
-  'mcp__medical-sidecar__medical_sidecar_rag_search': medicalToolConfig(
-    '医疗知识库检索',
-    (input) => String(input?.query || input?.corpus_id || 'RAG 查询'),
-  ),
-  'mcp__medical-sidecar__medical_sidecar_rag_query': medicalToolConfig(
-    '医疗知识库检索',
-    (input) => String(input?.query || '文本检索'),
-  ),
-  'mcp__medical-sidecar__medical_sidecar_normalize_table': medicalToolConfig(
-    '表格结构化',
-    (input) => String(input?.title || 'OCR/模型表格输出'),
-  ),
-  'mcp__medical-sidecar__medical_sidecar_build_trauma_prompt': medicalToolConfig(
-    '战创伤阶段研判',
-    (input) => String(input?.stage || '战创伤'),
-  ),
-  'mcp__medical-sidecar__medical_sidecar_prepare_volume': medicalToolConfig(
-    '医学 Volume 处理',
-    (input) => String(input?.filename || input?.name || 'Volume'),
-  ),
-  'mcp__medical-sidecar__medical_sidecar_m3d_infer': medicalToolConfig(
-    'M3D 医学影像推理',
-    (input) => String(input?.task || 'M3D'),
-  ),
 
   // ============================================================================
   // DEFAULT FALLBACK

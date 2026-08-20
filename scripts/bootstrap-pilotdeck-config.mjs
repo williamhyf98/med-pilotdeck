@@ -92,18 +92,22 @@ router:
       - "Simple file creation (1-2 files) or single code generation is medium"
       - "Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple"
   autoOrchestrate:
-    enabled: true
+    enabled: false
     triggerTiers:
       - complex
     slimSystemPrompt: true
     allowedTools:
-      - agent
       - read_file
       - grep
       - glob
       - read_skill
   stats:
     enabled: true
+telemetry:
+  enabled: false
+tools:
+  webSearch:
+    enabled: false
 cron:
   enabled: true
   timezone: Asia/Shanghai
@@ -143,9 +147,22 @@ cron:
   runTimeoutMinutes: 60
 `;
 
+const DEFAULT_TELEMETRY_SNIPPET = `
+telemetry:
+  enabled: false
+`;
+
+const DEFAULT_TOOLS_SNIPPET = `
+tools:
+  webSearch:
+    enabled: false
+`;
+
 const PATCH_SECTIONS = [
   { key: 'adapters', snippet: DEFAULT_ADAPTERS_SNIPPET },
   { key: 'cron', snippet: DEFAULT_CRON_SNIPPET },
+  { key: 'telemetry', snippet: DEFAULT_TELEMETRY_SNIPPET },
+  { key: 'tools', snippet: DEFAULT_TOOLS_SNIPPET },
 ];
 
 function patchMissingSections(configPath) {

@@ -7,7 +7,7 @@ import {
   ensureUploadFailedMessage,
   formatAttachmentLimitErrors,
   validateAttachmentBatch,
-} from '../../ui/src/components/chat/utils/medicalFolderUpload.ts';
+} from '../../ui/src/components/chat/utils/medicalFolderUpload.js';
 
 function fakeFile(name: string, size: number): File {
   return {

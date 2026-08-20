@@ -1,124 +1,121 @@
-# OOXML, Review, Privacy, and Compatibility
+# OOXML、审阅、隐私与兼容性
 
-Read this guide before working with comments, tracked changes, fields, external relationships, sensitive metadata, or package-sensitive Word features.
+在处理批注、跟踪更改、域、外部关系、敏感元数据或对包敏感的 Word 功能之前阅读本指南。
 
-## Contents
+## 目录
 
-1. Package model
-2. Comments
-3. Tracked changes
-4. Fields and links
-5. Privacy and sanitization
-6. Unsupported and high-risk features
-7. Safe handling rules
+1. 包模型
+2. 批注
+3. 跟踪更改
+4. 域与链接
+5. 隐私与净化
+6. 不受支持和高风险功能
+7. 安全处理规则
 
-## 1. Package model
+## 1. 包模型
 
-A `.docx` file is an OPC ZIP package containing XML parts, relationships, media, and properties. Text extraction alone does not establish package integrity or visual correctness.
+`.docx` 文件是包含 XML 部件、关系、媒体和属性的 OPC ZIP 包。仅提取文本不能确立包完整性或视觉正确性。
 
-Use `validate` to check required parts, XML well-formedness, archive path safety, expansion limits, internal relationship targets, content-type declarations, and macro absence. Use `inspect` to report comments, tracked changes across story parts, fields, images, external relationships, package features, metadata, sections, visible structure, and inspection limitations.
+使用 `validate` 检查所需部件、XML 良构性、归档路径安全、展开限制、内部关系目标、内容类型声明以及无宏。使用 `inspect` 报告批注、跨故事部件的跟踪更改、域、图像、外部关系、包功能、元数据、节、可见结构以及检查限制。
 
-The `review`, `finalize`, and `sanitize` commands patch a copied OOXML package. The general `edit` command loads and saves through `python-docx`; it blocks package-sensitive inputs by default. Use the controlled `fallback-patch` wrapper for a narrow OOXML change rather than bypassing the skill.
+`review`、`finalize` 和 `sanitize` 命令会修补复制的 OOXML 包。通用 `edit` 命令通过 `python-docx` 加载和保存；它默认阻断对包敏感的输入。对窄范围 OOXML 更改使用受控的 `fallback-patch` 包装器，而不是绕过该 skill。
 
-## 2. Comments
+## 2. 批注
 
-Comments require coordinated changes to:
+批注需要对以下内容进行协调更改：
 
-- `word/comments.xml`;
-- comment relationships;
-- content type declarations;
-- range start, range end, and reference markers in the document body.
+- `word/comments.xml`；
+- 批注关系；
+- 内容类型声明；
+- 文档正文中的范围起点、范围终点和引用标记。
 
-Use the bundled `review` command rather than hand-writing these parts. Inspect the result and verify comment count, ID, author, date, text, and anchor context.
+使用捆绑的 `review` 命令，而不是手工编写这些部件。检查结果并核验批注数量、ID、作者、日期、文本和锚点上下文。
 
-Page rendering normally omits review balloons. Do not use PNG pages as proof that comments exist or are correctly anchored.
+页面渲染通常会省略审阅气泡。不要用 PNG 页面作为批注存在或正确锚定的证明。
 
-## 3. Tracked changes
+## 3. 跟踪更改
 
-A tracked replacement contains a deletion and insertion with IDs, authors, and dates. The bundled command enables revision tracking and inserts both structures in place.
+跟踪替换包含带有 ID、作者和日期的删除和插入。捆绑命令会启用修订跟踪，并在原地插入这两种结构。
 
-Limitations:
+限制：
 
-- the match must be unique enough for the intended paragraph;
-- tracked replacement requires the matched text to exist in a single run;
-- complex moves, table-structure changes, and full Microsoft Word Compare semantics are not implemented;
-- accepting or rejecting revisions changes visible content and can affect pagination.
+- 匹配必须足以唯一确定预期段落；
+- 跟踪替换要求匹配文本存在于单个 run 中；
+- 复杂移动、表格结构更改以及完整的 Microsoft Word 比较语义未实现；
+- 接受或拒绝修订会改变可见内容，并可能影响分页。
 
-Finalization processes simple insertions and deletions in the main body, headers, footers, footnotes, and endnotes. It blocks move and property revisions because those require fuller Word semantics. Always inspect before and after finalization. Confirm every revision count reaches zero when delivering a clean final document.
+定稿会处理主体、页眉、页脚、脚注和尾注中的简单插入和删除。它会阻断移动和属性修订，因为那些需要更完整的 Word 语义。始终在定稿前后检查。交付干净最终文档时，确认每一项修订计数都达到零。
 
-## 4. Fields and links
+## 4. 域与链接
 
-Inspection reports field instructions and external relationships. Treat field display text as potentially stale because headless tools may not recalculate Word fields.
+检查会报告域指令和外部关系。将域显示文本视为可能过期，因为无头工具可能不会重新计算 Word 域。
 
-Do not silently rewrite field instructions, bookmarks, hyperlinks, or relationship targets during unrelated edits. The creator supports TOC, PAGE, NUMPAGES, DATE, and TIME fields. Verify their displayed results in rendering; a valid field instruction does not prove its cached display is current. For a created TOC, use `refresh-toc` to retain the live field while generating visible cached entries and page numbers, then require `toc.populated` in acceptance.
+在无关编辑期间，不要静默重写域指令、书签、超链接或关系目标。创建器支持 TOC、PAGE、NUMPAGES、DATE 和 TIME 域。在渲染中核验其显示结果；有效的域指令不能证明其缓存显示是最新的。对于已创建的目录，使用 `refresh-toc` 在生成可见缓存条目和页码的同时保留活动域，然后在验收中要求 `toc.populated`。
 
-The creator does not set `w:updateFields` by default, and `refresh-toc`
-removes that update-on-open request after caching stable results. This avoids
-the Word warning that a document's fields may refer to other files. The final
-audit reports `fields-update-on-open`, and delivery blocks it unless the
-current user explicitly accepts dynamic updates and the
-`--allow-update-fields-on-open` flag is used. This opt-in does not authorize
-following external relationships.
+创建器默认不设置 `w:updateFields`，并且 `refresh-toc`
+在缓存稳定结果后会移除该打开时更新请求。这避免了
+Word 关于文档域可能引用其他文件的警告。最终
+审计会报告 `fields-update-on-open`，除非当前用户明确接受动态更新并使用
+`--allow-update-fields-on-open` 标志，否则交付会阻断它。此项选择加入并不授权
+跟随外部关系。
 
-Treat unexpected external relationships as a security and privacy signal. Do not follow remote targets automatically.
+将意外的外部关系视为安全和隐私信号。不要自动跟随远程目标。
 
-## 5. Privacy and sanitization
+## 5. 隐私与净化
 
-The `sanitize` command removes:
+`sanitize` 命令会移除：
 
-- author and last-modified-by values;
-- subject and keywords values;
-- custom document properties;
-- Word revision identifiers (`rsid*`);
-- comments when `--remove-comments` is supplied.
+- 作者和上次修改者值；
+- 主题和关键字值；
+- 自定义文档属性；
+- Word 修订标识符（`rsid*`）；
+- 当提供 `--remove-comments` 时的批注。
 
-It does not remove visible sensitive content, image metadata, embedded files, external link targets, or arbitrary custom XML. For a privacy-sensitive delivery:
+它不会移除可见的敏感内容、图像元数据、嵌入文件、外部链接目标或任意自定义 XML。对于隐私敏感的交付：
 
-1. inspect metadata, comments, relationships, headers, footers, and visible text;
-2. sanitize to a new output;
-3. inspect again;
-4. search visible content for sensitive values;
-5. validate, audit, and render the sanitized copy.
+1. 检查元数据、批注、关系、页眉、页脚和可见文本；
+2. 净化到新输出；
+3. 再次检查；
+4. 在可见内容中搜索敏感值；
+5. 验证、审计并渲染净化副本。
 
-Do not claim redaction or anonymization when only metadata was scrubbed.
+当仅擦除了元数据时，不要声称涂黑或匿名化。
 
-## 6. Unsupported and high-risk features
+## 6. 不受支持和高风险功能
 
-Stop and assess fidelity before modifying documents that contain:
+在修改包含以下内容的文档之前停止并评估保真度：
 
-- digital signatures;
-- document and write protection;
-- macros or VBA;
-- embedded OLE objects;
-- complex content controls;
-- custom XML mappings;
-- protected or rights-managed content;
-- linked external media;
-- uncommon drawing, equation, or chart extensions;
-- nested revision structures beyond simple insertions and deletions.
+- 数字签名；
+- 文档保护和写入保护；
+- 宏或 VBA；
+- 嵌入的 OLE 对象；
+- 复杂内容控件；
+- 自定义 XML 映射；
+- 受保护或权限管理的内容；
+- 链接的外部媒体；
+- 非常用绘图、公式或图表扩展；
+- 超出简单插入和删除的嵌套修订结构。
 
-This skill rejects macro-enabled formats. Preserve the source and avoid reconstruction when unsupported parts are important to the document's function.
+此 skill 拒绝启用宏的格式。当不受支持的部分对文档功能重要时，保留源文件并避免重建。
 
-Documents declaring `w:documentProtection` or `w:writeProtection` are read-only. The skill inventories those settings but does not bypass passwords, enforcement, rights management, or policy controls. Standard mutation commands and targeted fallback patching return `blocked`.
+声明 `w:documentProtection` 或 `w:writeProtection` 的文档是只读的。该 skill 会盘点这些设置，但不会绕过密码、强制执行、权限管理或策略控制。标准变更命令和定向回退修补会返回 `blocked`。
 
-Before writing custom code, query `capabilities` and the relevant `schema`. If a fallback is allowed, follow [capabilities-and-fallbacks.md](capabilities-and-fallbacks.md). A fallback manifest and post-mutation preflight are mandatory; direct custom mutation is not an accepted delivery path. Keep the fallback output internal and use `deliver` only after its exact SHA-256-bound candidate passes acceptance and per-page visual review.
+在编写自定义代码之前，查询 `capabilities` 和相关 `schema`。如果允许回退，遵循 [capabilities-and-fallbacks.md](capabilities-and-fallbacks.md)。回退清单和变更后预检是强制的；直接自定义变更不是可接受的交付路径。将回退输出保持为内部，并仅在其精确的 SHA-256 绑定候选通过验收和逐页视觉审阅之后使用 `deliver`。
 
-## 7. Safe handling rules
+## 7. 安全处理规则
 
-- Work only with `.docx` files.
-- Validate before extraction or mutation.
-- Never overwrite the source by default. A current, explicit request to replace
-  that exact source requires `deliver --replace-source`; `--overwrite` is not
-  equivalent. The delivery command must retain its hidden recovery copy.
-- Continue modifying from the latest session-tracked delivery. Use an older or
-  original version as the base only when the current user explicitly asks for
-  it.
-- Never extract unsafe archive paths.
-- Never fetch remote images or relationships automatically.
-- Never place credentials, internal tokens, hidden reasoning, or private system paths into document content.
-- Keep temporary unpacked packages in controlled temporary directories and delete them after repacking.
-- Keep fallback programs under the turn work directory. Do not read secrets
-  from the environment, access the network, or write outside declared
-  arguments and task-local assets.
-- Validate every repacked file before use.
-- Treat clean visual rendering as necessary but insufficient; pair it with structural inspection.
+- 仅处理 `.docx` 文件。
+- 在提取或变更之前验证。
+- 默认切勿覆盖源文件。当前、明确要求替换
+  该精确源时，需要 `deliver --replace-source`；`--overwrite` 并不
+  等效。交付命令必须保留其隐藏恢复副本。
+- 从会话跟踪的最新交付继续修改。仅当当前用户明确要求时，才将较旧或
+  原始版本作为基础。
+- 切勿提取不安全的归档路径。
+- 切勿自动获取远程图像或关系。
+- 切勿将凭据、内部令牌、隐藏推理或私有系统路径放入文档内容。
+- 将临时解包包放在受控临时目录中，并在重新打包后删除它们。
+- 将回退程序放在本轮工作目录下。不要从环境读取机密、
+  访问网络，或写入已声明参数和任务本地资源之外。
+- 在使用前验证每一个重新打包的文件。
+- 将干净的视觉渲染视为必要但不充分；将其与结构检查配对。

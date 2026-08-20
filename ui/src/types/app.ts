@@ -14,8 +14,6 @@ export type AppTab =
   | 'skills'
   | 'preview'
   | 'dashboard'
-  | 'medical-dialogue'
-  | 'medical-trauma'
   | `plugin:${string}`;
 
 export type AlwaysOnSessionTarget =

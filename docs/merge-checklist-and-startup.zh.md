@@ -1,5 +1,7 @@
 # PilotDeck-main(A)→ med-pilotdeck(B)合并清单与启动指南
 
+> **2026-08-19 更新：** 专用医疗 UI 与 `products/medical-integration`（sidecar / medical-tools）已按 [`offline-deployment-plan.md`](./offline-deployment-plan.md) 步骤 1 删除。下文是当时合并记录，其中 sidecar 启动方式不再适用；医疗能力以 `plugins/med-tools` + 通用对话为准。
+
 > 合并日期:2026-08-13
 > 合并目标:把 A(`D:\projects\PilotDeck-main`)的医疗开发工作并入 B(`D:\projects\med-pilotdeck`),推送到远程 `feat/add-new-skill` 分支。
 

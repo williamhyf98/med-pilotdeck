@@ -1,220 +1,215 @@
-# DOCX Task Workflows
+# DOCX 任务工作流
 
-Use this guide to choose the correct lifecycle for reading, creating, editing, reviewing, comparing, sanitizing, and delivering Word documents.
+使用本指南选择正确的生命周期，用于阅读、创建、编辑、审阅、比较、净化和交付 Word 文档。
 
-Begin every modifying workflow with `capabilities`, `prepare`, and the relevant
-`schema`. `prepare` freezes acceptance and returns the canonical paths for the
-current `PILOTDECK_WORK_DIR`; never guess or search for another turn directory.
-The standard command owns common operations;
-[capabilities-and-fallbacks.md](capabilities-and-fallbacks.md) owns every
-exception. Every mutation produces an internal candidate below
-`PILOTDECK_WORK_DIR`; only `deliver` may create the project-visible final DOCX.
-The Skill keeps a session-scoped version chain outside the project-visible
-files. An original or prior path therefore resolves to the latest delivered
-revision during later modifying turns.
+每一个修改工作流都以 `capabilities`、`prepare` 以及相关的
+`schema` 开始。`prepare` 会冻结验收并返回当前
+`PILOTDECK_WORK_DIR` 的规范路径；切勿猜测或搜索另一个轮次目录。
+标准命令负责常见操作；
+[capabilities-and-fallbacks.md](capabilities-and-fallbacks.md) 负责每一项
+例外。每一次变更都会在
+`PILOTDECK_WORK_DIR` 下生成内部候选文件；只有 `deliver` 可以创建项目可见的最终 DOCX。
+该 Skill 在项目可见文件之外保持会话范围的版本链。
+因此，在后续修改轮次中，原始路径或先前路径会解析到最新已交付修订。
 
-## Contents
+## 目录
 
-1. Read-only analysis
-2. New document creation
-3. Targeted editing
-4. Major rewrite or redesign
-5. Review and redline
-6. Finalization
-7. Comparison
-8. Privacy cleanup
-9. Rendering and iteration
-10. Failure handling
+1. 只读分析
+2. 新建文档
+3. 定向编辑
+4. 重大改写或重新设计
+5. 审阅与修订标记
+6. 定稿
+7. 比较
+8. 隐私清理
+9. 渲染与迭代
+10. 失败处理
 
-## 1. Read-only analysis
+## 1. 只读分析
 
-Validate and inspect the source. Read the complete relevant section, including headings, table labels, notes, headers, footers, comments, and tracked content. Use rendering when page position or layout affects the answer.
+验证并检查源文件。阅读完整的相关部分，包括标题、表格标签、注释、页眉、页脚、批注和已跟踪内容。当页面位置或版式会影响答案时使用渲染。
 
-Do not change or re-export the source for a read-only question. State when a requested fact is absent, ambiguous, or present only inside unresolved revisions.
+对于只读问题，不要更改或重新导出源文件。当所要求的事实缺失、含糊，或仅存在于未解决的修订中时，予以说明。
 
-## 2. New document creation
+## 2. 新建文档
 
-1. Clarify the requested outcome from available context without inventing facts.
-2. Select an archetype, then freeze one style path. Use user mode only for a
-   supplied template, concrete visual requirements, or an existing document
-   whose style must be preserved. Otherwise use the single built-in neutral
-   template. Never infer a colored theme from the document archetype.
-3. Read `design-and-layout.md` and map content to appropriate forms.
-4. Run `prepare --style-mode builtin` or the corresponding user style source.
-   Add `--document-structure formal-report` for a cover + TOC + body report,
-   and add `--min-images N` when figures are required. Include requirements
-   from the current user request, then query
-   `schema --command create` and write a strict JSON specification below the
-   returned `tmp` path. Do not loosen acceptance after a candidate fails.
-   Do not enable headers, footers, or page numbers unless the current user
-   explicitly requested them. When requested, freeze only the corresponding
-   `--allow-header`, `--allow-footer`, and/or `--allow-page-numbers` flags.
-5. Copy the frozen style policy into the create specification and run `create`
-   with the acceptance manifest to a new internal candidate path.
-6. If the required feature is outside the schema, choose an auxiliary asset or declared fallback; never run an ad hoc builder directly.
-7. Inspect the candidate and run `audit --profile draft`.
-8. Correct content or design defects and repeat.
-9. If a TOC is required, run `refresh-toc` after content and headings are
-   stable. It writes visible cached entries and disables field updates on
-   open; do not enable automatic updates merely to refresh the TOC.
-10. Run `qa-init` with the frozen acceptance manifest and resolve its automated gate.
-11. Open every current page path, call `qa-record` immediately with a
-    page-specific passed/failed note, then run `qa-finalize`. Do not handwrite
-    review JSON or calculate page hashes.
-12. Run `deliver --new-document` once with the exact candidate and successful
-    preflight report. If the user did not specify a destination, keep the final
-    file in the current workspace. An outside-workspace destination must be
-    the exact path frozen by `prepare --external-output`.
+1. 从可用上下文澄清所要求的结果，不要编造事实。
+2. 选择原型，然后冻结一条样式路径。仅在有
+   所提供模板、具体视觉要求，或必须保留样式的既有文档时
+   使用用户模式。否则使用单一内置中性
+   模板。切勿从文档原型推断彩色主题。
+3. 阅读 `design-and-layout.md`，并将内容映射到合适的形式。
+4. 运行 `prepare --style-mode builtin` 或相应的用户样式来源。
+   对于封面 + 目录 + 正文报告，添加 `--document-structure formal-report`，
+   当需要插图时添加 `--min-images N`。纳入当前用户请求中的需求，然后查询
+   `schema --command create`，并在返回的 `tmp` 路径下写入严格的 JSON 规范。
+   不要在候选失败后放宽验收。
+   除非当前用户明确要求，否则不要启用页眉、页脚或页码。
+   当被要求时，仅冻结相应的
+   `--allow-header`、`--allow-footer` 和/或 `--allow-page-numbers` 标志。
+5. 将冻结的样式策略复制到创建规范中，并用验收清单将 `create`
+   运行到新的内部候选路径。
+6. 如果所需功能超出模式，选择辅助资源或已声明的回退；切勿直接运行临时构建器。
+7. 检查候选文件并运行 `audit --profile draft`。
+8. 纠正内容或设计缺陷并重复。
+9. 如果需要目录，在内容和标题稳定后运行 `refresh-toc`。
+   它会写入可见的缓存条目并禁用打开时的域更新；
+   不要仅为刷新目录而启用自动更新。
+10. 使用冻结的验收清单运行 `qa-init`，并解决其自动化门禁。
+11. 打开每一个当前页面路径，立即用特定于页面的通过/失败说明调用 `qa-record`，
+    然后运行 `qa-finalize`。不要手写
+    审阅 JSON 或计算页面哈希。
+12. 使用精确候选和成功的预检报告运行一次 `deliver --new-document`。
+    如果用户未指定目的地，将最终文件保留在当前工作区。
+    工作区外的目的地必须是 `prepare --external-output` 冻结的精确路径。
 
-Use placeholders or clearly marked assumptions when required information is missing. Do not silently fabricate names, dates, financial values, citations, legal terms, or technical results.
+当所需信息缺失时，使用占位符或清晰标记的假设。不要静默编造名称、日期、财务数值、引文、法律条款或技术结果。
 
-## 3. Targeted editing
+## 3. 定向编辑
 
-1. Preserve the original by default.
-2. Run `resolve-latest` on the path named by the user. Inspect and modify the
-   returned `resolved` document, not a stale original or prior revision.
-3. Run `prepare --existing-document`, then `inspect` and identify exact text,
-   style, and location targets. Existing recurring content may remain, but
-   `set_header`, `set_footer`, and new page fields require explicit frozen
-   permission.
-4. Use the smallest supported edit operation. Ordinary anchored image insertion
-   is supported by `insert_image`; use fallback only for unsupported wrapping,
-   floating placement, or package-sensitive structures.
-5. Write to a new internal candidate path.
-6. Verify each operation's `affected` count. Missing or ambiguous targets return `partial`; refine them rather than guessing.
-7. Re-inspect the changed area and compare the output with the resolved input when useful.
-8. Validate, audit, render, and inspect every page affected by pagination changes. For safety, inspect all pages before final delivery.
-9. Pass `qa-init`, per-page `qa-record`, and `qa-finalize`, then promote the exact
-   candidate with `deliver --source <user-referenced-path>` to a new final
-   filename. The delivery becomes the latest version for the next turn.
+1. 默认保留原始文件。
+2. 对用户命名的路径运行 `resolve-latest`。检查并修改
+   返回的 `resolved` 文档，而不是过期的原始文件或先前修订。
+3. 运行 `prepare --existing-document`，然后 `inspect` 并识别精确的文本、
+   样式和位置目标。既有的重复内容可以保留，但
+   `set_header`、`set_footer` 和新的页面域需要显式冻结的
+   许可。
+4. 使用最小的受支持编辑操作。普通锚定图像插入
+   由 `insert_image` 支持；仅对不支持的环绕、
+   浮动放置或对包敏感的结构使用回退。
+5. 写入新的内部候选路径。
+6. 核验每一项操作的 `affected` 计数。缺失或含糊的目标会返回 `partial`；应细化它们，而不是猜测。
+7. 重新检查变更区域，并在有用时将输出与已解析输入比较。
+8. 验证、审计、渲染，并检查分页变化所影响的每一页。为安全起见，在最终交付前检查所有页面。
+9. 通过 `qa-init`、逐页 `qa-record` 和 `qa-finalize`，然后用 `deliver --source <user-referenced-path>`
+   将精确候选提升为新的最终
+   文件名。该交付成为下一轮的最新版本。
 
-Prefer this order of intervention:
+优先按此干预顺序：
 
-1. replace text inside existing runs;
-2. insert or remove one paragraph;
-3. change one paragraph style;
-4. append a clearly requested section;
-5. use a narrow `fallback-patch` when preservation requires an OOXML operation outside the edit schema;
-6. rebuild only for a requested substantial redesign, and only through declared `fallback-create`.
+1. 在既有 run 内替换文本；
+2. 插入或删除一个段落；
+3. 更改一个段落样式；
+4. 追加明确要求的章节；
+5. 当保留需要编辑模式之外的 OOXML 操作时，使用窄范围的 `fallback-patch`；
+6. 仅对所要求的实质性重新设计进行重建，并且仅通过已声明的 `fallback-create`。
 
-Do not convert a local correction into a broad rewrite. Preserve citations, fields, bookmarks, links, and review history unless the user asks to change them.
+不要把局部更正变成大范围改写。除非用户要求更改，否则保留引文、域、书签、链接和审阅历史。
 
-Use `--use-exact-input` only when the current user explicitly requests an
-older/original revision as the new editing base. If the current request
-explicitly says to overwrite the exact source, `deliver` may use
-`--source <source> --out <source> --replace-source`. That mode creates a
-hidden recovery copy. A generic `--overwrite` flag, an earlier request, or the
-absence of a preferred filename does not authorize source replacement.
+仅当当前用户明确要求将
+较旧/原始修订作为新的编辑基础时，才使用 `--use-exact-input`。如果当前请求
+明确要求覆盖精确源，`deliver` 可以使用
+`--source <source> --out <source> --replace-source`。该模式会创建
+隐藏的恢复副本。通用的 `--overwrite` 标志、更早的请求，或
+缺少首选文件名，都不能授权替换源。
 
-## 4. Major rewrite or redesign
+## 4. 重大改写或重新设计
 
-Treat a major rewrite as a new design task with a fidelity constraint.
+将重大改写视为带有保真约束的新设计任务。
 
-- Capture the original content and hierarchy with `inspect`.
-- Render the original to understand pagination and recurring components.
-- Decide what must remain semantically or visually stable.
-- Choose whether to edit a copy or recreate from a specification.
-- Record intentional omissions or structural changes.
-- Compare old and new text, then render both when visual comparison matters.
-- Keep all redesign iterations internal and deliver only the accepted candidate.
+- 用 `inspect` 捕获原始内容和层级。
+- 渲染原始文件以理解分页和重复组件。
+- 决定哪些内容必须在语义或视觉上保持稳定。
+- 选择是编辑副本还是从规范重新创建。
+- 记录有意的省略或结构变化。
+- 比较新旧文本，并在视觉比较重要时渲染两者。
+- 将所有重新设计迭代保持为内部，并仅交付被接受的候选。
 
-Use recreation only when its benefits outweigh the risk of losing unsupported OOXML features.
+仅当重新创建的收益大于丢失不受支持 OOXML 功能的风险时，才使用重新创建。
 
-## 5. Review and redline
+## 5. 审阅与修订标记
 
-Use `review` when changes must remain visible or feedback must be anchored near the relevant content.
+当更改必须保持可见，或反馈必须锚定在相关内容附近时，使用 `review`。
 
-- Use comments for questions, requests for evidence, ambiguity, or non-authoritative suggestions.
-- Use tracked replacements for proposed wording changes.
-- Keep comment text specific and actionable.
-- Anchor feedback at the point of concern instead of collecting unrelated notes at the end.
-- Use a short unique match whenever possible.
-- Inspect the result to verify comment count, author, text, and tracked insertion/deletion counts.
+- 对问题、证据请求、含糊之处或非权威建议使用批注。
+- 对拟议措辞更改使用跟踪替换。
+- 保持批注文本具体且可执行。
+- 将反馈锚定在关注点，而不是在末尾收集无关备注。
+- 尽可能使用简短且唯一的匹配。
+- 检查结果以核验批注数量、作者、文本以及跟踪插入/删除计数。
 
-The bundled tracked-replacement operation requires the matched text to reside in one Word run. If it spans multiple runs, the command returns `unsupported`. Use a smaller exact match, obtain approval for a clean edit, or use a controlled OOXML patch; never silently downgrade a requested redline.
+捆绑的跟踪替换操作要求匹配文本位于一个 Word run 中。如果它跨越多个 run，命令会返回 `unsupported`。使用更小的精确匹配、获得干净编辑的批准，或使用受控的 OOXML 补丁；切勿静默降级所要求的修订标记。
 
-## 6. Finalization
+## 6. 定稿
 
-Determine the requested review state before finalizing:
+在定稿前确定所要求的审阅状态：
 
-- accept changes and keep comments;
-- accept changes and remove comments;
-- reject changes and keep comments;
-- reject changes and remove comments;
-- remove comments without changing revisions.
+- 接受更改并保留批注；
+- 接受更改并移除批注；
+- 拒绝更改并保留批注；
+- 拒绝更改并移除批注；
+- 移除批注但不更改修订。
 
-Never accept or reject changes by assumption. After finalization, inspect the output and verify that comment and revision counts match the requested state. Run the `final` audit before delivery.
+切勿凭假设接受或拒绝更改。定稿后，检查输出并核验批注和修订计数与所要求状态匹配。交付前运行 `final` 审计。
 
-## 7. Comparison
+## 7. 比较
 
-Use `compare` to produce a paragraph-level unified text diff plus metadata, section, field, image, package-feature, and inspection-coverage differences. Read the result rather than reporting only that files differ.
+使用 `compare` 生成段落级统一文本差异，以及元数据、节、域、图像、包功能和检查覆盖的差异。阅读结果，而不是只报告文件不同。
 
-If either document has partial inspection coverage, comparison top-level `status` is `partial`. Do not report a complete comparison when unsupported structures could contain changes outside the modeled surface.
+如果任一文档的检查覆盖为部分，比较的顶层 `status` 为 `partial`。当不受支持的结构可能包含建模表面之外的更改时，不要报告完整比较。
 
-This comparison does not establish:
+此项比较不能确立：
 
-- visual equality;
-- style equality;
-- identical table geometry;
-- identical images or relationships;
-- a legal redline equivalent to Microsoft Word Compare.
+- 视觉相等；
+- 样式相等；
+- 相同的表格几何；
+- 相同的图像或关系；
+- 与 Microsoft Word 比较等效的法律修订标记。
 
-Render both documents for visual comparison when layout matters. Use inspection output to compare metadata, sections, tables, comments, and revisions.
+当版式重要时，渲染两份文档进行视觉比较。使用检查输出比较元数据、节、表格、批注和修订。
 
-## 8. Privacy cleanup
+## 8. 隐私清理
 
-Use `sanitize` to remove core author fields, custom properties, and revision identifiers. Add `--remove-comments` when comments must not remain.
+使用 `sanitize` 移除核心作者字段、自定义属性和修订标识符。当批注不得保留时添加 `--remove-comments`。
 
-Sanitization does not remove visible names, emails, phone numbers, account values, or confidential prose. Search visible content separately when the user requests redaction or anonymization. Do not claim irreversible redaction unless visible text, document XML, comments, headers, footers, hyperlinks, and embedded content were all checked.
+净化不会移除可见的姓名、电子邮件、电话号码、账户值或机密正文。当用户要求涂黑或匿名化时，单独搜索可见内容。除非可见文本、文档 XML、批注、页眉、页脚、超链接和嵌入内容均已检查，否则不要声称不可逆涂黑。
 
-Validate, inspect, and render the sanitized output. Confirm that the visual document remains unchanged where expected.
+验证、检查并渲染净化后的输出。确认视觉文档在预期处保持不变。
 
-## 9. Rendering and iteration
+## 9. 渲染与迭代
 
-Render every delivery candidate through the bundled command. Use a fresh output directory for each iteration so stale pages cannot be mistaken for the latest result.
+通过捆绑命令渲染每一个交付候选。每次迭代使用新的输出目录，以免将过期页面误认为最新结果。
 
-For each page:
+对每一页：
 
-1. inspect the full page at a readable scale;
-2. zoom into tables, images, callouts, footnotes, headers, and footers;
-3. note every defect and its page;
-4. correct the source or specification;
-5. regenerate the DOCX and rerun validation and audit;
-6. render again and discard stale QA images.
+1. 以可读比例检查整页；
+2. 放大表格、图像、标注、脚注、页眉和页脚；
+3. 记录每一项缺陷及其所在页；
+4. 纠正源或规范；
+5. 重新生成 DOCX 并重新运行验证和审计；
+6. 再次渲染并丢弃过期的质量图像。
 
-Treat page PNGs and optional PDFs as internal QA unless the user explicitly
-requests them. Rendering alone is not acceptance: freeze requirements with
-`prepare`, resolve or disposition warnings from `qa-init`, inspect every PNG,
-and call `qa-record` for every current page before `qa-finalize`. Never edit
-the review JSON or calculate image hashes manually; `qa-init` emits the
-normalized decoded-pixel digests consumed by the gate. Repeated generic notes
-and stale page images are rejected.
-Automated body-ink checks also block unintended blank pages and surface
-suspiciously sparse pages. A searchable PDF text layer
-does not compensate for text that is missing from the rendered page. A TOC
-field is not accepted until `refresh-toc` produces visible cached entries and
-page numbers. A final candidate that requests automatic field updates is
-blocked unless the current user explicitly accepted the Word opening prompt
-and `deliver --allow-update-fields-on-open` is used. `deliver` also requires
-the acceptance manifest and rejects
-visual evidence or preflight reports bound to another candidate digest.
+除非用户明确要求，否则将页面 PNG 和可选 PDF 视为内部质量产物。
+仅渲染并不等于验收：用 `prepare` 冻结需求，
+解决或处置来自 `qa-init` 的警告，检查每一张 PNG，
+并在 `qa-finalize` 之前为每一个当前页面调用 `qa-record`。切勿手动编辑
+审阅 JSON 或计算图像哈希；`qa-init` 会发出
+门禁所消费的规范化解码像素摘要。重复的笼统说明
+和过期页面图像会被拒绝。
+自动化正文墨迹检查也会阻断非预期空白页，并标出
+可疑稀疏页。可搜索的 PDF 文本层
+不能弥补渲染页面上缺失的文本。目录
+域在 `refresh-toc` 产生可见缓存条目和
+页码之前不被接受。请求自动域更新的最终候选
+会被阻断，除非当前用户明确接受 Word 打开提示
+并使用 `deliver --allow-update-fields-on-open`。`deliver` 还要求
+验收清单，并拒绝
+绑定到另一候选摘要的视觉证据或预检报告。
 
-## 10. Failure handling
+## 10. 失败处理
 
-- If dependencies are missing, run `fix` only when installation is allowed.
-- If LibreOffice is absent, `preflight` cannot pass. Finish structural QA and disclose that visual QA was not completed.
-- If LibreOffice exists but conversion fails, inspect the command output, writable HOME/profile, input validity, and output directory before retrying.
-- If an edit target is missing or ambiguous, do not guess. Refine the match from inspection data or report the unresolved target.
-- If a package contains macros, reject it; this skill intentionally supports `.docx` only.
-- If a standard operation returns `partial`, `unsupported`, or `blocked`, preserve that result. Do not use `|| true` or continue from a file merely because it exists.
-- An `inspect` result with `inspection_coverage.status: partial` also has top-level
-  `status: partial`. You may continue with a narrowly supported operation only
-  when its target is inside the inspected scope and the unmodeled package
-  features are preserved and disclosed; do not claim complete document
-  understanding.
-- If the document depends on signatures, embedded objects, custom XML mappings, or complex content controls, preserve the source. Use a narrow fallback only when the capability table permits it.
-- If a fallback is appropriate, run it through `fallback-patch` or `fallback-create` and retain its manifest. Scope violations are blocked, not retried outside the wrapper.
-- If preflight passed but the candidate changed, delivery is blocked by the
-  SHA-256 mismatch. Rerun the complete gate; never copy or rename around it.
-- If full preflight is impossible, report the limitation and keep the candidate
-  internal. Do not expose it as a completed deliverable.
+- 如果依赖缺失，仅在允许安装时运行 `fix`。
+- 如果缺少 LibreOffice，`preflight` 无法通过。完成结构质量检查并披露视觉质量检查未完成。
+- 如果存在 LibreOffice 但转换失败，在重试前检查命令输出、可写的 HOME/配置文件、输入有效性和输出目录。
+- 如果编辑目标缺失或含糊，不要猜测。根据检查数据细化匹配，或报告未解析目标。
+- 如果包包含宏，拒绝它；此 skill 有意仅支持 `.docx`。
+- 如果标准操作返回 `partial`、`unsupported` 或 `blocked`，保留该结果。不要使用 `|| true`，也不要仅仅因为文件存在就继续。
+- 带有 `inspection_coverage.status: partial` 的 `inspect` 结果，其顶层
+  `status` 也为 `partial`。仅当目标位于已检查范围内、且未建模的包
+  功能被保留并披露时，才可以继续进行范围收窄的受支持操作；不要声称完整理解文档。
+- 如果文档依赖于签名、嵌入对象、自定义 XML 映射或复杂内容控件，保留源文件。仅当能力表允许时才使用窄范围回退。
+- 如果回退合适，通过 `fallback-patch` 或 `fallback-create` 运行它并保留其清单。范围违规会被阻断，而不是在包装器之外重试。
+- 如果预检已通过但候选已更改，交付会被
+  SHA-256 不匹配阻断。重新运行完整门禁；切勿通过复制或重命名绕过。
+- 如果无法完成完整预检，报告限制并将候选
+  保持为内部。不要把它作为已完成交付物公开。

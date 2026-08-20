@@ -1,6 +1,6 @@
-# Excalidraw Patterns
+# Excalidraw 模式
 
-Envelope:
+信封：
 
 ```json
 {
@@ -12,7 +12,7 @@ Envelope:
 }
 ```
 
-Labeled rounded rectangle:
+带标签的圆角矩形：
 
 ```json
 {
@@ -32,7 +32,7 @@ Labeled rounded rectangle:
 }
 ```
 
-Bound text:
+绑定文本：
 
 ```json
 {
@@ -54,7 +54,7 @@ Bound text:
 }
 ```
 
-Bound arrow:
+绑定箭头：
 
 ```json
 {
@@ -74,12 +74,12 @@ Bound arrow:
 }
 ```
 
-Palette:
+调色板：
 
-- Primary/input: `#a5d8ff`
-- Process: `#d0bfff`
-- Success/output: `#b2f2bb`
-- Storage/data: `#c3fae8`
-- External/warning: `#ffd8a8`
-- Error/risk: `#ffc9c9`
-- Note/decision: `#fff3bf`
+- 主要/输入：`#a5d8ff`
+- 处理：`#d0bfff`
+- 成功/输出：`#b2f2bb`
+- 存储/数据：`#c3fae8`
+- 外部/警告：`#ffd8a8`
+- 错误/风险：`#ffc9c9`
+- 备注/决策：`#fff3bf`

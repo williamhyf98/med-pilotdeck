@@ -1,10 +1,10 @@
-# Requirements coverage and delivery
+# 需求覆盖与交付
 
-Create a task-specific `requirements.json` for every non-trivial workbook. Requirements turn user-visible promises into checks that cannot be satisfied by a look-alike image or an unrelated worksheet object.
+为每一份非平凡工作簿创建任务专用的 `requirements.json`。需求把用户可见的承诺变成检查，这些检查不能由看起来相似的图像或不相关的工作表对象来满足。
 
-## Schema
+## 模式
 
-Use only fields that the task needs:
+仅使用任务需要的字段：
 
 ```json
 {
@@ -75,27 +75,27 @@ Use only fields that the task needs:
 }
 ```
 
-## Source-backed workbooks
+## 有源支撑的工作簿
 
-Set `sourceBacked: true` whenever one or more files supply facts for the output. Record absolute input paths and their SHA-256 values before building; `audit` and `deliver` reject missing or changed sources. List every output sheet that materially reproduces source facts in `sourceBackedSheets`.
+只要有一个或多个文件为输出提供事实，就设置 `sourceBacked: true`。构建前记录绝对输入路径及其 SHA-256 值；`audit` 和 `deliver` 会拒绝缺失或已更改的源。在 `sourceBackedSheets` 中列出每一张实质复现源事实的输出工作表。
 
-Each source-backed sheet must have at least one `expectedCells` or `expectedRanges` assertion. Use `expectedRanges` for complete user-critical tables rather than checking one convenient cell. This is especially important for KPI histories, channel/source tables, schedules, action registers, owners, dates, and other facts where a plausible replacement would still look polished.
+每一张有源支撑的工作表必须至少有一项 `expectedCells` 或 `expectedRanges` 断言。对完整的、对用户关键的表格使用 `expectedRanges`，而不是只检查一个方便的单元格。这对 KPI 历史、渠道/来源表、日程、行动登记、负责人、日期以及其他“看起来像样但仍可能被替换”的事实尤其重要。
 
-Build the expected matrices from actual `inspect` output or exact text/JSON extraction. Do not type them from memory. Requirements prove that the output matches the frozen fact matrix; source hashes prove the inputs were not changed during the task.
+根据实际的 `inspect` 输出或精确的文本/JSON 提取来构建预期矩阵。不要凭记忆输入。需求证明输出匹配冻结的事实矩阵；源哈希证明任务期间输入未被更改。
 
-For non-trivial workbooks, structural checks alone are rejected. Formula-driven workbooks need `requiredFormulaRanges`. Native charts need `requiredNativeCharts` with exact `sourceRanges` and `minPoints`. Coverage means only that the declared checks passed; it is not a percentage of undeclared user intent.
+对于非平凡工作簿，仅有结构检查会被拒绝。由公式驱动的工作簿需要 `requiredFormulaRanges`。原生图表需要带有精确 `sourceRanges` 和 `minPoints` 的 `requiredNativeCharts`。覆盖仅表示已声明的检查通过；它不是未声明用户意图的百分比。
 
-Chart types are `line`, `column`, or `bar`. Source ranges are matched against native chart series formulas. `minPoints` is the minimum number of complete category/value observations required in every series. Blank categories, blank/non-numeric values, mismatched lengths, and one-point line charts are rejected. An inserted SVG or PNG never satisfies `requiredNativeCharts`.
+图表类型为 `line`、`column` 或 `bar`。源范围对照原生图表系列公式进行匹配。`minPoints` 是每个系列中完整类别/值观测的最小数量。空白类别、空白/非数值、长度不匹配以及单点折线图会被拒绝。插入的 SVG 或 PNG 永远不能满足 `requiredNativeCharts`。
 
-`requiredCellTypes` supports `number`, `date`, `string`, and `boolean`. Unless `allowBlank` is true, every cell in the range must have the requested type. This catches accidental style sharing that causes ExcelJS or Excel to reinterpret ordinary KPI values as dates.
+`requiredCellTypes` 支持 `number`、`date`、`string` 和 `boolean`。除非 `allowBlank` 为 true，否则范围内每一个单元格都必须具有所要求的类型。这能捕获导致 ExcelJS 或 Excel 把普通 KPI 值重新解释为日期的意外样式共享。
 
-`warningDispositions` is not a wildcard bypass. Each entry must match a reported warning `type` and contain a concrete, task-specific rationale. Prefer fixing the warning; use a disposition only when the workbook is intentionally correct.
+`warningDispositions` 不是通配旁路。每一项必须匹配已报告警告的 `type`，并包含具体的、任务特定的理由。优先修复警告；仅当工作簿有意正确时才使用处置。
 
-Requirements declare checks only. Do not write audit output such as `status` or `coverage` into `requirements.json`; the runtime calculates those fields. Keep `warningDispositions` as an array of `{ "type": "...", "rationale": "..." }` objects.
+需求只声明检查。不要把 `status` 或 `coverage` 这类审计输出写入 `requirements.json`；运行时会计算这些字段。将 `warningDispositions` 保持为 `{ "type": "...", "rationale": "..." }` 对象数组。
 
-## Candidate workflow
+## 候选工作流
 
-Build to a scratch candidate, not the final destination:
+构建到临时候选文件，而不是最终目的地：
 
 ```bash
 bash "$SHEET" build \
@@ -104,7 +104,7 @@ bash "$SHEET" build \
   --out "$WORKSPACE/tmp/candidate.xlsx"
 ```
 
-Inspect and, when necessary, revise the candidate. Then seal it:
+检查并在必要时修订候选文件。然后封存它：
 
 ```bash
 bash "$SHEET" deliver \
@@ -115,16 +115,16 @@ bash "$SHEET" deliver \
   --report "$WORKSPACE/qa/delivery.json"
 ```
 
-`deliver` requires `requirements.json`, performs structural/formula/type coverage checks, renders each worksheet separately, rejects blank print pages and page-budget failures, rejects unresolved warnings, verifies the copied file hash, reopens the final artifact, and reports its SHA-256.
+`deliver` 要求 `requirements.json`，执行结构/公式/类型覆盖检查，分别渲染每一张工作表，拒绝空白打印页和页数预算失败，拒绝未解决警告，核验复制文件的哈希，重新打开最终产物，并报告其 SHA-256。
 
-Warnings block delivery until they are fixed or explicitly dispositioned. Formula errors, invalid dates, missing required objects, blank print pages, failed coverage, and hash mismatches are hard failures. A failed build does not update the requested candidate; never recover by copying a raw or debug workbook to the final path.
+警告会阻断交付，直到被修复或显式处置。公式错误、无效日期、缺失所需对象、空白打印页、覆盖失败和哈希不匹配是硬失败。失败的构建不会更新所要求的候选文件；切勿通过把原始或调试工作簿复制到最终路径来恢复。
 
-## Claims
+## 声明
 
-Base the final response on `delivery.json` and the final package inspection. Do not claim:
+最终回复以 `delivery.json` 和最终包检查为依据。不要声称：
 
-- a native chart when `package.features.charts` is zero;
-- formula-driven logic when the required formula ranges did not pass;
-- a one-page layout when the sheet render has multiple pages;
-- a clean final artifact when the reported SHA refers to a different file.
-- complete task coverage when requirements contain only structural checks or omit critical source facts.
+- 当 `package.features.charts` 为零时存在原生图表；
+- 当所需公式范围未通过时存在公式驱动逻辑；
+- 当工作表渲染有多页时为一页版式；
+- 当报告的 SHA 指向不同文件时为干净的最终产物。
+- 当需求仅包含结构检查或省略关键源事实时为完整任务覆盖。

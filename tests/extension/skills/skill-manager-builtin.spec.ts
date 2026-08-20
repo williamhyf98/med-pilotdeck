@@ -30,6 +30,7 @@ test("SkillManager lists built-ins separately and describes override relationshi
         assert.equal(result.user[0]?.overridesBuiltin, true);
         assert.equal(result.project.find((skill) => skill.slug === "docx")?.overridesBuiltin, true);
         assert.equal(result.project.find((skill) => skill.slug === "custom")?.overridesBuiltin, undefined);
+        assert.deepEqual(result.medical, []);
     }
     finally {
         await rm(root, { recursive: true, force: true });
@@ -57,6 +58,35 @@ test("SkillManager permits reading but rejects mutations of built-in skills", as
                 return true;
             });
         }
+    }
+    finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+test("SkillManager lists medical skills as a separate read-only group", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pilotdeck-skill-manager-medical-"));
+    try {
+        const pilotHome = join(root, "pilot-home");
+        const builtinSkillsRoot = join(root, "bundled-skills");
+        const medicalSkillsRoot = join(root, "med-skills");
+        await writeSkill(builtinSkillsRoot, "pdf", "Built-in PDF skill description.");
+        await writeSkill(medicalSkillsRoot, "med-medical", "Parse medical attachments into structured findings.");
+        const manager = new SkillManager({ pilotHome, builtinSkillsRoot, medicalSkillsRoot });
+        const result = await manager.list({});
+        assert.deepEqual(result.builtin.map((skill) => skill.slug), ["pdf"]);
+        assert.deepEqual(result.medical.map((skill) => skill.slug), ["med-medical"]);
+        assert.equal(result.medical[0]?.readonly, true);
+        assert.equal(result.medical[0]?.scope, "medical");
+        const read = await manager.read({ scope: "medical", slug: "med-medical" });
+        assert.match(read.content, /Parse medical attachments/);
+        await assert.rejects(
+            () => manager.write({ scope: "medical", slug: "med-medical", content: "changed" }),
+            (error) => {
+                assert.equal(error instanceof SkillManagerError, true);
+                assert.equal(error.code, "read_only");
+                return true;
+            },
+        );
     }
     finally {
         await rm(root, { recursive: true, force: true });

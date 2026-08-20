@@ -58,7 +58,6 @@ import {
   ASK_MODE_DESCRIPTION_SUFFIX,
   isAskModeAllowedTool,
 } from "../../tool/askModeConstraints.js";
-import { buildAskModeAgentToolSchema } from "../../tool/builtin/agent.js";
 import { repairToolName } from "../../model/streaming/repairToolName.js";
 import {
   createAgentStatusDetail,
@@ -2765,13 +2764,9 @@ function resolveEffectiveToolChoice(
 }
 
 function filterAskModeTools(tools: PilotDeckToolDefinition[]): CanonicalToolSchema[] {
-  const agentOverride = buildAskModeAgentToolSchema();
   return tools
     .filter(isAskModeAllowedTool)
     .map((tool) => {
-      if (tool.name === "agent") {
-        return { ...toolToCanonicalSchema(tool), description: agentOverride.description, inputSchema: agentOverride.inputSchema };
-      }
       const suffix = ASK_MODE_DESCRIPTION_SUFFIX[tool.name];
       const schema = toolToCanonicalSchema(tool);
       return suffix ? { ...schema, description: schema.description + suffix } : schema;

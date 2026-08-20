@@ -1,6 +1,6 @@
-# SVG HTML Template
+# SVG HTML 模板
 
-Copy this to a `.html` file and replace `<!-- SVG -->`.
+将此复制到 `.html` 文件，并替换 `<!-- SVG -->`。
 
 ```html
 <!doctype html>

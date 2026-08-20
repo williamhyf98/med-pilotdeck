@@ -1,78 +1,78 @@
 ---
 name: spreadsheets
-description: Create, edit, inspect, analyze, recalculate, render, and validate standalone spreadsheet files in .xlsx, .xls, .csv, and .tsv formats. Use whenever the requested input or deliverable is a workspace spreadsheet, including formula-driven workbooks, native charts, formatted tables, data cleanup, workbook questions, legacy XLS conversion, Chinese or bilingual workbooks, and visual spreadsheet QA. Do not use for Google Sheets, macro-enabled .xlsm files, or live control of Microsoft Excel.
+description: 创建、编辑、检查、分析、重算、渲染并校验独立电子表格文件，格式包括 .xlsx、.xls、.csv 和 .tsv。只要请求的输入或交付物是工作区电子表格，就使用本技能，包括公式驱动工作簿、原生图表、格式化表格、数据清理、工作簿问答、旧版 XLS 转换、中文或双语工作簿，以及电子表格视觉 QA。不要用于 Google Sheets、启用宏的 .xlsm 文件，或对 Microsoft Excel 的实时操控。
 ---
 
-# Spreadsheets
+# 电子表格
 
-Work with standalone spreadsheet files through a reproducible JavaScript `.mjs` builder and the bundled `spreadsheet.sh` workflow. Preserve source files, keep calculations auditable, recalculate formulas, and verify both workbook structure and rendered pages before delivery.
+通过可复现的 JavaScript `.mjs` 构建脚本和捆绑的 `spreadsheet.sh` 工作流处理独立电子表格文件。保留源文件，保持计算可审计，重算公式，并在交付前同时核验工作簿结构与渲染页面。
 
-## Hard requirements
+## 硬性要求
 
-- Use JavaScript ES modules and the bundled scripts. Do not use `openpyxl`, `xlsxwriter`, `pandas.ExcelWriter`, Google Sheets APIs, or Codex-private runtime paths.
-- Preserve every input file. Write edits to a distinct output unless the user explicitly requests replacement.
-- Keep important calculations in worksheet formulas. Do not replace inspectable formulas with hardcoded results.
-- Inspect and render an existing workbook before modifying it. Match its formatting and conventions unless the user requests a redesign.
-- Run compatibility preflight before editing an existing XLSX. Do not bypass a risky round trip without explicit user approval.
-- Recalculate formula-driven XLSX files through LibreOffice and scan the saved results for formula errors.
-- Use native Excel chart objects for requested charts. A raster image or SVG does not satisfy a chart requirement.
-- Create `requirements.json` for every non-trivial workbook and require `coverage.status=passed`.
-- For source-backed workbooks, freeze source file hashes and a compact fact matrix before building. Do not rely on remembered values or reconstruct missing facts from context.
-- Treat Chinese as first-class content when the user does not specify a language. Apply the cross-platform typography policy and verify glyphs after recalculation.
-- Render every final worksheet page and inspect the individual PNG files at full size. A montage is only an overview.
-- Fix formula errors, clipped content, broken tables, unreadable formats, unexpected blank sheets, and poor page layout before delivery.
-- Build to a scratch candidate and use `deliver` to seal the final XLSX. Do not manually copy an unaudited candidate to the final path.
-- A failed `build`, `audit`, or `deliver` means the workbook is not deliverable. Do not copy a raw/debug workbook, remove requested features, append `|| true`, or claim success after a gate fails.
-- Use the bundled helpers for conditional formatting and native charts. Do not replace them with unsupported ExcelJS chart APIs or unvalidated low-level conditional-formatting objects.
-- Resolve every audit warning or add a task-specific `warningDispositions` entry with a concrete rationale. Undisposed warnings block `deliver`.
+- 使用 JavaScript ES 模块和捆绑脚本。不要使用 `openpyxl`、`xlsxwriter`、`pandas.ExcelWriter`、Google Sheets API 或 Codex 私有运行时路径。
+- 保留每一份输入文件。除非用户明确要求替换，否则把编辑写到不同输出。
+- 重要计算保留在工作表公式中。不要用写死的结果替换可检查的公式。
+- 修改现有工作簿之前先检查并渲染。除非用户要求重新设计，否则匹配其格式与约定。
+- 编辑现有 XLSX 之前运行兼容性预检。未经用户明确批准，不要绕过有风险的往返。
+- 通过 LibreOffice 重算公式驱动的 XLSX，并扫描保存结果中的公式错误。
+- 请求的图表使用原生 Excel 图表对象。栅格图像或 SVG 不满足图表要求。
+- 对每一份非平凡工作簿创建 `requirements.json`，并要求 `coverage.status=passed`。
+- 对有源文件支撑的工作簿，在构建前冻结源文件哈希和紧凑事实矩阵。不要依赖记忆中的数值，也不要从上下文重构缺失事实。
+- 当用户未指定语言时，把中文作为一等内容。应用跨平台排版策略，并在重算后核验字形。
+- 渲染每一张终稿工作表页，并按全尺寸检查各 PNG。拼图只作总览。
+- 交付前修复公式错误、裁切内容、损坏表格、不可读格式、意外空白表以及糟糕的页面布局。
+- 构建到临时候选，并用 `deliver` 封印最终 XLSX。不要把未经审计的候选手动复制到最终路径。
+- `build`、`audit` 或 `deliver` 失败意味着工作簿不可交付。不要复制原始/调试工作簿、删除请求的功能、追加 `|| true`，或在门禁失败后声称成功。
+- 条件格式和原生图表使用捆绑辅助函数。不要用不受支持的 ExcelJS 图表 API 或未校验的底层条件格式对象替换它们。
+- 解决每一条审计警告，或在 `warningDispositions` 中加入带具体理由的任务特定条目。未处置的警告会阻断 `deliver`。
 
-## Read the relevant references
+## 阅读相关参考
 
-- Read [api-quick-start.md](references/api-quick-start.md) before writing or modifying a builder.
-- Read [formulas-and-data.md](references/formulas-and-data.md) for every formula-driven workbook or data conversion.
-- Read [formatting.md](references/formatting.md) before creating or visually editing a workbook.
-- Read [chinese-and-cross-platform.md](references/chinese-and-cross-platform.md) for Chinese, bilingual, or unspecified-language net-new workbooks.
-- Read [charts-and-compatibility.md](references/charts-and-compatibility.md) before editing an existing XLSX or handling charts and advanced Excel objects.
-- Read [requirements-and-delivery.md](references/requirements-and-delivery.md) for every non-trivial workbook.
-- Read [qa-checklist.md](references/qa-checklist.md) before delivery.
+- 编写或修改构建脚本之前，阅读 [api-quick-start.md](references/api-quick-start.md)。
+- 每一份公式驱动工作簿或数据转换，阅读 [formulas-and-data.md](references/formulas-and-data.md)。
+- 创建或视觉编辑工作簿之前，阅读 [formatting.md](references/formatting.md)。
+- 中文、双语或未指定语言的全新工作簿，阅读 [chinese-and-cross-platform.md](references/chinese-and-cross-platform.md)。
+- 编辑现有 XLSX 或处理图表与高级 Excel 对象之前，阅读 [charts-and-compatibility.md](references/charts-and-compatibility.md)。
+- 每一份非平凡工作簿，阅读 [requirements-and-delivery.md](references/requirements-and-delivery.md)。
+- 交付前阅读 [qa-checklist.md](references/qa-checklist.md)。
 
-## Prepare the runtime
+## 准备运行时
 
-Resolve the directory containing this file as `SPREADSHEET_SKILL_ROOT`, then run:
+将包含本文件的目录解析为 `SPREADSHEET_SKILL_ROOT`，然后运行：
 
 ```bash
 SHEET="$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh"
 bash "$SHEET" check || bash "$SHEET" fix
 ```
 
-Use the turn-scoped PilotDeck work directory for every intermediate. The host sets `PILOTDECK_WORK_DIR`; the fallback keeps manual runs internal to the project:
+所有中间产物都使用本轮作用域的 PilotDeck 工作目录。宿主会设置 `PILOTDECK_WORK_DIR`；回退路径把手动运行限制在项目内部：
 
 ```bash
 WORKSPACE="${PILOTDECK_WORK_DIR:-$PWD/.pilotdeck/work/manual/<task-slug>}/spreadsheets"
 mkdir -p "$WORKSPACE/tmp" "$WORKSPACE/qa"
 ```
 
-Keep builders, converted inputs, source notes, inspections, candidates, renders, recalculation files, and QA reports in `WORKSPACE`. Put only requested deliverables in the project or user-selected output directory. Never create `.pilotdeck_build.mjs`, QA directories, or other intermediates beside the user's files.
+把构建脚本、转换后的输入、源备注、检查结果、候选、渲染图、重算文件和 QA 报告放在 `WORKSPACE`。只有请求的交付物才放到项目或用户选定的输出目录。切勿在用户文件旁边创建 `.pilotdeck_build.mjs`、QA 目录或其他中间产物。
 
-The CLI enforces this boundary whenever `PILOTDECK_WORK_DIR` is set:
-`scaffold`, `build`, `convert-legacy`, `recalculate`, JSON reports, and render
-outputs must stay under the work directory. Only `deliver --out` may create the
-project-visible final workbook. A boundary failure must be corrected by moving
-the intermediate path; do not bypass the command or copy the file manually.
+只要设置了 `PILOTDECK_WORK_DIR`，CLI 就会强制该边界：
+`scaffold`、`build`、`convert-legacy`、`recalculate`、JSON 报告和渲染
+输出必须留在工作目录下。只有 `deliver --out` 可以创建
+项目可见的最终工作簿。边界失败必须通过移动
+中间路径来纠正；不要绕过命令或手动复制文件。
 
-## Route the request
+## 路由请求
 
-Choose one route:
+选择一条路线：
 
-1. Read-only question or analysis: inspect the relevant workbook ranges and formulas; do not export or modify a file.
-2. Net-new XLSX: scaffold a builder, create the workbook, recalculate, audit, render, and inspect it.
-3. Existing XLSX edit: inspect and render first, review compatibility risks, then make the smallest scoped edit.
-4. Legacy XLS: convert to a temporary XLSX, inspect and render the conversion, then use the XLSX workflow and deliver `.xlsx`.
-5. CSV or TSV task: preserve delimiter, encoding, identifiers, and text semantics. Convert to XLSX only when formulas, formatting, tables, images, or other workbook features are requested.
+1. 只读问题或分析：检查相关工作簿区域和公式；不要导出或修改文件。
+2. 全新 XLSX：搭一份构建脚本，创建工作簿，重算、审计、渲染并检查。
+3. 现有 XLSX 编辑：先检查并渲染，审阅兼容性风险，然后做最小范围的编辑。
+4. 旧版 XLS：转换为临时 XLSX，检查并渲染转换结果，然后走 XLSX 工作流并交付 `.xlsx`。
+5. CSV 或 TSV 任务：保留分隔符、编码、标识符和文本语义。仅当请求公式、格式、表格、图像或其他工作簿功能时，才转换为 XLSX。
 
-Do not accept `.xlsm`, Google Sheets, or a live Excel session through this skill. Never rename `.xls` to `.xlsx`.
+不要通过本技能接受 `.xlsm`、Google Sheets 或实时 Excel 会话。切勿把 `.xls` 重命名为 `.xlsx`。
 
-Convert a legacy workbook without modifying the source:
+在不修改源文件的情况下转换旧版工作簿：
 
 ```bash
 bash "$SHEET" convert-legacy \
@@ -80,9 +80,9 @@ bash "$SHEET" convert-legacy \
   --out "$WORKSPACE/tmp/converted.xlsx"
 ```
 
-## Inspect before acting
+## 行动前先检查
 
-Get a compact workbook overview:
+获取紧凑的工作簿概览：
 
 ```bash
 bash "$SHEET" inspect \
@@ -90,7 +90,7 @@ bash "$SHEET" inspect \
   --out "$WORKSPACE/tmp/inspection.json"
 ```
 
-Inspect exact ranges and styles when needed:
+需要时检查精确区域和样式：
 
 ```bash
 bash "$SHEET" inspect \
@@ -101,9 +101,9 @@ bash "$SHEET" inspect \
   --out "$WORKSPACE/tmp/summary.json"
 ```
 
-For an existing XLSX, review `package.unsafeForRoundTrip` and `package.roundTripRisks`. If either reports risky objects, stop before editing and follow [charts-and-compatibility.md](references/charts-and-compatibility.md).
+对于现有 XLSX，审阅 `package.unsafeForRoundTrip` 和 `package.roundTripRisks`。若任一项报告有风险对象，编辑前停止并遵循 [charts-and-compatibility.md](references/charts-and-compatibility.md)。
 
-Render an existing XLSX before changing its visual layout:
+在改变现有 XLSX 的视觉布局之前先渲染：
 
 ```bash
 bash "$SHEET" render \
@@ -111,9 +111,9 @@ bash "$SHEET" render \
   --out-dir "$WORKSPACE/tmp/source-render"
 ```
 
-## Create or edit a workbook
+## 创建或编辑工作簿
 
-Create requirements and one executable builder:
+创建需求和一份可执行构建脚本：
 
 ```bash
 bash "$SHEET" scaffold \
@@ -121,16 +121,16 @@ bash "$SHEET" scaffold \
   --requirements-out "$WORKSPACE/tmp/requirements.json"
 ```
 
-Write `$WORKSPACE/tmp/requirements.json` from the user's requested sheets, formulas, native charts, validations, conditional formatting, expected cells/ranges, and print-page constraints. A sheet list plus a formula count is not sufficient coverage.
+根据用户请求的工作表、公式、原生图表、校验、条件格式、期望单元格/区域和打印页约束，编写 `$WORKSPACE/tmp/requirements.json`。仅有工作表列表加公式数量不足以构成覆盖率。
 
-For a task based on input files:
+对于基于输入文件的任务：
 
-1. Inspect the exact source ranges or text sections first.
-2. Set `sourceBacked: true`, record every input in `sourceFiles` with its pre-build SHA-256, and list output data sheets in `sourceBackedSheets`.
-3. Add `expectedRanges` for complete user-critical tables such as KPI history, source rows, action items, owners, and deadlines. Use `expectedCells` for important totals and derived checkpoints.
-4. Do not create a builder until the fact matrix is written. If a source omits a status, owner, date, or value, keep it blank or label it as unconfirmed instead of inventing it.
+1. 先检查确切的源区域或文本段落。
+2. 设置 `sourceBacked: true`，在 `sourceFiles` 中记录每个输入及其构建前 SHA-256，并在 `sourceBackedSheets` 中列出输出数据表。
+3. 为完整的用户关键表（如 KPI 历史、源行、行动项、负责人和截止日期）添加 `expectedRanges`。对重要合计和派生检查点使用 `expectedCells`。
+4. 写完事实矩阵之前不要创建构建脚本。若源缺少状态、负责人、日期或数值，保持空白或标注为未确认，而不是编造。
 
-Patch and rerun that builder instead of creating duplicate scripts. Build a net-new workbook:
+修补并重跑该构建脚本，而不是创建重复脚本。构建全新工作簿：
 
 ```bash
 bash "$SHEET" build \
@@ -139,7 +139,7 @@ bash "$SHEET" build \
   --out "$WORKSPACE/tmp/candidate.xlsx"
 ```
 
-Edit an existing safe workbook:
+编辑现有的安全工作簿：
 
 ```bash
 bash "$SHEET" build \
@@ -149,24 +149,24 @@ bash "$SHEET" build \
   --out "$WORKSPACE/tmp/candidate.xlsx"
 ```
 
-`build` preserves the input, validates builder structures and requirements, blocks unsafe round trips, recalculates formula-driven XLSX files, and performs a compact formula audit. It stages output and updates the requested candidate only after audit passes, so a failed build must be fixed and rerun. Fix the reported `stage`, worksheet, range, and field instead of disabling requested features or switching to a second builder. Never add `--allow-risky-roundtrip` unless the user has explicitly accepted the listed compatibility risks.
+`build` 会保留输入，校验构建器结构和需求，阻断不安全往返，重算公式驱动的 XLSX，并执行紧凑公式审计。它会暂存输出，仅在审计通过后更新请求的候选，因此失败的构建必须修复并重跑。修复所报告的 `stage`、工作表、区域和字段，而不是关闭请求的功能或换第二份构建脚本。除非用户已明确接受所列兼容性风险，否则切勿添加 `--allow-risky-roundtrip`。
 
-## Formula and data rules
+## 公式与数据规则
 
-- Separate assumptions/raw data from derived outputs.
-- Write derived values as formulas and use visible helper ranges for complex logic.
-- Use bounded ranges instead of entire-column references in large calculations.
-- Use typed numbers, booleans, and dates rather than display-formatted strings.
-- Apply explicit number formats for currency, percentages, counts, and dates.
-- Keep cross-sheet references quoted, for example `'Revenue Model'!B6`.
-- In ExcelJS formula objects, omit the leading `=`. See [formulas-and-data.md](references/formulas-and-data.md).
-- For CSV and TSV, preserve identifiers with leading zeroes as text and do not infer dates or numbers unless the task requires it.
-- Preserve identifiers longer than 15 digits as text. Detect UTF-8/UTF-8 BOM/GBK/GB18030 and default new delimited exports to UTF-8 BOM.
-- Preserve source facts exactly when translating labels or reorganizing tables. Never substitute plausible KPIs, channels, action items, owners, dates, or statuses.
+- 把假设/原始数据与派生输出分开。
+- 把派生值写成公式，复杂逻辑使用可见的辅助区域。
+- 大规模计算使用有界区域，而不是整列引用。
+- 使用类型化的数字、布尔值和日期，而不是按显示格式写的字符串。
+- 为货币、百分比、计数和日期应用显式数字格式。
+- 跨表引用加引号，例如 `'Revenue Model'!B6`。
+- 在 ExcelJS 公式对象中省略前导 `=`。见 [formulas-and-data.md](references/formulas-and-data.md)。
+- 对于 CSV 和 TSV，把带前导零的标识符保留为文本；除非任务要求，否则不要推断日期或数字。
+- 把超过 15 位的标识符保留为文本。检测 UTF-8/UTF-8 BOM/GBK/GB18030，新的分隔导出默认使用 UTF-8 BOM。
+- 在翻译标签或重组表格时精确保留源事实。切勿用看似合理的 KPI、渠道、行动项、负责人、日期或状态替换。
 
-## Validate and render
+## 校验与渲染
 
-Run the final structural audit:
+运行最终结构审计：
 
 ```bash
 bash "$SHEET" audit \
@@ -175,7 +175,7 @@ bash "$SHEET" audit \
   --out "$WORKSPACE/qa/audit.json"
 ```
 
-Render the final workbook:
+渲染最终工作簿：
 
 ```bash
 bash "$SHEET" render \
@@ -185,17 +185,17 @@ bash "$SHEET" render \
   --per-sheet
 ```
 
-Inspect every `page-N.png` at full resolution. Revise the builder, rebuild, and rerun audit/render until hard failures are gone and every warning is fixed or explicitly dispositioned in `requirements.json`. Stop after the workbook is correct, legible, and usable; do not spend extra loops on decorative polish.
+按全分辨率检查每一张 `page-N.png`。修订构建脚本、重建，并重跑审计/渲染，直到硬失败消失，且每条警告都已修复或在 `requirements.json` 中明确处置。工作簿正确、可读且可用后即停止；不要把额外循环花在装饰抛光上。
 
-After modifying this skill or its runtime, run:
+修改本技能或其运行时之后，运行：
 
 ```bash
 bash "$SHEET" self-test --out "$WORKSPACE/self-test"
 ```
 
-## Deliver
+## 交付
 
-Seal an XLSX only after inspecting the candidate pages:
+仅在检查候选页面之后封印 XLSX：
 
 ```bash
 bash "$SHEET" deliver \
@@ -206,4 +206,4 @@ bash "$SHEET" deliver \
   --report "$WORKSPACE/qa/delivery.json"
 ```
 
-Return the final `.xlsx`, `.csv`, or `.tsv` and a concise summary grounded in the delivery report. Mention deliberate compatibility limitations. Do not claim a native chart when package inspection reports zero charts. Describe coverage as only the checks actually declared; never turn a shallow structural pass into “100% task coverage.” Do not deliver builders, requirements JSON, PDFs, renders, runtime files, or QA reports unless the user requests them.
+返回最终 `.xlsx`、`.csv` 或 `.tsv`，以及基于交付报告的简明摘要。提及有意的兼容性限制。当包检查报告图表数为零时，不要声称有原生图表。覆盖率只按实际声明的检查来描述；切勿把浅层结构通过说成「100% 任务覆盖」。除非用户要求，否则不要交付构建脚本、需求 JSON、PDF、渲染图、运行时文件或 QA 报告。

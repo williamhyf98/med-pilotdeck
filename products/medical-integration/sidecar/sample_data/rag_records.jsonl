@@ -1,4 +1,0 @@
-{"source_id":"synthetic-manual","chunk_id":"chunk-001","vector":[1.0,0.0,0.0],"chunk":"人工测试语料：记录可追溯来源 ID，不代表临床建议。","title":"合成测试资料","section":"契约","source":"sample://synthetic-manual","metadata":{"topic":"contract","synthetic":"true"}}
-{"source_id":"synthetic-manual","chunk_id":"chunk-002","vector":[0.8,0.2,0.0],"chunk":"人工测试语料：检索结果必须包含语料版本和相关度分数。","title":"合成测试资料","section":"检索","source":"sample://synthetic-manual","metadata":{"topic":"retrieval","synthetic":"true"}}
-{"source_id":"synthetic-other","chunk_id":"chunk-003","vector":[0.0,1.0,0.0],"chunk":"人工测试语料：低相关结果应由阈值过滤。","title":"合成测试资料","section":"阈值","source":"sample://synthetic-other","metadata":{"topic":"threshold","synthetic":"true"}}
-

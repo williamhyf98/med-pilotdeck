@@ -39,8 +39,9 @@ describe('LlmConfigurationStep', () => {
     render(<LlmConfigurationStep onSaved={vi.fn()} />);
 
     await waitFor(() => {
-      expect(mocks.fetchRemoteDefaultModels).toHaveBeenCalledWith('openrouter');
+      expect(screen.getByRole('button', { name: /Custom/ })).toBeTruthy();
     });
+    expect(mocks.fetchRemoteDefaultModels).not.toHaveBeenCalled();
 
     mocks.fetchRemoteDefaultModels.mockClear();
     mocks.fetchProviderModels.mockClear();
@@ -68,8 +69,9 @@ describe('LlmConfigurationStep', () => {
     render(<LlmConfigurationStep onSaved={vi.fn()} />);
 
     await waitFor(() => {
-      expect(mocks.fetchRemoteDefaultModels).toHaveBeenCalledWith('openrouter');
+      expect(screen.getByRole('button', { name: /Custom/ })).toBeTruthy();
     });
+    expect(mocks.fetchRemoteDefaultModels).not.toHaveBeenCalled();
     mocks.fetchRemoteDefaultModels.mockClear();
 
     fireEvent.click(screen.getByRole('button', { name: /^DeepSeek$/ }));
@@ -83,8 +85,9 @@ describe('LlmConfigurationStep', () => {
     render(<LlmConfigurationStep onSaved={vi.fn()} />);
 
     await waitFor(() => {
-      expect(mocks.fetchRemoteDefaultModels).toHaveBeenCalledWith('openrouter');
+      expect(screen.getByRole('button', { name: /Custom/ })).toBeTruthy();
     });
+    expect(mocks.fetchRemoteDefaultModels).not.toHaveBeenCalled();
     mocks.fetchRemoteDefaultModels.mockClear();
 
     fireEvent.click(screen.getByRole('button', { name: /^Moonshot AI \(Kimi\)$/ }));

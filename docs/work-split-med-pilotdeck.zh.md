@@ -1,5 +1,7 @@
 # med-pilotdeck 协作工作清单与实现说明
 
+> **2026-08-19 更新：** 已物理删除 `products/medical-integration` 与专用医疗 UI / `/api/medical`。现行医疗路径为 `plugins/med-tools`。离线化后续步骤见 [`offline-deployment-plan.md`](./offline-deployment-plan.md)。
+
 > 文档版本：2026-08-14（修订：已拍板 Q1–Q5）  
 > 适用分支建议：功能各自开 `feat/*`，避免互相污染；合入前在 `feat/add-new-skill` 或约定主开发分支上集成。
 

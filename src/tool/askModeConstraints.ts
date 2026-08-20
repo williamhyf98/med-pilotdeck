@@ -11,17 +11,9 @@ export const ASK_MODE_ALLOWED_TOOLS = new Set([
   "get_current_time",
   "grep",
   "glob",
-  "web_search",
-  "web_fetch",
   "ask_user_question",
   "read_skill",
-  "structured_output",
-  "agent",
-  "execute_code",
   "bash",
-  "task_list",
-  "task_output",
-  "task_wait",
 ]);
 
 export const ASK_MODE_DESCRIPTION_SUFFIX: Record<string, string> = {

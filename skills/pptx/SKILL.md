@@ -1,93 +1,93 @@
 ---
 name: pptx
-description: Create, edit, inspect, render, and validate editable Microsoft PowerPoint (.pptx) presentations, and import legacy binary .ppt files through verified conversion to .pptx. Use for native PowerPoint creation, modification, template inheritance, charts, tables, images, legacy .ppt migration, and slide-level quality assurance. Do not use for HTML/browser presentations or Google Slides.
+description: 创建、编辑、检查、渲染并校验可编辑的 Microsoft PowerPoint（.pptx）演示文稿，并通过已验证的转换将旧版二进制 .ppt 导入为 .pptx。用于原生 PowerPoint 创建、修改、模板继承、图表、表格、图像、旧版 .ppt 迁移以及幻灯片级质量保证。不要用于 HTML/浏览器演示文稿或 Google Slides。
 ---
 
 # PPTX
 
-Create and modify native PowerPoint files through a reproducible JavaScript workflow. Keep the `.mjs` builder, render every final slide, and fix structural and visual defects before delivery.
+通过可复现的 JavaScript 工作流创建和修改原生 PowerPoint 文件。保留 `.mjs` 构建脚本，渲染每一张终稿幻灯片，并在交付前修复结构与视觉缺陷。
 
-## Hard requirements
+## 硬性要求
 
-- Use JavaScript ES modules and the bundled `scripts/pptx.sh` workflow.
-- Use PptxGenJS for net-new decks and pptx-automizer for inherited template slides.
-- Do not use `python-pptx`, `@oai/artifact-tool`, Google Slides APIs, or an HTML-to-PPTX authoring path.
-- Preserve every input PPT or PPTX. Write edits and conversions to a distinct `.pptx` output unless the user explicitly requests replacement.
-- Write audience-facing slide copy. Do not expose planning notes or implementation commentary on slides.
-- Render every final slide to PNG and inspect each page at full size. A montage is only an overview.
-- Fix unintended clipping, overflow, wrapping, overlap, image cropping, broken connectors, unresolved placeholders, footer/page-number inconsistency, and chart/data mismatches.
-- Use `deliver` for the last build or verification so the PPTX hash, coverage, audit, render, and seal all refer to the same artifact. Do not edit or rebuild after the final report.
-- Never append `|| true`, suppress stderr, or otherwise bypass `deliver`. A file is final only when `delivery.status` and `delivery.seal.status` are both `passed`.
-- Do not ignore `audit` warnings. Fix genuine defects; explicitly disposition verified false positives, intentional overlaps, and accepted renderer limitations. Every disposition must bind to the exact PPTX SHA-256 and include a concrete reason and visual evidence.
+- 使用 JavaScript ES 模块和捆绑的 `scripts/pptx.sh` 工作流。
+- 全新幻灯片使用 PptxGenJS；继承模板幻灯片使用 pptx-automizer。
+- 不要使用 `python-pptx`、`@oai/artifact-tool`、Google Slides API，或 HTML-to-PPTX 创作路径。
+- 保留每一份输入 PPT 或 PPTX。除非用户明确要求替换，否则把编辑和转换写到不同的 `.pptx` 输出。
+- 幻灯片文案面向观众。不要在幻灯片上暴露规划备注或实现说明。
+- 将每一张终稿幻灯片渲染为 PNG，并按全尺寸检查每一页。拼图只作总览。
+- 修复非预期裁切、溢出、换行、重叠、图像裁剪、断开的连接线、未解析的占位符、页脚/页码不一致，以及图表/数据不匹配。
+- 最后一次构建或核验使用 `deliver`，使 PPTX 哈希、覆盖率、审计、渲染和封印都指向同一制品。最终报告之后不要再编辑或重建。
+- 切勿追加 `|| true`、抑制 stderr，或以其他方式绕过 `deliver`。只有当 `delivery.status` 和 `delivery.seal.status` 都为 `passed` 时，文件才算终稿。
+- 不要忽略 `audit` 警告。修复真实缺陷；对已核实的误报、有意重叠和已接受的渲染器限制给出明确处置。每条处置必须绑定到确切的 PPTX SHA-256，并包含具体理由和视觉证据。
 
-## Read the relevant references
+## 阅读相关参考
 
-- Always read [content-and-narrative.md](references/content-and-narrative.md) before planning a deck.
-- Read [api-quick-start.md](references/api-quick-start.md) before writing a builder.
-- Read [design-and-layout.md](references/design-and-layout.md) for a deck without a supplied template.
-- Read [template-following.md](references/template-following.md) when a source PPTX supplies the visual system or editable frames.
-- Read [charts-and-data.md](references/charts-and-data.md) before adding charts or quantitative tables.
-- Read [typography-and-fonts.md](references/typography-and-fonts.md) when no supplied template controls typography, especially for Chinese or mixed-language content.
-- Read [requirements-and-delivery.md](references/requirements-and-delivery.md) when the task contains exact facts, mandatory sections, benchmark criteria, or high-risk delivery requirements.
-- Read [legacy-ppt-conversion.md](references/legacy-ppt-conversion.md) when the input is `.ppt`, has an ambiguous extension, or was created by PowerPoint 97–2003.
-- Read [qa-checklist.md](references/qa-checklist.md) before delivery.
+- 规划幻灯片之前，始终阅读 [content-and-narrative.md](references/content-and-narrative.md)。
+- 编写构建脚本之前，阅读 [api-quick-start.md](references/api-quick-start.md)。
+- 没有提供模板的幻灯片，阅读 [design-and-layout.md](references/design-and-layout.md)。
+- 当源 PPTX 提供视觉体系或可编辑框架时，阅读 [template-following.md](references/template-following.md)。
+- 添加图表或定量表格之前，阅读 [charts-and-data.md](references/charts-and-data.md)。
+- 当没有模板控制排版时（尤其是中文或中英混排），阅读 [typography-and-fonts.md](references/typography-and-fonts.md)。
+- 当任务包含确切事实、必选章节、基准标准或高风险交付要求时，阅读 [requirements-and-delivery.md](references/requirements-and-delivery.md)。
+- 当输入是 `.ppt`、扩展名含糊，或由 PowerPoint 97–2003 创建时，阅读 [legacy-ppt-conversion.md](references/legacy-ppt-conversion.md)。
+- 交付前阅读 [qa-checklist.md](references/qa-checklist.md)。
 
-## Resolve paths and prepare the runtime
+## 解析路径并准备运行时
 
-Resolve the directory containing this file as `PPTX_SKILL_ROOT`, then use:
+将包含本文件的目录解析为 `PPTX_SKILL_ROOT`，然后使用：
 
 ```bash
 PPTX="$PPTX_SKILL_ROOT/scripts/pptx.sh"
 bash "$PPTX" check || bash "$PPTX" fix
 ```
 
-Use the turn-scoped PilotDeck work directory for every intermediate. The host sets `PILOTDECK_WORK_DIR`; the fallback keeps manual runs internal to the project:
+所有中间产物都使用本轮作用域的 PilotDeck 工作目录。宿主会设置 `PILOTDECK_WORK_DIR`；回退路径把手动运行限制在项目内部：
 
 ```bash
 WORKSPACE="${PILOTDECK_WORK_DIR:-$PWD/.pilotdeck/work/manual/<task-slug>}/pptx"
 mkdir -p "$WORKSPACE/tmp" "$WORKSPACE/qa"
 ```
 
-Put the builder, converted inputs, source notes, renders, manifests, maps, candidates, and QA reports in `WORKSPACE`. Put only the requested final deliverables in the project or user-selected output directory. Never create `.pilotdeck_build.mjs`, QA directories, or other intermediates beside the user's files. Do not conceal scratch files with Git ignore changes.
+把构建脚本、转换后的输入、源备注、渲染图、清单、映射、候选文件和 QA 报告放在 `WORKSPACE`。只有请求的最终交付物才放到项目或用户选定的输出目录。切勿在用户文件旁边创建 `.pilotdeck_build.mjs`、QA 目录或其他中间产物。不要用 Git ignore 变更来隐藏临时文件。
 
-## Route the request
+## 路由请求
 
-Choose exactly one route:
+恰好选择一条路线：
 
-1. Legacy `.ppt` input: preserve it, convert it once to a verified temporary `.pptx`, inspect the paired renders, and use only the converted `.pptx` downstream.
-2. Existing PPTX to inspect or answer questions about: inspect the entire deck; do not edit unless requested.
-3. Net-new PPTX without a template: use the PilotDeck layout library unless the user gives explicit visual direction.
-4. Net-new PPTX with explicit visual direction: build a custom composition; do not combine it with the default library.
-5. Template-based creation or edit: use only the supplied source deck as the visual system and follow template mode.
+1. 旧版 `.ppt` 输入：保留它，一次性转换为已验证的临时 `.pptx`，检查配对渲染，下游只使用转换后的 `.pptx`。
+2. 现有 PPTX 仅检查或回答问题：检查整套幻灯片；除非被要求，否则不要编辑。
+3. 无模板的全新 PPTX：除非用户给出明确视觉方向，否则使用 PilotDeck 布局库。
+4. 有明确视觉方向的全新 PPTX：构建自定义构图；不要与默认库混用。
+5. 基于模板的创建或编辑：只把提供的源幻灯片作为视觉体系，并遵循模板模式。
 
-Use `frontend-slides` instead when the requested output is a browser-based HTML presentation or a PPTX-to-web conversion. Never route a native Google Slides request through this skill.
+当请求的输出是基于浏览器的 HTML 演示文稿时，改用 `diagram-maker` 生成本地 HTML/SVG。切勿把原生 Google Slides 或在线演示服务请求路由到本技能。
 
-## Plan the communication before coding
+## 先规划表达，再写代码
 
-Write one sentence that states the audience, desired outcome, and single most important takeaway. Then create a slide plan with one job per slide. Prefer a coherent argument over a collection of facts.
+写一句话，说明受众、期望结果和最重要的一条结论。然后做幻灯片计划，每页只承担一项任务。宁可做成连贯论证，也不要堆砌事实。
 
-Plan visuals together with the narrative. Use one strong image, chart, table, or simple diagram only when it improves comprehension. Do not repeat the same image except as a background. Avoid presentation pages that resemble dashboards, settings screens, or grids of UI cards.
+把视觉与叙事一起规划。仅当能提升理解时，才使用一张有力的图片、图表、表格或简单图示。除背景外不要重复同一张图。避免做成仪表盘、设置页或 UI 卡片网格那样的演示页。
 
-When no template controls typography, resolve a locale profile with `resolveDesignTokens`. Use `cross-platform-zh` for unspecified simplified-Chinese or mixed-language delivery and `cross-platform-en` for English. Use a platform-specific profile only when the target platform is known. Shorten copy or change the layout before shrinking type below the selected density profile.
+当没有模板控制排版时，用 `resolveDesignTokens` 解析 locale 配置。未指定的简体中文或中英混排交付使用 `cross-platform-zh`，英文使用 `cross-platform-en`。仅当目标平台已知时才使用平台专用配置。在把字号缩小到所选密度配置以下之前，先缩短文案或改布局。
 
-When the user supplies exact values, required phrases, mandatory sections, or benchmark criteria, create a lightweight requirements file before authoring. Mark only genuinely blocking items as `critical`; keep preferred details `recommended` so the Harness does not over-constrain creative work.
+当用户提供确切数值、必用短语、必选章节或基准标准时，在创作前创建一份轻量需求文件。只有真正阻断的项才标为 `critical`；把偏好细节标为 `recommended`，以免 Harness 过度约束创作。
 
-## Control effort without a wall-clock cutoff
+## 控制投入，不要用墙钟时限截断
 
-Prioritize a complete, correct, editable, and auditable deck over repeated visual refinement. API or tool waiting time is not a reason to stop an otherwise progressing task.
+优先交付完整、正确、可编辑且可审计的幻灯片，而不是反复视觉打磨。API 或工具等待时间不是停止仍在推进的任务的理由。
 
-1. Read and normalize each source once; reuse extracted facts and file hashes.
-2. Establish the complete slide structure before visual refinement, then produce one usable full-deck build.
-3. Run `audit` and render the full deck. Fix critical content, overflow, clipping, and unintended overlap before aesthetic details.
-4. After the hard requirements pass, perform at most one optional visual-polish pass unless the user explicitly requests more.
-5. Do not rebuild the whole deck for small spacing, color, or decorative differences. Inspect and repair only affected slides.
-6. Use the bundled typography profile. Do not scan the system or repeatedly compare fonts unless the selected font breaks the target PowerPoint output.
-7. Do not rewrite a valid deck only because LibreOffice substitutes Chinese glyphs differently. Treat PowerPoint as the target viewer and record the baseline limitation.
-8. When an audit warning is visually intentional, disposition it instead of redesigning the page repeatedly.
+1. 每个源只读取并规范化一次；复用已提取的事实和文件哈希。
+2. 在视觉打磨之前先确立完整幻灯片结构，然后产出一份可用的全套构建。
+3. 运行 `audit` 并渲染全套。在审美细节之前，先修复关键内容、溢出、裁切和非预期重叠。
+4. 硬性要求通过后，最多再做一轮可选的视觉抛光，除非用户明确要求更多。
+5. 不要为细小间距、颜色或装饰差异重建整套幻灯片。只检查并修复受影响的页。
+6. 使用捆绑的排版配置。除非所选字体破坏目标 PowerPoint 输出，否则不要扫描系统或反复比较字体。
+7. 不要仅因为 LibreOffice 对中文字形的替换不同就重写一份有效幻灯片。把 PowerPoint 当作目标查看器，并记录该基线限制。
+8. 当审计警告在视觉上是有意的，给出处置，而不是反复重做该页。
 
-## Convert a legacy PPT
+## 转换旧版 PPT
 
-Do not pass `.ppt` directly to OOXML inspection or template editing. Convert and verify it first:
+不要把 `.ppt` 直接交给 OOXML 检查或模板编辑。先转换并核验：
 
 ```bash
 bash "$PPTX" convert \
@@ -96,19 +96,19 @@ bash "$PPTX" convert \
   --qa-dir "$WORKSPACE/legacy-conversion-qa"
 ```
 
-Inspect the source and converted montages and the conversion report. Page-count or structural failure blocks use. A visual-difference or legacy-feature warning requires review but does not claim that the `.ppt` was converted losslessly. Keep the original `.ppt`; final output remains `.pptx`.
+检查源与转换后的拼图以及转换报告。页数或结构失败会阻断使用。视觉差异或旧版特性警告需要审阅，但不等于声称 `.ppt` 已无损转换。保留原始 `.ppt`；最终输出仍是 `.pptx`。
 
-## Build a net-new deck
+## 构建全新幻灯片
 
-Create the executable builder:
+创建可执行构建脚本：
 
 ```bash
 bash "$PPTX" scaffold --out "$WORKSPACE/tmp/deck.mjs"
 ```
 
-Edit the builder so its default export receives the PilotDeck toolkit and returns a PptxGenJS presentation. Use plain `.mjs`; do not add a transpiler. Resolve design tokens for the content language, pass the same tokens to `createDeck` and layout functions, and set PptxGenJS `objectName` values for anything likely to be edited later.
+编辑构建脚本，使其默认导出接收 PilotDeck 工具包并返回 PptxGenJS 演示文稿。使用普通 `.mjs`；不要加转译器。按内容语言解析设计令牌，把同一套令牌传给 `createDeck` 和布局函数，并为后续可能编辑的对象设置 PptxGenJS `objectName`。
 
-Build the PPTX:
+构建 PPTX：
 
 ```bash
 bash "$PPTX" build \
@@ -116,17 +116,17 @@ bash "$PPTX" build \
   --out "$FINAL_PPTX"
 ```
 
-Use the bundled layout registry and design tokens only when no stronger visual source exists:
+仅当没有更强的视觉来源时，才使用捆绑的布局注册表和设计令牌：
 
 - `assets/layout-library/template-registry.json`
 - `assets/layout-library/design-tokens.json`
 - `assets/layout-library/layouts/core.mjs`
 
-Do not fill a deck with every available layout. Select the smallest set that supports the story and vary the slide silhouette across the deck.
+不要用尽每一种可用布局填满幻灯片。选择能支撑故事的最小集合，并在整套中变化页面轮廓。
 
-## Follow a supplied template
+## 遵循提供的模板
 
-Inspect and render the complete source deck before mapping output slides:
+在映射输出页之前，检查并渲染完整源幻灯片：
 
 ```bash
 bash "$PPTX" inspect \
@@ -139,7 +139,7 @@ bash "$PPTX" render \
   --montage "$WORKSPACE/tmp/template-montage.png"
 ```
 
-Create `template-frame-map.json`. Map every output slide to a source slide and list the exact inherited objects allowed to change. Validate the map before editing:
+创建 `template-frame-map.json`。把每一张输出页映射到一张源页，并列出允许改动的精确继承对象。编辑前校验映射：
 
 ```bash
 bash "$PPTX" validate-map \
@@ -148,7 +148,7 @@ bash "$PPTX" validate-map \
   --out "$WORKSPACE/tmp/template-map-validation.json"
 ```
 
-Create an unedited starter deck first:
+先创建未经编辑的起始幻灯片：
 
 ```bash
 bash "$PPTX" prepare-starter \
@@ -157,7 +157,7 @@ bash "$PPTX" prepare-starter \
   --out "$WORKSPACE/tmp/template-starter.pptx"
 ```
 
-Render the source and starter, then run `fidelity`. Resolve unexplained differences before applying edits. Apply only operations authorized by the frame map:
+渲染源与起始稿，然后运行 `fidelity`。在应用编辑之前解决无法解释的差异。只应用框架映射授权的操作：
 
 ```bash
 bash "$PPTX" apply-template \
@@ -167,20 +167,20 @@ bash "$PPTX" apply-template \
   --out "$FINAL_PPTX"
 ```
 
-Do not overlay replacement objects on top of inaccessible template objects. If the requested target cannot be preserved or safely modified, stop and report the unsupported object and closest viable source-slide alternatives.
+不要在无法访问的模板对象上叠加替换对象。若请求的目标无法保留或无法安全修改，停止并报告不支持的对象以及最接近、仍可用的源页备选。
 
-## Charts, diagrams, and images
+## 图表、图示与图像
 
-- Validate chart category counts, series lengths, units, labels, and displayed totals before generation.
-- Keep a source note for externally researched values and visuals.
-- Create connectors before diagram nodes so edges stay behind nodes.
-- Use native shapes only for simple diagrams. Use a prepared raster or SVG asset for complex or aesthetic visuals.
-- Determine image aspect ratio and intended crop before placement. Use `imageSizingCrop` or `imageSizingContain` from the toolkit rather than stretching images.
-- Do not treat decorative shapes as the main visual content.
+- 生成前校验图表类别数量、系列长度、单位、标签和显示合计。
+- 为外部调研的数值和视觉素材保留源备注。
+- 先创建连接线再创建图示节点，让边位于节点后面。
+- 简单图示只用原生形状。复杂或偏审美的视觉使用准备好的栅格或 SVG 资源。
+- 放置前确定图像宽高比和预期裁切。使用工具包中的 `imageSizingCrop` 或 `imageSizingContain`，不要拉伸图像。
+- 不要把装饰形状当作主要视觉内容。
 
-## Render and validate
+## 渲染与校验
 
-Use `audit` and `render` for fast iteration after material revisions:
+重大修订后，用 `audit` 和 `render` 做快速迭代：
 
 ```bash
 bash "$PPTX" audit \
@@ -194,9 +194,9 @@ bash "$PPTX" render \
   --pdf "$WORKSPACE/qa/rendered.pdf"
 ```
 
-Inspect every `slide-N.png` at full resolution. Compare the rendered page count to the PPTX manifest. Revise the builder or template edit map, rebuild, and repeat until all hard failures are gone and every warning has been resolved or visually confirmed as intentional.
+按全分辨率检查每一张 `slide-N.png`。把渲染页数与 PPTX 清单比较。修订构建脚本或模板编辑映射，重建并重复，直到所有硬失败消失，且每条警告都已解决或在视觉上确认为有意。
 
-For the final net-new build, run:
+最终的全新构建运行：
 
 ```bash
 bash "$PPTX" deliver \
@@ -207,9 +207,9 @@ bash "$PPTX" deliver \
   --require-render
 ```
 
-For exact coverage criteria, save `requirements.json` under `WORKSPACE/tmp` and add `--require-coverage`. `deliver` auto-discovers that file. For template output, run `deliver --input "$FINAL_PPTX"` instead.
+对于精确覆盖率标准，把 `requirements.json` 保存在 `WORKSPACE/tmp` 下并加上 `--require-coverage`。`deliver` 会自动发现该文件。对于模板输出，改为运行 `deliver --input "$FINAL_PPTX"`。
 
-If the first delivery is blocked by warnings, inspect the full-size PNGs and `audit.json`. Create a hash-bound disposition file, then seal the unchanged QA candidate:
+若首次交付被警告阻断，检查全尺寸 PNG 和 `audit.json`。创建绑定哈希的处置文件，然后封印未改动的 QA 候选：
 
 ```bash
 bash "$PPTX" deliver \
@@ -222,14 +222,14 @@ bash "$PPTX" deliver \
   --require-render
 ```
 
-Do not deliver `candidate.pptx`. Only a `passed` delivery is sealed to `FINAL_PPTX`. Treat Microsoft PowerPoint as the target viewer and LibreOffice as an automated baseline, especially for Chinese font substitution.
+不要交付 `candidate.pptx`。只有 `passed` 的交付才会封印到 `FINAL_PPTX`。把 Microsoft PowerPoint 当作目标查看器，把 LibreOffice 当作自动化基线，尤其是中文字体替换。
 
-Run the bundled integration test after modifying this skill or its runtime:
+修改本技能或其运行时之后，运行捆绑的集成测试：
 
 ```bash
 bash "$PPTX" self-test --out "$WORKSPACE/self-test"
 ```
 
-## Deliver
+## 交付
 
-Return the sealed final `.pptx` and a concise summary. State that verification passed and disclose accepted compatibility limitations. For legacy input, state that the preserved `.ppt` was converted to `.pptx` and that macros, legacy animation, OLE objects, WordArt, media, and uncommon fonts are not guaranteed lossless. Do not deliver builders, candidates, manifests, frame maps, renders, or QA reports unless the user requests them.
+返回已封印的最终 `.pptx` 和简明摘要。说明核验已通过，并披露已接受的兼容性限制。对于旧版输入，说明已将保留的 `.ppt` 转换为 `.pptx`，且宏、旧版动画、OLE 对象、WordArt、媒体和不常见字体不保证无损。除非用户要求，否则不要交付构建脚本、候选文件、清单、框架映射、渲染图或 QA 报告。

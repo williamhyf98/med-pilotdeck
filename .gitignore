@@ -200,6 +200,7 @@ package-lock.json
 
 # Test output
 test-results/
+tests/skill-e2e/work/
 
 # Local test drafts (force-add intentional new tests with git add -f)
 test/

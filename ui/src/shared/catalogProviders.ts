@@ -205,3 +205,37 @@ export function findCatalogProviderById(id: string): CatalogProvider | undefined
 export function findCatalogProviderByUrl(url: string): CatalogProvider | undefined {
   return CATALOG_PROVIDERS.find((p) => p.defaultUrl === url);
 }
+
+export type ConfigProviderInput = {
+  protocol?: string;
+  url?: string;
+  models?: Record<string, unknown> | null;
+};
+
+/** Build UI provider tiles from pilotdeck.yaml `model.providers` (offline UI uses this instead of the public catalog grid). */
+export function providersFromConfig(
+  providers: Record<string, ConfigProviderInput> | undefined,
+): CatalogProvider[] {
+  if (!providers) return [];
+  return Object.entries(providers).map(([id, prov]) => {
+    const catalogMatch = findCatalogProviderById(id);
+    const protocol = (prov.protocol ?? catalogMatch?.protocol ?? 'openai') as CatalogProviderProtocol;
+    const url = prov.url ?? catalogMatch?.defaultUrl ?? '';
+    const modelIds = prov.models ? Object.keys(prov.models) : [];
+    const models: CatalogModel[] = modelIds.length > 0
+      ? modelIds.map((modelId) => {
+          const catalogModel = catalogMatch?.models.find((m) => m.id === modelId);
+          return catalogModel ?? { id: modelId, displayName: modelId };
+        })
+      : (catalogMatch?.models ?? []);
+    return {
+      id,
+      displayName: catalogMatch?.displayName ?? id,
+      protocol,
+      defaultUrl: url,
+      requiresApiKey: catalogMatch?.requiresApiKey,
+      modelListRequiresApiKey: catalogMatch?.modelListRequiresApiKey,
+      models,
+    };
+  });
+}

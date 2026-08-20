@@ -1,40 +1,40 @@
-# Design and layout
+# 设计与版式
 
-## Choose a visual route
+## 选择视觉路径
 
-Use one visual source only:
+仅使用一种视觉来源：
 
-1. A user-supplied PPTX or reference deck.
-2. Explicit user art direction.
-3. The PilotDeck core layout library when neither exists.
+1. 用户提供的 PPTX 或参考演示文稿。
+2. 明确的用户美术方向。
+3. 当前两者都不存在时，使用 PilotDeck 核心版式库。
 
-Do not mix the default library into a supplied template.
+不要把默认库混入已提供的模板。
 
-## Core layout library
+## 核心版式库
 
-Read `assets/layout-library/template-registry.json`, shortlist layouts by `useWhen`, `slots`, and `densityBudget`, then inspect only the relevant exports in `assets/layout-library/layouts/core.mjs`.
+阅读 `assets/layout-library/template-registry.json`，按 `useWhen`、`slots` 和 `densityBudget` 筛选版式，然后仅检查 `assets/layout-library/layouts/core.mjs` 中相关的导出。
 
-Available exports:
+可用导出：
 
-- `titleSlide`, `sectionSlide`, `statementSlide`
-- `splitSlide`, `twoColumnSlide`
-- `metricSlide`, `comparisonSlide`, `timelineSlide`
-- `chartSlide`, `tableSlide`, `quoteSlide`, `closingSlide`
+- `titleSlide`、`sectionSlide`、`statementSlide`
+- `splitSlide`、`twoColumnSlide`
+- `metricSlide`、`comparisonSlide`、`timelineSlide`
+- `chartSlide`、`tableSlide`、`quoteSlide`、`closingSlide`
 
-Treat these as composition scaffolds, not mandatory styling. Preserve margins, hierarchy, and density while adapting content.
+将这些视为组合脚手架，而非强制样式。在适配内容时保留边距、层级和密度。
 
-## Presentation-native design
+## 演示文稿原生设计
 
-Favor flat editorial composition over UI panels. Avoid repeated cards, pills, buttons, navigation bars, and dense dashboards unless the subject is explicitly a product interface.
+优先采用平面编辑式构图，而不是 UI 面板。除非主题明确是产品界面，否则避免重复的卡片、胶囊、按钮、导航栏和密集仪表盘。
 
-Maintain equal outer margins by default. Use alignment, whitespace, scale, and one accent color to create hierarchy. Vary slide silhouettes without introducing a different visual language on every page.
+默认保持相等的外边距。用对齐、留白、比例和一种强调色建立层级。变换幻灯片轮廓，但不要在每一页引入不同的视觉语言。
 
-Use at most one primary visual on a standard content slide. Avoid decorative charts, unlabelled icons, and low-value diagrams.
+标准内容页最多使用一个主视觉。避免装饰性图表、无标签图标和低价值示意图。
 
-## Typography and fit
+## 排版与适配
 
-Keep titles on one line. Shorten text before shrinking it. Resolve the appropriate typography profile from `typography-and-fonts.md`; use presentation density for projection and report density only for desktop-reading deliverables. Check Chinese and mixed-language wrapping in the rendered PNG and treat LibreOffice font substitution separately from target-PowerPoint compatibility.
+标题保持一行。先缩短文本再缩小字号。从 `typography-and-fonts.md` 解析合适的排版配置；投影使用 presentation 密度，仅桌面阅读交付物使用 report 密度。在已渲染 PNG 中检查中文和中英混排换行，并将 LibreOffice 字体替换与目标 PowerPoint 兼容性分开处理。
 
-## Images
+## 图像
 
-Select the intended crop before placing the image. Do not stretch images. Keep important faces, labels, and product UI away from crop edges. Do not reuse the same non-background image on multiple slides by default.
+放置图像前先选定预期裁切。不要拉伸图像。让重要的人脸、标签和产品 UI 远离裁切边缘。默认不要在多张幻灯片上复用同一张非背景图像。

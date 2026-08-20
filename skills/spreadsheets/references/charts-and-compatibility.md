@@ -1,38 +1,38 @@
-# Charts and compatibility
+# 图表与兼容性
 
-## Compatibility preflight
+## 兼容性预检
 
-An XLSX is a package containing many object types. The bundled inspector detects advanced features before an ExcelJS round trip.
+XLSX 是包含多种对象类型的包。捆绑检查器会在 ExcelJS 往返之前检测高级功能。
 
-Treat these as unsafe by default:
+默认将这些视为不安全：
 
-- VBA macros.
-- Native charts and chart drawings.
-- Pivot tables and pivot caches.
-- Slicers.
-- External links, connections, and query tables.
-- Embedded or ActiveX objects.
-- Package signatures.
-- Drawings that may contain unsupported shapes.
+- VBA 宏。
+- 原生图表和图表绘图。
+- 数据透视表和透视缓存。
+- 切片器。
+- 外部链接、连接和查询表。
+- 嵌入对象或 ActiveX 对象。
+- 包签名。
+- 可能包含不支持形状的绘图。
 
-Run:
+运行：
 
 ```bash
 bash "$SHEET" inspect --input "$INPUT_XLSX" --out "$WORKSPACE/tmp/inspection.json"
 ```
 
-Review `package.unsafeForRoundTrip` and `package.roundTripRisks`. If risks are present:
+审阅 `package.unsafeForRoundTrip` 和 `package.roundTripRisks`。如果存在风险：
 
-1. Do not run `build --input` automatically.
-2. Explain which objects may be lost or rewritten.
-3. Prefer read-only analysis, a new companion workbook, or a narrowly designed future OOXML operation.
-4. Use `--allow-risky-roundtrip` only after explicit user approval and only when losing or rewriting the listed objects is acceptable.
+1. 不要自动运行 `build --input`。
+2. 说明哪些对象可能丢失或被重写。
+3. 优先只读分析、新建配套工作簿，或范围收窄的未来 OOXML 操作。
+4. 仅在用户明确批准之后、且丢失或重写所列对象可接受时，才使用 `--allow-risky-roundtrip`。
 
-## Native chart support
+## 原生图表支持
 
-Net-new workbooks support editable native `line`, `column`, and `bar` charts. The runtime recalculates formulas first and injects the chart OOXML afterward, so LibreOffice cannot erase the newly created chart during recalculation.
+全新工作簿支持可编辑的原生 `line`、`column` 和 `bar` 图表。运行时先重新计算公式，然后再注入图表 OOXML，因此 LibreOffice 无法在重新计算期间擦除新创建的图表。
 
-Create a chart through the builder helper:
+通过构建器辅助函数创建图表：
 
 ```js
 helpers.addNativeChart(workbook, {
@@ -51,28 +51,28 @@ helpers.addNativeChart(workbook, {
 });
 ```
 
-- Category and series ranges must have equal lengths.
-- Categories must be non-blank, series values must be non-blank and numeric after recalculation, and line charts must contain at least two complete points.
-- Keep chart sources visible and formula-backed when reshaping is needed.
-- Do not use an image to satisfy a requested chart.
-- Add every requested chart to `requirements.json`; audit the sheet, type, source ranges, native chart count, and `minPoints`. For a requested three-month trend, use `minPoints: 3`.
-- Render and inspect chart titles, category labels, legend labels, units, placement, and empty-data behavior.
-- Do not round-trip an existing chart workbook through ExcelJS by default. Net-new chart creation does not imply safe editing of arbitrary existing chart packages.
+- 类别范围和系列范围必须长度相等。
+- 类别必须非空，系列值必须非空且在重新计算后为数值，折线图必须包含至少两个完整点。
+- 当需要重塑时，保持图表源可见并由公式支撑。
+- 不要用图像来满足所要求的图表。
+- 将每一个所要求的图表加入 `requirements.json`；审计工作表、类型、源范围、原生图表数量和 `minPoints`。对于所要求的三个月趋势，使用 `minPoints: 3`。
+- 渲染并检查图表标题、类别标签、图例标签、单位、放置以及空数据行为。
+- 默认不要通过 ExcelJS 往返既有图表工作簿。全新创建图表并不意味着可以安全编辑任意既有图表包。
 
-The native-chart helper owns the DrawingML anchor and relationship XML. Do not hand-edit it in a builder. `audit` rejects malformed anchors, nested or misplaced `clientData`, unresolved worksheet-to-drawing links, unresolved chart relationships, and missing chart parts. A chart is structurally deliverable only when `package.compatibility.status` is `ok` in addition to meeting the chart requirements.
+原生图表辅助函数负责 DrawingML 锚点和关系 XML。不要在构建器中手工编辑它。`audit` 会拒绝畸形锚点、嵌套或错位的 `clientData`、未解析的工作表到绘图链接、未解析的图表关系，以及缺失的图表部件。仅当 `package.compatibility.status` 为 `ok` 且满足图表需求时，图表在结构上才可交付。
 
-Other chart types remain unsupported. If a requested type is unavailable, choose the closest supported native type only when it preserves the intended analytical takeaway, and state the substitution.
+其他图表类型仍不受支持。如果所要求的类型不可用，仅在保留预期分析要点时选择最接近的受支持原生类型，并说明替换。
 
-## Images and drawings
+## 图像与绘图
 
-ExcelJS can create images, but existing drawing packages can contain unsupported shapes or chart relationships. For an existing workbook, treat any drawing risk as a reason to stop. For a net-new workbook, use images only when they improve comprehension and verify their placement in the rendered pages.
+ExcelJS 可以创建图像，但既有绘图包可能包含不支持的形状或图表关系。对于既有工作簿，将任何绘图风险视为停止的理由。对于全新工作簿，仅在图像能改善理解时使用，并在已渲染页面中核验其位置。
 
-## Legacy and macro-enabled formats
+## 旧版与启用宏的格式
 
-- Convert `.xls` to a temporary `.xlsx` with `convert-legacy`, inspect the converted workbook, and continue through the XLSX workflow. Preserve the `.xls` source and deliver `.xlsx`.
-- Do not edit `.xlsm`; macro preservation and signature integrity are outside the current contract.
-- Do not rename an unsupported file to `.xlsx`.
+- 用 `convert-legacy` 将 `.xls` 转换为临时 `.xlsx`，检查转换后的工作簿，并继续走 XLSX 工作流。保留 `.xls` 源并交付 `.xlsx`。
+- 不要编辑 `.xlsm`；宏保留和签名完整性超出当前约定。
+- 不要把不受支持的文件重命名为 `.xlsx`。
 
-## LibreOffice round-trip limitations
+## LibreOffice 往返限制
 
-LibreOffice provides deterministic headless recalculation and rendering, but it is not Microsoft Excel. Recalculation can introduce empty drawing parts on worksheets with filters. The runtime removes only drawing parts that have zero anchors, zero drawing relationships, and exactly one resolvable worksheet owner; it preserves and rejects ambiguous or populated drawing structures instead of guessing. Complex Excel-only formulas, external connections, and advanced objects may behave differently. Keep final Microsoft Excel smoke testing as an optional higher-assurance step when the environment provides Excel.
+LibreOffice 提供确定性的无头重新计算和渲染，但它不是 Microsoft Excel。重新计算可能在带筛选的工作表上引入空的绘图部件。运行时仅移除锚点数为零、绘图关系为零、且恰好有一个可解析工作表所有者的绘图部件；对含糊或已填充的绘图结构予以保留并拒绝，而不是猜测。复杂的仅限 Excel 公式、外部连接和高级对象可能表现不同。当环境提供 Excel 时，将最终 Microsoft Excel 冒烟测试作为可选的更高保障步骤。

@@ -1,7 +1,6 @@
 import { useTranslation } from "react-i18next";
 import {
   findCatalogProviderById,
-  type CatalogProvider,
 } from "../../../../../shared/catalogProviders";
 import type {
   ConfigSaveOptions,
@@ -76,16 +75,6 @@ export default function ModelsSection({ config, onChange }: ModelsSectionProps) 
     );
   };
 
-  const handleCatalogPick = async (cp: CatalogProvider) => {
-    if (providers[cp.id]) return;
-    await setProvider(cp.id, {
-      apiKey: "",
-      protocol: cp.protocol,
-      url: cp.defaultUrl,
-      models: {},
-    });
-  };
-
   const handleCustom = async () => {
     let i = 1;
     while (providers[`provider${i}`]) i++;
@@ -101,11 +90,7 @@ export default function ModelsSection({ config, onChange }: ModelsSectionProps) 
     <div className="space-y-3">
       <PageSectionHeader description={t("pilotDeckConfig.panels.models.description")} />
       <div className="flex justify-start">
-        <CatalogPicker
-          existingIds={new Set(ids)}
-          onPick={handleCatalogPick}
-          onCustom={handleCustom}
-        />
+        <CatalogPicker onCustom={handleCustom} />
       </div>
       {ids.length === 0 && (
         <div className="rounded-md border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">

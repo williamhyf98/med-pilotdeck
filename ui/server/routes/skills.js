@@ -16,10 +16,6 @@
  *     call to compute the validation result. A future revision can lift
  *     this onto a gateway RPC that accepts base64 chunks.
  *
- *   - `/clawhub/*` — shells out to the `clawhub` CLI which writes its
- *     output to disk by itself. We just retarget the install root to
- *     `~/.pilotdeck/skills/` so installs end up where the agent looks.
- *
  * Anything else (list/read/write/create/delete/import/validate/scan) is
  * a one-line forward to the gateway. Errors raised by `SkillManagerError`
  * arrive as `{ code, message }` and we map their `code` to a sensible
@@ -31,14 +27,11 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import multer from 'multer';
 import { getPilotDeckGateway } from '../pilotdeck-bridge.js';
 import { resolvePilotHome } from '../utils/pilotPaths.js';
 import { moveDirectoryAcrossDevicesSafe } from '../utils/fileMoves.js';
 
-const execFileAsync = promisify(execFile);
 const router = express.Router();
 
 const upload = multer({
@@ -65,6 +58,10 @@ const BUNDLED_SKILLS_ROOT = path.resolve(
   process.env.PILOTDECK_BUNDLED_SKILLS_DIR ||
     path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'skills'),
 );
+const MEDICAL_SKILLS_ROOT = path.resolve(
+  process.env.PILOTDECK_MEDICAL_SKILLS_DIR ||
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'plugins', 'med-tools', 'skills'),
+);
 
 function safeSlug(slug) {
   return typeof slug === 'string' && SLUG_RE.test(slug) && !slug.includes('..');
@@ -81,7 +78,7 @@ function resolveRequestedScope(scope, projectPath, { defaultToProjectWhenAvailab
   const generalCwd = isGeneralCwd(projectPath);
   const effectiveProjectPath = generalCwd ? null : projectPath || null;
 
-  if (scope === 'builtin') {
+  if (scope === 'builtin' || scope === 'medical') {
     return { ok: false, error: 'built-in skills are read-only' };
   }
 
@@ -142,6 +139,7 @@ function classifySkillPath(skillPath, projectPath = null) {
 
   const candidates = [
     { root: BUNDLED_SKILLS_ROOT, scope: 'builtin' },
+    { root: MEDICAL_SKILLS_ROOT, scope: 'medical' },
     { root: userSkillsRoot(), scope: 'user' },
   ];
   if (projectPath && !isGeneralCwd(projectPath)) {
@@ -227,6 +225,7 @@ router.post('/list', async (req, res) => {
       builtin: data.builtin,
       user: data.user,
       project: data.project,
+      medical: data.medical ?? [],
       projectPath: data.projectPath,
       isGeneralCwd: generalCwd,
     });
@@ -481,146 +480,6 @@ router.post('/import-upload', upload.array('files', 500), async (req, res) => {
       }
     }
     sendGatewayError(res, e);
-  }
-});
-
-// ---------------------------------------------------------------------------
-// ClawHub passthrough — kept here because the binary writes to disk and
-// reading it back into the gateway would just add a layer.  We retarget
-// the install root to `~/.pilotdeck/skills/` (or `<project>/.pilotdeck/
-// skills/`) so installed skills end up where the agent looks.
-// ---------------------------------------------------------------------------
-
-router.post('/clawhub/search', async (req, res) => {
-  try {
-    const { query, registry } = req.body || {};
-    if (typeof query !== 'string' || query.trim().length === 0) {
-      return res.json({ results: [] });
-    }
-    const args = ['--no-input'];
-    if (registry) args.push('--registry', registry);
-    args.push('search', query.trim());
-
-    let stdout = '';
-    try {
-      const r = await execFileAsync('clawhub', args, { timeout: 30_000, maxBuffer: 4 * 1024 * 1024 });
-      stdout = r.stdout || '';
-    } catch (e) {
-      if (e.code === 'ENOENT') {
-        return res
-          .status(503)
-          .json({ error: 'clawhub CLI not found in PATH. Install with `npm install -g clawhub`.' });
-      }
-      stdout = e.stdout || '';
-      if (!stdout) {
-        return res.status(500).json({ error: 'clawhub search failed', message: e.message });
-      }
-    }
-
-    // eslint-disable-next-line no-control-regex
-    const ANSI = /\x1b\[[0-9;]*m/g;
-    const results = [];
-    for (const rawLine of stdout.split('\n')) {
-      const line = rawLine.replace(ANSI, '').trim();
-      if (!line) continue;
-      if (line.startsWith('-') || line.toLowerCase().startsWith('searching')) continue;
-      const m = line.match(/^(\S+)\s+(.+?)\s+\(([\d.]+)\)\s*$/);
-      if (m) {
-        results.push({ slug: m[1], name: m[2], score: parseFloat(m[3]) });
-      } else {
-        const parts = line.split(/\s{2,}/);
-        if (parts.length >= 1 && safeSlug(parts[0])) {
-          results.push({ slug: parts[0], name: parts[1] || parts[0], score: null });
-        }
-      }
-    }
-    res.json({ results });
-  } catch (e) {
-    console.error('[skills/clawhub/search]', e);
-    res.status(500).json({ error: 'Search failed', message: e.message });
-  }
-});
-
-router.post('/clawhub/install', async (req, res) => {
-  try {
-    const { slug, version, force, scope, projectPath, registry } = req.body || {};
-    if (!safeSlug(slug)) {
-      return res.status(400).json({ error: `Invalid slug "${slug}".` });
-    }
-    const resolved = resolveRequestedScope(scope, projectPath, {
-      defaultToProjectWhenAvailable: true,
-    });
-    if (!resolved.ok) return res.status(400).json({ error: resolved.error });
-
-    let workdir;
-    let dir;
-    if (resolved.wantProject) {
-      workdir = resolved.projectPath;
-      dir = path.join(PROJECT_DIR, SKILLS_SUBDIR);
-    } else {
-      workdir = PILOT_HOME;
-      dir = SKILLS_SUBDIR;
-    }
-    const installPath = path.join(workdir, dir, slug);
-
-    const args = ['--no-input', '--workdir', workdir, '--dir', dir];
-    if (registry) args.push('--registry', registry);
-    args.push('install', slug);
-    if (version) args.push('--version', version);
-    if (force) args.push('--force');
-
-    let stdout = '';
-    let stderr = '';
-    let runError = null;
-    try {
-      const r = await execFileAsync('clawhub', args, { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 });
-      stdout = r.stdout || '';
-      stderr = r.stderr || '';
-    } catch (e) {
-      if (e.code === 'ENOENT') {
-        return res
-          .status(503)
-          .json({ error: 'clawhub CLI not found in PATH. Install with `npm install -g clawhub`.' });
-      }
-      runError = e;
-      stdout = e.stdout || '';
-      stderr = e.stderr || '';
-    }
-
-    let installed = false;
-    let skill = null;
-    try {
-      await fs.access(path.join(installPath, 'SKILL.md'));
-      installed = true;
-      // Pull the summary back through the gateway so descriptions reflect
-      // the same frontmatter parser the agent will use.
-      const list = await callGateway('skillsList', {
-        projectKey: resolved.wantProject ? resolved.projectPath : null,
-      });
-      const bucket = resolved.wantProject ? list.project : list.user;
-      skill = bucket.find((s) => s.slug === slug) ?? null;
-    } catch {
-      /* not installed */
-    }
-
-    const needsForce =
-      !installed && !force && (stderr || stdout).match(/Use --force to install suspicious/i) !== null;
-
-    res.json({
-      ok: installed,
-      slug,
-      scope: resolved.scope,
-      installPath,
-      installed,
-      skill,
-      stdout: stdout.trim(),
-      stderr: stderr.trim(),
-      exitCode: runError ? (runError.code === undefined ? 1 : runError.code) : 0,
-      needsForce,
-    });
-  } catch (e) {
-    console.error('[skills/clawhub/install]', e);
-    res.status(500).json({ error: 'Install failed', message: e.message });
   }
 });
 

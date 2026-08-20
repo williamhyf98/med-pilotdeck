@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Check, ChevronDown, Loader2, Plus } from 'lucide-react';
 import { authenticatedFetch } from '../../../../utils/api';
 import {
-  CATALOG_PROVIDERS,
+  providersFromConfig,
   findCatalogProviderByUrl,
   type CatalogProvider,
   type CatalogProviderProtocol,
@@ -31,7 +31,7 @@ const CUSTOM_PROVIDER: CatalogProvider = {
   models: [],
 };
 
-const DEFAULT_PROVIDER = CATALOG_PROVIDERS.find((provider) => provider.id === 'openrouter') ?? CATALOG_PROVIDERS[0];
+const DEFAULT_PROVIDER = CUSTOM_PROVIDER;
 
 function defaultModelForProvider(provider: CatalogProvider | null) {
   if (!provider) return '';
@@ -51,6 +51,7 @@ function requiresApiKey(provider: CatalogProvider | null) {
 }
 
 export default function LlmConfigurationStep({ onSaved }: LlmConfigurationStepProps) {
+  const [configuredProviders, setConfiguredProviders] = useState<CatalogProvider[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<CatalogProvider | null>(DEFAULT_PROVIDER);
   const [selectedModelId, setSelectedModelId] = useState(() => defaultModelForProvider(DEFAULT_PROVIDER));
   const [customModelId, setCustomModelId] = useState('');
@@ -76,14 +77,47 @@ export default function LlmConfigurationStep({ onSaved }: LlmConfigurationStepPr
   useEffect(() => {
     (async () => {
       try {
-        const res = await authenticatedFetch('/api/config/provider');
+        const res = await authenticatedFetch('/api/config');
         if (!res.ok) return;
         const data = await res.json();
-        if (!data.exists || !data.provider) return;
+        const yamlProviders = data.config?.model?.providers as Record<string, {
+          protocol?: CatalogProviderProtocol;
+          url?: string;
+          apiKey?: string;
+          models?: Record<string, unknown>;
+        }> | undefined;
+        const tiles = providersFromConfig(yamlProviders);
+        if (tiles.length > 0) {
+          setConfiguredProviders(tiles);
+        }
 
-        const p = data.provider;
-        const existingKeyIsUsable = hasUsableApiKey(p.apiKey);
-        if (!existingKeyIsUsable) return;
+        const agentModel = typeof data.config?.agent?.model === 'string' ? data.config.agent.model : '';
+        const [preferredProviderId, preferredModelId] = agentModel.includes('/')
+          ? agentModel.split('/', 2)
+          : [null, null];
+        const preferredProvider = preferredProviderId
+          ? tiles.find((tile) => tile.id === preferredProviderId)
+          : tiles[0];
+
+        if (preferredProvider) {
+          setSelectedProvider(preferredProvider);
+          setSelectedModelId(preferredModelId || defaultModelForProvider(preferredProvider));
+          const saved = yamlProviders?.[preferredProvider.id];
+          if (saved?.apiKey && hasUsableApiKey(saved.apiKey)) {
+            setApiKey(saved.apiKey);
+          }
+          if (saved?.url) {
+            setCustomUrl(saved.url === preferredProvider.defaultUrl ? '' : saved.url);
+          }
+          return;
+        }
+
+        const legacy = await authenticatedFetch('/api/config/provider');
+        if (!legacy.ok) return;
+        const legacyData = await legacy.json();
+        if (!legacyData.exists || !legacyData.provider) return;
+        const p = legacyData.provider;
+        if (!hasUsableApiKey(p.apiKey)) return;
         setApiKey(p.apiKey);
         if (p.baseUrl) {
           const match = findCatalogProviderByUrl(p.baseUrl);
@@ -351,7 +385,7 @@ export default function LlmConfigurationStep({ onSaved }: LlmConfigurationStepPr
       <div>
         <h2 className="text-lg font-semibold text-foreground">LLM Provider Setup</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Select your provider and configure credentials. Model capabilities are auto-configured.
+          Choose a provider already configured in pilotdeck.yaml, or add a custom OpenAI-compatible endpoint.
         </p>
       </div>
 
@@ -363,7 +397,7 @@ export default function LlmConfigurationStep({ onSaved }: LlmConfigurationStepPr
           Provider
         </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {CATALOG_PROVIDERS.map((provider) => (
+          {configuredProviders.map((provider) => (
             <button
               key={provider.id}
               type="button"
@@ -375,6 +409,9 @@ export default function LlmConfigurationStep({ onSaved }: LlmConfigurationStepPr
               }`}
             >
               <div className="font-medium">{provider.displayName}</div>
+              {provider.defaultUrl ? (
+                <div className="mt-0.5 truncate font-mono text-[10px] opacity-60">{provider.defaultUrl}</div>
+              ) : null}
               {selectedProvider?.id === provider.id && (
                 <Check className="absolute right-2 top-2 h-4 w-4 text-foreground" strokeWidth={2.5} />
               )}

@@ -1,34 +1,34 @@
-# Creating PDFs
+# 创建 PDF
 
-Read this before generating a new PDF or substantially redesigning one.
+在生成新 PDF 或进行实质性重新设计之前阅读本文。
 
-## Builder contract
+## 构建器约定
 
-- Start with `pdf.sh scaffold` and maintain one executable Python builder for the task.
-- The builder must accept `--out <path>`, create parent directories, work offline, and exit nonzero on failure.
-- Keep source data and calculations outside drawing callbacks when possible. Make the content model easy to inspect and revise.
-- Use ReportLab for generation. Use `SimpleDocTemplate` and flowables for ordinary reports; use canvas-level drawing only when exact placement is genuinely required.
+- 从 `pdf.sh scaffold` 开始，并为该任务维护一个可执行的 Python 构建器。
+- 构建器必须接受 `--out <path>`，创建父目录，可离线工作，并在失败时以非零状态退出。
+- 尽可能将源数据和计算放在绘制回调之外。让内容模型易于检查和修订。
+- 使用 ReportLab 进行生成。普通报告使用 `SimpleDocTemplate` 和 flowables；仅在确实需要精确放置时才使用画布级绘制。
 
-## Page and type system
+## 页面与字体系统
 
-- Choose page size, margins, type scale, line spacing, colors, table styles, and spacing before adding content.
-- Register fonts explicitly. Confirm that the selected font contains every required glyph, especially for Chinese, Japanese, Korean, symbols, and emoji.
-- Prefer a project-provided font. If none exists, search common system font locations and provide a safe fallback. Never download a font during the build.
-- Keep body text readable at the final page size. Avoid shrinking text merely to force content onto a page.
-- Use deterministic header/footer callbacks for titles, dates, confidentiality labels, and page numbers.
+- 在添加内容之前，先选定页面尺寸、边距、字号层级、行距、颜色、表格样式和间距。
+- 显式注册字体。确认所选字体包含所有必需字形，尤其是中文、日文、韩文、符号和 emoji。
+- 优先使用项目提供的字体。若不存在，搜索常见系统字体位置并提供安全回退。构建过程中切勿下载字体。
+- 正文在最终页面尺寸下保持可读。不要仅为把内容塞进一页而缩小文字。
+- 使用确定性的页眉/页脚回调来放置标题、日期、保密标签和页码。
 
-## Tables and images
+## 表格与图像
 
-- Specify column widths rather than relying on accidental auto-sizing.
-- Repeat table headers across pages and allow rows to split only when the result remains readable.
-- Use paragraphs inside table cells for wrapping and consistent typography.
-- Preserve image aspect ratios. Crop intentionally; do not stretch.
-- Use sufficient source resolution for the rendered output. A visually soft image is a defect even when the PDF is structurally valid.
+- 指定列宽，而不是依赖偶然的自动尺寸。
+- 跨页重复表头，并且仅在结果仍可读时才允许行拆分。
+- 在表格单元格内使用段落，以实现换行和一致的排版。
+- 保持图像宽高比。有意裁切；不要拉伸。
+- 为渲染输出使用足够的源分辨率。即使 PDF 结构有效，视觉上发虚的图像也是缺陷。
 
-## Iteration
+## 迭代
 
-1. Build the PDF.
-2. Run `audit`.
-3. Render all pages at 144 DPI or higher.
-4. Inspect every page PNG at full size.
-5. Patch the same builder and repeat until the QA checklist passes.
+1. 构建 PDF。
+2. 运行 `audit`。
+3. 以 144 DPI 或更高分辨率渲染所有页面。
+4. 以全尺寸检查每一页 PNG。
+5. 修补同一构建器并重复，直到质量检查清单通过。

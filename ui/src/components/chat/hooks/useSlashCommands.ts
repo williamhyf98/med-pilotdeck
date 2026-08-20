@@ -302,7 +302,7 @@ export function useSlashCommands({
   // surprise sends from slash suggestions that still need arguments.
   //
   // The replacement spans from the active `/` to the next whitespace so a
-  // partial query like `hello /skill_inst` becomes `hello /skill_install ` and
+  // partial query like `hello /switch-proj` becomes `hello /switch-project ` and
   // any trailing text after the query is preserved.
   const insertCommandIntoInput = useCallback(
     (command: SlashCommand) => {

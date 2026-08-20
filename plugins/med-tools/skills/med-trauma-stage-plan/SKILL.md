@@ -1,6 +1,6 @@
 ---
 name: med-trauma-stage-plan
-description: Formal six-stage war-trauma graded care plan via med_trauma_stage_plan (G9 inside plugin, main-agent-model fallback). Use when the user wants a structured care plan for one of 伤员发生地/野战分类场/收容处置组/重伤救治组/手术组/洗消组. Paste care_plan verbatim. Not for textbook Q&A (use med-trauma-assist) or attachment-only reading (use med-medical).
+description: 通过 med_trauma_stage_plan 生成正式六阶段战创伤分级救治方案（插件内 G9，主 Agent 模型回退）。当用户需要针对伤员发生地/野战分类场/收容处置组/重伤救治组/手术组/洗消组之一给出结构化救治方案时使用。原样粘贴 care_plan。不用于教材问答（用 med-trauma-assist），也不用于仅解读附件（用 med-medical）。
 ---
 
 # 战创伤分阶段正式救治方案（med-tools）
