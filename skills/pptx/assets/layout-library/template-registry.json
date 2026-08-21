@@ -5,6 +5,7 @@
     { "id": "title", "export": "titleSlide", "family": "opening", "useWhen": "Open the deck with one clear promise", "slots": ["eyebrow", "title", "subtitle", "meta"], "densityBudget": "low" },
     { "id": "section", "export": "sectionSlide", "family": "divider", "useWhen": "Introduce a new narrative chapter", "slots": ["number", "title", "subtitle"], "densityBudget": "low" },
     { "id": "statement", "export": "statementSlide", "family": "editorial", "useWhen": "Land one memorable conclusion", "slots": ["kicker", "statement", "support"], "densityBudget": "low" },
+    { "id": "content", "export": "contentSlide", "family": "content", "useWhen": "Present one concise set of points", "slots": ["title", "items", "body"], "densityBudget": "medium" },
     { "id": "split", "export": "splitSlide", "family": "media", "useWhen": "Pair a concise argument with one visual", "slots": ["title", "body", "media"], "densityBudget": "medium" },
     { "id": "two-column", "export": "twoColumnSlide", "family": "content", "useWhen": "Explain two related dimensions", "slots": ["title", "left", "right"], "densityBudget": "medium" },
     { "id": "metrics", "export": "metricSlide", "family": "evidence", "useWhen": "Show two to four headline metrics", "slots": ["title", "metrics", "source"], "densityBudget": "medium" },

@@ -18,7 +18,10 @@
 
 使用 `validate` 检查所需部件、XML 良构性、归档路径安全、展开限制、内部关系目标、内容类型声明以及无宏。使用 `inspect` 报告批注、跨故事部件的跟踪更改、域、图像、外部关系、包功能、元数据、节、可见结构以及检查限制。
 
-`review`、`finalize` 和 `sanitize` 命令会修补复制的 OOXML 包。通用 `edit` 命令通过 `python-docx` 加载和保存；它默认阻断对包敏感的输入。对窄范围 OOXML 更改使用受控的 `fallback-patch` 包装器，而不是绕过该 skill。
+`review`、`finalize` 和 `sanitize` 命令会修补复制的 OOXML 包。通用 `edit`
+命令通过 `python-docx` 加载和保存；它默认阻断对包敏感的输入。标准命令
+无法安全表达窄范围 OOXML 更改时，报告 `unsupported` 或 `blocked`；不要
+调用 `fallback-patch`，也不要绕过该 skill。
 
 ## 2. 批注
 

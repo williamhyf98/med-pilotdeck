@@ -13,6 +13,7 @@ import { inspectPptx, writeManifest } from './lib/ooxml.mjs';
 import { compareRenderedDirectories, renderPptx, renderingAvailability } from './lib/render.mjs';
 import { prepareStarter, validateFrameMap } from './lib/template.mjs';
 import { buildToolkit } from './lib/toolkit.mjs';
+import { makePptx } from './lib/make.mjs';
 import { skillRoot } from './lib/runtime.mjs';
 
 function print(value) {
@@ -100,6 +101,25 @@ async function buildCommand(args) {
   return response;
 }
 
+async function makeCommand(args) {
+  const contentSources = ['body', 'body-file', 'markdown', 'spec']
+    .filter((name) => args[name] !== undefined && args[name] !== false);
+  if (contentSources.length > 1) {
+    throw new Error('make accepts only one of --body, --body-file, --markdown, or --spec');
+  }
+  return makePptx({
+    title: args.title === true ? '' : args.title,
+    body: args.body === true ? '' : args.body,
+    bodyFile: args['body-file'] === true ? null : args['body-file'],
+    markdownFile: args.markdown === true ? null : args.markdown,
+    specFile: args.spec === true ? null : args.spec,
+    output: required(args, 'out'),
+    locale: args.locale === true ? null : args.locale,
+    footer: args.footer === true ? null : args.footer,
+    force: Boolean(args.force),
+  });
+}
+
 async function deliverCommand(args) {
   const hasBuilder = Boolean(args.builder && args.builder !== true);
   const hasInput = Boolean(args.input && args.input !== true);
@@ -130,8 +150,9 @@ async function deliverCommand(args) {
     requireRender: Boolean(args['require-render']),
     pdf: args.pdf !== false,
   });
+  const deliveryPassed = ['passed', 'passed_with_warnings'].includes(delivery.status);
   let sealedOutput = null;
-  if (delivery.status === 'passed') {
+  if (deliveryPassed) {
     sealedOutput = requestedOutput ? await sealFile(input, requestedOutput) : input;
     const sealedManifest = await inspectPptx(sealedOutput);
     if (sealedManifest.sha256 !== delivery.artifact.sha256) {
@@ -154,7 +175,7 @@ async function deliverCommand(args) {
       requestedOutput,
       output: null,
       candidate: input,
-      reason: 'Only a delivery with status=passed can be sealed to the requested output path',
+      reason: 'Only a delivery with status=passed or passed_with_warnings can be sealed to the requested output path',
     };
     await writeJson(delivery.report, delivery);
     process.exitCode = 1;
@@ -163,7 +184,7 @@ async function deliverCommand(args) {
     status: delivery.status,
     build,
     requestedOutput,
-    candidate: delivery.status === 'passed' ? null : input,
+    candidate: deliveryPassed ? null : input,
     output: sealedOutput,
     delivery,
   };
@@ -362,7 +383,11 @@ async function selfTest(args) {
       coverage: delivery.audit.coverage.status,
       requirementsDiscovered: delivery.requirements.discovered,
     };
-    if (delivery.status !== 'passed' || delivery.audit.coverage.status !== 'passed' || !delivery.requirements.discovered) {
+    if (
+      !['passed', 'passed_with_warnings'].includes(delivery.status)
+      || delivery.audit.coverage.status !== 'passed'
+      || !delivery.requirements.discovered
+    ) {
       throw new Error('Final delivery did not enforce discovered coverage and resolved warnings');
     }
 
@@ -420,7 +445,10 @@ async function selfTest(args) {
       'target-platform': 'cross-platform',
       dpi: numberArg(args, 'dpi', 96),
     });
-    if (sealedDelivery.status !== 'passed' || sealedDelivery.output !== sealedOutput) {
+    if (
+      !['passed', 'passed_with_warnings'].includes(sealedDelivery.status)
+      || sealedDelivery.output !== sealedOutput
+    ) {
       throw new Error('Verified input was not sealed to the requested final output');
     }
     const sealedManifest = await inspectPptx(sealedOutput);
@@ -565,6 +593,7 @@ function help() {
   return {
     usage: 'pptx.sh <command> [options]',
     commands: {
+      make: '--title TEXT [--body TEXT|--body-file FILE|--markdown FILE|--spec FILE] --out deck.pptx [--locale zh-CN --footer TEXT --force]',
       scaffold: '--out deck.mjs [--force]',
       convert: '--input legacy.ppt --out converted.pptx --qa-dir DIR [--fidelity-threshold 0.01 --force]',
       build: '--builder deck.mjs --out deck.pptx [--verify --qa-dir DIR --strict-overlap]',
@@ -586,7 +615,8 @@ const args = parseArgs(rest);
 
 try {
   let result;
-  if (command === 'scaffold') result = await scaffold(args);
+  if (command === 'make') result = await makeCommand(args);
+  else if (command === 'scaffold') result = await scaffold(args);
   else if (command === 'convert') result = await convertCommand(args);
   else if (command === 'build') result = await buildCommand(args);
   else if (command === 'deliver') result = await deliverCommand(args);

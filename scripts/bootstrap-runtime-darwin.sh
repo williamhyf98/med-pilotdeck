@@ -186,6 +186,32 @@ install_med_tools_venv() {
   PYTHON_BIN="$py_bin" bash "${med_dir}/setup.sh"
 }
 
+# Warm the bundled document skill runtimes. The skills locate their venv through
+# XDG_CACHE_HOME, which apply_local_runtime_env pins inside .runtime/cache, so a
+# runtime installed by hand in a plain shell lands somewhere the gateway cannot
+# see and every document request reports an incomplete delivery package.
+SKILL_RUNTIME_SUMMARY=""
+
+install_skill_runtimes() {
+  local skill entrypoint script
+  for skill in pdf docx pptx spreadsheets; do
+    entrypoint="$skill"
+    [[ "$skill" == "spreadsheets" ]] && entrypoint="spreadsheet"
+    script="${PILOTDECK_ROOT}/skills/${skill}/scripts/${entrypoint}.sh"
+    if [[ ! -f "$script" ]]; then
+      echo "==> skills/${skill} not present; skipping its runtime"
+      continue
+    fi
+    echo "==> Warming ${skill} skill runtime"
+    if bash "$script" bootstrap-runtime; then
+      SKILL_RUNTIME_SUMMARY+="    skill runtime ${skill}: ok"$'\n'
+    else
+      SKILL_RUNTIME_SUMMARY+="    skill runtime ${skill}: FAILED (check: bash ${script} check)"$'\n'
+      echo "warn: ${skill} skill runtime is not ready; document requests will report an incomplete delivery package" >&2
+    fi
+  done
+}
+
 install_node
 install_python
 # Re-apply PATH now that binaries exist.
@@ -194,10 +220,12 @@ assert_no_share
 ensure_pnpm
 install_js_deps
 install_med_tools_venv
+install_skill_runtimes
 
 echo
 echo "==> Bootstrap complete (darwin)"
 echo "    node:   $(command -v node) ($(node -v))"
 echo "    python: $(runtime_python) ($($(runtime_python) -V 2>&1))"
+printf '%s' "$SKILL_RUNTIME_SUMMARY"
 echo "    start:  ${PILOTDECK_ROOT}/scripts/start-local.sh"
 du -sh "$RUNTIME_DIR" "${PILOTDECK_ROOT}/node_modules" "${PILOTDECK_ROOT}/plugins/med-tools/.venv" 2>/dev/null || true

@@ -8,6 +8,7 @@ RUNTIME_SOURCE="$SKILL_DIR/runtime"
 CACHE_ROOT="${SPREADSHEET_SKILL_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/pilotdeck-spreadsheets}"
 RUNTIME_CACHE="$CACHE_ROOT/runtime"
 STAMP_FILE="$RUNTIME_CACHE/.pilotdeck-lock-hash"
+BUNDLED_FONT_DIR="${SPREADSHEET_SKILL_FONT_DIR:-$SKILL_DIR/../pdf/assets/fonts}"
 
 find_node() {
   command -v node 2>/dev/null || return 1
@@ -34,6 +35,7 @@ runtime_ready() {
   local node_path="" expected="" actual=""
   node_path="$(find_node)" || return 1
   [[ -f "$RUNTIME_SOURCE/package-lock.json" ]] || return 1
+  [[ -f "$BUNDLED_FONT_DIR/NotoSansSC-VF.ttf" ]] || return 1
   [[ -f "$STAMP_FILE" && -f "$RUNTIME_CACHE/package.json" ]] || return 1
   expected="$(runtime_hash)" || return 1
   actual="$(<"$STAMP_FILE")"
@@ -76,13 +78,16 @@ find_pdf_renderer() {
 
 cmd_check() {
   local node_path="" npm_path="" soffice_path="" renderer_path=""
-  local node_ok=false deps_ok=false recalculate_available=false render_available=false
+  local node_ok=false deps_ok=false font_ok=false recalculate_available=false render_available=false
   if node_path="$(find_node)"; then
     node_ok=true
   fi
   npm_path="$(find_npm || true)"
   if runtime_ready; then
     deps_ok=true
+  fi
+  if [[ -f "$BUNDLED_FONT_DIR/NotoSansSC-VF.ttf" ]]; then
+    font_ok=true
   fi
   soffice_path="$(find_soffice || true)"
   renderer_path="$(find_pdf_renderer || true)"
@@ -92,14 +97,18 @@ cmd_check() {
   if [[ -n "$soffice_path" && -n "$renderer_path" ]]; then
     render_available=true
   fi
-  printf '{"status":"%s","node":%s,"node_path":"%s","npm_path":"%s","dependencies":%s,"runtime":"%s","libreoffice_path":"%s","recalculate_available":%s,"pdf_renderer_path":"%s","render_available":%s}\n' \
-    "$([[ "$node_ok" == true && "$deps_ok" == true ]] && printf ok || printf missing_dependencies)" \
-    "$node_ok" "$node_path" "$npm_path" "$deps_ok" "$RUNTIME_CACHE" \
+  printf '{"status":"%s","node":%s,"node_path":"%s","npm_path":"%s","dependencies":%s,"runtime":"%s","bundled_font":%s,"bundled_font_dir":"%s","libreoffice_path":"%s","recalculate_available":%s,"pdf_renderer_path":"%s","render_available":%s}\n' \
+    "$([[ "$node_ok" == true && "$deps_ok" == true && "$font_ok" == true ]] && printf ok || printf missing_dependencies)" \
+    "$node_ok" "$node_path" "$npm_path" "$deps_ok" "$RUNTIME_CACHE" "$font_ok" "$BUNDLED_FONT_DIR" \
     "$soffice_path" "$recalculate_available" "$renderer_path" "$render_available"
-  [[ "$node_ok" == true && "$deps_ok" == true ]]
+  [[ "$node_ok" == true && "$deps_ok" == true && "$font_ok" == true ]]
 }
 
-cmd_fix() {
+runtime_missing_json() {
+  printf '{"status":"error","code":"missing-dependencies","error":"交付包不完整：表格本地运行时未就绪。请使用完整交付包，不要在现场安装依赖或自行编写 JavaScript。"}\n'
+}
+
+cmd_bootstrap_runtime() {
   local npm_path="" expected=""
   find_node >/dev/null || {
     printf '{"status":"error","error":"Node.js was not found"}\n' >&2
@@ -127,22 +136,28 @@ case "${1:-}" in
     shift
     cmd_check "$@"
     ;;
-  fix)
+  bootstrap-runtime)
     shift
-    cmd_fix "$@"
+    cmd_bootstrap_runtime "$@"
+    ;;
+  fix)
+    printf '{"status":"error","code":"offline-install-disabled","error":"spreadsheet.sh 不支持现场安装。请使用完整交付包，不要 npm，不要自行编写 JavaScript。"}\n' >&2
+    exit 2
     ;;
   ""|-h|--help|help)
-    printf 'Usage: spreadsheet.sh <check|fix|scaffold|build|inspect|convert-legacy|recalculate|audit|render|deliver|self-test> [options]\n'
+    printf 'Usage: spreadsheet.sh <check|make|inspect|audit|render|convert-legacy|recalculate|deliver|self-test> [options]\n'
     ;;
   *)
     if ! runtime_ready; then
-      printf '{"status":"error","error":"Spreadsheet dependencies are missing or stale","hint":"Run: bash %s fix"}\n' "$0" >&2
+      runtime_missing_json >&2
       exit 2
     fi
     export SPREADSHEET_SKILL_ROOT="$SKILL_DIR"
     export SPREADSHEET_RUNTIME_ROOT="$RUNTIME_CACHE"
     export SPREADSHEET_SKILL_SOFFICE="$(find_soffice || true)"
     export SPREADSHEET_SKILL_PDF_RENDERER="$(find_pdf_renderer || true)"
+    export SPREADSHEET_SKILL_FONT_DIR="$BUNDLED_FONT_DIR"
+    export SAL_FONTPATH="$BUNDLED_FONT_DIR"
     exec "$(find_node)" "$SCRIPT_DIR/spreadsheet_cli.mjs" "$@"
     ;;
 esac

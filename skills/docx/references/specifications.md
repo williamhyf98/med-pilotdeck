@@ -1,13 +1,13 @@
 # DOCX CLI 规范
 
-在为 `create`、`edit` 或 `review` 编写 JSON 之前阅读本文件。仅使用
+在为 `make --spec`、`edit` 或 `review` 编写 JSON 之前阅读本文件。仅使用
 已文档化的字段，并将规范写在按轮次限定的
 `PILOTDECK_WORK_DIR` 下，切勿写在用户文件旁边。
 
-先查询实时模式：
+高级编辑/审阅先查询实时模式：
 
 ```bash
-bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command create
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
 ```
 
 解析器是严格的。未知字段、块和操作会失败，而不是被忽略。
@@ -58,7 +58,9 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command create
 }
 ```
 
-`style_policy` 必须与 `prepare` 冻结的策略匹配。
+直接 `make --spec` 时使用内置策略即可，不需要先 `prepare`。高级
+`create`/编辑工作流若带验收清单，`style_policy` 必须与 `prepare` 冻结的
+策略匹配。
 
 - 内置模式为
   `{"mode":"builtin","template":"neutral-document-v1"}`。当用户未提供视觉说明时，它是默认值。
@@ -98,7 +100,8 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command create
 `space_after`。不要把这些决策分散到内容块中。创建器会将缺失的 CJK 字体映射到已安装的平台回退。
 
 使用实际内容区域设置，例如 `zh-CN` 或 `en-US`；与区域相关的默认值
-包括中文目录和标注标签。页眉和页脚值可以是字符串，
+包括中文目录和标注标签。内置模式固定使用捆绑 Noto Sans SC，不搜索系统
+字体。页眉和页脚值可以是字符串，
 也可以是带有 `text` 和 `alignment`（`left`、`center` 或 `right`）的对象。`{PAGE}`
 和 `{NUMPAGES}` 会创建真正的域。
 
@@ -385,7 +388,9 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command create
 显式设置 `allow_missing: true`。切勿将意外的零
 `affected` 计数解释为成功。
 
-当 `python-docx` 往返可能丢失内容时，`edit` 会阻断对包敏感的文档。优先使用 `fallback-patch`；仅在用户明确接受后才使用 `--allow-lossy`。
+当 `python-docx` 往返可能丢失内容时，`edit` 会阻断对包敏感的文档。不要
+调用 `fallback-patch` 或自行修补 OOXML；报告限制。仅在用户明确理解并接受
+内容丢失风险后才使用 `--allow-lossy`。
 
 ## 6. 审阅规范
 

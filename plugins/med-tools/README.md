@@ -86,7 +86,7 @@ If the embedding service is down, the tool uses **lexical-fallback** and sets `m
 
 Tool `med_trauma_stage_plan(stage, injury_text, image_paths?)`:
 
-1. One stage per call among 伤员发生地 / 野战分类场 / 收容处置组 / 重伤救治组 / 手术组 / 洗消组.
+1. One stage per call among 伤员发生地 / 野战分类场 / 收容处置组 / 重伤救治组 / 手术组 / 洗消组. If the user did not name a stage, Skill `med-trauma-stage-plan` must call `ask_user_question` first (do not guess).
 2. Plugin builds the fixed prompt (stage-specific 【任务要求】 + five sections + multi-image rules).
 3. Calls G9-V-Med; falls back to the configured main agent model inside the plugin when G9 fails.
 4. Agent shows `care_plan` **verbatim** (same rule as `report` on parse).

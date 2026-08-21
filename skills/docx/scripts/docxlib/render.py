@@ -8,7 +8,13 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-import fitz
+try:
+    import pymupdf as fitz
+except ImportError:  # Rendering is optional for make when LibreOffice/PyMuPDF is absent.
+    try:
+        import fitz  # type: ignore[no-redef]
+    except ImportError:
+        fitz = None  # type: ignore[assignment]
 
 from .common import (
     DocxSkillError,
@@ -196,6 +202,12 @@ def render_docx(
     include_text: bool = False,
     timeout_seconds: int = 120,
 ) -> dict[str, Any]:
+    if fitz is None:
+        raise DocxSkillError(
+            "PyMuPDF is unavailable; use a complete DOCX runtime to render previews",
+            status="unsupported",
+            code="render-runtime-unavailable",
+        )
     source = require_docx_path(input_path)
     assert_valid_docx(source)
     soffice = find_soffice()
@@ -239,6 +251,9 @@ def render_docx(
             profile_uri = profile_path.as_uri()
             env = os.environ.copy()
             env["HOME"] = profile_dir
+            bundled_font_dir = os.environ.get("DOCX_SKILL_FONT_DIR", "").strip()
+            if bundled_font_dir and Path(bundled_font_dir).is_dir():
+                env["SAL_FONTPATH"] = bundled_font_dir
             if platform.system() == "Darwin" and Path("/private/tmp").is_dir():
                 env["TMPDIR"] = "/private/tmp"
             command = [

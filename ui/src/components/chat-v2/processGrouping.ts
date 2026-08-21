@@ -350,8 +350,8 @@ function getToolStepResultDetail(message: ChatMessage): string {
   if (!result) return '';
 
   const content = typeof result.content === 'string' ? result.content.trim() : '';
-  const pdfDetail = getPdfToolResultDetail(content, Boolean(result.isError));
-  if (pdfDetail) return pdfDetail;
+  const documentDetail = getDocumentToolResultDetail(content, Boolean(result.isError));
+  if (documentDetail) return documentDetail;
 
   if (result.isError) {
     const firstLine = content.split(/\r?\n/u).find((line) => line.trim()) || 'Failed';
@@ -389,11 +389,20 @@ function summarizeBashCommand(command: string): string {
   if (/\bpdf\.sh\b/u.test(compact) && /\bmake\b/u.test(compact)) {
     return outName ? `pdf.sh make → ${outName}` : 'pdf.sh make';
   }
+  if (/\bdocx\.sh\b/u.test(compact) && /\bmake\b/u.test(compact)) {
+    return outName ? `docx.sh make → ${outName}` : 'docx.sh make';
+  }
+  if (/\bpptx\.sh\b/u.test(compact) && /\bmake\b/u.test(compact)) {
+    return outName ? `pptx.sh make → ${outName}` : 'pptx.sh make';
+  }
+  if (/\bspreadsheet\.sh\b/u.test(compact) && /\bmake\b/u.test(compact)) {
+    return outName ? `spreadsheet.sh make → ${outName}` : 'spreadsheet.sh make';
+  }
   return truncateToolText(compact, 72);
 }
 
-function getPdfToolResultDetail(content: string, isError: boolean): string {
-  const parsed = extractPdfToolJson(content);
+function getDocumentToolResultDetail(content: string, isError: boolean): string {
+  const parsed = extractDocumentToolJson(content);
   if (!parsed) return '';
   const status = typeof parsed.status === 'string' ? parsed.status.toLowerCase() : '';
   const output = typeof parsed.output === 'string' ? parsed.output : '';
@@ -407,7 +416,7 @@ function getPdfToolResultDetail(content: string, isError: boolean): string {
   return '';
 }
 
-function extractPdfToolJson(content: string): Record<string, unknown> | null {
+function extractDocumentToolJson(content: string): Record<string, unknown> | null {
   const candidates: string[] = [];
   for (const line of content.split(/\r?\n/u)) {
     const trimmed = line.trim();
@@ -419,6 +428,10 @@ function extractPdfToolJson(content: string): Record<string, unknown> | null {
   const end = content.lastIndexOf('}');
   if (start >= 0 && end > start) {
     candidates.push(content.slice(start, end + 1));
+  }
+  const firstStart = content.indexOf('{');
+  if (firstStart >= 0 && end > firstStart && firstStart !== start) {
+    candidates.push(content.slice(firstStart, end + 1));
   }
   for (let index = candidates.length - 1; index >= 0; index -= 1) {
     try {

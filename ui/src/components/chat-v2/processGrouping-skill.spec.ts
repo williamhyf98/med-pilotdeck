@@ -86,4 +86,105 @@ describe('buildProcessToolSteps skill target', () => {
     expect(steps[0]?.resultDetail).toContain('output already exists');
     expect(steps[0]?.resultDetail).not.toContain('Command exited with code');
   });
+
+  it('summarizes docx.sh make commands and surfaces the written Word file', () => {
+    const command = 'bash /opt/skills/docx/scripts/docx.sh make --markdown "$PWD/exports/qa/content.md" --out "$PWD/exports/救治方案.docx"';
+    const steps = buildProcessToolSteps([{
+      id: 'm-docx',
+      type: 'assistant',
+      content: '',
+      timestamp: new Date().toISOString(),
+      isToolUse: true,
+      toolName: 'bash',
+      toolInput: JSON.stringify({
+        command,
+        description: 'Generate care plan Word document',
+      }),
+      toolId: 't-docx',
+      toolResult: {
+        content: [
+          'BASH_RESULT[success][stdout_data]',
+          'stdout:',
+          JSON.stringify({
+            status: 'ok',
+            output: '/workspace/exports/救治方案.docx',
+            audit: { status: 'ok', issues: [] },
+            validation: { status: 'ok' },
+            blocks: 8,
+          }, null, 2),
+        ].join('\n'),
+        isError: false,
+      },
+    } as any]);
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0]?.title).toBe('Generate care plan Word document');
+    expect(steps[0]?.target).toBe('docx.sh make → 救治方案.docx');
+    expect(steps[0]?.detail).toBe(command);
+    expect(steps[0]?.resultDetail).toBe('已写入 救治方案.docx');
+  });
+
+  it('summarizes pptx.sh make commands and surfaces the written presentation', () => {
+    const command = 'bash /opt/skills/pptx/scripts/pptx.sh make --markdown "$PWD/exports/qa/slides.md" --out "$PWD/exports/救治教学.pptx"';
+    const steps = buildProcessToolSteps([{
+      id: 'm-pptx',
+      type: 'assistant',
+      content: '',
+      timestamp: new Date().toISOString(),
+      isToolUse: true,
+      toolName: 'bash',
+      toolInput: JSON.stringify({
+        command,
+        description: 'Generate care training presentation',
+      }),
+      toolId: 't-pptx',
+      toolResult: {
+        content: JSON.stringify({
+          status: 'ok',
+          output: '/workspace/exports/救治教学.pptx',
+          slides: 4,
+          validation: { status: 'ok' },
+        }, null, 2),
+        isError: false,
+      },
+    } as any]);
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0]?.title).toBe('Generate care training presentation');
+    expect(steps[0]?.target).toBe('pptx.sh make → 救治教学.pptx');
+    expect(steps[0]?.detail).toBe(command);
+    expect(steps[0]?.resultDetail).toBe('已写入 救治教学.pptx');
+  });
+
+  it('summarizes spreadsheet.sh make commands and surfaces the written workbook', () => {
+    const command = 'bash /opt/skills/spreadsheets/scripts/spreadsheet.sh make --spec "$PWD/exports/qa/workbook.json" --out "$PWD/exports/救治统计.xlsx"';
+    const steps = buildProcessToolSteps([{
+      id: 'm-xlsx',
+      type: 'assistant',
+      content: '',
+      timestamp: new Date().toISOString(),
+      isToolUse: true,
+      toolName: 'bash',
+      toolInput: JSON.stringify({
+        command,
+        description: 'Generate care statistics workbook',
+      }),
+      toolId: 't-xlsx',
+      toolResult: {
+        content: JSON.stringify({
+          status: 'ok',
+          output: '/workspace/exports/救治统计.xlsx',
+          formulaCount: 3,
+          validation: { status: 'ok' },
+        }, null, 2),
+        isError: false,
+      },
+    } as any]);
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0]?.title).toBe('Generate care statistics workbook');
+    expect(steps[0]?.target).toBe('spreadsheet.sh make → 救治统计.xlsx');
+    expect(steps[0]?.detail).toBe(command);
+    expect(steps[0]?.resultDetail).toBe('已写入 救治统计.xlsx');
+  });
 });

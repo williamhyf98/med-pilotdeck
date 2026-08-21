@@ -281,6 +281,129 @@ test("bash pdf.sh JSON output becomes an explicit PDF artifact without a workspa
         await rm(projectRoot, { recursive: true, force: true });
     }
 });
+test("bash docx.sh JSON output becomes an explicit DOCX artifact without a workspace scan", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "pilotdeck-artifact-docx-bash-"));
+    const docxPath = join(projectRoot, "exports", "救治方案.docx");
+    try {
+        await mkdir(join(projectRoot, "exports"), { recursive: true });
+        await writeFile(docxPath, "PK test docx");
+        const collector = await FileArtifactCollector.start({
+            cwd: projectRoot,
+            allowWorkspaceDiff: false,
+            allowedExtensions: [".pdf", ".docx"],
+            now: () => new Date("2026-08-21T10:00:00.000Z"),
+        });
+        collector.observeToolResult({
+            type: "success",
+            toolCallId: "bash-docx-1",
+            toolName: "bash",
+            content: [{
+                type: "text",
+                text: [
+                    "BASH_RESULT[success][stdout_data]",
+                    "stdout:",
+                    JSON.stringify({ status: "ok", output: docxPath, blocks: 5 }),
+                ].join("\n"),
+            }],
+            data: {
+                command: `bash docx.sh make --out "${docxPath}"`,
+                stdout: JSON.stringify({ status: "ok", output: docxPath, blocks: 5 }),
+                stderr: "",
+                exitCode: 0,
+            },
+            startedAt: "2026-08-21T10:00:00.000Z",
+            completedAt: "2026-08-21T10:00:01.000Z",
+        });
+        const artifacts = await collector.finish("complete");
+        assert.deepEqual(artifacts.map((artifact) => artifact.path), ["exports/救治方案.docx"]);
+        assert.equal(artifacts[0]?.source, "tool");
+        assert.equal(
+            artifacts[0]?.mimeType,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        );
+    }
+    finally {
+        await rm(projectRoot, { recursive: true, force: true });
+    }
+});
+test("bash pptx.sh JSON output becomes an explicit PPTX artifact without a workspace scan", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "pilotdeck-artifact-pptx-bash-"));
+    const pptxPath = join(projectRoot, "exports", "救治教学.pptx");
+    try {
+        await mkdir(join(projectRoot, "exports"), { recursive: true });
+        await writeFile(pptxPath, "PK test pptx");
+        const collector = await FileArtifactCollector.start({
+            cwd: projectRoot,
+            allowWorkspaceDiff: false,
+            allowedExtensions: [".pdf", ".docx", ".pptx"],
+        });
+        collector.observeToolResult({
+            type: "success",
+            toolCallId: "bash-pptx-1",
+            toolName: "bash",
+            content: [{
+                type: "text",
+                text: JSON.stringify({ status: "ok", output: pptxPath, slides: 3 }),
+            }],
+            data: {
+                command: `bash pptx.sh make --out "${pptxPath}"`,
+                stdout: JSON.stringify({ status: "ok", output: pptxPath, slides: 3 }),
+                stderr: "",
+                exitCode: 0,
+            },
+            startedAt: "2026-08-21T10:00:00.000Z",
+            completedAt: "2026-08-21T10:00:01.000Z",
+        });
+        const artifacts = await collector.finish("complete");
+        assert.deepEqual(artifacts.map((artifact) => artifact.path), ["exports/救治教学.pptx"]);
+        assert.equal(
+            artifacts[0]?.mimeType,
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        );
+    }
+    finally {
+        await rm(projectRoot, { recursive: true, force: true });
+    }
+});
+test("bash spreadsheet.sh JSON output becomes an explicit XLSX artifact without a workspace scan", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "pilotdeck-artifact-xlsx-bash-"));
+    const xlsxPath = join(projectRoot, "exports", "救治统计.xlsx");
+    try {
+        await mkdir(join(projectRoot, "exports"), { recursive: true });
+        await writeFile(xlsxPath, "PK test xlsx");
+        const collector = await FileArtifactCollector.start({
+            cwd: projectRoot,
+            allowWorkspaceDiff: false,
+            allowedExtensions: [".pdf", ".docx", ".pptx", ".xlsx"],
+        });
+        collector.observeToolResult({
+            type: "success",
+            toolCallId: "bash-xlsx-1",
+            toolName: "bash",
+            content: [{
+                type: "text",
+                text: JSON.stringify({ status: "ok", output: xlsxPath, formulaCount: 3 }),
+            }],
+            data: {
+                command: `bash spreadsheet.sh make --out "${xlsxPath}"`,
+                stdout: JSON.stringify({ status: "ok", output: xlsxPath, formulaCount: 3 }),
+                stderr: "",
+                exitCode: 0,
+            },
+            startedAt: "2026-08-21T10:00:00.000Z",
+            completedAt: "2026-08-21T10:00:01.000Z",
+        });
+        const artifacts = await collector.finish("complete");
+        assert.deepEqual(artifacts.map((artifact) => artifact.path), ["exports/救治统计.xlsx"]);
+        assert.equal(
+            artifacts[0]?.mimeType,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        );
+    }
+    finally {
+        await rm(projectRoot, { recursive: true, force: true });
+    }
+});
 test("general-chat PDF collection ignores non-pdf writes even when bash mutates the workspace", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "pilotdeck-artifact-pdf-filter-"));
     try {

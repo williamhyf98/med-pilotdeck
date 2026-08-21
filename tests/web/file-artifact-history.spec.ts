@@ -126,7 +126,7 @@ test("history replay hides Agent file artifacts in general conversations", async
         await rm(pilotHome, { recursive: true, force: true });
     }
 });
-test("history replay shows PDF artifacts in general conversations", async () => {
+test("history replay shows PDF, DOCX, PPTX, and XLSX artifacts in general conversations", async () => {
     const pilotHome = await mkdtemp(join(tmpdir(), "pilotdeck-general-pdf-artifact-history-"));
     try {
         const sessionKey = "web:s_general_pdf_file_artifacts";
@@ -161,6 +161,39 @@ test("history replay shows PDF artifacts in general conversations", async () => 
             mimeType: "application/pdf",
             createdAt: "2026-08-21T10:00:00.000Z",
         }, {
+            id: "artifact-docx",
+            name: "战创伤救治方案.docx",
+            path: "exports/战创伤救治方案.docx",
+            operation: "created",
+            source: "tool",
+            status: "complete",
+            size: 4096,
+            sha256: "e".repeat(64),
+            mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            createdAt: "2026-08-21T10:00:00.000Z",
+        }, {
+            id: "artifact-pptx",
+            name: "战创伤救治教学.pptx",
+            path: "exports/战创伤救治教学.pptx",
+            operation: "created",
+            source: "tool",
+            status: "complete",
+            size: 8192,
+            sha256: "f".repeat(64),
+            mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            createdAt: "2026-08-21T10:00:00.000Z",
+        }, {
+            id: "artifact-xlsx",
+            name: "战创伤救治统计.xlsx",
+            path: "exports/战创伤救治统计.xlsx",
+            operation: "created",
+            source: "tool",
+            status: "complete",
+            size: 16384,
+            sha256: "a".repeat(64),
+            mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            createdAt: "2026-08-21T10:00:00.000Z",
+        }, {
             id: "artifact-json",
             name: "trauma_care_plan_spec.json",
             path: "exports/trauma_care_plan_spec.json",
@@ -175,7 +208,12 @@ test("history replay shows PDF artifacts in general conversations", async () => 
         const replay = await readWebSessionMessages({ sessionKey, projectKey: pilotHome }, { projectRoot: pilotHome, pilotHome });
         const message = replay.messages.find((item) => item.kind === "file_artifacts");
         assert.ok(message);
-        assert.deepEqual(message.artifacts?.map((artifact) => artifact.path), ["exports/战创伤救治方案.pdf"]);
+        assert.deepEqual(message.artifacts?.map((artifact) => artifact.path), [
+            "exports/战创伤救治方案.pdf",
+            "exports/战创伤救治方案.docx",
+            "exports/战创伤救治教学.pptx",
+            "exports/战创伤救治统计.xlsx",
+        ]);
     }
     finally {
         await rm(pilotHome, { recursive: true, force: true });

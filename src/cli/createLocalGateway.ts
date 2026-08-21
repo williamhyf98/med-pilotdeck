@@ -932,7 +932,7 @@ class ProjectRuntimeRegistry {
     }
     return {
       artifactAllowWorkspaceDiff: false,
-      artifactAllowedExtensions: [".pdf"],
+      artifactAllowedExtensions: [".pdf", ".docx", ".pptx", ".xlsx"],
     };
   }
 

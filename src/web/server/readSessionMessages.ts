@@ -97,7 +97,7 @@ export async function readWebSessionMessages(
     input.sessionKey,
     input.projectKey,
     resolve(effectiveProjectRoot) === resolve(options.pilotHome)
-      ? isPdfFileArtifact
+      ? isGeneralDocumentArtifact
       : undefined,
   );
   injectAgentStatusMessages(entries, allMessages, input.sessionKey, input.projectKey);
@@ -1026,10 +1026,17 @@ function attachSubagentIds(
   }
 }
 
-function isPdfFileArtifact(artifact: { path?: string; name?: string; mimeType?: string }): boolean {
-  if (artifact.mimeType === "application/pdf") return true;
+function isGeneralDocumentArtifact(artifact: { path?: string; name?: string; mimeType?: string }): boolean {
+  if (
+    artifact.mimeType === "application/pdf"
+    || artifact.mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    || artifact.mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    || artifact.mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  ) {
+    return true;
+  }
   const name = (artifact.name || artifact.path || "").toLowerCase();
-  return name.endsWith(".pdf");
+  return name.endsWith(".pdf") || name.endsWith(".docx") || name.endsWith(".pptx") || name.endsWith(".xlsx");
 }
 
 function injectFileArtifactMessages(
