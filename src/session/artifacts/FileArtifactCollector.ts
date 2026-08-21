@@ -28,6 +28,14 @@ export type FileArtifactCollectorOptions = {
   cwd: string;
   allowedInputPaths?: string[];
   now?: () => Date;
+  /**
+   * When false, skip the whole-workspace baseline/diff scan and keep only
+   * paths reported by this turn's tool results. Used for the general-chat
+   * home directory, which is too large and noisy to fingerprint every turn.
+   */
+  allowWorkspaceDiff?: boolean;
+  /** When set, only files with these extensions (including the leading dot) become artifacts. */
+  allowedExtensions?: string[];
   /** @internal Test seam for verifying fingerprint-cache behavior. */
   hashFile?: (filePath: string) => Promise<string>;
 };
@@ -59,6 +67,7 @@ const EXCLUDED_DIRECTORY_NAMES = new Set([
   "node_modules",
   "out",
   "qa",
+  ".pdf-qa",
   "screenshots",
   "target",
   "temp",
@@ -123,6 +132,8 @@ export class FileArtifactCollector {
   private readonly cwd: string;
   private readonly now: () => Date;
   private readonly hashFile: (filePath: string) => Promise<string>;
+  private readonly allowWorkspaceDiff: boolean;
+  private readonly allowedExtensions: Set<string> | undefined;
   private readonly baseline = new Map<string, FileFingerprint>();
   private readonly explicitCandidates = new Map<string, ArtifactCandidate>();
   private readonly allowedInputPaths: Set<string>;
@@ -136,6 +147,10 @@ export class FileArtifactCollector {
     this.workspaceKey = this.cwd;
     this.now = options.now ?? (() => new Date());
     this.hashFile = options.hashFile ?? sha256File;
+    this.allowWorkspaceDiff = options.allowWorkspaceDiff !== false;
+    this.allowedExtensions = options.allowedExtensions && options.allowedExtensions.length > 0
+      ? new Set(options.allowedExtensions.map((extension) => extension.toLowerCase()))
+      : undefined;
     this.allowedInputPaths = new Set(
       (options.allowedInputPaths ?? [])
         .map((inputPath) => path.isAbsolute(inputPath) ? path.resolve(inputPath) : path.resolve(this.cwd, inputPath))
@@ -147,12 +162,14 @@ export class FileArtifactCollector {
     const collector = new FileArtifactCollector(options);
     collector.workspaceKey = await realpath(collector.cwd).catch(() => collector.cwd);
     collector.baseline.clear();
-    const cachedFingerprints = readCachedWorkspaceFingerprints(collector.cwd);
-    for (const file of await collector.scanWorkspace(cachedFingerprints)) {
-      collector.baseline.set(file.absolutePath, file.fingerprint);
+    if (collector.allowWorkspaceDiff) {
+      const cachedFingerprints = readCachedWorkspaceFingerprints(collector.cwd);
+      for (const file of await collector.scanWorkspace(cachedFingerprints)) {
+        collector.baseline.set(file.absolutePath, file.fingerprint);
+      }
+      await collector.captureAllowedInputFingerprints(collector.baseline, cachedFingerprints);
+      cacheWorkspaceFingerprints(collector.cwd, collector.baseline);
     }
-    await collector.captureAllowedInputFingerprints(collector.baseline, cachedFingerprints);
-    cacheWorkspaceFingerprints(collector.cwd, collector.baseline);
     collector.register();
     return collector;
   }
@@ -172,6 +189,10 @@ export class FileArtifactCollector {
     if (["write_file", "edit_file", "edit_notebook"].includes(result.toolName)) {
       collectKnownFilePaths(result.data, (candidate) => this.addExplicitPath(candidate));
     }
+
+    if (result.toolName.toLowerCase() === "bash") {
+      collectPdfPathsFromBashResult(result, (candidate) => this.addExplicitPath(candidate));
+    }
   }
 
   async finish(status: FileArtifactStatus): Promise<FileArtifact[]> {
@@ -183,7 +204,9 @@ export class FileArtifactCollector {
       // Otherwise keep only paths explicitly reported by this collector's own
       // tool results.
       const collectWorkspaceDiff =
-        this.sawWorkspaceMutationCandidate && !this.hadConcurrentOverlap;
+        this.allowWorkspaceDiff
+        && this.sawWorkspaceMutationCandidate
+        && !this.hadConcurrentOverlap;
       const finalFingerprints = new Map<string, FileFingerprint>();
       if (collectWorkspaceDiff) {
         for (const file of await this.scanWorkspace(this.baseline)) {
@@ -211,7 +234,7 @@ export class FileArtifactCollector {
           }
         }
         cacheWorkspaceFingerprints(this.cwd, finalFingerprints);
-      } else {
+      } else if (this.allowWorkspaceDiff) {
         cacheWorkspaceFingerprints(this.cwd, this.baseline);
       }
 
@@ -345,6 +368,9 @@ export class FileArtifactCollector {
   private isAllowedArtifactPath(absolutePath: string): boolean {
     if (isHardInternalPath(this.cwd, absolutePath)) return false;
     if (isSensitivePath(absolutePath)) return false;
+    if (this.allowedExtensions && !this.allowedExtensions.has(path.extname(absolutePath).toLowerCase())) {
+      return false;
+    }
     if (!isInternalPath(this.cwd, absolutePath)) return true;
     return this.allowedInputPaths.has(absolutePath);
   }
@@ -522,6 +548,75 @@ function collectKnownFilePaths(value: unknown, add: (pathValue: string) => void,
       add(child);
       continue;
     }
+    if (typeof child === "string" && /^output$/i.test(key) && looksLikeFilePath(child)) {
+      add(child);
+      continue;
+    }
     collectKnownFilePaths(child, add, depth + 1);
   }
+}
+
+function looksLikeFilePath(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed || (/\s/.test(trimmed) && !/[\\/]/.test(trimmed))) return false;
+  return /[\\/]/.test(trimmed) || /\.[A-Za-z0-9]{2,8}$/.test(trimmed);
+}
+
+function collectPdfPathsFromBashResult(
+  result: PilotDeckToolResult,
+  add: (pathValue: string) => void,
+): void {
+  const data = result.data && typeof result.data === "object" && !Array.isArray(result.data)
+    ? result.data as Record<string, unknown>
+    : undefined;
+  if (typeof data?.stdout === "string") {
+    collectPdfPathsFromText(data.stdout, add);
+  }
+  for (const item of result.content) {
+    if (item.type === "text") collectPdfPathsFromText(item.text, add);
+  }
+}
+
+function collectPdfPathsFromText(text: string, add: (pathValue: string) => void): void {
+  if (!text) return;
+  tryParsePdfJsonObject(text.trim(), add);
+  for (const line of text.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{") || !/\.pdf/i.test(trimmed)) continue;
+    tryParsePdfJsonObject(trimmed, add);
+  }
+  const start = text.lastIndexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    tryParsePdfJsonObject(text.slice(start, end + 1), add);
+  }
+}
+
+function tryParsePdfJsonObject(text: string, add: (pathValue: string) => void): void {
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    collectPdfOutputFields(parsed, add);
+  } catch {
+    // Tool stdout is often wrapped in BASH_RESULT banners; ignore non-JSON slices.
+  }
+}
+
+function collectPdfOutputFields(value: unknown, add: (pathValue: string) => void, depth = 0): void {
+  if (depth > 4 || !value || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectPdfOutputFields(item, add, depth + 1);
+    return;
+  }
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof child === "string" && isPdfFilePath(child) && /^(?:output|out|file(?:Path)?|path|artifactPath)$/i.test(key)) {
+      add(child);
+      continue;
+    }
+    collectPdfOutputFields(child, add, depth + 1);
+  }
+}
+
+function isPdfFilePath(value: string): boolean {
+  const trimmed = value.trim().split(/[?#]/u)[0] ?? "";
+  return /\.pdf$/i.test(trimmed);
 }

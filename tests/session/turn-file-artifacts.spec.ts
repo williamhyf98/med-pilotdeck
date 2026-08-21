@@ -113,6 +113,72 @@ test("TurnRunner does not collect generated files when artifacts are disabled", 
         await rm(generalRoot, { recursive: true, force: true });
     }
 });
+test("TurnRunner collects PDF artifacts from bash output in general chat without scanning the home workspace", async () => {
+    const generalRoot = await mkdtemp(join(tmpdir(), "pilotdeck-general-pdf-artifacts-"));
+    const pdfPath = join(generalRoot, "exports", "救治方案.pdf");
+    try {
+        const result = {
+            type: "success",
+            sessionId: "general-session",
+            turnId: "turn-pdf",
+            stopReason: "completed",
+            usage: {},
+            permissionDenials: [],
+            turns: 1,
+            startedAt: "2026-08-21T10:00:00.000Z",
+            completedAt: "2026-08-21T10:00:01.000Z",
+        };
+        const fakeLoop = {
+            async *run(input) {
+                await mkdir(join(generalRoot, "exports"), { recursive: true });
+                await writeFile(pdfPath, "%PDF-1.4");
+                await writeFile(join(generalRoot, "notes.md"), "not a deliverable");
+                yield {
+                    type: "tool_result",
+                    sessionId: input.sessionId,
+                    turnId: input.turnId,
+                    result: {
+                        type: "success",
+                        toolCallId: "bash-1",
+                        toolName: "bash",
+                        content: [{ type: "text", text: `stdout:\n${JSON.stringify({ status: "ok", output: pdfPath })}` }],
+                        data: {
+                            stdout: JSON.stringify({ status: "ok", output: pdfPath }),
+                        },
+                        startedAt: "2026-08-21T10:00:00.000Z",
+                        completedAt: "2026-08-21T10:00:00.500Z",
+                    },
+                };
+                yield { type: "turn_completed", sessionId: input.sessionId, turnId: input.turnId, result };
+                return { result, messages: input.messages };
+            },
+            snapshotFileState: () => ({}),
+        };
+        const transcript = new InMemoryTranscriptWriter();
+        const runner = new TurnRunner(fakeLoop, transcript, undefined, () => new Date("2026-08-21T10:00:01.000Z"), undefined, {
+            cwd: generalRoot,
+            transcriptPath: "",
+            artifactAllowWorkspaceDiff: false,
+            artifactAllowedExtensions: [".pdf"],
+        });
+        const eventTypes = [];
+        let artifacts = [];
+        for await (const event of runner.run({
+            sessionId: "general-session",
+            turnId: "turn-pdf",
+            messages: [],
+            input: { type: "text", text: "生成 PDF" },
+        })) {
+            eventTypes.push(event.type);
+            if (event.type === "file_artifacts") artifacts = event.artifacts;
+        }
+        assert.ok(eventTypes.includes("file_artifacts"));
+        assert.deepEqual(artifacts.map((artifact) => artifact.path), ["exports/救治方案.pdf"]);
+    }
+    finally {
+        await rm(generalRoot, { recursive: true, force: true });
+    }
+});
 test("TurnRunner unregisters its artifact collector when the event stream closes early", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "pilotdeck-turn-artifact-cleanup-"));
     try {

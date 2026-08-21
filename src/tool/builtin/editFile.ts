@@ -80,7 +80,7 @@ export function createEditFileTool(): PilotDeckToolDefinition<EditFileInput> {
           issues: [{
             path: "file_path",
             code: "invalid_schema",
-            message: "File is a Jupyter notebook. Use edit_notebook to edit this file.",
+            message: "File is a Jupyter notebook. Read it with read_file and rewrite it with write_file if a change is required; do not call a notebook-specific editor.",
           }],
         };
       }

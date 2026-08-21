@@ -21,6 +21,8 @@ from pypdf import PdfReader, PdfWriter
 SKILL_ROOT = Path(os.environ.get("PDF_SKILL_ROOT", Path(__file__).resolve().parents[1]))
 PDFINFO = os.environ.get("PDF_SKILL_PDFINFO", "pdfinfo")
 PDFTOPPM = os.environ.get("PDF_SKILL_PDFTOPPM", "pdftoppm")
+BUNDLED_FONT_NAME = "PilotDeckCJK"
+_BUNDLED_FONT_REGISTERED = False
 
 
 class PdfToolError(RuntimeError):
@@ -65,6 +67,108 @@ def same_path(first: Path, second: Path) -> bool:
 def require_distinct(input_path: Path, output_path: Path) -> None:
     if same_path(input_path, output_path):
         raise PdfToolError("input and output must be different paths")
+
+
+def bundled_font_name() -> str:
+    """Register and return the skill-bundled CJK font. Never search the system."""
+    global _BUNDLED_FONT_REGISTERED
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    if _BUNDLED_FONT_REGISTERED:
+        return BUNDLED_FONT_NAME
+    fonts_dir = SKILL_ROOT / "assets" / "fonts"
+    candidates = [
+        fonts_dir / "NotoSansSC-VF.ttf",
+        fonts_dir / "NotoSansSC-Regular.ttf",
+        fonts_dir / "NotoSansSC-Regular.otf",
+    ]
+    last_error: Exception | None = None
+    found = False
+    for path in candidates:
+        if not path.is_file():
+            continue
+        found = True
+        try:
+            pdfmetrics.registerFont(TTFont(BUNDLED_FONT_NAME, str(path)))
+            _BUNDLED_FONT_REGISTERED = True
+            return BUNDLED_FONT_NAME
+        except Exception as exc:
+            last_error = exc
+    if found and last_error is not None:
+        raise PdfToolError(f"交付包不完整：捆绑字体无法加载：{last_error}")
+    raise PdfToolError("交付包不完整：缺少捆绑中文字体（assets/fonts）。")
+
+
+def xml_escape(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def paragraph_blocks(text: str) -> list[str]:
+    if not text or not text.strip():
+        return []
+    chunks = re.split(r"\n\s*\n", text.strip())
+    return [chunk.strip() for chunk in chunks if chunk.strip()]
+
+
+def format_make_text(text: str) -> str:
+    escaped = xml_escape(text)
+    escaped = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escaped)
+    lines: list[str] = []
+    for line in escaped.split("\n"):
+        stripped = line.lstrip()
+        if stripped.startswith("- ") or stripped.startswith("* "):
+            lines.append("• " + stripped[2:])
+        else:
+            lines.append(line)
+    return "<br/>".join(lines)
+
+
+def flowable_paragraph(text: str, style: Any) -> Any:
+    from reportlab.platypus import Paragraph
+
+    return Paragraph(format_make_text(text), style)
+
+
+HEADING_LINE = re.compile(r"^(#{1,6})\s+(.*)$")
+
+
+def parse_markdown_source(text: str) -> dict[str, Any]:
+    """Split ATX markdown into title, preamble body, and heading sections."""
+    preamble: list[str] = []
+    sections: list[dict[str, Any]] = []
+    title: str | None = None
+    current: dict[str, Any] | None = None
+    saw_preamble = False
+
+    def flush() -> None:
+        nonlocal current
+        if current is None:
+            return
+        current["body"] = str(current["body"]).strip()
+        if current["heading"] or current["body"]:
+            sections.append(current)
+        current = None
+
+    for raw in text.replace("\r\n", "\n").split("\n"):
+        match = HEADING_LINE.match(raw)
+        if match is None:
+            if current is None:
+                preamble.append(raw)
+                if raw.strip():
+                    saw_preamble = True
+            else:
+                current["body"] += raw + "\n"
+            continue
+        heading = match.group(2).strip()
+        level = len(match.group(1))
+        if title is None and current is None and not saw_preamble and level == 1:
+            title = heading
+            continue
+        flush()
+        current = {"heading": heading, "body": "", "level": level}
+    flush()
+    return {"title": title, "body": "\n".join(preamble).strip(), "sections": sections}
 
 
 def pdfinfo_data(path: Path) -> dict[str, Any]:
@@ -395,6 +499,190 @@ def command_build(args: argparse.Namespace) -> int:
     return 0
 
 
+def load_make_spec(args: argparse.Namespace) -> dict[str, Any]:
+    spec: dict[str, Any] = {}
+    markdown_path = getattr(args, "markdown", None)
+    body_file = getattr(args, "body_file", None)
+    if markdown_path and body_file:
+        raise PdfToolError("provide only one of --markdown or --body-file")
+    if args.spec:
+        payload = json.loads(resolved_file(args.spec, "spec").read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise PdfToolError("spec must be a JSON object")
+        spec = payload
+    markdown: dict[str, Any] | None = None
+    if markdown_path:
+        markdown = parse_markdown_source(resolved_file(markdown_path, "markdown").read_text(encoding="utf-8"))
+        if not spec.get("title") and markdown["title"]:
+            spec["title"] = markdown["title"]
+        if spec.get("body") in (None, "") and markdown["body"]:
+            spec["body"] = markdown["body"]
+        if not spec.get("sections") and markdown["sections"]:
+            spec["sections"] = markdown["sections"]
+    title = args.title if args.title is not None else spec.get("title")
+    if not isinstance(title, str) or not title.strip():
+        raise PdfToolError("make requires --title, spec.title, or a top-level # heading in --markdown")
+    if args.body is not None:
+        body = args.body
+    elif body_file:
+        body = resolved_file(body_file, "body").read_text(encoding="utf-8")
+    else:
+        body = spec.get("body", "")
+    if body is None:
+        body = ""
+    if not isinstance(body, str):
+        raise PdfToolError("body must be a string")
+    author = args.author if args.author is not None else spec.get("author", "PilotDeck")
+    if not isinstance(author, str) or not author.strip():
+        author = "PilotDeck"
+    sections = spec.get("sections") or []
+    if not isinstance(sections, list):
+        raise PdfToolError("spec.sections must be an array")
+    normalized: list[dict[str, Any]] = []
+    for index, section in enumerate(sections, start=1):
+        if not isinstance(section, dict):
+            raise PdfToolError(f"spec.sections[{index}] must be an object")
+        heading = section.get("heading") or section.get("title") or ""
+        section_body = section.get("body") or ""
+        level = section.get("level", 2)
+        if not isinstance(heading, str) or not isinstance(section_body, str):
+            raise PdfToolError(f"spec.sections[{index}] heading/body must be strings")
+        if not isinstance(level, int):
+            level = 2
+        if not heading.strip() and not section_body.strip():
+            continue
+        normalized.append({"heading": heading.strip(), "body": section_body, "level": level})
+    if markdown and not normalized and markdown["body"] and not body.strip():
+        body = markdown["body"]
+    return {
+        "title": title.strip(),
+        "body": body,
+        "author": author.strip(),
+        "sections": normalized,
+    }
+
+
+def write_made_pdf(output: Path, spec: dict[str, Any]) -> None:
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_LEFT
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Spacer
+
+    font_name = bundled_font_name()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    ink = colors.HexColor("#172033")
+    muted = colors.HexColor("#5F6B7A")
+    rule = colors.HexColor("#D8E0EA")
+    title_text = spec["title"]
+
+    def header_footer(canvas, doc) -> None:
+        canvas.saveState()
+        canvas.setStrokeColor(rule)
+        canvas.setLineWidth(0.5)
+        canvas.line(doc.leftMargin, 18 * mm, A4[0] - doc.rightMargin, 18 * mm)
+        canvas.setFillColor(muted)
+        canvas.setFont(font_name, 8)
+        canvas.drawString(doc.leftMargin, 11 * mm, title_text[:48])
+        canvas.drawRightString(A4[0] - doc.rightMargin, 11 * mm, f"{doc.page}")
+        canvas.restoreState()
+
+    doc = SimpleDocTemplate(
+        str(output),
+        pagesize=A4,
+        rightMargin=20 * mm,
+        leftMargin=20 * mm,
+        topMargin=20 * mm,
+        bottomMargin=25 * mm,
+        title=title_text,
+        author=spec["author"],
+    )
+    base = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "MakeTitle",
+        parent=base["Title"],
+        fontName=font_name,
+        fontSize=22,
+        leading=28,
+        textColor=ink,
+        alignment=TA_LEFT,
+        spaceAfter=8 * mm,
+    )
+    heading_style = ParagraphStyle(
+        "MakeHeading",
+        parent=base["Heading2"],
+        fontName=font_name,
+        fontSize=13,
+        leading=18,
+        textColor=ink,
+        spaceBefore=4 * mm,
+        spaceAfter=2.5 * mm,
+    )
+    subheading_style = ParagraphStyle(
+        "MakeSubheading",
+        parent=heading_style,
+        fontSize=11,
+        leading=15,
+        spaceBefore=3 * mm,
+        spaceAfter=2 * mm,
+    )
+    body_style = ParagraphStyle(
+        "MakeBody",
+        parent=base["BodyText"],
+        fontName=font_name,
+        fontSize=11,
+        leading=16,
+        textColor=ink,
+        spaceAfter=3 * mm,
+    )
+
+    story: list[Any] = [flowable_paragraph(title_text, title_style)]
+    for block in paragraph_blocks(spec["body"]):
+        story.append(flowable_paragraph(block, body_style))
+    for section in spec["sections"]:
+        heading = section["heading"]
+        style = subheading_style if int(section.get("level", 2) or 2) >= 4 else heading_style
+        if heading:
+            story.append(flowable_paragraph(heading, style))
+        for block in paragraph_blocks(section["body"]):
+            story.append(flowable_paragraph(block, body_style))
+        if heading and not paragraph_blocks(section["body"]):
+            story.append(Spacer(1, 1 * mm))
+    if not story:
+        raise PdfToolError("make produced no content")
+    doc.build(story, onFirstPage=header_footer, onLaterPages=header_footer)
+
+
+def command_make(args: argparse.Namespace) -> int:
+    spec = load_make_spec(args)
+    out = Path(args.out).expanduser().resolve()
+    if out.exists() and not args.force:
+        raise PdfToolError(f"output already exists; pass --force to replace: {out}")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    write_made_pdf(out, spec)
+    if not out.is_file():
+        raise PdfToolError(f"make did not create the requested output: {out}")
+    audit = audit_document(out)
+    if audit["hardFailures"]:
+        raise PdfToolError("built PDF failed structural audit: " + "; ".join(audit["hardFailures"]))
+    preview_dir = out.parent / ".pdf-qa" / out.stem
+    images = render_document(out, preview_dir, 144, None)
+    audit_path = preview_dir / "audit.json"
+    write_json(audit_path, audit)
+    emit(
+        {
+            "status": "ok",
+            "output": str(out),
+            "pages": audit["pageCount"],
+            "preview": [str(path) for path in images],
+            "audit": str(audit_path),
+            "warnings": audit["warnings"],
+        }
+    )
+    return 0
+
+
 def command_merge(args: argparse.Namespace) -> int:
     inputs = [resolved_file(value) for value in args.inputs]
     out = output_file(args.out)
@@ -574,7 +862,6 @@ def create_self_test_form(path: Path) -> None:
 
 def command_self_test(args: argparse.Namespace) -> int:
     root = output_dir(args.out)
-    builder = root / "build_pdf.py"
     pdf = root / "sample.pdf"
     audit = root / "audit.json"
     inspection = root / "inspection.json"
@@ -593,8 +880,18 @@ def command_self_test(args: argparse.Namespace) -> int:
     filled_form_audit = root / "filled-form-audit.json"
     form_render_dir = root / "form-render"
 
-    run_self_test_command(["scaffold", "--out", str(builder), "--force"])
-    run_self_test_command(["build", "--builder", str(builder), "--out", str(pdf)])
+    run_self_test_command(
+        [
+            "make",
+            "--title",
+            "病例报告",
+            "--body",
+            "【病例报告】",
+            "--out",
+            str(pdf),
+            "--force",
+        ]
+    )
     run_self_test_command(
         [
             "inspect",
@@ -674,6 +971,17 @@ def build_parser() -> argparse.ArgumentParser:
     render_parser.add_argument("--dpi", type=int, default=144)
     render_parser.add_argument("--montage")
     render_parser.set_defaults(handler=command_render)
+
+    make_parser = subparsers.add_parser("make", help="Create a PDF from title/body/spec using bundled fonts")
+    make_parser.add_argument("--title")
+    make_parser.add_argument("--body")
+    make_parser.add_argument("--body-file")
+    make_parser.add_argument("--markdown")
+    make_parser.add_argument("--author")
+    make_parser.add_argument("--spec")
+    make_parser.add_argument("--out", required=True)
+    make_parser.add_argument("--force", action="store_true")
+    make_parser.set_defaults(handler=command_make)
 
     scaffold_parser = subparsers.add_parser("scaffold", help="Copy the starter PDF builder")
     scaffold_parser.add_argument("--out", required=True)

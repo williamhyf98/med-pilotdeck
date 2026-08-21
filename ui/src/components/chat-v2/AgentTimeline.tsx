@@ -96,9 +96,10 @@ function normalizePhase(raw: string): string {
 type AgentTimelineProps = {
   steps: ProcessTraceStep[];
   className?: string;
+  expandAll?: boolean;
 };
 
-export function AgentTimeline({ steps, className = '' }: AgentTimelineProps) {
+export function AgentTimeline({ steps, className = '', expandAll = false }: AgentTimelineProps) {
   const groups = useMemo(() => groupStepsByPhase(steps), [steps]);
 
   if (groups.length === 0) return null;
@@ -109,7 +110,7 @@ export function AgentTimeline({ steps, className = '' }: AgentTimelineProps) {
         <TimelineGroupRow
           key={group.id}
           group={group}
-          defaultExpanded={idx === groups.length - 1 && group.isRunning}
+          defaultExpanded={expandAll || (idx === groups.length - 1 && group.isRunning)}
         />
       ))}
     </div>
@@ -178,10 +179,12 @@ function TimelineGroupRow({
 function TimelineStepRow({ step }: { step: ProcessTraceStep }) {
   const isRunning = step.state === 'running';
   const isFailed = step.state === 'failed' || step.severity === 'error';
-  const toolLabel = step.toolName || step.title || 'Step';
-  const target = (step.target || step.detail || '').trim();
+  const toolLabel = step.title || step.toolName || 'Step';
+  const target = (step.target || '').trim();
   const context = (step.context || '').trim();
   const resultDetail = (step.resultDetail || '').trim();
+  const commandDetail = (step.detail || '').trim();
+  const showCommand = Boolean(commandDetail && commandDetail !== target);
 
   return (
     <div
@@ -204,7 +207,10 @@ function TimelineStepRow({ step }: { step: ProcessTraceStep }) {
               <span className="shrink-0 text-neutral-400 dark:text-neutral-600" aria-hidden>
                 /
               </span>
-              <span className="min-w-0 truncate font-mono text-[11.5px] text-sky-700 dark:text-sky-400">
+              <span
+                className="min-w-0 break-all font-mono text-[11.5px] text-sky-700 dark:text-sky-400"
+                title={target}
+              >
                 {target}
               </span>
             </>
@@ -215,12 +221,15 @@ function TimelineStepRow({ step }: { step: ProcessTraceStep }) {
             </span>
           ) : null}
         </div>
+        {showCommand ? (
+          <div className="mt-0.5 break-all font-mono text-[11px] leading-4 text-neutral-400 dark:text-neutral-500" title={commandDetail}>
+            {commandDetail}
+          </div>
+        ) : null}
         {resultDetail ? (
-          <div className="mt-0.5 truncate font-mono text-[11px] leading-4 text-neutral-400 dark:text-neutral-500">
+          <div className="mt-0.5 break-all font-mono text-[11px] leading-4 text-neutral-400 dark:text-neutral-500">
             <span className="text-neutral-500 dark:text-neutral-600">&gt;</span>
             {' '}
-            {toolLabel}
-            {' / '}
             {resultDetail}
           </div>
         ) : null}

@@ -126,3 +126,58 @@ test("history replay hides Agent file artifacts in general conversations", async
         await rm(pilotHome, { recursive: true, force: true });
     }
 });
+test("history replay shows PDF artifacts in general conversations", async () => {
+    const pilotHome = await mkdtemp(join(tmpdir(), "pilotdeck-general-pdf-artifact-history-"));
+    try {
+        const sessionKey = "web:s_general_pdf_file_artifacts";
+        const storage = createAgentProjectSessionStorage({
+            projectRoot: pilotHome,
+            pilotHome,
+            sessionId: sessionKey,
+            now: () => new Date("2026-08-21T10:00:00.000Z"),
+        });
+        await storage.transcript.recordDurableMessage(sessionKey, "turn-1", {
+            role: "user",
+            content: [{
+                type: "tool_result",
+                toolCallId: "bash-1",
+                content: [{ type: "text", text: "wrote pdf" }],
+                raw: { toolName: "bash" },
+            }],
+        });
+        await storage.transcript.recordDurableMessage(sessionKey, "turn-1", {
+            role: "assistant",
+            content: [{ type: "text", text: "PDF ready." }],
+        });
+        await storage.transcript.recordFileArtifacts(sessionKey, "turn-1", [{
+            id: "artifact-pdf",
+            name: "战创伤救治方案.pdf",
+            path: "exports/战创伤救治方案.pdf",
+            operation: "created",
+            source: "tool",
+            status: "complete",
+            size: 2048,
+            sha256: "c".repeat(64),
+            mimeType: "application/pdf",
+            createdAt: "2026-08-21T10:00:00.000Z",
+        }, {
+            id: "artifact-json",
+            name: "trauma_care_plan_spec.json",
+            path: "exports/trauma_care_plan_spec.json",
+            operation: "created",
+            source: "tool",
+            status: "complete",
+            size: 12,
+            sha256: "d".repeat(64),
+            mimeType: "application/json",
+            createdAt: "2026-08-21T10:00:00.000Z",
+        }]);
+        const replay = await readWebSessionMessages({ sessionKey, projectKey: pilotHome }, { projectRoot: pilotHome, pilotHome });
+        const message = replay.messages.find((item) => item.kind === "file_artifacts");
+        assert.ok(message);
+        assert.deepEqual(message.artifacts?.map((artifact) => artifact.path), ["exports/战创伤救治方案.pdf"]);
+    }
+    finally {
+        await rm(pilotHome, { recursive: true, force: true });
+    }
+});

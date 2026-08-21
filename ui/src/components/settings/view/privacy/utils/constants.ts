@@ -12,10 +12,6 @@ export const QUICK_ADD_TOOLS = [
   "edit_file",
   "glob",
   "grep",
-  "agent",
-  "task_create",
-  "web_fetch",
-  "web_search",
 ];
 
 const QUICK_BLOCK_TOOLS_UNIX = ["bash:rm:*", "bash:sudo:*"];

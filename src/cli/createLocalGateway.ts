@@ -886,7 +886,8 @@ class ProjectRuntimeRegistry {
       projectStorage: prepared.runtime.projectStorage,
       extendDependencies: prepared.extendDependencies,
       sessionTitleGenerator: prepared.sessionTitleGenerator,
-      collectFileArtifacts: this.shouldCollectFileArtifacts(prepared.runtime),
+      collectFileArtifacts: true,
+      ...this.fileArtifactPolicy(prepared.runtime),
     });
     return resumed.session;
   }
@@ -915,13 +916,24 @@ class ProjectRuntimeRegistry {
       initialState: previous.state,
       seedState: previous.fileState,
       sessionTitleGenerator: prepared.sessionTitleGenerator,
-      collectFileArtifacts: this.shouldCollectFileArtifacts(prepared.runtime),
+      collectFileArtifacts: true,
+      ...this.fileArtifactPolicy(prepared.runtime),
     });
     return session;
   }
 
-  private shouldCollectFileArtifacts(runtime: ProjectRuntime): boolean {
-    return resolve(runtime.projectRoot) !== resolve(this.options.pilotHome);
+  private fileArtifactPolicy(runtime: ProjectRuntime): {
+    artifactAllowWorkspaceDiff: boolean;
+    artifactAllowedExtensions?: string[];
+  } {
+    const isGeneral = resolve(runtime.projectRoot) === resolve(this.options.pilotHome);
+    if (!isGeneral) {
+      return { artifactAllowWorkspaceDiff: true };
+    }
+    return {
+      artifactAllowWorkspaceDiff: false,
+      artifactAllowedExtensions: [".pdf"],
+    };
   }
 
   private async prepareSessionRuntime(context: GatewaySessionContext) {

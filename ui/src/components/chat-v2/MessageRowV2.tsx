@@ -74,6 +74,7 @@ type MessageRowV2Props = {
   inlineThinking?: boolean;
   isProcessExpanded?: (processKey: string, defaultExpanded?: boolean) => boolean;
   onProcessExpandedChange?: (processKey: string, expanded: boolean) => void;
+  defaultProcessExpanded?: boolean;
   onOpenSubagentDetail?: (subagentId: string) => void;
   subagentActivityById?: Map<string, ChatMessage>;
   subagentThinkingById?: Map<string, string>;
@@ -115,6 +116,7 @@ function MessageRowV2({
   inlineThinking,
   isProcessExpanded,
   onProcessExpandedChange,
+  defaultProcessExpanded = false,
   onOpenSubagentDetail,
   subagentActivityById,
   subagentThinkingById,
@@ -187,6 +189,7 @@ function MessageRowV2({
         processKey={message.id || message.runId || message.activityId}
         isProcessExpanded={isProcessExpanded}
         onProcessExpandedChange={onProcessExpandedChange}
+        defaultExpanded={defaultProcessExpanded}
         t={t}
       />
     );
@@ -198,6 +201,7 @@ function MessageRowV2({
       attachment={attachment}
       isProcessExpanded={isProcessExpanded}
       onProcessExpandedChange={onProcessExpandedChange}
+      defaultExpanded={defaultProcessExpanded}
       t={t}
     />
   );
@@ -538,6 +542,7 @@ function ProcessSummaryRow({
   detailMessages = [],
   isProcessExpanded,
   onProcessExpandedChange,
+  defaultExpanded = false,
   t,
 }: {
   message: ChatMessage;
@@ -545,6 +550,7 @@ function ProcessSummaryRow({
   detailMessages?: ChatMessage[];
   isProcessExpanded?: (processKey: string, defaultExpanded?: boolean) => boolean;
   onProcessExpandedChange?: (processKey: string, expanded: boolean) => void;
+  defaultExpanded?: boolean;
   t: TFunction<'chat'>;
 }) {
   const trace = useMemo(() => processSummaryToTrace(message, t), [message, t]);
@@ -554,7 +560,7 @@ function ProcessSummaryRow({
   );
   const resolvedProcessKey = processKey || message.id || message.runId || message.activityId;
   const expanded = resolvedProcessKey
-    ? isProcessExpanded?.(resolvedProcessKey, false)
+    ? isProcessExpanded?.(resolvedProcessKey, defaultExpanded)
     : undefined;
 
   return (
@@ -565,6 +571,7 @@ function ProcessSummaryRow({
       status={trace.status}
       metrics={trace.metrics}
       steps={toolSteps}
+      defaultExpanded={defaultExpanded}
       expanded={expanded}
       onExpandedChange={resolvedProcessKey
         ? (nextExpanded) => onProcessExpandedChange?.(resolvedProcessKey, nextExpanded)
@@ -577,11 +584,13 @@ function ProcessAttachmentRow({
   attachment,
   isProcessExpanded,
   onProcessExpandedChange,
+  defaultExpanded = false,
   t,
 }: {
   attachment: ProcessAttachment;
   isProcessExpanded?: (processKey: string, defaultExpanded?: boolean) => boolean;
   onProcessExpandedChange?: (processKey: string, expanded: boolean) => void;
+  defaultExpanded?: boolean;
   t: TFunction<'chat'>;
 }) {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
@@ -603,6 +612,7 @@ function ProcessAttachmentRow({
         detailMessages={attachment.processDetailMessages}
         isProcessExpanded={isProcessExpanded}
         onProcessExpandedChange={onProcessExpandedChange}
+        defaultExpanded={defaultExpanded}
         t={t}
       />
       {lightboxImages.length > 0 ? (

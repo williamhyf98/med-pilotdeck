@@ -90,4 +90,9 @@ export type RouterExecuteContext = {
   turnId: string;
   projectPath?: string;
   abortSignal?: AbortSignal;
+  /**
+   * When true, this execute is the main conversation and must not apply
+   * subagent token budgets even if routing leftover flags say otherwise.
+   */
+  isMainAgent?: boolean;
 };

@@ -25,7 +25,7 @@ const ASK_USER_QUESTION_DESCRIPTION =
   "Usage notes: provide 1-4 questions, each with 2-4 options; set multiSelect to true when a question " +
   "should allow multiple selections; phrase the choices yourself instead of using this tool for open-ended " +
   "free-form clarification. In plan mode, use ask_user_question to clarify requirements or choose between " +
-  "approaches before finalizing your plan. Do not use it to ask for plan approval; use exit_plan_mode for that.";
+  "approaches before finalizing your plan. Do not use it to ask for plan approval; present the plan and wait for the user to leave plan mode.";
 
 export type AskUserQuestionOption = {
   label: string;

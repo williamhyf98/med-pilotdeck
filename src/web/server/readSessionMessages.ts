@@ -91,9 +91,15 @@ export async function readWebSessionMessages(
     input.projectKey,
   );
   attachSubagentIds(entries, allMessages);
-  if (resolve(effectiveProjectRoot) !== resolve(options.pilotHome)) {
-    injectFileArtifactMessages(entries, allMessages, input.sessionKey, input.projectKey);
-  }
+  injectFileArtifactMessages(
+    entries,
+    allMessages,
+    input.sessionKey,
+    input.projectKey,
+    resolve(effectiveProjectRoot) === resolve(options.pilotHome)
+      ? isPdfFileArtifact
+      : undefined,
+  );
   injectAgentStatusMessages(entries, allMessages, input.sessionKey, input.projectKey);
   injectErrorTurnMessages(entries, allMessages, input.sessionKey, input.projectKey);
   if (incompleteTurnIds.length > 0) {
@@ -1020,11 +1026,18 @@ function attachSubagentIds(
   }
 }
 
+function isPdfFileArtifact(artifact: { path?: string; name?: string; mimeType?: string }): boolean {
+  if (artifact.mimeType === "application/pdf") return true;
+  const name = (artifact.name || artifact.path || "").toLowerCase();
+  return name.endsWith(".pdf");
+}
+
 function injectFileArtifactMessages(
   entries: AgentTranscriptEntry[],
   allMessages: WebMessage[],
   sessionKey: string,
   projectKey?: string,
+  artifactFilter?: (artifact: NonNullable<WebMessage["artifacts"]>[number]) => boolean,
 ): void {
   const artifactMessages: WebMessage[] = [];
   const turnsWithToolResults = new Set(
@@ -1038,9 +1051,10 @@ function injectFileArtifactMessages(
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
     if (entry.type !== "file_artifacts" || entry.artifacts.length === 0) continue;
-    const artifacts = turnsWithToolResults.has(entry.turnId)
+    const artifacts = (turnsWithToolResults.has(entry.turnId)
       ? entry.artifacts
-      : entry.artifacts.filter((artifact) => artifact.source !== "workspace_diff");
+      : entry.artifacts.filter((artifact) => artifact.source !== "workspace_diff")
+    ).filter((artifact) => (artifactFilter ? artifactFilter(artifact) : true));
     if (artifacts.length === 0) continue;
     artifactMessages.push({
       id: entry.entryId ?? `${sessionKey}-file-artifacts-${entry.turnId}-${entry.sequence}`,

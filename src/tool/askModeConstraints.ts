@@ -18,8 +18,6 @@ export const ASK_MODE_ALLOWED_TOOLS = new Set([
 
 export const ASK_MODE_DESCRIPTION_SUFFIX: Record<string, string> = {
   bash: "\n\n[ASK MODE] READ-ONLY commands only. Write/modify/delete commands will be rejected.",
-  agent: "\n\n[ASK MODE] Subagents inherit ask mode and the same permission setting. They can read and search, but cannot modify files.",
-  execute_code: "\n\n[ASK MODE] READ-ONLY Python scripts only. Scripts that call write_file, edit_file, or non-read-only bash commands will be rejected.",
 };
 
 const ASK_MODE_VIOLATION_HEADER = "[ASK_MODE_VIOLATION]";
@@ -35,7 +33,7 @@ export function buildAskModeViolationMessage(toolName: string): string {
   return [
     `${ASK_MODE_VIOLATION_HEADER} Tool "${toolName}" is BLOCKED in ask mode.`,
     "",
-    "Ask mode is read-only. Tools may inspect files, search, ask questions, fetch/read external content, or launch read-only subagents, but they cannot modify files or create side effects.",
+    "Ask mode is read-only. Tools may inspect files, search, or ask questions, but they cannot modify files or create side effects.",
     "",
     "Do NOT retry this tool. It will fail again while ask mode is active.",
   ].join("\n");
@@ -66,7 +64,7 @@ export function getAskModeViolation(
     return undefined;
   }
 
-  if (!tool.isReadOnly(input) && tool.name !== "agent") {
+  if (!tool.isReadOnly(input)) {
     return buildAskModeViolationMessage(tool.name);
   }
 

@@ -1,143 +1,116 @@
 ---
 name: pdf
-description: 读取、创建、编辑、合并、拆分、旋转、填写、渲染并校验工作区 PDF 文件。只要请求的输入或交付物是 .pdf，就使用本技能，包括提取文本或表格、检查元数据与页面几何、生成新 PDF、重排页面、填写 AcroForm 字段，或检查视觉版式。不要用于 Google Drive 或仅限浏览器的 PDF 工作流。
+description: 读取、创建、编辑、合并、拆分、旋转、填写、渲染并校验工作区 PDF。输入或交付物是 .pdf 时使用本技能，包括把对话里刚生成的救治方案、病例报告导出为 PDF。只通过捆绑的 pdf.sh 完成工作，不要手写 Python、不要安装依赖、不要搜索系统字体。
 ---
 
 # PDF
 
-通过捆绑的 `pdf.sh` 工作流处理 PDF。把结构提取与视觉渲染当作互补：解析出的文本是内容证据，渲染出的页面才是版式证据。
-
-## 硬性要求
-
-- 保留每一份输入 PDF。除非用户明确要求替换，否则把编辑结果写到不同的输出文件。
-- 文本、表格、图像及带坐标的检查使用 `pdfplumber`；页面结构、元数据、页面操作和 AcroForm 使用 `pypdf`；新建 PDF 使用 ReportLab。
-- 改现有 PDF 之前先检查。当版式、页序、表单外观或视觉保真度重要时，先渲染。
-- 用一份可执行的 Python 构建脚本创建新 PDF。修补并重跑同一构建脚本，不要堆积一次性脚本。
-- 切勿仅凭文本提取成功就认定 PDF 看起来正确。
-- 运行 `audit`，用 Poppler 渲染每一页终稿，并按全尺寸检查每一张页面 PNG。拼图只作总览。
-- 交付前修复裁切或重叠内容、缺失字形、损坏表格、错误页序、不当图像裁剪、不一致页面尺寸以及错误页码。
-- 不要依赖 Codex 私有运行时路径，也不要全局安装 Python 包。
-
-## 阅读相关参考
-
-- 创建或视觉上重新设计 PDF 之前，阅读 [creation.md](references/creation.md)。
-- 合并、拆分、旋转、编辑元数据或处理表单之前，阅读 [structure-and-forms.md](references/structure-and-forms.md)。
-- 交付前阅读 [qa-checklist.md](references/qa-checklist.md)。
-
-## 准备运行时
-
-将包含本文件的目录解析为 `PDF_SKILL_ROOT`，然后运行：
+只用 `read_skill` 返回的 `<path>` 所在目录。那就是本技能根目录。不要用 `$PILOT_HOME/skills/pdf`，不要在用户 skills 目录里查找本技能。
 
 ```bash
+PDF_SKILL_ROOT="$(dirname "<path>")"
 PDF_TOOL="$PDF_SKILL_ROOT/scripts/pdf.sh"
-bash "$PDF_TOOL" check || bash "$PDF_TOOL" fix
 ```
 
-`fix` 会在 `${PDF_SKILL_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/pilotdeck-pdf}` 下创建隔离的 Python 环境。Poppler 是系统依赖；若缺少 `pdfinfo` 或 `pdftoppm`，按 `fix` 打印的平台提示处理。
+`pdf.sh` 会自己定位隔离 Python、捆绑字体和 Poppler。缺任何一项都会返回 JSON 错误「交付包不完整」；此时停止，不要 pip、不要 `fix`、不要改用系统 `python3`、不要自己写生成脚本。
 
-所有中间产物都使用本轮作用域的 PilotDeck 工作目录。宿主会设置 `PILOTDECK_WORK_DIR`；回退路径把手动运行限制在项目内部：
+## 禁止
+
+- 用 `write_file` 或 `edit_file` 写 `*.py` / `*.js` 来生成 PDF
+- `pip`、`curl`、`brew`、`npm`，或 `check || fix`
+- 搜索 `$HOME`、`$PILOT_HOME/skills`、`/System/Library/Fonts`、`/usr/share/fonts` 或其他系统字体
+- 把中间产物写到 `.pilotdeck/work/manual/`
+- 把本技能复制到用户 skills 目录
+
+## 输出位置
+
+用户给了路径就用用户的路径。否则写到当前工作目录下的 `exports/`：
 
 ```bash
-WORKSPACE="${PILOTDECK_WORK_DIR:-$PWD/.pilotdeck/work/manual/<task-slug>}/pdf"
-mkdir -p "$WORKSPACE/tmp" "$WORKSPACE/qa"
+mkdir -p "$PWD/exports"
 ```
 
-把构建脚本、提取内容、拆分页、转换文件、检查结果、渲染图和 QA 报告放在 `WORKSPACE`。只有用户请求的交付物才放到项目或用户选定的输出目录。切勿在用户文件旁边创建 QA 目录或其他中间产物。
+例如用户要「病例报告.pdf」：`--out "$PWD/exports/病例报告.pdf"`。
 
-## 路由请求
+## 新建 PDF
 
-选择其中一条路线：
+不要 scaffold，不要手写 ReportLab。把标题和正文交给 `make`：
 
-1. 只读问题：只检查或提取；不要导出修改后的 PDF。
-2. 新建 PDF：搭一份构建脚本，构建、审计、渲染、检查并迭代。
-3. 现有 PDF 的结构性编辑：先检查并渲染，做最小页面级改动，再审计并重新渲染。
-4. AcroForm 任务：检查字段，填写到不同输出，渲染每个受影响页面，并核对外观。
+```bash
+bash "$PDF_TOOL" make \
+  --title "病例报告" \
+  --body "【病例报告】" \
+  --out "$PWD/exports/病例报告.pdf"
+```
 
-扫描件/纯图像 PDF 可能没有机器可读文本。若渲染页面有效，不要称之为提取失败。本技能不捆绑 OCR；披露该限制，或在用户要求时使用另行可用的 OCR 工作流。
+多段正文用换行；多节内容把 JSON 写成 `--spec`，仍然不要写 Python：
+
+```json
+{
+  "title": "病例报告",
+  "body": "【病例报告】",
+  "sections": [
+    { "heading": "病史", "body": "……" }
+  ]
+}
+```
+
+`make` 会用技能内字体生成 PDF，并完成结构审计和页面渲染。JSON 里的 `output` 是交付文件；`preview` 里的 PNG 只供你目视核对，不要当用户交付物。核对可用 `read_file` 打开第一张预览图。
+
+## 把对话里已有的方案做成 PDF
+
+`pdf.sh` **读不到聊天记录**。用户说「把以上/刚才的救治方案（或病例报告）生成 PDF」时，上一轮你已经写过的全文就在当前对话里：直接用原文，不要让用户再贴一遍，不要摘要代替原文，不要重写一版，不要因为内容长就去写 Python。
+
+长文不要塞进 `--body "..."`（引号和长度容易把命令搞坏）。用 `write_file` 把完整原文写成 Markdown，再交给 `make`：
+
+```bash
+bash "$PDF_TOOL" make \
+  --title "救治方案" \
+  --markdown "$PWD/exports/qa/content.md" \
+  --out "$PWD/exports/救治方案.pdf"
+```
+
+- 标题用用户的说法（「救治方案」「病例报告」等）。
+- `content.md` 保持对话原文，包括 `###` / `####` 小标题和列表。`make` 会按标题分页排版。
+- 允许 `write_file` 写 `.md` / `.json`；仍然禁止写 `*.py` 来生成 PDF。
+
+复杂排版规范见 [creation.md](references/creation.md)。
 
 ## 检查或提取
 
-创建紧凑的结构与内容概览：
-
 ```bash
 bash "$PDF_TOOL" inspect \
   --input "$INPUT_PDF" \
-  --out "$WORKSPACE/tmp/inspection.json"
+  --out "$PWD/exports/qa/inspection.json"
 ```
 
-需要时提取整页文本和检测到的表格：
+需要全文或表格时再加 `--text-out` / `--tables-out`。扫描件可能没有可提取文本；本技能不含 OCR。
+
+## 改现有 PDF
+
+先 `inspect`，必要时 `render`。源文件保留，结果写到源文件的同一个目录下。
 
 ```bash
-bash "$PDF_TOOL" inspect \
-  --input "$INPUT_PDF" \
-  --out "$WORKSPACE/tmp/inspection.json" \
-  --text-out "$WORKSPACE/tmp/text.json" \
-  --tables-out "$WORKSPACE/tmp/tables.json"
+bash "$PDF_TOOL" merge --inputs first.pdf second.pdf --out "$PWD/exports/merged.pdf"
+bash "$PDF_TOOL" split --input source.pdf --out-dir "$PWD/exports/pages" --pages "1-3,7"
+bash "$PDF_TOOL" rotate --input source.pdf --out "$PWD/exports/rotated.pdf" --degrees 90 --pages "2,4-5"
+bash "$PDF_TOOL" forms-inspect --input form.pdf --out "$PWD/exports/qa/fields.json"
+bash "$PDF_TOOL" forms-fill --input form.pdf --data "$PWD/exports/qa/values.json" --out "$PWD/exports/filled.pdf"
 ```
 
-当页面级检查或定向搜索已足够时，不要整份加载大型提取结果。
+页面操作不会像字处理器那样重排正文。见 [structure-and-forms.md](references/structure-and-forms.md)。
 
-## 创建 PDF
+## 校验
 
-搭一份构建脚本并按任务编辑：
+`make` 已包含审计和渲染。对已有 PDF 或编辑结果：
 
 ```bash
-bash "$PDF_TOOL" scaffold --out "$WORKSPACE/tmp/build_pdf.py"
-bash "$PDF_TOOL" build \
-  --builder "$WORKSPACE/tmp/build_pdf.py" \
-  --out "$FINAL_PDF"
+bash "$PDF_TOOL" audit --input "$FINAL_PDF" --out "$PWD/exports/qa/audit.json"
+bash "$PDF_TOOL" render --input "$FINAL_PDF" --out-dir "$PWD/exports/qa/render" --dpi 144
 ```
 
-构建脚本必须接受 `--out <path>`，可离线工作，显式嵌入或注册字体，并保持页码确定。遵循 [creation.md](references/creation.md)。
-
-## 执行结构性操作
-
-```bash
-bash "$PDF_TOOL" merge --inputs first.pdf second.pdf --out merged.pdf
-bash "$PDF_TOOL" split --input source.pdf --out-dir "$WORKSPACE/tmp/pages" --pages "1-3,7"
-bash "$PDF_TOOL" rotate --input source.pdf --out rotated.pdf --degrees 90 --pages "2,4-5"
-```
-
-表单：
-
-```bash
-bash "$PDF_TOOL" forms-inspect --input form.pdf --out "$WORKSPACE/tmp/fields.json"
-bash "$PDF_TOOL" forms-fill \
-  --input form.pdf \
-  --data "$WORKSPACE/tmp/values.json" \
-  --out filled.pdf
-```
-
-这些操作保留源文件，且不会重排页面内容。见 [structure-and-forms.md](references/structure-and-forms.md)。
-
-## 校验与渲染
-
-运行最终结构审计：
-
-```bash
-bash "$PDF_TOOL" audit \
-  --input "$FINAL_PDF" \
-  --out "$WORKSPACE/qa/audit.json"
-```
-
-渲染每一页，并可选择创建总览拼图：
-
-```bash
-bash "$PDF_TOOL" render \
-  --input "$FINAL_PDF" \
-  --out-dir "$WORKSPACE/qa/render" \
-  --dpi 144 \
-  --montage "$WORKSPACE/qa/montage.png"
-```
-
-按全分辨率检查每一张 `page-*.png`。修订构建脚本或编辑，然后重跑审计与渲染，直到硬失败消失，且每条警告都已被理解。
-
-更改本技能或其运行时之后，运行：
-
-```bash
-bash "$PDF_TOOL" self-test --out "$WORKSPACE/self-test"
-```
+按全尺寸查看每一张 `page-*.png`。硬失败必须消除。清单见 [qa-checklist.md](references/qa-checklist.md)。
 
 ## 交付
 
-返回最终 PDF 和简明摘要。提及有意的限制，例如纯图像页、不支持的动态表单、签名，或保留的源文件缺陷。除非用户要求，否则不要交付构建脚本、提取文本、JSON 报告、渲染图、运行时文件或临时产物。
+只返回用户要的 PDF 和简短说明。不要交付预览图、JSON、构建脚本或运行时文件，除非用户明确要。

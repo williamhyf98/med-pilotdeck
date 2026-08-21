@@ -153,7 +153,15 @@ export function ProcessLiveStatus({
       )}
       {expanded && hasDetails ? (
         <div className="mt-1.5 space-y-1.5 pl-5">
-          {hasStepList ? <AgentTimeline steps={steps} /> : null}
+          {hasStepList ? (
+            steps.length > 3 ? (
+              <AgentTimeline steps={steps} />
+            ) : (
+              steps.map((item, index) => (
+                <ProcessTraceLine key={item.id || `${item.title || 'process-step'}-${index}`} step={item} />
+              ))
+            )
+          ) : null}
           {children}
         </div>
       ) : null}
@@ -220,9 +228,19 @@ function ProcessTraceLine({ step }: { step: ProcessTraceStep }) {
       />
       <div className="min-w-0">
         <div className="truncate">{title}</div>
-        {step.detail ? (
-          <div className="truncate text-[12px] leading-5 text-neutral-400/80 dark:text-neutral-500/80">
+        {step.target && step.target !== title ? (
+          <div className="break-all text-[12px] leading-5 text-neutral-400/80 dark:text-neutral-500/80">
+            {step.target}
+          </div>
+        ) : null}
+        {step.detail && step.detail !== step.target && step.detail !== title ? (
+          <div className="break-all text-[12px] leading-5 text-neutral-400/80 dark:text-neutral-500/80">
             {step.detail}
+          </div>
+        ) : null}
+        {step.resultDetail ? (
+          <div className="break-all text-[12px] leading-5 text-neutral-400/80 dark:text-neutral-500/80">
+            {step.resultDetail}
           </div>
         ) : null}
       </div>
@@ -304,7 +322,7 @@ export function ProcessTrace({
       {expanded ? (
         <div className="mt-1.5 space-y-1.5 pl-5">
           {steps.length > 3 ? (
-            <AgentTimeline steps={steps} />
+            <AgentTimeline steps={steps} expandAll />
           ) : (
             steps.map((step, index) => (
               <ProcessTraceLine key={step.id || `${step.title || 'process-step'}-${index}`} step={step} />

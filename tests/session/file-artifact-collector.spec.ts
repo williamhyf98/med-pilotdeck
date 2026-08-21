@@ -238,3 +238,67 @@ test("disposing an unfinished collector removes it from workspace concurrency tr
         await rm(projectRoot, { recursive: true, force: true });
     }
 });
+test("bash pdf.sh JSON output becomes an explicit PDF artifact without a workspace scan", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "pilotdeck-artifact-pdf-bash-"));
+    const pdfPath = join(projectRoot, "exports", "战创伤救治方案.pdf");
+    try {
+        await mkdir(join(projectRoot, "exports"), { recursive: true });
+        await writeFile(pdfPath, "%PDF-1.4 test");
+        await writeFile(join(projectRoot, "notes.md"), "should not be collected");
+        const collector = await FileArtifactCollector.start({
+            cwd: projectRoot,
+            allowWorkspaceDiff: false,
+            allowedExtensions: [".pdf"],
+            now: () => new Date("2026-08-21T10:00:00.000Z"),
+        });
+        collector.observeToolResult({
+            type: "success",
+            toolCallId: "bash-1",
+            toolName: "bash",
+            content: [{
+                type: "text",
+                text: [
+                    "BASH_RESULT[success][stdout_data]",
+                    "stdout:",
+                    JSON.stringify({ status: "ok", output: pdfPath, pages: 3 }),
+                ].join("\n"),
+            }],
+            data: {
+                command: `bash pdf.sh make --out "${pdfPath}"`,
+                stdout: JSON.stringify({ status: "ok", output: pdfPath, pages: 3 }),
+                stderr: "",
+                exitCode: 0,
+            },
+            startedAt: "2026-08-21T10:00:00.000Z",
+            completedAt: "2026-08-21T10:00:01.000Z",
+        });
+        const artifacts = await collector.finish("complete");
+        assert.deepEqual(artifacts.map((artifact) => artifact.path), ["exports/战创伤救治方案.pdf"]);
+        assert.equal(artifacts[0]?.source, "tool");
+        assert.equal(artifacts[0]?.mimeType, "application/pdf");
+    }
+    finally {
+        await rm(projectRoot, { recursive: true, force: true });
+    }
+});
+test("general-chat PDF collection ignores non-pdf writes even when bash mutates the workspace", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "pilotdeck-artifact-pdf-filter-"));
+    try {
+        await writeFile(join(projectRoot, "notes.md"), "before");
+        const collector = await FileArtifactCollector.start({
+            cwd: projectRoot,
+            allowWorkspaceDiff: false,
+            allowedExtensions: [".pdf"],
+        });
+        await writeFile(join(projectRoot, "notes.md"), "after");
+        await writeFile(join(projectRoot, "ignored.json"), "{}");
+        collector.observeToolResult({
+            ...toolResult("write_file"),
+            data: { filePath: join(projectRoot, "ignored.json") },
+        });
+        assert.deepEqual(await collector.finish("complete"), []);
+    }
+    finally {
+        await rm(projectRoot, { recursive: true, force: true });
+    }
+});

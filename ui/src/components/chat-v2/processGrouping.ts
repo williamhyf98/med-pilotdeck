@@ -325,9 +325,13 @@ function getToolStepTargetMeta(message: ChatMessage): { target: string; context:
   }
 
   if (command) {
+    const description =
+      getToolInputString(message, 'description') ||
+      getToolInputString(message, 'prompt');
+    const summary = summarizeBashCommand(command);
     return {
-      target: truncateToolText(command, 48),
-      context: '',
+      target: summary,
+      context: description && description !== summary ? description : '',
     };
   }
 
@@ -346,9 +350,12 @@ function getToolStepResultDetail(message: ChatMessage): string {
   if (!result) return '';
 
   const content = typeof result.content === 'string' ? result.content.trim() : '';
+  const pdfDetail = getPdfToolResultDetail(content, Boolean(result.isError));
+  if (pdfDetail) return pdfDetail;
+
   if (result.isError) {
     const firstLine = content.split(/\r?\n/u).find((line) => line.trim()) || 'Failed';
-    return truncateToolText(firstLine.replace(/^<[^>]+>/u, '').trim() || 'Failed', 56);
+    return truncateToolText(firstLine.replace(/^<[^>]+>/u, '').trim() || 'Failed', 80);
   }
 
   if (!content) return '';
@@ -372,6 +379,58 @@ function getDisplayTarget(target: string): string {
   if (!target) return '';
   const normalized = target.replace(/\\/g, '/');
   return normalized.split('/').filter(Boolean).pop() || target;
+}
+
+function summarizeBashCommand(command: string): string {
+  const compact = command.replace(/\s+/g, ' ').trim();
+  const outMatch = compact.match(/--out(?:put)?\s+(?:"([^"]+)"|'([^']+)'|(\S+))/u);
+  const outPath = outMatch?.[1] || outMatch?.[2] || outMatch?.[3] || '';
+  const outName = outPath ? getDisplayTarget(outPath.replace(/["']$/u, '')) : '';
+  if (/\bpdf\.sh\b/u.test(compact) && /\bmake\b/u.test(compact)) {
+    return outName ? `pdf.sh make → ${outName}` : 'pdf.sh make';
+  }
+  return truncateToolText(compact, 72);
+}
+
+function getPdfToolResultDetail(content: string, isError: boolean): string {
+  const parsed = extractPdfToolJson(content);
+  if (!parsed) return '';
+  const status = typeof parsed.status === 'string' ? parsed.status.toLowerCase() : '';
+  const output = typeof parsed.output === 'string' ? parsed.output : '';
+  const error = typeof parsed.error === 'string' ? parsed.error : '';
+  if (status === 'ok' && output) {
+    return `已写入 ${getDisplayTarget(output)}`;
+  }
+  if ((isError || status === 'error') && error) {
+    return truncateToolText(error, 80);
+  }
+  return '';
+}
+
+function extractPdfToolJson(content: string): Record<string, unknown> | null {
+  const candidates: string[] = [];
+  for (const line of content.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('{') && trimmed.includes('"status"')) {
+      candidates.push(trimmed);
+    }
+  }
+  const start = content.lastIndexOf('{');
+  const end = content.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    candidates.push(content.slice(start, end + 1));
+  }
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    try {
+      const parsed = JSON.parse(candidates[index] as string);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Keep scanning wrapped bash banners for the JSON payload.
+    }
+  }
+  return null;
 }
 
 function hasToolError(message: ChatMessage): boolean {
@@ -1311,17 +1370,30 @@ export function buildProcessToolSteps(messages: ChatMessage[]): ProcessTraceStep
     const kind = getProcessToolKind(message);
     const { target, context } = getToolStepTargetMeta(message);
     const resultDetail = getToolStepResultDetail(message);
+    const command = getToolInputString(message, 'command');
+    const description = getToolInputString(message, 'description');
+    const title = kind === 'command' && description ? description : toolName;
 
     steps.push({
       id: stepId,
-      title: toolName,
+      title,
       toolName,
       target: target || undefined,
-      context: context || undefined,
-      detail: target || undefined,
+      context: kind === 'command' ? undefined : (context || undefined),
+      detail: command || target || undefined,
       resultDetail: resultDetail || undefined,
       state: !hasResult ? 'running' : isError ? 'failed' : 'completed',
-      phase: kind === 'search' ? 'rag' : kind === 'subagent' ? 'subtask' : 'tool',
+      phase: kind === 'search'
+        ? 'rag'
+        : kind === 'subagent'
+          ? 'subtask'
+          : kind === 'command'
+            ? 'command'
+            : kind === 'edit'
+              ? 'write'
+              : kind === 'read'
+                ? 'read'
+                : 'tool',
     });
   }
 

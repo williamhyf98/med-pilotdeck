@@ -34,6 +34,10 @@ export type CreateAgentSessionOptions = {
   initialMetadata?: SessionMetadataValue;
   /** Whether Agent-created or modified workspace files should become message artifacts. */
   collectFileArtifacts?: boolean;
+  /** Skip whole-workspace fingerprinting; keep tool-reported paths only. */
+  artifactAllowWorkspaceDiff?: boolean;
+  /** Restrict collected artifacts to these extensions, e.g. `[".pdf"]`. */
+  artifactAllowedExtensions?: string[];
 };
 
 export function createAgentSession(options: CreateAgentSessionOptions): AgentSession {
@@ -81,6 +85,8 @@ export function createAgentSessionWithStorage(options: CreateAgentSessionOptions
     cwd: options.config.cwd,
     transcriptPath: storage?.transcriptPath ?? "",
     collectFileArtifacts: options.collectFileArtifacts ?? true,
+    artifactAllowWorkspaceDiff: options.artifactAllowWorkspaceDiff,
+    artifactAllowedExtensions: options.artifactAllowedExtensions,
   };
   const turnRunner = new TurnRunner(
     loop,
