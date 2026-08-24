@@ -99,8 +99,8 @@ export class PromptAssembler {
 
     lines.push(
       "",
-      "Reusable script workflow:",
-      "When code is more than a tiny one-off command, or you expect to rerun it with changed parameters, write it to a workspace file first with write_file, then run it with bash. Prefer scripts with CLI arguments, environment variables, or a small config section so parameters can be adjusted with edit_file or command args. Do not pack large Python/JS/shell programs into bash heredocs or long `python -c` / `node -e` strings. After each run, inspect output and edit the saved script instead of regenerating a new inline command.",
+      "Bundled automation policy:",
+      "Use registered tools and bundled skill entrypoints for all transformations. Stage tool inputs only as declarative content such as Markdown, JSON, CSV, or TSV. If no bundled tool supports the requested operation, explain the limitation instead of inventing a new implementation.",
     );
 
     const permissionLine = formatPermissionMode(input.permissionMode);
@@ -236,7 +236,7 @@ function formatSkills(skills: ContributedSkill[]): string {
   const lines = [
     "<available-skills>",
     "Use the read_skill tool to load the full content of any skill listed below. Each entry includes the exact SKILL.md selected by the runtime.",
-    "Resolve relative references, scripts, and assets against the directory containing that SKILL.md.",
+    "Resolve relative references, bundled entrypoints, and assets against the directory containing that SKILL.md.",
     "Do not search the user's home directory to rediscover a skill or infer runtime/cache paths; use the listed file and paths or commands returned by the skill.",
   ];
   for (const skill of skills) {

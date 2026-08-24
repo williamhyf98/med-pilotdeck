@@ -44,8 +44,8 @@ Usage:
 - The shell runs in the current workspace directory and inherits the tool runtime environment.
 - Use \`timeout\` to override the command timeout in milliseconds. When omitted, the default is 30000ms. Values above 600000ms are rejected.
 - Use \`description\` to provide a short, clear label for logs and audits. Prefer 3-10 words that say what the command does.
-- Use this tool for short shell commands, simple pipelines, and running bundled skill scripts (for example pdf.sh / docx.sh).
-- For non-trivial code or anything you will debug/rerun with changed parameters, first create or edit a script file with write_file/edit_file, then run that file. Avoid large inline heredocs, \`python - <<...\`, long \`python -c\`, or long \`node -e\` programs when a saved script would be reusable.
+- Use this tool for short local inspection/file-management commands and for running bundled skill entrypoints (for example pdf.sh / docx.sh).
+- All transformations must go through registered tools or bundled skill entrypoints. If no bundled command supports an operation, report the limitation instead of implementing a replacement.
 - Read-only shell commands (for example \`pwd\`, \`ls\`, \`git status\`, \`git diff\`, \`git log\`) are treated as read-only. Commands with side effects require permission, and known-dangerous commands are denied outright.
 - Offline deployment: do not use curl, wget, pip install, npm install, npx, or other outbound network/package-manager commands. If dependencies are missing, say so instead of trying to download them.
 - The tool returns stdout, stderr, exit code, and duration. Non-zero exits raise a tool error, and timeouts raise \`tool_timeout\`.

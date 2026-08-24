@@ -1032,11 +1032,16 @@ function isGeneralDocumentArtifact(artifact: { path?: string; name?: string; mim
     || artifact.mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     || artifact.mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     || artifact.mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    || artifact.mimeType === "image/svg+xml"
   ) {
     return true;
   }
   const name = (artifact.name || artifact.path || "").toLowerCase();
-  return name.endsWith(".pdf") || name.endsWith(".docx") || name.endsWith(".pptx") || name.endsWith(".xlsx");
+  return name.endsWith(".pdf")
+    || name.endsWith(".docx")
+    || name.endsWith(".pptx")
+    || name.endsWith(".xlsx")
+    || name.endsWith(".svg");
 }
 
 function injectFileArtifactMessages(

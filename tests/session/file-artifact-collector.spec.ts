@@ -404,6 +404,42 @@ test("bash spreadsheet.sh JSON output becomes an explicit XLSX artifact without 
         await rm(projectRoot, { recursive: true, force: true });
     }
 });
+test("bash diagram.sh JSON output becomes an explicit SVG artifact without a workspace scan", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "pilotdeck-artifact-svg-bash-"));
+    const svgPath = join(projectRoot, "exports", "救治流程.svg");
+    try {
+        await mkdir(join(projectRoot, "exports"), { recursive: true });
+        await writeFile(svgPath, '<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+        const collector = await FileArtifactCollector.start({
+            cwd: projectRoot,
+            allowWorkspaceDiff: false,
+            allowedExtensions: [".pdf", ".docx", ".pptx", ".xlsx", ".svg"],
+        });
+        collector.observeToolResult({
+            type: "success",
+            toolCallId: "bash-svg-1",
+            toolName: "bash",
+            content: [{
+                type: "text",
+                text: JSON.stringify({ status: "ok", output: svgPath, nodes: 3, edges: 2 }),
+            }],
+            data: {
+                command: `bash diagram.sh make --out "${svgPath}"`,
+                stdout: JSON.stringify({ status: "ok", output: svgPath, nodes: 3, edges: 2 }),
+                stderr: "",
+                exitCode: 0,
+            },
+            startedAt: "2026-08-21T10:00:00.000Z",
+            completedAt: "2026-08-21T10:00:01.000Z",
+        });
+        const artifacts = await collector.finish("complete");
+        assert.deepEqual(artifacts.map((artifact) => artifact.path), ["exports/救治流程.svg"]);
+        assert.equal(artifacts[0]?.mimeType, "image/svg+xml");
+    }
+    finally {
+        await rm(projectRoot, { recursive: true, force: true });
+    }
+});
 test("general-chat PDF collection ignores non-pdf writes even when bash mutates the workspace", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "pilotdeck-artifact-pdf-filter-"));
     try {

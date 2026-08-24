@@ -1,6 +1,6 @@
 ---
 name: pdf
-description: 读取、创建、编辑、合并、拆分、旋转、填写、渲染并校验工作区 PDF。输入或交付物是 .pdf 时使用本技能，包括把对话里刚生成的救治方案、病例报告导出为 PDF。只通过捆绑的 pdf.sh 完成工作，不要手写 Python、不要安装依赖、不要搜索系统字体。
+description: 读取、创建、编辑、合并、拆分、旋转、填写、渲染并校验工作区 PDF。输入或交付物是 .pdf 时使用本技能，包括把对话里刚生成的救治方案、病例报告导出为 PDF。所有转换只通过捆绑的 pdf.sh 完成。
 ---
 
 # PDF
@@ -9,18 +9,17 @@ description: 读取、创建、编辑、合并、拆分、旋转、填写、渲�
 
 ```bash
 PDF_SKILL_ROOT="$(dirname "<path>")"
-PDF_TOOL="$PDF_SKILL_ROOT/scripts/pdf.sh"
 ```
 
-`pdf.sh` 会自己定位隔离 Python、捆绑字体和 Poppler。缺任何一项都会返回 JSON 错误「交付包不完整」；此时停止，不要 pip、不要 `fix`、不要改用系统 `python3`、不要自己写生成脚本。
+`pdf.sh` 会自己定位完整的隔离运行时、捆绑字体和渲染组件。缺任何一项都会
+返回 JSON 错误「交付包不完整」；此时停止并报告，不要改走其它实现。
 
-## 禁止
+## Agent 可用表面
 
-- 用 `write_file` 或 `edit_file` 写 `*.py` / `*.js` 来生成 PDF
-- `pip`、`curl`、`brew`、`npm`，或 `check || fix`
-- 搜索 `$HOME`、`$PILOT_HOME/skills`、`/System/Library/Fonts`、`/usr/share/fonts` 或其他系统字体
-- 把中间产物写到 `.pilotdeck/work/manual/`
-- 把本技能复制到用户 skills 目录
+- 只调用本技能的 `pdf.sh`
+- 只用 `.md` / `.json` 暂存声明式内容
+- 不搜索运行时、缓存、系统字体或替代工具
+- 命令返回 `unsupported`、`blocked` 或「交付包不完整」时立即停止并报告
 
 ## 输出位置
 
@@ -37,13 +36,13 @@ mkdir -p "$PWD/exports"
 不要 scaffold，不要手写 ReportLab。把标题和正文交给 `make`：
 
 ```bash
-bash "$PDF_TOOL" make \
+bash "$PDF_SKILL_ROOT/scripts/pdf.sh" make \
   --title "病例报告" \
   --body "【病例报告】" \
   --out "$PWD/exports/病例报告.pdf"
 ```
 
-多段正文用换行；多节内容把 JSON 写成 `--spec`，仍然不要写 Python：
+多段正文用换行；多节内容把声明式 JSON 写成 `--spec`：
 
 ```json
 {
@@ -59,12 +58,12 @@ bash "$PDF_TOOL" make \
 
 ## 把对话里已有的方案做成 PDF
 
-`pdf.sh` **读不到聊天记录**。用户说「把以上/刚才的救治方案（或病例报告）生成 PDF」时，上一轮你已经写过的全文就在当前对话里：直接用原文，不要让用户再贴一遍，不要摘要代替原文，不要重写一版，不要因为内容长就去写 Python。
+`pdf.sh` **读不到聊天记录**。用户说「把以上/刚才的救治方案（或病例报告）生成 PDF」时，上一轮你已经写过的全文就在当前对话里：直接用原文，不要让用户再贴一遍，不要摘要代替原文，不要重写一版。
 
 长文不要塞进 `--body "..."`（引号和长度容易把命令搞坏）。用 `write_file` 把完整原文写成 Markdown，再交给 `make`：
 
 ```bash
-bash "$PDF_TOOL" make \
+bash "$PDF_SKILL_ROOT/scripts/pdf.sh" make \
   --title "救治方案" \
   --markdown "$PWD/exports/qa/content.md" \
   --out "$PWD/exports/救治方案.pdf"
@@ -72,14 +71,14 @@ bash "$PDF_TOOL" make \
 
 - 标题用用户的说法（「救治方案」「病例报告」等）。
 - `content.md` 保持对话原文，包括 `###` / `####` 小标题和列表。`make` 会按标题分页排版。
-- 允许 `write_file` 写 `.md` / `.json`；仍然禁止写 `*.py` 来生成 PDF。
+- `write_file` 只用于 `.md` / `.json` 声明式输入。
 
 复杂排版规范见 [creation.md](references/creation.md)。
 
 ## 检查或提取
 
 ```bash
-bash "$PDF_TOOL" inspect \
+bash "$PDF_SKILL_ROOT/scripts/pdf.sh" inspect \
   --input "$INPUT_PDF" \
   --out "$PWD/exports/qa/inspection.json"
 ```
@@ -91,11 +90,11 @@ bash "$PDF_TOOL" inspect \
 先 `inspect`，必要时 `render`。源文件保留，结果写到源文件的同一个目录下。
 
 ```bash
-bash "$PDF_TOOL" merge --inputs first.pdf second.pdf --out "$PWD/exports/merged.pdf"
-bash "$PDF_TOOL" split --input source.pdf --out-dir "$PWD/exports/pages" --pages "1-3,7"
-bash "$PDF_TOOL" rotate --input source.pdf --out "$PWD/exports/rotated.pdf" --degrees 90 --pages "2,4-5"
-bash "$PDF_TOOL" forms-inspect --input form.pdf --out "$PWD/exports/qa/fields.json"
-bash "$PDF_TOOL" forms-fill --input form.pdf --data "$PWD/exports/qa/values.json" --out "$PWD/exports/filled.pdf"
+bash "$PDF_SKILL_ROOT/scripts/pdf.sh" merge --inputs first.pdf second.pdf --out "$PWD/exports/merged.pdf"
+bash "$PDF_SKILL_ROOT/scripts/pdf.sh" split --input source.pdf --out-dir "$PWD/exports/pages" --pages "1-3,7"
+bash "$PDF_SKILL_ROOT/scripts/pdf.sh" rotate --input source.pdf --out "$PWD/exports/rotated.pdf" --degrees 90 --pages "2,4-5"
+bash "$PDF_SKILL_ROOT/scripts/pdf.sh" forms-inspect --input form.pdf --out "$PWD/exports/qa/fields.json"
+bash "$PDF_SKILL_ROOT/scripts/pdf.sh" forms-fill --input form.pdf --data "$PWD/exports/qa/values.json" --out "$PWD/exports/filled.pdf"
 ```
 
 页面操作不会像字处理器那样重排正文。见 [structure-and-forms.md](references/structure-and-forms.md)。
@@ -105,12 +104,12 @@ bash "$PDF_TOOL" forms-fill --input form.pdf --data "$PWD/exports/qa/values.json
 `make` 已包含审计和渲染。对已有 PDF 或编辑结果：
 
 ```bash
-bash "$PDF_TOOL" audit --input "$FINAL_PDF" --out "$PWD/exports/qa/audit.json"
-bash "$PDF_TOOL" render --input "$FINAL_PDF" --out-dir "$PWD/exports/qa/render" --dpi 144
+bash "$PDF_SKILL_ROOT/scripts/pdf.sh" audit --input "$FINAL_PDF" --out "$PWD/exports/qa/audit.json"
+bash "$PDF_SKILL_ROOT/scripts/pdf.sh" render --input "$FINAL_PDF" --out-dir "$PWD/exports/qa/render" --dpi 144
 ```
 
 按全尺寸查看每一张 `page-*.png`。硬失败必须消除。清单见 [qa-checklist.md](references/qa-checklist.md)。
 
 ## 交付
 
-只返回用户要的 PDF 和简短说明。不要交付预览图、JSON、构建脚本或运行时文件，除非用户明确要。
+只返回用户要的 PDF 和简短说明。不要交付预览图、JSON 或运行时文件，除非用户明确要。

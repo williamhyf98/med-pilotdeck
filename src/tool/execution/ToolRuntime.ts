@@ -25,6 +25,7 @@ import type { AgentEventEmitter } from "../../agent/protocol/events.js";
 import { requiresPromptCapability } from "../userInteractionConstraints.js";
 import { buildToolErrorRecovery } from "./errorRecovery.js";
 import { repairToolName } from "./repairToolName.js";
+import { getAutomationPolicyViolation } from "../automationPolicyConstraints.js";
 
 export class ToolRuntime {
   constructor(
@@ -117,6 +118,18 @@ export class ToolRuntime {
         tool.name,
         "ask_mode_violation",
         askModeViolation,
+        startedAt,
+        runtimeContext,
+      );
+    }
+
+    const automationPolicyViolation = getAutomationPolicyViolation(tool.name, call.input);
+    if (automationPolicyViolation) {
+      return this.errorResult(
+        call.id,
+        tool.name,
+        "automation_policy_violation",
+        automationPolicyViolation,
         startedAt,
         runtimeContext,
       );

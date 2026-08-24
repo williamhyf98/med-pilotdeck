@@ -585,7 +585,7 @@ function collectDocumentPathsFromText(text: string, add: (pathValue: string) => 
   tryParseDocumentJsonObject(text.trim(), add);
   for (const line of text.split(/\r?\n/u)) {
     const trimmed = line.trim();
-    if (!trimmed.startsWith("{") || !/\.(?:pdf|docx|pptx|xlsx)/i.test(trimmed)) continue;
+    if (!trimmed.startsWith("{") || !/\.(?:pdf|docx|pptx|xlsx|svg)/i.test(trimmed)) continue;
     tryParseDocumentJsonObject(trimmed, add);
   }
   const start = text.lastIndexOf("{");
@@ -625,5 +625,5 @@ function collectDocumentOutputFields(value: unknown, add: (pathValue: string) =>
 
 function isDocumentFilePath(value: string): boolean {
   const trimmed = value.trim().split(/[?#]/u)[0] ?? "";
-  return /\.(?:pdf|docx|pptx|xlsx)$/i.test(trimmed);
+  return /\.(?:pdf|docx|pptx|xlsx|svg)$/i.test(trimmed);
 }

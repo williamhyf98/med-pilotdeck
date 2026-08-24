@@ -187,4 +187,36 @@ describe('buildProcessToolSteps skill target', () => {
     expect(steps[0]?.detail).toBe(command);
     expect(steps[0]?.resultDetail).toBe('已写入 救治统计.xlsx');
   });
+
+  it('summarizes diagram.sh make commands and surfaces the written SVG', () => {
+    const command = 'bash /opt/skills/diagram-maker/scripts/diagram.sh make --markdown "$PWD/exports/qa/flow.mmd" --out "$PWD/exports/救治流程.svg"';
+    const steps = buildProcessToolSteps([{
+      id: 'm-diagram',
+      type: 'assistant',
+      content: '',
+      timestamp: new Date().toISOString(),
+      isToolUse: true,
+      toolName: 'bash',
+      toolInput: JSON.stringify({
+        command,
+        description: 'Generate care flow diagram',
+      }),
+      toolId: 't-diagram',
+      toolResult: {
+        content: JSON.stringify({
+          status: 'ok',
+          output: '/workspace/exports/救治流程.svg',
+          nodes: 3,
+          edges: 2,
+        }),
+        isError: false,
+      },
+    } as any]);
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0]?.title).toBe('Generate care flow diagram');
+    expect(steps[0]?.target).toBe('diagram.sh make → 救治流程.svg');
+    expect(steps[0]?.detail).toBe(command);
+    expect(steps[0]?.resultDetail).toBe('已写入 救治流程.svg');
+  });
 });

@@ -124,6 +124,9 @@ function summarizeError(
   if (code === "ask_mode_violation") {
     return `The ${toolName} call is not allowed while the agent is in ask mode.`;
   }
+  if (code === "automation_policy_violation") {
+    return `The ${toolName} call is blocked by the bundled automation policy.`;
+  }
   if (evidence.length > 0) {
     return trimSentence(evidence[0]);
   }
@@ -153,7 +156,8 @@ function classifyError(
     code === "tool_not_found" ||
     code === "unsupported_tool" ||
     code === "plan_mode_violation" ||
-    code === "ask_mode_violation"
+    code === "ask_mode_violation" ||
+    code === "automation_policy_violation"
   ) {
     return "switch_tool";
   }
@@ -250,6 +254,12 @@ function baseNextActions(
       return [
         "Do not retry this write/action tool while in ask mode.",
         "Use read-only tools or ask the user to change mode if they want execution.",
+      ];
+    case "automation_policy_violation":
+      return [
+        "Do not retry with another interpreter, shell wrapper, generated source file, or build runner.",
+        "Use a registered tool or bundled skill entrypoint with declarative inputs.",
+        "If no bundled capability supports the operation, explain the limitation and stop.",
       ];
     case "permission_required":
       return ["Pause tool execution and ask the user for approval with a concise reason."];
@@ -419,6 +429,8 @@ function defaultAvoidRetryReason(code: PilotDeckToolErrorCode): string | undefin
       return "Plan mode blocks this class of tool until execution mode is restored.";
     case "ask_mode_violation":
       return "Ask mode blocks this class of tool until execution mode is restored.";
+    case "automation_policy_violation":
+      return "This deployment permanently blocks generated executable source and interpreter execution.";
     default:
       return undefined;
   }

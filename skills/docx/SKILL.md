@@ -1,6 +1,6 @@
 ---
 name: docx
-description: 读取、创建、编辑、审阅、比较、净化、渲染并校验工作区 Microsoft Word .docx 文档。输入或交付物是 .docx 时使用本技能，包括把对话里刚生成的方案、病例报告导出为 Word。只通过捆绑的 docx.sh 完成工作，不要手写 Python、不要安装依赖、不要搜索系统字体。
+description: 读取、创建、编辑、审阅、比较、净化、渲染并校验工作区 Microsoft Word .docx 文档。输入或交付物是 .docx 时使用本技能，包括把对话里刚生成的方案、病例报告导出为 Word。所有转换只通过捆绑的 docx.sh 完成。
 ---
 
 # Word DOCX
@@ -10,21 +10,17 @@ description: 读取、创建、编辑、审阅、比较、净化、渲染并校�
 
 ```bash
 DOCX_SKILL_ROOT="$(dirname "<path>")"
-DOCX_TOOL="$DOCX_SKILL_ROOT/scripts/docx.sh"
 ```
 
-`docx.sh` 会自己定位隔离 Python 和捆绑字体。不要安装 LibreOffice、Poppler
-或其它系统软件。本地运行时未就绪时会返回 JSON 错误「交付包不完整」；此时
-停止，不要 pip、不要 `fix`、不要 `bootstrap-runtime`、不要改用系统
-`python3`、不要自己写生成脚本。
+`docx.sh` 会自己定位完整的隔离运行时和捆绑字体。本地运行时未就绪时会返回
+JSON 错误「交付包不完整」；此时停止并报告，不要改走其它实现。
 
-## 禁止
+## Agent 可用表面
 
-- 用 `write_file` 或 `edit_file` 写 `*.py` / `*.js` 来生成或修改 DOCX
-- `pip`、`curl`、`brew`、`npm`，或 `check || fix` / `bootstrap-runtime`
-- 搜索 `$HOME`、`$PILOT_HOME/skills`、系统字体，或安装 LibreOffice
-- 调用 `fallback-create` / `fallback-patch` 绕过已声明能力
-- 把本技能复制到用户 skills 目录
+- 只调用本技能的 `docx.sh`
+- 只用 `.md` / `.json` 暂存声明式内容
+- 不搜索运行时、缓存、系统字体或替代工具
+- 命令返回 `unsupported`、`blocked` 或「交付包不完整」时立即停止并报告
 
 ## 输出位置
 
@@ -39,11 +35,10 @@ mkdir -p "$PWD/exports"
 
 ## 新建 Word
 
-不要 `prepare`、不要查询 schema、不要手写 python-docx。常见新建只调用
-`make`：
+常见新建只调用 `make`：
 
 ```bash
-bash "$DOCX_TOOL" make \
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" make \
   --title "病例报告" \
   --body "【病例报告】" \
   --out "$PWD/exports/病例报告.docx"
@@ -73,7 +68,7 @@ bash "$DOCX_TOOL" make \
 
 ```bash
 mkdir -p "$PWD/exports/qa"
-bash "$DOCX_TOOL" make \
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" make \
   --title "救治方案" \
   --markdown "$PWD/exports/qa/content.md" \
   --out "$PWD/exports/救治方案.docx"
@@ -86,17 +81,17 @@ Markdown 中：
 - `1.` / `1)` 转为编号项；
 - 普通段落保持正文顺序。
 
-允许 `write_file` 写 `.md` / `.json`；仍然禁止写 `*.py`。
+`write_file` 只用于 `.md` / `.json` 声明式输入。
 
 复杂表格、图片、封面或精确样式可使用 `--spec`。只使用
 [specifications.md](references/specifications.md) 已声明的字段；不要为新建
-文档改走 fallback Python。新建细则见
+文档改走未声明的替代路径。新建细则见
 [creation.md](references/creation.md)。
 
 ## 检查或读取
 
 ```bash
-bash "$DOCX_TOOL" inspect \
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" inspect \
   --input "$INPUT_DOCX" \
   --out "$PWD/exports/qa/inspection.json"
 ```
@@ -125,15 +120,15 @@ bash "$DOCX_TOOL" inspect \
 ### 其他保留能力
 
 ```bash
-bash "$DOCX_TOOL" compare --before old.docx --after new.docx --out "$PWD/exports/qa/compare.json"
-bash "$DOCX_TOOL" sanitize --input source.docx --out "$INTERNAL_CANDIDATE"
-bash "$DOCX_TOOL" refresh-toc --input source.docx --out "$INTERNAL_CANDIDATE" --render-dir "$INTERNAL_RENDER_DIR"
-bash "$DOCX_TOOL" validate --input source.docx
-bash "$DOCX_TOOL" audit --input source.docx --out "$PWD/exports/qa/audit.json"
-bash "$DOCX_TOOL" render --input source.docx --out-dir "$PWD/exports/qa/render"
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" compare --before old.docx --after new.docx --out "$PWD/exports/qa/compare.json"
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" sanitize --input source.docx --out "$INTERNAL_CANDIDATE"
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" refresh-toc --input source.docx --out "$INTERNAL_CANDIDATE" --render-dir "$INTERNAL_RENDER_DIR"
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" validate --input source.docx
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" audit --input source.docx --out "$PWD/exports/qa/audit.json"
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" render --input source.docx --out-dir "$PWD/exports/qa/render"
 ```
 
-若命令返回 `unsupported` 或 `blocked`，说明限制并停止。不要编写脚本绕过。
+若命令返回 `unsupported` 或 `blocked`，说明限制并停止。
 
 ## 校验
 
@@ -152,4 +147,4 @@ bash "$DOCX_TOOL" render --input source.docx --out-dir "$PWD/exports/qa/render"
 ## 交付
 
 只返回用户要的最终 `.docx` 和简短说明。不要交付 Markdown、spec JSON、
-预览图、QA 报告、候选文件、构建脚本或运行时文件，除非用户明确要求。
+预览图、QA 报告、候选文件或运行时文件，除非用户明确要求。

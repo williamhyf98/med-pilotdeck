@@ -126,7 +126,7 @@ test("history replay hides Agent file artifacts in general conversations", async
         await rm(pilotHome, { recursive: true, force: true });
     }
 });
-test("history replay shows PDF, DOCX, PPTX, and XLSX artifacts in general conversations", async () => {
+test("history replay shows document and SVG artifacts in general conversations", async () => {
     const pilotHome = await mkdtemp(join(tmpdir(), "pilotdeck-general-pdf-artifact-history-"));
     try {
         const sessionKey = "web:s_general_pdf_file_artifacts";
@@ -194,6 +194,17 @@ test("history replay shows PDF, DOCX, PPTX, and XLSX artifacts in general conver
             mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             createdAt: "2026-08-21T10:00:00.000Z",
         }, {
+            id: "artifact-svg",
+            name: "战创伤救治流程.svg",
+            path: "exports/战创伤救治流程.svg",
+            operation: "created",
+            source: "tool",
+            status: "complete",
+            size: 4096,
+            sha256: "b".repeat(64),
+            mimeType: "image/svg+xml",
+            createdAt: "2026-08-21T10:00:00.000Z",
+        }, {
             id: "artifact-json",
             name: "trauma_care_plan_spec.json",
             path: "exports/trauma_care_plan_spec.json",
@@ -213,6 +224,7 @@ test("history replay shows PDF, DOCX, PPTX, and XLSX artifacts in general conver
             "exports/战创伤救治方案.docx",
             "exports/战创伤救治教学.pptx",
             "exports/战创伤救治统计.xlsx",
+            "exports/战创伤救治流程.svg",
         ]);
     }
     finally {

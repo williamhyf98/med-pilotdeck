@@ -68,14 +68,14 @@ test("bash failure tool result includes raw stdout and stderr tail for UI and mo
                 };
             },
         });
-        const result = await runtime.execute({ id: "call-bash", name: "bash", input: { command: "npm test" } }, context());
+        const result = await runtime.execute({ id: "call-bash", name: "bash", input: { command: "git status" } }, context());
         assert.equal(result.type, "error");
         const text = result.content[0]?.type === "text" ? result.content[0].text : "";
         assert.match(text, /TOOL_ERROR\[tool_execution_failed\]\[bash\]/);
         assert.match(text, /Raw tool details:/);
         assert.match(text, /Diagnostic:/);
         assert.match(text, /BASH_FAILURE_DIAGNOSTIC/);
-        assert.match(text, /- command: npm test/);
+        assert.match(text, /- command: git status/);
         assert.match(text, /- exit_code: 1/);
         assert.match(text, /stdout:/);
         assert.match(text, /stderr:/);
@@ -113,7 +113,7 @@ test("bash failure diagnostic extracts Python traceback location and exception",
             };
         },
     });
-    const result = await runtime.execute({ id: "call-bash", name: "bash", input: { command: "python3 script.py" } }, context());
+    const result = await runtime.execute({ id: "call-bash", name: "bash", input: { command: "bash \"/opt/pilotdeck/skills/pdf/scripts/pdf.sh\" self-test" } }, context());
     assert.equal(result.type, "error");
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
     assert.match(text, /BASH_FAILURE_DIAGNOSTIC/);

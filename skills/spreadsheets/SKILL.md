@@ -1,6 +1,6 @@
 ---
 name: spreadsheets
-description: 创建、读取、审计和安全修改 .xlsx、.csv、.tsv 表格。只通过捆绑 spreadsheet.sh 工作，不要编写 JavaScript/Python 生成器，不要安装依赖，不要把 LibreOffice 当成离线部署前提。旧版 .xls 仅在已有转换后端时支持。
+description: 创建、读取、审计和安全修改 .xlsx、.csv、.tsv 表格。所有转换只通过捆绑 spreadsheet.sh 完成。旧版 .xls 仅在已有转换后端时支持。
 ---
 
 # 电子表格
@@ -9,22 +9,19 @@ description: 创建、读取、审计和安全修改 .xlsx、.csv、.tsv 表格�
 
 ```bash
 SPREADSHEET_SKILL_ROOT="$(dirname "<path>")"
-SHEET="$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh"
 ```
 
-`spreadsheet.sh` 会定位隔离 Node 运行时、ExcelJS 和内置图表/审计工具。
-运行时未就绪时会返回「交付包不完整」；此时停止，不要 `fix`、
-`bootstrap-runtime`、npm、npx，也不要自己写构建脚本。
+`spreadsheet.sh` 会定位完整的隔离运行时和内置图表/审计工具。运行时未就绪
+时会返回「交付包不完整」；此时停止并报告，不要改走其它实现。
 
-## 禁止
+## Agent 可用表面
 
-- 用 `write_file` / `edit_file` 写 `.mjs`、`.js`、`.ts`、`.py` 生成表格
-- `npm install` / `npm ci` / `npx` / `pip` / `curl` / `wget` / `brew`
-- `check || fix`，或调用 `scaffold` 后修改 starter
-- 搜索系统字体，或安装 LibreOffice、Poppler、ImageMagick
-- `openpyxl`、XlsxWriter、pandas ExcelWriter、Google Sheets API
-- `.xlsm`、宏、实时 Excel 控制，或把 `.xls` 改名为 `.xlsx`
-- 未经用户明确授权覆盖已有输出或绕过 risky round-trip
+- 只调用本技能的 `spreadsheet.sh`
+- 只用 `.md` / `.json` / `.csv` / `.tsv` 暂存声明式内容
+- 不搜索运行时、缓存、系统字体或替代工具
+- 命令返回 `unsupported`、`blocked` 或「交付包不完整」时立即停止并报告
+- 输入材料尚未被现有工具转换为结构化数据时，明确说明缺少抽取能力并停止；
+  不要自行补充新的解析实现
 
 ## 输出位置
 
@@ -43,7 +40,7 @@ mkdir -p "$PWD/exports"
 短内容：
 
 ```bash
-bash "$SHEET" make \
+bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make \
   --title "战创伤救治清单" \
   --body "现场评估
 
@@ -56,7 +53,7 @@ bash "$SHEET" make \
 Markdown 管道表：
 
 ```bash
-bash "$SHEET" make \
+bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make \
   --title "救治清单" \
   --markdown "$PWD/exports/qa/table.md" \
   --out "$PWD/exports/救治清单.xlsx"
@@ -65,7 +62,7 @@ bash "$SHEET" make \
 导入分隔文件：
 
 ```bash
-bash "$SHEET" make \
+bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make \
   --csv "$INPUT_CSV" \
   --out "$PWD/exports/导入结果.xlsx"
 ```
@@ -74,7 +71,7 @@ bash "$SHEET" make \
 `--spec`：
 
 ```bash
-bash "$SHEET" make \
+bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make \
   --spec "$PWD/exports/qa/workbook.json" \
   --out "$PWD/exports/统计工作簿.xlsx"
 ```
@@ -111,7 +108,7 @@ bash "$SHEET" make \
 先检查，保留源文件：
 
 ```bash
-bash "$SHEET" inspect \
+bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" inspect \
   --input "$INPUT_XLSX" \
   --out "$PILOTDECK_WORK_DIR/spreadsheets/inspection.json"
 ```
@@ -123,7 +120,7 @@ bash "$SHEET" inspect \
 安全的现有工作簿用受控 spec 修改单元格/公式，输出新文件：
 
 ```bash
-bash "$SHEET" make \
+bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make \
   --input "$INPUT_XLSX" \
   --spec "$PILOTDECK_WORK_DIR/spreadsheets/edits.json" \
   --out "$PWD/exports/修改后.xlsx"
@@ -144,8 +141,8 @@ bash "$SHEET" make \
 ## 读取与审计
 
 ```bash
-bash "$SHEET" inspect --input "$INPUT" --sheet "汇总" --range "A1:H30" --styles
-bash "$SHEET" audit --input "$INPUT" --out "$PILOTDECK_WORK_DIR/spreadsheets/audit.json"
+bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" inspect --input "$INPUT" --sheet "汇总" --range "A1:H30" --styles
+bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" audit --input "$INPUT" --out "$PILOTDECK_WORK_DIR/spreadsheets/audit.json"
 ```
 
 只读请求不要生成新表格。

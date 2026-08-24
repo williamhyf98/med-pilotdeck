@@ -1,6 +1,6 @@
 ---
 name: pptx
-description: 创建、读取、审计和安全修改 Microsoft PowerPoint .pptx 演示文稿。输入或交付物是 .pptx 时使用本技能。只通过捆绑的 pptx.sh 完成工作，不要编写 JavaScript/Python 生成器，不要安装依赖，不要把 LibreOffice 当成部署前提。
+description: 创建、读取、审计和安全修改 Microsoft PowerPoint .pptx 演示文稿。输入或交付物是 .pptx 时使用本技能。所有转换只通过捆绑的 pptx.sh 完成。
 ---
 
 # PowerPoint PPTX
@@ -9,22 +9,17 @@ description: 创建、读取、审计和安全修改 Microsoft PowerPoint .pptx 
 
 ```bash
 PPTX_SKILL_ROOT="$(dirname "<path>")"
-PPTX_TOOL="$PPTX_SKILL_ROOT/scripts/pptx.sh"
 ```
 
-`pptx.sh` 会定位隔离 Node 运行时和内置布局库。运行时未就绪时会返回
-「交付包不完整」；此时停止，不要 `fix`、`bootstrap-runtime`、npm、npx，
-不要改用系统包，也不要自己写构建脚本。
+`pptx.sh` 会定位完整的隔离运行时和内置布局库。运行时未就绪时会返回
+「交付包不完整」；此时停止并报告，不要改走其它实现。
 
-## 禁止
+## Agent 可用表面
 
-- 用 `write_file` / `edit_file` 写 `*.mjs`、`*.js`、`*.ts` 或 `*.py`
-  来生成 PPTX
-- `npm install` / `npm ci` / `npx` / `curl` / `wget` / `brew`
-- `check || fix`，或调用 `scaffold` 后修改 starter
-- 搜索系统字体，或为页面 PNG 安装 LibreOffice、Poppler、ImageMagick
-- 远程图片 URL、Google Slides API、HTML-to-PPTX
-- 未经用户明确授权覆盖已有输出
+- 只调用本技能的 `pptx.sh`
+- 只用 `.md` / `.json` 暂存声明式内容
+- 不搜索运行时、缓存、系统字体或替代工具
+- 命令返回 `unsupported`、`blocked` 或「交付包不完整」时立即停止并报告
 
 ## 输出位置
 
@@ -43,7 +38,7 @@ mkdir -p "$PWD/exports"
 短演示可以直接传正文：
 
 ```bash
-bash "$PPTX_TOOL" make \
+bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" make \
   --title "战创伤四级救治" \
   --body "现场处置。
 
@@ -56,7 +51,7 @@ bash "$PPTX_TOOL" make \
 长演示先把完整内容写成 Markdown，再传路径：
 
 ```bash
-bash "$PPTX_TOOL" make \
+bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" make \
   --title "战创伤四级救治" \
   --markdown "$PWD/exports/qa/slides.md" \
   --out "$PWD/exports/战创伤四级救治.pptx"
@@ -103,8 +98,8 @@ layout-library。
 ## 读取与审计
 
 ```bash
-bash "$PPTX_TOOL" inspect --input "$INPUT_PPTX" --out "$PWD/exports/qa/manifest.json"
-bash "$PPTX_TOOL" audit --input "$INPUT_PPTX" --out "$PWD/exports/qa/audit.json"
+bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" inspect --input "$INPUT_PPTX" --out "$PWD/exports/qa/manifest.json"
+bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" audit --input "$INPUT_PPTX" --out "$PWD/exports/qa/audit.json"
 ```
 
 只读请求不要生成新 PPTX。

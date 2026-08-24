@@ -74,8 +74,8 @@
       "kind": "document",
       "skill": "diagram-maker",
       "timeoutMs": 180000,
-      "message": "请使用 diagram-maker 技能，在当前工作目录生成一张简单流程图（clean-svg）：输入 -> 处理 -> 输出。保存为 diagram.html。不要向我确认，直接执行。",
-      "expectOutputGlob": "*.{html,svg,excalidraw}"
+      "message": "请使用 diagram-maker 技能，通过捆绑的 diagram.sh make 在当前工作目录生成一张简单 SVG 流程图：输入 -> 处理 -> 输出。不要向我确认，直接执行。",
+      "expectOutputGlob": "*.svg"
     }
   ]
 }

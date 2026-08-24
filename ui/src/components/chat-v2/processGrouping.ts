@@ -398,6 +398,9 @@ function summarizeBashCommand(command: string): string {
   if (/\bspreadsheet\.sh\b/u.test(compact) && /\bmake\b/u.test(compact)) {
     return outName ? `spreadsheet.sh make → ${outName}` : 'spreadsheet.sh make';
   }
+  if (/\bdiagram\.sh\b/u.test(compact) && /\bmake\b/u.test(compact)) {
+    return outName ? `diagram.sh make → ${outName}` : 'diagram.sh make';
+  }
   return truncateToolText(compact, 72);
 }
 

@@ -194,9 +194,10 @@ SKILL_RUNTIME_SUMMARY=""
 
 install_skill_runtimes() {
   local skill entrypoint script
-  for skill in pdf docx pptx spreadsheets; do
+  for skill in pdf docx pptx spreadsheets diagram-maker; do
     entrypoint="$skill"
     [[ "$skill" == "spreadsheets" ]] && entrypoint="spreadsheet"
+    [[ "$skill" == "diagram-maker" ]] && entrypoint="diagram"
     script="${PILOTDECK_ROOT}/skills/${skill}/scripts/${entrypoint}.sh"
     if [[ ! -f "$script" ]]; then
       echo "==> skills/${skill} not present; skipping its runtime"

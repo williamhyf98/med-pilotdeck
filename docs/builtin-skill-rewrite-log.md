@@ -8,7 +8,7 @@
 | Word | `skills/docx/` | 已改造（本文第 2 节） |
 | PowerPoint | `skills/pptx/` | 已改造（本文第 3 节） |
 | 表格 | `skills/spreadsheets/` | 已改造（本文第 4 节） |
-| 图示 | `skills/diagram-maker/` | 未开始 |
+| 图示 | `skills/diagram-maker/` | 已改造（本文第 6 节） |
 
 原则（五个 skill 共用，先在 PDF 上落地）：
 
@@ -483,8 +483,9 @@ bash "$SHEET" make \
 
 ### 4.5 Agent 闸门
 
-- 禁止写 `.mjs` / `.js` / `.py` 生成表格。
-- 禁止 `fix`、npm、npx、pip、系统字体搜索和 LibreOffice 安装。
+- Agent 可见表面只保留 `spreadsheet.sh` 与声明式 `.md/.json/.csv/.tsv`
+  输入；输入尚未结构化且没有现成抽取工具时停止并说明能力缺口。
+- 禁止 `fix`、现场安装、系统字体搜索和 LibreOffice 安装。
 - `scaffold` / `build` 只保留维护兼容，不再写入 Agent 主流程。
 - CSV/TSV 不允许多工作表、公式或图表；这些需求必须输出 XLSX。
 - `.xlsm`、Google Sheets、实时 Excel、宏与未授权 risky round-trip 不支持。
@@ -518,6 +519,242 @@ bash "$SHEET" make \
 - 不把工作表 PNG 作为用户交付物。
 - 不在聊天气泡里嵌整本工作簿。
 
-## 5. 图示（`skills/diagram-maker`）
+## 5. 全局声明式自动化边界
 
-未开始。
+2026-08-21 排查 CDA/XML → Excel 失败会话时发现：文档 Skill 虽然要求使用
+捆绑入口，但系统提示、`write_file` 与 `bash` 的工具说明仍主动推荐 Agent
+保存并运行自建程序。该高优先级引导与 Skill 闸门冲突，导致 Agent 写出
+`extract_med_reports.py`，并在零数据行时静默继续。
+
+现统一为医疗/文档离线产品的全局策略：
+
+- 系统提示只推荐「注册工具 + 捆绑 Skill 入口 + 声明式输入」，不再向模型
+  描述自建程序工作流。
+- `write_file` / `edit_file` 的模型可见用途收敛为 Markdown、JSON、CSV、
+  TSV、纯文本等声明式内容。
+- `bash` 的模型可见用途收敛为本地检查、文件管理与捆绑 Skill 入口。
+- ToolRuntime 在权限判断之前硬阻断可执行源码写入、解释器/编译器、动态
+  shell、heredoc、构建/包管理器和任意可执行路径；因此
+  `bypassPermissions` 也不能放行。
+- `pdf.sh` / `docx.sh` / `pptx.sh` / `spreadsheet.sh` 作为唯一允许的文档
+  转换入口继续可用；Skill 示例改为包含真实入口文件名，便于运行时准确识别。
+  图示落地后把 `diagram.sh` 加进同一白名单。
+- 当前产品没有注册 `agent` 工具，不存在模型可触发的子 Agent 路径，因此
+  不增加无效的子 Agent 状态继承设计。
+
+## 6. 图示（`skills/diagram-maker`）
+
+2026-08-21 已完成。图示原先是五个内置技能里唯一没有捆绑入口的，等于让
+模型自己当画图引擎；现在已与 PDF/PPTX 对齐：Agent 只填声明式图，
+`diagram.sh` 负责布局、审计和出文件。
+
+### 6.1 现状（改造前）
+
+目录里只有 `SKILL.md`、`references/svg-template.md`、
+`references/excalidraw-patterns.md`，没有 `scripts/diagram.sh`。
+
+闸门仍在教模型做三件事：
+
+1. 在三种**成品形态**里自选：`clean-svg`、`architecture-svg`、`excalidraw`
+2. 复制 HTML 外壳，手写 SVG 坐标和箭头
+3. 或手写完整 Excalidraw JSON（元素 `id`、绑定文本、箭头 `points`）
+
+这三种形态分别是：
+
+| 名称 | 是什么 | 典型用途 |
+| --- | --- | --- |
+| `clean-svg` | 干净的方框+箭头示意图，做成内联 SVG 的单文件 HTML | 教学概念、流程、生命周期、简单数据流 |
+| `architecture-svg` | 同样是 SVG/HTML，节点形状和分区偏架构图 | 服务、数据库、队列、信任域 |
+| `excalidraw` | `.excalidraw` JSON，给 Excalidraw 打开后还能拖改 | 手绘白板、可继续编辑的草图 |
+
+它们不是三种运行时，而是三种「模型自己画」的输出约定。`clean` 与
+`architecture` 的差别主要在题材和图形语言；Excalidraw 则是另一套编辑器
+内部协议，聊天里也不能当图预览。
+
+全局自动化策略拦的是 `.py` / `.js` / 解释器，**不拦** `.html` / `.svg` /
+`.excalidraw`。因此图示这条手写路径现在仍然合法，也最容易框重叠、箭头
+对不齐，或在坐标上反复修改。e2e 用例还要求「保存为 `diagram.html`」，
+等于默认模型手写 HTML。
+
+产品层通用对话只收 `.pdf/.docx/.pptx/.xlsx`，即使写出了 SVG 也不会出
+预览/下载卡。
+
+### 6.2 为什么不让模型写 SVG / HTML / Excalidraw
+
+交付物仍然可以是 SVG。禁止的是模型去做排版引擎：
+
+- **SVG 坐标**：每个框的 `x,y,width,height` 和箭头路径。模型没有几何
+  求解器，这和让它写 Python 去生成 Excel 是同一类失败。
+- **完整 HTML**：doctype、CSS 变量、暗色模式每次相同，不该每张图重写；
+  手写 HTML 也不走 `*.sh make` 的 JSON `output`，前端收不成卡片。
+- **Excalidraw 元素数组**：标签必须是绑定文本，箭头必须 `startBinding` /
+  `endBinding`。漏一项文件在编辑器里就坏。这是在手写编辑器协议，不是在
+  描述「A 指向 B」。
+
+对照已改造技能：模型提供节点、边、分组和方向；坐标、外壳、元素协议留给
+捆绑脚本。
+
+### 6.3 改造后主路径
+
+```bash
+DIAGRAM_SKILL_ROOT="$(dirname "<path>")"
+mkdir -p "$PWD/exports" "$PWD/exports/qa"
+# write_file 只写 .mmd / .json
+bash "$DIAGRAM_SKILL_ROOT/scripts/diagram.sh" make \
+  --markdown "$PWD/exports/qa/flow.mmd" \
+  --out "$PWD/exports/救治流程.svg"
+```
+
+`make` 已支持：
+
+| 参数 | 用途 |
+| --- | --- |
+| `--title` / `--body` | 短线性流程，如 `分诊 → 抢救 → 后送` |
+| `--markdown` | Mermaid 子集：`flowchart` / `graph TD\|LR`，节点、边、子图 |
+| `--spec` | JSON：nodes / edges / groups / layout / kind |
+| `--theme clean\|architecture` | 形状和语义色（原 clean-svg / architecture-svg 收成主题，不是两套引擎） |
+| `--format svg`（默认） | 用户交付物 |
+| `--format html` | 用现有模板把 SVG 包进单文件 HTML，可选 |
+| `--out` / `--force` | 与 PDF 相同；成功 JSON 带绝对 `output` |
+
+内部先把输入收成一份图模型再布局，不要让 Agent 在三种输出格式之间做几何。
+
+**Excalidraw 没有进入主路径。** 聊天里不好预览，元素协议脆，和
+「不要手写实现」冲突。若以后要可编辑白板，从同一份 spec 导出，不要让
+模型写 `boundElements`。
+
+改已有图：图示不像 PDF 有合页拆页。改图 = 改 spec 再 `make --force`。
+第一期不做从已有 SVG 反解析。
+
+不支持的 Mermaid（时序图、类图、gitGraph 等）返回 `unsupported` 并停止，
+不要降级成模型手写 SVG。
+
+### 6.4 Agent 闸门
+
+- 只用 `read_skill` 返回 `<path>` 的 `dirname`。
+- 只调用 `diagram.sh`；只用 `.md` / `.mmd` / `.json` 暂存声明式内容。
+- 禁止手写 `.html` / `.svg` / `.excalidraw` 作为生成器。
+- 禁止现场安装、浏览器、Graphviz、Mermaid CLI、搜索替代工具。
+- 未就绪或 `unsupported` 时停止并报告。
+- 默认输出 `$PWD/exports/`；中间 spec 放 `exports/qa/`，不交付。
+
+第一期闸门用 SKILL.md 禁止手写 HTML/SVG。是否像 `.py` 一样硬拦
+`.html/.svg` 写入，观察后再定——HTML 误伤面比 Python 大。
+
+`diagram.sh` 已加入 `automationPolicyConstraints.ts` 的捆绑入口白名单。
+
+### 6.5 运行时与字体
+
+- 已新增 `skills/diagram-maker/scripts/diagram.sh` + Python CLI。
+- **不新增 pip/npm 依赖**，不引入 Puppeteer / Chrome / `@mermaid-js/mermaid-cli` /
+  Graphviz。离线现场不能再多装一个浏览器。
+- 解析 Mermaid 子集和 JSON spec；分层布局（LR/TB、简单分组/泳道）；按现有
+  模板语义色画框、线、箭头。
+- `fix` 明确拒绝；`bootstrap-runtime` 只检查交付包 Python，不安装依赖。
+  Linux/macOS 总预热脚本均已加入 `diagram-maker`。
+- 中文第一期用 SVG `<text>` + 系统 UI 字体。SVG 是矢量，不必像 PDF 那样
+  嵌 Noto。若现场中文方框缺字，再考虑嵌捆绑字体，不当第一期硬依赖。
+
+### 6.6 产品层
+
+- 通用对话 `artifactAllowedExtensions` 已增加 `.svg`。HTML 不进通用对话
+  产物白名单，也不 iframe，避免 XSS。
+- 收集 bash JSON 的 `output`。
+- 历史回放识别 SVG MIME / `.svg`。
+- 步骤条：`diagram.sh make → 文件名.svg`，成功「已写入 …」。
+- 文件卡：SVG 当图预览 + 下载。HTML 若产出则只提供下载，或只预览其中的 SVG。
+- 更新 `tests/skill-e2e/cases.json` 的 diagram-maker 用例：不再要求模型
+  手写 `diagram.html`，改为走 `diagram.sh make`。
+
+### 6.7 文件与实现
+
+| 路径 | 实现 |
+| --- | --- |
+| `SKILL.md` | 重写为闸门：`diagram.sh make`，禁止手写 SVG/HTML/Excalidraw |
+| `scripts/diagram.sh` | 新入口；`make` / `check` / `self-test`；`fix` 拒绝 |
+| `scripts/diagram_cli.py` | 解析、分层布局、安全审计、原子写入 SVG/可选 HTML |
+| `references/creation.md` | 教 `--markdown` / `--spec`，取代「复制模板填坐标」 |
+| `references/svg-template.md` | 降为内部 HTML 外壳，Agent 不要复制 |
+| `references/excalidraw-patterns.md` | 第一期不开放给 Agent |
+| Gateway / history / chat-v2 | 放行 `.svg`，步骤摘要显示 `diagram.sh make` |
+
+### 6.8 刻意不做
+
+- 不把 `frontend-slides`、完整 Mermaid、PlantUML、D2 并进本技能。
+- 不为离线现场增加 Chrome / Graphviz / 字体安装项。
+- 不在聊天气泡里嵌可交互白板。
+- 不让模型继续「复制 template + 填 SVG」。
+- 不做 Excalidraw 主路径，也不做已有 SVG 的反向编辑。
+
+### 6.9 验证结果
+
+- `check` 与 `self-test` 通过；运行时只依赖交付包 Python 标准库。
+- `--body "分诊 → 抢救 → 后送"` 生成 3 节点、2 条边的中文 SVG。
+- Mermaid `flowchart LR` 生成合法 SVG，分支边标签保留。
+- 非 flowchart Mermaid 返回 `invalid-diagram-input`，没有手写回退。
+- 已存在输出且无 `--force` 时拒绝覆盖，原文件保持不变。
+- SVG 审计阻断脚本、`javascript:` 和外部 `href/src`。
+- automation policy、artifact collector、历史回放共 28 项定向后端测试通过。
+- chat-v2 步骤摘要 7 项前端测试通过，显示
+  `diagram.sh make → 文件名.svg` 与「已写入」。
+- 通用对话收集 `.svg`；文件卡和代码编辑器现有图片预览路径原本就支持 SVG，
+  因此可预览和下载。
+- 仓库全量 TypeScript build 仍被既有
+  `scripts/run-skill-e2e.ts` 的 `Dirent<string>` /
+  `Dirent<NonSharedBuffer>` 类型错误阻断；该错误与本次图示改动无关，未扩大
+  任务范围修改。
+
+### 6.10 上线后修复的两个缺陷
+
+首次真实会话「把战创伤急救止血方式的流程画成一个图」失败，暴露两个独立缺陷。
+两者都不是设计问题，但都能让整条链路对用户表现为「入口被拦住」。
+
+**缺陷一：策略把技能自己的 `make` 子命令误判成 GNU make。**
+
+`getAutomationPolicyViolation` 先把捆绑入口从命令里删掉，再拿残渣匹配黑名单。
+删成空串后，`make` 就紧贴在前一个 `;` 或 `&&` 后面，落进
+`BUILD_OR_PACKAGE_RUNNER` 的命令起始位判定，而 `make` 同时是 GNU make 的名字：
+
+```text
+原始：  ...; bash "$DIAGRAM_SKILL_ROOT/scripts/diagram.sh" make --markdown ...
+残渣：  ...;  make --markdown ...        ← 被判定为构建工具
+```
+
+命令起始位字符类是 `[;&|]`，不含换行，`^` 也没开 `m` 标志。所以用换行串联能过、
+用 `;` / `&&` 串联被拦，表现为随机复现；同一次会话里 `spreadsheet.sh` 调 16 次
+全过就是因为它用的是换行。原有单元测试只覆盖裸命令形式（残渣以空格开头，
+`^` 后紧跟空格不匹配），恰好漏掉了这个缺口。
+
+修法是把剥离时的空串换成占位词 `BUNDLED_ENTRYPOINT_PLACEHOLDER`，
+让入口自己的参数不再处于命令起始位。豁免范围精确收窄到「跟在捆绑入口后面的
+参数」：`bash pdf.sh …; make clean` 里 `make` 前面的 `;` 仍然保留，照样拦截。
+测试补上 `;`、`&&` 和换行三种串联写法，以及两条应被拦的真实构建命令。
+
+影响面是全部五个技能——`pdf`/`docx`/`pptx`/`spreadsheet`/`diagram` 主命令都叫
+`make`，这次只是恰好被图示碰上。
+
+**缺陷二：Mermaid 子集不认最常用的流程图写法。**
+
+Agent 写出的是完全标准的 Mermaid，但解析器三处不支持，直接返回
+`invalid-diagram-input`：
+
+| 写法 | 之前 | 现在 |
+| --- | --- | --- |
+| `B{是否为外出血?}` 菱形判断节点 | 报「不支持的节点语法」 | 支持，渲染成菱形，新增 `decision` kind |
+| `B -- 否 --> C` 短横线边标签 | 报错（只认 `-->|标签|`） | 与 `-->|标签|` 等价 |
+| 方括号内换行 / `<br/>` | 断成两条语句后报错 | 自动重新拼接为一个节点 |
+
+顺带修掉一个既有排版缺陷：`wrapped_lines` 的提前返回用字符数
+（`len(label) <= maximum`），而循环体用的是 CJK 加权宽度，两者不一致，导致
+17 个汉字的标签判定为「无需换行」后溢出 184px 节点框。现在统一走
+`text_width`，默认阈值按 14px 字号下的实际可用宽度改为 11 个汉字单位；
+菱形在顶点附近更窄，`node_lines` 给判断节点用 9 并额外加高 32px。
+边标签加 `paint-order="stroke"` 白色描边，压在连线上时仍可读。
+
+用户那份真实 `.mmd`（21 节点、26 条边、7 个判断节点）现在能正常导出 SVG，
+节点无重叠。已知局限：布局是拓扑分层，分支多的长流程会形成 544×3868 这类
+细长图，可读但偏高；改成 Sugiyama 类布局是独立任务，本次没做。
+
+验证：`tests/tool/diagram-skill.spec.ts` 新增判断节点/边标签/标签换行用例，
+`tests/tool/automation-policy-constraints.spec.ts` 新增串联写法用例，
+后端 `tests/{tool,session,web,context}` 全量 114 项通过。
