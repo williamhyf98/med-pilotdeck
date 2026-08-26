@@ -221,6 +221,8 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
 ```
 
 相对路径从 JSON 文件所在目录解析。远程 URL 会被拒绝。
+用户聊天上传的图片在 `.tmp/chat-attachments/<批次>/`，路径写在用户消息的
+`[Files attached by user…]` 清单里；**优先使用该绝对路径**，后续轮次到历史消息里找，不要全盘搜索。
 栅格图像在插入前会被解码，透明度会展平到
 白色背景上，完全空白或无效的图像会被拒绝。
 

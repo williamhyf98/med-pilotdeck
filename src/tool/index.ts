@@ -4,6 +4,7 @@ export type {
   PilotDeckToolAuditRecorder,
 } from "./audit/ToolAuditRecorder.js";
 export { ToolRuntime } from "./execution/ToolRuntime.js";
+export { coerceJsonEncodedToolInput } from "./execution/coerceJsonEncodedToolInput.js";
 export { validateToolInput } from "./execution/validateToolInput.js";
 export {
   normalizeToolError,
@@ -87,6 +88,9 @@ export {
 } from "./builtin/bash.js";
 export {
   ASK_USER_QUESTION_HEADER_MAX,
+  ASK_USER_QUESTION_MAX_OPTIONS,
+  ASK_USER_QUESTION_MAX_QUESTIONS,
+  ASK_USER_QUESTION_MIN_OPTIONS,
   ASK_USER_QUESTION_TOOL_NAME,
   createAskUserQuestionTool,
   type AskUserQuestionInput,

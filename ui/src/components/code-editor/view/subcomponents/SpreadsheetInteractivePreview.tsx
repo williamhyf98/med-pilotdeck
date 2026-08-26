@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   LocaleType,
+  LifecycleStages,
   LogLevel,
   mergeLocales,
   Univer,
@@ -14,7 +15,10 @@ import { UniverDocsUIPlugin } from '@univerjs/docs-ui';
 import DocsUIEnUS from '@univerjs/docs-ui/locale/en-US';
 import DocsUIZhCN from '@univerjs/docs-ui/locale/zh-CN';
 import { UniverFormulaEnginePlugin } from '@univerjs/engine-formula';
-import { UniverRenderEnginePlugin } from '@univerjs/engine-render';
+import {
+  IRenderManagerService,
+  UniverRenderEnginePlugin,
+} from '@univerjs/engine-render';
 import { UniverSheetsPlugin } from '@univerjs/sheets';
 import '@univerjs/sheets/facade';
 import { UniverSheetsFormulaPlugin } from '@univerjs/sheets-formula';
@@ -37,7 +41,6 @@ import { UniverUIPlugin } from '@univerjs/ui';
 import '@univerjs/ui/facade';
 import UIEnUS from '@univerjs/ui/locale/en-US';
 import UIZhCN from '@univerjs/ui/locale/zh-CN';
-import { Search } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   createCellRangeContentReference,
@@ -61,6 +64,7 @@ import {
 import {
   SPREADSHEET_UNIVER_SHEETS_UI_CONFIG,
   SPREADSHEET_UNIVER_UI_CONFIG,
+  shouldBlockSpreadsheetPreviewCommand,
 } from './spreadsheetUniverConfig';
 
 import '@univerjs/design/lib/index.css';
@@ -94,6 +98,8 @@ type UniverRuntime = {
   disposeContextSelectionIntent?: () => void;
   disposePopupComponent?: () => void;
   disposeSelectionPopup?: () => void;
+  disposeResizeObserver?: () => void;
+  disposeMutationGuard?: () => void;
 };
 
 type SelectedCell = {
@@ -143,6 +149,31 @@ const UNIVER_LOCALES = {
     SheetsNumfmtUIZhCN,
   ),
 };
+
+function resizeUniverWorkbook(
+  univer: Univer,
+  unitId?: string | null,
+  size?: { width: number; height: number },
+) {
+  const renderManager = univer.__getInjector().get(IRenderManagerService);
+  const render = unitId
+    ? renderManager.getRenderById(unitId)
+    : [...renderManager.getRenderAll().values()][0];
+  if (!render) return false;
+  const width = Math.floor(size?.width || 0);
+  const height = Math.floor(size?.height || 0);
+  if (width > 8 && height > 8) {
+    render.engine.resizeBySize(width, height);
+  } else {
+    render.engine.resize();
+  }
+  try {
+    const canvas = render.engine.getCanvasElement();
+    return canvas.width > 8 && canvas.height > 8;
+  } catch {
+    return false;
+  }
+}
 
 function getSheetIndex(sheetId: string) {
   const match = /^sheet-(\d+)$/.exec(sheetId);
@@ -196,11 +227,13 @@ export default function SpreadsheetInteractivePreview({
   const onErrorRef = useRef(onError);
   const activeSheetIndexRef = useRef(activeSheetIndex);
   const zoomRef = useRef(zoom);
+  const tRef = useRef(t);
   onActiveSheetChangeRef.current = onActiveSheetChange;
   onErrorRef.current = onError;
   activeSheetIndexRef.current = activeSheetIndex;
   zoomRef.current = zoom;
   referenceModeRef.current = referenceMode;
+  tRef.current = t;
   const openSearch = useCallback(() => {
     runtimeRef.current?.disposeSelectionPopup?.();
     setSearchOpen(true);
@@ -230,6 +263,7 @@ export default function SpreadsheetInteractivePreview({
           [univerLocale]: UNIVER_LOCALES[univerLocale],
         },
         logLevel: LogLevel.ERROR,
+        darkMode: false,
       });
 
       univer.registerPlugin(UniverRenderEnginePlugin);
@@ -252,6 +286,14 @@ export default function SpreadsheetInteractivePreview({
 
       const api = FUniver.newAPI(univer);
       api.createWorkbook({ ...workbook, locale: univerLocale });
+      const blockMutations = api.addEvent(
+        api.Event.BeforeCommandExecute,
+        (event) => {
+          if (shouldBlockSpreadsheetPreviewCommand(event.id)) {
+            event.cancel = true;
+          }
+        },
+      );
       const fWorkbook = api.getActiveWorkbook();
       const contextSelectionIntent = createSpreadsheetContextSelectionIntent<
         ReturnType<NonNullable<typeof fWorkbook>['getActiveSheet']>
@@ -272,7 +314,7 @@ export default function SpreadsheetInteractivePreview({
             onPointerUp={(event) => event.stopPropagation()}
             onClick={() => addCellReferenceRef.current()}
           >
-            {t('selection.chatInPilotDeck')}
+            {tRef.current('selection.chatInPilotDeck')}
           </button>
         ),
       );
@@ -456,6 +498,40 @@ export default function SpreadsheetInteractivePreview({
           });
         },
       );
+      const unitId = fWorkbook?.getId() ?? workbook.id;
+      let resizeFrame = 0;
+      let paintAttempts = 0;
+      const paintSheet = () => {
+        if (disposed) return true;
+        const width = Math.max(container.clientWidth, Math.floor(container.getBoundingClientRect().width));
+        const height = Math.max(container.clientHeight, Math.floor(container.getBoundingClientRect().height));
+        return resizeUniverWorkbook(univer, unitId, { width, height });
+      };
+      const scheduleResize = () => {
+        if (disposed) return;
+        if (resizeFrame) cancelAnimationFrame(resizeFrame);
+        resizeFrame = requestAnimationFrame(() => {
+          resizeFrame = 0;
+          paintSheet();
+        });
+      };
+      const lifecycleListener = api.addEvent(
+        api.Event.LifeCycleChanged,
+        ({ stage }) => {
+          if (stage === LifecycleStages.Rendered || stage === LifecycleStages.Steady) {
+            scheduleResize();
+          }
+        },
+      );
+      scheduleResize();
+      const paintTimer = window.setInterval(() => {
+        paintAttempts += 1;
+        if (paintSheet() || paintAttempts >= 40) {
+          window.clearInterval(paintTimer);
+        }
+      }, 50);
+      const resizeObserver = new ResizeObserver(scheduleResize);
+      resizeObserver.observe(container);
       runtimeRef.current = {
         univer,
         api,
@@ -472,6 +548,15 @@ export default function SpreadsheetInteractivePreview({
         },
         disposePopupComponent: () => popupComponent.dispose(),
         disposeSelectionPopup,
+        disposeResizeObserver: () => {
+          if (resizeFrame) cancelAnimationFrame(resizeFrame);
+          window.clearInterval(paintTimer);
+          resizeObserver.disconnect();
+        },
+        disposeMutationGuard: () => {
+          lifecycleListener.dispose();
+          blockMutations.dispose();
+        },
       };
       setRuntimeReady(true);
     } catch (error) {
@@ -491,9 +576,11 @@ export default function SpreadsheetInteractivePreview({
       runtime?.disposeCellPointerUpListener?.();
       runtime?.disposeContextSelectionIntent?.();
       runtime?.disposePopupComponent?.();
+      runtime?.disposeResizeObserver?.();
+      runtime?.disposeMutationGuard?.();
       runtime?.univer.dispose();
     };
-  }, [t, univerLocale, workbook]);
+  }, [revision, univerLocale, workbook]);
 
   useEffect(() => {
     const fWorkbook = runtimeRef.current?.api.getActiveWorkbook();
@@ -503,6 +590,10 @@ export default function SpreadsheetInteractivePreview({
       fWorkbook.setActiveSheet(targetSheetId);
     }
     fWorkbook.getActiveSheet().zoom(zoom);
+    const univer = runtimeRef.current?.univer;
+    if (univer) {
+      requestAnimationFrame(() => resizeUniverWorkbook(univer, fWorkbook.getId()));
+    }
   }, [activeSheetIndex, zoom]);
 
   useEffect(() => {
@@ -676,7 +767,10 @@ export default function SpreadsheetInteractivePreview({
               : 'text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100',
           ].join(' ')}
         >
-          <Search className="h-3.5 w-3.5" strokeWidth={1.75} />
+          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <circle cx="11" cy="11" r="7" strokeLinecap="round" strokeWidth="1.75" />
+            <path d="M20 20l-3.5-3.5" strokeLinecap="round" strokeWidth="1.75" />
+          </svg>
         </button>
         <ContentReferenceMenu
           capabilities={capabilities}
@@ -703,11 +797,11 @@ export default function SpreadsheetInteractivePreview({
           />
         ) : null}
       </div>
-      <div className="relative min-h-0 w-full flex-1 overflow-hidden bg-white">
+      <div className="relative min-h-[320px] w-full flex-1 overflow-hidden bg-white">
         <div
           ref={containerRef}
           data-testid="spreadsheet-interactive-preview"
-          className="h-full min-h-0 w-full overflow-hidden bg-white"
+          className="h-full min-h-[320px] w-full overflow-hidden bg-white"
         />
       </div>
       <RegionSelectionOverlay

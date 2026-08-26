@@ -1780,6 +1780,13 @@ app.put('/api/projects/:projectName/file', authenticateToken, async (req, res) =
             return res.status(403).json({ error: 'Path must be under project root' });
         }
 
+        const saveExtension = getFileExtension(resolved);
+        if (OFFICE_PDF_PREVIEW_EXTENSIONS.has(saveExtension) || saveExtension === 'pdf') {
+            return res.status(415).json({
+                error: 'Refusing to overwrite a binary Office document via text save',
+            });
+        }
+
         // Write the new content
         await fsPromises.writeFile(resolved, content, 'utf8');
 

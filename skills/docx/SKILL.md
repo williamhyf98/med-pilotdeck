@@ -83,6 +83,20 @@ Markdown 中：
 
 `write_file` 只用于 `.md` / `.json` 声明式输入。
 
+## 插入用户上传的图片
+
+Word 插图只能用磁盘路径，不能用聊天气泡里的图。创面照等**优先**用本会话
+（含更早轮次）用户上传的附件：
+
+```text
+[Files attached by user and available for reading in the project:]
+- name.jpg: /…/.tmp/chat-attachments/<批次id>/1-name.jpg
+```
+
+文件就在 `{项目根或 PILOT_HOME}/.tmp/chat-attachments/<批次id>/`。直接把
+**绝对路径**写进 spec 的 image block（见 [specifications.md](references/specifications.md)）。
+不要 `find /`，不要下载，不要为此编写 Python。后续轮次清单可能不再出现，到历史用户消息或 `image_paths_used` 里找同一路径。
+
 复杂表格、图片、封面或精确样式可使用 `--spec`。只使用
 [specifications.md](references/specifications.md) 已声明的字段；不要为新建
 文档改走未声明的替代路径。新建细则见

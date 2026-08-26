@@ -18,6 +18,7 @@ import {
 } from "../protocol/result.js";
 import type { PilotDeckToolCall, PilotDeckToolRuntimeContext } from "../protocol/types.js";
 import type { ToolRegistry } from "../registry/ToolRegistry.js";
+import { coerceJsonEncodedToolInput } from "./coerceJsonEncodedToolInput.js";
 import { validateToolInput } from "./validateToolInput.js";
 import { formatValidationError } from "./formatValidationError.js";
 import { normalizeToolError } from "../protocol/errors.js";
@@ -135,7 +136,8 @@ export class ToolRuntime {
       );
     }
 
-    const validation = validateToolInput(call.input, tool.inputSchema);
+    const coercedInput = coerceJsonEncodedToolInput(call.input, tool.inputSchema);
+    const validation = validateToolInput(coercedInput, tool.inputSchema);
     if (!validation.ok) {
       return this.errorResult(
         call.id,
@@ -151,7 +153,7 @@ export class ToolRuntime {
       );
     }
 
-    if (runtimeContext.permissionContext.canPrompt === false && requiresPromptCapability(tool, call.input)) {
+    if (runtimeContext.permissionContext.canPrompt === false && requiresPromptCapability(tool, coercedInput)) {
       return this.errorResult(
         call.id,
         tool.name,
@@ -162,7 +164,7 @@ export class ToolRuntime {
       );
     }
 
-    let executeInput = call.input;
+    let executeInput = coercedInput;
     const preToolResult = await this.dispatchLifecycle("PreToolUse", tool.name, call.id, executeInput, context);
     this.eventEmitter?.({ type: "pre_tool_execute", sessionId: context.sessionId, turnId: context.turnId, toolCallId: call.id, toolName: tool.name });
     const preBlock = findEffect(preToolResult.effects, "block");
@@ -180,7 +182,7 @@ export class ToolRuntime {
     }
     const updatedInput = findEffect(preToolResult.effects, "updated_tool_input");
     if (updatedInput) {
-      executeInput = updatedInput.input;
+      executeInput = coerceJsonEncodedToolInput(updatedInput.input, tool.inputSchema);
       const updatedValidation = validateToolInput(executeInput, tool.inputSchema);
       if (!updatedValidation.ok) {
         return this.errorResult(

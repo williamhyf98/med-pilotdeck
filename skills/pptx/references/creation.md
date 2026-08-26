@@ -79,6 +79,7 @@ Agent 不得复制或修改该文件。常用字段：
 - 通用：`title`、`kicker`、`footer`、`page`
 - content：`items` 或 `body`
 - statement：`statement`、`support`
+- split：`body`（左侧文字）；配图时加 `image: { "path": "<绝对路径或相对 spec 文件的路径>" }`
 - two-column / comparison：`left`、`right`
 - metric：`metrics[{value,label,detail}]`
 - timeline：`steps[{label,detail}]`
@@ -86,7 +87,9 @@ Agent 不得复制或修改该文件。常用字段：
 - quote：`quote`、`attribution`、`context`
 - closing：`title`、`action`、`contact`
 
-图片只能来自工作区本地路径，禁止 HTTP/HTTPS URL。
+插图必须是本机已有文件。用户聊天上传的图（创面照等）路径见用户消息中的
+`[Files attached by user…]` 清单，文件在 `.tmp/chat-attachments/<批次>/`。
+优先填该**绝对路径**；禁止 HTTP/HTTPS URL；不要改 `layout-library`。
 
 ## 离线校验
 

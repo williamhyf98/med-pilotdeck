@@ -3,6 +3,7 @@ import {
   lazy,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -37,10 +38,7 @@ import ContentReferenceMenu from './ContentReferenceMenu';
 import PdfDocumentPreview from './PdfDocumentPreview';
 import RegionSelectionOverlay, { type CapturedRegion } from './RegionSelectionOverlay';
 import SpreadsheetTabs, { type SpreadsheetSheetTab } from './SpreadsheetTabs';
-
-const SpreadsheetInteractivePreview = lazy(
-  () => import('./SpreadsheetInteractivePreview'),
-);
+import SpreadsheetInteractivePreview from './SpreadsheetInteractivePreview';
 const DocxBuiltinPreview = lazy(
   () => import('./DocxBuiltinPreview'),
 );
@@ -61,6 +59,7 @@ type CodeEditorBinaryFileProps = {
   title: string;
   message: string;
   headerPrefix?: ReactNode;
+  isActive?: boolean;
 };
 
 type BlobSource = 'raw' | 'office-pdf';
@@ -988,6 +987,7 @@ function SpreadsheetPreview({
   onClose,
   isFullscreen,
   onToggleFullscreen,
+  isActive = true,
 }: {
   service: OfficePreviewService;
   projectName?: string;
@@ -996,6 +996,7 @@ function SpreadsheetPreview({
   onClose: () => void;
   isFullscreen: boolean;
   onToggleFullscreen?: (() => void) | null;
+  isActive?: boolean;
 }) {
   const { t } = useTranslation('codeEditor');
   const [zoom, setZoom] = useState(1);
@@ -1019,6 +1020,9 @@ function SpreadsheetPreview({
     refreshKey,
   } = useSpreadsheetPreviewManifest(projectName, file.path, printPreviewEnabled);
   const [selectedSheetIndex, setSelectedSheetIndex] = useState<number | null>(null);
+  const sheetHostRef = useRef<HTMLDivElement | null>(null);
+  const [sheetHostReady, setSheetHostReady] = useState(false);
+  const autoRefreshDoneForPathRef = useRef<string | null>(null);
 
   const reload = useCallback((options: ReloadOptions = {}) => {
     setRuntimeError(null);
@@ -1032,7 +1036,45 @@ function SpreadsheetPreview({
     setZoom(1);
     setRuntimeError(null);
     setSelectedSheetIndex(null);
+    setSheetHostReady(false);
+    autoRefreshDoneForPathRef.current = null;
   }, [file.path]);
+
+  useEffect(() => {
+    if (isActive) autoRefreshDoneForPathRef.current = null;
+  }, [isActive]);
+
+  useEffect(() => {
+    if (!isActive || !interactiveEnabled || interactiveFailure) return undefined;
+    if (!interactiveData || selectedSheetIndex === null) return undefined;
+    if (autoRefreshDoneForPathRef.current === file.path) return undefined;
+    const timer = window.setTimeout(() => {
+      if (autoRefreshDoneForPathRef.current === file.path) return;
+      autoRefreshDoneForPathRef.current = file.path;
+      reload({ force: true });
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [
+    file.path,
+    interactiveData,
+    interactiveEnabled,
+    interactiveFailure,
+    isActive,
+    reload,
+    selectedSheetIndex,
+  ]);
+
+  useLayoutEffect(() => {
+    const host = sheetHostRef.current;
+    if (!host) return undefined;
+    const update = () => {
+      setSheetHostReady(host.clientWidth >= 8 && host.clientHeight >= 8);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [file.path, interactiveData?.revision]);
 
   const activeManifest = usePrintPreview ? manifest : interactiveData;
 
@@ -1079,22 +1121,22 @@ function SpreadsheetPreview({
           )}
         />
       );
+    } else if (!sheetHostReady) {
+      sheetContent = <PreviewSpinner label={t('spreadsheetPreview.loadingInteractive')} />;
     } else {
       sheetContent = (
-        <Suspense fallback={<PreviewSpinner label={t('spreadsheetPreview.loadingInteractive')} />}>
-          <SpreadsheetInteractivePreview
-            key={interactiveData.revision}
-            workbook={interactiveData.workbook}
-            projectName={projectName}
-            fileName={file.name}
-            filePath={file.path}
-            revision={interactiveData.revision}
-            activeSheetIndex={selectedSheetIndex}
-            zoom={zoom}
-            onActiveSheetChange={setSelectedSheetIndex}
-            onError={(error) => setRuntimeError(error.message)}
-          />
-        </Suspense>
+        <SpreadsheetInteractivePreview
+          key={interactiveData.revision}
+          workbook={interactiveData.workbook}
+          projectName={projectName}
+          fileName={file.name}
+          filePath={file.path}
+          revision={interactiveData.revision}
+          activeSheetIndex={selectedSheetIndex}
+          zoom={zoom}
+          onActiveSheetChange={setSelectedSheetIndex}
+          onError={(error) => setRuntimeError(error.message)}
+        />
       );
     }
   } else if (manifestLoading && !manifest) {
@@ -1187,7 +1229,7 @@ function SpreadsheetPreview({
           {warning}
         </div>
       )}
-      <div className="min-h-0 flex-1">{sheetContent}</div>
+      <div ref={sheetHostRef} className="flex min-h-[240px] flex-1 flex-col overflow-hidden">{sheetContent}</div>
       {activeManifest && (
         <SpreadsheetTabs
           sheets={activeManifest.sheets}
@@ -1350,6 +1392,7 @@ function OfficeFilePreviewRouter({
   onClose,
   isFullscreen,
   onToggleFullscreen,
+  isActive = true,
 }: {
   projectName?: string;
   file: CodeEditorFile;
@@ -1357,6 +1400,7 @@ function OfficeFilePreviewRouter({
   onClose: () => void;
   isFullscreen: boolean;
   onToggleFullscreen?: (() => void) | null;
+  isActive?: boolean;
 }) {
   const { t } = useTranslation('codeEditor');
   const { status, loading } = useOfficePreviewService();
@@ -1376,6 +1420,7 @@ function OfficeFilePreviewRouter({
           onClose={onClose}
           isFullscreen={isFullscreen}
           onToggleFullscreen={onToggleFullscreen}
+          isActive={isActive}
         />
       )
       : (
@@ -1418,6 +1463,7 @@ function OfficeFilePreviewRouter({
         onClose={onClose}
         isFullscreen={isFullscreen}
         onToggleFullscreen={onToggleFullscreen}
+        isActive={isActive}
       />
     );
   }
@@ -1447,6 +1493,7 @@ export default function CodeEditorBinaryFile({
   title,
   message,
   headerPrefix,
+  isActive = true,
 }: CodeEditorBinaryFileProps) {
   const { t } = useTranslation('codeEditor');
   const iconBtn =
@@ -1483,6 +1530,7 @@ export default function CodeEditorBinaryFile({
             onClose={onClose}
             isFullscreen={documentIsFullscreen}
             onToggleFullscreen={onToggleDocumentFullscreen}
+            isActive={isActive}
           />
         )
         : <FallbackContent title={title} message={message} onClose={onClose} />;
@@ -1551,7 +1599,7 @@ export default function CodeEditorBinaryFile({
       <div className="relative flex h-full w-full flex-col bg-white dark:bg-neutral-950">
         {headerPrefix}
         {!compactHeader || !headerPrefix ? headerTopBar : null}
-        {previewContent}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{previewContent}</div>
       </div>
     );
   }
@@ -1573,7 +1621,7 @@ export default function CodeEditorBinaryFile({
       <div className={innerClassName}>
         {headerPrefix}
         {headerTopBar}
-        {previewContent}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{previewContent}</div>
       </div>
     </div>
   );

@@ -95,6 +95,42 @@ layout-library。
 当前对话里：直接使用原文和事实，不要让用户重贴，不要把全文缩成无依据的
 新版本。先整理为按页 Markdown 或 spec，再调用一次 `make`。
 
+## 插入用户上传的图片（优先这样做）
+
+聊天里的图**不能**从气泡/base64 直接嵌进 PPT。必须用磁盘上的绝对路径。
+创面照、X 光、报告截图等，**绝大多数**就是本会话（或更早轮次）用户上传的附件。
+
+路径在用户消息里的附件清单中（后续轮次不再重复打印，但路径仍有效，到历史消息里找）：
+
+```text
+[Files attached by user and available for reading in the project:]
+- wse_0820_00_injury.jpg (1-wse_0820_00_injury.jpg): /…/.tmp/chat-attachments/<批次id>/1-wse_0820_00_injury.jpg
+```
+
+落盘位置：
+
+- `{当前项目根}/.tmp/chat-attachments/<批次id>/`
+- 或 `{PILOT_HOME}/.tmp/chat-attachments/<批次id>/`（本仓库本地启动常见）
+
+规则：
+
+1. **直接使用清单里的绝对路径**。不要 `find /`，不要下载 URL，不要手写 Python/JS 去读图。
+2. `.tmp/chat-attachments/` 算作允许的本地路径；不必先 `cp` 到 `exports/`（复制可选，不是必需）。
+3. 本轮消息没有清单时：在**同一会话更早的用户消息**里找同一标记；G9/`med_trauma_stage_plan` 返回的 `image_paths_used` 也可复用。
+4. 禁止 HTTP/HTTPS。禁止打开或修改 `assets/layout-library/`。
+5. 插图用 `--spec`，`split` 页字段如下（`path` 用绝对路径最稳）：
+
+```json
+{
+  "type": "split",
+  "title": "创面判读",
+  "body": "左前胸穿透伤，活动性出血。",
+  "image": { "path": "/absolute/path/from/attachment-note.jpg" }
+}
+```
+
+Markdown `![](...)` 不能可靠插图；需要图时改用 `--spec`，不要新写 `.mjs` builder。
+
 ## 读取与审计
 
 ```bash

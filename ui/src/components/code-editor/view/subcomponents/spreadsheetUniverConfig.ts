@@ -17,3 +17,24 @@ export const SPREADSHEET_UNIVER_SHEETS_UI_CONFIG = {
   disableEdit: true,
   protectedRangeShadow: false,
 } as const;
+
+// Preview is view-only. Header-drag / F2 still emit these commands even when
+// disableEdit is true, so the sheet runtime cancels them before they apply.
+export const SPREADSHEET_READONLY_BLOCKED_COMMAND_IDS = new Set([
+  'sheet.command.delta-column-width',
+  'sheet.command.set-col-width',
+  'sheet.command.delta-row-height',
+  'sheet.command.set-row-height',
+  'sheet.command.set-worksheet-col-is-auto-width',
+  'sheet.command.set-worksheet-row-is-auto-height',
+  'sheet.operation.set-cell-edit-visible',
+  'sheet.operation.set-cell-edit-visible-f2',
+]);
+
+export function shouldBlockSpreadsheetPreviewCommand(commandId: string) {
+  if (SPREADSHEET_READONLY_BLOCKED_COMMAND_IDS.has(commandId)) return true;
+  if (commandId.includes('sheet.command.paste') || commandId.includes('sheet.command.cut')) {
+    return true;
+  }
+  return false;
+}
