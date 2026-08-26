@@ -17,15 +17,20 @@ export const ASK_USER_QUESTION_TOOL_NAME = "ask_user_question";
  * `ASK_USER_QUESTION_TOOL_CHIP_WIDTH = 12` (prompt.ts).
  */
 export const ASK_USER_QUESTION_HEADER_MAX = 12;
+/** Max questions in one ask_user_question call. */
+export const ASK_USER_QUESTION_MAX_QUESTIONS = 4;
+/** Min / max choices per question. Six trauma stages fit in one card when this is ≥ 6. */
+export const ASK_USER_QUESTION_MIN_OPTIONS = 2;
+export const ASK_USER_QUESTION_MAX_OPTIONS = 8;
 
 const ASK_USER_QUESTION_DESCRIPTION =
   "Use this tool when you need to ask the user one or more multiple-choice questions during execution. " +
   "It is suitable for gathering preferences or requirements, clarifying ambiguous instructions, " +
   "getting decisions on implementation choices, or offering the user concrete directions to choose from. " +
-  "Usage notes: provide 1-4 questions, each with 2-4 options; set multiSelect to true when a question " +
+  "Usage notes: provide 1-4 questions, each with 2-8 options; set multiSelect to true when a question " +
   "should allow multiple selections; phrase the choices yourself instead of using this tool for open-ended " +
   "free-form clarification. In plan mode, use ask_user_question to clarify requirements or choose between " +
-  "approaches before finalizing your plan. Do not use it to ask for plan approval; use exit_plan_mode for that.";
+  "approaches before finalizing your plan. Do not use it to ask for plan approval; present the plan and wait for the user to leave plan mode.";
 
 export type AskUserQuestionOption = {
   label: string;
@@ -62,8 +67,8 @@ export type AskUserQuestionOutput = {
  * via `runtimeContext.elicitation.askUser`.
  *
  * Behaviour alignment with `AskUserQuestionTool.tsx` (E1..E10 in §5.1.6):
- *   E1 schema: questions ≥ 1, ≤ 4 (legacy max).
- *   E2 each question.options ≥ 2, ≤ 4.
+ *   E1 schema: questions ≥ 1, ≤ ASK_USER_QUESTION_MAX_QUESTIONS.
+ *   E2 each question.options ≥ ASK_USER_QUESTION_MIN_OPTIONS, ≤ ASK_USER_QUESTION_MAX_OPTIONS.
  *   E3 question texts unique within the call; option labels unique within
  *      each question (legacy `UNIQUENESS_REFINE`).
  *   E4 header.length ≤ ASK_USER_QUESTION_HEADER_MAX.
@@ -94,9 +99,9 @@ export function createAskUserQuestionTool(): PilotDeckToolDefinition<
         questions: {
           type: "array",
           minItems: 1,
-          maxItems: 4,
+          maxItems: ASK_USER_QUESTION_MAX_QUESTIONS,
           description:
-            "Questions to ask the user. Provide 1-4 multiple-choice questions in one batch.",
+            `Questions to ask the user. Must be a JSON array of question objects (not a string). Provide 1-${ASK_USER_QUESTION_MAX_QUESTIONS} multiple-choice questions in one batch.`,
           items: {
             type: "object",
             required: ["question", "header", "options"],
@@ -115,10 +120,10 @@ export function createAskUserQuestionTool(): PilotDeckToolDefinition<
               },
               options: {
                 type: "array",
-                minItems: 2,
-                maxItems: 4,
+                minItems: ASK_USER_QUESTION_MIN_OPTIONS,
+                maxItems: ASK_USER_QUESTION_MAX_OPTIONS,
                 description:
-                  "Available choices for this question. Provide 2-4 distinct options; they should be mutually exclusive unless multiSelect is true.",
+                  `Available choices for this question. Provide ${ASK_USER_QUESTION_MIN_OPTIONS}-${ASK_USER_QUESTION_MAX_OPTIONS} distinct options; they should be mutually exclusive unless multiSelect is true.`,
                 items: {
                   type: "object",
                   required: ["label", "description"],
@@ -182,35 +187,46 @@ export function createAskUserQuestionTool(): PilotDeckToolDefinition<
     isConcurrencySafe: () => true,
     requiresUserInteraction: () => true,
     validateInput: async (input): Promise<PilotDeckToolValidationResult> => {
-      // E1: 1 ≤ questions ≤ 4. The JSON-Schema validator currently does not
-      // enforce minItems/maxItems, so we double-check here.
+      // E1: 1 ≤ questions ≤ MAX. Schema minItems/maxItems are also enforced here.
       if (!Array.isArray(input.questions) || input.questions.length < 1) {
         return {
           ok: false,
           issues: [
-            { path: "questions", code: "invalid_schema", message: "Provide 1-4 questions" },
+            {
+              path: "questions",
+              code: "invalid_schema",
+              message: `Provide 1-${ASK_USER_QUESTION_MAX_QUESTIONS} questions`,
+            },
           ],
         };
       }
-      if (input.questions.length > 4) {
+      if (input.questions.length > ASK_USER_QUESTION_MAX_QUESTIONS) {
         return {
           ok: false,
           issues: [
-            { path: "questions", code: "invalid_schema", message: "At most 4 questions allowed" },
+            {
+              path: "questions",
+              code: "invalid_schema",
+              message: `At most ${ASK_USER_QUESTION_MAX_QUESTIONS} questions allowed`,
+            },
           ],
         };
       }
 
-      // E2: 2 ≤ options ≤ 4 per question.
+      // E2: MIN ≤ options ≤ MAX per question.
       for (const q of input.questions) {
-        if (!Array.isArray(q.options) || q.options.length < 2 || q.options.length > 4) {
+        if (
+          !Array.isArray(q.options) ||
+          q.options.length < ASK_USER_QUESTION_MIN_OPTIONS ||
+          q.options.length > ASK_USER_QUESTION_MAX_OPTIONS
+        ) {
           return {
             ok: false,
             issues: [
               {
                 path: "questions[].options",
                 code: "invalid_schema",
-                message: `Question "${q.question}" must have 2-4 options`,
+                message: `Question "${q.question}" must have ${ASK_USER_QUESTION_MIN_OPTIONS}-${ASK_USER_QUESTION_MAX_OPTIONS} options`,
               },
             ],
           };

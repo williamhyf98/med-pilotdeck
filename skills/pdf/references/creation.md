@@ -1,34 +1,43 @@
-# Creating PDFs
+# 创建 PDF
 
-Read this before generating a new PDF or substantially redesigning one.
+生成新 PDF 或做实质性重新设计之前阅读本文。Agent 只填写参数；不要编写 Python。
 
-## Builder contract
+## 固定流程
 
-- Start with `pdf.sh scaffold` and maintain one executable Python builder for the task.
-- The builder must accept `--out <path>`, create parent directories, work offline, and exit nonzero on failure.
-- Keep source data and calculations outside drawing callbacks when possible. Make the content model easy to inspect and revise.
-- Use ReportLab for generation. Use `SimpleDocTemplate` and flowables for ordinary reports; use canvas-level drawing only when exact placement is genuinely required.
+- 新建 PDF 只使用 `pdf.sh make`。
+- 常见任务：`--title`、`--body`、`--out`。
+- 对话里已有的长文（救治方案、病例报告）先写成 `--markdown` 文件，不要把全文塞进命令行。
+- 多节内容也可以用 `--spec` JSON，不要复制或修改 `assets/starter_pdf.py`。
+- `make` 只加载 `assets/fonts/` 下的捆绑字体。不要搜索系统字体，不要下载字体。
+- 运行时未就绪时停止。不要 pip，不要改用系统 Python。
 
-## Page and type system
+## spec 约定
 
-- Choose page size, margins, type scale, line spacing, colors, table styles, and spacing before adding content.
-- Register fonts explicitly. Confirm that the selected font contains every required glyph, especially for Chinese, Japanese, Korean, symbols, and emoji.
-- Prefer a project-provided font. If none exists, search common system font locations and provide a safe fallback. Never download a font during the build.
-- Keep body text readable at the final page size. Avoid shrinking text merely to force content onto a page.
-- Use deterministic header/footer callbacks for titles, dates, confidentiality labels, and page numbers.
+```json
+{
+  "title": "文档标题",
+  "author": "PilotDeck",
+  "body": "开头段落。空行分段。",
+  "sections": [
+    { "heading": "小节标题", "body": "小节正文。" }
+  ]
+}
+```
 
-## Tables and images
+命令行的 `--title` / `--body` / `--author` 会覆盖 spec 中的同名字段。
 
-- Specify column widths rather than relying on accidental auto-sizing.
-- Repeat table headers across pages and allow rows to split only when the result remains readable.
-- Use paragraphs inside table cells for wrapping and consistent typography.
-- Preserve image aspect ratios. Crop intentionally; do not stretch.
-- Use sufficient source resolution for the rendered output. A visually soft image is a defect even when the PDF is structurally valid.
+## 页面与字体
 
-## Iteration
+- 页面为 A4，边距、字号和页脚由 `make` 固定。
+- 中文、标点必须能用捆绑 Noto Sans SC 显示。不要回退到 Helvetica。
+- 不要为了塞进一页而缩小到不可读。
 
-1. Build the PDF.
-2. Run `audit`.
-3. Render all pages at 144 DPI or higher.
-4. Inspect every page PNG at full size.
-5. Patch the same builder and repeat until the QA checklist passes.
+## 已有 PDF 的视觉改版
+
+对已有文件用 `inspect` / `render` 取证，再用 `merge`、`split`、`rotate`、`forms-fill` 做最小改动。不要为了改几个字就手写一套 ReportLab 脚本。
+
+## 迭代
+
+1. 运行 `make`（或对已有文件运行 `audit` + `render`）。
+2. 查看 `preview` 或 `page-*.png`。
+3. 调整参数或 spec，再次 `make --force`，直到质量清单通过。

@@ -242,8 +242,6 @@ const VALID_TABS: Set<string> = new Set([
   'skills',
   'preview',
   'dashboard',
-  'medical-dialogue',
-  'medical-trauma',
 ]);
 
 const isValidTab = (tab: string): tab is AppTab => {

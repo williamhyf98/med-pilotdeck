@@ -684,7 +684,11 @@ export function createRouterRuntime(
       lastAttempt = attempt;
       lastDecision = attemptDecision;
 
-      if (decision.isSubagent && config.autoOrchestrate?.subagentMaxTokens) {
+      if (
+        decision.isSubagent &&
+        ctx.isMainAgent !== true &&
+        config.autoOrchestrate?.subagentMaxTokens
+      ) {
         const budget = config.autoOrchestrate.subagentMaxTokens;
         const estimated = countMessagesTokens(attemptRequest.messages);
         if (estimated > budget) {

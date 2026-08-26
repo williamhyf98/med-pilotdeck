@@ -17,10 +17,7 @@ const TOOL_NAME_ALIASES = new Map([
   ['Glob', 'glob'],
   ['Grep', 'grep'],
   ['Bash', 'bash'],
-  ['Task', 'agent'],
   ['TodoWrite', 'todo_write'],
-  ['WebFetch', 'web_fetch'],
-  ['WebSearch', 'web_search'],
 ]);
 
 export function getPermissionSettingsPath(env = process.env) {

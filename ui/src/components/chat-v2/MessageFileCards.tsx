@@ -49,6 +49,9 @@ function fileVisual(file: CardFile) {
   if (['ppt', 'pptx', 'dps', 'odp'].includes(ext)) {
     return { Icon: Presentation, className: 'bg-orange-50 text-orange-700 dark:bg-orange-950/70 dark:text-orange-300' };
   }
+  if (ext === 'pdf') {
+    return { Icon: FileText, className: 'bg-rose-50 text-rose-700 dark:bg-rose-950/70 dark:text-rose-300' };
+  }
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) {
     return { Icon: Image, className: 'bg-violet-50 text-violet-700 dark:bg-violet-950/70 dark:text-violet-300' };
   }
@@ -149,7 +152,7 @@ export function MessageFileCard({
           visualClassName,
           onBrowse && 'cursor-pointer transition-transform hover:scale-[1.03]',
         )}
-        aria-label={t('fileArtifacts.browse', { defaultValue: 'Browse {{name}}', name: file.name }) as string}
+        aria-label={t('fileArtifacts.browse', { defaultValue: 'Preview {{name}}', name: file.name }) as string}
       >
         <Icon className="h-5 w-5" strokeWidth={1.8} />
       </button>
@@ -178,8 +181,8 @@ export function MessageFileCard({
             type="button"
             onClick={() => { void handleBrowse(); }}
             className="rounded-md p-1.5 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
-            title={t('fileArtifacts.browseTitle', { defaultValue: 'Browse' }) as string}
-            aria-label={t('fileArtifacts.browse', { defaultValue: 'Browse {{name}}', name: file.name }) as string}
+            title={t('fileArtifacts.browseTitle', { defaultValue: 'Preview' }) as string}
+            aria-label={t('fileArtifacts.browse', { defaultValue: 'Preview {{name}}', name: file.name }) as string}
           >
             <Eye className="h-4 w-4" strokeWidth={1.8} />
           </button>
@@ -189,7 +192,7 @@ export function MessageFileCard({
             type="button"
             onClick={handleDownload}
             className="rounded-md p-1.5 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
-            title={t('fileArtifacts.download', { defaultValue: 'Download / save a copy' }) as string}
+            title={t('fileArtifacts.download', { defaultValue: 'Download' }) as string}
             aria-label={t('fileArtifacts.downloadName', { defaultValue: 'Download {{name}}', name: file.name }) as string}
           >
             <Download className="h-4 w-4" strokeWidth={1.8} />

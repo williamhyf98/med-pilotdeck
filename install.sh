@@ -1176,16 +1176,6 @@ else
 fi
 echo ""
 
-echo "$(L "Installing ClawHub CLI..." "正在安装 ClawHub CLI...")"
-if command -v clawhub >/dev/null 2>&1; then
-  ok "$(L "ClawHub CLI already installed ($(clawhub --version 2>/dev/null || echo 'unknown version'))" "ClawHub CLI 已安装($(clawhub --version 2>/dev/null || echo '未知版本'))")"
-else
-  npm install -g clawhub --loglevel=error </dev/null && \
-    ok "$(L "ClawHub CLI installed" "ClawHub CLI 已安装")" || \
-    warn "$(L "ClawHub CLI install failed (skill marketplace features may not work)" "ClawHub CLI 安装失败(技能市场功能可能不可用)")"
-fi
-echo ""
-
 echo "$(L "Setting up CLI command..." "正在设置 CLI 命令...")"
 WRAPPER_DIR="$INSTALL_DIR/bin"
 CLI_TARGET="$WRAPPER_DIR/pilotdeck"

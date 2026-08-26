@@ -1,35 +1,35 @@
-# PDF QA Checklist
+# PDF 质量检查清单
 
-Read this before delivering any created or modified PDF.
+在交付任何新建或已修改的 PDF 之前阅读本文。
 
-## Structural checks
+## 结构检查
 
-- `pdfinfo` and `pypdf` can open the file.
-- Page count is correct and pages are in the requested order.
-- Page sizes and rotations are intentional.
-- The document is not unexpectedly encrypted.
-- Metadata, forms, annotations, and signatures have not changed unexpectedly.
-- No requested content is missing; empty pages are intentional.
+- `pdfinfo` 和 `pypdf` 能够打开该文件。
+- 页数正确，且页面顺序符合要求。
+- 页面尺寸与旋转是有意设置的。
+- 文档未被意外加密。
+- 元数据、表单、批注和签名未发生意外变化。
+- 没有缺失所要求的内容；空白页是有意为之。
 
-## Visual checks
+## 视觉检查
 
-Render every page with Poppler and inspect each individual PNG at full resolution. Confirm:
+用 Poppler 渲染每一页，并以全分辨率检查每一张独立的 PNG。确认：
 
-- fonts are embedded or reliably rendered and all glyphs are present;
-- headings, paragraphs, lists, and page breaks are consistent;
-- no text, image, table, footer, or annotation is clipped or outside the page;
-- no objects overlap unintentionally;
-- tables wrap cleanly, repeat headers when needed, and remain readable;
-- images preserve aspect ratio and use intentional crops;
-- page numbers, headers, footers, dates, and cross-references are correct;
-- filled form values are visible and aligned;
-- scanned pages are upright, legible, and not excessively soft.
+- 字体已嵌入或能可靠渲染，且所有字形均存在；
+- 标题、段落、列表和分页一致；
+- 没有文本、图像、表格、页脚或批注被裁切或超出页面；
+- 没有对象发生非预期重叠；
+- 表格换行干净，必要时重复表头，且仍可读；
+- 图像保持宽高比，裁切是有意的；
+- 页码、页眉、页脚、日期和交叉引用正确；
+- 已填写的表单值可见且对齐；
+- 扫描页方向正确、清晰可读，且不过度发虚。
 
-A montage helps find inconsistencies but does not replace full-size page inspection.
+拼图有助于发现不一致，但不能替代全尺寸单页检查。
 
-## Delivery gate
+## 交付门禁
 
-- Resolve every hard audit failure.
-- Understand and document any remaining warning.
-- Re-render after the last modification; never rely on an earlier render.
-- Deliver only the requested PDF unless the user asks for extraction files, QA reports, or source builders.
+- 解决每一项硬性审计失败。
+- 理解并记录任何剩余警告。
+- 在最后一次修改之后重新渲染；切勿依赖更早的渲染结果。
+- 仅交付所要求的 PDF，除非用户要求提取文件或质量报告。不要交付 Python 构建脚本。

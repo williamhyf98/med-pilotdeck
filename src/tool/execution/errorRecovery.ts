@@ -124,6 +124,9 @@ function summarizeError(
   if (code === "ask_mode_violation") {
     return `The ${toolName} call is not allowed while the agent is in ask mode.`;
   }
+  if (code === "automation_policy_violation") {
+    return `The ${toolName} call is blocked by the bundled automation policy.`;
+  }
   if (evidence.length > 0) {
     return trimSentence(evidence[0]);
   }
@@ -153,7 +156,8 @@ function classifyError(
     code === "tool_not_found" ||
     code === "unsupported_tool" ||
     code === "plan_mode_violation" ||
-    code === "ask_mode_violation"
+    code === "ask_mode_violation" ||
+    code === "automation_policy_violation"
   ) {
     return "switch_tool";
   }
@@ -251,6 +255,12 @@ function baseNextActions(
         "Do not retry this write/action tool while in ask mode.",
         "Use read-only tools or ask the user to change mode if they want execution.",
       ];
+    case "automation_policy_violation":
+      return [
+        "Do not retry with another interpreter, shell wrapper, generated source file, or build runner.",
+        "Use a registered tool or bundled skill entrypoint with declarative inputs.",
+        "If no bundled capability supports the operation, explain the limitation and stop.",
+      ];
     case "permission_required":
       return ["Pause tool execution and ask the user for approval with a concise reason."];
     case "permission_denied":
@@ -315,16 +325,14 @@ function invalidToolInputNextActions(
   if (toolName === "bash" && /timeout \d+ms exceeds|timeout .*exceeds|exceeds the maximum|maximum of 600000/i.test(haystack)) {
     return [
       "Use timeout=600000 or less for foreground bash.",
-      "For a finite long-running command that should finish, use task_create and then task_wait to block for completion.",
-      "For long-lived services or watchers, use task_create with task_output for progress and task_stop for cleanup.",
+      "Keep long work in a bounded foreground command, or split it into shorter steps the user can rerun.",
     ];
   }
 
   if (toolName === "bash" && /background|nohup|disown|setsid|task_create|task_wait/i.test(haystack)) {
     return [
       "Run short commands directly in foreground bash with a timeout of 600000ms or less.",
-      "For finite background work, use task_create and then task_wait so completion output returns to the model context.",
-      "For long-lived services or watchers, use task_create with task_output for progress checks and task_stop for cleanup.",
+      "Do not background the process. Split long work into shorter foreground steps instead.",
     ];
   }
 
@@ -421,6 +429,8 @@ function defaultAvoidRetryReason(code: PilotDeckToolErrorCode): string | undefin
       return "Plan mode blocks this class of tool until execution mode is restored.";
     case "ask_mode_violation":
       return "Ask mode blocks this class of tool until execution mode is restored.";
+    case "automation_policy_violation":
+      return "This deployment permanently blocks generated executable source and interpreter execution.";
     default:
       return undefined;
   }

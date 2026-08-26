@@ -391,11 +391,7 @@ describe('MessagesPaneV2 render behavior', () => {
     expect(screen.queryByText('Parameters')).toBeNull();
     expect(container.querySelector('.border-l-red-500')).toBeNull();
     expect(screen.queryByRole('button', { name: /permissions\.grant|Grant Bash for this chat/ })).toBeNull();
-
-    const errorSummary = screen.getByText('Tool error').closest('summary');
-    expect(errorSummary).not.toBeNull();
-    const details = errorSummary?.closest('details') as HTMLDetailsElement | null;
-    expect(details?.open).toBe(false);
+    expect(screen.getByText(/Plan mode denies side-effecting tool bash/)).toBeTruthy();
   });
 
   it('preserves an expanded live process row while streamed tool groups grow', () => {
@@ -542,6 +538,18 @@ describe('MessagesPaneV2 render behavior', () => {
         id: 'a-1',
         type: 'assistant',
         content: 'Done.',
+        timestamp: now,
+      },
+      {
+        id: 'u-2',
+        type: 'user',
+        content: '下一个问题',
+        timestamp: now,
+      },
+      {
+        id: 'a-2',
+        type: 'assistant',
+        content: 'Ready.',
         timestamp: now,
       },
     ];
@@ -880,6 +888,12 @@ describe('MessagesPaneV2 render behavior', () => {
         content: 'I will retry with corrected inputs.',
         timestamp: now,
       },
+      {
+        id: 'u-2',
+        type: 'user',
+        content: '继续',
+        timestamp: now,
+      },
     ];
 
     const { container } = renderPane({ messages });
@@ -899,7 +913,6 @@ describe('MessagesPaneV2 render behavior', () => {
     fireEvent.click(button as HTMLButtonElement);
 
     expect(screen.getByText('FailedTool.tsx')).toBeTruthy();
-    expect(screen.getAllByText('Tool error').length).toBeGreaterThan(0);
     expect(container.querySelector('.border-l-red-500')).toBeNull();
   });
 

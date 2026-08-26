@@ -55,22 +55,21 @@ if [ ! -f "$CONFIG_FILE" ]; then
         description: \"Single tool call, short text generation, 1-2 file read/write, code generation\"
       complex:
         model: ${MODEL}
-        description: \"Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents\"
+        description: \"Needs coordinated work across independent workstreams that can proceed in parallel\"
       reasoning:
         model: ${MODEL}
-        description: \"Deep single-agent work: multi-file operations, data analysis, multi-step workflows, web research, structured reports from many sources\"
+        description: \"Deep single-agent work: multi-file operations, data analysis, multi-step workflows, structured reports from many sources\"
     rules:
-      - \"complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work\"
+      - \"complex is ONLY for tasks that need coordinated parallel workstreams — do NOT use it for ordinary multi-step work\"
       - \"Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning\"
       - \"Simple file creation (1-2 files) or single code generation is medium\"
       - \"Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple\"
   autoOrchestrate:
-    enabled: true
+    enabled: false
     triggerTiers:
       - complex
     slimSystemPrompt: true
     allowedTools:
-      - agent
       - read_file
       - grep
       - glob

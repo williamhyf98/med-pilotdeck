@@ -5,7 +5,6 @@ import { SubAgentSession, } from "../../../src/agent/sub/SubAgentSession.js";
 import { SUBAGENT_DEFINITIONS, } from "../../../src/agent/sub/builtinSubagentTypes.js";
 import { PermissionRuntime, createDefaultPermissionContext, } from "../../../src/permission/index.js";
 import { createBashTool } from "../../../src/tool/builtin/bash.js";
-import { createExecuteCodeTool } from "../../../src/tool/builtin/executeCode.js";
 import { ToolRuntime } from "../../../src/tool/execution/ToolRuntime.js";
 import { ToolRegistry, } from "../../../src/tool/index.js";
 const FINAL_REPORT = [
@@ -146,9 +145,9 @@ test("explore subagent does not probe tool safety before execution", async () =>
     assert.equal(report.markdown, FINAL_REPORT);
     assert.deepEqual(readOnlyChecks, []);
 });
-test("explore registry ignores an unallowed dynamic execute_code tool without probing it", () => {
+test("explore registry ignores an unallowed dynamic tool without probing it", () => {
     const registry = new ToolRegistry();
-    registry.register(createExecuteCodeTool());
+    registry.register(createNoopTool("write_file", () => false));
     registry.register(createBashTool({
         runner: {
             async run() {
@@ -201,26 +200,4 @@ test("read-only subagent evaluates bash safety from the real command", async () 
     assert.equal(writeResult.type, "error");
     assert.equal(writeResult.type === "error" ? writeResult.error.code : "", "ask_mode_violation");
     assert.deepEqual(commands, ["pwd"], "blocked command must not reach the shell runner");
-});
-test("read-only execute_code checks the real code instead of crashing on registry setup", async () => {
-    const registry = new ToolRegistry();
-    registry.register(createExecuteCodeTool());
-    const definition = {
-        ...SUBAGENT_DEFINITIONS.explore,
-        allowedTools: ["execute_code"],
-    };
-    const session = sessionFor(definition, registry);
-    const scoped = session.buildScopedRegistry();
-    const config = session.buildConfig();
-    const runtime = new ToolRuntime(scoped, new PermissionRuntime());
-    assert.equal(scoped.has("execute_code"), true);
-    const result = await runtime.execute({
-        id: "write-code",
-        name: "execute_code",
-        input: {
-            code: "from pilotdeck_tools import write_file\nwrite_file('blocked.txt', 'no')",
-        },
-    }, runtimeContext(config));
-    assert.equal(result.type, "error");
-    assert.equal(result.type === "error" ? result.error.code : "", "ask_mode_violation");
 });

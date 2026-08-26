@@ -45,8 +45,6 @@ const DashboardV2 = React.lazy(() => import('../../main-content-v2/DashboardV2')
 const TasksV2 = React.lazy(() => import('../../main-content-v2/TasksV2'));
 const MemoryPanel = React.lazy(() => import('./memory/MemoryPanel'));
 const SkillsV2 = React.lazy(() => import('../../main-content-v2/SkillsV2'));
-const DialoguePage = React.lazy(() => import('../../../features/medical/dialogue/DialoguePage'));
-const MedTraumaPage = React.lazy(() => import('../../../features/medical/trauma/MedTraumaPage'));
 
 function TabSkeleton() {
   return (
@@ -387,8 +385,6 @@ function MainContent({
     !selectedProject
     && activeTab !== 'dashboard'
     && activeTab !== 'cron'
-    && activeTab !== 'medical-dialogue'
-    && activeTab !== 'medical-trauma'
   ) {
     return (
       <MainContentStateView
@@ -580,8 +576,7 @@ function SplitBody(props: SplitBodyProps) {
     editorSidebarProps,
   } = props;
 
-  // Shell, Git, Tasks, medical workspaces, and plugin tabs retain their
-  // full-screen mode.
+  // Shell, Git, Tasks, and plugin tabs retain their full-screen mode.
   // Skills, Routing, Memory, and Always-On are auxiliary dashboards paired
   // with chat. Files stays a separate explorer + artifact + assistant mode.
   const isPlugin = typeof activeTab === 'string' && activeTab.startsWith('plugin:');
@@ -590,8 +585,6 @@ function SplitBody(props: SplitBodyProps) {
     'git',
     'cron',
     'tasks',
-    'medical-dialogue',
-    'medical-trauma',
   ]);
   const isFullScreenTool = fullScreenToolTabs.has(activeTab) || isPlugin;
   const isDashboardPanel = DASHBOARD_PANEL_TABS.has(activeTab);
@@ -790,47 +783,6 @@ function SplitBody(props: SplitBodyProps) {
     if (activeTab === 'dashboard') return <DashboardV2 projectFilter={selectedProject?.name} projectFullPath={selectedProject?.fullPath} onSelectProject={onSelectProjectByName} compact />;
     if (activeTab === 'memory') return <MemoryPanel selectedProject={selectedProject} />;
     if (activeTab === 'skills') return <SkillsV2 selectedProject={selectedProject} projects={projects} compact />;
-    if (activeTab === 'medical-dialogue') {
-      return (
-        <DialoguePage
-          selectedProject={selectedProject}
-          selectedSession={selectedSession}
-          processingSessions={processingSessions}
-          unreadSessionIds={unreadSessionIds}
-          onSelectSession={onSelectSession}
-          onStartNewSession={onStartNewSession}
-          onOpenTrauma={() => setActiveTab('medical-trauma')}
-          chatProps={{
-            selectedProject,
-            selectedSession,
-            ws,
-            sendMessage,
-            latestMessage,
-            onFileOpen: handleFileOpen,
-            onInputFocusChange,
-            onSessionActive,
-            onSessionInactive,
-            onSessionProcessing,
-            onSessionNotProcessing,
-            onSessionActivityBump,
-            processingSessions,
-            onReplaceTemporarySession,
-            onNavigateToSession,
-            onShowSettings,
-            autoExpandTools,
-            showRawParameters,
-            showThinking,
-            inlineThinking,
-            autoScrollToBottom,
-            sendByCtrlEnter,
-            externalMessageUpdate,
-          }}
-        />
-      );
-    }
-    if (activeTab === 'medical-trauma') {
-      return <MedTraumaPage onOpenDialogue={() => setActiveTab('medical-dialogue')} />;
-    }
     if (renderTasksAsTool) return <TasksV2 isVisible />;
     if (isPlugin) {
       return (
@@ -991,8 +943,7 @@ function SplitBody(props: SplitBodyProps) {
             </button>
           </div>
         ) : null}
-        {activeTab !== 'medical-dialogue' ? (
-          <ErrorBoundary showDetails>
+        <ErrorBoundary showDetails>
             <ChatInterfaceV2
               selectedProject={selectedProject}
               selectedSession={selectedSession}
@@ -1023,7 +974,6 @@ function SplitBody(props: SplitBodyProps) {
               compact={isFiles}
             />
           </ErrorBoundary>
-        ) : null}
       </div>
 
       {dashboardPanelTab ? (

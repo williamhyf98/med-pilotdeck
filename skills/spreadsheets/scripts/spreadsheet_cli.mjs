@@ -637,8 +637,8 @@ function fontProfile(platform = "cross-platform") {
   const normalized = String(platform).toLowerCase();
   if (["windows", "win"].includes(normalized)) return { platform: "windows", body: "Microsoft YaHei", title: "Microsoft YaHei" };
   if (["mac", "macos", "darwin"].includes(normalized)) return { platform: "macos", body: "PingFang SC", title: "PingFang SC" };
-  if (["linux", "libreoffice", "server"].includes(normalized)) return { platform: "linux", body: "Noto Sans CJK SC", title: "Noto Sans CJK SC" };
-  if (["cross-platform", "crossplatform", "auto"].includes(normalized)) return { platform: "cross-platform", body: null, title: null };
+  if (["linux", "libreoffice", "server"].includes(normalized)) return { platform: "linux", body: "Noto Sans SC", title: "Noto Sans SC" };
+  if (["cross-platform", "crossplatform", "auto"].includes(normalized)) return { platform: "cross-platform", body: "Noto Sans SC", title: "Noto Sans SC" };
   throw new Error(`Unsupported font platform '${platform}'`);
 }
 
@@ -1375,7 +1375,7 @@ function collectChartFailures(workbook, packageInfo) {
   return failures;
 }
 
-async function auditXlsx(filePath, requirements = null) {
+async function auditXlsx(filePath, requirements = null, options = {}) {
   const packageInfo = await inspectPackage(filePath);
   const workbook = await loadXlsx(filePath);
   const facts = collectWorkbookFacts(workbook);
@@ -1410,7 +1410,9 @@ async function auditXlsx(filePath, requirements = null) {
   const warningDispositions = evaluateWarningDispositions(warnings, requirements);
   const hardFailures = [
     ...facts.errors.map((error) => ({ type: "formula_error", ...error })),
-    ...facts.missingCachedResults.map((error) => ({ type: "missing_cached_formula_result", ...error })),
+    ...(options.allowMissingCachedResults
+      ? []
+      : facts.missingCachedResults.map((error) => ({ type: "missing_cached_formula_result", ...error }))),
     ...facts.formulaReferencesWithErrors.map((error) => ({ type: "invalid_formula_reference", ...error })),
     ...facts.invalidDates.map((error) => ({ type: "invalid_date_value", ...error })),
     ...chartFailures,
@@ -1489,17 +1491,8 @@ async function runLibreOffice(args, profileDir) {
     throw new Error("LibreOffice was not found. Install LibreOffice or expose soffice on PATH.");
   }
   const fontDirectories = [
-    path.join(skillRoot, "assets", "fonts"),
-    "/System/Library/Fonts",
-    "/System/Library/Fonts/Supplemental",
-    "/Library/Fonts",
-    path.join(os.homedir(), "Library", "Fonts"),
-    "/usr/share/fonts",
-    "/usr/local/share/fonts",
-    path.join(os.homedir(), ".fonts"),
-    process.env.WINDIR ? path.join(process.env.WINDIR, "Fonts") : "C:/Windows/Fonts",
-    "/c/Windows/Fonts",
-  ];
+    process.env.SPREADSHEET_SKILL_FONT_DIR,
+  ].filter(Boolean);
   const availableFontDirectories = [];
   for (const directory of fontDirectories) if (await pathExists(directory)) availableFontDirectories.push(directory);
   const fontCache = path.join(profileDir, "font-cache");
@@ -1868,6 +1861,528 @@ async function commandBuild(options) {
       requirements: reportedAudit.coverage,
       audit: reportedAudit,
     }, options.report && String(options.report));
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+}
+
+function makeContentSources(options) {
+  return ["body", "body-file", "markdown", "csv", "tsv", "spec"]
+    .filter((key) => options[key] !== undefined && options[key] !== false);
+}
+
+function makeCellValue(value, location) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  if (typeof value.formula === "string") {
+    const formula = value.formula.trim().replace(/^=/, "");
+    if (!formula) throw new Error(`${location}.formula must not be empty`);
+    if (
+      /\[[^\]]+\][^!]*!/u.test(formula)
+      || /\b(?:WEBSERVICE|FILTERXML|RTD)\s*\(/iu.test(formula)
+      || /\bHYPERLINK\s*\(\s*"https?:/iu.test(formula)
+    ) {
+      throw new Error(`${location}.formula uses an external or network-dependent reference`);
+    }
+    return { formula };
+  }
+  if (typeof value.date === "string") {
+    const date = new Date(value.date);
+    if (Number.isNaN(date.getTime())) throw new Error(`${location}.date is invalid`);
+    return date;
+  }
+  throw new Error(`${location} must be a scalar, { formula }, or { date }`);
+}
+
+function markdownTable(markdown) {
+  const lines = String(markdown ?? "").split(/\r?\n/u);
+  const splitRow = (line) => line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim());
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    if (!lines[index].includes("|")) continue;
+    const separator = splitRow(lines[index + 1]);
+    if (!separator.length || !separator.every((cell) => /^:?-{3,}:?$/u.test(cell))) continue;
+    const headers = splitRow(lines[index]);
+    const rows = [];
+    for (let rowIndex = index + 2; rowIndex < lines.length; rowIndex += 1) {
+      const line = lines[rowIndex];
+      if (!line.includes("|") || !line.trim()) break;
+      const row = splitRow(line);
+      while (row.length < headers.length) row.push("");
+      rows.push(row.slice(0, headers.length).map(inferScalar));
+    }
+    return { headers, rows };
+  }
+  throw new Error("Markdown input must contain a GitHub-style pipe table");
+}
+
+function safeWorksheetName(value, index) {
+  const fallback = `Sheet${index + 1}`;
+  const name = String(value ?? fallback).replace(/[\\/*?:[\]]/gu, " ").trim().slice(0, 31);
+  return name || fallback;
+}
+
+function safeTableName(value, index) {
+  const normalized = String(value ?? `Table${index + 1}`)
+    .replace(/[^A-Za-z0-9_]/gu, "_")
+    .replace(/^[^A-Za-z_]+/u, "");
+  return normalized || `Table${index + 1}`;
+}
+
+function applyMakeSheetDefaults(worksheet, { headerRange = null, titleRanges = [] } = {}) {
+  worksheet.views = [{
+    state: "frozen",
+    ySplit: headerRange ? parseRangeReference(headerRange).startRow : 1,
+    showGridLines: false,
+  }];
+  worksheet.pageSetup = {
+    orientation: worksheet.columnCount > 6 ? "landscape" : "portrait",
+    fitToPage: true,
+    fitToWidth: 1,
+    fitToHeight: 0,
+  };
+  if (headerRange) styleHeader(worksheet, headerRange);
+  applyChineseTypography(worksheet, {
+    platform: "cross-platform",
+    titleRanges,
+  });
+  autoFitColumns(worksheet, { min: 10, max: 36 });
+  autoFitRows(worksheet, { min: 18, max: 90 });
+}
+
+function buildWorkbookFromSpec(spec, existingWorkbook = null) {
+  if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
+    throw new Error("Spreadsheet make spec must be a JSON object");
+  }
+  if (!Array.isArray(spec.sheets) || spec.sheets.length === 0) {
+    throw new Error("Spreadsheet make spec requires a non-empty sheets array");
+  }
+  const workbook = existingWorkbook ?? createWorkbook();
+  const editingExisting = Boolean(existingWorkbook);
+  if (!editingExisting || spec.title !== undefined) workbook.title = String(spec.title ?? "");
+  const requirements = {
+    requiredSheets: [],
+    requiredNonEmptyRanges: [],
+    exactSheetCount: editingExisting ? workbook.worksheets.length : spec.sheets.length,
+    expectedCells: [],
+    requiredFormulaRanges: [],
+    requiredNativeCharts: [],
+    requiredTables: [],
+    requiredConditionalFormatting: [],
+    requiredDataValidations: [],
+  };
+  const nativeCharts = [];
+  let formulaCount = 0;
+
+  spec.sheets.forEach((sheetSpec, sheetIndex) => {
+    if (!sheetSpec || typeof sheetSpec !== "object" || Array.isArray(sheetSpec)) {
+      throw new Error(`sheets[${sheetIndex}] must be an object`);
+    }
+    const name = safeWorksheetName(sheetSpec.name, sheetIndex);
+    let worksheet = workbook.getWorksheet(name);
+    const existedBeforeEdit = Boolean(worksheet);
+    if (editingExisting) {
+      if (!worksheet && !sheetSpec.create) {
+        throw new Error(`Existing workbook has no worksheet named '${name}'; pass create:true to add it`);
+      }
+      if (!worksheet) worksheet = workbook.addWorksheet(name);
+      if ((sheetSpec.headers || sheetSpec.rows) && !sheetSpec.create) {
+        throw new Error(`Editing existing sheet '${name}' must use cells/formulas instead of headers/rows`);
+      }
+    } else {
+      if (worksheet) throw new Error(`Duplicate worksheet name: ${name}`);
+      worksheet = workbook.addWorksheet(name);
+    }
+    requirements.requiredSheets.push(name);
+    const headers = Array.isArray(sheetSpec.headers) ? sheetSpec.headers : null;
+    if (headers?.length) worksheet.addRow(headers.map((value, columnIndex) => makeCellValue(value, `sheets[${sheetIndex}].headers[${columnIndex}]`)));
+    const rows = Array.isArray(sheetSpec.rows) ? sheetSpec.rows : [];
+    rows.forEach((row, rowIndex) => {
+      if (!Array.isArray(row)) throw new Error(`sheets[${sheetIndex}].rows[${rowIndex}] must be an array`);
+      const worksheetRow = (headers?.length ? 2 : 1) + rowIndex;
+      worksheet.addRow(row.map((value, columnIndex) => {
+        const cell = makeCellValue(value, `sheets[${sheetIndex}].rows[${rowIndex}][${columnIndex}]`);
+        if (cell && typeof cell === "object" && typeof cell.formula === "string") {
+          formulaCount += 1;
+          requirements.requiredFormulaRanges.push({
+            sheet: name,
+            range: `${columnLetters(columnIndex + 1)}${worksheetRow}`,
+          });
+        }
+        return cell;
+      }));
+    });
+    for (const [formulaIndex, item] of (sheetSpec.formulas ?? []).entries()) {
+      if (!item || typeof item.cell !== "string" || typeof item.formula !== "string") {
+        throw new Error(`sheets[${sheetIndex}].formulas[${formulaIndex}] requires cell and formula`);
+      }
+      worksheet.getCell(item.cell).value = makeCellValue(
+        { formula: item.formula },
+        `sheets[${sheetIndex}].formulas[${formulaIndex}]`,
+      );
+      requirements.requiredFormulaRanges.push({ sheet: name, range: item.cell });
+      formulaCount += 1;
+    }
+    for (const [cellIndex, item] of (sheetSpec.cells ?? []).entries()) {
+      if (!item || typeof item.cell !== "string" || !Object.hasOwn(item, "value")) {
+        throw new Error(`sheets[${sheetIndex}].cells[${cellIndex}] requires cell and value`);
+      }
+      const value = makeCellValue(item.value, `sheets[${sheetIndex}].cells[${cellIndex}].value`);
+      worksheet.getCell(item.cell).value = value;
+      if (value && typeof value === "object" && typeof value.formula === "string") {
+        requirements.requiredFormulaRanges.push({ sheet: name, range: item.cell });
+        formulaCount += 1;
+      } else {
+        requirements.expectedCells.push({
+          sheet: name,
+          cell: item.cell,
+          value: serializableValue(value),
+        });
+      }
+    }
+    for (const [formatIndex, item] of (sheetSpec.numberFormats ?? []).entries()) {
+      if (!item || typeof item.range !== "string" || typeof item.format !== "string") {
+        throw new Error(`sheets[${sheetIndex}].numberFormats[${formatIndex}] requires range and format`);
+      }
+      setNumberFormat(worksheet, item.range, item.format);
+    }
+    for (const [validationIndex, item] of (sheetSpec.validations ?? []).entries()) {
+      if (!item || typeof item.range !== "string" || !Array.isArray(item.values) || item.values.length === 0) {
+        throw new Error(`sheets[${sheetIndex}].validations[${validationIndex}] requires range and values`);
+      }
+      addListValidation(worksheet, item.range, item.values, { allowBlank: item.allowBlank !== false });
+      requirements.requiredDataValidations.push({ sheet: name, cell: parseRangeReference(item.range).startAddress ?? item.range.split(":")[0] });
+    }
+    for (const [conditionalIndex, item] of (sheetSpec.conditionalFormatting ?? []).entries()) {
+      if (!item || typeof item.range !== "string" || !Array.isArray(item.rules)) {
+        throw new Error(`sheets[${sheetIndex}].conditionalFormatting[${conditionalIndex}] requires range and rules`);
+      }
+      addConditionalFormatting(worksheet, item);
+      requirements.requiredConditionalFormatting.push({ sheet: name, range: item.range });
+    }
+    const tableSpecs = sheetSpec.table
+      ? [sheetSpec.table === true ? {} : sheetSpec.table]
+      : (Array.isArray(sheetSpec.tables) ? sheetSpec.tables : []);
+    tableSpecs.forEach((tableSpec, tableIndex) => {
+      const lastColumn = columnLetters(Math.max(worksheet.columnCount, 1));
+      const range = tableSpec.range ?? `A1:${lastColumn}${Math.max(worksheet.rowCount, 1)}`;
+      addTableFromRange(worksheet, {
+        name: safeTableName(tableSpec.name, sheetIndex * 10 + tableIndex),
+        range,
+        style: tableSpec.style,
+      });
+      requirements.requiredTables.push({ sheet: name, minCount: 1 });
+    });
+    for (const [chartIndex, chart] of (sheetSpec.charts ?? []).entries()) {
+      const normalized = { ...chart, sheet: name, minPoints: chart.minPoints ?? 2 };
+      validateNativeChartSpec(workbook, normalized, `sheets[${sheetIndex}].charts[${chartIndex}]`);
+      nativeCharts.push(normalized);
+      requirements.requiredNativeCharts.push({
+        sheet: name,
+        type: normalized.type,
+        minCount: 1,
+        minPoints: normalized.minPoints,
+        sourceRanges: [
+          normalized.categories,
+          ...normalized.series.map((series) => series.values),
+        ],
+      });
+    }
+    for (const [columnIndex, item] of (sheetSpec.columns ?? []).entries()) {
+      if (!item || (!item.column && !Number.isInteger(item.index)) || !Number.isFinite(Number(item.width))) {
+        throw new Error(`sheets[${sheetIndex}].columns[${columnIndex}] requires column/index and width`);
+      }
+      worksheet.getColumn(item.column ?? item.index).width = Number(item.width);
+    }
+    if (sheetSpec.freeze && typeof sheetSpec.freeze === "object") {
+      worksheet.views = [{
+        state: "frozen",
+        xSplit: Number(sheetSpec.freeze.columns ?? 0),
+        ySplit: Number(sheetSpec.freeze.rows ?? 0),
+        showGridLines: false,
+      }];
+    }
+    if (!editingExisting || !existedBeforeEdit) {
+      applyMakeSheetDefaults(worksheet, {
+        headerRange: headers?.length ? `A1:${columnLetters(headers.length)}1` : null,
+      });
+    }
+    if (worksheet.actualRowCount > 0 && worksheet.actualColumnCount > 0) {
+      requirements.requiredNonEmptyRanges.push({
+        sheet: name,
+        range: `A1:${columnLetters(worksheet.actualColumnCount)}${worksheet.actualRowCount}`,
+        minCount: 1,
+      });
+    }
+  });
+  const finalFacts = collectWorkbookFacts(workbook);
+  for (const formula of finalFacts.formulas) {
+    if (!requirements.requiredFormulaRanges.some((item) => item.sheet === formula.sheet && item.range === formula.address)) {
+      requirements.requiredFormulaRanges.push({ sheet: formula.sheet, range: formula.address });
+    }
+  }
+  if (finalFacts.formulaCount > 0) requirements.minFormulaCount = finalFacts.formulaCount;
+  requirements.exactSheetCount = workbook.worksheets.length;
+  for (const key of Object.keys(requirements)) {
+    if (Array.isArray(requirements[key]) && requirements[key].length === 0) delete requirements[key];
+  }
+  return { workbook, nativeCharts, requirements: validateRequirements(requirements, "make spec requirements") };
+}
+
+async function buildSimpleMakeWorkbook(options) {
+  const title = options.title === true ? "" : String(options.title ?? "").trim();
+  if (options.csv || options.tsv) {
+    const source = path.resolve(String(options.csv || options.tsv));
+    const expectedExtension = options.csv ? ".csv" : ".tsv";
+    if (workbookExtension(source) !== expectedExtension) {
+      throw new Error(`${options.csv ? "--csv" : "--tsv"} input must end with ${expectedExtension}`);
+    }
+    const sheetName = safeWorksheetName(options.sheet === true ? "" : options.sheet, 0);
+    const workbook = await loadDelimited(source, {
+      sheetName,
+      inferTypes: Boolean(options["infer-types"]),
+      encoding: options.encoding === true ? "auto" : String(options.encoding ?? "auto"),
+    });
+    const worksheet = workbook.worksheets[0];
+    if (title) workbook.title = title;
+    applyMakeSheetDefaults(worksheet, {
+      headerRange: worksheet.columnCount > 0 ? `A1:${columnLetters(worksheet.columnCount)}1` : null,
+    });
+    const expectedEndRow = Math.min(Math.max(worksheet.actualRowCount, 1), 100);
+    const expectedEndColumn = Math.min(Math.max(worksheet.actualColumnCount, 1), 50);
+    const expectedValues = [];
+    for (let row = 1; row <= expectedEndRow; row += 1) {
+      const values = [];
+      for (let column = 1; column <= expectedEndColumn; column += 1) {
+        values.push(serializableValue(worksheet.getCell(row, column).value));
+      }
+      expectedValues.push(values);
+    }
+    return {
+      workbook,
+      nativeCharts: [],
+      requirements: validateRequirements({
+        sourceBacked: true,
+        sourceFiles: [{ path: source, sha256: await fileSha256(source) }],
+        sourceBackedSheets: [worksheet.name],
+        requiredSheets: [worksheet.name],
+        expectedRanges: [{
+          sheet: worksheet.name,
+          range: `A1:${columnLetters(expectedEndColumn)}${expectedEndRow}`,
+          values: expectedValues,
+        }],
+        requiredNonEmptyRanges: [{
+          sheet: worksheet.name,
+          range: `A1:${columnLetters(Math.max(worksheet.actualColumnCount, 1))}${Math.max(worksheet.actualRowCount, 1)}`,
+          minCount: 1,
+        }],
+      }, "make delimited requirements"),
+    };
+  }
+
+  let body = options.body === true ? "" : options.body;
+  if (options["body-file"]) body = await fs.readFile(path.resolve(String(options["body-file"])), "utf8");
+  let table = null;
+  if (options.markdown) {
+    table = markdownTable(await fs.readFile(path.resolve(String(options.markdown)), "utf8"));
+  }
+  if (!table && !String(body ?? "").trim() && !title) {
+    throw new Error("Spreadsheet make requires a title or content");
+  }
+  const workbook = createWorkbook();
+  workbook.title = title;
+  const worksheet = workbook.addWorksheet(safeWorksheetName(options.sheet === true ? "" : options.sheet, 0));
+  let headerRange = null;
+  const titleRanges = [];
+  if (title) {
+    worksheet.getCell("A1").value = title;
+    titleRanges.push("A1:A1");
+  }
+  if (table) {
+    const startRow = title ? 3 : 1;
+    table.headers.forEach((value, columnIndex) => {
+      worksheet.getCell(startRow, columnIndex + 1).value = value;
+    });
+    table.rows.forEach((row, index) => {
+      row.forEach((value, columnIndex) => {
+        worksheet.getCell(startRow + 1 + index, columnIndex + 1).value = value;
+      });
+    });
+    headerRange = `A${startRow}:${columnLetters(table.headers.length)}${startRow}`;
+    if (table.rows.length > 0) {
+      addTableFromRange(worksheet, {
+        name: "DataTable",
+        range: `A${startRow}:${columnLetters(table.headers.length)}${startRow + table.rows.length}`,
+      });
+    }
+  } else {
+    const startRow = title ? 3 : 1;
+    worksheet.getCell(`A${startRow}`).value = "内容";
+    headerRange = `A${startRow}:A${startRow}`;
+    const items = String(body ?? "").split(/\n\s*\n/u).map((item) => item.trim()).filter(Boolean);
+    items.forEach((item, index) => {
+      worksheet.getCell(`A${startRow + 1 + index}`).value = item;
+    });
+  }
+  applyMakeSheetDefaults(worksheet, { headerRange, titleRanges });
+  return {
+    workbook,
+    nativeCharts: [],
+    requirements: validateRequirements({
+      requiredSheets: [worksheet.name],
+      requiredNonEmptyRanges: [{
+        sheet: worksheet.name,
+        range: `A1:${columnLetters(Math.max(worksheet.actualColumnCount, 1))}${Math.max(worksheet.actualRowCount, 1)}`,
+        minCount: 1,
+      }],
+      ...(table?.rows.length ? { requiredTables: [{ sheet: worksheet.name, minCount: 1 }] } : {}),
+    }, "make simple requirements"),
+  };
+}
+
+function makeQaRoot(outputPath) {
+  const workDir = pilotDeckWorkDir();
+  if (workDir) return path.join(workDir, "spreadsheets", "make", `${Date.now()}-${process.pid}`);
+  return path.join(path.dirname(outputPath), ".xlsx-qa", path.basename(outputPath, path.extname(outputPath)));
+}
+
+async function commandMake(options) {
+  const sources = makeContentSources(options);
+  if (sources.length > 1) {
+    throw new Error("make accepts only one of --body, --body-file, --markdown, --csv, --tsv, or --spec");
+  }
+  const outputPath = assertDeliveryOutputPath(requireOption(options, "out"));
+  const outputExtension = assertSupportedOutput(outputPath);
+  if (await pathExists(outputPath) && !options.force) {
+    throw new Error(`Output already exists; pass --force to replace: ${outputPath}`);
+  }
+  let product;
+  if (options.spec) {
+    let existingWorkbook = null;
+    if (options.input) {
+      const inputPath = path.resolve(String(options.input));
+      if (workbookExtension(inputPath) !== ".xlsx" || outputExtension !== ".xlsx") {
+        throw new Error("make --input edits require .xlsx input and output");
+      }
+      if (pathsReferToSameLocation(inputPath, outputPath)) {
+        throw new Error("Refusing to overwrite the input spreadsheet; choose a distinct --out path");
+      }
+      const packageInfo = await inspectPackage(inputPath);
+      if (packageInfo.unsafeForRoundTrip && !options["allow-risky-roundtrip"]) {
+        const names = packageInfo.roundTripRisks.map((risk) => `${risk.feature}(${risk.count})`).join(", ");
+        throw new Error(`Input workbook contains objects unsafe for an ExcelJS round trip: ${names}`);
+      }
+      existingWorkbook = await loadXlsx(inputPath);
+    }
+    product = buildWorkbookFromSpec(
+      JSON.parse(await fs.readFile(path.resolve(String(options.spec)), "utf8")),
+      existingWorkbook,
+    );
+  } else {
+    if (options.input) throw new Error("make --input requires --spec with controlled cell edits");
+    product = await buildSimpleMakeWorkbook(options);
+  }
+  const { workbook, nativeCharts, requirements } = product;
+  workbook.calcProperties.fullCalcOnLoad = true;
+  workbook.calcProperties.forceFullCalc = true;
+  validateWorkbookForSerialization(workbook, nativeCharts);
+  const facts = collectWorkbookFacts(workbook);
+
+  if (outputExtension !== ".xlsx") {
+    if (facts.formulaCount > 0 || nativeCharts.length > 0 || workbook.worksheets.length !== 1) {
+      throw new Error("CSV/TSV output supports one worksheet without formulas or native charts; use .xlsx for workbook features");
+    }
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pilotdeck-spreadsheet-make-delimited-"));
+    try {
+      const staged = path.join(tempRoot, `candidate${outputExtension}`);
+      await exportDelimited(workbook, staged, options.sheet ? String(options.sheet) : undefined, options.encoding ? String(options.encoding) : "utf8-bom");
+      const audit = await auditDelimited(staged);
+      if (audit.status === "error") throw new Error(`Delimited output audit failed: ${JSON.stringify(audit.hardFailures)}`);
+      await replaceFileAtomically(staged, outputPath);
+      await emitReport({
+        status: "ok",
+        output: path.resolve(outputPath),
+        format: outputExtension.slice(1),
+        audit: {
+          status: audit.status,
+          rowCount: audit.rowCount,
+          maxColumnCount: audit.maxColumnCount,
+          warnings: audit.warnings,
+        },
+      });
+      return;
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true });
+    }
+  }
+
+  const qaRoot = makeQaRoot(outputPath);
+  const renderDir = path.join(qaRoot, "render");
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pilotdeck-spreadsheet-make-"));
+  try {
+    await fs.mkdir(qaRoot, { recursive: true });
+    const rawPath = path.join(tempRoot, "raw.xlsx");
+    const stagedPath = path.join(tempRoot, "candidate.xlsx");
+    await workbook.xlsx.writeFile(rawPath);
+    const canRecalculate = facts.formulaCount > 0 && Boolean(process.env.SPREADSHEET_SKILL_SOFFICE);
+    if (canRecalculate) {
+      await recalculateWorkbook(rawPath, stagedPath);
+    } else {
+      await fs.copyFile(rawPath, stagedPath);
+    }
+    const chartResult = await injectNativeCharts(stagedPath, nativeCharts, { JSZip, loadXlsx });
+    const audit = await auditXlsx(stagedPath, requirements, {
+      allowMissingCachedResults: facts.formulaCount > 0 && !canRecalculate,
+    });
+    if (audit.status === "error") {
+      throw new Error(`Workbook failed structural, formula, or requirement coverage audit. ${summarizeAuditFailures(audit)}`);
+    }
+    let preview = [];
+    let warning = null;
+    if (process.env.SPREADSHEET_SKILL_SOFFICE && process.env.SPREADSHEET_SKILL_PDF_RENDERER) {
+      try {
+        const rendered = await renderWorkbook(stagedPath, renderDir, { perSheet: true });
+        preview = rendered.pages;
+      } catch (error) {
+        warning = `Optional page rendering failed: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    } else {
+      warning = "LibreOffice/PDF rasterization is unavailable; structural validation passed and page rendering was skipped";
+    }
+    if (facts.formulaCount > 0 && !canRecalculate) {
+      warning = [
+        "LibreOffice is unavailable; formulas were preserved with full recalculation requested when opened in Excel",
+        warning,
+      ].filter(Boolean).join("; ");
+    }
+    await replaceFileAtomically(stagedPath, outputPath);
+    await emitReport({
+      status: "ok",
+      output: path.resolve(outputPath),
+      formulaCount: facts.formulaCount,
+      recalculated: canRecalculate,
+      nativeCharts: chartResult,
+      preview,
+      audit: {
+        status: audit.status,
+        coverage: {
+          status: audit.coverage.status,
+          total: audit.coverage.total,
+          passed: audit.coverage.passed,
+        },
+        formulas: {
+          count: audit.formulas.count,
+          errors: audit.formulas.errors,
+          missingCachedResults: audit.formulas.missingCachedResults,
+        },
+        warnings: audit.warnings,
+      },
+      validation: {
+        status: "ok",
+        worksheetCount: audit.worksheetCount,
+        formulaCount: audit.formulas.count,
+        nativeChartCount: chartResult.chartCount,
+      },
+      ...(warning ? { warning } : {}),
+    });
   } finally {
     await fs.rm(tempRoot, { recursive: true, force: true });
   }
@@ -2303,6 +2818,55 @@ async function createSelfTestWorkbook() {
 async function commandSelfTest(options) {
   const outputDir = options.out ? String(options.out) : path.join(os.tmpdir(), `pilotdeck-spreadsheets-self-test-${Date.now()}`);
   await fs.mkdir(outputDir, { recursive: true });
+  if (!process.env.SPREADSHEET_SKILL_SOFFICE) {
+    const output = path.join(outputDir, "offline-self-test.xlsx");
+    const product = buildWorkbookFromSpec({
+      title: "Offline spreadsheet self-test",
+      sheets: [{
+        name: "汇总",
+        headers: ["月份", "收入", "成本", "利润"],
+        rows: [
+          ["1月", 100, 70, { formula: "B2-C2" }],
+          ["2月", 120, 80, { formula: "B3-C3" }],
+        ],
+        numberFormats: [{ range: "B2:D3", format: "#,##0" }],
+        table: { name: "OfflineSummary", range: "A1:D3" },
+        charts: [{
+          type: "column",
+          title: "收入与成本",
+          categories: "A2:A3",
+          series: [
+            { name: "收入", values: "B2:B3" },
+            { name: "成本", values: "C2:C3" },
+          ],
+          anchor: { from: "F2", to: "M15" },
+        }],
+      }],
+    });
+    await product.workbook.xlsx.writeFile(output);
+    const charts = await injectNativeCharts(output, product.nativeCharts, { JSZip, loadXlsx });
+    const audit = await auditXlsx(output, product.requirements, { allowMissingCachedResults: true });
+    if (audit.status === "error") {
+      throw new Error(`Offline spreadsheet self-test failed: ${summarizeAuditFailures(audit)}`);
+    }
+    await emitReport({
+      status: "passed",
+      mode: "offline",
+      workspace: path.resolve(outputDir),
+      output: path.resolve(output),
+      checks: {
+        create: "passed",
+        audit: audit.status,
+        coverage: audit.coverage.status,
+        formulas: audit.formulas.count,
+        nativeCharts: charts.chartCount,
+        recalculate: "skipped",
+        render: "skipped",
+      },
+      warning: "LibreOffice is unavailable; recalculation, rendering, and legacy XLS conversion checks were skipped",
+    });
+    return;
+  }
   const steps = [];
 
   const rawPath = path.join(outputDir, "raw.xlsx");
@@ -2792,12 +3356,13 @@ async function commandSelfTest(options) {
 }
 
 function printHelp() {
-  process.stdout.write(`PilotDeck spreadsheets skill\n\nCommands:\n  scaffold --out builder.mjs [--requirements-out requirements.json]\n  build --builder builder.mjs --out candidate.xlsx [--input source.xlsx] [--requirements requirements.json]\n  inspect --input book.xlsx [--sheet Sheet1 --range A1:H20 --styles --out report.json]\n  convert-legacy --input source.xls --out converted.xlsx\n  recalculate --input source.xlsx --out recalculated.xlsx\n  audit --input book.xlsx [--requirements requirements.json --out audit.json]\n  render --input book.xlsx --out-dir render [--pdf render.pdf --montage montage.png --per-sheet]\n  deliver --input candidate.xlsx --out final.xlsx --qa-dir qa --requirements requirements.json\n  self-test [--out directory]\n`);
+  process.stdout.write(`PilotDeck spreadsheets skill\n\nCommands:\n  make --title TEXT [--body TEXT|--body-file FILE|--markdown FILE|--csv FILE|--tsv FILE|--spec FILE] --out book.xlsx [--force]\n  inspect --input book.xlsx [--sheet Sheet1 --range A1:H20 --styles --out report.json]\n  audit --input book.xlsx [--requirements requirements.json --out audit.json]\n  render --input book.xlsx --out-dir render [--pdf render.pdf --montage montage.png --per-sheet]\n  convert-legacy --input source.xls --out converted.xlsx\n  recalculate --input source.xlsx --out recalculated.xlsx\n  deliver --input candidate.xlsx --out final.xlsx --qa-dir qa --requirements requirements.json\n  self-test [--out directory]\n`);
 }
 
 async function main() {
   const { command, options } = parseArgs(process.argv.slice(2));
   switch (command) {
+    case "make": await commandMake(options); break;
     case "scaffold": await commandScaffold(options); break;
     case "build": await commandBuild(options); break;
     case "inspect": await commandInspect(options); break;

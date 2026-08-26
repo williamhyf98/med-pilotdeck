@@ -103,26 +103,35 @@ async function collectMarkdownFiles(directory: string): Promise<string[]> {
 }
 
 function parseMarkdownFrontmatter(raw: string): { frontmatter: Record<string, unknown>; content: string } {
-  if (!raw.startsWith("---\n")) {
+  // Tolerate CRLF (Windows checkout) as well as LF line endings. The strict
+  // `---\n` match silently returned an empty frontmatter for CRLF SKILL.md
+  // files, dropping skill name/description from <available-skills>.
+  if (!raw.startsWith("---")) {
     return { frontmatter: {}, content: raw };
   }
-  const end = raw.indexOf("\n---\n", 4);
+  const fmBodyStart = raw.startsWith("---\r\n") ? 5 : raw.startsWith("---\n") ? 4 : -1;
+  if (fmBodyStart === -1) {
+    return { frontmatter: {}, content: raw };
+  }
+  const end = raw.indexOf("\n---", fmBodyStart);
   if (end === -1) {
     return { frontmatter: {}, content: raw };
   }
   const frontmatter: Record<string, unknown> = {};
-  for (const line of raw.slice(4, end).split("\n")) {
-    const separator = line.indexOf(":");
+  for (const line of raw.slice(fmBodyStart, end).split("\n")) {
+    const trimmed = line.replace(/\r$/u, "");
+    const separator = trimmed.indexOf(":");
     if (separator === -1) {
       continue;
     }
-    const key = line.slice(0, separator).trim();
-    const value = line.slice(separator + 1).trim();
+    const key = trimmed.slice(0, separator).trim();
+    const value = trimmed.slice(separator + 1).trim();
     if (key) {
       frontmatter[key] = parseScalar(value);
     }
   }
-  return { frontmatter, content: raw.slice(end + 5) };
+  const contentStart = end + (raw[end + 4] === "\r" ? 6 : 5);
+  return { frontmatter, content: raw.slice(contentStart) };
 }
 
 function parseScalar(value: string): unknown {

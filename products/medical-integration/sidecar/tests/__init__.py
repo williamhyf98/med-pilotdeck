@@ -1,2 +1,0 @@
-"""Medical sidecar unit tests."""
-

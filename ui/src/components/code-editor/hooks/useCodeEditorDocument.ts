@@ -115,6 +115,9 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
     // Guard against persisting a buffer that was never successfully loaded.
     // Without this, a transient read failure followed by Ctrl+S would write
     // empty/stale content to disk.
+    if (isBinary) {
+      return;
+    }
     if (loading) {
       setSaveError('File is still loading');
       return;
@@ -158,7 +161,7 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
     } finally {
       setSaving(false);
     }
-  }, [content, filePath, fileProjectName, loadError, loading]);
+  }, [content, filePath, fileProjectName, isBinary, loadError, loading]);
 
   const handleDownload = useCallback(() => {
     const blob = new Blob([content], { type: 'text/plain' });

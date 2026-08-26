@@ -354,8 +354,8 @@ function MessagesPaneV2({
   const [openSubagentId, setOpenSubagentId] = useState<string | null>(null);
   const wasAssistantWorkingRef = useRef(isAssistantWorking);
 
-  // After the assistant turn finishes, live process panels unmount and completed
-  // summaries should start collapsed — drop any expand prefs from the live turn.
+  // After the assistant turn finishes, live process panels unmount. Drop live
+  // expand prefs so the completed last-turn summaries can use their own default.
   useEffect(() => {
     if (wasAssistantWorkingRef.current && !isAssistantWorking) {
       setExpandedProcessRows(new Map());
@@ -574,6 +574,12 @@ function MessagesPaneV2({
     }
     return keyedMessageItems.length > 0 ? 0 : -1;
   }, [isAssistantWorking, keyedMessageItems]);
+  const lastUserRenderIndex = useMemo(() => {
+    for (let index = keyedMessageItems.length - 1; index >= 0; index -= 1) {
+      if (keyedMessageItems[index].message.type === 'user') return index;
+    }
+    return -1;
+  }, [keyedMessageItems]);
   // The current turn's "started at" is anchored to the latest user message's
   // timestamp (set by the composer when the user submits). This is the only
   // signal that survives a page refresh and reliably resets between turns —
@@ -820,7 +826,7 @@ function MessagesPaneV2({
     const step = getLiveProcessGroupStep(group, t, group.isRunning && isLatestGroup ? liveStatusStep : null);
     const showWebFetchWaiting = shouldShowWebFetchWaitingHint(group, resolvedPlanModeActive);
     const toolSteps = getLiveProcessToolNameSteps(group);
-    const defaultExpanded = isAssistantWorking && toolSteps.length > 0;
+    const defaultExpanded = false;
     const expanded = isProcessExpanded(group.id, defaultExpanded);
     const { beforeStatusMessages, statusDetailMessages } = splitLiveProcessGroupDetailMessages(group);
     return (
@@ -939,6 +945,7 @@ function MessagesPaneV2({
             inlineThinking={inlineThinking}
             isProcessExpanded={isProcessExpanded}
             onProcessExpandedChange={handleProcessExpandedChange}
+            defaultProcessExpanded={!isAssistantWorking && lastUserRenderIndex >= 0 && item.renderIndex > lastUserRenderIndex}
             onOpenSubagentDetail={handleOpenSubagentDetail}
             subagentActivityById={subagentActivityById}
             subagentThinkingById={subagentThinkingById}
@@ -979,6 +986,7 @@ function MessagesPaneV2({
     isProcessExpanded,
     isAssistantWorking,
     keyedMessageItems,
+    lastUserRenderIndex,
     renderableMessages,
     nonSubagentLiveActivities,
     liveProcessGroupsByAnchor,

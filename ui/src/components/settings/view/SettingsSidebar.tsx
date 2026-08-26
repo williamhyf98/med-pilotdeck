@@ -21,11 +21,9 @@ const MENU_ITEMS: SettingsMenuItemI18n[] = [
       { key: "agentRoute", labelKey: "settingsPage.menu.agentRoute" },
       { key: "agentMemory", labelKey: "settingsPage.menu.agentMemory" },
       { key: "agentResident", labelKey: "settingsPage.menu.agentResident" },
-      { key: "agentSearch", labelKey: "settingsPage.menu.agentSearch" },
       { key: "agentSchedule", labelKey: "settingsPage.menu.agentSchedule" },
     ],
   },
-  { key: "integrations", labelKey: "settingsPage.menu.integrations" },
   {
     key: "extensions",
     labelKey: "settingsPage.menu.extensions",

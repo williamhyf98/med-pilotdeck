@@ -54,6 +54,10 @@ jspm_packages/
 # Plugin Python venvs (created by bootstrap / setup.sh)
 plugins/**/.venv/
 
+# Python bytecode (regenerated on import; do not ship)
+__pycache__/
+*.py[cod]
+
 # Snowpack dependency directory (https://snowpack.dev/)
 web_modules/
 
@@ -200,6 +204,7 @@ package-lock.json
 
 # Test output
 test-results/
+tests/skill-e2e/work/
 
 # Local test drafts (force-add intentional new tests with git add -f)
 test/

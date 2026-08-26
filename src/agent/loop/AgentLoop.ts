@@ -58,7 +58,6 @@ import {
   ASK_MODE_DESCRIPTION_SUFFIX,
   isAskModeAllowedTool,
 } from "../../tool/askModeConstraints.js";
-import { buildAskModeAgentToolSchema } from "../../tool/builtin/agent.js";
 import { repairToolName } from "../../model/streaming/repairToolName.js";
 import {
   createAgentStatusDetail,
@@ -85,7 +84,7 @@ const PLAN_MODE_REMINDER_MESSAGE = [
   "Plan mode is active.",
   "Read first using read-only tools, then write or refine plan markdown only under `.pilotdeck/plans/`.",
   "Do not make implementation changes while planning.",
-  "When the plan is ready for user review, call `exit_plan_mode` with the plan file path.",
+  "When the plan is ready for user review, present it in your reply and wait for the user to leave plan mode.",
 ].join("\n");
 
 function logAutoCompactFailure(
@@ -620,6 +619,7 @@ export class AgentLoop {
           turnId: input.turnId,
           projectPath: this.config.cwd,
           abortSignal: input.abortSignal,
+          isMainAgent: !this.config.isSubagent,
         })) {
           yield { type: "model_event", sessionId: input.sessionId, turnId: input.turnId, event };
           applyModelEventToAssembler(assembler, event);
@@ -2284,10 +2284,9 @@ export class AgentLoop {
         input.turnId,
       ),
       maxResultBytes: this.config.maxResultBytes,
-      // Tools that need a secondary model call (e.g. `agent` subagents in
-      // fallback mode, `web_fetch` extraction) get a thin adapter that
-      // funnels into the router's stream so subagents inherit fallback /
-      // zero-usage retry.
+      // Tools that need a secondary model call (e.g. subagent fallback)
+      // get a thin adapter that funnels into the router's stream so nested
+      // model calls inherit fallback / zero-usage retry.
       model: {
         stream: (request, signal) =>
           this.dependencies.router.stream(request, {
@@ -2765,13 +2764,9 @@ function resolveEffectiveToolChoice(
 }
 
 function filterAskModeTools(tools: PilotDeckToolDefinition[]): CanonicalToolSchema[] {
-  const agentOverride = buildAskModeAgentToolSchema();
   return tools
     .filter(isAskModeAllowedTool)
     .map((tool) => {
-      if (tool.name === "agent") {
-        return { ...toolToCanonicalSchema(tool), description: agentOverride.description, inputSchema: agentOverride.inputSchema };
-      }
       const suffix = ASK_MODE_DESCRIPTION_SUFFIX[tool.name];
       const schema = toolToCanonicalSchema(tool);
       return suffix ? { ...schema, description: schema.description + suffix } : schema;

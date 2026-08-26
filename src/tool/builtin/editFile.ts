@@ -27,7 +27,7 @@ export function createEditFileTool(): PilotDeckToolDefinition<EditFileInput> {
     name: "edit_file",
     aliases: ["Edit"],
     description:
-      "Edit a workspace text file, or an outside-workspace text file after explicit host permission, by replacing an exact string match.\n\nUsage:\n- You may create a new file directly by setting old_string to an empty string.\n- You must read an existing target file with read_file before editing it. This tool will reject edits to existing files that have not been read in this session.\n- old_string must exactly match the file content character-by-character, including indentation. Copy old_string directly from read_file output without adding or removing spaces.\n- Use this tool for targeted changes to an existing file.\n- old_string must appear in the target file unless you are creating a new file with old_string: \"\".\n- If old_string is not unique, either provide a more specific old_string or set replace_all to update every occurrence.\n- Use replace_all when renaming or replacing repeated text across the same file.\n- Paths outside the workspace require explicit user permission before execution.",
+      "Edit a declarative workspace text file, or an outside-workspace text file after explicit host permission, by replacing an exact string match.\n\nUsage:\n- Use this tool for document content and bundled-tool inputs such as Markdown, JSON, CSV, TSV, and plain text.\n- You may create a new declarative file directly by setting old_string to an empty string.\n- You must read an existing target file with read_file before editing it. This tool will reject edits to existing files that have not been read in this session.\n- old_string must exactly match the file content character-by-character, including indentation. Copy old_string directly from read_file output without adding or removing spaces.\n- Use this tool for targeted changes to an existing declarative file.\n- old_string must appear in the target file unless you are creating a new file with old_string: \"\".\n- If old_string is not unique, either provide a more specific old_string or set replace_all to update every occurrence.\n- Use replace_all when renaming or replacing repeated text across the same file.\n- Paths outside the workspace require explicit user permission before execution.",
     kind: "filesystem",
     inputSchema: {
       type: "object",
@@ -80,7 +80,7 @@ export function createEditFileTool(): PilotDeckToolDefinition<EditFileInput> {
           issues: [{
             path: "file_path",
             code: "invalid_schema",
-            message: "File is a Jupyter notebook. Use edit_notebook to edit this file.",
+            message: "File is a Jupyter notebook. Read it with read_file and rewrite it with write_file if a change is required; do not call a notebook-specific editor.",
           }],
         };
       }

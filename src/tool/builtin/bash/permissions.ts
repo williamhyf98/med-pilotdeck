@@ -12,6 +12,13 @@ const SYSTEM_DELETE_TARGET_LOOKAHEAD = String.raw`(?=${SHELL_SEGMENT}\s${SYSTEM_
 const HOME_DELETE_TARGET_LOOKAHEAD = String.raw`(?=${SHELL_SEGMENT}\s${HOME_DELETE_TARGET})`;
 
 const HARD_DENY_PATTERNS: RegExp[] = [
+  // Offline deployment: block common outbound network commands.
+  commandPattern(String.raw`curl\b`),
+  commandPattern(String.raw`wget\b`),
+  commandPattern(String.raw`(?:pip3?|python3?\s+-m\s+pip)\s+install\b`),
+  commandPattern(String.raw`(?:npm|pnpm|yarn|bun)\s+(?:install|add|update|upgrade)\b`),
+  commandPattern(String.raw`npx\b`),
+
   // Unix — catastrophic filesystem destruction.
   commandPattern(String.raw`rm\s+${RM_RECURSIVE_LOOKAHEAD}${ROOT_DELETE_TARGET_LOOKAHEAD}`),
   commandPattern(String.raw`rm\s+${RM_RECURSIVE_LOOKAHEAD}${SYSTEM_DELETE_TARGET_LOOKAHEAD}`),
@@ -99,10 +106,21 @@ const READ_ONLY_GIT_SUBCOMMANDS = new Set(["diff", "log", "show", "status"]);
 
 export function classifyBashPermission(command: string): PermissionResult {
   if (HARD_DENY_PATTERNS.some((pattern) => pattern.test(command))) {
+    const isNetworkBlock = /\b(curl|wget)\b/i.test(command)
+      || /\b(?:pip3?|python3?\s+-m\s+pip)\s+install\b/i.test(command)
+      || /\b(?:npm|pnpm|yarn|bun)\s+(?:install|add|update|upgrade)\b/i.test(command)
+      || /\bnpx\b/i.test(command);
     return {
       type: "deny",
-      reason: { type: "safety", message: "Dangerous shell command denied." },
-      message: "Dangerous shell command denied.",
+      reason: {
+        type: "safety",
+        message: isNetworkBlock
+          ? "Outbound network shell commands are disabled in offline deployment."
+          : "Dangerous shell command denied.",
+      },
+      message: isNetworkBlock
+        ? "Outbound network shell commands are disabled in offline deployment."
+        : "Dangerous shell command denied.",
     };
   }
 

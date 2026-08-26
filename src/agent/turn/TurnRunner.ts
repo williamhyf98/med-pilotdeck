@@ -49,6 +49,10 @@ export type TurnRunnerRuntimeContext = {
   transcriptPath: string;
   /** Disable Agent-generated file artifact collection for non-project chats. */
   collectFileArtifacts?: boolean;
+  /** Skip whole-workspace fingerprinting; keep tool-reported paths only. */
+  artifactAllowWorkspaceDiff?: boolean;
+  /** Restrict collected artifacts to these extensions, e.g. `[".pdf"]`. */
+  artifactAllowedExtensions?: string[];
 };
 
 export type TurnRunnerRuntimeReloadSnapshot = {
@@ -95,6 +99,8 @@ export class TurnRunner {
           cwd: this.runtimeContext.cwd,
           allowedInputPaths: options.allowedReadFiles,
           now: this.now,
+          allowWorkspaceDiff: this.runtimeContext.artifactAllowWorkspaceDiff,
+          allowedExtensions: this.runtimeContext.artifactAllowedExtensions,
         }).catch(() => undefined);
     try {
       let artifactsFinished = false;

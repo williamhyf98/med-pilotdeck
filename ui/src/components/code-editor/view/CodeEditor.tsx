@@ -320,7 +320,7 @@ export default function CodeEditor({
     onGoBack,
     canGoBack,
     dependency: content,
-    enabled: isActive,
+    enabled: isActive && !isBinary,
   });
 
   if (loading) {
@@ -369,6 +369,7 @@ export default function CodeEditor({
         title={t('binaryFile.title', 'Binary File')}
         message={t('binaryFile.message', 'The file "{{fileName}}" cannot be displayed in the text editor because it is a binary file.', { fileName: file.name })}
         headerPrefix={headerPrefix}
+        isActive={isActive}
       />
     );
   }

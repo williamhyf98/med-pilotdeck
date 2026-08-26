@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isBinaryFile, isOfficeFile, isSpreadsheetFile } from './binaryFile';
+import { isBinaryFile, isImageFile, isOfficeFile, isSpreadsheetFile } from './binaryFile';
 
 describe('WPS Office file recognition', () => {
   it.each(['proposal.wps', 'budget.et', 'briefing.dps'])(
@@ -25,4 +25,11 @@ describe('spreadsheet file recognition', () => {
       expect(isSpreadsheetFile(fileName)).toBe(false);
     },
   );
+});
+
+describe('diagram image recognition', () => {
+  it('treats SVG diagrams as binary image previews', () => {
+    expect(isImageFile('救治流程.svg')).toBe(true);
+    expect(isBinaryFile('救治流程.svg')).toBe(true);
+  });
 });

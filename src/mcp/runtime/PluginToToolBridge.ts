@@ -78,8 +78,10 @@ function buildToolDefinition(
         );
       }
       try {
-        const directFinalField = directStreamFinalField(spec.serverId, spec.toolName);
-        const directStream = directFinalField !== undefined;
+        const streamSpec = directStreamSpec(spec.serverId, spec.toolName);
+        const directStream = streamSpec !== undefined;
+        const directFinalField = streamSpec?.field;
+        const endTurn = streamSpec?.endTurn === true;
         let streamedText = "";
         const emitDelta = (chunk: string): void => {
           if (!chunk || !context.progress) return;
@@ -139,8 +141,8 @@ function buildToolDefinition(
             mcp: { serverId: spec.serverId, toolName: spec.toolName, wireName: spec.wireName },
             ...(finalText
               ? {
-                  directFinalAssistantText: finalText,
                   generationOwner: "plugin-vlm",
+                  ...(endTurn ? { directFinalAssistantText: finalText } : {}),
                 }
               : {}),
           },
@@ -173,20 +175,26 @@ function buildToolDefinition(
 }
 
 /**
- * Tools whose plugin already generates the user-facing answer with its own
- * model (G9-V-Med) and streams it via MCP progress. For these, the bridge
- * projects streamed chunks into the assistant bubble and hands the final field
- * to the agent loop so the turn finalizes without a second main-model call.
+ * Tools whose plugin already generates user-facing prose (G9-V-Med) and
+ * streams it via MCP progress into the assistant bubble.
+ *
+ * `endTurn` false: keep streaming, but let the agent loop continue (so a
+ * follow-up like Word/PDF export can run in the same user turn).
+ * `endTurn` true: also set `directFinalAssistantText` and finish the turn
+ * without a second main-model rewrite.
  */
-const DIRECT_STREAM_FINAL_FIELDS: Record<string, Record<string, string>> = {
+const DIRECT_STREAM_FIELDS: Record<string, Record<string, { field: string; endTurn: boolean }>> = {
   "med-tools": {
-    med_trauma_stage_plan: "care_plan",
-    med_parse_medical: "report",
+    med_trauma_stage_plan: { field: "care_plan", endTurn: false },
+    med_parse_medical: { field: "report", endTurn: true },
   },
 };
 
-function directStreamFinalField(serverId: string, toolName: string): string | undefined {
-  return DIRECT_STREAM_FINAL_FIELDS[serverId]?.[toolName];
+function directStreamSpec(
+  serverId: string,
+  toolName: string,
+): { field: string; endTurn: boolean } | undefined {
+  return DIRECT_STREAM_FIELDS[serverId]?.[toolName];
 }
 
 function extractJsonTextPayload(raw: unknown): Record<string, unknown> | undefined {

@@ -21,9 +21,9 @@ _NEUTRAL_SHARED: dict[str, Any] = {
 
 _NEUTRAL_LOCALE_VARIANTS: dict[str, dict[str, Any]] = {
     "zh": {
-        "body_font": "Times New Roman",
-        "east_asia_font": "SimSun",
-        "cjk_family": "serif",
+        "body_font": "Noto Sans SC",
+        "east_asia_font": "Noto Sans SC",
+        "cjk_family": "sans",
         "body_size": 10.5,
         "title_size": 24,
         "heading_sizes": (14, 10.5, 10.5),
@@ -32,9 +32,9 @@ _NEUTRAL_LOCALE_VARIANTS: dict[str, dict[str, Any]] = {
         "normal_line_spacing_points": 18,
     },
     "default": {
-        "body_font": "Times New Roman",
-        "east_asia_font": "Noto Serif CJK SC",
-        "cjk_family": "serif",
+        "body_font": "Noto Sans SC",
+        "east_asia_font": "Noto Sans SC",
+        "cjk_family": "sans",
         "body_size": 11,
         "title_size": 22,
         "heading_sizes": (16, 13, 11),

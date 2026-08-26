@@ -483,7 +483,7 @@ For full Docker configuration, see [README_DOCKER.md](README_DOCKER.md).
 PilotDeck has an open plugin architecture with a strict boundary between the open-source core and plugin customization. Extending the system is a `plugin.json` away:
 
 - **MCP Servers** — first-class integration with any Model Context Protocol server.
-- **Tools & Skills** — register custom tools, or pull community skills via [ClawHub](https://www.npmjs.com/package/clawhub).
+- **Tools & Skills** — register custom tools and ship bundled / plugin skills with the deployment package.
 - **Lifecycle Hooks** — intercept `PreToolUse`, `UserPromptSubmit`, and other critical lifecycle events.
 - **Custom Memory** — plug in your own memory store provider.
 

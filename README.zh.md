@@ -461,7 +461,7 @@ docker compose up -d --build
 PilotDeck 采用开放的插件架构，插件代码与开源核心严格隔离。开发者可以通过 `plugin.json` 轻松扩展系统能力：
 
 - **MCP Servers**: 原生支持集成 Model Context Protocol 服务器。
-- **Tools & Skills**: 注册自定义工具，或通过 [ClawHub](https://www.npmjs.com/package/clawhub) 引入社区 Skill。
+- **Tools & Skills**: 注册自定义工具，并通过交付包附带内置 / 插件 Skill。
 - **Lifecycle Hooks**: 拦截 `PreToolUse`、`UserPromptSubmit` 等关键生命周期。
 - **Custom Memory**: 允许接入自定义的记忆存储 Provider。
 

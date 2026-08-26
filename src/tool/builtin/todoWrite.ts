@@ -84,7 +84,7 @@ export function createTodoWriteTool(): PilotDeckToolDefinition<TodoWriteInput, T
         "Prefer a final verification checkpoint that checks outputs, format, counts, extra artifacts, and key constraints when applicable.",
         "This tool only updates a checklist; it does not write files, submit, or replace a final plan.",
         "In plan mode, do not use todo_write to write the plan itself, and do not treat a todo list as the final plan.",
-        "You may use todo_write in plan mode only to organize planning work such as exploration, analysis, writing a markdown plan under `.pilotdeck/plans/`, and submitting that plan with `exit_plan_mode`.",
+        "You may use todo_write in plan mode only to organize planning work such as exploration, analysis, and writing a markdown plan under `.pilotdeck/plans/`. When the plan is ready, present it to the user and wait for them to leave plan mode.",
       ].join(" "),
     kind: "session",
     inputSchema: {

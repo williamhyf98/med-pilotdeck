@@ -126,3 +126,108 @@ test("history replay hides Agent file artifacts in general conversations", async
         await rm(pilotHome, { recursive: true, force: true });
     }
 });
+test("history replay shows document and SVG artifacts in general conversations", async () => {
+    const pilotHome = await mkdtemp(join(tmpdir(), "pilotdeck-general-pdf-artifact-history-"));
+    try {
+        const sessionKey = "web:s_general_pdf_file_artifacts";
+        const storage = createAgentProjectSessionStorage({
+            projectRoot: pilotHome,
+            pilotHome,
+            sessionId: sessionKey,
+            now: () => new Date("2026-08-21T10:00:00.000Z"),
+        });
+        await storage.transcript.recordDurableMessage(sessionKey, "turn-1", {
+            role: "user",
+            content: [{
+                type: "tool_result",
+                toolCallId: "bash-1",
+                content: [{ type: "text", text: "wrote pdf" }],
+                raw: { toolName: "bash" },
+            }],
+        });
+        await storage.transcript.recordDurableMessage(sessionKey, "turn-1", {
+            role: "assistant",
+            content: [{ type: "text", text: "PDF ready." }],
+        });
+        await storage.transcript.recordFileArtifacts(sessionKey, "turn-1", [{
+            id: "artifact-pdf",
+            name: "战创伤救治方案.pdf",
+            path: "exports/战创伤救治方案.pdf",
+            operation: "created",
+            source: "tool",
+            status: "complete",
+            size: 2048,
+            sha256: "c".repeat(64),
+            mimeType: "application/pdf",
+            createdAt: "2026-08-21T10:00:00.000Z",
+        }, {
+            id: "artifact-docx",
+            name: "战创伤救治方案.docx",
+            path: "exports/战创伤救治方案.docx",
+            operation: "created",
+            source: "tool",
+            status: "complete",
+            size: 4096,
+            sha256: "e".repeat(64),
+            mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            createdAt: "2026-08-21T10:00:00.000Z",
+        }, {
+            id: "artifact-pptx",
+            name: "战创伤救治教学.pptx",
+            path: "exports/战创伤救治教学.pptx",
+            operation: "created",
+            source: "tool",
+            status: "complete",
+            size: 8192,
+            sha256: "f".repeat(64),
+            mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            createdAt: "2026-08-21T10:00:00.000Z",
+        }, {
+            id: "artifact-xlsx",
+            name: "战创伤救治统计.xlsx",
+            path: "exports/战创伤救治统计.xlsx",
+            operation: "created",
+            source: "tool",
+            status: "complete",
+            size: 16384,
+            sha256: "a".repeat(64),
+            mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            createdAt: "2026-08-21T10:00:00.000Z",
+        }, {
+            id: "artifact-svg",
+            name: "战创伤救治流程.svg",
+            path: "exports/战创伤救治流程.svg",
+            operation: "created",
+            source: "tool",
+            status: "complete",
+            size: 4096,
+            sha256: "b".repeat(64),
+            mimeType: "image/svg+xml",
+            createdAt: "2026-08-21T10:00:00.000Z",
+        }, {
+            id: "artifact-json",
+            name: "trauma_care_plan_spec.json",
+            path: "exports/trauma_care_plan_spec.json",
+            operation: "created",
+            source: "tool",
+            status: "complete",
+            size: 12,
+            sha256: "d".repeat(64),
+            mimeType: "application/json",
+            createdAt: "2026-08-21T10:00:00.000Z",
+        }]);
+        const replay = await readWebSessionMessages({ sessionKey, projectKey: pilotHome }, { projectRoot: pilotHome, pilotHome });
+        const message = replay.messages.find((item) => item.kind === "file_artifacts");
+        assert.ok(message);
+        assert.deepEqual(message.artifacts?.map((artifact) => artifact.path), [
+            "exports/战创伤救治方案.pdf",
+            "exports/战创伤救治方案.docx",
+            "exports/战创伤救治教学.pptx",
+            "exports/战创伤救治统计.xlsx",
+            "exports/战创伤救治流程.svg",
+        ]);
+    }
+    finally {
+        await rm(pilotHome, { recursive: true, force: true });
+    }
+});

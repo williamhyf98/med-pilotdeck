@@ -280,14 +280,7 @@ pnpm install --frozen-lockfile
 
 当前应用使用 `better-sqlite3` 和 Node.js 22 内置的 `node:sqlite`，不需要旧的 `sqlite` 或 `sqlite3` npm 包。
 
-ClawHub CLI 是可选项，但如果需要使用技能市场功能，建议安装：
-
-```bash
-npm install -g clawhub
-clawhub --version
-```
-
-在 Windows 上，如果 PowerShell 拦截 `npm.ps1`，请使用 `npm.cmd install -g clawhub`。如果使用 Portable Node，`clawhub` 会安装到当前 portable Node 前缀下；运行 PilotDeck 时需要继续保留该 Node 目录在 `PATH` 中。
+离线 / 现场部署不会安装技能市场 CLI。随仓库交付的 Skill 已打包进产品；额外 Skill 随交付包部署，安装阶段不再从公网下载。
 
 ## 首次 Onboarding
 

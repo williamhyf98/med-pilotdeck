@@ -293,7 +293,7 @@ test("single-tool-pass profiles close tools after the first successful retrieval
 });
 
 test("direct-final tool output completes without a second agent model call", async () => {
-  const toolName = "mcp__med-tools__med_trauma_stage_plan";
+  const toolName = "mcp__med-tools__med_parse_medical";
   const tools = new ToolRegistry();
   tools.register(fakeTool(toolName));
   let modelCalls = 0;
@@ -349,7 +349,7 @@ test("direct-final tool output completes without a second agent model call", asy
             toolCallId: call.id,
             toolName: call.name,
             content: [{ type: "text", text: directText }],
-            data: { ok: true, care_plan: directText },
+            data: { ok: true, report: directText },
             metadata: {
               directFinalAssistantText: directText,
               generationOwner: "plugin-vlm",

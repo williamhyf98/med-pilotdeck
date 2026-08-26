@@ -2,7 +2,7 @@ import path from "node:path";
 import type { PermissionContext, PermissionRule } from "../protocol/types.js";
 
 const FILE_WRITE_TOOLS = new Set(["write_file", "edit_file"]);
-const FILE_PATH_PATTERN_TOOLS = new Set(["read_file", "send_attachment", "write_file", "edit_file"]);
+const FILE_PATH_PATTERN_TOOLS = new Set(["read_file", "write_file", "edit_file"]);
 
 export function matchPermissionRule(
   rule: PermissionRule,

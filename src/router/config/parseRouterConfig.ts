@@ -1,7 +1,6 @@
 import type { ModelConfig } from "../../model/index.js";
 import {
   DEFAULT_ALLOWED_TOOLS,
-  DEFAULT_BLOCKED_TOOLS,
   DEFAULT_JUDGE_TIMEOUT_MS,
   DEFAULT_TIER_DESCRIPTIONS,
   DEFAULT_TIER_NAME,

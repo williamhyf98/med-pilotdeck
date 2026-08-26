@@ -15,14 +15,28 @@ if [[ -z "${PYTHON_BIN:-}" ]]; then
     PYTHON_BIN="python3"
   fi
 fi
+if ! "${PYTHON_BIN}" -c "import sys" >/dev/null 2>&1; then
+  echo "error: cannot run ${PYTHON_BIN}. On Windows, pass a real interpreter:" >&2
+  echo "  PYTHON_BIN='D:/path/to/python.exe' bash setup.sh" >&2
+  exit 1
+fi
 if [[ ! -d .venv ]]; then
   "${PYTHON_BIN}" -m venv .venv
 fi
+# Venv layout differs per platform: POSIX uses bin/, Windows uses Scripts/.
+if [[ -x ".venv/bin/python" ]]; then
+  VENV_PY=".venv/bin/python"
+elif [[ -x ".venv/Scripts/python.exe" ]]; then
+  VENV_PY=".venv/Scripts/python.exe"
+else
+  echo "error: venv python not found under .venv" >&2
+  exit 1
+fi
 # Prefer a China mirror when available; fall back to default PyPI.
 INDEX_URL="${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
-.venv/bin/pip install -U pip
-.venv/bin/pip install -r requirements.txt -i "${INDEX_URL}"
+"${VENV_PY}" -m pip install -U pip
+"${VENV_PY}" -m pip install -r requirements.txt -i "${INDEX_URL}"
 
 chmod +x "${ROOT}/run.sh"
-echo "med-tools setup complete: ${ROOT}/.venv"
-.venv/bin/python -c "import mcp, pydicom, PIL, numpy, httpx; print('imports ok')"
+echo "med-tools setup complete: ${ROOT}/.venv (${VENV_PY})"
+"${VENV_PY}" -c "import mcp, pydicom, PIL, numpy, httpx; print('imports ok')"

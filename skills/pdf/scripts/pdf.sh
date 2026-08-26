@@ -58,7 +58,7 @@ find_pdftoppm() {
 
 runtime_hash() {
   local python_path=""
-  python_path="$(find_python)" || return 1
+  python_path="$(venv_python || find_python)" || return 1
   "$python_path" - "$RUNTIME_SOURCE/requirements.txt" <<'PY'
 import hashlib
 import pathlib
@@ -82,18 +82,12 @@ runtime_ready() {
   "$python_path" -c 'import pdfplumber, pypdf, reportlab; from PIL import Image' >/dev/null 2>&1
 }
 
-poppler_hint() {
-  case "$(uname -s 2>/dev/null || true)" in
-    Darwin)
-      printf 'Install Poppler with Homebrew: brew install poppler'
-      ;;
-    Linux)
-      printf 'Install Poppler with your package manager, for example: sudo apt-get install poppler-utils'
-      ;;
-    *)
-      printf 'Install Poppler and ensure pdfinfo and pdftoppm are on PATH'
-      ;;
-  esac
+runtime_missing_json() {
+  printf '{"status":"error","error":"交付包不完整：PDF 本地运行时未就绪。请使用完整交付包，不要在现场安装依赖或自行编写 Python。"}\n'
+}
+
+poppler_missing_json() {
+  printf '{"status":"error","error":"交付包不完整：缺少 Poppler（pdfinfo / pdftoppm）。请使用完整交付包。"}\n'
 }
 
 cmd_check() {
@@ -122,7 +116,8 @@ cmd_check() {
   [[ "$status" == "ok" ]]
 }
 
-cmd_fix() {
+# Packager / image-build only. Never exposed in SKILL.md or agent error hints.
+cmd_bootstrap_runtime() {
   local python_path="" runtime_python_path="" expected=""
   python_path="$(find_python)" || {
     printf '{"status":"error","error":"Python 3 was not found"}\n' >&2
@@ -142,7 +137,7 @@ cmd_fix() {
   printf '%s\n' "$expected" > "$STAMP_FILE"
 
   if ! find_pdfinfo >/dev/null || ! find_pdftoppm >/dev/null; then
-    printf '{"status":"error","error":"Poppler is missing","hint":"%s"}\n' "$(poppler_hint)" >&2
+    poppler_missing_json >&2
     exit 2
   fi
   cmd_check
@@ -153,22 +148,26 @@ case "${1:-}" in
     shift
     cmd_check "$@"
     ;;
-  fix)
+  bootstrap-runtime)
     shift
-    cmd_fix "$@"
+    cmd_bootstrap_runtime "$@"
+    ;;
+  fix)
+    printf '{"status":"error","error":"pdf.sh 不支持现场安装。请使用完整交付包，不要 pip，不要自行编写 Python。"}\n' >&2
+    exit 2
     ;;
   ""|-h|--help|help)
-    printf 'Usage: pdf.sh <check|fix|scaffold|build|inspect|audit|render|merge|split|rotate|forms-inspect|forms-fill|self-test> [options]\n'
+    printf 'Usage: pdf.sh <check|make|inspect|audit|render|merge|split|rotate|forms-inspect|forms-fill|self-test> [options]\n'
     ;;
   *)
     if ! runtime_ready; then
-      printf '{"status":"error","error":"PDF Python dependencies are missing or stale","hint":"Run: bash %s fix"}\n' "$0" >&2
+      runtime_missing_json >&2
       exit 2
     fi
     pdfinfo_path="$(find_pdfinfo || true)"
     pdftoppm_path="$(find_pdftoppm || true)"
     if [[ -z "$pdfinfo_path" || -z "$pdftoppm_path" ]]; then
-      printf '{"status":"error","error":"Poppler is missing","hint":"%s"}\n' "$(poppler_hint)" >&2
+      poppler_missing_json >&2
       exit 2
     fi
     export PDF_SKILL_ROOT="$SKILL_DIR"

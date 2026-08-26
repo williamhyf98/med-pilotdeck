@@ -379,6 +379,28 @@ function applyColorTint(rgb, tint) {
   return `#${adjusted.map((value) => value.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
 }
 
+const PREVIEW_FALLBACK_TEXT_COLOR = '#1F2937';
+
+function rgbLuminance(rgb) {
+  if (typeof rgb !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(rgb)) return null;
+  const channels = rgb.slice(1).match(/.{2}/g)?.map((value) => Number.parseInt(value, 16) / 255);
+  if (!channels || channels.length !== 3) return null;
+  const linear = channels.map((channel) => (
+    channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+  ));
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+}
+
+/** Keep light text on a dark fill; otherwise fall back so Univer does not paint white-on-white. */
+function previewForegroundColor(foreground, background) {
+  const fgLum = rgbLuminance(foreground);
+  if (fgLum === null) return foreground;
+  const bgLum = rgbLuminance(background);
+  const backgroundIsLight = bgLum === null || bgLum > 0.72;
+  if (fgLum > 0.72 && backgroundIsLight) return PREVIEW_FALLBACK_TEXT_COLOR;
+  return foreground;
+}
+
 function resolveExcelColor(color, themeColors) {
   const direct = excelColorToRgb(color);
   if (direct) return applyColorTint(direct, Number(color?.tint));
@@ -448,6 +470,7 @@ function mapCellStyle(cell, themeColors) {
   const background = fill.type === 'pattern' && fill.pattern !== 'none'
     ? resolveExcelColor(fill.fgColor, themeColors)
     : null;
+  const previewForeground = previewForegroundColor(foreground, background);
 
   if (font.name) style.ff = font.name;
   if (Number.isFinite(font.size)) style.fs = font.size;
@@ -455,7 +478,7 @@ function mapCellStyle(cell, themeColors) {
   if (font.italic) style.it = 1;
   if (font.underline) style.ul = { s: 1 };
   if (font.strike) style.st = { s: 1 };
-  if (foreground) style.cl = { rgb: foreground };
+  if (previewForeground) style.cl = { rgb: previewForeground };
   if (background) style.bg = { rgb: background };
   if (alignment.horizontal) style.ht = mapHorizontalAlignment(alignment.horizontal);
   if (alignment.vertical) style.vt = mapVerticalAlignment(alignment.vertical);
@@ -605,19 +628,16 @@ function worksheetToUniver(worksheet, sheetIndex, date1904, themeColors) {
     if (Object.keys(data).length > 0) columnData[columnNumber - 1] = data;
   }
 
-  const frozenView = worksheet.views?.find((view) => view.state === 'frozen');
-  const xSplit = Number(frozenView?.xSplit) || 0;
-  const ySplit = Number(frozenView?.ySplit) || 0;
   return {
     id: `sheet-${sheetIndex}`,
     name: worksheet.name,
     tabColor: resolveExcelColor(worksheet.properties?.tabColor, themeColors) || '',
     hidden: 0,
     freeze: {
-      xSplit,
-      ySplit,
-      startRow: ySplit,
-      startColumn: xSplit,
+      xSplit: 0,
+      ySplit: 0,
+      startRow: 0,
+      startColumn: 0,
     },
     rowCount,
     columnCount,
@@ -632,7 +652,7 @@ function worksheetToUniver(worksheet, sheetIndex, date1904, themeColors) {
     columnData,
     rowHeader: { width: 46 },
     columnHeader: { height: 24 },
-    showGridlines: worksheet.views?.[0]?.showGridLines === false ? 0 : 1,
+    showGridlines: 1,
     rightToLeft: worksheet.views?.[0]?.rightToLeft ? 1 : 0,
   };
 }

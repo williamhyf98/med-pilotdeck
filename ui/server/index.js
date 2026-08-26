@@ -108,7 +108,6 @@ import projectsRoutes, { WORKSPACES_ROOT, validateWorkspacePath } from './routes
 import userRoutes from './routes/user.js';
 import pluginsRoutes from './routes/plugins.js';
 import messagesRoutes from './routes/messages.js';
-import medicalRoutes from './routes/medical.js';
 import { closeMemoryServices, startMemoryScheduler, stopMemoryScheduler } from './services/memoryService.js';
 import { createNormalizedMessage } from './pilotdeck-message.js';
 import { startEnabledPluginServers, stopAllPlugins, getPluginPort } from './utils/plugin-process-manager.js';
@@ -458,20 +457,9 @@ app.locals.wss = wss;
 
 app.use(cors({ exposedHeaders: ['X-Refreshed-Token'] }));
 
-function isMedicalApiRequest(req) {
-    const requestPath = String(req.originalUrl || req.url || '').split('?', 1)[0];
-    return requestPath === '/api/medical' || requestPath.startsWith('/api/medical/');
-}
-
 app.use(express.json({
     limit: '50mb',
     type: (req) => {
-        // Medical routes apply their own substantially smaller parser limit.
-        // Skipping the broad UI parser here prevents a medical request from
-        // being accepted at 50 MB before its route-level policy runs.
-        if (isMedicalApiRequest(req)) {
-            return false;
-        }
         // Skip multipart/form-data requests (for file uploads like images)
         const contentType = req.headers['content-type'] || '';
         if (contentType.includes('multipart/form-data')) {
@@ -484,7 +472,6 @@ app.use(express.urlencoded({
     limit: '50mb',
     extended: true,
     type: (req) => {
-        if (isMedicalApiRequest(req)) return false;
         const contentType = req.headers['content-type'] || '';
         return contentType.includes('application/x-www-form-urlencoded');
     },
@@ -504,10 +491,6 @@ app.use('/api', validateApiKey);
 
 // Authentication routes (public)
 app.use('/api/auth', authRoutes);
-
-// Medical UI API (protected). Chat and trauma generation are both adapted
-// through pilotdeck-bridge; the router owns stricter request-size limits.
-app.use('/api/medical', authenticateToken, medicalRoutes);
 
 // Projects API Routes (protected)
 app.use('/api/projects', authenticateToken, projectsRoutes);
@@ -1795,6 +1778,13 @@ app.put('/api/projects/:projectName/file', authenticateToken, async (req, res) =
         const normalizedRoot = path.resolve(projectRoot) + path.sep;
         if (!resolved.startsWith(normalizedRoot)) {
             return res.status(403).json({ error: 'Path must be under project root' });
+        }
+
+        const saveExtension = getFileExtension(resolved);
+        if (OFFICE_PDF_PREVIEW_EXTENSIONS.has(saveExtension) || saveExtension === 'pdf') {
+            return res.status(415).json({
+                error: 'Refusing to overwrite a binary Office document via text save',
+            });
         }
 
         // Write the new content
@@ -3107,7 +3097,7 @@ async function moveUploadedAttachmentWithRelativePath(file, attachmentDir, relat
 // multimodal input/previews and are also staged under the project so the agent
 // can operate on the same bytes by path; other files are staged by path only.
 // Optional form field `relativePaths` (JSON string array) preserves folder trees
-// for medical multi-source folder uploads.
+// for med-tools multi-source folder uploads.
 app.post('/api/projects/:projectName/upload-attachments', authenticateToken, async (req, res) => {
     let multerUpload;
     try {

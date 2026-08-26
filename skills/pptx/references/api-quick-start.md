@@ -1,6 +1,6 @@
-# API quick start
+# API 快速入门
 
-All command examples assume the turn-scoped paths below. Keep every builder, candidate, conversion, render, and report under `WORKSPACE`; only `FINAL_PPTX` is user-facing.
+所有命令示例都假定使用下列按轮次限定的路径。将每个构建器、候选文件、转换、渲染和报告都放在 `WORKSPACE` 下；只有 `FINAL_PPTX` 面向用户。
 
 ```bash
 WORKSPACE="${PILOTDECK_WORK_DIR:-$PWD/.pilotdeck/work/manual/<task-slug>}/pptx"
@@ -8,9 +8,9 @@ FINAL_PPTX="$PWD/<requested-output>.pptx"
 mkdir -p "$WORKSPACE/tmp" "$WORKSPACE/qa"
 ```
 
-## Builder contract
+## 构建器约定
 
-Create a plain ES module that exports one async function and returns a PptxGenJS presentation:
+创建普通 ES 模块，导出一个异步函数并返回 PptxGenJS 演示文稿：
 
 ```js
 export default async function build({ createDeck, layouts, resolveDesignTokens, pptxgenjs, imageSizingCrop }) {
@@ -41,28 +41,28 @@ export default async function build({ createDeck, layouts, resolveDesignTokens, 
 }
 ```
 
-Use `build` while iterating. Use `deliver` for the final build so the verified hash, audit, and render remain bound to one PPTX:
+迭代时使用 `build`。最终构建使用 `deliver`，使已验证的哈希、审计和渲染绑定到同一个 PPTX：
 
 ```bash
 bash "$PPTX" build --builder "$WORKSPACE/tmp/deck.mjs" --out "$WORKSPACE/tmp/candidate.pptx"
 bash "$PPTX" deliver --builder "$WORKSPACE/tmp/deck.mjs" --out "$FINAL_PPTX" --qa-dir "$WORKSPACE/qa" --target-platform cross-platform --require-render
 ```
 
-## Toolkit members
+## 工具包成员
 
-- `createDeck(options)`: create a themed wide-screen presentation.
-- `resolveDesignTokens(options)`: select locale, platform, and density-aware typography tokens.
-- `layouts`: the 12 PilotDeck core layout functions.
-- `tokens`: canvas, palette, typography, and spacing values.
-- `pptxgenjs`: the PptxGenJS constructor and enum holder; access `pptx.ShapeType` and `pptx.ChartType` from the created instance when possible.
-- `imageSizingCrop(path, x, y, w, h)`: prepare a centered crop.
-- `imageSizingContain(path, x, y, w, h)`: fit an image without distortion.
+- `createDeck(options)`：创建带主题的宽屏演示文稿。
+- `resolveDesignTokens(options)`：选择与区域、平台和密度相关的排版令牌。
+- `layouts`：12 个 PilotDeck 核心版式函数。
+- `tokens`：画布、调色板、排版和间距值。
+- `pptxgenjs`：PptxGenJS 构造函数和枚举持有者；尽可能从已创建的实例访问 `pptx.ShapeType` 和 `pptx.ChartType`。
+- `imageSizingCrop(path, x, y, w, h)`：准备居中裁切。
+- `imageSizingContain(path, x, y, w, h)`：在不变形的情况下适配图像。
 
-## Object naming
+## 对象命名
 
-Set PptxGenJS `objectName` for meaningful elements. Use stable names such as `Slide Title`, `Primary Chart`, `Hero Image`, and `Page Number`. Template frame maps address objects by the names exposed in `inspect` output.
+为有意义的元素设置 PptxGenJS `objectName`。使用稳定名称，例如 `Slide Title`、`Primary Chart`、`Hero Image` 和 `Page Number`。模板框架映射按 `inspect` 输出中暴露的名称寻址对象。
 
-## Useful commands
+## 常用命令
 
 ```bash
 bash "$PPTX" convert --input "$SOURCE_PPT" --out "$WORKSPACE/tmp/converted.pptx" --qa-dir "$WORKSPACE/qa/legacy"
@@ -75,4 +75,4 @@ bash "$PPTX" audit --input "$FINAL_PPTX" --out "$WORKSPACE/qa/audit.json" --targ
 bash "$PPTX" render --input "$FINAL_PPTX" --out-dir "$WORKSPACE/qa/slides" --montage "$WORKSPACE/qa/montage.png"
 ```
 
-`deliver --builder` writes an intermediate candidate under the QA directory. The requested output is created only when delivery status is `passed`. Do not bypass the exit status or deliver `candidate.pptx`.
+`deliver --builder` 会在质量目录下写入中间候选文件。仅当交付状态为 `passed` 时才创建所要求的输出。不要绕过退出状态，也不要交付 `candidate.pptx`。

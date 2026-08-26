@@ -93,6 +93,8 @@ export type CreateLocalGatewayOptions = {
   pilotHome?: string;
   /** Read-only skills shipped with this PilotDeck build. Auto-discovered when omitted. */
   builtinSkillsRoot?: string;
+  /** Read-only medical skills from plugins/med-tools. Auto-discovered when omitted. */
+  medicalSkillsRoot?: string;
   env?: Record<string, string | undefined>;
   permissionMode?: AgentRuntimeConfig["permissionMode"];
   /** Tools merged into every per-project ToolRegistry. */
@@ -162,8 +164,16 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
   const baseEnv = options.env ?? process.env;
   const projectRoot = resolve(options.projectRoot ?? process.cwd());
   const pilotHome = options.pilotHome ?? resolvePilotHome(baseEnv);
+  // Plugin manifests reference `${env:PILOT_HOME}` (e.g. med-tools MCP
+  // server command); export the resolved home into the process env so
+  // placeholder expansion sees it even when the gateway was started
+  // without PILOT_HOME set (plain `npm run dev`). On Windows use forward
+  // slashes: MSYS bash strips backslashes from arguments, turning
+  // `C:\Users\...\run.sh` into `C:Users.../run.sh`.
+  process.env.PILOT_HOME = process.platform === "win32" ? pilotHome.replace(/\\/gu, "/") : pilotHome;
   const env = options.pilotHome ? { ...baseEnv, PILOT_HOME: pilotHome } : baseEnv;
   const builtinSkillsRoot = resolveBuiltinSkillsRoot(options.builtinSkillsRoot, env);
+  const medicalSkillsRoot = resolveMedicalSkillsRoot(options.medicalSkillsRoot, env, builtinSkillsRoot);
   const legacySkillMigration = migrateLegacyBundledSkillCopies({ pilotHome, builtinSkillsRoot });
   if (legacySkillMigration.migrated.length > 0) {
     // eslint-disable-next-line no-console
@@ -280,7 +290,11 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
         }
       : undefined,
   });
-  const skillManager = new SkillManager({ pilotHome, builtinSkillsRoot });
+  const skillManager = new SkillManager({
+    pilotHome,
+    builtinSkillsRoot,
+    ...(medicalSkillsRoot ? { medicalSkillsRoot } : {}),
+  });
   const gateway = new InProcessGateway(router, {
     now,
     serverInfo: { mode: "in_process", projectKey: projectRoot },
@@ -428,6 +442,22 @@ function resolveBuiltinSkillsRoot(
     joinPath(process.cwd(), "skills"),
   ];
   return resolve(candidates.find((candidate) => existsSync(candidate)) ?? candidates[2]);
+}
+
+function resolveMedicalSkillsRoot(
+  configuredRoot: string | undefined,
+  env: Record<string, string | undefined>,
+  builtinSkillsRoot: string,
+): string | undefined {
+  const explicit = configuredRoot ?? env.PILOTDECK_MEDICAL_SKILLS_DIR;
+  if (explicit) return resolve(explicit);
+
+  const candidates = [
+    joinPath(dirname(builtinSkillsRoot), "plugins", "med-tools", "skills"),
+    joinPath(process.cwd(), "plugins", "med-tools", "skills"),
+  ];
+  const found = candidates.find((candidate) => existsSync(candidate));
+  return found ? resolve(found) : undefined;
 }
 
 type ProjectRuntimeRegistryOptions = {
@@ -710,28 +740,16 @@ class ProjectRuntimeRegistry {
       now: this.options.now,
       onCompletion: (event) => this.emitBackgroundTaskCompletion(event),
     });
-    const webSearchConfig = snapshot.config.tools?.webSearch;
     const tools = createBuiltinRegistry({
-      backgroundTasks: { runtime: backgroundTasks },
       readSkill: {
-        loader: (name) => pluginRuntime.loadSkillPrompt(name),
+        loader: (name) => {
+          const info = pluginRuntime.getAllSkills().find((entry) => entry.name === name);
+          // Runtime visibility: which skill the model actually invoked.
+          console.log(`[skill] read_skill invoked: ${name}${info ? ` (${info.path})` : ""}`);
+          return pluginRuntime.loadSkillPrompt(name);
+        },
         lister: () => pluginRuntime.getAllSkills(),
       },
-      // Pass the YAML-configured web-search provider through to the built-in
-      // `web_search` tool. When absent, the tool may infer GLM/Tavily from
-      // provider-specific environment variables.
-      ...(webSearchConfig?.enabled === false
-        ? { webSearch: false as const }
-        : webSearchConfig
-          ? {
-              webSearch: {
-                ...(webSearchConfig.provider ? { provider: webSearchConfig.provider } : {}),
-                ...(webSearchConfig.apiKey ? { apiKey: webSearchConfig.apiKey } : {}),
-                ...(webSearchConfig.endpoint ? { endpoint: webSearchConfig.endpoint } : {}),
-                ...(webSearchConfig.customProvider ? { customProvider: webSearchConfig.customProvider } : {}),
-              },
-            }
-          : {}),
     });
     for (const tool of this._extraTools) {
       tools.register(tool);
@@ -868,7 +886,8 @@ class ProjectRuntimeRegistry {
       projectStorage: prepared.runtime.projectStorage,
       extendDependencies: prepared.extendDependencies,
       sessionTitleGenerator: prepared.sessionTitleGenerator,
-      collectFileArtifacts: this.shouldCollectFileArtifacts(prepared.runtime),
+      collectFileArtifacts: true,
+      ...this.fileArtifactPolicy(prepared.runtime),
     });
     return resumed.session;
   }
@@ -897,13 +916,24 @@ class ProjectRuntimeRegistry {
       initialState: previous.state,
       seedState: previous.fileState,
       sessionTitleGenerator: prepared.sessionTitleGenerator,
-      collectFileArtifacts: this.shouldCollectFileArtifacts(prepared.runtime),
+      collectFileArtifacts: true,
+      ...this.fileArtifactPolicy(prepared.runtime),
     });
     return session;
   }
 
-  private shouldCollectFileArtifacts(runtime: ProjectRuntime): boolean {
-    return resolve(runtime.projectRoot) !== resolve(this.options.pilotHome);
+  private fileArtifactPolicy(runtime: ProjectRuntime): {
+    artifactAllowWorkspaceDiff: boolean;
+    artifactAllowedExtensions?: string[];
+  } {
+    const isGeneral = resolve(runtime.projectRoot) === resolve(this.options.pilotHome);
+    if (!isGeneral) {
+      return { artifactAllowWorkspaceDiff: true };
+    }
+    return {
+      artifactAllowWorkspaceDiff: false,
+      artifactAllowedExtensions: [".pdf", ".docx", ".pptx", ".xlsx", ".svg"],
+    };
   }
 
   private async prepareSessionRuntime(context: GatewaySessionContext) {

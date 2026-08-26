@@ -33,6 +33,10 @@ Wire names in chat: `mcp__med-tools__<tool>`.
   │                  ├─ (可选) med_parse_medical 并入可见伤情
   │                  └─ med_trauma_stage_plan → care_plan 原样展示
   │
+  ├─【按模版生成病例报告】── Skill med-case-report
+  │                  ├─ (可选) med_parse_medical 并入附件解读
+  │                  └─ 主模型按固定 9 段模版 + 诊断四步方案撰写
+  │
   └─【纯问答】────── 主模型直接答
 ```
 
@@ -41,6 +45,7 @@ Skills:
 - `med-medical` — 附件解读；`report` 原样展示
 - `med-trauma-assist` — RAG 知识点问答；非正式五段方案
 - `med-trauma-stage-plan` — 六阶段正式方案；`care_plan` 原样展示
+- `med-case-report` — 固定 9 段模版病例报告（med-mas scribe 契约）；主模型生成
 
 ## Primary tool: `med_parse_medical`
 
@@ -81,7 +86,7 @@ If the embedding service is down, the tool uses **lexical-fallback** and sets `m
 
 Tool `med_trauma_stage_plan(stage, injury_text, image_paths?)`:
 
-1. One stage per call among 伤员发生地 / 野战分类场 / 收容处置组 / 重伤救治组 / 手术组 / 洗消组.
+1. One stage per call among 伤员发生地 / 野战分类场 / 收容处置组 / 重伤救治组 / 手术组 / 洗消组. If the user did not name a stage, Skill `med-trauma-stage-plan` must call `ask_user_question` first (do not guess).
 2. Plugin builds the fixed prompt (stage-specific 【任务要求】 + five sections + multi-image rules).
 3. Calls G9-V-Med; falls back to the configured main agent model inside the plugin when G9 fails.
 4. Agent shows `care_plan` **verbatim** (same rule as `report` on parse).
@@ -106,8 +111,22 @@ cd plugins/med-tools
 bash setup.sh
 ```
 
-`plugin.json` MCP command uses `${env:PILOT_HOME}/plugins/med-tools/run.sh`.
-`timeoutMs: 300000` (5 minutes) for this MCP only.
+Windows notes:
+
+- `setup.sh` needs a real Python (the Microsoft Store `python3` stub is NOT one).
+  Point it at any real interpreter, e.g. a conda env:
+  `PYTHON_BIN='D:/softwares/miniconda3/envs/med-mas/python.exe' bash setup.sh`
+- venv layout on Windows is `.venv/Scripts/python.exe`; `setup.sh` / `run.sh`
+  detect both POSIX (`bin/`) and Windows (`Scripts/`) layouts.
+- When running plain `npm run dev` (PILOT_HOME=`~/.pilotdeck`), link this
+  plugin into the global plugins dir so the runtime discovers it
+  (symlinks need dev mode/admin; a junction works without):
+  `cmd //c mklink /J "%USERPROFILE%\.pilotdeck\plugins\med-tools" "D:\projects\med-pilotdeck\plugins\med-tools"`
+
+`plugin.json` MCP command is `node ${env:PILOT_HOME}/plugins/med-tools/run-mcp.cjs`
+(the node launcher locates the venv python itself; it deliberately avoids
+shell resolution because on Windows plain `bash` can resolve to WSL's bash).
+`run.sh` remains for manual use. `timeoutMs: 300000` (5 minutes) for this MCP only.
 
 Restart PilotDeck (or reload plugins) after changing `plugin.json` env.
 

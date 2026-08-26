@@ -261,14 +261,7 @@ Use the committed `pnpm-lock.yaml` for source installs. Do not replace this step
 
 The app uses `better-sqlite3` and Node.js 22's built-in `node:sqlite`. It does not require the legacy `sqlite` or `sqlite3` npm packages.
 
-ClawHub CLI is optional, but recommended for skill marketplace features:
-
-```bash
-npm install -g clawhub
-clawhub --version
-```
-
-On Windows, use `npm.cmd install -g clawhub` if PowerShell blocks `npm.ps1`. With Portable Node, this installs `clawhub` into the portable Node prefix, so keep that Node directory on `PATH` when running PilotDeck.
+Offline / on-prem deployments do not install a skill marketplace CLI. Bundled skills ship with the repo; additional skills are deployed with the package, not downloaded at install time.
 
 ## First-Run Onboarding
 

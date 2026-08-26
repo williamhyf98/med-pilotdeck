@@ -42,20 +42,19 @@ const BASH_TOOL_DESCRIPTION = `Run a shell command in the PilotDeck workspace.
 Usage:
 - The \`command\` parameter is passed to the system shell (\`cmd.exe\` on Windows, \`/bin/sh\` on macOS/Linux).
 - The shell runs in the current workspace directory and inherits the tool runtime environment.
-- Use \`timeout\` to override the command timeout in milliseconds. When omitted, the default is 30000ms. Values above 600000ms are rejected; lower the foreground timeout to 600000 or less, or use task_create followed by task_wait for background work that should finish.
+- Use \`timeout\` to override the command timeout in milliseconds. When omitted, the default is 30000ms. Values above 600000ms are rejected.
 - Use \`description\` to provide a short, clear label for logs and audits. Prefer 3-10 words that say what the command does.
-- Use this tool for short shell commands, simple pipelines, and running saved workspace scripts.
-- Use task_create for long-running work such as dev servers, watchers, builds, test suites, deploys, CI pollers, or commands that need more than the maximum foreground timeout. For background work that should finish, call task_wait after task_create. Use task_output for progress checks and task_stop for long-lived processes.
-- For non-trivial code or anything you will debug/rerun with changed parameters, first create or edit a script file with write_file/edit_file, then run that file. Avoid large inline heredocs, \`python - <<...\`, long \`python -c\`, or long \`node -e\` programs when a saved script would be reusable.
-- Do not use shell-level backgrounding (\`nohup\`, \`disown\`, \`setsid\`, trailing \`&\`) in bash. Use task_create so PilotDeck can track lifecycle and output.
+- Use this tool for short local inspection/file-management commands and for running bundled skill entrypoints (for example pdf.sh / docx.sh).
+- All transformations must go through registered tools or bundled skill entrypoints. If no bundled command supports an operation, report the limitation instead of implementing a replacement.
 - Read-only shell commands (for example \`pwd\`, \`ls\`, \`git status\`, \`git diff\`, \`git log\`) are treated as read-only. Commands with side effects require permission, and known-dangerous commands are denied outright.
+- Offline deployment: do not use curl, wget, pip install, npm install, npx, or other outbound network/package-manager commands. If dependencies are missing, say so instead of trying to download them.
 - The tool returns stdout, stderr, exit code, and duration. Non-zero exits raise a tool error, and timeouts raise \`tool_timeout\`.
 - Successful results begin with \`BASH_RESULT[success][...]\` plus Assertions. Read \`retrieved_data_available\` before treating \`exit_code: 0\` as task progress: exit code 0 only proves the process succeeded, not that useful task data was retrieved.
 - If a task needs content but the result is \`empty_stdout\` or \`stderr_only\`, run a follow-up command that prints or verifies the needed data instead of assuming progress.
 - If you have no command to run, respond with text instead of calling bash.`;
 
 const LONG_TASK_HINT =
-  "Use timeout=600000 or less for foreground bash. If the command must run in the background, use task_create and then task_wait to block for completion; use task_output only for progress checks and task_stop to clean up long-lived processes.";
+  "Use timeout=600000 or less for foreground bash. Long-running commands may time out; keep skill script invocations bounded.";
 
 const STREAM_DIAGNOSTIC_MAX_CHARS = 600;
 
@@ -91,7 +90,7 @@ export function createBashTool(options?: CreateBashToolOptions): PilotDeckToolDe
         },
         timeout: {
           type: "integer",
-          description: "Optional timeout in milliseconds. Defaults to 30000. Max 600000; larger values are rejected. Use timeout=600000 or less for foreground bash, or task_create followed by task_wait for background work that should finish.",
+          description: "Optional timeout in milliseconds. Defaults to 30000. Max 600000; larger values are rejected. Use timeout=600000 or less for foreground bash. Offline deployments reject curl, wget, and package-manager install commands.",
         },
         description: {
           type: "string",

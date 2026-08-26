@@ -1,0 +1,5 @@
+Noto Sans SC (variable TrueType subset)
+Source: https://github.com/notofonts/noto-cjk/raw/main/Sans/Variable/TTF/Subset/NotoSansSC-VF.ttf
+License: SIL Open Font License 1.1 (see OFL.txt)
+
+The PDF skill loads fonts only from this directory. Do not substitute system fonts.

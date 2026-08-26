@@ -80,23 +80,23 @@ test("bash missing command reports the required command parameter", () => {
     assert.match(text, /Include the required parameter `command`/);
     assert.doesNotMatch(text, /did not match the tool schema/i);
 });
-test("bash timeout over max keeps foreground and task_wait guidance", () => {
+test("bash timeout over max keeps foreground guidance without deleted task tools", () => {
     const text = recovery({
         toolName: "bash",
-        message: "Foreground bash timeout 900000ms exceeds the maximum of 600000ms. Use timeout=600000 or less for foreground bash. If the command must run in the background, use task_create and then task_wait to block for completion; use task_output only for progress checks and task_stop to clean up long-lived processes.",
+        message: "Foreground bash timeout 900000ms exceeds the maximum of 600000ms. Use timeout=600000 or less for foreground bash. Long-running commands may time out; keep skill script invocations bounded.",
     });
     assert.match(text, /Summary: Foreground bash timeout 900000ms exceeds the maximum of 600000ms/);
     assert.match(text, /Use timeout=600000 or less for foreground bash/);
-    assert.match(text, /task_create and then task_wait/);
+    assert.doesNotMatch(text, /task_create|task_wait|task_stop/);
     assert.doesNotMatch(text, /did not match the tool schema/i);
 });
-test("bash background rejection keeps background-specific guidance", () => {
+test("bash background rejection keeps foreground-only guidance", () => {
     const text = recovery({
         toolName: "bash",
-        message: "This command appears to start background work. Use timeout=600000 or less for foreground bash. If the command must run in the background, use task_create and then task_wait to block for completion; use task_output only for progress checks and task_stop to clean up long-lived processes.",
+        message: "This command appears to start background work. Use timeout=600000 or less for foreground bash. Long-running commands may time out; keep skill script invocations bounded.",
     });
     assert.match(text, /Summary: This command appears to start background work/);
     assert.match(text, /Run short commands directly in foreground bash/);
-    assert.match(text, /task_create and then task_wait/);
+    assert.doesNotMatch(text, /task_create|task_wait|task_stop/);
     assert.doesNotMatch(text, /did not match the tool schema/i);
 });

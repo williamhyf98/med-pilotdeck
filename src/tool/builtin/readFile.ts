@@ -48,7 +48,7 @@ export function createReadFileTool(): PilotDeckToolDefinition<ReadFileInput> {
       + "If the User provides a path to a file, assume that path is valid as long as it resolves inside the current workspace. "
       + "It is okay to read a file that does not exist; an error will be returned.\n\nUsage:\n"
       + "- The file_path parameter may be a workspace-relative path or an absolute path, but it must resolve inside the current workspace\n"
-      + "- If the user asks you to send or share a file, use send_attachment instead of read_file; do not inspect arbitrary binary files before sending them\n"
+      + "- If the user asks you to send or share a file, give them the workspace path; do not inspect arbitrary binary files unless a document skill or medical MCP tool is the right next step\n"
       + "- By default, offset is 1 and the tool reads from the beginning of the file\n"
       + "- You can optionally specify offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters\n"
       + "- Results are returned using cat -n format, with line numbers starting at 1\n"
@@ -147,7 +147,7 @@ export function createReadFileTool(): PilotDeckToolDefinition<ReadFileInput> {
           issues: [{
             path: "file_path",
             code: "invalid_schema",
-            message: "binary files are not supported by read_file. Use the relevant document, spreadsheet, or presentation skill for Office files; convert archives or other binary files to a supported text, PDF, or image format before inspection. Use send_attachment/send_file only when the user wants this file sent back through the current channel.",
+            message: "binary files are not supported by read_file. Use the relevant document, spreadsheet, or presentation skill for Office files; convert archives or other binary files to a supported text, PDF, or image format before inspection. For medical attachments, use the med-tools MCP parse tool instead of read_file.",
           }],
         };
       }

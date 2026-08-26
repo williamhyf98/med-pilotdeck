@@ -8,11 +8,12 @@
  */
 
 /**
- * "builtin" is shipped with PilotDeck and is read-only. "user" lives in
+ * "builtin" is shipped with PilotDeck and is read-only. "medical" is shipped
+ * with plugins/med-tools and is also read-only. "user" lives in
  * `~/.pilotdeck/skills/`, available to every project. "project" lives in
  * `<projectRoot>/.pilotdeck/skills/`, scoped to the active project.
  */
-export type SkillScope = "builtin" | "user" | "project";
+export type SkillScope = "builtin" | "user" | "project" | "medical";
 
 /**
  * Lightweight summary used by `list` / `create` / `write` responses.
@@ -31,7 +32,7 @@ export type SkillSummary = {
   /** Absolute path of the containing skill directory. */
   skillDir: string;
   scope: SkillScope;
-  /** Built-in skills are immutable; user/project skills remain editable. */
+  /** Built-in and medical skills are immutable; user/project skills remain editable. */
   readonly: boolean;
   /** Higher-priority scope currently shadowing this entry, when any. */
   overriddenBy?: "user" | "project";
@@ -54,6 +55,7 @@ export type SkillsListResult = {
   builtin: SkillSummary[];
   user: SkillSummary[];
   project: SkillSummary[];
+  medical: SkillSummary[];
   /** Echoed back so the UI can confirm which project the list came from. */
   projectPath: string | null;
 };
