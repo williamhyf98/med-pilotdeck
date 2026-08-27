@@ -9,7 +9,6 @@ import type {
   AuthStatusPayload,
   AuthUser,
   AuthUserPayload,
-  OnboardingStatusPayload,
 } from '../types';
 import { parseJsonSafely, resolveApiErrorMessage } from '../utils';
 
@@ -39,7 +38,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [token, setToken] = useState<string | null>(() => readStoredToken());
   const [isLoading, setIsLoading] = useState(true);
   const [needsSetup, setNeedsSetup] = useState(false);
-  const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const setSession = useCallback((nextUser: AuthUser, nextToken: string) => {
@@ -54,26 +52,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
     clearStoredToken();
   }, []);
 
-  const checkOnboardingStatus = useCallback(async () => {
-    try {
-      const response = await api.user.onboardingStatus();
-      if (!response.ok) {
-        return;
-      }
-
-      const payload = await parseJsonSafely<OnboardingStatusPayload>(response);
-      setHasCompletedOnboarding(Boolean(payload?.hasCompletedOnboarding));
-    } catch (caughtError) {
-      console.error('Error checking onboarding status:', caughtError);
-      // Fail open to avoid blocking access on transient onboarding status errors.
-      setHasCompletedOnboarding(true);
-    }
-  }, []);
-
-  const refreshOnboardingStatus = useCallback(async () => {
-    await checkOnboardingStatus();
-  }, [checkOnboardingStatus]);
-
   const checkAuthStatus = useCallback(async () => {
     try {
       setIsLoading(true);
@@ -85,7 +63,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (statusPayload?.authDisabled) {
         setUser({ username: 'local' });
         setNeedsSetup(false);
-        await checkOnboardingStatus();
         return;
       }
 
@@ -113,26 +90,24 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
 
       setUser(userPayload.user);
-      await checkOnboardingStatus();
     } catch (caughtError) {
       console.error('[Auth] Auth status check failed:', caughtError);
       setError(AUTH_ERROR_MESSAGES.authStatusCheckFailed);
     } finally {
       setIsLoading(false);
     }
-  }, [checkOnboardingStatus, clearSession, token]);
+  }, [clearSession, token]);
 
   useEffect(() => {
     if (IS_PLATFORM || DISABLE_LOCAL_AUTH) {
       setUser({ username: DISABLE_LOCAL_AUTH ? 'local-user' : 'platform-user' });
       setNeedsSetup(false);
-      setIsLoading(true);
-      checkOnboardingStatus().finally(() => setIsLoading(false));
+      setIsLoading(false);
       return;
     }
 
     void checkAuthStatus();
-  }, [checkAuthStatus, checkOnboardingStatus]);
+  }, [checkAuthStatus]);
 
   const login = useCallback<AuthContextValue['login']>(
     async (username, password) => {
@@ -149,7 +124,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
         setSession(payload.user, payload.token);
         setNeedsSetup(false);
-        await checkOnboardingStatus();
         return { success: true };
       } catch (caughtError) {
         console.error('Login error:', caughtError);
@@ -157,7 +131,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         return { success: false, error: AUTH_ERROR_MESSAGES.networkError };
       }
     },
-    [checkOnboardingStatus, setSession],
+    [setSession],
   );
 
   const register = useCallback<AuthContextValue['register']>(
@@ -175,7 +149,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
         setSession(payload.user, payload.token);
         setNeedsSetup(false);
-        await checkOnboardingStatus();
         return { success: true };
       } catch (caughtError) {
         console.error('Registration error:', caughtError);
@@ -183,7 +156,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         return { success: false, error: AUTH_ERROR_MESSAGES.networkError };
       }
     },
-    [checkOnboardingStatus, setSession],
+    [setSession],
   );
 
   const logout = useCallback(() => {
@@ -197,31 +170,24 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, [clearSession, token]);
 
+  const refreshOnboardingStatus = useCallback(async () => {
+    // Onboarding LLM setup has been removed; kept as a no-op for API compatibility.
+  }, []);
+
   const contextValue = useMemo<AuthContextValue>(
     () => ({
       user,
       token,
       isLoading,
       needsSetup,
-      hasCompletedOnboarding,
+      hasCompletedOnboarding: true,
       error,
       login,
       register,
       logout,
       refreshOnboardingStatus,
     }),
-    [
-      error,
-      hasCompletedOnboarding,
-      isLoading,
-      login,
-      logout,
-      needsSetup,
-      refreshOnboardingStatus,
-      register,
-      token,
-      user,
-    ],
+    [error, isLoading, login, logout, needsSetup, refreshOnboardingStatus, register, token, user],
   );
 
   return <AuthContext.Provider value={contextValue}>{children}</AuthContext.Provider>;

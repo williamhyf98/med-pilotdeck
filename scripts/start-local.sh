@@ -69,9 +69,19 @@ assert_no_share
 # Medical MCP (G9-V-Med) can take >60s for a full trauma stage plan.
 export PILOTDECK_MCP_TOOL_TIMEOUT_MS="${PILOTDECK_MCP_TOOL_TIMEOUT_MS:-300000}"
 
+run_llm_check() {
+  if [[ "${SKIP_LLM_CHECK:-0}" == "1" ]]; then
+    echo "==> LLM_CHECK skipped (SKIP_LLM_CHECK=1)"
+    return 0
+  fi
+  node "${SCRIPT_DIR}/check-llm-config.mjs" --pilot-home "${PILOT_HOME}"
+}
+
 if already_running; then
   exit 0
 fi
+
+run_llm_check
 
 mkdir -p "$(dirname "$LOG_FILE")"
 cd "$PILOTDECK_ROOT"

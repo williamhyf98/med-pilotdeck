@@ -2,45 +2,9 @@ import express from 'express';
 import { userDb } from '../database/db.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { getSystemGitConfig } from '../utils/gitConfig.js';
-import { readPilotDeckConfigFile } from '../services/pilotdeckConfig.js';
 import { spawn } from 'child_process';
 
 const router = express.Router();
-
-// Sentinel api-key written by scripts/bootstrap-pilotdeck-config.mjs so the
-// engine can boot. Treated as "not configured" so the UI routes to onboarding.
-const PLACEHOLDER_API_KEY = 'PLACEHOLDER_RUN_ONBOARDING_TO_REPLACE';
-
-function providerAllowsMissingApiKey(providerId) {
-  return providerId === 'ollama';
-}
-
-function hasUsablePilotDeckConfig() {
-  const record = readPilotDeckConfigFile();
-  if (!record.exists) return false;
-
-  const mainRef = typeof record.config?.agent?.model === 'string'
-    ? record.config.agent.model.trim()
-    : '';
-  if (!mainRef) return false;
-
-  const slash = mainRef.indexOf('/');
-  if (slash <= 0 || slash === mainRef.length - 1) return false;
-  const providerId = mainRef.slice(0, slash);
-  const modelId = mainRef.slice(slash + 1);
-
-  const provider = record.config?.model?.providers?.[providerId];
-  if (!provider || typeof provider !== 'object') return false;
-
-  const hasUrl = typeof provider.url === 'string' && provider.url.trim();
-  const apiKey = typeof provider.apiKey === 'string' ? provider.apiKey.trim() : '';
-  const hasRequiredCredential = providerAllowsMissingApiKey(providerId)
-    ? apiKey !== PLACEHOLDER_API_KEY
-    : Boolean(apiKey) && apiKey !== PLACEHOLDER_API_KEY;
-  const hasModel = provider.models && typeof provider.models === 'object' && modelId in provider.models;
-
-  return Boolean(hasUrl && hasRequiredCredential && hasModel);
-}
 
 function spawnAsync(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -130,30 +94,20 @@ router.post('/git-config', authenticateToken, async (req, res) => {
   }
 });
 
-router.post('/complete-onboarding', authenticateToken, async (req, res) => {
-  try {
-    res.json({
-      success: true,
-      message: 'Onboarding completed successfully'
-    });
-  } catch (error) {
-    console.error('Error completing onboarding:', error);
-    res.status(500).json({ error: 'Failed to complete onboarding' });
-  }
+router.post('/complete-onboarding', authenticateToken, async (_req, res) => {
+  // Kept for API compatibility; LLM onboarding UI has been removed.
+  res.json({
+    success: true,
+    message: 'Onboarding is no longer required',
+  });
 });
 
-router.get('/onboarding-status', authenticateToken, async (req, res) => {
-  try {
-    const hasCompleted = hasUsablePilotDeckConfig();
-
-    res.json({
-      success: true,
-      hasCompletedOnboarding: hasCompleted
-    });
-  } catch (error) {
-    console.error('Error checking onboarding status:', error);
-    res.status(500).json({ error: 'Failed to check onboarding status' });
-  }
+router.get('/onboarding-status', authenticateToken, async (_req, res) => {
+  // LLM provider setup is preconfigured via pilotdeck.yaml + start-local LLM_CHECK.
+  res.json({
+    success: true,
+    hasCompletedOnboarding: true,
+  });
 });
 
 export default router;
