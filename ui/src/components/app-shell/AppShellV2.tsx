@@ -798,6 +798,7 @@ function DeleteProjectDialog({
   onCancel,
   onConfirm,
 }: DeleteProjectDialogProps) {
+  const { t } = useTranslation('sidebar');
   const sessionCount = project.sessions?.length ?? 0;
   const displayName = project.displayName || project.name;
 
@@ -809,7 +810,9 @@ function DeleteProjectDialog({
             <Trash2 className="h-5 w-5" strokeWidth={1.75} />
           </div>
           <div className="min-w-0 flex-1">
-            <h3 className="text-base font-semibold text-foreground">Delete project?</h3>
+            <h3 className="text-base font-semibold text-foreground">
+              {t('deleteConfirmation.title', { defaultValue: 'Delete project?' })}
+            </h3>
             <p className="mt-1 break-all text-sm text-muted-foreground">
               <span className="font-mono text-xs">{displayName}</span>
             </p>
@@ -818,20 +821,25 @@ function DeleteProjectDialog({
 
         <div className="space-y-3 p-5">
           <p className="text-sm text-foreground">
-            This removes the project from PilotDeck and deletes its session metadata.
+            {t('deleteConfirmation.body', {
+              defaultValue:
+                'This permanently deletes the project’s conversations and project memory.',
+            })}
             {sessionCount > 0 ? (
               <>
                 {' '}
-                <span className="font-medium">
-                  {sessionCount} session{sessionCount === 1 ? '' : 's'}
-                </span>{' '}
-                will also be removed.
+                {t('deleteConfirmation.sessionCount', {
+                  count: sessionCount,
+                  defaultValue: 'About {{count}} conversation(s) will be removed.',
+                })}
               </>
             ) : null}
           </p>
           <p className="text-xs text-muted-foreground">
-            Files on disk are <span className="font-medium text-foreground">not</span> deleted —
-            only PilotDeck&apos;s reference to them.
+            {t('deleteConfirmation.archiveNote', {
+              defaultValue:
+                'Generated files are archived on disk (not permanently wiped). Conversations and project memory cannot be recovered.',
+            })}
           </p>
           {error ? (
             <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -847,7 +855,7 @@ function DeleteProjectDialog({
             disabled={isDeleting}
             className="inline-flex h-9 items-center justify-center rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground hover:bg-accent disabled:opacity-50"
           >
-            Cancel
+            {t('actions.cancel', { defaultValue: 'Cancel' })}
           </button>
           <button
             type="button"
@@ -856,7 +864,9 @@ function DeleteProjectDialog({
             className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-destructive px-3 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-60"
           >
             {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" strokeWidth={1.75} />}
-            {isDeleting ? 'Deleting…' : 'Delete project'}
+            {isDeleting
+              ? t('deleteConfirmation.deleting', { defaultValue: 'Deleting…' })
+              : t('deleteConfirmation.deleteProject', { defaultValue: 'Delete project' })}
           </button>
         </div>
       </div>

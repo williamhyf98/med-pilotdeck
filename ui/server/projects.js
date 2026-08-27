@@ -43,6 +43,7 @@ import {
     GENERAL_WORKSPACE_ID,
     ensureWorkspaceLayout,
 } from './utils/pilotPaths.js';
+import { archiveAndDeleteProjectStorage } from './utils/projectDelete.js';
 import { mapCronRunOutcome } from '../../src/cron/protocol/types.js';
 import sessionManager from './sessionManager.js';
 import { applyCustomSessionNames } from './database/db.js';
@@ -555,23 +556,14 @@ async function renameProject(_projectName, _displayName) {
 
 async function deleteSession(projectName, sessionId, _options = {}) {
     const pilotHome = resolvePilotHome(process.env);
-    const projectId = resolveProjectStorageId(
-        resolveGatewayProjectKey(projectName, pilotHome),
-        pilotHome,
-    );
+    const chatDir = resolveProjectChatDir(projectName, pilotHome);
     // Try the sanitized filename first (current storage layout), then the
     // raw form (legacy files written before the sanitize fix).
     const safeId = sanitizeSessionIdForPath(sessionId);
     const filenames = safeId === sessionId ? [sessionId] : [safeId, sessionId];
     let removed = false;
     for (const name of filenames) {
-        const transcript = path.join(
-            pilotHome,
-            'projects',
-            projectId,
-            'chats',
-            `${name}.jsonl`,
-        );
+        const transcript = path.join(chatDir, `${name}.jsonl`);
         try {
             await fs.unlink(transcript);
             removed = true;
@@ -584,23 +576,25 @@ async function deleteSession(projectName, sessionId, _options = {}) {
     return removed;
 }
 
+/**
+ * P7: delete project chats + project memory; archive `$WS` under archives/projects.
+ *
+ * @returns {{ success: boolean, projectId: string, archivePath: string | null }}
+ */
 async function deleteProject(projectName, force = false) {
     const pilotHome = resolvePilotHome(process.env);
     const projectId = resolveProjectStorageId(
         resolveGatewayProjectKey(projectName, pilotHome),
         pilotHome,
     );
-    const projectDir = path.join(pilotHome, 'projects', projectId);
-    try {
-        await fs.rm(projectDir, { recursive: true, force });
-        directoryCache.delete(projectName);
-        return true;
-    } catch (error) {
-        if (error?.code === 'ENOENT') {
-            return false;
-        }
-        throw error;
-    }
+    const result = await archiveAndDeleteProjectStorage({
+        pilotHome,
+        projectId,
+        force,
+    });
+    directoryCache.delete(projectName);
+    directoryCache.delete(projectId);
+    return result;
 }
 
 async function resolveProjectIdForPathOrName(projectName, fullPath) {

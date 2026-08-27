@@ -897,13 +897,17 @@ app.put('/api/sessions/:sessionId/rename', authenticateToken, async (req, res) =
     }
 });
 
-// Delete project endpoint (force=true to delete with sessions)
+// Delete project endpoint (P7: chats+memory deleted; workspace archived)
 app.delete('/api/projects/:projectName', authenticateToken, async (req, res) => {
     try {
         const { projectName } = req.params;
         const force = req.query.force === 'true';
-        await deleteProject(projectName, force);
-        res.json({ success: true });
+        const result = await deleteProject(projectName, force);
+        res.json({
+            success: true,
+            projectId: result?.projectId ?? null,
+            archivePath: result?.archivePath ?? null,
+        });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

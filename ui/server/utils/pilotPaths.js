@@ -303,6 +303,40 @@ export function resolveWorkspaceDataRoot(workspaceId, pilotHome = resolvePilotHo
     return resolve(pilotHome, 'workspaces', workspaceId);
 }
 
+/** `$PILOT_HOME/archives` — retained workspace snapshots after project delete (P7). */
+export function getPilotArchivesRootDir(pilotHome = resolvePilotHome()) {
+    return resolve(pilotHome, 'archives');
+}
+
+/**
+ * Destination for an archived project workspace:
+ * `$PILOT_HOME/archives/projects/<projectId>-<timestamp>/`.
+ */
+export function resolveProjectArchiveDir(projectId, timestamp, pilotHome = resolvePilotHome()) {
+    const safeId = String(projectId || 'project')
+        .replace(/[^A-Za-z0-9._-]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'project';
+    const safeTs = String(timestamp || Date.now())
+        .replace(/[^A-Za-z0-9._-]+/g, '-')
+        .replace(/^-+|-+$/g, '') || String(Date.now());
+    return resolve(pilotHome, 'archives', 'projects', `${safeId}-${safeTs}`);
+}
+
+/** UTC stamp safe for archive directory names, e.g. `20260827T122530Z`. */
+export function formatProjectArchiveTimestamp(now = new Date()) {
+    const pad = (n) => String(n).padStart(2, '0');
+    return [
+        now.getUTCFullYear(),
+        pad(now.getUTCMonth() + 1),
+        pad(now.getUTCDate()),
+        'T',
+        pad(now.getUTCHours()),
+        pad(now.getUTCMinutes()),
+        pad(now.getUTCSeconds()),
+        'Z',
+    ].join('');
+}
+
 export function resolveAgentCwd(projectKey, pilotHome = resolvePilotHome()) {
     const workspaceId = resolveWorkspaceId(projectKey, pilotHome);
     return resolveWorkspaceDataRoot(workspaceId, pilotHome);
