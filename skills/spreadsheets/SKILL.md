@@ -92,6 +92,23 @@ bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make \
 这些内容源互斥。详细 spec 见
 [creation.md](references/creation.md)。
 
+### 浮动插图（用户上传照片）
+
+像 Excel「插入 → 图片」：在 `--spec` 的 sheet 上写 `images[]`，路径用附件列表的 **`$WS/inbox/...` 绝对路径**。禁止 http(s)。仅新建工作簿；不要为插图去读 `spreadsheet_cli.mjs` 源码。
+
+```json
+{
+  "sheets": [{
+    "name": "汇总",
+    "headers": ["阶段", "人数"],
+    "rows": [["一级", 10]],
+    "images": [
+      { "path": "/abs/.../inbox/<batch>/1-wound.jpg", "anchor": "G2", "width": 400, "height": 300 }
+    ]
+  }]
+}
+```
+
 ## 公式与 LibreOffice
 
 - 派生值必须保留为 Excel 公式，不要硬编码计算结果。

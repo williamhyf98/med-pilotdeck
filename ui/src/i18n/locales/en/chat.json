@@ -489,6 +489,10 @@
       "message": "Reached the maximum number of turns ({{maxTurns}}), so this turn has stopped. Increase maxTurns or split the task into smaller steps and try again.",
       "hint": "Increase maxTurns in local config if this task legitimately needs more agent steps, or split the task into smaller prompts and try again."
     },
+    "maxToolCalls": {
+      "message": "Reached the maximum number of tool calls ({{maxToolCalls}}), so this turn has stopped. Reply with what you already know, or split the task into smaller steps.",
+      "hint": "If a skill cannot do something (for example embed images in PDF), say so clearly instead of calling more tools. Otherwise split the task into smaller prompts."
+    },
     "maxOutputRecoveryExhausted": {
       "message": "Output token recovery was exhausted, so the visible response may be incomplete. Increase max output tokens or split the task into smaller steps and try again.",
       "hint": "Increase max output tokens in Settings → Model Provider, or ask the agent to split the answer into smaller parts."

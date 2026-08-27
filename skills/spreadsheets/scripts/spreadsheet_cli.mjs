@@ -1948,13 +1948,100 @@ function applyMakeSheetDefaults(worksheet, { headerRange = null, titleRanges = [
   autoFitRows(worksheet, { min: 18, max: 90 });
 }
 
-function buildWorkbookFromSpec(spec, existingWorkbook = null) {
+function imageExtensionFromPath(filePath) {
+  const extension = path.extname(filePath).toLowerCase().replace(".", "");
+  if (extension === "jpg" || extension === "jpeg") return "jpeg";
+  if (extension === "png" || extension === "gif" || extension === "webp") return extension;
+  throw new Error(`Unsupported image extension '${extension || "(none)"}'; use jpeg/png/gif/webp`);
+}
+
+function resolveLocalImagePath(pathValue, baseDir, label) {
+  const raw = String(pathValue ?? "").trim();
+  if (!raw) throw new Error(`${label}: image path is required`);
+  if (/^https?:\/\//i.test(raw)) {
+    throw new Error(
+      `${label}: remote images are not allowed; use a local workspace path (prefer absolute $WS/inbox/...)`,
+    );
+  }
+  const resolved = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(baseDir, raw);
+  if (!existsSync(resolved)) {
+    throw new Error(`${label}: image not found: ${resolved}`);
+  }
+  return resolved;
+}
+
+function resolveImageAnchor(anchorValue, label) {
+  if (typeof anchorValue === "string" && anchorValue.trim()) {
+    const cell = parseCellReference(anchorValue.trim());
+    return { col: cell.col - 1, row: cell.row - 1 };
+  }
+  if (anchorValue && typeof anchorValue === "object" && !Array.isArray(anchorValue)) {
+    if (typeof anchorValue.cell === "string" && anchorValue.cell.trim()) {
+      const cell = parseCellReference(anchorValue.cell.trim());
+      return { col: cell.col - 1, row: cell.row - 1 };
+    }
+    if (typeof anchorValue.from === "string" && anchorValue.from.trim()) {
+      const cell = parseCellReference(anchorValue.from.trim());
+      return { col: cell.col - 1, row: cell.row - 1 };
+    }
+    const colRaw = anchorValue.col;
+    const rowRaw = anchorValue.row;
+    if (typeof colRaw === "string" && /^[A-Za-z]+$/.test(colRaw.trim())) {
+      const col = columnNumber(colRaw.trim()) - 1;
+      const row = Number(rowRaw);
+      if (!Number.isInteger(row) || row < 1) {
+        throw new Error(`${label}.anchor.row must be a 1-based row number`);
+      }
+      return { col, row: row - 1 };
+    }
+    const col = Number(colRaw);
+    const row = Number(rowRaw);
+    if (!Number.isInteger(col) || col < 0 || !Number.isInteger(row) || row < 0) {
+      throw new Error(`${label}.anchor requires col/row (0-based) or a cell like "G2"`);
+    }
+    return { col, row };
+  }
+  return { col: 5, row: 1 };
+}
+
+function addFloatingImage(workbook, worksheet, imageSpec, label, baseDir) {
+  if (!imageSpec || typeof imageSpec !== "object" || Array.isArray(imageSpec)) {
+    throw new Error(`${label} must be an object`);
+  }
+  const imagePath = resolveLocalImagePath(imageSpec.path, baseDir, label);
+  const extension = imageSpec.extension
+    ? String(imageSpec.extension).toLowerCase().replace("jpg", "jpeg")
+    : imageExtensionFromPath(imagePath);
+  if (!["jpeg", "png", "gif", "webp"].includes(extension)) {
+    throw new Error(`${label}: unsupported extension '${extension}'`);
+  }
+  const width = Number(imageSpec.width ?? 320);
+  const height = Number(imageSpec.height ?? Math.round(width * 0.75));
+  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+    throw new Error(`${label}: width/height must be positive numbers (pixels)`);
+  }
+  const tl = resolveImageAnchor(imageSpec.anchor, label);
+  const imageId = workbook.addImage({
+    filename: imagePath,
+    extension,
+  });
+  worksheet.addImage(imageId, {
+    tl,
+    ext: { width, height },
+    editAs: imageSpec.editAs === "absolute" || imageSpec.editAs === "oneCell"
+      ? imageSpec.editAs
+      : "oneCell",
+  });
+}
+
+function buildWorkbookFromSpec(spec, existingWorkbook = null, context = {}) {
   if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
     throw new Error("Spreadsheet make spec must be a JSON object");
   }
   if (!Array.isArray(spec.sheets) || spec.sheets.length === 0) {
     throw new Error("Spreadsheet make spec requires a non-empty sheets array");
   }
+  const baseDir = context.baseDir ? path.resolve(String(context.baseDir)) : process.cwd();
   const workbook = existingWorkbook ?? createWorkbook();
   const editingExisting = Boolean(existingWorkbook);
   if (!editingExisting || spec.title !== undefined) workbook.title = String(spec.title ?? "");
@@ -1971,6 +2058,7 @@ function buildWorkbookFromSpec(spec, existingWorkbook = null) {
   };
   const nativeCharts = [];
   let formulaCount = 0;
+  let imageCount = 0;
 
   spec.sheets.forEach((sheetSpec, sheetIndex) => {
     if (!sheetSpec || typeof sheetSpec !== "object" || Array.isArray(sheetSpec)) {
@@ -2086,6 +2174,26 @@ function buildWorkbookFromSpec(spec, existingWorkbook = null) {
         ],
       });
     }
+    if (sheetSpec.images != null) {
+      if (editingExisting) {
+        throw new Error(
+          `sheets[${sheetIndex}].images is only supported when creating a new workbook (not make --input edits)`,
+        );
+      }
+      if (!Array.isArray(sheetSpec.images)) {
+        throw new Error(`sheets[${sheetIndex}].images must be an array`);
+      }
+      for (const [imageIndex, imageSpec] of sheetSpec.images.entries()) {
+        addFloatingImage(
+          workbook,
+          worksheet,
+          imageSpec,
+          `sheets[${sheetIndex}].images[${imageIndex}]`,
+          baseDir,
+        );
+        imageCount += 1;
+      }
+    }
     for (const [columnIndex, item] of (sheetSpec.columns ?? []).entries()) {
       if (!item || (!item.column && !Number.isInteger(item.index)) || !Number.isFinite(Number(item.width))) {
         throw new Error(`sheets[${sheetIndex}].columns[${columnIndex}] requires column/index and width`);
@@ -2124,7 +2232,12 @@ function buildWorkbookFromSpec(spec, existingWorkbook = null) {
   for (const key of Object.keys(requirements)) {
     if (Array.isArray(requirements[key]) && requirements[key].length === 0) delete requirements[key];
   }
-  return { workbook, nativeCharts, requirements: validateRequirements(requirements, "make spec requirements") };
+  return {
+    workbook,
+    nativeCharts,
+    requirements: validateRequirements(requirements, "make spec requirements"),
+    imageCount,
+  };
 }
 
 async function buildSimpleMakeWorkbook(options) {
@@ -2272,23 +2385,25 @@ async function commandMake(options) {
       }
       existingWorkbook = await loadXlsx(inputPath);
     }
+    const specPath = path.resolve(String(options.spec));
     product = buildWorkbookFromSpec(
-      JSON.parse(await fs.readFile(path.resolve(String(options.spec)), "utf8")),
+      JSON.parse(await fs.readFile(specPath, "utf8")),
       existingWorkbook,
+      { baseDir: path.dirname(specPath) },
     );
   } else {
     if (options.input) throw new Error("make --input requires --spec with controlled cell edits");
     product = await buildSimpleMakeWorkbook(options);
   }
-  const { workbook, nativeCharts, requirements } = product;
+  const { workbook, nativeCharts, requirements, imageCount = 0 } = product;
   workbook.calcProperties.fullCalcOnLoad = true;
   workbook.calcProperties.forceFullCalc = true;
   validateWorkbookForSerialization(workbook, nativeCharts);
   const facts = collectWorkbookFacts(workbook);
 
   if (outputExtension !== ".xlsx") {
-    if (facts.formulaCount > 0 || nativeCharts.length > 0 || workbook.worksheets.length !== 1) {
-      throw new Error("CSV/TSV output supports one worksheet without formulas or native charts; use .xlsx for workbook features");
+    if (facts.formulaCount > 0 || nativeCharts.length > 0 || imageCount > 0 || workbook.worksheets.length !== 1) {
+      throw new Error("CSV/TSV output supports one worksheet without formulas, images, or native charts; use .xlsx for workbook features");
     }
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pilotdeck-spreadsheet-make-delimited-"));
     try {
@@ -2820,6 +2935,13 @@ async function commandSelfTest(options) {
   await fs.mkdir(outputDir, { recursive: true });
   if (!process.env.SPREADSHEET_SKILL_SOFFICE) {
     const output = path.join(outputDir, "offline-self-test.xlsx");
+    const illustration = path.join(outputDir, "illustration.png");
+    // Minimal valid 1x1 PNG
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    await fs.writeFile(illustration, png);
     const product = buildWorkbookFromSpec({
       title: "Offline spreadsheet self-test",
       sheets: [{
@@ -2841,8 +2963,17 @@ async function commandSelfTest(options) {
           ],
           anchor: { from: "F2", to: "M15" },
         }],
+        images: [{
+          path: illustration,
+          anchor: "O2",
+          width: 120,
+          height: 90,
+        }],
       }],
-    });
+    }, null, { baseDir: outputDir });
+    if ((product.imageCount ?? 0) < 1) {
+      throw new Error("Offline spreadsheet self-test failed to embed floating image");
+    }
     await product.workbook.xlsx.writeFile(output);
     const charts = await injectNativeCharts(output, product.nativeCharts, { JSZip, loadXlsx });
     const audit = await auditXlsx(output, product.requirements, { allowMissingCachedResults: true });
@@ -2860,6 +2991,7 @@ async function commandSelfTest(options) {
         coverage: audit.coverage.status,
         formulas: audit.formulas.count,
         nativeCharts: charts.chartCount,
+        floatingImages: product.imageCount,
         recalculate: "skipped",
         render: "skipped",
       },

@@ -83,3 +83,9 @@ flowchart LR
   的单文件 HTML。
 
 不要用 HTML 代替 SVG 作为普通交付物。
+
+## 不支持用户照片
+
+`diagram-maker` **不能**把 inbox 照片嵌进流程图（无 `<image>` / 无照片节点贴图）。
+需要「流程 + 照片」时：用本技能导出 SVG，再在 **pptx / docx / pdf / spreadsheets**
+里插入用户图片。不要读取技能脚本源码去绕过。

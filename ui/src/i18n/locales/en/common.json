@@ -169,9 +169,10 @@
   "mainContent": {
     "loading": "Loading PilotDeck",
     "settingUpWorkspace": "Setting up your workspace...",
-    "chooseProject": "Choose Your Project",
-    "selectProjectDescription": "Select a project from the sidebar to start coding with PilotDeck. Each project contains your chat sessions and file history.",
+    "chooseProject": "Create a project to start",
+    "selectProjectDescription": "Chat requires a project. Create one with a name and type, or pick an existing project from the sidebar.",
     "tip": "Tip",
+    "createProject": "Create project",
     "createProjectMobile": "Tap the menu button above to access projects",
     "createProjectDesktop": "Create a new project by clicking the folder icon in the sidebar",
     "newSession": "New Session",

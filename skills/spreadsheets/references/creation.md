@@ -75,8 +75,36 @@ Markdown 只适合一张简单表。公式、图表和多个工作表使用 JSON
 - `validations`：列表验证。
 - `conditionalFormatting`：使用已文档化的 ExcelJS 规则。
 - `charts`：原生 `line`、`column`、`bar` 图表。
+- `images`：浮动图片（类似 Excel「插入 → 图片」），仅新建工作簿。
 - `columns`：`{"column":"A","width":20}`。
 - `freeze`：`{"rows":1,"columns":0}`。
+
+## 插入用户上传的图片
+
+在 sheet 上放浮动图（不塞进单元格二进制）：
+
+```json
+{
+  "name": "汇总",
+  "headers": ["阶段", "人数"],
+  "rows": [["一级", 10]],
+  "images": [
+    {
+      "path": "/abs/path/to/workspaces/.../inbox/<batch>/1-wound.jpg",
+      "anchor": "G2",
+      "width": 400,
+      "height": 300
+    }
+  ]
+}
+```
+
+- 路径优先用附件列表里的 **`$WS/inbox/...` 绝对路径**；相对路径相对 `--spec` 目录。
+- 禁止 `http://` / `https://`。
+- `anchor`：单元格如 `"G2"`，或 `{ "from": "G2" }` / `{ "col": 6, "row": 1 }`（0-based）。
+- `width` / `height`：像素；未给 `height` 时按 3:4 估算。
+- 仅支持**新建**工作簿；`make --input` 编辑既有文件时不要使用 `images`（既有 Drawing 包风险）。
+- 图表仍用 `charts`；不要用图片冒充图表。
 
 单元格值可以是字符串、数字、布尔值、null，或：
 

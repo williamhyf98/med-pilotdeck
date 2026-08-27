@@ -57,3 +57,57 @@ test("linked project uses slug workspace id but keeps gateway key on repo path",
     await rm(repoRoot, { recursive: true, force: true });
   }
 });
+
+test("typed system project nests under typeKey and gateway key is project id", async () => {
+  const pilotHome = await mkdtemp(join(tmpdir(), "pilotdeck-ws-typed-"));
+  const { writeFile, mkdir } = await import("node:fs/promises");
+  const projectId = "general_med-demo1";
+  try {
+    const workspaceRoot = resolveWorkspaceDataRoot(projectId, pilotHome);
+    assert.ok(workspaceRoot.endsWith(join("workspaces", "general_med", projectId)));
+    ensureWorkspaceLayout(workspaceRoot);
+
+    const projectDir = join(pilotHome, "projects", "general_med", projectId);
+    await mkdir(projectDir, { recursive: true });
+    await writeFile(join(projectDir, ".cwd"), workspaceRoot, "utf8");
+
+    assert.equal(resolveGatewayProjectKey(workspaceRoot, pilotHome), projectId);
+    assert.equal(resolveGatewayProjectKey(projectId, pilotHome), projectId);
+    assert.equal(resolveAgentCwd(projectId, pilotHome), workspaceRoot);
+    assert.equal(
+      resolveProjectChatDir(workspaceRoot, pilotHome),
+      join(pilotHome, "projects", "general_med", projectId, "chats"),
+    );
+    assert.equal(
+      resolveProjectChatDir(projectId, pilotHome),
+      join(pilotHome, "projects", "general_med", projectId, "chats"),
+    );
+  } finally {
+    await rm(pilotHome, { recursive: true, force: true });
+  }
+});
+
+test("general and typed projects never resolve memory under memory/workspaces", async () => {
+  const pilotHome = await mkdtemp(join(tmpdir(), "pilotdeck-mem-dir-"));
+  const { resolveProjectMemoryDataDir, LEGACY_GENERAL_PROJECT_ID, GENERAL_WORKSPACE_ID } =
+    await import("../../src/pilot/paths.js");
+  try {
+    const generalMem = resolveProjectMemoryDataDir(pilotHome, pilotHome);
+    assert.equal(
+      generalMem,
+      join(pilotHome, "memory", "general_med", LEGACY_GENERAL_PROJECT_ID),
+    );
+    const generalWsMem = resolveProjectMemoryDataDir(
+      join(pilotHome, "workspaces", GENERAL_WORKSPACE_ID),
+      pilotHome,
+    );
+    assert.equal(generalWsMem, generalMem);
+    assert.ok(!generalMem.includes(`${join("memory", "workspaces")}`));
+
+    const projectId = "trauma_med-demo";
+    const typedMem = resolveProjectMemoryDataDir(projectId, pilotHome);
+    assert.equal(typedMem, join(pilotHome, "memory", "trauma_med", projectId));
+  } finally {
+    await rm(pilotHome, { recursive: true, force: true });
+  }
+});

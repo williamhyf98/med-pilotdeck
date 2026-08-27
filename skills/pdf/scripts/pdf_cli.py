@@ -130,6 +130,132 @@ def flowable_paragraph(text: str, style: Any) -> Any:
     return Paragraph(format_make_text(text), style)
 
 
+MAX_IMAGE_PIXELS = 80_000_000
+DEFAULT_IMAGE_WIDTH_MM = 120.0
+MAX_IMAGE_WIDTH_MM = 170.0
+
+
+def resolve_local_image(path_value: Any, *, base_dir: Path, label: str) -> Path:
+    raw_value = str(path_value or "").strip()
+    if not raw_value:
+        raise PdfToolError(f"{label}: image path is required")
+    if raw_value.startswith(("http://", "https://")):
+        raise PdfToolError(
+            f"{label}: remote images are not allowed; use a local workspace path "
+            "(prefer absolute $WS/inbox/... from the user attachment list)"
+        )
+    raw_path = Path(raw_value).expanduser()
+    image_path = raw_path if raw_path.is_absolute() else (base_dir / raw_path)
+    image_path = image_path.resolve()
+    if not image_path.is_file():
+        raise PdfToolError(f"{label}: image not found: {image_path}")
+    return image_path
+
+
+def normalize_make_image(
+    raw: Any,
+    *,
+    label: str,
+    base_dir: Path,
+) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise PdfToolError(f"{label} must be an object")
+    block_type = raw.get("type")
+    if block_type not in (None, "image"):
+        raise PdfToolError(f"{label}: unsupported type {block_type!r}; only image is allowed")
+    path = resolve_local_image(raw.get("path"), base_dir=base_dir, label=label)
+    width_mm = raw.get("width_mm")
+    if width_mm is None and raw.get("width_inches") is not None:
+        try:
+            width_mm = float(raw["width_inches"]) * 25.4
+        except (TypeError, ValueError) as exc:
+            raise PdfToolError(f"{label}: width_inches must be a number") from exc
+    if width_mm is None:
+        width_mm = DEFAULT_IMAGE_WIDTH_MM
+    try:
+        width_mm = float(width_mm)
+    except (TypeError, ValueError) as exc:
+        raise PdfToolError(f"{label}: width_mm must be a number") from exc
+    if width_mm <= 0:
+        raise PdfToolError(f"{label}: width_mm must be positive")
+    width_mm = min(width_mm, MAX_IMAGE_WIDTH_MM)
+    caption = raw.get("caption") or raw.get("alt_text") or ""
+    if caption is None:
+        caption = ""
+    if not isinstance(caption, str):
+        raise PdfToolError(f"{label}: caption must be a string")
+    return {
+        "type": "image",
+        "path": str(path),
+        "width_mm": width_mm,
+        "caption": caption.strip(),
+    }
+
+
+def normalize_image_list(
+    raw: Any,
+    *,
+    label: str,
+    base_dir: Path,
+) -> list[dict[str, Any]]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise PdfToolError(f"{label} must be an array")
+    images: list[dict[str, Any]] = []
+    for index, item in enumerate(raw, start=1):
+        images.append(
+            normalize_make_image(item, label=f"{label}[{index}]", base_dir=base_dir)
+        )
+    return images
+
+
+def prepare_image_flowables(
+    images: list[dict[str, Any]],
+    *,
+    caption_style: Any,
+) -> list[Any]:
+    from io import BytesIO
+
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Image as RLImage, Spacer
+
+    flowables: list[Any] = []
+    for image in images:
+        path = Path(image["path"])
+        try:
+            with Image.open(path) as source:
+                source.load()
+                width_px, height_px = source.size
+                if width_px < 1 or height_px < 1:
+                    raise PdfToolError(f"image has invalid dimensions: {path}")
+                if width_px * height_px > MAX_IMAGE_PIXELS:
+                    raise PdfToolError(f"image is too large to embed safely: {path}")
+                rgba = source.convert("RGBA")
+                white = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+                flattened = Image.alpha_composite(white, rgba).convert("RGB")
+                stream = BytesIO()
+                flattened.save(stream, format="PNG", optimize=True)
+                stream.seek(0)
+        except PdfToolError:
+            raise
+        except OSError as exc:
+            raise PdfToolError(f"unable to decode image: {path} ({exc})") from exc
+
+        width_mm = float(image["width_mm"])
+        height_mm = width_mm * (height_px / width_px)
+        flowable = RLImage(stream, width=width_mm * mm, height=height_mm * mm)
+        flowable.hAlign = "CENTER"
+        flowables.append(Spacer(1, 2 * mm))
+        flowables.append(flowable)
+        caption = image.get("caption") or ""
+        if caption:
+            flowables.append(Spacer(1, 1.5 * mm))
+            flowables.append(flowable_paragraph(caption, caption_style))
+        flowables.append(Spacer(1, 2 * mm))
+    return flowables
+
+
 HEADING_LINE = re.compile(r"^(#{1,6})\s+(.*)$")
 
 
@@ -505,8 +631,11 @@ def load_make_spec(args: argparse.Namespace) -> dict[str, Any]:
     body_file = getattr(args, "body_file", None)
     if markdown_path and body_file:
         raise PdfToolError("provide only one of --markdown or --body-file")
+    base_dir = Path.cwd()
     if args.spec:
-        payload = json.loads(resolved_file(args.spec, "spec").read_text(encoding="utf-8"))
+        spec_path = resolved_file(args.spec, "spec")
+        base_dir = spec_path.parent
+        payload = json.loads(spec_path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise PdfToolError("spec must be a JSON object")
         spec = payload
@@ -538,6 +667,11 @@ def load_make_spec(args: argparse.Namespace) -> dict[str, Any]:
     sections = spec.get("sections") or []
     if not isinstance(sections, list):
         raise PdfToolError("spec.sections must be an array")
+    top_images = normalize_image_list(
+        spec.get("images"),
+        label="spec.images",
+        base_dir=base_dir,
+    )
     normalized: list[dict[str, Any]] = []
     for index, section in enumerate(sections, start=1):
         if not isinstance(section, dict):
@@ -549,9 +683,21 @@ def load_make_spec(args: argparse.Namespace) -> dict[str, Any]:
             raise PdfToolError(f"spec.sections[{index}] heading/body must be strings")
         if not isinstance(level, int):
             level = 2
-        if not heading.strip() and not section_body.strip():
+        section_images = normalize_image_list(
+            section.get("images"),
+            label=f"spec.sections[{index}].images",
+            base_dir=base_dir,
+        )
+        if not heading.strip() and not section_body.strip() and not section_images:
             continue
-        normalized.append({"heading": heading.strip(), "body": section_body, "level": level})
+        normalized.append(
+            {
+                "heading": heading.strip(),
+                "body": section_body,
+                "level": level,
+                "images": section_images,
+            }
+        )
     if markdown and not normalized and markdown["body"] and not body.strip():
         body = markdown["body"]
     return {
@@ -559,12 +705,13 @@ def load_make_spec(args: argparse.Namespace) -> dict[str, Any]:
         "body": body,
         "author": author.strip(),
         "sections": normalized,
+        "images": top_images,
     }
 
 
 def write_made_pdf(output: Path, spec: dict[str, Any]) -> None:
     from reportlab.lib import colors
-    from reportlab.lib.enums import TA_LEFT
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
@@ -636,10 +783,22 @@ def write_made_pdf(output: Path, spec: dict[str, Any]) -> None:
         textColor=ink,
         spaceAfter=3 * mm,
     )
+    caption_style = ParagraphStyle(
+        "MakeCaption",
+        parent=body_style,
+        fontSize=9,
+        leading=12,
+        textColor=muted,
+        alignment=TA_CENTER,
+        spaceAfter=1 * mm,
+    )
 
     story: list[Any] = [flowable_paragraph(title_text, title_style)]
     for block in paragraph_blocks(spec["body"]):
         story.append(flowable_paragraph(block, body_style))
+    story.extend(
+        prepare_image_flowables(spec.get("images") or [], caption_style=caption_style)
+    )
     for section in spec["sections"]:
         heading = section["heading"]
         style = subheading_style if int(section.get("level", 2) or 2) >= 4 else heading_style
@@ -647,7 +806,10 @@ def write_made_pdf(output: Path, spec: dict[str, Any]) -> None:
             story.append(flowable_paragraph(heading, style))
         for block in paragraph_blocks(section["body"]):
             story.append(flowable_paragraph(block, body_style))
-        if heading and not paragraph_blocks(section["body"]):
+        story.extend(
+            prepare_image_flowables(section.get("images") or [], caption_style=caption_style)
+        )
+        if heading and not paragraph_blocks(section["body"]) and not (section.get("images") or []):
             story.append(Spacer(1, 1 * mm))
     if not story:
         raise PdfToolError("make produced no content")
@@ -892,6 +1054,70 @@ def command_self_test(args: argparse.Namespace) -> int:
             "--force",
         ]
     )
+
+    illustration = root / "illustration.png"
+    with Image.new("RGB", (320, 200), "#2F6FED") as canvas:
+        draw = ImageDraw.Draw(canvas)
+        draw.rectangle((24, 24, 296, 176), outline="#FFFFFF", width=4)
+        draw.text((96, 88), "PDF QA", fill="#FFFFFF")
+        canvas.save(illustration)
+    image_spec = root / "with-image.json"
+    image_pdf = root / "with-image.pdf"
+    image_inspection = root / "with-image-inspection.json"
+    write_json(
+        image_spec,
+        {
+            "title": "带图病例报告",
+            "body": "正文后嵌入本地图片。",
+            "images": [
+                {
+                    "type": "image",
+                    "path": str(illustration),
+                    "width_mm": 90,
+                    "caption": "图 1 示意图",
+                }
+            ],
+            "sections": [
+                {
+                    "heading": "创面",
+                    "body": "小节内再嵌一张图。",
+                    "images": [
+                        {
+                            "path": str(illustration),
+                            "width_mm": 70,
+                            "caption": "图 2 创面",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    run_self_test_command(
+        [
+            "make",
+            "--spec",
+            str(image_spec),
+            "--out",
+            str(image_pdf),
+            "--force",
+        ]
+    )
+    run_self_test_command(
+        [
+            "inspect",
+            "--input",
+            str(image_pdf),
+            "--out",
+            str(image_inspection),
+        ]
+    )
+    image_pages = json.loads(image_inspection.read_text(encoding="utf-8")).get("pages") or []
+    embedded_images = sum(int(page.get("images") or 0) for page in image_pages)
+    if embedded_images < 2:
+        raise PdfToolError(
+            f"self-test expected at least 2 embedded images, found {embedded_images}"
+        )
+
     run_self_test_command(
         [
             "inspect",
@@ -941,6 +1167,8 @@ def command_self_test(args: argparse.Namespace) -> int:
             "status": "ok",
             "output": str(root),
             "sample": str(pdf),
+            "withImage": str(image_pdf),
+            "embeddedImages": embedded_images,
             "renderedPages": [str(path) for path in sorted(render_dir.glob("page-*.png"))],
             "filledForm": str(filled_form),
             "filledFormPages": [str(path) for path in sorted(form_render_dir.glob("page-*.png"))],

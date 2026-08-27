@@ -93,9 +93,9 @@ Word 插图只能用磁盘路径，不能用聊天气泡里的图。创面照等
 - name.jpg: /…/inbox/<批次id>/1-name.jpg
 ```
 
-文件就在 `{项目根或 PILOT_HOME}/inbox/<批次id>/`。直接把
+文件就在工作区 `inbox/<批次id>/`（附件清单里的绝对路径，常见为 `$WS/inbox/...`）。直接把
 **绝对路径**写进 spec 的 image block（见 [specifications.md](references/specifications.md)）。
-不要 `find /`，不要下载，不要为此编写 Python。后续轮次清单可能不再出现，到历史用户消息或 `image_paths_used` 里找同一路径。
+不要 `find /`，不要下载，不要为此编写 Python，不要翻 `docx_cli` / `docxlib` 源码猜字段。后续轮次清单可能不再出现，到历史用户消息或 `image_paths_used` 里找同一路径。
 
 复杂表格、图片、封面或精确样式可使用 `--spec`。只使用
 [specifications.md](references/specifications.md) 已声明的字段；不要为新建

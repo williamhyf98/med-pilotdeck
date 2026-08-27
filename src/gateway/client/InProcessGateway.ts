@@ -448,6 +448,7 @@ export class InProcessGateway implements Gateway {
           {
             turnId: runId,
             maxTurns: input.maxTurns,
+            maxToolCalls: input.maxToolCalls,
             ...(input.profile !== undefined ? { profile: input.profile } : {}),
             ...(input.turnOverrides !== undefined ? { turnOverrides: input.turnOverrides } : {}),
             runMode,

@@ -47,7 +47,7 @@ import { randomUUID } from 'node:crypto';
 import { installGlobalProxy } from '../../src/cli/proxy.js';
 await installGlobalProxy();
 
-import { resolvePilotHome, createProjectId, sanitizeSessionIdForPath, resolveGatewayProjectKey, resolveProjectStorageId } from './utils/pilotPaths.js';
+import { resolvePilotHome, createProjectId, sanitizeSessionIdForPath, resolveGatewayProjectKey, resolveProjectStorageId, resolveTypedProjectDir, listProjectStorageIds } from './utils/pilotPaths.js';
 // Read the gateway client straight from TypeScript source via tsx — the UI
 // server is launched with `node --import tsx`, so no prior `npm run build`
 // is required. (A prior tsx 4.x JSDoc dynamic-import parse bug was fixed by
@@ -85,6 +85,7 @@ const pendingAgentToolCalls = new Map();
 const visibleFailureAgentStatusEvents = new Set([
     'model_empty_response_exhausted',
     'max_turns_reached',
+    'max_tool_calls_reached',
     'max_output_recovery_exhausted',
     'model_request_failed',
     'tool_call_recovery_exhausted',
@@ -507,6 +508,9 @@ export function getGatewayTurnSafetyOverrides(options) {
         if (Number.isInteger(options.maxTurns) && options.maxTurns > 0) {
             result.maxTurns = options.maxTurns;
         }
+        if (Number.isInteger(options.maxToolCalls) && options.maxToolCalls > 0) {
+            result.maxToolCalls = options.maxToolCalls;
+        }
         if (Number.isFinite(options.timeoutMs) && options.timeoutMs > 0) {
             result.timeoutMs = options.timeoutMs;
         }
@@ -869,6 +873,20 @@ export function gatewayEventToFrames(event, sessionId, provider) {
                         ...base,
                         kind: 'error',
                         content: detail.message || 'Reached the maximum number of turns, so this turn has stopped. Increase maxTurns or split the task into smaller steps and try again.',
+                        contentI18n: detail.messageI18n,
+                        code: event.event,
+                        recoverable: false,
+                        userHint: detail.userHint,
+                        userHintI18n: detail.userHintI18n,
+                    }),
+                ];
+            }
+            if (event.event === 'max_tool_calls_reached') {
+                return [
+                    createNormalizedMessage({
+                        ...base,
+                        kind: 'error',
+                        content: detail.message || 'Reached the maximum number of tool calls, so this turn has stopped. Reply with what you already know, or split the task into smaller steps.',
                         contentI18n: detail.messageI18n,
                         code: event.event,
                         recoverable: false,
@@ -1501,24 +1519,21 @@ function _buildSessionProjectIndex() {
     const sessionIndex = new Map();
     const dirToPath = new Map();
     try {
-        const projectsDir = path.join(GENERAL_HOME, 'projects');
-        const dirs = fs.readdirSync(projectsDir, { withFileTypes: true });
-        for (const d of dirs) {
-            if (!d.isDirectory()) continue;
-            // Resolve actual project path from .cwd marker (handles lossy encoding)
-            const cwdFile = path.join(projectsDir, d.name, '.cwd');
+        for (const projectId of listProjectStorageIds(GENERAL_HOME)) {
+            const projectDir = resolveTypedProjectDir(projectId, GENERAL_HOME);
+            const cwdFile = path.join(projectDir, '.cwd');
             try {
                 const realPath = fs.readFileSync(cwdFile, 'utf-8').trim();
-                if (realPath) dirToPath.set(d.name, realPath);
+                if (realPath) dirToPath.set(projectId, realPath);
             } catch { /* no .cwd — will use fallback below */ }
 
-            const chatsDir = path.join(projectsDir, d.name, 'chats');
+            const chatsDir = path.join(projectDir, 'chats');
             let files;
             try { files = fs.readdirSync(chatsDir); } catch { continue; }
             for (const f of files) {
                 if (!f.endsWith('.jsonl')) continue;
                 const sessionId = f.slice(0, -6);
-                sessionIndex.set(sessionId, d.name);
+                sessionIndex.set(sessionId, projectId);
             }
         }
     } catch { /* projects dir may not exist yet */ }
@@ -1661,19 +1676,13 @@ function _transcriptFileCandidates(sessionId, projectKey) {
     const candidates = [];
     const pushForProjectId = (projectId) => {
         for (const id of fileVariants) {
-            candidates.push(path.join(pilotHome, 'projects', projectId, 'chats', `${id}.jsonl`));
+            candidates.push(path.join(resolveTypedProjectDir(projectId, pilotHome), 'chats', `${id}.jsonl`));
         }
     };
     pushForProjectId(_resolveTranscriptProjectId(projectKey));
     try {
-        const projectsDir = path.join(pilotHome, 'projects');
-        const dirs = fs.readdirSync(projectsDir, { withFileTypes: true });
-        for (const d of dirs) {
-            if (!d.isDirectory()) continue;
-            for (const id of fileVariants) {
-                const candidate = path.join(projectsDir, d.name, 'chats', `${id}.jsonl`);
-                if (!candidates.includes(candidate)) candidates.push(candidate);
-            }
+        for (const projectId of listProjectStorageIds(pilotHome)) {
+            pushForProjectId(projectId);
         }
     } catch { /* ignore */ }
     return candidates;

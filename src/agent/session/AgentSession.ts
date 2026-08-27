@@ -77,6 +77,7 @@ export class AgentSession {
       messages: this.state.messages,
       input,
       maxTurns: submitOptions.maxTurns,
+      maxToolCalls: submitOptions.maxToolCalls,
       ...(submitOptions.profile !== undefined ? { profile: submitOptions.profile } : {}),
       ...(submitOptions.turnOverrides !== undefined
         ? { turnOverrides: submitOptions.turnOverrides }

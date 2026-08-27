@@ -8,18 +8,25 @@
  *
  * Behavior parity goals:
  *   - The provider lives at the per-project scope (one DB per project root).
- *   - When `config.rootDir` is set we pin the workspace dir there; otherwise
- *     we anchor it under the project root so memory data lives next to the
- *     code it was captured from (matches legacy default).
+ *   - Typed system projects store data under
+ *     `$PILOT_HOME/memory/<typeKey>/<projectId>/` (not path-hash workspaces/).
+ *   - When `config.rootDir` is set we pin the memory root there; otherwise
+ *     we use `$PILOT_HOME/memory`.
  *   - `apiKey` for the LLM extractor is **lazily forwarded** — the user is
  *     expected to set it through env or pilotdeck.yaml; we never default
  *     credentials to anything other than what the user supplied.
  */
 
+import { join } from "node:path";
 import { EdgeClawMemoryService, type EdgeClawMemoryLlmOptions } from "edgeclaw-memory-core";
 import { EdgeClawMemoryProvider } from "./EdgeClawMemoryProvider.js";
 import type { ModelConfig, ModelProtocol } from "../../model/protocol/canonical.js";
 import type { PilotMemoryConfig } from "../../pilot/config/types.js";
+import {
+  getPilotMemoryRootDir,
+  resolvePilotHome,
+  resolveProjectMemoryDataDir,
+} from "../../pilot/paths.js";
 import type { TelemetryClient } from "../../telemetry/index.js";
 
 export type CreateEdgeClawMemoryProviderOptions = {
@@ -28,6 +35,8 @@ export type CreateEdgeClawMemoryProviderOptions = {
   /** Fallback model ref ("provider/model") when memory.model is not set. */
   agentModel?: string;
   projectRoot: string;
+  /** Optional Pilot home; defaults to `resolvePilotHome(process.env)`. */
+  pilotHome?: string;
   /** Optional logger forwarded to the underlying service. */
   logger?: {
     info?: (...args: unknown[]) => void;
@@ -46,14 +55,18 @@ export function createEdgeClawMemoryProviderFromConfig(
   if (!cfg || cfg.enabled !== true) return undefined;
   if (cfg.provider !== "edgeclaw") return undefined;
 
+  const pilotHome = options.pilotHome ?? resolvePilotHome(process.env);
+  const memoryRoot = cfg.rootDir ?? getPilotMemoryRootDir(pilotHome);
   const workspaceDir = options.projectRoot;
-  const rootDir = cfg.rootDir;
+  const dataDir = resolveProjectMemoryDataDir(workspaceDir, pilotHome);
 
   const llm = resolveMemoryLlm(cfg, options.modelConfig, options.agentModel);
 
   const service = new EdgeClawMemoryService({
     workspaceDir,
-    rootDir,
+    rootDir: memoryRoot,
+    dbPath: join(dataDir, "control.sqlite"),
+    memoryDir: join(dataDir, "memory"),
     captureStrategy: cfg.captureStrategy,
     includeAssistant: cfg.includeAssistant,
     maxMessageChars: cfg.maxMessageChars,

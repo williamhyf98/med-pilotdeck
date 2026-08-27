@@ -1,5 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync as mkdirSyncFs, renameSync } from "node:fs";
-import { dirname, resolve, join as joinPath } from "node:path";
+import { dirname, resolve, join as joinPath, isAbsolute } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { EdgeClawMemoryService } from "edgeclaw-memory-core";
@@ -666,12 +666,14 @@ class ProjectRuntimeRegistry {
     this.sessionMcpRuntimes.clear();
 
     if (projectRoot) {
-      const runtime = this.runtimes.get(projectRoot);
+      const identityKey = resolveGatewayProjectKey(projectRoot, this.options.pilotHome);
+      const runtime = this.runtimes.get(identityKey) ?? this.runtimes.get(projectRoot);
       if (runtime?.mcpRuntime) {
         runtime.mcpRuntime.stop().catch(() => {});
       }
       runtime?.memoryService?.close();
       runtime?.router?.shutdown().catch(() => {});
+      this.runtimes.delete(identityKey);
       this.runtimes.delete(projectRoot);
     } else {
       for (const [, runtime] of this.runtimes) {
@@ -713,17 +715,25 @@ class ProjectRuntimeRegistry {
   }
 
   resolve(projectKey?: string): ProjectRuntime {
-    const projectRoot = resolveGatewayProjectKey(
+    const identityKey = resolveGatewayProjectKey(
       projectKey ?? this.options.fallbackProjectRoot,
       this.options.pilotHome,
     );
-    this.options.onProjectActivated?.(projectRoot);
-    const cached = this.runtimes.get(projectRoot);
+    const agentCwd = resolveAgentCwd(identityKey, this.options.pilotHome);
+    // Config / plugins / MCP load against a real directory. Bare system ids are
+    // not filesystem paths — use PILOT_HOME for global config and agentCwd for
+    // project-scoped extension roots.
+    const configProjectRoot =
+      !isAbsolute(identityKey) || identityKey === resolve(this.options.pilotHome)
+        ? this.options.pilotHome
+        : identityKey;
+    this.options.onProjectActivated?.(identityKey);
+    const cached = this.runtimes.get(identityKey);
     if (cached) {
       return cached;
     }
 
-    const snapshot = loadPilotConfig({ projectRoot, env: this.options.env });
+    const snapshot = loadPilotConfig({ projectRoot: configProjectRoot, env: this.options.env });
     const model = this.options.modelFactory
       ? this.options.modelFactory(snapshot)
       : createModelRuntime(snapshot.config.model);
@@ -731,7 +741,7 @@ class ProjectRuntimeRegistry {
       modelConfig: snapshot.config.model,
     });
     const pluginRuntime = new PluginRuntime({
-      projectRoot,
+      projectRoot: agentCwd,
       pilotHome: this.options.pilotHome,
       builtinSkillsRoot: this.options.builtinSkillsRoot,
       builtinPlugins: loadBuiltinPlugins(),
@@ -769,13 +779,14 @@ class ProjectRuntimeRegistry {
       config: snapshot.config.memory,
       modelConfig: snapshot.config.model,
       agentModel: snapshot.config.agent.model.id,
-      projectRoot,
+      projectRoot: agentCwd,
+      pilotHome: this.options.pilotHome,
       now: this.options.now,
       telemetry: this.options.telemetry,
     });
 
     const runtime: ProjectRuntime = {
-      projectRoot,
+      projectRoot: agentCwd,
       snapshot,
       model,
       tokenAccounting,
@@ -786,11 +797,11 @@ class ProjectRuntimeRegistry {
       memory: memory?.provider,
       memoryService: memory?.service,
       projectStorage: {
-        projectRoot,
+        projectRoot: identityKey,
         pilotHome: this.options.pilotHome,
       },
     };
-    this.runtimes.set(projectRoot, runtime);
+    this.runtimes.set(identityKey, runtime);
     return runtime;
   }
 

@@ -23,6 +23,7 @@ export type TurnRunnerOptions = {
   messages: CanonicalMessage[];
   input: AgentInput;
   maxTurns?: number;
+  maxToolCalls?: number;
   profile?: string;
   turnOverrides?: AgentTurnOverrides;
   runMode?: AgentRunMode;
@@ -204,6 +205,7 @@ export class TurnRunner {
           turnId: options.turnId,
           messages,
           maxTurns: options.maxTurns,
+          maxToolCalls: options.maxToolCalls,
           ...(options.profile !== undefined ? { profile: options.profile } : {}),
           ...(options.turnOverrides !== undefined
             ? { turnOverrides: options.turnOverrides }

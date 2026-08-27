@@ -339,25 +339,6 @@ function MainAreaV2Content(props: MainAreaV2Props) {
             <Search className="h-4 w-4" strokeWidth={1.9} />
           </button>
 
-          <button
-            type="button"
-            aria-pressed={displayActiveTab === 'files'}
-            onClick={() => {
-              setDashboardMenuOpen(false);
-              chatHistorySearch.closeSearch();
-              setActiveTab(displayActiveTab === 'files' ? 'chat' : 'files');
-            }}
-            className={cn(
-              'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[13px] transition-colors',
-              displayActiveTab === 'files'
-                ? cn('font-medium', ACTIVE_TOOL_BUTTON_CLASS)
-                : 'text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100',
-            )}
-          >
-            <Folder className="h-3.5 w-3.5" strokeWidth={1.75} />
-            <span>{t(FILES_TAB.labelKey)}</span>
-          </button>
-
           <div ref={dashboardMenuRef} className="relative">
             {activeDashboardTab && ActiveDashboardIcon ? (
               <button

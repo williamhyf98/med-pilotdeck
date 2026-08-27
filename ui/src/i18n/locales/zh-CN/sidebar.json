@@ -5,6 +5,7 @@
     "deleteProject": "删除项目",
     "renameProject": "重命名项目",
     "noProjects": "未找到项目",
+    "noProjectsHint": "还没有项目。点击 + 创建（名称 + 类型）。",
     "loadingProjects": "加载项目中...",
     "searchPlaceholder": "搜索项目...",
     "projectNamePlaceholder": "项目名称",
@@ -26,8 +27,13 @@
     "name": "通用",
     "missing": "未找到通用工作区"
   },
+  "types": {
+    "generalMedicine": "通用医学",
+    "warTrauma": "战创伤医学",
+    "empty": "此类型下暂无项目。点击上方「新建项目」创建。"
+  },
   "sectionToggle": {
-    "label": "侧边栏分区"
+    "label": "项目类型"
   },
   "renamePlaceholder": "重命名 - 留空恢复默认",
   "contextMenu": {
@@ -65,6 +71,7 @@
     "deleteProject": "删除空项目 (Delete)",
     "showSidebar": "显示侧边栏",
     "newChat": "新建对话",
+    "openFiles": "文件",
     "addToFavorites": "添加到收藏",
     "removeFromFavorites": "从收藏移除",
     "editSessionName": "手动编辑会话名称",
@@ -121,7 +128,7 @@
     "deleteSuccess": "删除成功",
     "errorOccurred": "发生错误",
     "deleteSessionConfirm": "确定要删除此会话吗？此操作无法撤销。",
-    "deleteProjectConfirm": "确定要删除此空项目吗？此操作无法撤销。",
+    "deleteProjectConfirm": "确定要删除此项目吗？对话与项目记忆将永久删除；已生成文件会归档保留。",
     "enterProjectPath": "请输入项目路径",
     "deleteSessionFailed": "删除会话失败，请重试。",
     "deleteSessionError": "删除会话时出错，请重试。",
@@ -148,11 +155,15 @@
     "projectsScanned_other": "{{count}} 个项目已扫描"
   },
   "deleteConfirmation": {
+    "title": "删除项目？",
     "deleteProject": "删除项目",
     "deleteSession": "删除会话",
     "confirmDelete": "您确定要删除",
-    "sessionCount_one": "此项目包含 {{count}} 个对话。",
-    "sessionCount_other": "此项目包含 {{count}} 个对话。",
+    "body": "将永久删除该项目的对话与项目记忆。",
+    "sessionCount_one": "约有 {{count}} 个对话将被删除。",
+    "sessionCount_other": "约有 {{count}} 个对话将被删除。",
+    "archiveNote": "已生成的文件会归档保留在磁盘上（不会直接抹除）。对话与项目记忆无法恢复。",
+    "deleting": "删除中…",
     "allConversationsDeleted": "所有对话将被永久删除。",
     "cannotUndo": "此操作无法撤销。"
   }
