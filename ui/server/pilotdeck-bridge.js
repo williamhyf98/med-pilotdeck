@@ -47,7 +47,7 @@ import { randomUUID } from 'node:crypto';
 import { installGlobalProxy } from '../../src/cli/proxy.js';
 await installGlobalProxy();
 
-import { resolvePilotHome, createProjectId, sanitizeSessionIdForPath } from './utils/pilotPaths.js';
+import { resolvePilotHome, createProjectId, sanitizeSessionIdForPath, resolveGatewayProjectKey, resolveProjectStorageId } from './utils/pilotPaths.js';
 // Read the gateway client straight from TypeScript source via tsx — the UI
 // server is launched with `node --import tsx`, so no prior `npm run build`
 // is required. (A prior tsx 4.x JSDoc dynamic-import parse bug was fixed by
@@ -1161,7 +1161,10 @@ export async function runChatViaGateway(
     writer,
     provider = 'pilotdeck',
 ) {
-    const projectKey = options.projectPath || options.cwd || GENERAL_HOME;
+    const projectKey = resolveGatewayProjectKey(
+        options.projectPath || options.cwd || GENERAL_HOME,
+        GENERAL_HOME,
+    );
     const channelKey = 'web';
 
     const incoming = options.sessionId || options.sessionKey;
@@ -1643,38 +1646,41 @@ function lookupSessionTitle(sessionId, projectKey) {
     return title;
 }
 
-function _readFirstPrompt(sessionId, projectKey) {
+function _resolveTranscriptProjectId(projectKey) {
+    if (!projectKey) {
+        return resolveProjectStorageId(GENERAL_HOME, GENERAL_HOME);
+    }
+    const gatewayKey = resolveGatewayProjectKey(projectKey, GENERAL_HOME);
+    return resolveProjectStorageId(gatewayKey, GENERAL_HOME);
+}
+
+function _transcriptFileCandidates(sessionId, projectKey) {
     const pilotHome = GENERAL_HOME;
-    // Sessions are stored on disk under a sanitized filename (raw sessionId
-    // may contain /, :, = which would split into nested dirs). We try
-    // both the sanitized and raw form so this also resolves any legacy files
-    // that pre-date the sanitize fix.
     const safeId = sanitizeSessionIdForPath(sessionId);
     const fileVariants = safeId === sessionId ? [sessionId] : [safeId, sessionId];
     const candidates = [];
-    if (projectKey) {
+    const pushForProjectId = (projectId) => {
         for (const id of fileVariants) {
-            candidates.push(path.join(pilotHome, 'projects', createProjectId(projectKey), 'chats', `${id}.jsonl`));
+            candidates.push(path.join(pilotHome, 'projects', projectId, 'chats', `${id}.jsonl`));
         }
-    }
-    // Also check the general workspace (sessions may live there)
-    for (const id of fileVariants) {
-        const generalChatPath = path.join(pilotHome, 'projects', createProjectId(pilotHome), 'chats', `${id}.jsonl`);
-        if (!candidates.includes(generalChatPath)) candidates.push(generalChatPath);
-    }
+    };
+    pushForProjectId(_resolveTranscriptProjectId(projectKey));
     try {
         const projectsDir = path.join(pilotHome, 'projects');
         const dirs = fs.readdirSync(projectsDir, { withFileTypes: true });
         for (const d of dirs) {
             if (!d.isDirectory()) continue;
             for (const id of fileVariants) {
-                const p = path.join(projectsDir, d.name, 'chats', `${id}.jsonl`);
-                if (!candidates.includes(p)) candidates.push(p);
+                const candidate = path.join(projectsDir, d.name, 'chats', `${id}.jsonl`);
+                if (!candidates.includes(candidate)) candidates.push(candidate);
             }
         }
     } catch { /* ignore */ }
+    return candidates;
+}
 
-    for (const filePath of candidates) {
+function _readFirstPrompt(sessionId, projectKey) {
+    for (const filePath of _transcriptFileCandidates(sessionId, projectKey)) {
         try {
             const fd = fs.openSync(filePath, 'r');
             try {
@@ -1722,27 +1728,7 @@ function extractUserQueries(sessionId, projectKey, limit = 20) {
 }
 
 function _getTranscriptMtime(sessionId, projectKey) {
-    const pilotHome = GENERAL_HOME;
-    const safeId = sanitizeSessionIdForPath(sessionId);
-    const fileVariants = safeId === sessionId ? [sessionId] : [safeId, sessionId];
-    const candidates = [];
-    if (projectKey) {
-        for (const id of fileVariants) {
-            candidates.push(path.join(pilotHome, 'projects', createProjectId(projectKey), 'chats', `${id}.jsonl`));
-        }
-    }
-    try {
-        const projectsDir = path.join(pilotHome, 'projects');
-        const dirs = fs.readdirSync(projectsDir, { withFileTypes: true });
-        for (const d of dirs) {
-            if (!d.isDirectory()) continue;
-            for (const id of fileVariants) {
-                const p = path.join(projectsDir, d.name, 'chats', `${id}.jsonl`);
-                if (!candidates.includes(p)) candidates.push(p);
-            }
-        }
-    } catch { /* ignore */ }
-    for (const filePath of candidates) {
+    for (const filePath of _transcriptFileCandidates(sessionId, projectKey)) {
         try {
             return fs.statSync(filePath).mtimeMs;
         } catch { /* next */ }
@@ -1751,32 +1737,7 @@ function _getTranscriptMtime(sessionId, projectKey) {
 }
 
 function _readUserQueriesFromTranscript(sessionId, projectKey, limit) {
-    const pilotHome = GENERAL_HOME;
-    const safeId = sanitizeSessionIdForPath(sessionId);
-    const fileVariants = safeId === sessionId ? [sessionId] : [safeId, sessionId];
-    const candidates = [];
-    if (projectKey) {
-        for (const id of fileVariants) {
-            candidates.push(path.join(pilotHome, 'projects', createProjectId(projectKey), 'chats', `${id}.jsonl`));
-        }
-    }
-    for (const id of fileVariants) {
-        const generalChatPath = path.join(pilotHome, 'projects', createProjectId(pilotHome), 'chats', `${id}.jsonl`);
-        if (!candidates.includes(generalChatPath)) candidates.push(generalChatPath);
-    }
-    try {
-        const projectsDir = path.join(pilotHome, 'projects');
-        const dirs = fs.readdirSync(projectsDir, { withFileTypes: true });
-        for (const d of dirs) {
-            if (!d.isDirectory()) continue;
-            for (const id of fileVariants) {
-                const p = path.join(projectsDir, d.name, 'chats', `${id}.jsonl`);
-                if (!candidates.includes(p)) candidates.push(p);
-            }
-        }
-    } catch { /* ignore */ }
-
-    for (const filePath of candidates) {
+    for (const filePath of _transcriptFileCandidates(sessionId, projectKey)) {
         try {
             const raw = fs.readFileSync(filePath, 'utf-8');
             const queries = [];
@@ -1830,32 +1791,7 @@ function _extractToolSequence(sessionId, projectKey) {
 }
 
 function _readToolSequenceFromTranscript(sessionId, projectKey) {
-    const pilotHome = GENERAL_HOME;
-    const safeId = sanitizeSessionIdForPath(sessionId);
-    const fileVariants = safeId === sessionId ? [sessionId] : [safeId, sessionId];
-    const candidates = [];
-    if (projectKey) {
-        for (const id of fileVariants) {
-            candidates.push(path.join(pilotHome, 'projects', createProjectId(projectKey), 'chats', `${id}.jsonl`));
-        }
-    }
-    for (const id of fileVariants) {
-        const generalChatPath = path.join(pilotHome, 'projects', createProjectId(pilotHome), 'chats', `${id}.jsonl`);
-        if (!candidates.includes(generalChatPath)) candidates.push(generalChatPath);
-    }
-    try {
-        const projectsDir = path.join(pilotHome, 'projects');
-        const dirs = fs.readdirSync(projectsDir, { withFileTypes: true });
-        for (const d of dirs) {
-            if (!d.isDirectory()) continue;
-            for (const id of fileVariants) {
-                const p = path.join(projectsDir, d.name, 'chats', `${id}.jsonl`);
-                if (!candidates.includes(p)) candidates.push(p);
-            }
-        }
-    } catch { /* ignore */ }
-
-    for (const filePath of candidates) {
+    for (const filePath of _transcriptFileCandidates(sessionId, projectKey)) {
         try {
             const raw = fs.readFileSync(filePath, 'utf-8');
             const turns = [];
@@ -1918,33 +1854,8 @@ function _extractSubagentPrompts(sessionId, projectKey) {
 }
 
 function _readSubagentPromptsFromTranscript(sessionId, projectKey) {
-    const pilotHome = GENERAL_HOME;
-    const safeId = sanitizeSessionIdForPath(sessionId);
-    const fileVariants = safeId === sessionId ? [sessionId] : [safeId, sessionId];
-    const candidates = [];
-    if (projectKey) {
-        for (const id of fileVariants) {
-            candidates.push(path.join(pilotHome, 'projects', createProjectId(projectKey), 'chats', `${id}.jsonl`));
-        }
-    }
-    for (const id of fileVariants) {
-        const generalChatPath = path.join(pilotHome, 'projects', createProjectId(pilotHome), 'chats', `${id}.jsonl`);
-        if (!candidates.includes(generalChatPath)) candidates.push(generalChatPath);
-    }
-    try {
-        const projectsDir = path.join(pilotHome, 'projects');
-        const dirs = fs.readdirSync(projectsDir, { withFileTypes: true });
-        for (const d of dirs) {
-            if (!d.isDirectory()) continue;
-            for (const id of fileVariants) {
-                const p = path.join(projectsDir, d.name, 'chats', `${id}.jsonl`);
-                if (!candidates.includes(p)) candidates.push(p);
-            }
-        }
-    } catch { /* ignore */ }
-
     const promptsByTurn = new Map();
-    for (const filePath of candidates) {
+    for (const filePath of _transcriptFileCandidates(sessionId, projectKey)) {
         try {
             const raw = fs.readFileSync(filePath, 'utf-8');
             for (const line of raw.split('\n')) {

@@ -31,6 +31,13 @@ import {
     createProjectId,
     createCollisionResistantProjectId,
     sanitizeSessionIdForPath,
+    resolveWorkspaceDirectoryForProjectName,
+    resolveWorkspaceDataRoot,
+    resolveGatewayProjectKey,
+    resolveProjectStorageId,
+    resolveProjectChatDir,
+    GENERAL_WORKSPACE_ID,
+    ensureWorkspaceLayout,
 } from './utils/pilotPaths.js';
 import { mapCronRunOutcome } from '../../src/cron/protocol/types.js';
 import sessionManager from './sessionManager.js';
@@ -183,12 +190,15 @@ async function getProjects(progressCallback = null) {
     const dedupedProjects = [...byId.values()];
     const total = dedupedProjects.length;
 
+    const pilotHome = resolvePilotHome(process.env);
     const result = [];
     for (let index = 0; index < dedupedProjects.length; index += 1) {
         const project = dedupedProjects[index];
-        const fullPath = project.fullPath || project.projectKey;
-        const name = project.__projectId || createProjectId(fullPath);
-        rememberProjectDirectory(name, fullPath);
+        const gatewayKey = project.fullPath || project.projectKey;
+        const name = project.__projectId || createProjectId(gatewayKey);
+        const workspacePath = resolveWorkspaceDirectoryForProjectName(name, pilotHome);
+        ensureWorkspaceLayout(workspacePath);
+        rememberProjectDirectory(name, workspacePath);
 
         if (progressCallback) {
             progressCallback({
@@ -200,22 +210,22 @@ async function getProjects(progressCallback = null) {
         }
 
         const sessionsResult = await gateway
-            .listSessions({ projectKey: fullPath, limit: 5 })
+            .listSessions({ projectKey: gatewayKey, limit: 5 })
             .catch(() => ({ sessions: [] }));
         const sessions = (sessionsResult.sessions || []).map((session) =>
             toLegacySession(session, name),
         );
         applyCustomSessionNames(sessions, 'claude');
 
-        const taskmaster = await detectTaskMaster(fullPath).catch(() => ({
+        const taskmaster = await detectTaskMaster(gatewayKey).catch(() => ({
             hasTaskmaster: false,
         }));
 
         result.push({
             name,
-            displayName: projectDisplayName(fullPath),
-            fullPath,
-            path: fullPath,
+            displayName: projectDisplayName(gatewayKey),
+            fullPath: workspacePath,
+            path: workspacePath,
             lastActivity: project.lastActivity,
             sessions,
             sessionMeta: {
@@ -238,6 +248,8 @@ async function getProjects(progressCallback = null) {
     // started from the General section use this cwd; sessions are
     // sourced from the same backend as any other project.
     const generalHome = resolvePilotHome(process.env);
+    const generalWorkspace = resolveWorkspaceDataRoot(GENERAL_WORKSPACE_ID, generalHome);
+    ensureWorkspaceLayout(generalWorkspace);
     let generalSessions = [];
     let generalTotal = 0;
     let generalLastActivity;
@@ -269,12 +281,12 @@ async function getProjects(progressCallback = null) {
         generalTotal = 0;
         generalLastActivity = undefined;
     }
-    rememberProjectDirectory('general', generalHome);
+    rememberProjectDirectory('general', generalWorkspace);
     result.unshift({
         name: 'general',
         displayName: 'general',
-        fullPath: generalHome,
-        path: generalHome,
+        fullPath: generalWorkspace,
+        path: generalWorkspace,
         lastActivity: generalLastActivity,
         sessions: generalSessions,
         sessionMeta: {
@@ -289,7 +301,8 @@ async function getProjects(progressCallback = null) {
 
 async function getSessions(projectName, limit = 5, offset = 0) {
     const gateway = await getPilotDeckGateway();
-    const projectPath = await extractProjectDirectory(projectName);
+    const pilotHome = resolvePilotHome(process.env);
+    const gatewayKey = resolveGatewayProjectKey(projectName, pilotHome);
     const cursor = offset > 0 ? String(offset) : undefined;
     // Fan-out the page query and the project summary (for the authoritative
     // total session count) in parallel. Without summary.sessionCount we'd
@@ -301,10 +314,10 @@ async function getSessions(projectName, limit = 5, offset = 0) {
     // pulled in everything that exists.
     const [listResult, summary] = await Promise.all([
         gateway
-            .listSessions({ projectKey: projectPath, limit, cursor })
+            .listSessions({ projectKey: gatewayKey, limit, cursor })
             .catch(() => ({ sessions: [] })),
         gateway
-            .describeProject({ projectKey: projectPath })
+            .describeProject({ projectKey: gatewayKey })
             .catch(() => null),
     ]);
     const sessions = (listResult.sessions || []).map((session) =>
@@ -325,36 +338,19 @@ async function getSessions(projectName, limit = 5, offset = 0) {
 }
 
 /**
- * Resolve a `projectName` (encoded form like `-Users-miwi-PilotDeck`,
- * a basename, or an already-absolute path) to the absolute project root.
- * Falls back to consulting the directory cache populated by
- * `getProjects()` so worktree-aware paths resolve correctly.
+ * Resolve a `projectName` to the workspace data root used as agent cwd.
  */
 async function extractProjectDirectory(projectName) {
-    if (!projectName) {
-        return resolvePilotHome(process.env);
+    const pilotHome = resolvePilotHome(process.env);
+    const workspaceDir = resolveWorkspaceDirectoryForProjectName(projectName, pilotHome);
+    ensureWorkspaceLayout(workspaceDir);
+    if (projectName) {
+        rememberProjectDirectory(projectName, workspaceDir);
     }
-    if (path.isAbsolute(projectName)) {
-        rememberProjectDirectory(projectName, projectName);
-        return projectName;
+    if (projectName === 'general' || projectName === GENERAL_WORKSPACE_ID) {
+        rememberProjectDirectory('general', workspaceDir);
     }
-    const cached = directoryCache.get(projectName);
-    if (cached) {
-        return cached;
-    }
-    const markedProjects = await readMarkedProjectPaths();
-    const marked = markedProjects.get(projectName);
-    if (marked) {
-        rememberProjectDirectory(projectName, marked);
-        return marked;
-    }
-    if (projectName.startsWith('-')) {
-        // Legacy dash-encoding heuristic: `-Users-foo-foo` → `/Users/foo/foo`.
-        const decoded = '/' + projectName.replace(/^-+/, '').replace(/-/g, '/');
-        rememberProjectDirectory(projectName, decoded);
-        return decoded;
-    }
-    return resolvePilotHome(process.env);
+    return workspaceDir;
 }
 
 async function addProjectManually(projectPath, _displayName = null) {
@@ -385,11 +381,15 @@ async function addProjectManually(projectPath, _displayName = null) {
         );
     }
 
+    const workspacePath = resolveWorkspaceDataRoot(name, pilotHome);
+    ensureWorkspaceLayout(workspacePath);
+    rememberProjectDirectory(name, workspacePath);
+
     return {
         name,
         displayName: projectDisplayName(absolute),
-        fullPath: absolute,
-        path: absolute,
+        fullPath: workspacePath,
+        path: workspacePath,
     };
 }
 
@@ -427,9 +427,11 @@ async function renameProject(_projectName, _displayName) {
 }
 
 async function deleteSession(projectName, sessionId, _options = {}) {
-    const fullPath = await extractProjectDirectory(projectName);
     const pilotHome = resolvePilotHome(process.env);
-    const projectId = await resolveProjectIdForPathOrName(projectName, fullPath);
+    const projectId = resolveProjectStorageId(
+        resolveGatewayProjectKey(projectName, pilotHome),
+        pilotHome,
+    );
     // Try the sanitized filename first (current storage layout), then the
     // raw form (legacy files written before the sanitize fix).
     const safeId = sanitizeSessionIdForPath(sessionId);
@@ -456,9 +458,11 @@ async function deleteSession(projectName, sessionId, _options = {}) {
 }
 
 async function deleteProject(projectName, force = false) {
-    const fullPath = await extractProjectDirectory(projectName);
     const pilotHome = resolvePilotHome(process.env);
-    const projectId = await resolveProjectIdForPathOrName(projectName, fullPath);
+    const projectId = resolveProjectStorageId(
+        resolveGatewayProjectKey(projectName, pilotHome),
+        pilotHome,
+    );
     const projectDir = path.join(pilotHome, 'projects', projectId);
     try {
         await fs.rm(projectDir, { recursive: true, force });
@@ -489,8 +493,9 @@ async function resolveProjectIdForPathOrName(projectName, fullPath) {
 async function getProjectCronJobsOverview(projectName) {
     try {
         const gateway = await getPilotDeckGateway();
+        const pilotHome = resolvePilotHome(process.env);
         const projectKey = projectName
-            ? await extractProjectDirectory(projectName)
+            ? resolveGatewayProjectKey(projectName, pilotHome)
             : undefined;
         const result = await gateway.cronList({
             projectKey,

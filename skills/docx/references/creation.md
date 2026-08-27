@@ -18,7 +18,7 @@ Python。
 ```bash
 bash "$DOCX_TOOL" make \
   --title "救治方案" \
-  --markdown "$PWD/exports/qa/content.md" \
+  --markdown "$PWD/scratch/qa/content.md" \
   --out "$PWD/exports/救治方案.docx"
 ```
 

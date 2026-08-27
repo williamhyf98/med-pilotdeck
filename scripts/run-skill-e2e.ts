@@ -27,14 +27,32 @@ type CaseDef = {
   id: string;
   kind: CaseKind;
   skill: string;
+  /** Require an explicit read_skill call. Defaults to true. */
+  requireSkillLoad?: boolean;
   timeoutMs: number;
   message: string;
   attachments?: Array<{ type: ChannelAttachment["type"]; name: string; from: string; mimeType?: string }>;
   copyDir?: string;
   expectTools?: string[];
+  /** Tool must be invoked; success is not required (e.g. ask_user_question with canPrompt=false). */
+  expectToolsCalled?: string[];
+  forbidTools?: string[];
+  expectToolCounts?: Record<string, number>;
   expectBashNeedle?: string;
+  forbidBashNeedles?: string[];
+  expectToolArgNeedles?: Array<{ tool: string; needle: string }>;
   expectOutputGlob?: string;
+  expectOutputUnder?: string;
+  expectAssistantContains?: string[];
+  requireBatchDirArg?: boolean;
   requireStagePlanBehavior?: boolean;
+  allowEmptyAssistant?: boolean;
+  /** Elicitation observation cases intentionally abort before a normal turn completion. */
+  allowIncompleteTurn?: boolean;
+  /** Expose interactive tools to the model for this case. */
+  canPrompt?: boolean;
+  /** Abort after observing this tool call so headless tests do not wait for user input. */
+  abortAfterToolCall?: string;
 };
 
 type CaseResult = {
@@ -62,19 +80,18 @@ function parseOnlyFlag(argv: string[]): Set<string> | undefined {
 
 async function walkFiles(dir: string): Promise<string[]> {
   const out: string[] = [];
-  let entries: Awaited<ReturnType<typeof readdir>>;
   try {
-    entries = await readdir(dir, { withFileTypes: true });
+    const entries = await readdir(dir, { withFileTypes: true, encoding: "utf8" });
+    for (const entry of entries) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        out.push(...(await walkFiles(full)));
+      } else if (entry.isFile()) {
+        out.push(full);
+      }
+    }
   } catch {
     return out;
-  }
-  for (const entry of entries) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      out.push(...(await walkFiles(full)));
-    } else if (entry.isFile()) {
-      out.push(full);
-    }
   }
   return out;
 }
@@ -110,8 +127,36 @@ function skillLoaded(tools: Array<{ name: string; args?: string }>, skill: strin
   });
 }
 
+function bashCommand(args: string | undefined): string {
+  if (!args) {
+    return "";
+  }
+  try {
+    const parsed = JSON.parse(args) as { command?: unknown };
+    if (typeof parsed.command === "string") {
+      return parsed.command;
+    }
+  } catch {
+    // Fall back to the preview text when it is truncated or not JSON.
+  }
+  return args;
+}
+
+function normalizeShellForMatching(value: string): string {
+  return value
+    .replace(/\\"/g, "\"")
+    .replace(/["']/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function bashHit(tools: Array<{ name: string; args?: string }>, needle: string): boolean {
-  return tools.some((t) => t.name === "bash" && (t.args ?? "").includes(needle));
+  const normalizedNeedle = normalizeShellForMatching(needle);
+  return tools.some(
+    (t) =>
+      t.name === "bash"
+      && normalizeShellForMatching(bashCommand(t.args)).includes(normalizedNeedle),
+  );
 }
 
 function stagePlanBehaviorOk(previews: string[]): boolean {
@@ -131,6 +176,12 @@ function stagePlanBehaviorOk(previews: string[]): boolean {
     return true;
   }
   return /fallback_used|agent_continue/.test(text);
+}
+
+function isMedToolsSkillGateResult(
+  tool: { preview?: string },
+): boolean {
+  return (tool.preview ?? "").includes("<med-tools-skill-gate>");
 }
 
 async function prepareWorkDir(c: CaseDef): Promise<{ workDir: string; batchDir?: string }> {
@@ -193,7 +244,7 @@ async function runCase(gateway: Gateway, c: CaseDef): Promise<CaseResult> {
       runMode: "agent",
       mode: "bypassPermissions",
       basePermissionMode: "bypassPermissions",
-      canPrompt: false,
+      canPrompt: c.canPrompt ?? false,
       runId,
       timeoutMs: c.timeoutMs,
     });
@@ -214,6 +265,13 @@ async function runCase(gateway: Gateway, c: CaseDef): Promise<CaseResult> {
           tools.push(row);
           toolsById.set(event.toolCallId, row);
           process.stderr.write(`[${c.id}] tool ${event.name} ${event.argsPreview ?? ""}\n`.slice(0, 400) + "\n");
+          if (c.abortAfterToolCall === event.name) {
+            void gateway.abortTurn({
+              sessionKey,
+              runId,
+              reason: `skill-e2e-observed-${event.name}`,
+            });
+          }
         } else if (event.type === "tool_call_finished") {
           const row = toolsById.get(event.toolCallId);
           if (row) {
@@ -245,29 +303,75 @@ async function runCase(gateway: Gateway, c: CaseDef): Promise<CaseResult> {
   if (modelStarted < 1) {
     reasons.push("main model was not called");
   }
-  if (fatalError && !turnCompleted) {
+  if (fatalError && !turnCompleted && !c.allowIncompleteTurn) {
     reasons.push(`turn did not complete (${fatalError})`);
   }
-  if (!skillLoaded(tools, c.skill)) {
+  if (c.requireSkillLoad !== false && !skillLoaded(tools, c.skill)) {
     reasons.push(`skill not loaded via read_skill (${c.skill})`);
   }
   for (const name of c.expectTools ?? []) {
     const hits = tools.filter((t) => t.name === name);
     if (hits.length === 0) {
       reasons.push(`missing tool ${name}`);
-    } else if (!hits.some((t) => t.ok === true)) {
+    } else if (!hits.some((t) => t.ok === true && !isMedToolsSkillGateResult(t))) {
+      if (hits.some(isMedToolsSkillGateResult)) {
+        reasons.push(`tool ${name} was skill-gated but not retried`);
+        continue;
+      }
       reasons.push(`tool ${name} did not finish successfully`);
+    }
+  }
+  for (const name of c.expectToolsCalled ?? []) {
+    if (!tools.some((t) => t.name === name)) {
+      reasons.push(`missing tool call ${name}`);
+    }
+  }
+  for (const { tool, needle } of c.expectToolArgNeedles ?? []) {
+    const hits = tools.filter((t) => t.name === tool);
+    if (hits.length === 0) {
+      reasons.push(`missing tool ${tool} (needed arg ${needle})`);
+    } else if (!hits.some((t) => (t.args ?? "").includes(needle))) {
+      reasons.push(`tool ${tool} args missing ${needle}`);
+    }
+  }
+  for (const name of c.forbidTools ?? []) {
+    if (tools.some((t) => t.name === name)) {
+      reasons.push(`forbidden tool was called: ${name}`);
+    }
+  }
+  for (const [name, expectedCount] of Object.entries(c.expectToolCounts ?? {})) {
+    const actualCount = tools.filter((t) => t.name === name).length;
+    if (actualCount !== expectedCount) {
+      reasons.push(`tool ${name} called ${actualCount} time(s), expected ${expectedCount}`);
     }
   }
   if (c.expectBashNeedle && !bashHit(tools, c.expectBashNeedle)) {
     reasons.push(`bash did not invoke ${c.expectBashNeedle}`);
   }
+  for (const needle of c.forbidBashNeedles ?? []) {
+    if (bashHit(tools, needle)) {
+      reasons.push(`bash invoked forbidden path: ${needle}`);
+    }
+  }
+  if (c.requireBatchDirArg) {
+    const parseCalls = tools.filter((t) => t.name === "mcp__med-tools__med_parse_medical");
+    if (!batchDir || !parseCalls.some((t) => (t.args ?? "").includes(batchDir))) {
+      reasons.push("med_parse_medical did not receive the prepared batch directory");
+    }
+  }
   if (c.expectOutputGlob) {
     const skip = new Set((c.attachments ?? []).map((a) => join(workDir, a.name)));
-    const files = (await walkFiles(workDir)).filter((p) => !skip.has(p));
+    const outputRoot = c.expectOutputUnder ? join(workDir, c.expectOutputUnder) : workDir;
+    const files = (await walkFiles(outputRoot)).filter((p) => !skip.has(p));
     const hits = files.filter((p) => matchesOutputGlob(p, c.expectOutputGlob!));
     if (hits.length === 0) {
-      reasons.push(`no output matching ${c.expectOutputGlob}`);
+      const location = c.expectOutputUnder ? ` under ${c.expectOutputUnder}/` : "";
+      reasons.push(`no output matching ${c.expectOutputGlob}${location}`);
+    }
+  }
+  for (const expectedText of c.expectAssistantContains ?? []) {
+    if (!assistant.includes(expectedText)) {
+      reasons.push(`final assistant message missing: ${expectedText}`);
     }
   }
   if (c.requireStagePlanBehavior) {
@@ -278,7 +382,7 @@ async function runCase(gateway: Gateway, c: CaseDef): Promise<CaseResult> {
       reasons.push("stage-plan care_plan empty and no fallback recorded");
     }
   }
-  if (assistant.trim().length === 0) {
+  if (!c.allowEmptyAssistant && assistant.trim().length === 0) {
     reasons.push("empty final assistant message");
   }
 
@@ -342,11 +446,15 @@ async function main(): Promise<void> {
   }
 
   const results: CaseResult[] = [];
-  for (const c of cases) {
-    process.stderr.write(`\n--- ${c.id} (new session) ---\n`);
-    results.push(await runCase(gateway, c));
+  try {
+    for (const c of cases) {
+      process.stderr.write(`\n--- ${c.id} (new session) ---\n`);
+      results.push(await runCase(gateway, c));
+    }
+    process.exitCode = printSummary(results);
+  } finally {
+    gateway.close();
   }
-  process.exitCode = printSummary(results);
 }
 
 await main();

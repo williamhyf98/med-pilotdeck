@@ -9,6 +9,7 @@ import {
   hashText,
 } from '../../../src/context/memory/edgeclaw-memory-core/lib/index.js';
 import { extractProjectDirectory } from '../projects.js';
+import { resolvePilotHome, resolveGatewayProjectKey } from '../utils/pilotPaths.js';
 import {
   buildMemoryDefaults,
   readPilotDeckConfigFile,
@@ -365,7 +366,9 @@ export async function resolveProjectPathFromRequest(req) {
     throw new Error('projectPath or projectName is required');
   }
 
-  return path.resolve(await extractProjectDirectory(projectName));
+  const pilotHome = resolvePilotHome(process.env);
+  const workspacePath = await extractProjectDirectory(projectName);
+  return path.resolve(resolveGatewayProjectKey(workspacePath, pilotHome));
 }
 
 export async function getMemoryServiceForRequest(req) {

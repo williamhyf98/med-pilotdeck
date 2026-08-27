@@ -65,7 +65,7 @@ bash "$PDF_SKILL_ROOT/scripts/pdf.sh" make \
 ```bash
 bash "$PDF_SKILL_ROOT/scripts/pdf.sh" make \
   --title "救治方案" \
-  --markdown "$PWD/exports/qa/content.md" \
+  --markdown "$PWD/scratch/qa/content.md" \
   --out "$PWD/exports/救治方案.pdf"
 ```
 
@@ -80,7 +80,7 @@ bash "$PDF_SKILL_ROOT/scripts/pdf.sh" make \
 ```bash
 bash "$PDF_SKILL_ROOT/scripts/pdf.sh" inspect \
   --input "$INPUT_PDF" \
-  --out "$PWD/exports/qa/inspection.json"
+  --out "$PWD/scratch/qa/inspection.json"
 ```
 
 需要全文或表格时再加 `--text-out` / `--tables-out`。扫描件可能没有可提取文本；本技能不含 OCR。
@@ -93,8 +93,8 @@ bash "$PDF_SKILL_ROOT/scripts/pdf.sh" inspect \
 bash "$PDF_SKILL_ROOT/scripts/pdf.sh" merge --inputs first.pdf second.pdf --out "$PWD/exports/merged.pdf"
 bash "$PDF_SKILL_ROOT/scripts/pdf.sh" split --input source.pdf --out-dir "$PWD/exports/pages" --pages "1-3,7"
 bash "$PDF_SKILL_ROOT/scripts/pdf.sh" rotate --input source.pdf --out "$PWD/exports/rotated.pdf" --degrees 90 --pages "2,4-5"
-bash "$PDF_SKILL_ROOT/scripts/pdf.sh" forms-inspect --input form.pdf --out "$PWD/exports/qa/fields.json"
-bash "$PDF_SKILL_ROOT/scripts/pdf.sh" forms-fill --input form.pdf --data "$PWD/exports/qa/values.json" --out "$PWD/exports/filled.pdf"
+bash "$PDF_SKILL_ROOT/scripts/pdf.sh" forms-inspect --input form.pdf --out "$PWD/scratch/qa/fields.json"
+bash "$PDF_SKILL_ROOT/scripts/pdf.sh" forms-fill --input form.pdf --data "$PWD/scratch/qa/values.json" --out "$PWD/exports/filled.pdf"
 ```
 
 页面操作不会像字处理器那样重排正文。见 [structure-and-forms.md](references/structure-and-forms.md)。
@@ -104,8 +104,8 @@ bash "$PDF_SKILL_ROOT/scripts/pdf.sh" forms-fill --input form.pdf --data "$PWD/e
 `make` 已包含审计和渲染。对已有 PDF 或编辑结果：
 
 ```bash
-bash "$PDF_SKILL_ROOT/scripts/pdf.sh" audit --input "$FINAL_PDF" --out "$PWD/exports/qa/audit.json"
-bash "$PDF_SKILL_ROOT/scripts/pdf.sh" render --input "$FINAL_PDF" --out-dir "$PWD/exports/qa/render" --dpi 144
+bash "$PDF_SKILL_ROOT/scripts/pdf.sh" audit --input "$FINAL_PDF" --out "$PWD/scratch/qa/audit.json"
+bash "$PDF_SKILL_ROOT/scripts/pdf.sh" render --input "$FINAL_PDF" --out-dir "$PWD/scratch/qa/render" --dpi 144
 ```
 
 按全尺寸查看每一张 `page-*.png`。硬失败必须消除。清单见 [qa-checklist.md](references/qa-checklist.md)。

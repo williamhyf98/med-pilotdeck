@@ -47,6 +47,23 @@ Skills:
 - `med-trauma-stage-plan` — 六阶段正式方案；`care_plan` 原样展示
 - `med-case-report` — 固定 9 段模版病例报告（med-mas scribe 契约）；主模型生成
 
+### MCP 调用前的 Skill 门禁
+
+所有 `mcp__med-tools__*` 工具都经过会话级 Skill 门禁：
+
+1. 若本会话已经通过 `read_skill` 加载了对应医学 Skill，工具正常执行。
+2. 若模型跳过 `read_skill` 直接调用 MCP，首次调用**不执行医学工具**；运行时自动加载完整 Skill，并把正文和“重新规划、重新调用”的提示返回模型。
+3. 模型按 Skill 重新规划并再次调用后，MCP 才真正执行。
+
+映射关系：
+
+- `med_parse_medical` → `med-medical`；已加载 `med-case-report` 或 `med-trauma-stage-plan` 时也可使用。
+- `med_trauma_rag_query` / `med_trauma_rag_status` → `med-trauma-assist`。
+- `med_trauma_stage_plan` → `med-trauma-stage-plan`。
+- `med_tools_health` → 任一医学 Skill；未加载时默认补 `med-medical`。
+
+门禁只保证模型先读完整操作手册；阶段合法性、输入路径等不可省略的参数仍由 MCP 工具自身校验。
+
 ## Primary tool: `med_parse_medical`
 
 Unified entry (aligned with offline-301 suffixes):

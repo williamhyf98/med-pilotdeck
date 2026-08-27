@@ -31,7 +31,7 @@ SPREADSHEET_SKILL_ROOT="$(dirname "<path>")"
 mkdir -p "$PWD/exports"
 ```
 
-中间 Markdown/JSON 放在 `exports/qa/` 或 `PILOTDECK_WORK_DIR`，不要交付。
+中间 Markdown/JSON 放在 `scratch/qa/` 或 `PILOTDECK_WORK_DIR`，不要交付。
 
 ## 新建表格
 
@@ -55,7 +55,7 @@ Markdown 管道表：
 ```bash
 bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make \
   --title "救治清单" \
-  --markdown "$PWD/exports/qa/table.md" \
+  --markdown "$PWD/scratch/qa/table.md" \
   --out "$PWD/exports/救治清单.xlsx"
 ```
 
@@ -72,7 +72,7 @@ bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make \
 
 ```bash
 bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make \
-  --spec "$PWD/exports/qa/workbook.json" \
+  --spec "$PWD/scratch/qa/workbook.json" \
   --out "$PWD/exports/统计工作簿.xlsx"
 ```
 

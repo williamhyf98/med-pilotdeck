@@ -37,59 +37,48 @@ function successfulFileResult(toolCallId, paths) {
         completedAt: "2026-07-21T10:00:01.000Z",
     };
 }
-test("file artifacts include every meaningful workspace change without an extension allowlist", async () => {
+test("file artifacts include every meaningful inbox and exports change without an extension allowlist", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "pilotdeck-artifacts-"));
-    const uploadedFile = join(projectRoot, ".tmp", "chat-attachments", "source.xlsx");
+    const uploadedFile = join(projectRoot, "inbox", "batch-1", "source.xlsx");
     try {
-        await mkdir(join(projectRoot, "app"), { recursive: true });
-        await mkdir(join(projectRoot, ".tmp", "chat-attachments"), { recursive: true });
-        await writeFile(join(projectRoot, "app", "page.tsx"), "before");
-        await writeFile(join(projectRoot, "existing.docx"), "before");
-        await writeFile(join(projectRoot, "restored.txt"), "original");
-        await writeFile(join(projectRoot, "mtime-only.txt"), "unchanged");
+        await mkdir(join(projectRoot, "exports"), { recursive: true });
+        await mkdir(join(projectRoot, "inbox", "batch-1"), { recursive: true });
+        await writeFile(join(projectRoot, "exports", "existing.docx"), "before");
+        await writeFile(join(projectRoot, "exports", "restored.txt"), "original");
+        await writeFile(join(projectRoot, "exports", "mtime-only.txt"), "unchanged");
         await writeFile(uploadedFile, "upload-before");
         const collector = await FileArtifactCollector.start({
             cwd: projectRoot,
             allowedInputPaths: [uploadedFile],
             now: () => new Date("2026-07-21T10:00:00.000Z"),
         });
-        await writeFile(join(projectRoot, "app", "page.tsx"), "after!");
-        await writeFile(join(projectRoot, "app", "globals.css"), "body { color: navy; }");
-        await writeFile(join(projectRoot, "existing.docx"), "after with more bytes");
-        await writeFile(join(projectRoot, "notes.custom"), "unknown extension is still meaningful");
-        await writeFile(join(projectRoot, "result.pptx"), "presentation");
-        await writeFile(join(projectRoot, ".env.example"), "PUBLIC_URL=http://localhost");
-        await mkdir(join(projectRoot, ".github", "workflows"), { recursive: true });
-        await writeFile(join(projectRoot, ".github", "workflows", "ci.yml"), "name: CI");
+        await writeFile(join(projectRoot, "exports", "existing.docx"), "after with more bytes");
+        await writeFile(join(projectRoot, "exports", "notes.custom"), "unknown extension is still meaningful");
+        await writeFile(join(projectRoot, "exports", "result.pptx"), "presentation");
+        await writeFile(join(projectRoot, "exports", ".env.example"), "PUBLIC_URL=http://localhost");
         await writeFile(uploadedFile, "upload-after with more bytes");
-        await writeFile(join(projectRoot, "restored.txt"), "temporary change");
-        await writeFile(join(projectRoot, "restored.txt"), "original");
-        await utimes(join(projectRoot, "mtime-only.txt"), new Date(), new Date());
-        await writeFile(join(projectRoot, "created-then-deleted.txt"), "temporary");
-        await rm(join(projectRoot, "created-then-deleted.txt"));
-        await mkdir(join(projectRoot, ".pilotdeck", "work", "session", "turn", "pptx"), { recursive: true });
-        await writeFile(join(projectRoot, ".pilotdeck", "work", "session", "turn", "pptx", "deck.mjs"), "builder");
-        await mkdir(join(projectRoot, ".next", "static"), { recursive: true });
-        await writeFile(join(projectRoot, ".next", "static", "bundle.js"), "generated bundle");
-        await writeFile(join(projectRoot, ".pilotdeck_build.mjs"), "build program");
-        await writeFile(join(projectRoot, ".env"), "API_KEY=secret");
-        await writeFile(join(projectRoot, "private.pem"), "secret key");
+        await writeFile(join(projectRoot, "exports", "restored.txt"), "temporary change");
+        await writeFile(join(projectRoot, "exports", "restored.txt"), "original");
+        await utimes(join(projectRoot, "exports", "mtime-only.txt"), new Date(), new Date());
+        await writeFile(join(projectRoot, "exports", "created-then-deleted.txt"), "temporary");
+        await rm(join(projectRoot, "exports", "created-then-deleted.txt"));
+        await mkdir(join(projectRoot, "scratch", "work", "session", "turn", "pptx"), { recursive: true });
+        await writeFile(join(projectRoot, "scratch", "work", "session", "turn", "pptx", "deck.mjs"), "builder");
+        await writeFile(join(projectRoot, "exports", ".env"), "API_KEY=secret");
+        await writeFile(join(projectRoot, "exports", "private.pem"), "secret key");
         collector.observeToolResult(toolResult("bash"));
         const artifacts = await collector.finish("incomplete");
         const expectedPaths = [
-            ".env.example",
-            ".github/workflows/ci.yml",
-            ".tmp/chat-attachments/source.xlsx",
-            "app/globals.css",
-            "app/page.tsx",
-            "existing.docx",
-            "notes.custom",
-            "result.pptx",
+            "exports/.env.example",
+            "exports/existing.docx",
+            "exports/notes.custom",
+            "exports/result.pptx",
+            "inbox/batch-1/source.xlsx",
         ].sort((left, right) => left.localeCompare(right));
         assert.deepEqual(artifacts.map((artifact) => artifact.path), expectedPaths);
-        assert.equal(artifacts.find((artifact) => artifact.path === "app/page.tsx")?.operation, "updated");
-        assert.equal(artifacts.find((artifact) => artifact.path === "app/globals.css")?.operation, "created");
-        assert.equal(artifacts.find((artifact) => artifact.path === "notes.custom")?.mimeType, undefined);
+        assert.equal(artifacts.find((artifact) => artifact.path === "exports/existing.docx")?.operation, "updated");
+        assert.equal(artifacts.find((artifact) => artifact.path === "exports/notes.custom")?.operation, "created");
+        assert.equal(artifacts.find((artifact) => artifact.path === "exports/notes.custom")?.mimeType, undefined);
         assert.ok(artifacts.every((artifact) => artifact.status === "incomplete"));
         assert.ok(artifacts.every((artifact) => artifact.sha256.length === 64));
     }
@@ -140,11 +129,12 @@ test("unexecuted mutating tool errors do not enable workspace-diff artifacts", a
 test("mutating tool execution failures still enable workspace-diff artifacts", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "pilotdeck-artifact-failed-tool-"));
     try {
-        await writeFile(join(projectRoot, "notes.txt"), "before");
+        await mkdir(join(projectRoot, "exports"), { recursive: true });
+        await writeFile(join(projectRoot, "exports", "notes.txt"), "before");
         const collector = await FileArtifactCollector.start({ cwd: projectRoot });
-        await writeFile(join(projectRoot, "notes.txt"), "changed before a tool failure");
+        await writeFile(join(projectRoot, "exports", "notes.txt"), "changed before a tool failure");
         collector.observeToolResult(failedToolResult("bash", "tool_execution_failed"));
-        assert.deepEqual((await collector.finish("complete")).map((artifact) => artifact.path), ["notes.txt"]);
+        assert.deepEqual((await collector.finish("complete")).map((artifact) => artifact.path), ["exports/notes.txt"]);
     }
     finally {
         await rm(projectRoot, { recursive: true, force: true });
@@ -152,13 +142,14 @@ test("mutating tool execution failures still enable workspace-diff artifacts", a
 });
 test("file artifact fingerprints are reused for unchanged files across scans and turns", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "pilotdeck-artifact-cache-"));
-    const trackedFile = join(projectRoot, "report.txt");
+    const trackedFile = join(projectRoot, "exports", "report.txt");
     let hashCalls = 0;
     const hashFile = async (filePath) => {
         hashCalls += 1;
         return createHash("sha256").update(await readFile(filePath)).digest("hex");
     };
     try {
+        await mkdir(join(projectRoot, "exports"), { recursive: true });
         await writeFile(trackedFile, "before");
         await mkdir(join(projectRoot, ".venv", "lib"), { recursive: true });
         await writeFile(join(projectRoot, ".venv", "lib", "dependency.py"), "ignored");
@@ -172,7 +163,7 @@ test("file artifact fingerprints are reused for unchanged files across scans and
         secondTurn.observeToolResult(toolResult("bash"));
         const artifacts = await secondTurn.finish("complete");
         assert.equal(hashCalls, 2, "only the changed file is re-hashed");
-        assert.deepEqual(artifacts.map((artifact) => artifact.path), ["report.txt"]);
+        assert.deepEqual(artifacts.map((artifact) => artifact.path), ["exports/report.txt"]);
     }
     finally {
         await rm(projectRoot, { recursive: true, force: true });
@@ -181,18 +172,19 @@ test("file artifact fingerprints are reused for unchanged files across scans and
 test("concurrent collectors in one workspace keep only files explicitly reported by their own turns", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "pilotdeck-artifact-concurrent-"));
     try {
+        await mkdir(join(projectRoot, "exports"), { recursive: true });
         const firstTurn = await FileArtifactCollector.start({ cwd: projectRoot });
         const secondTurn = await FileArtifactCollector.start({ cwd: projectRoot });
-        await writeFile(join(projectRoot, "first.txt"), "first turn");
-        await writeFile(join(projectRoot, "second.txt"), "second turn");
-        await writeFile(join(projectRoot, "shared.txt"), "shared result");
-        await writeFile(join(projectRoot, "unreported.txt"), "unknown owner");
-        firstTurn.observeToolResult(successfulFileResult("first-call", ["first.txt", "shared.txt"]));
-        secondTurn.observeToolResult(successfulFileResult("second-call", ["second.txt", "shared.txt"]));
+        await writeFile(join(projectRoot, "exports", "first.txt"), "first turn");
+        await writeFile(join(projectRoot, "exports", "second.txt"), "second turn");
+        await writeFile(join(projectRoot, "exports", "shared.txt"), "shared result");
+        await writeFile(join(projectRoot, "exports", "unreported.txt"), "unknown owner");
+        firstTurn.observeToolResult(successfulFileResult("first-call", ["exports/first.txt", "exports/shared.txt"]));
+        secondTurn.observeToolResult(successfulFileResult("second-call", ["exports/second.txt", "exports/shared.txt"]));
         const firstArtifacts = await firstTurn.finish("complete");
         const secondArtifacts = await secondTurn.finish("complete");
-        assert.deepEqual(firstArtifacts.map((artifact) => artifact.path), ["first.txt", "shared.txt"]);
-        assert.deepEqual(secondArtifacts.map((artifact) => artifact.path), ["second.txt", "shared.txt"]);
+        assert.deepEqual(firstArtifacts.map((artifact) => artifact.path), ["exports/first.txt", "exports/shared.txt"]);
+        assert.deepEqual(secondArtifacts.map((artifact) => artifact.path), ["exports/second.txt", "exports/shared.txt"]);
         assert.ok(firstArtifacts.every((artifact) => artifact.source === "tool"));
         assert.ok(secondArtifacts.every((artifact) => artifact.source === "tool"));
     }
@@ -204,16 +196,18 @@ test("concurrent collectors in separate workspaces retain independent workspace 
     const firstRoot = await mkdtemp(join(tmpdir(), "pilotdeck-artifact-project-a-"));
     const secondRoot = await mkdtemp(join(tmpdir(), "pilotdeck-artifact-project-b-"));
     try {
+        await mkdir(join(firstRoot, "exports"), { recursive: true });
+        await mkdir(join(secondRoot, "exports"), { recursive: true });
         const firstTurn = await FileArtifactCollector.start({ cwd: firstRoot });
         const secondTurn = await FileArtifactCollector.start({ cwd: secondRoot });
-        await writeFile(join(firstRoot, "first.txt"), "first project");
-        await writeFile(join(secondRoot, "second.txt"), "second project");
+        await writeFile(join(firstRoot, "exports", "first.txt"), "first project");
+        await writeFile(join(secondRoot, "exports", "second.txt"), "second project");
         firstTurn.observeToolResult(toolResult("bash"));
         secondTurn.observeToolResult(toolResult("bash"));
         const firstArtifacts = await firstTurn.finish("complete");
         const secondArtifacts = await secondTurn.finish("complete");
-        assert.deepEqual(firstArtifacts.map((artifact) => artifact.path), ["first.txt"]);
-        assert.deepEqual(secondArtifacts.map((artifact) => artifact.path), ["second.txt"]);
+        assert.deepEqual(firstArtifacts.map((artifact) => artifact.path), ["exports/first.txt"]);
+        assert.deepEqual(secondArtifacts.map((artifact) => artifact.path), ["exports/second.txt"]);
         assert.equal(firstArtifacts[0]?.source, "workspace_diff");
         assert.equal(secondArtifacts[0]?.source, "workspace_diff");
     }
@@ -225,13 +219,14 @@ test("concurrent collectors in separate workspaces retain independent workspace 
 test("disposing an unfinished collector removes it from workspace concurrency tracking", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "pilotdeck-artifact-dispose-"));
     try {
+        await mkdir(join(projectRoot, "exports"), { recursive: true });
         const unfinishedTurn = await FileArtifactCollector.start({ cwd: projectRoot });
         unfinishedTurn.dispose();
         const nextTurn = await FileArtifactCollector.start({ cwd: projectRoot });
-        await writeFile(join(projectRoot, "detected.txt"), "workspace diff remains enabled");
+        await writeFile(join(projectRoot, "exports", "detected.txt"), "workspace diff remains enabled");
         nextTurn.observeToolResult(toolResult("bash"));
         const artifacts = await nextTurn.finish("complete");
-        assert.deepEqual(artifacts.map((artifact) => artifact.path), ["detected.txt"]);
+        assert.deepEqual(artifacts.map((artifact) => artifact.path), ["exports/detected.txt"]);
         assert.equal(artifacts[0]?.source, "workspace_diff");
     }
     finally {

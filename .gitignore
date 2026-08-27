@@ -206,6 +206,11 @@ package-lock.json
 test-results/
 tests/skill-e2e/work/
 
+# Accidental runtime dirs at repo root (data lives under PILOT_HOME/workspaces/)
+/exports/
+/.tmp/
+/scratch/
+
 # Local test drafts (force-add intentional new tests with git add -f)
 test/
 test.ts

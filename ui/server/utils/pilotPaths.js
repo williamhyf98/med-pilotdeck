@@ -13,11 +13,12 @@
  * versa.
  */
 import { homedir } from 'node:os';
-import { resolve } from 'node:path';
+import { resolve, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 
 export const DEFAULT_PILOT_HOME = '~/.pilotdeck';
+export const GENERAL_WORKSPACE_ID = 'general';
 
 function normalizeHomePath(p) {
     if (p === '~') return homedir();
@@ -133,4 +134,151 @@ function findStoredProjectId(projectRoot, pilotHome) {
 function normalizeProjectPathForMarkerComparison(projectRoot) {
     const resolved = resolve(projectRoot);
     return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+export function isGeneralWorkspaceId(workspaceId) {
+    return workspaceId === GENERAL_WORKSPACE_ID;
+}
+
+export function isGeneralProjectKey(projectKey, pilotHome = resolvePilotHome()) {
+    if (!projectKey) return true;
+    const resolvedKey = resolve(projectKey);
+    const resolvedHome = resolve(pilotHome);
+    if (resolvedKey === resolvedHome) return true;
+    if (projectKey === GENERAL_WORKSPACE_ID) return true;
+    const generalWorkspace = resolveWorkspaceDataRoot(GENERAL_WORKSPACE_ID, pilotHome);
+    return resolvedKey === resolve(generalWorkspace);
+}
+
+export function resolveWorkspaceId(projectKey, pilotHome = resolvePilotHome()) {
+    if (isGeneralProjectKey(projectKey, pilotHome)) {
+        return GENERAL_WORKSPACE_ID;
+    }
+    return resolveProjectStorageId(resolve(projectKey), pilotHome);
+}
+
+export function resolveWorkspaceDataRoot(workspaceId, pilotHome = resolvePilotHome()) {
+    return resolve(pilotHome, 'workspaces', workspaceId);
+}
+
+export function resolveAgentCwd(projectKey, pilotHome = resolvePilotHome()) {
+    const workspaceId = resolveWorkspaceId(projectKey, pilotHome);
+    return resolveWorkspaceDataRoot(workspaceId, pilotHome);
+}
+
+export function resolveInboxBatchDir(workspaceDataRoot, batchId) {
+    return resolve(workspaceDataRoot, 'inbox', batchId);
+}
+
+export function resolveInboxDerivedDir(workspaceDataRoot, batchId) {
+    return resolve(workspaceDataRoot, 'inbox', batchId, 'derived');
+}
+
+export function resolveWorkspaceExportsDir(workspaceDataRoot) {
+    return resolve(workspaceDataRoot, 'exports');
+}
+
+export function resolveWorkspaceScratchDir(workspaceDataRoot) {
+    return resolve(workspaceDataRoot, 'scratch');
+}
+
+export function ensureWorkspaceLayout(workspaceDataRoot) {
+    const dirs = [
+        resolve(workspaceDataRoot, 'inbox'),
+        resolve(workspaceDataRoot, 'exports'),
+        resolve(workspaceDataRoot, 'scratch', 'qa'),
+        resolve(workspaceDataRoot, 'scratch', 'work'),
+        resolve(workspaceDataRoot, 'scratch', 'preview'),
+        resolve(workspaceDataRoot, 'scratch', 'tool-results'),
+    ];
+    for (const dir of dirs) {
+        mkdirSync(dir, { recursive: true });
+    }
+}
+
+export function resolveAssociatedProjectPath(workspaceId, pilotHome = resolvePilotHome()) {
+    if (isGeneralWorkspaceId(workspaceId)) {
+        return null;
+    }
+    const markerPath = resolve(pilotHome, 'projects', workspaceId, '.cwd');
+    try {
+        const marker = readFileSync(markerPath, 'utf8').trim();
+        if (marker && statSync(marker).isDirectory()) {
+            return resolve(marker);
+        }
+    } catch {
+        return null;
+    }
+    return null;
+}
+
+export function resolveGatewayProjectKey(projectPath, pilotHome = resolvePilotHome()) {
+    if (!projectPath) {
+        return resolve(pilotHome);
+    }
+    if (isGeneralProjectKey(projectPath, pilotHome)) {
+        return resolve(pilotHome);
+    }
+    if (!isAbsolute(projectPath) && !projectPath.includes('/') && !projectPath.includes('\\')) {
+        if (isGeneralWorkspaceId(projectPath)) {
+            return resolve(pilotHome);
+        }
+        const associatedFromId = resolveAssociatedProjectPath(projectPath, pilotHome);
+        if (associatedFromId) {
+            return associatedFromId;
+        }
+    }
+    const resolvedPath = resolve(projectPath);
+    const workspacesRoot = resolve(pilotHome, 'workspaces');
+    const prefix = workspacesRoot.endsWith('/') ? workspacesRoot : `${workspacesRoot}/`;
+    if (resolvedPath === workspacesRoot || resolvedPath.startsWith(prefix)) {
+        const relativeId = resolvedPath.slice(prefix.length).split('/')[0] ?? '';
+        if (relativeId && isGeneralWorkspaceId(relativeId)) {
+            return resolve(pilotHome);
+        }
+        if (relativeId) {
+            const associated = resolveAssociatedProjectPath(relativeId, pilotHome);
+            if (associated) {
+                return associated;
+            }
+        }
+    }
+    return resolvedPath;
+}
+
+/** Gateway session transcript directory for a UI project name or workspace path. */
+export function resolveProjectChatDir(projectKey, pilotHome = resolvePilotHome()) {
+    const gatewayKey = resolveGatewayProjectKey(projectKey, pilotHome);
+    const projectId = resolveProjectStorageId(gatewayKey, pilotHome);
+    return resolve(pilotHome, 'projects', projectId, 'chats');
+}
+
+/** Linked repository path for git/taskmaster/terminal; same as gateway project key. */
+export function resolveLinkedRepoPath(projectKey, pilotHome = resolvePilotHome()) {
+    return resolveGatewayProjectKey(projectKey, pilotHome);
+}
+
+export function resolveWorkspaceDirectoryForProjectName(projectName, pilotHome = resolvePilotHome()) {
+    if (!projectName || isGeneralProjectKey(projectName, pilotHome)) {
+        return resolveWorkspaceDataRoot(GENERAL_WORKSPACE_ID, pilotHome);
+    }
+    if (isAbsolute(projectName)) {
+        const workspaceId = resolveWorkspaceId(projectName, pilotHome);
+        return resolveWorkspaceDataRoot(workspaceId, pilotHome);
+    }
+    // Encoded storage id from `projects/<id>/`.
+    return resolveWorkspaceDataRoot(projectName, pilotHome);
+}
+
+export function resolveAgentAdditionalWorkingDirectories(projectKey, pilotHome = resolvePilotHome()) {
+    const workspaceId = resolveWorkspaceId(projectKey, pilotHome);
+    const associated = resolveAssociatedProjectPath(workspaceId, pilotHome);
+    if (!associated) {
+        return [];
+    }
+    const agentCwd = resolveAgentCwd(projectKey, pilotHome);
+    if (resolve(associated) === resolve(agentCwd)) {
+        return [];
+    }
+    return [associated];
 }

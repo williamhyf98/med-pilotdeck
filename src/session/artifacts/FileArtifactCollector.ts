@@ -63,6 +63,7 @@ const EXCLUDED_DIRECTORY_NAMES = new Set([
   "build",
   "cache",
   "coverage",
+  "derived",
   "dist",
   "node_modules",
   "out",
@@ -71,12 +72,16 @@ const EXCLUDED_DIRECTORY_NAMES = new Set([
   ".docx-qa",
   ".pptx-qa",
   ".xlsx-qa",
+  "scratch",
   "screenshots",
   "target",
   "temp",
   "tmp",
   "venv",
 ]);
+
+const VISIBLE_ARTIFACT_ROOTS = ["inbox", "exports"] as const;
+const LEGACY_ATTACHMENT_ROOT = ".tmp/chat-attachments";
 
 const INTERNAL_FILE_PATTERNS = [
   /^\.pilotdeck_build\.(?:c|m)?js$/i,
@@ -293,7 +298,15 @@ export class FileArtifactCollector {
     reusableFingerprints?: ReadonlyMap<string, FileFingerprint>,
   ): Promise<Array<{ absolutePath: string; fingerprint: FileFingerprint }>> {
     const paths: string[] = [];
-    await walk(this.cwd, async (absolutePath) => {
+    for (const rootName of VISIBLE_ARTIFACT_ROOTS) {
+      const scanRoot = path.join(this.cwd, rootName);
+      await walk(scanRoot, async (absolutePath) => {
+        if (!this.isAllowedArtifactPath(absolutePath)) return;
+        paths.push(absolutePath);
+      });
+    }
+    const legacyAttachmentRoot = path.join(this.cwd, LEGACY_ATTACHMENT_ROOT);
+    await walk(legacyAttachmentRoot, async (absolutePath) => {
       if (!this.isAllowedArtifactPath(absolutePath)) return;
       paths.push(absolutePath);
     });
@@ -371,6 +384,7 @@ export class FileArtifactCollector {
   private isAllowedArtifactPath(absolutePath: string): boolean {
     if (isHardInternalPath(this.cwd, absolutePath)) return false;
     if (isSensitivePath(absolutePath)) return false;
+    if (!isVisibleArtifactPath(this.cwd, absolutePath)) return false;
     if (this.allowedExtensions && !this.allowedExtensions.has(path.extname(absolutePath).toLowerCase())) {
       return false;
     }
@@ -514,6 +528,16 @@ function isSensitivePath(absolutePath: string): boolean {
   const basename = path.basename(absolutePath);
   if (/^\.env\.example$/i.test(basename)) return false;
   return SENSITIVE_FILE_PATTERNS.some((pattern) => pattern.test(basename));
+}
+
+function isVisibleArtifactPath(root: string, absolutePath: string): boolean {
+  const relativePath = normalizeRelativePath(path.relative(root, absolutePath));
+  if (!relativePath) return false;
+  const firstSegment = relativePath.split("/")[0];
+  if (firstSegment && VISIBLE_ARTIFACT_ROOTS.includes(firstSegment as typeof VISIBLE_ARTIFACT_ROOTS[number])) {
+    return true;
+  }
+  return relativePath === LEGACY_ATTACHMENT_ROOT || relativePath.startsWith(`${LEGACY_ATTACHMENT_ROOT}/`);
 }
 
 function isHardInternalPath(root: string, absolutePath: string): boolean {

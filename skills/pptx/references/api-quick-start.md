@@ -3,7 +3,7 @@
 所有命令示例都假定使用下列按轮次限定的路径。将每个构建器、候选文件、转换、渲染和报告都放在 `WORKSPACE` 下；只有 `FINAL_PPTX` 面向用户。
 
 ```bash
-WORKSPACE="${PILOTDECK_WORK_DIR:-$PWD/.pilotdeck/work/manual/<task-slug>}/pptx"
+WORKSPACE="${PILOTDECK_WORK_DIR:-$PWD/scratch/work/manual/<task-slug>}/pptx"
 FINAL_PPTX="$PWD/<requested-output>.pptx"
 mkdir -p "$WORKSPACE/tmp" "$WORKSPACE/qa"
 ```

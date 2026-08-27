@@ -29,7 +29,7 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
 import { getPilotDeckGateway } from '../pilotdeck-bridge.js';
-import { resolvePilotHome } from '../utils/pilotPaths.js';
+import { resolvePilotHome, isGeneralProjectKey, resolveLinkedRepoPath } from '../utils/pilotPaths.js';
 import { moveDirectoryAcrossDevicesSafe } from '../utils/fileMoves.js';
 
 const router = express.Router();
@@ -67,11 +67,8 @@ function safeSlug(slug) {
   return typeof slug === 'string' && SLUG_RE.test(slug) && !slug.includes('..');
 }
 
-const GENERAL_CWD_PATHS = [path.resolve(PILOT_HOME)];
-
 function isGeneralCwd(projectPath) {
-  if (!projectPath) return false;
-  return GENERAL_CWD_PATHS.includes(path.resolve(projectPath));
+  return isGeneralProjectKey(projectPath, PILOT_HOME);
 }
 
 function resolveRequestedScope(scope, projectPath, { defaultToProjectWhenAvailable = false } = {}) {
@@ -110,8 +107,19 @@ function userSkillsRoot() {
   return path.join(PILOT_HOME, SKILLS_SUBDIR);
 }
 
+function resolveProjectPathForSkills(projectPath) {
+  if (!projectPath || isGeneralCwd(projectPath)) return null;
+  return resolveLinkedRepoPath(projectPath, PILOT_HOME);
+}
+
+function gatewayProjectKey(projectPath) {
+  return resolveProjectPathForSkills(projectPath);
+}
+
 function projectSkillsRoot(projectPath) {
-  return path.join(projectPath, PROJECT_DIR, SKILLS_SUBDIR);
+  const repoRoot = resolveProjectPathForSkills(projectPath);
+  if (!repoRoot) return null;
+  return path.join(repoRoot, PROJECT_DIR, SKILLS_SUBDIR);
 }
 
 function expandHome(p) {
@@ -220,7 +228,7 @@ router.post('/list', async (req, res) => {
     const { projectPath } = req.body || {};
     const generalCwd = isGeneralCwd(projectPath);
     const effectiveProjectPath = generalCwd ? null : projectPath || null;
-    const data = await callGateway('skillsList', { projectKey: effectiveProjectPath });
+    const data = await callGateway('skillsList', { projectKey: gatewayProjectKey(projectPath) });
     res.json({
       builtin: data.builtin,
       user: data.user,
@@ -242,7 +250,7 @@ router.post('/read', async (req, res) => {
     const result = await callGateway('skillRead', {
       scope: cls.scope,
       slug: cls.slug,
-      projectKey: cls.scope === 'project' ? projectPath : null,
+      projectKey: cls.scope === 'project' ? gatewayProjectKey(projectPath) : null,
     });
     res.json(result);
   } catch (e) {
@@ -261,7 +269,7 @@ router.post('/write', async (req, res) => {
     const result = await callGateway('skillWrite', {
       scope: cls.scope,
       slug: cls.slug,
-      projectKey: cls.scope === 'project' ? projectPath : null,
+      projectKey: cls.scope === 'project' ? gatewayProjectKey(projectPath) : null,
       content,
     });
     res.json(result);
@@ -278,7 +286,7 @@ router.post('/create', async (req, res) => {
     const result = await callGateway('skillCreate', {
       scope: resolved.scope,
       slug,
-      projectKey: resolved.wantProject ? resolved.projectPath : null,
+      projectKey: resolved.wantProject ? gatewayProjectKey(resolved.projectPath) : null,
       name,
       description,
       body,
@@ -298,7 +306,7 @@ router.post('/delete', async (req, res) => {
     const result = await callGateway('skillDelete', {
       scope: cls.scope,
       slug: cls.slug,
-      projectKey: cls.scope === 'project' ? projectPath : null,
+      projectKey: cls.scope === 'project' ? gatewayProjectKey(projectPath) : null,
     });
     res.json(result);
   } catch (e) {
@@ -328,7 +336,7 @@ router.post('/import', async (req, res) => {
       sourcePath,
       slug,
       scope: resolved.scope,
-      projectKey: resolved.wantProject ? resolved.projectPath : null,
+      projectKey: resolved.wantProject ? gatewayProjectKey(resolved.projectPath) : null,
       mode,
       force,
     });
@@ -454,7 +462,7 @@ router.post('/import-upload', upload.array('files', 500), async (req, res) => {
     let skillSummary = null;
     try {
       const list = await callGateway('skillsList', {
-        projectKey: resolved.wantProject ? resolved.projectPath : null,
+        projectKey: resolved.wantProject ? gatewayProjectKey(resolved.projectPath) : null,
       });
       const bucket = resolved.wantProject ? list.project : list.user;
       skillSummary = bucket.find((s) => s.slug === inferredSlug) ?? null;

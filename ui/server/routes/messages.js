@@ -17,9 +17,16 @@
 import express from 'express';
 import { getPilotDeckGateway } from '../pilotdeck-bridge.js';
 import { createNormalizedMessage } from '../pilotdeck-message.js';
+import { resolvePilotHome, resolveGatewayProjectKey } from '../utils/pilotPaths.js';
 
 const router = express.Router();
 const REPO_ROOT = process.cwd();
+
+function resolveMessagesProjectKey(projectPathOrName) {
+  const pilotHome = resolvePilotHome(process.env);
+  const raw = String(projectPathOrName || REPO_ROOT);
+  return resolveGatewayProjectKey(raw, pilotHome);
+}
 
 function isSearchToolName(name) {
   const normalized = String(name || '').toLowerCase();
@@ -29,7 +36,7 @@ function isSearchToolName(name) {
 router.get('/:sessionId/messages', async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const projectPath = String(req.query.projectPath || req.query.projectName || REPO_ROOT);
+    const projectKey = resolveMessagesProjectKey(req.query.projectPath || req.query.projectName);
     const limitParam = req.query.limit;
     const limit = limitParam !== undefined && limitParam !== null && limitParam !== ''
       ? parseInt(limitParam, 10)
@@ -39,7 +46,7 @@ router.get('/:sessionId/messages', async (req, res) => {
     const gateway = await getPilotDeckGateway();
     const result = await gateway.readSessionMessages({
       sessionKey: sessionId,
-      projectKey: projectPath,
+      projectKey,
       limit: limit ?? undefined,
       cursor: offset > 0 ? String(offset) : undefined,
       ...(typeof req.query.sessionKind === 'string' && req.query.sessionKind
@@ -74,7 +81,9 @@ router.get('/:sessionId/messages', async (req, res) => {
 router.post('/:sessionId/fork', async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const projectPath = String(req.body?.projectPath || req.body?.projectName || req.query.projectPath || REPO_ROOT);
+    const projectKey = resolveMessagesProjectKey(
+      req.body?.projectPath || req.body?.projectName || req.query.projectPath || req.query.projectName,
+    );
     const fromEntryId = String(req.body?.fromEntryId || '');
     if (!fromEntryId) {
       return res.status(400).json({ error: 'fromEntryId is required' });
@@ -83,7 +92,7 @@ router.post('/:sessionId/fork', async (req, res) => {
     const gateway = await getPilotDeckGateway();
     const result = await gateway.forkSession({
       sessionKey: sessionId,
-      projectKey: projectPath,
+      projectKey,
       fromEntryId,
     });
 
@@ -111,13 +120,13 @@ router.post('/:sessionId/fork', async (req, res) => {
 router.get('/:sessionId/subagent/:subagentId/messages', async (req, res) => {
   try {
     const { sessionId, subagentId } = req.params;
-    const projectPath = String(req.query.projectPath || req.query.projectName || REPO_ROOT);
+    const projectKey = resolveMessagesProjectKey(req.query.projectPath || req.query.projectName);
 
     const gateway = await getPilotDeckGateway();
     const result = await gateway.readSubagentMessages({
       sessionKey: sessionId,
       subagentId,
-      projectKey: projectPath,
+      projectKey,
       ...(typeof req.query.sessionKind === 'string' && req.query.sessionKind
         ? { sessionKind: req.query.sessionKind }
         : {}),

@@ -62,6 +62,10 @@ import { parseReloadConfigResult } from "../protocol/reloadConfigResult.js";
 export class RemoteGateway implements Gateway {
   constructor(private readonly client: GatewayWsClient) {}
 
+  close(): void {
+    this.client.close();
+  }
+
   onNotification(handler: GatewayWsNotificationHandler): void {
     this.client.onNotification(handler);
   }

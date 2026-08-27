@@ -13,10 +13,16 @@ import {
   writeMcpConfigFile,
   normalizeMcpConfig,
 } from '../services/mcpConfig.js';
+import { resolvePilotHome, resolveLinkedRepoPath } from '../utils/pilotPaths.js';
 
 const router = express.Router();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+function normalizeMcpProjectPath(projectPath) {
+  if (!projectPath || typeof projectPath !== 'string') return undefined;
+  return resolveLinkedRepoPath(projectPath, resolvePilotHome(process.env));
+}
 
 function spawnCli(command, args, options = {}) {
   const prepared = prepareCliSpawn(command, args, options);
@@ -25,7 +31,9 @@ function spawnCli(command, args, options = {}) {
 
 router.get('/config', async (req, res) => {
   try {
-    const projectPath = typeof req.query.projectPath === 'string' ? req.query.projectPath : undefined;
+    const projectPath = normalizeMcpProjectPath(
+      typeof req.query.projectPath === 'string' ? req.query.projectPath : undefined,
+    );
     const configs = await listMcpConfigFiles(projectPath);
     res.json({ success: true, ...configs });
   } catch (error) {
@@ -39,7 +47,9 @@ router.get('/config/:scope', async (req, res) => {
     if (scope !== 'global' && scope !== 'project') {
       return res.status(400).json({ error: 'Invalid scope. Use global or project.' });
     }
-    const projectPath = typeof req.query.projectPath === 'string' ? req.query.projectPath : undefined;
+    const projectPath = normalizeMcpProjectPath(
+      typeof req.query.projectPath === 'string' ? req.query.projectPath : undefined,
+    );
     const config = await readMcpConfigFile(scope, projectPath);
     res.json({ success: true, scope, ...config });
   } catch (error) {
@@ -64,7 +74,9 @@ router.put('/config/:scope', async (req, res) => {
       return res.status(400).json({ error: 'Invalid scope. Use global or project.' });
     }
     const raw = typeof req.body?.raw === 'string' ? req.body.raw : JSON.stringify(req.body ?? {});
-    const projectPath = typeof req.body?.projectPath === 'string' ? req.body.projectPath : undefined;
+    const projectPath = normalizeMcpProjectPath(
+      typeof req.body?.projectPath === 'string' ? req.body.projectPath : undefined,
+    );
     const saved = await writeMcpConfigFile(scope, raw, projectPath);
 
     let reload = null;
@@ -128,7 +140,8 @@ router.get('/cli/list', async (req, res) => {
 
 router.post('/cli/add', async (req, res) => {
   try {
-    const { name, type = 'stdio', command, args = [], url, headers = {}, env = {}, scope = 'user', projectPath } = req.body;
+    const { name, type = 'stdio', command, args = [], url, headers = {}, env = {}, scope = 'user', projectPath: rawProjectPath } = req.body;
+    const projectPath = normalizeMcpProjectPath(rawProjectPath);
     
     console.log(`➕ Adding MCP server using Claude CLI (${scope} scope):`, name);
     
@@ -210,7 +223,8 @@ router.post('/cli/add', async (req, res) => {
 // POST /api/mcp/cli/add-json - Add MCP server using JSON format
 router.post('/cli/add-json', async (req, res) => {
   try {
-    const { name, jsonConfig, scope = 'user', projectPath } = req.body;
+    const { name, jsonConfig, scope = 'user', projectPath: rawProjectPath } = req.body;
+    const projectPath = normalizeMcpProjectPath(rawProjectPath);
     
     console.log('➕ Adding MCP server using JSON format:', name);
     

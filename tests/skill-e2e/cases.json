@@ -1,24 +1,114 @@
 {
   "cases": [
     {
+      "id": "pdf",
+      "kind": "document",
+      "skill": "pdf",
+      "timeoutMs": 300000,
+      "message": "帮我生成成一个pdf吧，文件名称就叫病例报告，里面写着标题【病例报告】即可",
+      "expectBashNeedle": "pdf.sh make",
+      "forbidBashNeedles": ["scaffold", "pdf.sh fix", "fallback-create"],
+      "expectOutputGlob": "*.pdf",
+      "expectOutputUnder": "exports"
+    },
+    {
+      "id": "pdf-from-text",
+      "kind": "document",
+      "skill": "pdf",
+      "timeoutMs": 300000,
+      "message": "把下面这段救治方案生成成一个pdf，标题用「救治方案」。\n\n### 伤员发生地\n1. 立即直接压迫止血，必要时上止血带并标注时间。\n2. 开放气道，观察呼吸与神志。\n3. 快速后送并交接伤情。",
+      "expectBashNeedle": "pdf.sh make",
+      "forbidBashNeedles": ["scaffold", "pdf.sh fix", "fallback-create"],
+      "expectOutputGlob": "*.pdf",
+      "expectOutputUnder": "exports"
+    },
+    {
+      "id": "docx",
+      "kind": "document",
+      "skill": "docx",
+      "timeoutMs": 300000,
+      "message": "帮我生成一个 Word，文件名就叫病例报告，里面标题写【病例报告】即可",
+      "expectBashNeedle": "docx.sh make",
+      "forbidBashNeedles": ["scaffold", "docx.sh fix", "fallback-create", "fallback-patch"],
+      "expectOutputGlob": "*.docx",
+      "expectOutputUnder": "exports"
+    },
+    {
+      "id": "pptx",
+      "kind": "document",
+      "skill": "pptx",
+      "timeoutMs": 300000,
+      "message": "帮我做一份 PPT，讲战创伤四级救治，大概三页就行",
+      "expectBashNeedle": "pptx.sh make",
+      "forbidBashNeedles": ["scaffold", "pptx.sh fix", "fallback-create"],
+      "expectOutputGlob": "*.pptx",
+      "expectOutputUnder": "exports"
+    },
+    {
+      "id": "spreadsheets",
+      "kind": "document",
+      "skill": "spreadsheets",
+      "timeoutMs": 300000,
+      "message": "帮我生成一份 excel，内容是战创伤救治清单：现场评估、控制出血、快速后送",
+      "expectBashNeedle": "spreadsheet.sh make",
+      "forbidBashNeedles": ["scaffold", "spreadsheet.sh fix", "fallback-create"],
+      "expectOutputGlob": "*.xlsx",
+      "expectOutputUnder": "exports"
+    },
+    {
+      "id": "diagram-maker",
+      "kind": "document",
+      "skill": "diagram-maker",
+      "timeoutMs": 180000,
+      "message": "把战创伤急救止血方式的流程画成一个图",
+      "expectBashNeedle": "diagram.sh make",
+      "forbidBashNeedles": ["scaffold", "diagram.sh fix"],
+      "expectOutputGlob": "*.svg",
+      "expectOutputUnder": "exports"
+    },
+    {
       "id": "med-trauma-assist",
       "kind": "medical",
       "skill": "med-trauma-assist",
       "timeoutMs": 180000,
       "message": "如何对战创伤执行现场止血急救",
-      "expectTools": ["mcp__med-tools__med_trauma_rag_query"]
+      "expectTools": ["mcp__med-tools__med_trauma_rag_query"],
+      "forbidTools": ["mcp__med-tools__med_trauma_stage_plan"]
     },
     {
       "id": "med-trauma-stage-plan",
       "kind": "medical",
       "skill": "med-trauma-stage-plan",
+      "requireSkillLoad": false,
       "timeoutMs": 420000,
       "attachments": [
         { "type": "image", "name": "wse_0820_00_injury.jpg", "from": "wse_0820_00_injury.jpg", "mimeType": "image/jpeg" }
       ],
-      "message": "【伤情背景】上午在前沿阵地遭近距离致伤因素待创面图判断击中受伤区域，伤后即诉受伤区域疼痛、胸闷、呼吸费力。\n【具体表现】伤员仰卧位，意识烦躁但可应答，面色苍白，表情痛苦，出冷汗，呼吸急促，言语断续，诉胸痛、气短、口渴，无呕吐。\n【生命体征】血压82/54 mmHg，心率136次/分，呼吸32次/分，体温36.1℃，血氧饱和度86%。\n【影像】附该伤员战创伤创面图片一张，创面部位、伤类、伤型和严重程度以图片判读为准。\n\n给我生成对应的救治方案吧",
+      "message": "【伤情背景】上午在前沿阵地遭近距离致伤因素待创面图判断击中受伤区域，伤后即诉受伤区域疼痛、胸闷、呼吸费力。\n【具体表现】伤员仰卧位，意识烦躁但可应答，面色苍白，表情痛苦，出冷汗，呼吸急促，言语断续，诉胸痛、气短、口渴，无呕吐。\n【生命体征】血压82/54 mmHg，心率136次/分，呼吸32次/分，体温36.1℃，血氧饱和度86%。\n【影像】附该伤员战创伤创面图片一张，创面部位、伤类、伤型和严重程度以图片判读为准。\n\n请按伤员发生地生成正式救治方案。",
       "expectTools": ["mcp__med-tools__med_trauma_stage_plan"],
+      "forbidTools": ["ask_user_question"],
+      "expectToolArgNeedles": [
+        { "tool": "mcp__med-tools__med_trauma_stage_plan", "needle": "伤员发生地" },
+        { "tool": "mcp__med-tools__med_trauma_stage_plan", "needle": "image_paths" }
+      ],
       "requireStagePlanBehavior": true
+    },
+    {
+      "id": "med-trauma-stage-plan-ask",
+      "kind": "medical",
+      "skill": "med-trauma-stage-plan",
+      "requireSkillLoad": false,
+      "timeoutMs": 180000,
+      "attachments": [
+        { "type": "image", "name": "wse_0820_00_injury.jpg", "from": "wse_0820_00_injury.jpg", "mimeType": "image/jpeg" }
+      ],
+      "message": "【伤情背景】上午在前沿阵地遭近距离致伤因素待创面图判断击中受伤区域，伤后即诉受伤区域疼痛、胸闷、呼吸费力。\n【具体表现】伤员仰卧位，意识烦躁但可应答，面色苍白，表情痛苦，出冷汗，呼吸急促，言语断续，诉胸痛、气短、口渴，无呕吐。\n【生命体征】血压82/54 mmHg，心率136次/分，呼吸32次/分，体温36.1℃，血氧饱和度86%。\n【影像】附该伤员战创伤创面图片一张，创面部位、伤类、伤型和严重程度以图片判读为准。\n\n给我生成对应的救治方案吧",
+      "expectToolsCalled": ["ask_user_question"],
+      "forbidTools": ["mcp__med-tools__med_trauma_stage_plan"],
+      "canPrompt": true,
+      "abortAfterToolCall": "ask_user_question",
+      "allowEmptyAssistant": true,
+      "allowIncompleteTurn": true
     },
     {
       "id": "med-medical",
@@ -30,52 +120,22 @@
         { "type": "file", "name": "admission-note.xml", "from": "medical-batch/admission-note.xml", "mimeType": "application/xml" },
         { "type": "file", "name": "ultrasound.dcm", "from": "medical-batch/ultrasound.dcm", "mimeType": "application/dicom" }
       ],
-      "message": "这是后续病人战场救治修复后，过了一段长时间后做的检查报告，帮我分析一下病人病情吧\n\n附件目录（请对整个目录调用 med_parse_medical）：{{BATCH_DIR}}",
-      "expectTools": ["mcp__med-tools__med_parse_medical"]
+      "message": "这是后续病人战场救治修复后，过了一段长时间后做的检查报告，帮我分析一下病人病情吧\n\n附件目录：{{BATCH_DIR}}",
+      "expectTools": ["mcp__med-tools__med_parse_medical"],
+      "requireBatchDirArg": true
     },
     {
-      "id": "pdf",
-      "kind": "document",
-      "skill": "pdf",
-      "timeoutMs": 300000,
-      "message": "请使用 pdf 技能，在当前工作目录生成一个单页 PDF：文件名 skill-e2e.pdf，标题 Skill E2E，正文一行 ok。不要向我确认，直接执行。",
-      "expectBashNeedle": "pdf.sh",
-      "expectOutputGlob": "*.pdf"
-    },
-    {
-      "id": "docx",
-      "kind": "document",
-      "skill": "docx",
-      "timeoutMs": 300000,
-      "message": "请使用 docx 技能，在当前工作目录生成一个短 Word 文档：文件名 skill-e2e.docx，正文一行 ok。不要向我确认，直接执行。",
-      "expectBashNeedle": "docx.sh",
-      "expectOutputGlob": "*.docx"
-    },
-    {
-      "id": "pptx",
-      "kind": "document",
-      "skill": "pptx",
-      "timeoutMs": 300000,
-      "message": "请使用 pptx 技能，在当前工作目录生成一份 3 页 PPT：文件名 skill-e2e.pptx，三页标题分别为 A、B、C。不要向我确认，直接执行。",
-      "expectBashNeedle": "pptx.sh",
-      "expectOutputGlob": "*.pptx"
-    },
-    {
-      "id": "spreadsheets",
-      "kind": "document",
-      "skill": "spreadsheets",
-      "timeoutMs": 300000,
-      "message": "请使用 spreadsheets 技能，在当前工作目录生成一份 xlsx：文件名 skill-e2e.xlsx，A1=1，A2=2，A3 为求和公式。不要向我确认，直接执行。",
-      "expectBashNeedle": "spreadsheet.sh",
-      "expectOutputGlob": "*.xlsx"
-    },
-    {
-      "id": "diagram-maker",
-      "kind": "document",
-      "skill": "diagram-maker",
-      "timeoutMs": 180000,
-      "message": "请使用 diagram-maker 技能，通过捆绑的 diagram.sh make 在当前工作目录生成一张简单 SVG 流程图：输入 -> 处理 -> 输出。不要向我确认，直接执行。",
-      "expectOutputGlob": "*.svg"
+      "id": "med-case-report",
+      "kind": "medical",
+      "skill": "med-case-report",
+      "timeoutMs": 240000,
+      "message": "男，58岁。胸痛伴出汗2小时，心电图提示前壁ST段抬高，肌钙蛋白升高。请按模版生成病例报告。",
+      "forbidTools": ["mcp__med-tools__med_trauma_stage_plan"],
+      "expectAssistantContains": [
+        "【病例综合摘要】",
+        "【建议诊断方向】",
+        "【不确定性声明】"
+      ]
     }
   ]
 }

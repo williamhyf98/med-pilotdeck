@@ -62,6 +62,13 @@ import {
 import { createModelRuntime, type ModelRuntime } from "../model/index.js";
 import { createDefaultPermissionContext, type PermissionRule } from "../permission/index.js";
 import { loadPilotConfig, resolvePilotHome, type PilotProxyConfig } from "../pilot/index.js";
+import {
+  ensureWorkspaceLayout,
+  isGeneralProjectKey,
+  resolveAgentAdditionalWorkingDirectories,
+  resolveAgentCwd,
+  resolveGatewayProjectKey,
+} from "../pilot/paths.js";
 import { createPilotConfigStoreSync, type PilotConfigStore } from "../pilot/config/PilotConfigStore.js";
 import type { PilotAgentModelSelection, PilotConfigSnapshot } from "../pilot/config/types.js";
 import { DEFAULT_JUDGE_TIMEOUT_MS, DEFAULT_ALLOWED_TOOLS, DEFAULT_TRIGGER_TIERS, type RouterConfig } from "../router/config/schema.js";
@@ -706,7 +713,10 @@ class ProjectRuntimeRegistry {
   }
 
   resolve(projectKey?: string): ProjectRuntime {
-    const projectRoot = resolve(projectKey ?? this.options.fallbackProjectRoot);
+    const projectRoot = resolveGatewayProjectKey(
+      projectKey ?? this.options.fallbackProjectRoot,
+      this.options.pilotHome,
+    );
     this.options.onProjectActivated?.(projectRoot);
     const cached = this.runtimes.get(projectRoot);
     if (cached) {
@@ -926,7 +936,7 @@ class ProjectRuntimeRegistry {
     artifactAllowWorkspaceDiff: boolean;
     artifactAllowedExtensions?: string[];
   } {
-    const isGeneral = resolve(runtime.projectRoot) === resolve(this.options.pilotHome);
+    const isGeneral = isGeneralProjectKey(runtime.projectRoot, this.options.pilotHome);
     if (!isGeneral) {
       return { artifactAllowWorkspaceDiff: true };
     }
@@ -1296,7 +1306,21 @@ class ProjectRuntimeRegistry {
     const agent = runtime.snapshot.config.agent;
     const override = this._sessionOverrides?.get(sessionKey);
     const permissionMode = override?.permissionMode ?? this.options.permissionMode;
-    const cwd = override?.cwd ?? runtime.projectRoot;
+    const agentCwd = resolveAgentCwd(runtime.projectRoot, this.options.pilotHome);
+    ensureWorkspaceLayout(agentCwd);
+    const cwd = override?.cwd ?? agentCwd;
+    const linkedDirs = resolveAgentAdditionalWorkingDirectories(
+      runtime.projectRoot,
+      this.options.pilotHome,
+    );
+    const additionalWorkingDirectories = [
+      ...(this.options.additionalWorkingDirectories ?? []),
+      ...linkedDirs.filter(
+        (dir) => !this.options.additionalWorkingDirectories?.some(
+          (existing) => resolve(existing) === resolve(dir),
+        ),
+      ),
+    ];
     // Hand `PermissionContext` the same live rule-set reference the
     // gateway permission hook owns (see `getLiveRuleSet`). With this
     // shared reference, an "allow + remember" decision pushed by the
@@ -1338,7 +1362,7 @@ class ProjectRuntimeRegistry {
         mode: permissionMode,
         canPrompt: override?.canPrompt ?? true,
         bypassAvailable: override?.bypassAvailable ?? true,
-        additionalWorkingDirectories: this.options.additionalWorkingDirectories,
+        additionalWorkingDirectories,
         rules: {
           allow: liveRuleSet.allow,
           deny: liveRuleSet.deny,

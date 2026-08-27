@@ -3,6 +3,12 @@ import { spawn } from 'child_process';
 import path from 'path';
 import { promises as fs } from 'fs';
 import { extractProjectDirectory } from '../projects.js';
+import { resolvePilotHome, resolveLinkedRepoPath } from '../utils/pilotPaths.js';
+
+async function resolveRepoProjectPath(projectName) {
+  const pilotHome = resolvePilotHome(process.env);
+  return resolveLinkedRepoPath(projectName, pilotHome);
+}
 import { runChatViaGateway } from '../pilotdeck-bridge.js';
 
 const router = express.Router();
@@ -105,9 +111,9 @@ function validateProjectPath(projectPath) {
 async function getActualProjectPath(projectName) {
   let projectPath;
   try {
-    projectPath = await extractProjectDirectory(projectName);
+    projectPath = await resolveRepoProjectPath(projectName);
   } catch (error) {
-    console.error(`Error extracting project directory for ${projectName}:`, error);
+    console.error(`Error resolving linked repo for ${projectName}:`, error);
     throw new Error(`Unable to resolve project path for "${projectName}"`);
   }
   return validateProjectPath(projectPath);
