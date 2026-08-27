@@ -54,6 +54,37 @@ bash "$PDF_SKILL_ROOT/scripts/pdf.sh" make \
 }
 ```
 
+### 正文插图（用户上传照片）
+
+需要把 inbox 里的图片嵌进 PDF 正文时，用 `--spec` 的 `images`（顶层或小节内），**不要**去读 `pdf_cli.py` / `starter_pdf.py` 源码：
+
+```json
+{
+  "title": "病例报告",
+  "body": "伤情概述……",
+  "images": [
+    {
+      "type": "image",
+      "path": "/abs/.../inbox/<batch>/1-wound.jpg",
+      "width_mm": 120,
+      "caption": "图 1 创面"
+    }
+  ],
+  "sections": [
+    {
+      "heading": "处置",
+      "body": "……",
+      "images": [
+        { "path": "/abs/.../inbox/<batch>/2-xray.jpg", "caption": "图 2 影像" }
+      ]
+    }
+  ]
+}
+```
+
+- 路径用附件列表给出的 **绝对路径**（`$WS/inbox/...`）。禁止 http(s)。
+- 详细字段见 [creation.md](references/creation.md)。
+
 `make` 会用技能内字体生成 PDF，并完成结构审计和页面渲染。JSON 里的 `output` 是交付文件；`preview` 里的 PNG 只供你目视核对，不要当用户交付物。核对可用 `read_file` 打开第一张预览图。
 
 ## 把对话里已有的方案做成 PDF

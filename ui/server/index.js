@@ -56,7 +56,19 @@ import { readPermissionSettings } from './services/permissionSettings.js';
 import { getDefaultPtyShell } from './utils/defaultShell.js';
 import { getOpenUrlSpawnCommand } from './utils/processSpawn.js';
 
-import { getProjects, getProjectCronJobsOverview, getSessions, renameProject, deleteSession, deleteProject, addProjectManually, extractProjectDirectory, clearProjectDirectoryCache, searchConversations } from './projects.js';
+import {
+  getProjects,
+  getProjectCronJobsOverview,
+  getSessions,
+  renameProject,
+  deleteSession,
+  deleteProject,
+  addProjectManually,
+  createSystemProject,
+  extractProjectDirectory,
+  clearProjectDirectoryCache,
+  searchConversations,
+} from './projects.js';
 import { resolvePilotHome, resolveProjectChatDir, sanitizeSessionIdForPath, resolveLinkedRepoPath, resolveGatewayProjectKey } from './utils/pilotPaths.js';
 import {
     runChatViaGateway,
@@ -897,7 +909,7 @@ app.delete('/api/projects/:projectName', authenticateToken, async (req, res) => 
     }
 });
 
-// Create project endpoint
+// Create project endpoint (legacy: link an external path)
 app.post('/api/projects/create', authenticateToken, async (req, res) => {
     try {
         const { path: projectPath } = req.body;
@@ -911,6 +923,28 @@ app.post('/api/projects/create', authenticateToken, async (req, res) => {
     } catch (error) {
         console.error('Error creating project:', error);
         res.status(500).json({ error: error.message });
+    }
+});
+
+// Create system-managed project (displayName + type). No external path.
+app.post('/api/projects/create-system', authenticateToken, async (req, res) => {
+    try {
+        const displayName = typeof req.body?.displayName === 'string'
+            ? req.body.displayName
+            : typeof req.body?.name === 'string'
+                ? req.body.name
+                : '';
+        const type = typeof req.body?.type === 'string'
+            ? req.body.type
+            : typeof req.body?.projectType === 'string'
+                ? req.body.projectType
+                : '';
+        const project = await createSystemProject({ displayName, type });
+        res.json({ success: true, project });
+    } catch (error) {
+        console.error('Error creating system project:', error);
+        const status = error?.code === 'invalid_input' ? 400 : 500;
+        res.status(status).json({ error: error.message });
     }
 });
 

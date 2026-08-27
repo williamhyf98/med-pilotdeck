@@ -477,6 +477,10 @@
       "message": "已达到最大轮数（{{maxTurns}}），本轮已停止。请增加 maxTurns，或把任务拆成更小步骤后重试。",
       "hint": "如果任务确实需要更多 agent 步数，请在本地配置中增加 maxTurns；否则请把任务拆成更小 prompt 后重试。"
     },
+    "maxToolCalls": {
+      "message": "已达到本轮最大工具调用次数（{{maxToolCalls}}），本轮已停止。请基于已有结果回复，或把任务拆成更小步骤。",
+      "hint": "若技能本身做不到某事（例如 PDF 正文插图），请直接说明限制，不要继续空转调用工具；否则请拆成更小 prompt 后重试。"
+    },
     "maxOutputRecoveryExhausted": {
       "message": "输出 token 恢复已耗尽，可见回复可能不完整。请增加最大输出 token，或把任务拆成更小步骤后重试。",
       "hint": "请在“设置 → 模型 Provider”中增加最大输出 token，或让 agent 将回答拆成更小部分。"

@@ -52,6 +52,15 @@ import { createMissingToolResult, ensureToolResultPairing } from "./ensureToolRe
 import { LargeFileRepair, type LargeFileRepairDecision } from "./LargeFileRepair.js";
 import { resolveOutputTokenRetryBump } from "./outputTokenRetry.js";
 import { projectToolResults } from "./projectToolResults.js";
+import {
+  MAX_TOOL_CALLS_GRACE_PROMPT,
+  SKILL_SOURCE_GRACE_AFTER_TURNS,
+  SKILL_SOURCE_GRACE_PROMPT,
+  SKILL_SOURCE_STOP_AFTER_TURNS,
+  areOnlySkillSourceInspections,
+  resolveEffectiveMaxToolCalls,
+  resolveEffectiveMaxTurns,
+} from "./spinGuards.js";
 import { requiresPromptCapability } from "../../tool/userInteractionConstraints.js";
 import type { AgentRunMode } from "../protocol/input.js";
 import {
@@ -119,6 +128,8 @@ export type AgentLoopInput = {
   turnId: string;
   messages: CanonicalMessage[];
   maxTurns?: number;
+  /** Hard cap on tool invocations for this user turn (defaults applied in loop). */
+  maxToolCalls?: number;
   profile?: string;
   turnOverrides?: AgentTurnOverrides;
   runMode?: AgentRunMode;
@@ -288,6 +299,13 @@ export class AgentLoop {
     let lastToolFailureFingerprint: string | undefined;
     let transientPromptCounter = 0;
     const activeTransientPromptIds = new Set<string>();
+
+    const effectiveMaxTurns = resolveEffectiveMaxTurns(input.maxTurns);
+    const effectiveMaxToolCalls = resolveEffectiveMaxToolCalls(input.maxToolCalls);
+    let toolCallCount = 0;
+    let consecutiveSkillSourceOnlyTurns = 0;
+    let hasUsedSkillSourceGrace = false;
+    let hasUsedMaxToolCallsGrace = false;
 
     const pushTransientSyntheticPrompt = (prompt: string, purpose: string): void => {
       const transientId = this.dependencies.uuid?.() ?? `transient-${++transientPromptCounter}`;
@@ -1834,11 +1852,95 @@ export class AgentLoop {
         return { result, messages };
       }
 
+      toolCallCount += toolCalls.length;
+      if (areOnlySkillSourceInspections(toolCalls)) {
+        consecutiveSkillSourceOnlyTurns += 1;
+      } else {
+        consecutiveSkillSourceOnlyTurns = 0;
+      }
+
+      if (
+        consecutiveSkillSourceOnlyTurns >= SKILL_SOURCE_GRACE_AFTER_TURNS
+        && !hasUsedSkillSourceGrace
+      ) {
+        hasUsedSkillSourceGrace = true;
+        pushTransientSyntheticPrompt(SKILL_SOURCE_GRACE_PROMPT, "skill_source_grace");
+        yield { type: "turn_continued", sessionId: input.sessionId, turnId: input.turnId, reason: "model_error" };
+        continue;
+      }
+
+      if (consecutiveSkillSourceOnlyTurns >= SKILL_SOURCE_STOP_AFTER_TURNS) {
+        const skillSpinError = agentError(
+          "agent_tool_error_loop",
+          `Stopped after ${consecutiveSkillSourceOnlyTurns} consecutive steps that only inspected skill script source. The skill likely lacks the requested capability.`,
+          undefined,
+          "Tell the user the skill limitation in plain language (for example: PDF cannot embed photos yet) and suggest an alternative such as a text-only PDF or Word/PPT with images.",
+        );
+        const result = this.createTurnResult(input, {
+          type: "error",
+          stopReason: "tool_error",
+          usage,
+          permissionDenials,
+          turns: turnCount,
+          startedAt,
+          finalMessage,
+          structuredOutput,
+          errors: [skillSpinError],
+        });
+        yield await emitStatus(createToolErrorLoopStatus({
+          error: skillSpinError,
+          repeatedFailures: consecutiveSkillSourceOnlyTurns,
+        }));
+        yield { type: "turn_failed", sessionId: input.sessionId, turnId: input.turnId, error: skillSpinError };
+        await captureTurn(result.type === "error");
+        yield { type: "turn_completed", sessionId: input.sessionId, turnId: input.turnId, result };
+        return { result, messages };
+      }
+
+      if (
+        toolCallCount >= Math.max(1, effectiveMaxToolCalls - 2)
+        && toolCallCount <= effectiveMaxToolCalls
+        && !hasUsedMaxToolCallsGrace
+      ) {
+        hasUsedMaxToolCallsGrace = true;
+        pushTransientSyntheticPrompt(MAX_TOOL_CALLS_GRACE_PROMPT, "max_tool_calls_grace");
+        yield { type: "turn_continued", sessionId: input.sessionId, turnId: input.turnId, reason: "model_error" };
+        continue;
+      }
+
+      if (toolCallCount > effectiveMaxToolCalls) {
+        const maxToolCallsError = agentError(
+          "agent_max_tool_calls_reached",
+          `Reached maximum number of tool calls (${effectiveMaxToolCalls}) for this turn.`,
+          undefined,
+          "Reply with what you already know, or split the task. If a skill cannot do something (for example embed images in PDF), say so clearly instead of calling more tools.",
+        );
+        const result = this.createTurnResult(input, {
+          type: "error",
+          stopReason: "tool_error",
+          usage,
+          permissionDenials,
+          turns: turnCount,
+          startedAt,
+          finalMessage,
+          structuredOutput,
+          errors: [maxToolCallsError],
+        });
+        yield await emitStatus(createMaxToolCallsStatus({
+          maxToolCalls: effectiveMaxToolCalls,
+          error: maxToolCallsError,
+        }));
+        yield { type: "turn_failed", sessionId: input.sessionId, turnId: input.turnId, error: maxToolCallsError };
+        await captureTurn(result.type === "error");
+        yield { type: "turn_completed", sessionId: input.sessionId, turnId: input.turnId, result };
+        return { result, messages };
+      }
+
       const nextTurnCount = turnCount + 1;
-      if (input.maxTurns && nextTurnCount > input.maxTurns) {
+      if (nextTurnCount > effectiveMaxTurns) {
         const maxTurnsError = agentError(
           "agent_max_turns_reached",
-          `Reached maximum number of turns (${input.maxTurns}).`,
+          `Reached maximum number of turns (${effectiveMaxTurns}).`,
           undefined,
           "Max turn limit reached. Increase maxTurns in config or break the task into smaller steps.",
         );
@@ -1853,7 +1955,7 @@ export class AgentLoop {
           structuredOutput,
           errors: [maxTurnsError],
         });
-        const status = createMaxTurnsStatus({ maxTurns: input.maxTurns, error: maxTurnsError });
+        const status = createMaxTurnsStatus({ maxTurns: effectiveMaxTurns, error: maxTurnsError });
         yield await emitStatus(status);
         await captureTurn(result.type === "error");
         yield { type: "turn_completed", sessionId: input.sessionId, turnId: input.turnId, result };
@@ -3486,6 +3588,28 @@ function createMaxTurnsStatus(args: {
       userHintI18n: { key: "chat:agentStatus.maxTurns.hint" },
       detail: {
         maxTurns: args.maxTurns,
+      },
+    }),
+  };
+}
+
+function createMaxToolCallsStatus(args: {
+  maxToolCalls: number;
+  error: ReturnType<typeof agentError>;
+}): AgentStatusMessage {
+  const text = `Reached the maximum number of tool calls (${args.maxToolCalls}), so this turn has stopped. Reply with what you already know, or split the task into smaller steps.`;
+  return {
+    event: "max_tool_calls_reached",
+    kind: "error",
+    text,
+    detail: createAgentTurnErrorDetail({
+      message: text,
+      messageI18n: { key: "chat:agentStatus.maxToolCalls.message", params: { maxToolCalls: args.maxToolCalls } },
+      code: args.error.code,
+      userHint: args.error.userHint ?? "If a skill cannot do something (for example embed images), say so clearly instead of calling more tools. Otherwise split the task into smaller prompts.",
+      userHintI18n: { key: "chat:agentStatus.maxToolCalls.hint" },
+      detail: {
+        maxToolCalls: args.maxToolCalls,
       },
     }),
   };

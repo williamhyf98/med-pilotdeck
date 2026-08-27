@@ -265,6 +265,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ path }),
     }),
+  createSystemProject: ({ displayName, type }) =>
+    authenticatedFetch('/api/projects/create-system', {
+      method: 'POST',
+      body: JSON.stringify({ displayName, type }),
+    }),
   createWorkspace: (workspaceData) =>
     authenticatedFetch('/api/projects/create-workspace', {
       method: 'POST',

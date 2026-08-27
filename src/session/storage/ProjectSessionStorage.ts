@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { getPilotProjectChatDir } from "../../pilot/index.js";
+import { getPilotProjectChatDir, resolveAgentCwd } from "../../pilot/index.js";
 import { JsonlTranscriptWriter } from "../transcript/JsonlTranscriptWriter.js";
 
 export type AgentProjectSessionStorageOptions = {
@@ -62,7 +62,8 @@ export function createAgentProjectSessionStorage(
   // them back with read_file when the inline preview is insufficient. The
   // project-local .pilotdeck directory is gitignored and already within the
   // workspace path boundary enforced by read_file.
-  const toolResultsDir = resolve(options.projectRoot, ".pilotdeck", "tool-results", safeId);
+  const agentCwd = resolveAgentCwd(options.projectRoot, options.pilotHome);
+  const toolResultsDir = resolve(agentCwd, ".pilotdeck", "tool-results", safeId);
   const fileHistoryDir = resolve(chatDir, safeId, "file-history");
   const subagentsDir = resolve(chatDir, safeId, "subagents");
   const subagentTranscriptPath = (subagentId: string): string =>

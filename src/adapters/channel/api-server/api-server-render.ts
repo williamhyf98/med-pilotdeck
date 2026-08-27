@@ -7,6 +7,7 @@ import {
 const VISIBLE_FAILURE_STATUS_EVENTS = new Set([
   "model_empty_response_exhausted",
   "max_turns_reached",
+  "max_tool_calls_reached",
   "max_output_recovery_exhausted",
   "model_request_failed",
   "tool_call_recovery_exhausted",

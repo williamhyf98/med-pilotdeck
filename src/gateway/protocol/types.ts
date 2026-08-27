@@ -106,6 +106,8 @@ export type GatewaySubmitTurnInput = {
   canPrompt?: boolean;
   runId?: string;
   maxTurns?: number;
+  /** Hard cap on tool invocations for this turn (defaults applied in AgentLoop when unset). */
+  maxToolCalls?: number;
   /** Id of a server-loaded agent profile (for example from a plugin manifest). */
   profile?: string;
   /** Per-turn controls. Endpoint URLs, credentials and system prompts are intentionally absent. */

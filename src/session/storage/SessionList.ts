@@ -1,6 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { getPilotProjectChatDir } from "../../pilot/index.js";
+import { getPilotProjectChatDir, listProjectStorageIds, resolveTypedProjectDir } from "../../pilot/index.js";
 import { readSessionLite, type SessionLiteFile } from "./SessionLiteReader.js";
 
 const ALWAYS_ON_AUXILIARY_PATTERN = /^always-on-(discovery|workspace|report)[:\-]/;
@@ -202,17 +202,11 @@ export type ListAllSessionsOptions = {
  * paginated via `limit` / `offset`.
  */
 export async function listAllSessions(options: ListAllSessionsOptions): Promise<SessionInfo[]> {
-  const projectsDir = resolve(options.pilotHome, "projects");
-  let projectIds: string[];
-  try {
-    projectIds = await readdir(projectsDir);
-  } catch {
-    return [];
-  }
+  const projectIds = listProjectStorageIds(options.pilotHome);
 
   const all: SessionInfo[] = [];
   for (const projectId of projectIds) {
-    const chatDir = join(projectsDir, projectId, "chats");
+    const chatDir = join(resolveTypedProjectDir(projectId, options.pilotHome), "chats");
     let names: string[];
     try {
       names = await readdir(chatDir);

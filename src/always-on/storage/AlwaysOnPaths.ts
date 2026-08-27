@@ -32,7 +32,10 @@ export function resolveAlwaysOnPaths(input: {
   snapshotsBaseDir?: string;
 }): AlwaysOnPaths {
   const pilotHome = resolve(input.pilotHome);
-  const projectKey = resolve(input.projectKey);
+  // Bare system project ids must not be path.resolve()'d into a relative cwd path.
+  const projectKey = input.projectKey.includes("/") || input.projectKey.includes("\\") || /^[A-Za-z]:/.test(input.projectKey)
+    ? resolve(input.projectKey)
+    : input.projectKey;
   const projectId = resolveProjectStorageId(projectKey, pilotHome);
   const rootDir = resolve(pilotHome, ROOT_DIR_NAME);
   const projectDir = resolve(rootDir, "projects", projectId);

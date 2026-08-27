@@ -9,6 +9,7 @@ import { useSessionProtection } from '../../hooks/useSessionProtection';
 import { useProjectsState } from '../../hooks/useProjectsState';
 import Settings from '../settings/Settings';
 import ProjectCreationWizard from '../project-creation-wizard';
+import SystemProjectCreateDialog from '../project-creation/SystemProjectCreateDialog';
 import { normalizeProjectForSettings, type SettingsProject } from '../../lib/projectSettings';
 import {
   sessionDisplayTitle,
@@ -381,21 +382,19 @@ export default function AppShellV2() {
     }
   }, [activeTab, isMobile]);
 
-  // Project creation wizard (local existing / new local / github clone). The
-  // sidebar's Projects-section "+" opens this; row-level "+" is for new sessions.
+  // System project create (name + type). Legacy path wizard remains via dialog link.
   const [showNewProject, setShowNewProject] = useState(false);
+  const [showLegacyPathWizard, setShowLegacyPathWizard] = useState(false);
   const handleOpenNewProject = useCallback(() => setShowNewProject(true), []);
   const handleCloseNewProject = useCallback(() => setShowNewProject(false), []);
   const handleProjectCreated = useCallback((project?: Record<string, unknown>) => {
     setShowNewProject(false);
+    setShowLegacyPathWizard(false);
     void refreshProjectsSilently();
 
     // Auto-jump into the new project's empty new-conversation screen so the
     // user doesn't accidentally keep chatting under the previously selected
-    // project (typically "general") after closing the wizard. The wizard
-    // hands back the freshly created project from POST /create-workspace
-    // (and the clone SSE complete event), which is the same `{ name,
-    // displayName, fullPath, path }` shape as the sidebar list entries.
+    // project (typically "general") after closing the wizard.
     const projectName = typeof project?.name === 'string' ? project.name : '';
     if (!projectName) return;
     const newProject = project as Project;
@@ -703,8 +702,19 @@ export default function AppShellV2() {
 
       {showNewProject
         ? ReactDOM.createPortal(
-            <ProjectCreationWizard
+            <SystemProjectCreateDialog
               onClose={handleCloseNewProject}
+              onCreated={handleProjectCreated}
+              onOpenLegacyPathWizard={() => setShowLegacyPathWizard(true)}
+            />,
+            document.body,
+          )
+        : null}
+
+      {showLegacyPathWizard
+        ? ReactDOM.createPortal(
+            <ProjectCreationWizard
+              onClose={() => setShowLegacyPathWizard(false)}
               onProjectCreated={handleProjectCreated}
             />,
             document.body,

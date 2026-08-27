@@ -114,7 +114,7 @@ layout-library。
 
 规则：
 
-1. **直接使用清单里的绝对路径**。不要 `find /`，不要下载 URL，不要手写 Python/JS 去读图。
+1. **直接使用清单里的绝对路径**（常见 `$WS/inbox/...`）。不要 `find /`，不要下载 URL，不要手写 Python/JS 去读图，不要翻 `pptx` 脚本源码猜字段。
 2. `inbox/` 算作允许的本地路径；不必先 `cp` 到 `exports/`（复制可选，不是必需）。
 3. 本轮消息没有清单时：在**同一会话更早的用户消息**里找同一标记；G9/`med_trauma_stage_plan` 返回的 `image_paths_used` 也可复用。
 4. 禁止 HTTP/HTTPS。禁止打开或修改 `assets/layout-library/`。

@@ -2,7 +2,7 @@ import { createReadStream } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { getPilotProjectChatDir } from "../../pilot/paths.js";
+import { getPilotProjectChatDir, listProjectStorageIds, resolveTypedProjectDir } from "../../pilot/paths.js";
 import { sanitizeSessionIdForPath } from "../storage/ProjectSessionStorage.js";
 import { parseSessionInfoFromLite, type SessionInfo } from "../storage/SessionList.js";
 import { readSessionLite } from "../storage/SessionLiteReader.js";
@@ -236,17 +236,10 @@ async function collectSessionFiles(options: {
     return listJsonlFiles(chatDir, options.projectRoot, options.includeInternal);
   }
 
-  const projectsDir = resolve(options.pilotHome, "projects");
-  let projectIds: string[];
-  try {
-    projectIds = await readdir(projectsDir);
-  } catch {
-    return [];
-  }
-
+  const projectIds = listProjectStorageIds(options.pilotHome);
   const files: SessionFileTarget[] = [];
   for (const projectId of projectIds) {
-    const chatDir = join(projectsDir, projectId, "chats");
+    const chatDir = join(resolveTypedProjectDir(projectId, options.pilotHome), "chats");
     files.push(...await listJsonlFiles(chatDir, projectId, options.includeInternal));
   }
   return files;

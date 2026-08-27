@@ -6,10 +6,13 @@ import {
   ALL_PROJECTS_MEMORY_EXPORT_FORMAT_VERSION,
   EdgeClawMemoryService,
   MemoryBundleValidationError,
-  hashText,
 } from '../../../src/context/memory/edgeclaw-memory-core/lib/index.js';
 import { extractProjectDirectory } from '../projects.js';
-import { resolvePilotHome, resolveGatewayProjectKey } from '../utils/pilotPaths.js';
+import {
+  resolvePilotHome,
+  resolveGatewayProjectKey,
+  resolveProjectMemoryDataDir,
+} from '../utils/pilotPaths.js';
 import {
   buildMemoryDefaults,
   readPilotDeckConfigFile,
@@ -34,7 +37,7 @@ function normalizePath(projectPath) {
 }
 
 function resolveWorkspaceDataDir(projectPath) {
-  return path.join(MEMORY_WORKSPACES_ROOT, hashText(path.resolve(projectPath)));
+  return resolveProjectMemoryDataDir(projectPath, resolvePilotHome(process.env));
 }
 
 function buildServiceForDataDir(dataDir, workspaceDir = dataDir) {
@@ -322,22 +325,46 @@ function normalizeAllProjectsBundle(value) {
 }
 
 async function listWorkspaceDataDirs() {
+  const dirs = [];
+  const seen = new Set();
+  const pushIfValid = async (dataDir) => {
+    const normalized = path.resolve(dataDir);
+    if (seen.has(normalized)) return;
+    const hasDb = await pathExists(path.join(normalized, 'control.sqlite'));
+    const hasMemoryDir = await pathExists(path.join(normalized, 'memory'));
+    if (hasDb && hasMemoryDir) {
+      seen.add(normalized);
+      dirs.push(normalized);
+    }
+  };
+
   try {
     const entries = await fs.readdir(MEMORY_WORKSPACES_ROOT, { withFileTypes: true });
-    const dirs = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const dataDir = path.join(MEMORY_WORKSPACES_ROOT, entry.name);
-      const hasDb = await pathExists(path.join(dataDir, 'control.sqlite'));
-      const hasMemoryDir = await pathExists(path.join(dataDir, 'memory'));
-      if (hasDb && hasMemoryDir) {
-        dirs.push(dataDir);
-      }
+      await pushIfValid(path.join(MEMORY_WORKSPACES_ROOT, entry.name));
     }
-    return dirs.sort((left, right) => left.localeCompare(right));
   } catch {
-    return [];
+    // legacy hash root may be absent after migration
   }
+
+  const pilotHome = resolvePilotHome(process.env);
+  const memoryRoot = path.join(pilotHome, 'memory');
+  for (const typeKey of ['general_med', 'trauma_med']) {
+    const typeDir = path.join(memoryRoot, typeKey);
+    let nested = [];
+    try {
+      nested = await fs.readdir(typeDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of nested) {
+      if (!entry.isDirectory()) continue;
+      await pushIfValid(path.join(typeDir, entry.name));
+    }
+  }
+
+  return dirs.sort((left, right) => left.localeCompare(right));
 }
 
 async function executeScheduledMaintenanceForDataDir(dataDir) {

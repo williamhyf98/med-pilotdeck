@@ -73,6 +73,7 @@ bash "$DIAGRAM_SKILL_ROOT/scripts/diagram.sh" make \
 - 默认交付 SVG；只有用户明确要求独立网页时才用 `--format html`
 - 时序图、类图、ER 图、状态图、gitGraph 和任意 Mermaid 扩展不支持
 - 第一期不交付 Excalidraw；不要自行拼接元素数组
+- **不支持嵌入用户照片 / inbox 图片**。本技能只画节点与边 → SVG。若用户要「流程图 + 伤情照」，改用 **pptx / docx / pdf / spreadsheets** 插图，diagram 只负责流程 SVG（可另嵌进那些文档）。不要去翻 `diagram_cli.py` 源码找插图能力。
 
 详细输入契约见 `references/creation.md`。
 

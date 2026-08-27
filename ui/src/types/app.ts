@@ -257,11 +257,19 @@ export interface ProjectTaskmasterInfo {
   [key: string]: unknown;
 }
 
+export type ProjectType = 'general_medicine' | 'war_trauma';
+
 export interface Project {
   name: string;
   displayName: string;
   fullPath: string;
   path?: string;
+  /** System project type when created via create-system (immutable). */
+  projectType?: ProjectType;
+  type?: ProjectType;
+  kind?: 'system' | string;
+  status?: 'active' | 'archived' | string;
+  createdAt?: string;
   sessions?: ProjectSession[];
   sessionMeta?: ProjectSessionMeta;
   taskmaster?: ProjectTaskmasterInfo;
