@@ -76,6 +76,8 @@ export type MainContentProps = {
   ) => void;
   onShowSettings: () => void;
   onSelectProjectByName?: (projectName: string) => void;
+  /** Open the create-system-project dialog (P2 empty-state CTA). */
+  onCreateProject?: () => void;
   externalMessageUpdate: number;
   /** When the URL uses /session/<file> by mistake, open the file in the editor. */
   misroutedFileFromUrl?: string | null;
@@ -86,6 +88,7 @@ export type MainContentStateViewProps = {
   mode: 'loading' | 'empty';
   isMobile: boolean;
   onMenuClick: () => void;
+  onCreateProject?: () => void;
 };
 
 export type MobileMenuButtonProps = {

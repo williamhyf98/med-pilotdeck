@@ -2,7 +2,10 @@ import { Folder } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { MainContentStateViewProps } from '../../types/types';
 
-export default function MainContentStateView({ mode }: MainContentStateViewProps) {
+export default function MainContentStateView({
+  mode,
+  onCreateProject,
+}: MainContentStateViewProps) {
   const { t } = useTranslation();
 
   const isLoading = mode === 'loading';
@@ -23,13 +26,22 @@ export default function MainContentStateView({ mode }: MainContentStateViewProps
               <Folder className="h-4.5 w-4.5 text-neutral-500" strokeWidth={1.75} />
             </div>
             <h2 className="mb-1 text-[15px] font-medium text-neutral-900 dark:text-neutral-100">
-              {t('mainContent.chooseProject', { defaultValue: 'Pick a project to start' })}
+              {t('mainContent.chooseProject', { defaultValue: 'Create a project to start' })}
             </h2>
             <p className="text-[13px] leading-relaxed text-neutral-500 dark:text-neutral-400">
               {t('mainContent.selectProjectDescription', {
-                defaultValue: 'Choose a project from the sidebar, or open a new one.',
+                defaultValue: 'Choose a project from the sidebar, or create one with a name and type.',
               })}
             </p>
+            {onCreateProject ? (
+              <button
+                type="button"
+                onClick={onCreateProject}
+                className="mt-5 inline-flex h-9 items-center justify-center rounded-md bg-neutral-900 px-4 text-[13px] font-medium text-white hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-white"
+              >
+                {t('mainContent.createProject', { defaultValue: 'Create project' })}
+              </button>
+            ) : null}
           </div>
         </div>
       )}

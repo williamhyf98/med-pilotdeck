@@ -148,6 +148,7 @@ function MainContent({
   onSelectSession,
   onShowSettings,
   onSelectProjectByName,
+  onCreateProject,
   externalMessageUpdate,
   misroutedFileFromUrl,
   onMisroutedFileUrlHandled,
@@ -391,6 +392,7 @@ function MainContent({
         mode="empty"
         isMobile={isMobile}
         onMenuClick={onMenuClick}
+        onCreateProject={onCreateProject}
       />
     );
   }

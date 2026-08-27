@@ -196,9 +196,9 @@ export default function AppShellV2() {
     navigate,
   ]);
 
-  // Default selection: prefer a regular project. General is only the fallback
-  // when no regular project exists. Explicit project/session URLs still own
-  // selection and are never overridden here.
+  // Default selection: first real project. With no projects, stay unselected
+  // so the empty state can prompt create-project (P2). Explicit project/session
+  // URLs still own selection and are never overridden here.
   const didDefaultProjectRef = useRef(false);
   useEffect(() => {
     if (didDefaultProjectRef.current) return;
@@ -212,7 +212,10 @@ export default function AppShellV2() {
       return;
     }
     const target = chooseDefaultProject(sidebarSharedProps.projects);
-    if (!target) return;
+    if (!target) {
+      didDefaultProjectRef.current = true;
+      return;
+    }
     handleProjectSelect(target);
     navigate(`/p/${encodeURIComponent(target.name)}`, { replace: true });
     didDefaultProjectRef.current = true;
@@ -394,7 +397,8 @@ export default function AppShellV2() {
 
     // Auto-jump into the new project's empty new-conversation screen so the
     // user doesn't accidentally keep chatting under the previously selected
-    // project (typically "general") after closing the wizard.
+    // After create, open a new chat in the new project (do not fall back to
+    // any virtual workspace).
     const projectName = typeof project?.name === 'string' ? project.name : '';
     if (!projectName) return;
     const newProject = project as Project;
@@ -497,6 +501,31 @@ export default function AppShellV2() {
     [handleProjectSelect, navigate],
   );
 
+  const handleOpenProjectFiles = useCallback(
+    (project: Project) => {
+      const sameProject = project.name === selectedProject?.name;
+      if (!sameProject) {
+        handleProjectSelect(project);
+      }
+      navigate(`/p/${encodeURIComponent(project.name)}`);
+      if (sameProject && activeTab === 'files') {
+        setActiveTab('chat');
+      } else {
+        setActiveTab('files');
+      }
+      if (isMobile) setSidebarOpen(false);
+    },
+    [
+      activeTab,
+      handleProjectSelect,
+      isMobile,
+      navigate,
+      selectedProject?.name,
+      setActiveTab,
+      setSidebarOpen,
+    ],
+  );
+
   const handleSelectSession = useCallback(
     (
       project: Project,
@@ -560,7 +589,8 @@ export default function AppShellV2() {
         setActiveTab(nextTab);
       } else {
         // No project context yet — land on /, MainContent's empty state
-        // will prompt the user to create or pick a project.
+        // No project context yet — land on /, MainContent empty state shows
+        // create-project CTA (P2).
         navigate('/');
       }
     },
@@ -602,6 +632,7 @@ export default function AppShellV2() {
       onSelectSession={handleSelectSession}
 	      onStartNewSession={handleStartNewSession}
 	      onCreateProject={handleOpenNewProject}
+	      onOpenProjectFiles={handleOpenProjectFiles}
 	      onRequestDeleteProject={handleRequestDeleteProject}
 	      onRequestDeleteSession={handleRequestDeleteSession}
 	      onShowSettings={onShowSettings}
@@ -680,6 +711,7 @@ export default function AppShellV2() {
               navigate(`/p/${encodeURIComponent(target.name)}`);
             }
           }}
+          onCreateProject={handleOpenNewProject}
           isSidebarCollapsed={!isMobile && !desktopSidebarOpen}
           onOpenSidebar={onOpenDesktopSidebar}
           externalMessageUpdate={externalMessageUpdate}

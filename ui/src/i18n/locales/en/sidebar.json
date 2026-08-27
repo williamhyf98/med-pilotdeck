@@ -5,6 +5,7 @@
     "deleteProject": "Delete Project",
     "renameProject": "Rename Project",
     "noProjects": "No projects found",
+    "noProjectsHint": "No projects yet. Click + to create one (name + type).",
     "loadingProjects": "Loading projects...",
     "searchPlaceholder": "Search projects...",
     "projectNamePlaceholder": "Project name",
@@ -26,8 +27,13 @@
     "name": "General",
     "missing": "No general workspace found"
   },
+  "types": {
+    "generalMedicine": "General Med",
+    "warTrauma": "War Trauma",
+    "empty": "No projects in this type yet. Create one above."
+  },
   "sectionToggle": {
-    "label": "Sidebar section"
+    "label": "Project type"
   },
   "renamePlaceholder": "Rename - empty to reset",
   "contextMenu": {
@@ -65,6 +71,7 @@
     "deleteProject": "Delete empty project (Delete)",
     "showSidebar": "Show sidebar",
     "newChat": "New Chat",
+    "openFiles": "Files",
     "addToFavorites": "Add to favorites",
     "removeFromFavorites": "Remove from favorites",
     "editSessionName": "Manually edit session name",

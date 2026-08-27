@@ -419,61 +419,9 @@ async function getProjects(progressCallback = null) {
         progressCallback({ phase: 'done', processed: total, total });
     }
 
-    // Virtual "general" workspace — a non-project chat space rooted at
-    // ~/.pilotdeck. SidebarV2 looks for a project whose `name` or
-    // `displayName` equals 'general' to populate the dedicated "General"
-    // toggle section. PilotDeck's gateway.listProjects() only returns
-    // real project directories, so we synthesize one here. New chats
-    // started from the General section use this cwd; sessions are
-    // sourced from the same backend as any other project.
-    const generalHome = resolvePilotHome(process.env);
-    const generalWorkspace = resolveWorkspaceDataRoot(GENERAL_WORKSPACE_ID, generalHome);
-    ensureWorkspaceLayout(generalWorkspace);
-    let generalSessions = [];
-    let generalTotal = 0;
-    let generalLastActivity;
-    try {
-        const generalGateway = await getPilotDeckGateway();
-        // Pair the first page query with describeProject so the General
-        // workspace gets the real session count instead of the page size.
-        // Without this, sessionMeta.hasMore was hardcoded `false` and the
-        // sidebar would silently truncate to the first 5 sessions even
-        // when dozens existed under ~/.pilotdeck/projects/<encoded>/chats/.
-        const [generalSessionsResult, generalSummary] = await Promise.all([
-            generalGateway
-                .listSessions({ projectKey: generalHome, limit: 5 })
-                .catch(() => ({ sessions: [] })),
-            generalGateway
-                .describeProject({ projectKey: generalHome })
-                .catch(() => null),
-        ]);
-        generalSessions = (generalSessionsResult.sessions || []).map((session) =>
-            toLegacySession(session, 'general'),
-        );
-        applyCustomSessionNames(generalSessions, 'claude');
-        generalTotal = typeof generalSummary?.sessionCount === 'number'
-            ? generalSummary.sessionCount
-            : generalSessions.length;
-        generalLastActivity = generalSummary?.lastActivity;
-    } catch {
-        generalSessions = [];
-        generalTotal = 0;
-        generalLastActivity = undefined;
-    }
-    rememberProjectDirectory('general', generalWorkspace);
-    result.unshift({
-        name: 'general',
-        displayName: 'general',
-        fullPath: generalWorkspace,
-        path: generalWorkspace,
-        lastActivity: generalLastActivity,
-        sessions: generalSessions,
-        sessionMeta: {
-            total: generalTotal,
-            hasMore: generalTotal > generalSessions.length,
-        },
-        taskmaster: { hasTaskmaster: false },
-    });
+    // P2: do not inject a virtual "general" chat workspace. Users must create
+    // a typed system project before chatting. Migrated history lives as the
+    // normal project `general_med-legacy-general` when present on disk.
 
     return result;
 }

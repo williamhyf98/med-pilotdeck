@@ -12,9 +12,8 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   ChevronRight,
-  ChevronsDownUp,
-  ChevronsUpDown,
   Folder,
+  FolderOpen,
   MessageSquarePlus,
   PanelLeftClose,
   Pencil,
@@ -24,7 +23,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { TFunction } from 'i18next';
-import type { AppTab, Project, ProjectSession } from '../../types/app';
+import type { AppTab, Project, ProjectSession, ProjectType } from '../../types/app';
 import { cn } from '../../lib/utils.js';
 import { isImeEnterEvent } from '../../utils/ime';
 import {
@@ -34,6 +33,7 @@ import {
   setSessionCustomTitle,
   useCustomNamesVersion,
 } from '../../lib/customNames';
+import { filterProjectsByType, resolveProjectType } from './appShellSelection';
 import pilotdeckLogoDark from '../../assets/pilotdeck-wordmark-dark.png';
 import pilotdeckLogoLight from '../../assets/pilotdeck-wordmark-light.png';
 
@@ -248,6 +248,7 @@ export type SidebarV2Props = {
   onSelectSession: (project: Project, sessionId: string) => void;
   onStartNewSession: (project: Project | null) => void;
   onCreateProject: () => void;
+  onOpenProjectFiles?: (project: Project) => void;
   onRequestDeleteProject: (project: Project) => void;
   onRequestDeleteSession: (project: Project, session: ProjectSession) => void;
   onShowSettings: () => void;
@@ -298,6 +299,7 @@ export default function SidebarV2({
   onSelectSession,
   onStartNewSession,
   onCreateProject,
+  onOpenProjectFiles,
   onRequestDeleteProject,
   onRequestDeleteSession,
   onShowSettings,
@@ -321,11 +323,9 @@ export default function SidebarV2({
   const [draftSessionProjectName, setDraftSessionProjectName] = useState<string | null>(null);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Segmented toggle between the Projects list and the General workspace.
-  // A fresh shell always starts on Projects; explicit project/session routing
-  // is synchronized below and still moves the toggle to General when needed.
-  type SidebarSection = 'projects' | 'general';
-  const [activeSection, setActiveSection] = useState<SidebarSection>('projects');
+  // P3: sidebar tabs are typed project lists (general medicine / war trauma).
+  type SidebarSection = ProjectType;
+  const [activeSection, setActiveSection] = useState<SidebarSection>('general_medicine');
 
   // Resizable sidebar width — clamped to a sensible range and persisted across
   // reloads. Drag-handle on the right edge mutates this on the fly.
@@ -426,71 +426,43 @@ export default function SidebarV2({
     }
   }, [draftSessionProjectName, selectedProject, selectedSession]);
 
-  const generalProject =
-    safeProjects.find((project) => project.name === 'general' || project.displayName === 'general') ?? null;
-
-  // Auto-flip the section toggle to match the active project when it changes
-  // externally (e.g. /switch-project, deep-linking, default selection on
-  // first load). Without this, navigating to a project on one section while
-  // the sidebar is parked on the other leaves the new project invisible.
-  // We only react to changes — if the user manually clicks the toggle we
-  // never fight them mid-session.
+  // P3: always show typed tabs. Auto-flip when the selected project changes
+  // externally (deep link / create). Manual tab clicks only filter the list.
   const previousSelectedProjectNameRef = useRef<string | null>(null);
   useEffect(() => {
     const currentName = selectedProject?.name ?? null;
     const previousName = previousSelectedProjectNameRef.current;
     previousSelectedProjectNameRef.current = currentName;
-    if (!currentName) return;
+    if (!currentName || !selectedProject) return;
     if (currentName === previousName) return;
-
-    const nextSection: SidebarSection =
-      generalProject && currentName === generalProject.name ? 'general' : 'projects';
+    const nextSection = resolveProjectType(selectedProject);
+    if (!nextSection) return;
     setActiveSection((current) => (current === nextSection ? current : nextSection));
-  }, [selectedProject?.name, generalProject]);
+  }, [selectedProject]);
 
   const projectSortOrder = useProjectSortOrder();
-  const otherProjects = useMemo(() => {
-    const remaining = safeProjects.filter((project) => project !== generalProject);
+  const visibleProjects = useMemo(() => {
+    const filtered = filterProjectsByType(safeProjects, activeSection);
     if (projectSortOrder === 'date') {
-      // Most recent first. Tie-break on display name so the order is stable
-      // when two projects have no recorded activity (both 0).
-      return [...remaining].sort((a, b) => {
+      return [...filtered].sort((a, b) => {
         const diff = projectLastActivity(b) - projectLastActivity(a);
         if (diff !== 0) return diff;
         return projectDisplayName(a).localeCompare(projectDisplayName(b));
       });
     }
-    return [...remaining].sort((a, b) =>
+    return [...filtered].sort((a, b) =>
       projectDisplayName(a).localeCompare(projectDisplayName(b), undefined, { sensitivity: 'base' }),
     );
-  }, [safeProjects, generalProject, projectSortOrder]);
-
-  const allProjectGroupsExpanded = otherProjects.length > 0 && otherProjects.every((project) =>
-    expandedGroups.has(project.name),
-  );
+  }, [safeProjects, activeSection, projectSortOrder]);
 
   const navToProject = useCallback(
     (name: string) => navigate(`/p/${encodeURIComponent(name)}`),
     [navigate],
   );
 
-  const handleGeneralSectionClick = useCallback(() => {
-    setActiveSection('general');
-    if (!generalProject) return;
-
-    onResetProjectSessionPreview?.(generalProject.name);
-    if (selectedProject?.name !== generalProject.name) {
-      onSelectProject(generalProject);
-    }
-    navToProject(generalProject.name);
-  }, [generalProject, navToProject, onResetProjectSessionPreview, onSelectProject, selectedProject?.name]);
-
-  const handleProjectsSectionClick = useCallback(() => {
-    if (generalProject) {
-      onResetProjectSessionPreview?.(generalProject.name);
-    }
-    setActiveSection('projects');
-  }, [generalProject, onResetProjectSessionPreview]);
+  const handleSectionClick = useCallback((section: SidebarSection) => {
+    setActiveSection(section);
+  }, []);
 
   const toggleProjectExpanded = useCallback((project: Project) => {
     setExpandedGroups((previous) => {
@@ -503,18 +475,6 @@ export default function SidebarV2({
       return next;
     });
   }, []);
-
-  const toggleAllProjectGroups = useCallback(() => {
-    setExpandedGroups((previous) => {
-      const next = new Set(previous);
-      if (allProjectGroupsExpanded) {
-        otherProjects.forEach((project) => next.delete(project.name));
-      } else {
-        otherProjects.forEach((project) => next.add(project.name));
-      }
-      return next;
-    });
-  }, [allProjectGroupsExpanded, otherProjects]);
 
   const ensureExpanded = useCallback((project: Project) => {
     setExpandedGroups((previous) => {
@@ -552,6 +512,14 @@ export default function SidebarV2({
       navToProject(project.name);
     },
     [ensureExpanded, navToProject, onStartNewSession],
+  );
+
+  const handleOpenFiles = useCallback(
+    (event: MouseEvent, project: Project) => {
+      event.stopPropagation();
+      onOpenProjectFiles?.(project);
+    },
+    [onOpenProjectFiles],
   );
 
   const openProjectContextMenu = useCallback(
@@ -974,6 +942,24 @@ export default function SidebarV2({
                   : 'opacity-0 group-hover/project:opacity-100 focus-within:opacity-100',
               )}
             >
+              {onOpenProjectFiles ? (
+                <button
+                  type="button"
+                  onClick={(event) => handleOpenFiles(event, project)}
+                  aria-label={t('sidebar:tooltips.openFiles', { defaultValue: 'Files' }) as string}
+                  title={t('sidebar:tooltips.openFiles', { defaultValue: 'Files' }) as string}
+                  className={cn(
+                    'inline-flex h-6 w-6 items-center justify-center rounded-md',
+                    'text-neutral-500 hover:bg-neutral-200/70 hover:text-neutral-900',
+                    'dark:text-neutral-400 dark:hover:bg-neutral-700 dark:hover:text-neutral-100',
+                    activeTab === 'files' && isSelected
+                      ? 'bg-neutral-200/80 text-neutral-900 dark:bg-neutral-700 dark:text-neutral-100'
+                      : null,
+                  )}
+                >
+                  <FolderOpen className="h-3.5 w-3.5" strokeWidth={1.75} />
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={(event) => handleNewSession(event, project)}
@@ -1051,44 +1037,42 @@ export default function SidebarV2({
         ) : null}
       </div>
 
-      {/* Section toggle: a thin pill control sitting just above the scroll
-          area, so it doesn't move while the list scrolls. Mirrors the look of
-          familiar two-tab segmented controls (e.g. iOS, ProseMirror). */}
+      {/* P3: typed project tabs */}
       <div className="px-3 pt-3 pb-1">
         <div
           role="tablist"
-          aria-label={t('sidebar:sectionToggle.label', { defaultValue: 'Sidebar section' }) as string}
+          aria-label={t('sidebar:sectionToggle.label', { defaultValue: 'Project type' }) as string}
           className="flex w-full rounded-md bg-neutral-100 p-0.5 dark:bg-neutral-900"
         >
           <button
             type="button"
             role="tab"
-            aria-selected={activeSection === 'projects'}
-            onClick={handleProjectsSectionClick}
+            aria-selected={activeSection === 'general_medicine'}
+            onClick={() => handleSectionClick('general_medicine')}
             className={cn(
-              'flex-1 rounded text-[12px] font-medium transition-colors',
-              'h-7 leading-none',
-              activeSection === 'projects'
+              'flex-1 rounded px-1 text-[11px] font-medium transition-colors',
+              'h-7 leading-tight',
+              activeSection === 'general_medicine'
                 ? 'bg-white text-neutral-900 shadow-sm dark:bg-neutral-700 dark:text-neutral-100'
                 : 'text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200',
             )}
           >
-            {t('sidebar:projects.title', { defaultValue: 'Projects' })}
+            {t('sidebar:types.generalMedicine', { defaultValue: 'General Med' })}
           </button>
           <button
             type="button"
             role="tab"
-            aria-selected={activeSection === 'general'}
-            onClick={handleGeneralSectionClick}
+            aria-selected={activeSection === 'war_trauma'}
+            onClick={() => handleSectionClick('war_trauma')}
             className={cn(
-              'flex-1 rounded text-[12px] font-medium transition-colors',
-              'h-7 leading-none',
-              activeSection === 'general'
+              'flex-1 rounded px-1 text-[11px] font-medium transition-colors',
+              'h-7 leading-tight',
+              activeSection === 'war_trauma'
                 ? 'bg-white text-neutral-900 shadow-sm dark:bg-neutral-700 dark:text-neutral-100'
                 : 'text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200',
             )}
           >
-            {t('sidebar:general.title', { defaultValue: 'General' })}
+            {t('sidebar:types.warTrauma', { defaultValue: 'War Trauma' })}
           </button>
         </div>
       </div>
@@ -1098,82 +1082,38 @@ export default function SidebarV2({
           <div className="px-2 py-4 text-xs text-neutral-500 dark:text-neutral-400">
             {t('sidebar:sessions.loading', { defaultValue: 'Loading...' })}
           </div>
-        ) : activeSection === 'projects' ? (
+        ) : (
           <section className="pt-2">
-            <div className="flex items-center px-3 pb-1">
-              <span className="flex-1 text-[11px] font-medium uppercase tracking-[0.04em] text-neutral-500/90 dark:text-neutral-400/80">
-                {t('sidebar:projects.title', { defaultValue: 'Projects' })}
-              </span>
-              <button
-                type="button"
-                onClick={toggleAllProjectGroups}
-                disabled={otherProjects.length === 0}
-                aria-label={
-                  allProjectGroupsExpanded
-                    ? t('sidebar:projects.collapseAll', { defaultValue: 'Collapse all projects' }) as string
-                    : t('sidebar:projects.expandAll', { defaultValue: 'Expand all projects' }) as string
-                }
-                title={
-                  allProjectGroupsExpanded
-                    ? t('sidebar:projects.collapseAll', { defaultValue: 'Collapse all projects' }) as string
-                    : t('sidebar:projects.expandAll', { defaultValue: 'Expand all projects' }) as string
-                }
-                className="inline-flex h-6 w-6 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 disabled:opacity-40 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
-              >
-                {allProjectGroupsExpanded ? (
-                  <ChevronsDownUp className="h-3.5 w-3.5" strokeWidth={1.75} />
-                ) : (
-                  <ChevronsUpDown className="h-3.5 w-3.5" strokeWidth={1.75} />
-                )}
-              </button>
+            <div className="flex items-center px-2 pb-1">
               <button
                 type="button"
                 onClick={onCreateProject}
                 aria-label={t('sidebar:projects.newProject', { defaultValue: 'New Project' }) as string}
                 title={t('sidebar:projects.newProject', { defaultValue: 'New Project' }) as string}
-                className="inline-flex h-6 w-6 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
+                className={cn(
+                  'inline-flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-[12px] font-medium transition-colors',
+                  'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900',
+                  'dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-neutral-100',
+                )}
               >
-                <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
+                <Plus className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+                <span className="truncate">
+                  {t('sidebar:projects.newProject', { defaultValue: 'New Project' })}
+                </span>
               </button>
             </div>
 
-            {otherProjects.length === 0 ? (
-              <div className="px-3 py-1 text-[11px] text-neutral-500 dark:text-neutral-400">
-                {t('sidebar:projects.noProjects', { defaultValue: 'No projects found' })}
+            {visibleProjects.length === 0 ? (
+              <div className="px-3 py-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-400">
+                <p>
+                  {t('sidebar:types.empty', {
+                    defaultValue: 'No projects in this type yet. Create one above.',
+                  })}
+                </p>
               </div>
             ) : (
               <div className="space-y-0.5">
-                {otherProjects.map((project) => renderProjectGroup(project))}
-              </div>
-            )}
-          </section>
-        ) : (
-          <section className="pt-2">
-            {generalProject ? (
-              <>
-                <div className="flex items-center px-3 pb-1">
-                  <span className="flex-1 text-[11px] font-medium uppercase tracking-[0.04em] text-neutral-500/90 dark:text-neutral-400/80">
-                    {t('sidebar:general.title', { defaultValue: 'General' })}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={(event) => handleNewSession(event, generalProject)}
-                    aria-label={t('sidebar:tooltips.newChat', { defaultValue: 'New Chat' }) as string}
-                    title={t('sidebar:tooltips.newChat', { defaultValue: 'New Chat' }) as string}
-                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
-                  >
-                    <MessageSquarePlus className="h-3.5 w-3.5" strokeWidth={1.75} />
-                  </button>
-                </div>
-                <div className="px-1">
-                  {renderSessionRows(generalProject, { flat: true })}
-                </div>
-              </>
-            ) : (
-              <div className="px-3 py-1 text-[11px] text-neutral-500 dark:text-neutral-400">
-                {t('sidebar:general.missing', {
-                  defaultValue: 'No general workspace found',
-                })}
+                {visibleProjects.map((project) => renderProjectGroup(project))}
               </div>
             )}
           </section>
