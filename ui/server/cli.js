@@ -111,7 +111,7 @@ Examples:
 
 Configuration:
   PilotDeck reads ~/.pilotdeck/pilotdeck.yaml by default.
-  First run opens the onboarding UI if no usable config exists.
+  First run requires a preconfigured pilotdeck.yaml (LLM onboarding UI was removed).
 `);
 }
 
@@ -140,7 +140,7 @@ function showStatus() {
   console.log(`${c.info('[INFO]')} Server Port: ${c.bright(process.env.SERVER_PORT || '3001')}`);
   console.log(`${c.info('[INFO]')} Config File: ${c.dim(configPath)}`);
   console.log(`       Status: ${record.exists ? c.ok('[OK] Exists') : c.warn('[WARN] Not found')}`);
-  console.log(`       Onboarding: ${hasUsableConfig(record) ? c.ok('[OK] Complete') : c.warn('[WARN] Required')}`);
+  console.log(`       Config: ${hasUsableConfig(record) ? c.ok('[OK] Present') : c.warn('[WARN] Missing/incomplete')}`);
   console.log(`${c.info('[INFO]')} Database: ${c.dim(dbPath)}`);
   console.log(`       Status: ${fs.existsSync(dbPath) ? c.ok('[OK] Exists') : c.warn('[WARN] Not created yet')}`);
   console.log('\n' + c.dim('═'.repeat(60)));

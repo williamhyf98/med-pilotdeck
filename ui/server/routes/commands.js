@@ -9,7 +9,7 @@ import { CURSOR_MODELS, CODEX_MODELS } from '../../shared/modelConstants.js';
 import { parseFrontmatter } from '../utils/frontmatter.js';
 import { getClaudeRuntimeModelConfig, getClaudeRuntimeModelValues } from '../utils/claude-runtime-config.js';
 import { readPilotDeckConfigFile, resolveModel } from '../services/pilotdeckConfig.js';
-import { resolvePilotHome } from '../utils/pilotPaths.js';
+import { resolvePilotHome, resolveLinkedRepoPath } from '../utils/pilotPaths.js';
 import { executeTurnkeySlashCommand } from '../turnkey-slash.js';
 import { getRegisteredCommands } from '../../../src/adapters/channel/protocol/ChannelCommandRegistry.js';
 import { runChatSearchFormatted } from '../../../src/cli/commands/chatSearch.js';
@@ -18,6 +18,19 @@ const execFileAsync = promisify(execFile);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+function normalizeRepoProjectPath(projectPath) {
+  if (!projectPath || typeof projectPath !== 'string') return projectPath;
+  return resolveLinkedRepoPath(projectPath, resolvePilotHome(process.env));
+}
+
+function normalizeCommandContext(context) {
+  if (!context?.projectPath) return context;
+  return {
+    ...context,
+    projectPath: normalizeRepoProjectPath(context.projectPath),
+  };
+}
 
 const router = express.Router();
 
@@ -672,8 +685,9 @@ router.post('/list', async (req, res) => {
     const customCommandSources = [];
 
     if (projectPath) {
-      const projectCommandsDir = path.join(projectPath, '.pilotdeck', 'commands');
-      const projectSkillsDir = path.join(projectPath, '.pilotdeck', 'skills');
+      const repoPath = normalizeRepoProjectPath(projectPath);
+      const projectCommandsDir = path.join(repoPath, '.pilotdeck', 'commands');
+      const projectSkillsDir = path.join(repoPath, '.pilotdeck', 'skills');
       const [projectCommands, projectSkills] = await Promise.all([
         scanCommandsDirectory(projectCommandsDir, projectCommandsDir, 'project'),
         scanSkillsDirectory(projectSkillsDir, 'project'),
@@ -800,7 +814,8 @@ router.post('/load', async (req, res) => {
  */
 router.post('/execute', async (req, res) => {
   try {
-    const { commandName, commandPath, args = [], rawArgs, rawInput, context = {} } = req.body;
+    const { commandName, commandPath, args = [], rawArgs, rawInput, context: rawContext = {} } = req.body;
+    const context = normalizeCommandContext(rawContext);
 
     if (!commandName) {
       return res.status(400).json({

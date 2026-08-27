@@ -63,7 +63,12 @@ ensure_project_pilot_home() {
     "${PILOT_HOME_DIR}/projects" \
     "${PILOT_HOME_DIR}/memory" \
     "${PILOT_HOME_DIR}/cron" \
-    "${PILOT_HOME_DIR}/logs"
+    "${PILOT_HOME_DIR}/logs" \
+    "${PILOT_HOME_DIR}/workspaces/general/inbox" \
+    "${PILOT_HOME_DIR}/workspaces/general/exports" \
+    "${PILOT_HOME_DIR}/workspaces/general/scratch/qa" \
+    "${PILOT_HOME_DIR}/workspaces/general/scratch/work" \
+    "${PILOT_HOME_DIR}/workspaces/general/scratch/preview"
 
   local med_src="${PILOTDECK_ROOT}/plugins/med-tools"
   local med_link="${PILOT_HOME_DIR}/plugins/med-tools"

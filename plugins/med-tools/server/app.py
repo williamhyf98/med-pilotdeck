@@ -60,7 +60,15 @@ def _resolve_derived_dir(anchor: Path) -> Path:
         derived = Path(override).expanduser().resolve()
     else:
         base = anchor if anchor.is_dir() else anchor.parent
-        derived = base / ".med-tools-derived"
+        parts = base.parts
+        if "inbox" in parts:
+            inbox_idx = parts.index("inbox")
+            batch_root = Path(*parts[: inbox_idx + 2])
+            derived = batch_root / "derived"
+        elif (base / ".med-tools-derived").is_dir():
+            derived = base / ".med-tools-derived"
+        else:
+            derived = base / "derived"
     derived.mkdir(parents=True, exist_ok=True)
     return derived
 

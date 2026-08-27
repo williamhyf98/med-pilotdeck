@@ -12,14 +12,14 @@ const marker = '[Files attached by user and available for reading in the project
 describe('attachment path notes', () => {
   it('writes a bounded attachment note for new messages', () => {
     const note = buildAttachmentPathNote([
-      { name: '报告.xlsx', path: '.tmp/chat-attachments/run/1-报告.xlsx' },
+      { name: '报告.xlsx', path: 'inbox/run/1-报告.xlsx' },
     ]);
 
     expect(note).toBe([
       '',
       '',
       marker,
-      '- 报告.xlsx: .tmp/chat-attachments/run/1-报告.xlsx',
+      '- 报告.xlsx: inbox/run/1-报告.xlsx',
       '[End files attached by user]',
       '',
     ].join('\n'));

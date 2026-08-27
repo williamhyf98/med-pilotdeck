@@ -26,7 +26,7 @@ import {
 import { listProjectSessions, readTranscript, type SessionInfo } from "../../session/index.js";
 import type { AgentTranscriptEntry } from "../../session/transcript/TranscriptEntry.js";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { getPilotProjectChatDir } from "../../pilot/index.js";
+import { getPilotProjectChatDir, resolveGatewayProjectKey } from "../../pilot/index.js";
 import { sanitizeSessionIdForPath } from "../../session/storage/ProjectSessionStorage.js";
 import type {
   WebReadSessionMessagesInput,
@@ -45,11 +45,18 @@ export type ReadWebSessionMessagesOptions = {
 
 const DEFAULT_HISTORY_CONTEXT_TOKENS = 200_000;
 
+function resolveEffectiveProjectRoot(
+  projectKey: string | undefined,
+  options: ReadWebSessionMessagesOptions,
+): string {
+  return resolveGatewayProjectKey(projectKey ?? options.projectRoot, options.pilotHome);
+}
+
 export async function readWebSessionMessages(
   input: WebReadSessionMessagesInput,
   options: ReadWebSessionMessagesOptions,
 ): Promise<WebReadSessionMessagesResult> {
-  const effectiveProjectRoot = input.projectKey ?? options.projectRoot;
+  const effectiveProjectRoot = resolveEffectiveProjectRoot(input.projectKey, options);
   const chatDir = getPilotProjectChatDir(effectiveProjectRoot, options.pilotHome);
   const transcriptPath = resolveTranscriptPath(input, chatDir);
   const isBackgroundTask = isBackgroundTaskInput(input);
@@ -339,7 +346,7 @@ export async function readSubagentWebMessages(
   },
   options: ReadWebSessionMessagesOptions,
 ): Promise<{ messages: WebMessage[]; total: number }> {
-  const effectiveProjectRoot = input.projectKey ?? options.projectRoot;
+  const effectiveProjectRoot = resolveEffectiveProjectRoot(input.projectKey, options);
   const chatDir = getPilotProjectChatDir(effectiveProjectRoot, options.pilotHome);
   const parentTranscriptPath = resolveTranscriptPath(input, chatDir);
 

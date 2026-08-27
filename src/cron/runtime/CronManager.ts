@@ -22,6 +22,7 @@ import type {
   CronTask,
 } from "../protocol/types.js";
 import { resolveCronPaths } from "../storage/CronPaths.js";
+import { resolveGatewayProjectKey } from "../../pilot/paths.js";
 import { createCronCreateTool } from "../tool/CronCreateTool.js";
 import { createCronDeleteTool } from "../tool/CronDeleteTool.js";
 import { createCronListTool } from "../tool/CronListTool.js";
@@ -163,7 +164,9 @@ export class CronManager {
   }
 
   private async ensureRuntime(projectKeyInput: string): Promise<CronRuntime> {
-    const projectKey = resolve(projectKeyInput);
+    const projectKey = resolve(
+      resolveGatewayProjectKey(projectKeyInput, this.pilotHome),
+    );
     const existing = this.runtimes.get(projectKey);
     if (existing) {
       await this.starting.get(projectKey);

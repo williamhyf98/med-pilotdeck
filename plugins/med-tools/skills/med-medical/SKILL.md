@@ -37,7 +37,7 @@ description: 通过 med-tools MCP 解析医疗附件（DICOM、PDF 报告、报�
 
 - 医疗二进制 / XML / CDA **不会**内联进对话。调用 MCP；不要对它们使用 `read_file`。
 - 一个文件 → 对该路径调用 `med_parse_medical`。
-- 同一轮中有多份医疗文件（文件夹或多选）→ 若路径明显同属 `.tmp/chat-attachments/` 下的同一父目录，优先对该父目录**调用一次** `med_parse_medical`；否则按文件分别调用。
+- 同一轮中有多份医疗文件（文件夹或多选）→ 若路径明显同属 `inbox/` 下的同一父目录，优先对该父目录**调用一次** `med_parse_medical`；否则按文件分别调用。
 - 项目 Files 面板：用 `@` 提及工作区目录，并对该目录调用一次。
 
 可选参数：

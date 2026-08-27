@@ -17,6 +17,12 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import os from 'os';
 import { extractProjectDirectory } from '../projects.js';
+import { resolvePilotHome, resolveLinkedRepoPath } from '../utils/pilotPaths.js';
+
+async function resolveRepoProjectPath(projectName) {
+  const pilotHome = resolvePilotHome(process.env);
+  return resolveLinkedRepoPath(projectName, pilotHome);
+}
 import { detectTaskMasterMCPServer } from '../utils/mcp-detector.js';
 import { broadcastTaskMasterProjectUpdate, broadcastTaskMasterTasksUpdate } from '../utils/taskmaster-websocket.js';
 import { prepareCliSpawn } from '../utils/processSpawn.js';
@@ -288,7 +294,7 @@ router.get('/detect/:projectName', async (req, res) => {
         // Use the existing extractProjectDirectory function to get actual project path
         let projectPath;
         try {
-            projectPath = await extractProjectDirectory(projectName);
+            projectPath = await resolveRepoProjectPath(projectName);
         } catch (error) {
             console.error('Error extracting project directory:', error);
             return res.status(404).json({
@@ -362,16 +368,11 @@ router.get('/detect-all', async (req, res) => {
         // Run detection for all projects in parallel
         const detectionPromises = projects.map(async (project) => {
             try {
-                // Use the project's fullPath if available, otherwise extract the directory
                 let projectPath;
-                if (project.fullPath) {
-                    projectPath = project.fullPath;
-                } else {
-                    try {
-                        projectPath = await extractProjectDirectory(project.name);
-                    } catch (error) {
-                        throw new Error(`Failed to extract project directory: ${error.message}`);
-                    }
+                try {
+                    projectPath = await resolveRepoProjectPath(project.fullPath || project.name);
+                } catch (error) {
+                    throw new Error(`Failed to resolve linked repo: ${error.message}`);
                 }
                 
                 const [taskMasterResult, mcpResult] = await Promise.all([
@@ -470,7 +471,7 @@ router.get('/next/:projectName', async (req, res) => {
         // Get project path
         let projectPath;
         try {
-            projectPath = await extractProjectDirectory(projectName);
+            projectPath = await resolveRepoProjectPath(projectName);
         } catch (error) {
             return res.status(404).json({
                 error: 'Project not found',
@@ -579,7 +580,7 @@ router.get('/tasks/:projectName', async (req, res) => {
         // Get project path
         let projectPath;
         try {
-            projectPath = await extractProjectDirectory(projectName);
+            projectPath = await resolveRepoProjectPath(projectName);
         } catch (error) {
             return res.status(404).json({
                 error: 'Project not found',
@@ -694,7 +695,7 @@ router.get('/prd/:projectName', async (req, res) => {
         // Get project path
         let projectPath;
         try {
-            projectPath = await extractProjectDirectory(projectName);
+            projectPath = await resolveRepoProjectPath(projectName);
         } catch (error) {
             return res.status(404).json({
                 error: 'Project not found',
@@ -786,7 +787,7 @@ router.post('/prd/:projectName', async (req, res) => {
         // Get project path
         let projectPath;
         try {
-            projectPath = await extractProjectDirectory(projectName);
+            projectPath = await resolveRepoProjectPath(projectName);
         } catch (error) {
             return res.status(404).json({
                 error: 'Project not found',
@@ -855,7 +856,7 @@ router.get('/prd/:projectName/:fileName', async (req, res) => {
         // Get project path
         let projectPath;
         try {
-            projectPath = await extractProjectDirectory(projectName);
+            projectPath = await resolveRepoProjectPath(projectName);
         } catch (error) {
             return res.status(404).json({
                 error: 'Project not found',
@@ -920,7 +921,7 @@ router.delete('/prd/:projectName/:fileName', async (req, res) => {
         // Get project path
         let projectPath;
         try {
-            projectPath = await extractProjectDirectory(projectName);
+            projectPath = await resolveRepoProjectPath(projectName);
         } catch (error) {
             return res.status(404).json({
                 error: 'Project not found',
@@ -980,7 +981,7 @@ router.post('/init/:projectName', async (req, res) => {
         // Get project path
         let projectPath;
         try {
-            projectPath = await extractProjectDirectory(projectName);
+            projectPath = await resolveRepoProjectPath(projectName);
         } catch (error) {
             return res.status(404).json({
                 error: 'Project not found',
@@ -1078,7 +1079,7 @@ router.post('/add-task/:projectName', async (req, res) => {
         // Get project path
         let projectPath;
         try {
-            projectPath = await extractProjectDirectory(projectName);
+            projectPath = await resolveRepoProjectPath(projectName);
         } catch (error) {
             return res.status(404).json({
                 error: 'Project not found',
@@ -1176,7 +1177,7 @@ router.put('/update-task/:projectName/:taskId', async (req, res) => {
         // Get project path
         let projectPath;
         try {
-            projectPath = await extractProjectDirectory(projectName);
+            projectPath = await resolveRepoProjectPath(projectName);
         } catch (error) {
             return res.status(404).json({
                 error: 'Project not found',
@@ -1305,7 +1306,7 @@ router.post('/parse-prd/:projectName', async (req, res) => {
         // Get project path
         let projectPath;
         try {
-            projectPath = await extractProjectDirectory(projectName);
+            projectPath = await resolveRepoProjectPath(projectName);
         } catch (error) {
             return res.status(404).json({
                 error: 'Project not found',
@@ -1860,7 +1861,7 @@ router.post('/apply-template/:projectName', async (req, res) => {
         // Get project path
         let projectPath;
         try {
-            projectPath = await extractProjectDirectory(projectName);
+            projectPath = await resolveRepoProjectPath(projectName);
         } catch (error) {
             return res.status(404).json({
                 error: 'Project not found',

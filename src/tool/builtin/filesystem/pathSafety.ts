@@ -54,7 +54,7 @@ export function resolvePilotDeckWorkspacePath(
         const allowedReal = safeRealpath(allowedPath) ?? path.resolve(allowedPath);
         return real === allowedReal;
       });
-      if (allowed || isManagedImAttachmentFile(real, context)) {
+      if (allowed || isManagedImAttachmentFile(real, context) || isManagedChatAttachmentFile(real, context)) {
         const relativePath = path.relative(context.cwd, absolutePath) || ".";
         return { ok: true, absolutePath, relativePath, root: context.cwd };
       }
@@ -132,6 +132,28 @@ function isManagedImAttachmentFile(realPath: string, context: PilotDeckToolRunti
   const pilotHome = path.resolve(context.env?.PILOT_HOME ?? path.join(homedir(), ".pilotdeck"));
   const root = safeRealpath(path.join(pilotHome, "im-attachments")) ?? path.join(pilotHome, "im-attachments");
   return isPathWithinRoot(realPath, root) && isRegularFile(realPath);
+}
+
+function isManagedChatAttachmentFile(realPath: string, context: PilotDeckToolRuntimeContext): boolean {
+  if (!isRegularFile(realPath)) return false;
+
+  const resolvedRealPath = safeRealpath(realPath) ?? path.resolve(realPath);
+  const withinRoot = (root: string): boolean => {
+    const resolvedRoot = safeRealpath(root) ?? path.resolve(root);
+    return isPathWithinRoot(resolvedRealPath, resolvedRoot);
+  };
+
+  if (withinRoot(path.resolve(context.cwd, "inbox"))) return true;
+  if (withinRoot(path.resolve(context.cwd, ".tmp", "chat-attachments"))) return true;
+
+  const pilotHome = path.resolve(context.env?.PILOT_HOME ?? path.join(homedir(), ".pilotdeck"));
+  if (withinRoot(path.join(pilotHome, ".tmp", "chat-attachments"))) return true;
+
+  const workspacesRoot = path.join(pilotHome, "workspaces");
+  if (!withinRoot(workspacesRoot)) return false;
+  const relative = path.relative(safeRealpath(workspacesRoot) ?? workspacesRoot, resolvedRealPath).replace(/\\/g, "/");
+  const segments = relative.split("/");
+  return segments.length >= 3 && segments[2] === "inbox";
 }
 
 function isRegularFile(value: string): boolean {

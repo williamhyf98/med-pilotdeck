@@ -67,10 +67,10 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" make \
 再交给 `make`：
 
 ```bash
-mkdir -p "$PWD/exports/qa"
+mkdir -p "$PWD/scratch/qa"
 bash "$DOCX_SKILL_ROOT/scripts/docx.sh" make \
   --title "救治方案" \
-  --markdown "$PWD/exports/qa/content.md" \
+  --markdown "$PWD/scratch/qa/content.md" \
   --out "$PWD/exports/救治方案.docx"
 ```
 
@@ -90,10 +90,10 @@ Word 插图只能用磁盘路径，不能用聊天气泡里的图。创面照等
 
 ```text
 [Files attached by user and available for reading in the project:]
-- name.jpg: /…/.tmp/chat-attachments/<批次id>/1-name.jpg
+- name.jpg: /…/inbox/<批次id>/1-name.jpg
 ```
 
-文件就在 `{项目根或 PILOT_HOME}/.tmp/chat-attachments/<批次id>/`。直接把
+文件就在 `{项目根或 PILOT_HOME}/inbox/<批次id>/`。直接把
 **绝对路径**写进 spec 的 image block（见 [specifications.md](references/specifications.md)）。
 不要 `find /`，不要下载，不要为此编写 Python。后续轮次清单可能不再出现，到历史用户消息或 `image_paths_used` 里找同一路径。
 
@@ -107,7 +107,7 @@ Word 插图只能用磁盘路径，不能用聊天气泡里的图。创面照等
 ```bash
 bash "$DOCX_SKILL_ROOT/scripts/docx.sh" inspect \
   --input "$INPUT_DOCX" \
-  --out "$PWD/exports/qa/inspection.json"
+  --out "$PWD/scratch/qa/inspection.json"
 ```
 
 按需使用 `--summary`、`--search`、`--location`。只读任务不要创建新的 DOCX。
@@ -134,12 +134,12 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" inspect \
 ### 其他保留能力
 
 ```bash
-bash "$DOCX_SKILL_ROOT/scripts/docx.sh" compare --before old.docx --after new.docx --out "$PWD/exports/qa/compare.json"
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" compare --before old.docx --after new.docx --out "$PWD/scratch/qa/compare.json"
 bash "$DOCX_SKILL_ROOT/scripts/docx.sh" sanitize --input source.docx --out "$INTERNAL_CANDIDATE"
 bash "$DOCX_SKILL_ROOT/scripts/docx.sh" refresh-toc --input source.docx --out "$INTERNAL_CANDIDATE" --render-dir "$INTERNAL_RENDER_DIR"
 bash "$DOCX_SKILL_ROOT/scripts/docx.sh" validate --input source.docx
-bash "$DOCX_SKILL_ROOT/scripts/docx.sh" audit --input source.docx --out "$PWD/exports/qa/audit.json"
-bash "$DOCX_SKILL_ROOT/scripts/docx.sh" render --input source.docx --out-dir "$PWD/exports/qa/render"
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" audit --input source.docx --out "$PWD/scratch/qa/audit.json"
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" render --input source.docx --out-dir "$PWD/scratch/qa/render"
 ```
 
 若命令返回 `unsupported` 或 `blocked`，说明限制并停止。

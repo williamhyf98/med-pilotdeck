@@ -79,7 +79,7 @@ description: 通过 med_trauma_stage_plan 生成正式六阶段战创伤分级�
 
 ```text
 [Files attached by user and available for reading in the project:]
-- name: /Users/xxx/.../.tmp/chat-attachments/xxxx.jpg
+- name: /Users/xxx/.../inbox/<batch>/xxxx.jpg
 ```
 
 - 直接用该**绝对路径**；不要 `read_file` 图片，也不要自己写影像所见。

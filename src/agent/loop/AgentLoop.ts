@@ -2723,13 +2723,16 @@ export function buildTurnEnvironment(
   sessionId: string,
   turnId: string,
 ): NodeJS.ProcessEnv {
+  const resolvedCwd = path.resolve(cwd);
   return {
     ...(baseEnv ?? process.env),
     PILOTDECK_SESSION_ID: sessionId,
     PILOTDECK_TURN_ID: turnId,
+    PILOTDECK_WORKSPACE_DIR: resolvedCwd,
+    PILOTDECK_WORKSPACE_CWD: resolvedCwd,
     PILOTDECK_WORK_DIR: path.join(
-      path.resolve(cwd),
-      ".pilotdeck",
+      resolvedCwd,
+      "scratch",
       "work",
       safeWorkPathSegment(sessionId),
       safeWorkPathSegment(turnId),

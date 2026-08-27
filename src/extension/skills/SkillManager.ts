@@ -3,7 +3,10 @@ import { homedir } from "node:os";
 import { basename, isAbsolute, join, posix, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 
-import { getPilotExtensionPaths } from "../../pilot/paths.js";
+import {
+  getPilotExtensionPaths,
+  isGeneralProjectKey,
+} from "../../pilot/paths.js";
 import type {
   SkillAddressInput,
   SkillCreateInput,
@@ -121,6 +124,9 @@ export class SkillManager {
 
   private isGeneralCwd(projectKey: string | null | undefined): boolean {
     if (!projectKey) return false;
+    if (isGeneralProjectKey(projectKey, this.pilotHome)) {
+      return true;
+    }
     return this.generalCwdPaths.includes(resolve(projectKey));
   }
 

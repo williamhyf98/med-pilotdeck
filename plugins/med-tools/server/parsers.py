@@ -1178,7 +1178,7 @@ def collect_medical_files(path: Path, *, max_files: int = 64) -> List[Path]:
             continue
         if child.name.startswith("."):
             continue
-        if ".med-tools-derived" in child.parts:
+        if ".med-tools-derived" in child.parts or child.name == "derived":
             continue
         if child.suffix.lower() in SUPPORTED_SUFFIXES:
             found.append(child)

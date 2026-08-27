@@ -7,6 +7,7 @@ import {
   rerunDiscoveryPlan,
 } from './discovery-plans.js';
 import { getPilotDeckGateway } from './pilotdeck-bridge.js';
+import { resolvePilotHome, resolveGatewayProjectKey } from './utils/pilotPaths.js';
 import { sortCronJobsByCreatedAt } from './utils/cronJobSort.js';
 
 const TARGET_ALIASES = new Map([
@@ -142,6 +143,7 @@ function getProjectContext(context) {
   return {
     projectName,
     projectPath,
+    gatewayKey: resolveGatewayProjectKey(projectPath || projectName, resolvePilotHome(process.env)),
   };
 }
 
@@ -382,7 +384,7 @@ export async function executeAlwaysOnSlashCommand(args = [], context = {}) {
       const gateway = await getPilotDeckGateway();
       const result = await gateway.cronRunNow({
         taskId: parsed.id,
-        projectKey: project.projectPath,
+        projectKey: project.gatewayKey,
       });
 
       if (result.reason === 'not_found') {

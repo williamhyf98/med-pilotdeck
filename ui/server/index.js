@@ -57,6 +57,7 @@ import { getDefaultPtyShell } from './utils/defaultShell.js';
 import { getOpenUrlSpawnCommand } from './utils/processSpawn.js';
 
 import { getProjects, getProjectCronJobsOverview, getSessions, renameProject, deleteSession, deleteProject, addProjectManually, extractProjectDirectory, clearProjectDirectoryCache, searchConversations } from './projects.js';
+import { resolvePilotHome, resolveProjectChatDir, sanitizeSessionIdForPath, resolveLinkedRepoPath, resolveGatewayProjectKey } from './utils/pilotPaths.js';
 import {
     runChatViaGateway,
     abortViaGateway,
@@ -610,11 +611,15 @@ app.get('/api/always-on/cron-jobs', authenticateToken, async (_req, res) => {
 app.post('/api/always-on/cron-jobs', authenticateToken, async (req, res) => {
     try {
         const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
-        const projectKey = typeof req.body?.projectKey === 'string' ? req.body.projectKey : '';
+        const rawProjectKey = typeof req.body?.projectKey === 'string' ? req.body.projectKey : '';
         const schedule = req.body?.schedule;
         const timezone = typeof req.body?.timezone === 'string' && req.body.timezone.trim()
             ? req.body.timezone.trim()
             : undefined;
+        const pilotHome = resolvePilotHome(process.env);
+        const projectKey = rawProjectKey
+            ? resolveGatewayProjectKey(rawProjectKey, pilotHome)
+            : '';
 
         if (!message) {
             res.status(400).json({ error: 'Cron message is required.' });
@@ -647,9 +652,12 @@ app.post('/api/always-on/cron-jobs', authenticateToken, async (req, res) => {
 app.post('/api/always-on/cron-jobs/:taskId/run-now', authenticateToken, async (req, res) => {
     try {
         const gateway = await getPilotDeckGateway();
+        const rawProjectKey = req.body?.projectKey || req.query?.projectKey || undefined;
         const result = await gateway.cronRunNow({
             taskId: req.params.taskId,
-            projectKey: req.body?.projectKey || req.query?.projectKey || undefined,
+            projectKey: rawProjectKey
+                ? resolveGatewayProjectKey(String(rawProjectKey), resolvePilotHome(process.env))
+                : undefined,
         });
         res.json(result);
     } catch (error) {
@@ -661,9 +669,12 @@ app.post('/api/always-on/cron-jobs/:taskId/run-now', authenticateToken, async (r
 app.post('/api/always-on/cron-jobs/:taskId/stop', authenticateToken, async (req, res) => {
     try {
         const gateway = await getPilotDeckGateway();
+        const rawProjectKey = req.body?.projectKey || req.query?.projectKey || undefined;
         const result = await gateway.cronStop({
             taskId: req.params.taskId,
-            projectKey: req.body?.projectKey || req.query?.projectKey || undefined,
+            projectKey: rawProjectKey
+                ? resolveGatewayProjectKey(String(rawProjectKey), resolvePilotHome(process.env))
+                : undefined,
         });
         res.json(result);
     } catch (error) {
@@ -675,9 +686,12 @@ app.post('/api/always-on/cron-jobs/:taskId/stop', authenticateToken, async (req,
 app.delete('/api/always-on/cron-jobs/:taskId', authenticateToken, async (req, res) => {
     try {
         const gateway = await getPilotDeckGateway();
+        const rawProjectKey = req.body?.projectKey || req.query?.projectKey || undefined;
         const result = await gateway.cronDelete({
             taskId: req.params.taskId,
-            projectKey: req.body?.projectKey || req.query?.projectKey || undefined,
+            projectKey: rawProjectKey
+                ? resolveGatewayProjectKey(String(rawProjectKey), resolvePilotHome(process.env))
+                : undefined,
             stopRunning: true,
         });
         res.json(result);
@@ -2609,7 +2623,13 @@ function handleShellConnection(ws) {
             console.log('📨 Shell message received:', data.type);
 
             if (data.type === 'init') {
-                const projectPath = data.projectPath || process.cwd();
+                const rawProjectPath = data.projectPath || process.cwd();
+                let projectPath = rawProjectPath;
+                try {
+                    projectPath = resolveLinkedRepoPath(rawProjectPath, resolvePilotHome(process.env));
+                } catch {
+                    projectPath = rawProjectPath;
+                }
                 const sessionId = data.sessionId;
                 const hasSession = data.hasSession;
                 const provider = data.provider || 'pilotdeck';
@@ -3159,7 +3179,8 @@ app.post('/api/projects/:projectName/upload-attachments', authenticateToken, asy
         let attachmentDir = null;
         try {
             const projectRoot = await extractProjectDirectory(req.params.projectName);
-            const targetDir = path.join(projectRoot, '.tmp', 'chat-attachments', `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`);
+            const batchId = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+            const targetDir = path.join(projectRoot, 'inbox', batchId);
             const validation = validatePathInProject(projectRoot, targetDir);
             if (!validation.valid) {
                 throw new Error(validation.error || 'Invalid attachment target');
@@ -3452,30 +3473,9 @@ app.get('/api/projects/:projectName/sessions/:sessionId/token-usage', authentica
             });
         }
 
-        // Extract actual project path
-        let projectPath;
-        try {
-            projectPath = await extractProjectDirectory(projectName);
-        } catch (error) {
-            console.error('Error extracting project directory:', error);
-            return res.status(500).json({ error: 'Failed to determine project path' });
-        }
-
-
-        const encodedPath = projectPath.replace(/[^a-zA-Z0-9-]/g, '-');
-        const projectDir = path.join(
-            process.env.PILOT_HOME || path.join(os.homedir(), '.pilotdeck'),
-            'projects',
-            encodedPath,
-        );
-
-        const jsonlPath = path.join(projectDir, `${safeSessionId}.jsonl`);
-
-        // Constrain to projectDir
-        const rel = path.relative(path.resolve(projectDir), path.resolve(jsonlPath));
-        if (rel.startsWith('..') || path.isAbsolute(rel)) {
-            return res.status(400).json({ error: 'Invalid path' });
-        }
+        const pilotHome = process.env.PILOT_HOME || path.join(os.homedir(), '.pilotdeck-home');
+        const chatDir = resolveProjectChatDir(projectName, pilotHome);
+        const jsonlPath = path.join(chatDir, `${sanitizeSessionIdForPath(safeSessionId)}.jsonl`);
 
         // Read and parse the JSONL file
         let fileContent;
@@ -3586,6 +3586,7 @@ async function getFileTree(dirPath, maxDepth = 3, currentDepth = 0, showHidden =
                 entry.name === 'build' ||
                 entry.name.startsWith('.pilotdeck') ||
                 entry.name === '.tmp' ||
+                entry.name === 'scratch' ||
                 /^\.pilotdeck_build\.(?:c|m)?js$/i.test(entry.name) ||
                 entry.name === '.git' ||
                 entry.name === '.svn' ||

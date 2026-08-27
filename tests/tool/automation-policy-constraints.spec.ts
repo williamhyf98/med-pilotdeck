@@ -29,7 +29,7 @@ test("automation policy blocks source writes but permits declarative inputs", ()
     /blocks writing executable source/u,
   );
   assert.equal(
-    getAutomationPolicyViolation("write_file", { file_path: "exports/qa/workbook.json" }),
+    getAutomationPolicyViolation("write_file", { file_path: "scratch/qa/workbook.json" }),
     undefined,
   );
 });
@@ -61,16 +61,16 @@ test("automation policy blocks interpreter and shell bypasses", () => {
 
 test("automation policy permits bundled document entrypoints and ordinary file operations", () => {
   const allowed = [
-    "mkdir -p exports/qa",
+    "mkdir -p scratch/qa",
     "ls -la exports",
     "git status --short",
-    "bash \"/opt/pilotdeck/skills/pdf/scripts/pdf.sh\" make --markdown exports/qa/content.md --out exports/report.pdf",
-    "bash \"$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh\" make --csv exports/qa/data.csv --out exports/data.xlsx",
+    "bash \"/opt/pilotdeck/skills/pdf/scripts/pdf.sh\" make --markdown scratch/qa/content.md --out exports/report.pdf",
+    "bash \"$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh\" make --csv scratch/qa/data.csv --out exports/data.xlsx",
     "bash \"$PPTX_SKILL_ROOT/scripts/pptx.sh\" make --title \"Node service\" --out exports/node.pptx",
-    "bash \"$DIAGRAM_SKILL_ROOT/scripts/diagram.sh\" make --markdown exports/qa/flow.mmd --out exports/flow.svg",
-    "DIAGRAM_SKILL_ROOT=\"$(dirname \"/opt/pilotdeck/skills/diagram-maker/SKILL.md\")\"; mkdir -p \"$PWD/exports/qa\"; bash \"$DIAGRAM_SKILL_ROOT/scripts/diagram.sh\" make --markdown \"$PWD/exports/qa/flow.mmd\" --out \"$PWD/exports/flow.svg\"",
-    "mkdir -p exports && bash \"$PDF_SKILL_ROOT/scripts/pdf.sh\" make --markdown exports/qa/content.md --out exports/report.pdf",
-    "SPREADSHEET_SKILL_ROOT=\"/opt/pilotdeck/skills/spreadsheets\"\nbash \"$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh\" make --spec exports/qa/book.json --out exports/book.xlsx",
+    "bash \"$DIAGRAM_SKILL_ROOT/scripts/diagram.sh\" make --markdown scratch/qa/flow.mmd --out exports/flow.svg",
+    "DIAGRAM_SKILL_ROOT=\"$(dirname \"/opt/pilotdeck/skills/diagram-maker/SKILL.md\")\"; mkdir -p \"$PWD/scratch/qa\"; bash \"$DIAGRAM_SKILL_ROOT/scripts/diagram.sh\" make --markdown \"$PWD/scratch/qa/flow.mmd\" --out \"$PWD/exports/flow.svg\"",
+    "mkdir -p exports && bash \"$PDF_SKILL_ROOT/scripts/pdf.sh\" make --markdown scratch/qa/content.md --out exports/report.pdf",
+    "SPREADSHEET_SKILL_ROOT=\"/opt/pilotdeck/skills/spreadsheets\"\nbash \"$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh\" make --spec scratch/qa/book.json --out exports/book.xlsx",
   ];
   for (const command of allowed) {
     assert.equal(

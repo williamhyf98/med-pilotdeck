@@ -7,7 +7,7 @@ Agent 只填写 `pptx.sh make` 的参数；不要编写 JavaScript 或 Python。
 ```bash
 bash "$PPTX_TOOL" make \
   --title "演示标题" \
-  --markdown "$PWD/exports/qa/slides.md" \
+  --markdown "$PWD/scratch/qa/slides.md" \
   --out "$PWD/exports/演示标题.pptx"
 ```
 
@@ -88,7 +88,7 @@ Agent 不得复制或修改该文件。常用字段：
 - closing：`title`、`action`、`contact`
 
 插图必须是本机已有文件。用户聊天上传的图（创面照等）路径见用户消息中的
-`[Files attached by user…]` 清单，文件在 `.tmp/chat-attachments/<批次>/`。
+`[Files attached by user…]` 清单，文件在 `inbox/<批次>/`。
 优先填该**绝对路径**；禁止 HTTP/HTTPS URL；不要改 `layout-library`。
 
 ## 离线校验

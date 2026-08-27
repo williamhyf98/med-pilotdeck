@@ -208,7 +208,7 @@ const workbook = await loadDelimited(inputPath, {
 将每个构建器、候选文件、转换、渲染和报告都放在本轮工作目录下。只有 `FINAL_XLSX` 面向用户。
 
 ```bash
-WORKSPACE="${PILOTDECK_WORK_DIR:-$PWD/.pilotdeck/work/manual/<task-slug>}/spreadsheets"
+WORKSPACE="${PILOTDECK_WORK_DIR:-$PWD/scratch/work/manual/<task-slug>}/spreadsheets"
 FINAL_XLSX="$PWD/<requested-output>.xlsx"
 mkdir -p "$WORKSPACE/tmp" "$WORKSPACE/qa"
 bash "$SHEET" scaffold --out "$WORKSPACE/tmp/workbook.mjs" --requirements-out "$WORKSPACE/tmp/requirements.json"

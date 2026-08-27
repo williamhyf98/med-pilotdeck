@@ -27,8 +27,16 @@ import { requiresPromptCapability } from "../userInteractionConstraints.js";
 import { buildToolErrorRecovery } from "./errorRecovery.js";
 import { repairToolName } from "./repairToolName.js";
 import { getAutomationPolicyViolation } from "../automationPolicyConstraints.js";
+import {
+  buildMedToolsSkillGateMessage,
+  getMedToolsSkillRequirement,
+  isRequiredMedToolsSkillLoaded,
+  normalizeLoadedSkillName,
+} from "../medToolsSkillGate.js";
 
 export class ToolRuntime {
+  private readonly loadedSkills = new Set<string>();
+
   constructor(
     private readonly registry: ToolRegistry,
     private readonly permissionRuntime: PermissionRuntime,
@@ -151,6 +159,16 @@ export class ToolRuntime {
         runtimeContext,
         { issues: validation.issues },
       );
+    }
+
+    const skillGateResult = await this.applyMedToolsSkillGate(
+      call.id,
+      tool.name,
+      startedAt,
+      runtimeContext,
+    );
+    if (skillGateResult) {
+      return skillGateResult;
     }
 
     if (runtimeContext.permissionContext.canPrompt === false && requiresPromptCapability(tool, coercedInput)) {
@@ -313,6 +331,12 @@ ${formatValidationError(tool.name, updatedValidation.issues, {
       : baseContext;
     try {
       const output = await tool.execute(executeInput, executeContext);
+      if (tool.name === "read_skill" && skillWasLoaded(output.content)) {
+        const skillName = readSkillName(executeInput);
+        if (skillName) {
+          this.loadedSkills.add(normalizeLoadedSkillName(skillName));
+        }
+      }
       const maxResultBytes = tool.maxResultBytes ?? context.maxResultBytes;
       const previewLimit = applyResultSizeLimit(output.content, maxResultBytes);
       const completedAt = now(context).toISOString();
@@ -357,6 +381,85 @@ ${formatValidationError(tool.name, updatedValidation.issues, {
       const result = this.createErrorResult(call.id, tool.name, normalized.code, normalized.message, startedAt, context, normalized.details);
       await this.recordToolAudit(result, context, startedAtDate);
       return result;
+    }
+  }
+
+  private async applyMedToolsSkillGate(
+    toolCallId: string,
+    toolName: string,
+    startedAt: string,
+    context: PilotDeckToolRuntimeContext,
+  ): Promise<PilotDeckToolSuccessResult | PilotDeckToolErrorResult | undefined> {
+    const requirement = getMedToolsSkillRequirement(toolName);
+    if (!requirement || isRequiredMedToolsSkillLoaded(requirement, this.loadedSkills)) {
+      return undefined;
+    }
+
+    const readSkillTool = this.registry.get("read_skill");
+    if (!readSkillTool) {
+      return this.errorResult(
+        toolCallId,
+        toolName,
+        "tool_execution_failed",
+        `Cannot execute ${toolName}: read_skill is unavailable, so required skill ${requirement.loadSkill} cannot be loaded.`,
+        startedAt,
+        context,
+      );
+    }
+
+    try {
+      const skillAddress = `med-tools:${requirement.loadSkill}`;
+      const skillOutput = await readSkillTool.execute(
+        { skillName: skillAddress },
+        context,
+      );
+      if (!skillWasLoaded(skillOutput.content)) {
+        return this.errorResult(
+          toolCallId,
+          toolName,
+          "tool_execution_failed",
+          `Cannot execute ${toolName}: required skill ${requirement.loadSkill} was not found.`,
+          startedAt,
+          context,
+        );
+      }
+
+      this.loadedSkills.add(normalizeLoadedSkillName(requirement.loadSkill));
+      const result: PilotDeckToolSuccessResult = {
+        type: "success",
+        toolCallId,
+        toolName,
+        content: [
+          {
+            type: "text",
+            text: buildMedToolsSkillGateMessage(toolName, skillAddress),
+          },
+          ...skillOutput.content,
+        ],
+        metadata: {
+          medToolsSkillGate: {
+            blocked: true,
+            toolName,
+            loadedSkill: skillAddress,
+            retryRequired: true,
+          },
+        },
+        startedAt,
+        completedAt: now(context).toISOString(),
+      };
+      await this.recordToolAudit(result, context, new Date(startedAt));
+      return result;
+    } catch (error) {
+      const normalized = normalizeToolError(error);
+      return this.errorResult(
+        toolCallId,
+        toolName,
+        normalized.code,
+        `Cannot execute ${toolName}: failed to load required skill ${requirement.loadSkill}. ${normalized.message}`,
+        startedAt,
+        context,
+        normalized.details,
+      );
     }
   }
 
@@ -459,6 +562,18 @@ ${formatValidationError(tool.name, updatedValidation.issues, {
       nonBlockingErrors: [],
     };
   }
+}
+
+function skillWasLoaded(
+  content: ReadonlyArray<{ type: string; text?: string }>,
+): boolean {
+  return content.some(
+    (item) => item.type === "text" && item.text?.includes("<skill>") === true,
+  );
+}
+
+function readSkillName(input: unknown): string | undefined {
+  return readStringProperty(input, "skillName");
 }
 
 function formatToolErrorContent(

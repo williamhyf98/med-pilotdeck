@@ -27,10 +27,10 @@ DIAGRAM_SKILL_ROOT="$(dirname "<path>")"
 用户给了路径就使用该路径；否则写到当前工作目录的 `exports/`：
 
 ```bash
-mkdir -p "$PWD/exports" "$PWD/exports/qa"
+mkdir -p "$PWD/exports" "$PWD/scratch/qa"
 ```
 
-中间 Markdown/Mermaid/JSON 放在 `exports/qa/`，不要交付。
+中间 Markdown/Mermaid/JSON 放在 `scratch/qa/`，不要交付。
 
 ## 新建图示
 
@@ -48,7 +48,7 @@ bash "$DIAGRAM_SKILL_ROOT/scripts/diagram.sh" make \
 
 ```bash
 bash "$DIAGRAM_SKILL_ROOT/scripts/diagram.sh" make \
-  --markdown "$PWD/exports/qa/flow.mmd" \
+  --markdown "$PWD/scratch/qa/flow.mmd" \
   --out "$PWD/exports/流程图.svg"
 ```
 
@@ -56,7 +56,7 @@ bash "$DIAGRAM_SKILL_ROOT/scripts/diagram.sh" make \
 
 ```bash
 bash "$DIAGRAM_SKILL_ROOT/scripts/diagram.sh" make \
-  --spec "$PWD/exports/qa/architecture.json" \
+  --spec "$PWD/scratch/qa/architecture.json" \
   --theme architecture \
   --out "$PWD/exports/系统架构.svg"
 ```

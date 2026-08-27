@@ -88,7 +88,7 @@ describe('buildProcessToolSteps skill target', () => {
   });
 
   it('summarizes docx.sh make commands and surfaces the written Word file', () => {
-    const command = 'bash /opt/skills/docx/scripts/docx.sh make --markdown "$PWD/exports/qa/content.md" --out "$PWD/exports/救治方案.docx"';
+    const command = 'bash /opt/skills/docx/scripts/docx.sh make --markdown "$PWD/scratch/qa/content.md" --out "$PWD/exports/救治方案.docx"';
     const steps = buildProcessToolSteps([{
       id: 'm-docx',
       type: 'assistant',
@@ -125,7 +125,7 @@ describe('buildProcessToolSteps skill target', () => {
   });
 
   it('summarizes pptx.sh make commands and surfaces the written presentation', () => {
-    const command = 'bash /opt/skills/pptx/scripts/pptx.sh make --markdown "$PWD/exports/qa/slides.md" --out "$PWD/exports/救治教学.pptx"';
+    const command = 'bash /opt/skills/pptx/scripts/pptx.sh make --markdown "$PWD/scratch/qa/slides.md" --out "$PWD/exports/救治教学.pptx"';
     const steps = buildProcessToolSteps([{
       id: 'm-pptx',
       type: 'assistant',
@@ -157,7 +157,7 @@ describe('buildProcessToolSteps skill target', () => {
   });
 
   it('summarizes spreadsheet.sh make commands and surfaces the written workbook', () => {
-    const command = 'bash /opt/skills/spreadsheets/scripts/spreadsheet.sh make --spec "$PWD/exports/qa/workbook.json" --out "$PWD/exports/救治统计.xlsx"';
+    const command = 'bash /opt/skills/spreadsheets/scripts/spreadsheet.sh make --spec "$PWD/scratch/qa/workbook.json" --out "$PWD/exports/救治统计.xlsx"';
     const steps = buildProcessToolSteps([{
       id: 'm-xlsx',
       type: 'assistant',
@@ -189,7 +189,7 @@ describe('buildProcessToolSteps skill target', () => {
   });
 
   it('summarizes diagram.sh make commands and surfaces the written SVG', () => {
-    const command = 'bash /opt/skills/diagram-maker/scripts/diagram.sh make --markdown "$PWD/exports/qa/flow.mmd" --out "$PWD/exports/救治流程.svg"';
+    const command = 'bash /opt/skills/diagram-maker/scripts/diagram.sh make --markdown "$PWD/scratch/qa/flow.mmd" --out "$PWD/exports/救治流程.svg"';
     const steps = buildProcessToolSteps([{
       id: 'm-diagram',
       type: 'assistant',

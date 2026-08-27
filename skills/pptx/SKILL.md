@@ -29,7 +29,7 @@ PPTX_SKILL_ROOT="$(dirname "<path>")"
 mkdir -p "$PWD/exports"
 ```
 
-中间 Markdown/JSON 放在 `exports/qa/` 或 `PILOTDECK_WORK_DIR`，不要交付。
+中间 Markdown/JSON 放在 `scratch/qa/` 或 `PILOTDECK_WORK_DIR`，不要交付。
 
 ## 新建 PPTX
 
@@ -53,7 +53,7 @@ bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" make \
 ```bash
 bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" make \
   --title "战创伤四级救治" \
-  --markdown "$PWD/exports/qa/slides.md" \
+  --markdown "$PWD/scratch/qa/slides.md" \
   --out "$PWD/exports/战创伤四级救治.pptx"
 ```
 
@@ -104,18 +104,18 @@ layout-library。
 
 ```text
 [Files attached by user and available for reading in the project:]
-- wse_0820_00_injury.jpg (1-wse_0820_00_injury.jpg): /…/.tmp/chat-attachments/<批次id>/1-wse_0820_00_injury.jpg
+- wse_0820_00_injury.jpg (1-wse_0820_00_injury.jpg): /…/inbox/<批次id>/1-wse_0820_00_injury.jpg
 ```
 
 落盘位置：
 
-- `{当前项目根}/.tmp/chat-attachments/<批次id>/`
-- 或 `{PILOT_HOME}/.tmp/chat-attachments/<批次id>/`（本仓库本地启动常见）
+- `{当前项目根}/inbox/<批次id>/`
+- 或 `inbox/<批次id>/`（本仓库本地启动常见）
 
 规则：
 
 1. **直接使用清单里的绝对路径**。不要 `find /`，不要下载 URL，不要手写 Python/JS 去读图。
-2. `.tmp/chat-attachments/` 算作允许的本地路径；不必先 `cp` 到 `exports/`（复制可选，不是必需）。
+2. `inbox/` 算作允许的本地路径；不必先 `cp` 到 `exports/`（复制可选，不是必需）。
 3. 本轮消息没有清单时：在**同一会话更早的用户消息**里找同一标记；G9/`med_trauma_stage_plan` 返回的 `image_paths_used` 也可复用。
 4. 禁止 HTTP/HTTPS。禁止打开或修改 `assets/layout-library/`。
 5. 插图用 `--spec`，`split` 页字段如下（`path` 用绝对路径最稳）：
@@ -134,8 +134,8 @@ Markdown `![](...)` 不能可靠插图；需要图时改用 `--spec`，不要新
 ## 读取与审计
 
 ```bash
-bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" inspect --input "$INPUT_PPTX" --out "$PWD/exports/qa/manifest.json"
-bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" audit --input "$INPUT_PPTX" --out "$PWD/exports/qa/audit.json"
+bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" inspect --input "$INPUT_PPTX" --out "$PWD/scratch/qa/manifest.json"
+bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" audit --input "$INPUT_PPTX" --out "$PWD/scratch/qa/audit.json"
 ```
 
 只读请求不要生成新 PPTX。

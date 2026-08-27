@@ -10,7 +10,7 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { resolve, basename } from "node:path";
 import { listProjectSessions } from "../../session/index.js";
-import { createProjectId } from "../../pilot/index.js";
+import { createProjectId, resolveGatewayProjectKey } from "../../pilot/index.js";
 import type { WebListProjectsResult, WebProjectSummary } from "../client/protocol.js";
 
 export type ListWebProjectsOptions = {
@@ -63,7 +63,8 @@ export async function describeWebProject(
   projectKey: string,
   options: ListWebProjectsOptions,
 ): Promise<WebProjectSummary> {
-  return summarizeProject(projectKey, options);
+  const effectiveKey = resolveGatewayProjectKey(projectKey, options.pilotHome);
+  return summarizeProject(effectiveKey, options);
 }
 
 async function summarizeProject(

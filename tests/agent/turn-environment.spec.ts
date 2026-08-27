@@ -10,7 +10,9 @@ test("turn environment provides an isolated PilotDeck-owned work directory", () 
     assert.equal(env.KEEP_ME, "yes");
     assert.equal(env.PILOTDECK_SESSION_ID, "web:s_123/unsafe");
     assert.equal(env.PILOTDECK_TURN_ID, "turn:456 unsafe");
-    assert.equal(env.PILOTDECK_WORK_DIR, join(cwd, ".pilotdeck", "work", "web-s_123-unsafe", "turn-456-unsafe"));
+    assert.equal(env.PILOTDECK_WORKSPACE_DIR, cwd);
+    assert.equal(env.PILOTDECK_WORKSPACE_CWD, cwd);
+    assert.equal(env.PILOTDECK_WORK_DIR, join(cwd, "scratch", "work", "web-s_123-unsafe", "turn-456-unsafe"));
 });
 test("turn environment inherits the process environment when no override is configured", () => {
     const markerName = "PILOTDECK_TURN_ENV_INHERITANCE_TEST";
