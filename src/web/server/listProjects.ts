@@ -25,29 +25,25 @@ type ProjectDirEntry = { id: string; dir: string };
 
 async function listProjectDirEntries(projectsDir: string): Promise<ProjectDirEntry[]> {
   const results: ProjectDirEntry[] = [];
-  let entries: Awaited<ReturnType<typeof readdir>>;
   try {
-    entries = await readdir(projectsDir, { withFileTypes: true });
-  } catch {
-    return results;
-  }
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    if (PROJECT_TYPE_KEY_SET.has(entry.name)) {
-      const typeDir = resolve(projectsDir, entry.name);
-      let nested: Awaited<ReturnType<typeof readdir>>;
-      try {
-        nested = await readdir(typeDir, { withFileTypes: true });
-      } catch {
+    for (const entry of await readdir(projectsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (PROJECT_TYPE_KEY_SET.has(entry.name)) {
+        const typeDir = resolve(projectsDir, entry.name);
+        try {
+          for (const child of await readdir(typeDir, { withFileTypes: true })) {
+            if (!child.isDirectory()) continue;
+            results.push({ id: child.name, dir: resolve(typeDir, child.name) });
+          }
+        } catch {
+          continue;
+        }
         continue;
       }
-      for (const child of nested) {
-        if (!child.isDirectory()) continue;
-        results.push({ id: child.name, dir: resolve(typeDir, child.name) });
-      }
-      continue;
+      results.push({ id: entry.name, dir: resolve(projectsDir, entry.name) });
     }
-    results.push({ id: entry.name, dir: resolve(projectsDir, entry.name) });
+  } catch {
+    return results;
   }
   return results;
 }

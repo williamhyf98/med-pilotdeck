@@ -279,18 +279,16 @@ function* listProjectMarkerCandidates(projectsDir: string): Generator<{ projectI
     if (!entry.isDirectory()) continue;
     if (PROJECT_TYPE_KEY_SET.has(entry.name)) {
       const typeDir = resolve(projectsDir, entry.name);
-      let nested: ReturnType<typeof readdirSync>;
       try {
-        nested = readdirSync(typeDir, { withFileTypes: true });
+        for (const child of readdirSync(typeDir, { withFileTypes: true })) {
+          if (!child.isDirectory()) continue;
+          yield {
+            projectId: child.name,
+            markerPath: resolve(typeDir, child.name, ".cwd"),
+          };
+        }
       } catch {
         continue;
-      }
-      for (const child of nested) {
-        if (!child.isDirectory()) continue;
-        yield {
-          projectId: child.name,
-          markerPath: resolve(typeDir, child.name, ".cwd"),
-        };
       }
       continue;
     }
