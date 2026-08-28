@@ -1,6 +1,6 @@
 ---
 name: med-medical
-description: 通过 med-tools MCP 解析医疗附件（DICOM、PDF 报告、报告截图、CDA/XML、检验文本、JSON、心电图/WFDB）。优先使用本地 G9-V-Med 报告；若不可用，则以已配置的主 Agent 模型作为回退报告，或继续由主 Agent 解读。只要用户上传或指向医学影像、报告、文书、检验或心电图文件——包括混合格式的整个文件夹——就使用本技能。
+description: 解析多种格式医疗附件（DICOM、PDF 报告、报告截图、CDA/XML、检验文本、JSON、心电图/WFDB）。优先使用本地 G9-V-Med 报告；若不可用，则以已配置的主 Agent 模型作为回退报告，或继续由主 Agent 解读。只要用户上传或指向医学影像、报告、文书、检验或心电图文件——包括混合格式的整个文件夹——就使用本技能。
 ---
 
 # 医疗多源解析（med-tools）

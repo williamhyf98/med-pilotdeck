@@ -79,6 +79,8 @@ import type {
   SkillValidationResult,
   SkillWriteInput,
   SkillWriteResult,
+  SkillSetAvailabilityInput,
+  SkillSetAvailabilityResult,
   SkillsListInput,
   SkillsListResult,
 } from "../../extension/skills/types.js";
@@ -809,6 +811,12 @@ export class InProcessGateway implements Gateway {
 
   async skillWrite(input: SkillWriteInput): Promise<SkillWriteResult> {
     return this.requireSkills().write(input);
+  }
+
+  async skillSetAvailability(
+    input: SkillSetAvailabilityInput,
+  ): Promise<SkillSetAvailabilityResult> {
+    return this.requireSkills().setAvailability(input);
   }
 
   async skillCreate(input: SkillCreateInput): Promise<SkillCreateResult> {

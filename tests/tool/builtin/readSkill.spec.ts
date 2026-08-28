@@ -32,7 +32,7 @@ test("read_skill returns the resolved SKILL.md path with the skill body", async 
         "</skill>",
     ].join("\n"));
 });
-test("read_skill preserves legacy content-only loading when metadata is unavailable", async () => {
+test("read_skill refuses skills omitted from the current visible catalog", async () => {
     const tool = createReadSkillTool({
         loader: async () => "# Legacy prompt contribution",
         lister: () => [],
@@ -42,5 +42,5 @@ test("read_skill preserves legacy content-only loading when metadata is unavaila
     assert.equal(first?.type, "text");
     if (first?.type !== "text")
         assert.fail("read_skill did not return text");
-    assert.equal(first.text, "# Legacy prompt contribution");
+    assert.equal(first.text, "Skill 'legacy' not found. No skills are currently loaded.");
 });

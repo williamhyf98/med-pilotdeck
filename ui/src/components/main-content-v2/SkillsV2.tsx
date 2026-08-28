@@ -1,13 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import CodeMirror from '@uiw/react-codemirror';
 import { markdown } from '@codemirror/lang-markdown';
 import { EditorView } from '@codemirror/view';
 import {
   ArrowLeft,
-  ArrowRightLeft,
-  Folder,
-  Globe,
   Loader2,
   PencilLine,
   RefreshCw,
@@ -20,6 +17,11 @@ import { authenticatedFetch } from '../../utils/api';
 import { useTheme } from '../../contexts/ThemeContext';
 import { zincDarkTheme, zincLightTheme } from '../code-editor/utils/zincThemes';
 import { cn } from '../../lib/utils.js';
+import {
+  availabilityBucket,
+  nextSkillAvailability,
+  type SkillAvailability,
+} from './skillAvailability';
 
 type SkillsV2Props = {
   selectedProject: Project | null;
@@ -28,7 +30,6 @@ type SkillsV2Props = {
 };
 
 type SkillScope = 'builtin' | 'user' | 'project' | 'medical';
-
 type Skill = {
   slug: string;
   name: string;
@@ -41,6 +42,8 @@ type Skill = {
   overriddenBy?: 'user' | 'project';
   overridesBuiltin?: boolean;
   mtime: number | null;
+  availability: SkillAvailability[];
+  availabilityMutable: boolean;
 };
 
 type SkillsListResponse = {
@@ -82,7 +85,7 @@ async function api<T>(url: string, body: unknown): Promise<T> {
 
 // ---------------------------------------------------------------------------
 
-export default function SkillsV2({ selectedProject, projects, compact = false }: SkillsV2Props) {
+export default function SkillsV2({ selectedProject, compact = false }: SkillsV2Props) {
   const { t } = useTranslation();
   const { isDarkMode } = useTheme() as { isDarkMode: boolean };
 
@@ -271,6 +274,43 @@ export default function SkillsV2({ selectedProject, projects, compact = false }:
     setActiveScope(skill.scope);
   }, [isDirty, t]);
 
+  const handleAvailabilityChange = useCallback(async (
+    skill: Skill,
+    availability: SkillAvailability[],
+  ) => {
+    if (!skill.availabilityMutable) return;
+    setSaving(true);
+    try {
+      const result = await api<{ skill: Skill }>('/api/skills/availability', {
+        skillPath: skill.skillDir,
+        projectPath: effectiveProjectPath,
+        availability,
+      });
+      setSkills((prev) => {
+        if (!prev) return prev;
+        const updateIn = (list: Skill[]) => list.map((entry) =>
+          entry.slug === skill.slug && entry.scope === skill.scope
+            ? { ...entry, ...result.skill }
+            : entry);
+        return {
+          ...prev,
+          builtin: updateIn(prev.builtin),
+          user: updateIn(prev.user),
+          project: updateIn(prev.project),
+          medical: updateIn(prev.medical),
+        };
+      });
+      flashToast({
+        kind: 'success',
+        text: t('skillsTab.availabilitySaved', { defaultValue: '技能归属已更新' }),
+      });
+    } catch (error) {
+      flashToast({ kind: 'error', text: (error as Error).message });
+    } finally {
+      setSaving(false);
+    }
+  }, [effectiveProjectPath, flashToast, t]);
+
   // ------------------------------------------------------------------------
 
   if (!selectedProject) {
@@ -299,16 +339,15 @@ export default function SkillsV2({ selectedProject, projects, compact = false }:
             loading={loading}
             activeSlug={activeSlug}
             activeScope={activeScope}
-            generalCwd={generalCwd}
             onSelect={handleSelect}
             selectedSkill={activeSkill}
             effectiveProjectPath={effectiveProjectPath}
-            projects={projects}
             refresh={refresh}
             flashToast={flashToast}
             setActiveSlug={setActiveSlug}
             setActiveScope={setActiveScope}
             compact={compact}
+            onAvailabilityChange={handleAvailabilityChange}
             t={t}
           />
         ) : null}
@@ -344,6 +383,7 @@ export default function SkillsV2({ selectedProject, projects, compact = false }:
               onDelete={handleDelete}
               onCreateUserOverride={handleCreateUserOverride}
               onRevert={() => setEditorContent(originalContent)}
+              onAvailabilityChange={handleAvailabilityChange}
               compact={compact}
               t={t}
             />
@@ -416,39 +456,35 @@ function Header({
   );
 }
 
-type MoveTarget = { scope: 'user'; projectPath: null } | { scope: 'project'; projectPath: string };
-
 function SkillsList({
   skills,
   loading,
   activeSlug,
   activeScope,
-  generalCwd,
   onSelect,
   selectedSkill,
   effectiveProjectPath,
-  projects,
   refresh,
   flashToast,
   setActiveSlug,
   setActiveScope,
   compact,
+  onAvailabilityChange,
   t,
 }: {
   skills: SkillsListResponse | null;
   loading: boolean;
   activeSlug: string | null;
   activeScope: SkillScope | null;
-  generalCwd: boolean;
   onSelect: (s: Skill) => void;
   selectedSkill: Skill | null;
   effectiveProjectPath: string | null;
-  projects: Project[];
   refresh: () => Promise<void>;
   flashToast: (t: ToastState, ms?: number) => void;
   setActiveSlug: (slug: string | null) => void;
   setActiveScope: (scope: SkillScope | null) => void;
   compact: boolean;
+  onAvailabilityChange: (skill: Skill, availability: SkillAvailability[]) => Promise<void>;
   t: ReturnType<typeof useTranslation>['t'];
 }) {
   const handleDeleteSkill = useCallback(async (skill: Skill) => {
@@ -472,53 +508,18 @@ function SkillsList({
     }
   }, [effectiveProjectPath, selectedSkill, refresh, flashToast, setActiveSlug, setActiveScope, t]);
 
-  const handleMoveSkill = useCallback(async (skill: Skill, target: MoveTarget) => {
-    if (skill.readonly) return;
-    try {
-      await api('/api/skills/import', {
-        sourcePath: skill.skillDir,
-        slug: skill.slug,
-        scope: target.scope,
-        projectPath: target.projectPath,
-        mode: 'copy',
-        force: false,
-      });
-      await api('/api/skills/delete', {
-        skillPath: skill.skillDir,
-        projectPath: effectiveProjectPath,
-      });
-      if (selectedSkill?.slug === skill.slug && selectedSkill?.scope === skill.scope) {
-        setActiveScope(target.scope);
-      }
-      await refresh();
-      const label = target.scope === 'user' ? 'User' : target.projectPath.split('/').pop() || 'Project';
-      flashToast({
-        kind: 'success',
-        text: t('skillsTab.moveSuccess', {
-          defaultValue: 'Moved "{{name}}" to {{scope}}',
-          name: skill.name,
-          scope: label,
-        }) as string,
-      });
-    } catch (e) {
-      flashToast({ kind: 'error', text: (e as Error).message });
+  const groupedSkills = useMemo(() => {
+    const groups: Record<SkillAvailability, Skill[]> = {
+      global: [],
+      general_medicine: [],
+      war_trauma: [],
+    };
+    if (!skills) return groups;
+    for (const skill of [...skills.builtin, ...skills.user, ...skills.medical]) {
+      groups[availabilityBucket(skill.availability)].push(skill);
     }
-  }, [effectiveProjectPath, selectedSkill, refresh, flashToast, setActiveScope, t]);
-
-  const moveTargets = useMemo((): { label: string; target: MoveTarget }[] => {
-    const targets: { label: string; target: MoveTarget }[] = [];
-    targets.push({ label: 'User (global)', target: { scope: 'user', projectPath: null } });
-    for (const project of projects) {
-      const path = project.fullPath || project.path || null;
-      if (!path) continue;
-      if (project.name === 'general' || project.displayName === 'general') continue;
-      targets.push({
-        label: project.displayName || project.name,
-        target: { scope: 'project', projectPath: path },
-      });
-    }
-    return targets;
-  }, [projects]);
+    return groups;
+  }, [skills]);
 
   return (
     <div className={cn(
@@ -533,63 +534,44 @@ function SkillsList({
           </div>
         ) : (
           <>
-            {skills?.builtin && skills.builtin.length > 0 ? (
-              <ListSection
-                title={t('skillsTab.generalScope', { defaultValue: '通用技能' })}
-                items={skills.builtin}
-                activeSlug={activeScope === 'builtin' ? activeSlug : null}
-                onSelect={onSelect}
-                onDelete={handleDeleteSkill}
-                onMove={handleMoveSkill}
-                moveTargets={moveTargets}
-                currentProjectPath={effectiveProjectPath}
-                t={t}
-              />
-            ) : null}
-            {skills?.user && skills.user.length > 0 ? (
-              <ListSection
-                title={t('skillsTab.userScope', { defaultValue: 'User Skills' })}
-                items={skills.user}
-                activeSlug={activeScope === 'user' ? activeSlug : null}
-                onSelect={onSelect}
-                onDelete={handleDeleteSkill}
-                onMove={handleMoveSkill}
-                moveTargets={moveTargets}
-                currentProjectPath={effectiveProjectPath}
-                t={t}
-              />
-            ) : null}
-            {!generalCwd && skills?.project && skills.project.length > 0 ? (
-              <ListSection
-                title={t('skillsTab.projectScope', { defaultValue: 'Project Skills' })}
-                items={skills.project}
-                activeSlug={activeScope === 'project' ? activeSlug : null}
-                onSelect={onSelect}
-                onDelete={handleDeleteSkill}
-                onMove={handleMoveSkill}
-                moveTargets={moveTargets}
-                currentProjectPath={effectiveProjectPath}
-                t={t}
-              />
-            ) : null}
-            {skills?.medical && skills.medical.length > 0 ? (
-              <ListSection
-                title={t('skillsTab.medicalScope', { defaultValue: '医学技能' })}
-                items={skills.medical}
-                activeSlug={activeScope === 'medical' ? activeSlug : null}
-                onSelect={onSelect}
-                onDelete={handleDeleteSkill}
-                onMove={handleMoveSkill}
-                moveTargets={moveTargets}
-                currentProjectPath={effectiveProjectPath}
-                t={t}
-              />
-            ) : null}
+            <ListSection
+              title={t('skillsTab.globalSkills', { defaultValue: '全局技能' })}
+              availability="global"
+              items={groupedSkills.global}
+              activeSlug={activeSlug}
+              activeScope={activeScope}
+              onSelect={onSelect}
+              onDelete={handleDeleteSkill}
+              onAvailabilityChange={onAvailabilityChange}
+              t={t}
+            />
+            <ListSection
+              title={t('skillsTab.generalMedicineSkills', { defaultValue: '通用医学技能' })}
+              availability="general_medicine"
+              items={groupedSkills.general_medicine}
+              activeSlug={activeSlug}
+              activeScope={activeScope}
+              onSelect={onSelect}
+              onDelete={handleDeleteSkill}
+              onAvailabilityChange={onAvailabilityChange}
+              t={t}
+            />
+            <ListSection
+              title={t('skillsTab.warTraumaSkills', { defaultValue: '战创伤医学技能' })}
+              availability="war_trauma"
+              items={groupedSkills.war_trauma}
+              activeSlug={activeSlug}
+              activeScope={activeScope}
+              onSelect={onSelect}
+              onDelete={handleDeleteSkill}
+              onAvailabilityChange={onAvailabilityChange}
+              t={t}
+            />
             {skills &&
             skills.builtin.length === 0 &&
             skills.user.length === 0 &&
             (skills.medical?.length ?? 0) === 0 &&
-            (generalCwd || skills.project.length === 0) ? (
+            skills.project.length === 0 ? (
               <div className="px-4 py-6 text-center text-xxs text-neutral-500 dark:text-neutral-400">
                 {t('skillsTab.empty', { defaultValue: 'No skills available.' })}
               </div>
@@ -601,89 +583,87 @@ function SkillsList({
   );
 }
 
-type ContextMenuState = { skill: Skill; x: number; y: number } | null;
-
 function ListSection({
   title,
+  availability,
   items,
   activeSlug,
+  activeScope,
   onSelect,
   onDelete,
-  onMove,
-  moveTargets,
-  currentProjectPath,
+  onAvailabilityChange,
   t,
 }: {
   title: string;
+  availability: SkillAvailability;
   items: Skill[];
   activeSlug: string | null;
+  activeScope: SkillScope | null;
   onSelect: (s: Skill) => void;
   onDelete: (s: Skill) => void;
-  onMove: (s: Skill, target: MoveTarget) => void;
-  moveTargets: { label: string; target: MoveTarget }[];
-  currentProjectPath: string | null;
+  onAvailabilityChange: (skill: Skill, availability: SkillAvailability[]) => Promise<void>;
   t: ReturnType<typeof useTranslation>['t'];
 }) {
-  const [ctxMenu, setCtxMenu] = useState<ContextMenuState>(null);
-  const [showMoveSubmenu, setShowMoveSubmenu] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!ctxMenu) return;
-    const handleClose = (e: MouseEvent | KeyboardEvent) => {
-      if (e instanceof KeyboardEvent && e.key === 'Escape') {
-        setCtxMenu(null);
-        setShowMoveSubmenu(false);
-        return;
-      }
-      if (e instanceof MouseEvent && menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setCtxMenu(null);
-        setShowMoveSubmenu(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClose);
-    document.addEventListener('keydown', handleClose);
-    return () => {
-      document.removeEventListener('mousedown', handleClose);
-      document.removeEventListener('keydown', handleClose);
-    };
-  }, [ctxMenu]);
-
-  const handleContextMenu = useCallback((e: React.MouseEvent, skill: Skill) => {
-    if (skill.readonly) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setCtxMenu({ skill, x: e.clientX, y: e.clientY });
-    setShowMoveSubmenu(false);
-  }, []);
-
-  const filteredMoveTargets = useMemo(() => {
-    if (!ctxMenu) return [];
-    const skill = ctxMenu.skill;
-    if (skill.readonly) return [];
-    return moveTargets.filter((mt) => {
-      if (skill.scope === 'user' && mt.target.scope === 'user') return false;
-      if (skill.scope === 'project' && mt.target.scope === 'project' && mt.target.projectPath === currentProjectPath) return false;
-      return true;
-    });
-  }, [ctxMenu, moveTargets, currentProjectPath]);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   return (
-    <div className="mb-2">
+    <div
+      className={cn(
+        'mb-2 rounded-lg border border-transparent transition-colors',
+        isDragOver && 'border-blue-300 bg-blue-50/70 dark:border-blue-700 dark:bg-blue-950/20',
+      )}
+      onDragOver={(event) => {
+        if (!event.dataTransfer.types.includes('application/x-pilotdeck-skill')) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        setIsDragOver(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setIsDragOver(false);
+        }
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        setIsDragOver(false);
+        try {
+          const skill = JSON.parse(
+            event.dataTransfer.getData('application/x-pilotdeck-skill'),
+          ) as Skill;
+          if (skill.availabilityMutable) {
+            void onAvailabilityChange(skill, [availability]);
+          }
+        } catch {
+          // Ignore malformed external drag payloads.
+        }
+      }}
+    >
       <div className="px-4 py-1 text-xxs uppercase tracking-wider text-neutral-400 dark:text-neutral-500">
         {title} <span className="text-neutral-300 dark:text-neutral-600">· {items.length}</span>
       </div>
       <ul className="space-y-0.5 px-2">
         {items.map((s) => {
-          const isActive = activeSlug === s.slug;
+          const isActive = activeSlug === s.slug && activeScope === s.scope;
           return (
             <li key={`${s.scope}:${s.slug}`} className="group relative">
               <button
                 type="button"
                 onClick={() => onSelect(s)}
-                onContextMenu={s.readonly ? undefined : (e) => handleContextMenu(e, s)}
+                draggable={s.availabilityMutable}
+                onDragStart={(event) => {
+                  if (!s.availabilityMutable) {
+                    event.preventDefault();
+                    return;
+                  }
+                  event.dataTransfer.effectAllowed = 'move';
+                  event.dataTransfer.setData(
+                    'application/x-pilotdeck-skill',
+                    JSON.stringify(s),
+                  );
+                }}
                 className={cn(
                   'block w-full truncate rounded-md px-2 py-1.5 pr-8 text-left text-[13px] transition-colors',
+                  s.availabilityMutable && 'cursor-grab active:cursor-grabbing',
                   isActive
                     ? 'bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100'
                     : 'text-neutral-700 hover:bg-neutral-50 dark:text-neutral-300 dark:hover:bg-neutral-900/60',
@@ -732,69 +712,6 @@ function ListSection({
         })}
       </ul>
 
-      {ctxMenu ? (
-        <div
-          ref={menuRef}
-          className="fixed z-[100] min-w-[180px] rounded-lg border border-neutral-200 bg-white py-1 shadow-xl dark:border-neutral-700 dark:bg-neutral-900"
-          style={{ left: ctxMenu.x, top: ctxMenu.y }}
-        >
-          {filteredMoveTargets.length > 0 ? (
-            <div className="relative">
-              <button
-                type="button"
-                onMouseEnter={() => setShowMoveSubmenu(true)}
-                onClick={() => setShowMoveSubmenu(!showMoveSubmenu)}
-                className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[12px] text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800"
-              >
-                <span className="flex items-center gap-2">
-                  <ArrowRightLeft className="h-3.5 w-3.5" strokeWidth={1.75} />
-                  <span>{t('skillsTab.moveTo', { defaultValue: 'Move to…' })}</span>
-                </span>
-                <span className="text-neutral-400">›</span>
-              </button>
-              {showMoveSubmenu ? (
-                <div
-                  className="absolute left-full top-0 z-[101] ml-1 min-w-[160px] max-h-[240px] overflow-y-auto rounded-lg border border-neutral-200 bg-white py-1 shadow-xl dark:border-neutral-700 dark:bg-neutral-900"
-                >
-                  {filteredMoveTargets.map((mt) => (
-                    <button
-                      key={mt.target.scope + ':' + (mt.target.projectPath || 'user')}
-                      type="button"
-                      onClick={() => {
-                        const skill = ctxMenu.skill;
-                        setCtxMenu(null);
-                        setShowMoveSubmenu(false);
-                        onMove(skill, mt.target);
-                      }}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800"
-                    >
-                      {mt.target.scope === 'user' ? (
-                        <Globe className="h-3.5 w-3.5 shrink-0 text-amber-500" strokeWidth={1.75} />
-                      ) : (
-                        <Folder className="h-3.5 w-3.5 shrink-0 text-blue-500" strokeWidth={1.75} />
-                      )}
-                      <span className="truncate">{mt.label}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => {
-              const skill = ctxMenu.skill;
-              setCtxMenu(null);
-              setShowMoveSubmenu(false);
-              onDelete(skill);
-            }}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
-          >
-            <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
-            <span>{t('skillsTab.delete', { defaultValue: 'Delete' })}</span>
-          </button>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -805,6 +722,72 @@ function EmptyState({ t }: { t: ReturnType<typeof useTranslation>['t'] }) {
       <Sparkles className="h-8 w-8 text-neutral-300 dark:text-neutral-700" strokeWidth={1.5} />
       <div>{t('skillsTab.selectHint', { defaultValue: 'Pick a skill on the left to view or edit its SKILL.md.' })}</div>
     </div>
+  );
+}
+
+const AVAILABILITY_OPTIONS: Array<{ value: SkillAvailability; label: string }> = [
+  { value: 'global', label: '全局' },
+  { value: 'general_medicine', label: '通用医学' },
+  { value: 'war_trauma', label: '战创伤医学' },
+];
+
+function AvailabilityControl({
+  skill,
+  saving,
+  onChange,
+}: {
+  skill: Skill;
+  saving: boolean;
+  onChange: (availability: SkillAvailability[]) => void;
+}) {
+  const selected = new Set(skill.availability);
+  const label = selected.has('global')
+    ? '全局'
+    : selected.has('general_medicine')
+      ? '仅通用医学'
+      : '仅战创伤医学';
+
+  if (!skill.availabilityMutable) {
+    return (
+      <div className="mt-2 flex items-center gap-2 text-[11px] text-neutral-500 dark:text-neutral-400">
+        <span>技能归属</span>
+        <span className="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+          {label}
+        </span>
+        <span>只读</span>
+      </div>
+    );
+  }
+
+  const toggle = (value: SkillAvailability) => {
+    const next = nextSkillAvailability(skill.availability, value);
+    if (next.length !== skill.availability.length || next[0] !== skill.availability[0]) {
+      onChange(next);
+    }
+  };
+
+  return (
+    <fieldset className="mt-3" disabled={saving}>
+      <legend className="mb-1.5 text-[11px] font-medium text-neutral-600 dark:text-neutral-300">
+        技能归属
+      </legend>
+      <div className="flex flex-wrap gap-3">
+        {AVAILABILITY_OPTIONS.map((option) => (
+          <label
+            key={option.value}
+            className="inline-flex cursor-pointer items-center gap-1.5 text-[12px] text-neutral-700 dark:text-neutral-300"
+          >
+            <input
+              type="checkbox"
+              checked={selected.has(option.value)}
+              onChange={() => toggle(option.value)}
+              className="h-3.5 w-3.5 rounded border-neutral-300 accent-blue-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+            />
+            <span>{option.label}</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
   );
 }
 
@@ -820,6 +803,7 @@ function SkillDetail({
   onDelete,
   onCreateUserOverride,
   onRevert,
+  onAvailabilityChange,
   compact,
   t,
 }: {
@@ -834,6 +818,7 @@ function SkillDetail({
   onDelete: () => void;
   onCreateUserOverride: () => void;
   onRevert: () => void;
+  onAvailabilityChange: (skill: Skill, availability: SkillAvailability[]) => Promise<void>;
   compact: boolean;
   t: ReturnType<typeof useTranslation>['t'];
 }) {
@@ -877,6 +862,11 @@ function SkillDetail({
         <div className="mt-1 truncate font-mono text-[10px] text-neutral-400 dark:text-neutral-500">
           {skill.skillDir}
         </div>
+        <AvailabilityControl
+          skill={skill}
+          saving={saving}
+          onChange={(availability) => onAvailabilityChange(skill, availability)}
+        />
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">

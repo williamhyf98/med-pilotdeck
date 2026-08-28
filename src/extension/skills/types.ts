@@ -1,3 +1,5 @@
+import type { SkillAvailability } from "../../pilot/skillAvailability.js";
+
 /**
  * Public protocol types for the skill manager. These types are shared
  * between the gateway, its remote clients (UI server bridge), and any
@@ -40,6 +42,10 @@ export type SkillSummary = {
   overridesBuiltin?: boolean;
   /** Last-modified time of SKILL.md in epoch ms, or null if unreadable. */
   mtime: number | null;
+  /** Project types where the skill is available. `global` means every type. */
+  availability: SkillAvailability[];
+  /** Whether the user may change availability without editing the skill body. */
+  availabilityMutable: boolean;
 };
 
 export type SkillsListInput = {
@@ -80,6 +86,17 @@ export type SkillWriteResult = {
   scope: SkillScope;
   slug: string;
   skill: SkillSummary | null;
+};
+
+export type SkillSetAvailabilityInput = SkillAddressInput & {
+  availability: SkillAvailability[];
+};
+
+export type SkillSetAvailabilityResult = {
+  ok: true;
+  scope: SkillScope;
+  slug: string;
+  skill: SkillSummary;
 };
 
 export type SkillCreateInput = SkillAddressInput & {

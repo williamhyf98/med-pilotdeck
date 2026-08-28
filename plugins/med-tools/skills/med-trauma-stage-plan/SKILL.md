@@ -1,6 +1,6 @@
 ---
 name: med-trauma-stage-plan
-description: 通过 med_trauma_stage_plan 生成正式六阶段战创伤分级救治方案（插件内 G9，主 Agent 模型回退）。当用户需要针对伤员发生地/野战分类场/收容处置组/重伤救治组/手术组/洗消组之一给出结构化救治方案时使用。用户未点名阶段时必须先 ask_user_question，禁止自行猜测。原样粘贴 care_plan。不用于教材问答（用 med-trauma-assist），也不用于仅解读附件（用 med-medical）。
+description: 生成战创伤分级救治方案（插件内 G9，主 Agent 模型回退）。当用户需要针对伤员发生地/野战分类场/收容处置组/重伤救治组/手术组/洗消组之一给出结构化救治方案时使用。用户未点名阶段时必须先 ask_user_question，禁止自行猜测。原样粘贴 care_plan。不用于教材问答（用 med-trauma-assist），也不用于仅解读附件（用 med-medical）。
 ---
 
 # 战创伤分阶段正式救治方案（med-tools）

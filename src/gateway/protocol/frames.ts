@@ -46,6 +46,7 @@ export type WsGatewayMethod =
   | "skill_list"
   | "skill_read"
   | "skill_write"
+  | "skill_set_availability"
   | "skill_create"
   | "skill_delete"
   | "skill_import"

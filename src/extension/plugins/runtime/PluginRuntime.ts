@@ -14,6 +14,10 @@ import {
   type AgentProfile,
   type AgentProfileResolver,
 } from "../../../agent/index.js";
+import {
+  normalizeSkillAvailability,
+  type SkillAvailability,
+} from "../../../pilot/skillAvailability.js";
 
 /**
  * Static MCP server contribution shape callers can rely on. Manifests load
@@ -65,6 +69,7 @@ export type PluginSkillContribution = {
   /** Absolute path to the resolved SKILL.md. */
   path: string;
   namespace?: string;
+  availability?: SkillAvailability[];
 };
 
 export type PluginMcpInstruction = {
@@ -311,11 +316,13 @@ function toSkillContribution(
   plugin: PilotDeckLoadedPlugin,
   skill: LoadedPluginCommand,
 ): PluginSkillContribution {
+  const availability = normalizeSkillAvailability(skill.frontmatter.availability);
   return {
     name: skill.name,
     description: typeof skill.frontmatter.description === "string" ? skill.frontmatter.description : undefined,
     path: skill.path,
     namespace: plugin.name,
+    ...(availability.length > 0 ? { availability } : {}),
   };
 }
 

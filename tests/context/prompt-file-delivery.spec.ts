@@ -42,5 +42,5 @@ test("default prompt uses local-only lookup and does not advertise deleted netwo
     }).joined;
     assert.doesNotMatch(prompt, /\bweb_search\b/);
     assert.doesNotMatch(prompt, /\bweb_fetch\b/);
-    assert.match(prompt, /This runtime is offline/);
+    assert.match(prompt, /本运行时离线|本运行时处于离线环境|This runtime is offline/);
 });

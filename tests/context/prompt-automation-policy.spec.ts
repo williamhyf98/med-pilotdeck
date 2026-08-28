@@ -20,8 +20,8 @@ test("default prompt exposes bundled declarative automation instead of a script 
     tools: [],
   }).joined;
 
-  assert.match(prompt, /Bundled automation policy/u);
-  assert.match(prompt, /declarative content such as Markdown, JSON, CSV, or TSV/u);
+  assert.match(prompt, /随附自动化策略|Bundled automation policy/u);
+  assert.match(prompt, /Markdown[,、]\s*JSON[,、]\s*CSV[,、]?\s*(or|或)\s*TSV/u);
   assert.doesNotMatch(prompt, /Reusable script workflow/u);
   assert.doesNotMatch(prompt, /write it to a workspace file first/u);
 });

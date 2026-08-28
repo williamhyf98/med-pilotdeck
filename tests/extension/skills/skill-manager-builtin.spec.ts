@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { SkillManager, SkillManagerError } from "../../../src/extension/skills/index.js";
+import { getPilotExtensionPaths } from "../../../src/pilot/paths.js";
 async function writeSkill(root, slug, description) {
     const dir = join(root, slug);
     await mkdir(dir, { recursive: true });
@@ -19,8 +20,9 @@ test("SkillManager lists built-ins separately and describes override relationshi
         await writeSkill(builtinSkillsRoot, "pdf", "Built-in PDF");
         await writeSkill(builtinSkillsRoot, "docx", "Built-in DOCX");
         await writeSkill(join(pilotHome, "skills"), "pdf", "User PDF override");
-        await writeSkill(join(projectRoot, ".pilotdeck", "skills"), "docx", "Project DOCX override");
-        await writeSkill(join(projectRoot, ".pilotdeck", "skills"), "custom", "Project custom skill");
+        const projectSkillsRoot = getPilotExtensionPaths(projectRoot, pilotHome).projectSkillsDir;
+        await writeSkill(projectSkillsRoot, "docx", "Project DOCX override");
+        await writeSkill(projectSkillsRoot, "custom", "Project custom skill");
         const manager = new SkillManager({ pilotHome, builtinSkillsRoot });
         const result = await manager.list({ projectKey: projectRoot });
         assert.deepEqual(result.builtin.map((skill) => skill.slug), ["docx", "pdf"]);
@@ -89,6 +91,97 @@ test("SkillManager lists medical skills as a separate read-only group", async ()
         );
     }
     finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+test("SkillManager lists all medical skills for management with fixed availability", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pilotdeck-skill-manager-project-type-"));
+    try {
+        const pilotHome = join(root, "pilot-home");
+        const medicalSkillsRoot = join(root, "plugins", "med-tools", "skills");
+        for (const slug of ["med-medical", "med-case-report", "med-trauma-assist", "med-trauma-stage-plan"]) {
+            await writeSkill(medicalSkillsRoot, slug, slug);
+        }
+        const manager = new SkillManager({ pilotHome, medicalSkillsRoot });
+        const generalProject = join(pilotHome, "workspaces", "general_med", "general_med-example");
+        const traumaProject = join(pilotHome, "workspaces", "trauma_med", "trauma_med-example");
+
+        const general = await manager.list({ projectKey: generalProject });
+        assert.deepEqual(
+            general.medical.map((skill) => skill.slug),
+            ["med-case-report", "med-medical", "med-trauma-assist", "med-trauma-stage-plan"],
+        );
+        assert.deepEqual(general.medical.find((skill) => skill.slug === "med-case-report")?.availability, ["general_medicine"]);
+        assert.deepEqual(general.medical.find((skill) => skill.slug === "med-trauma-assist")?.availability, ["war_trauma"]);
+        assert.equal(general.medical.find((skill) => skill.slug === "med-medical")?.availabilityMutable, true);
+        const trauma = await manager.list({ projectKey: traumaProject });
+        assert.deepEqual(
+            trauma.medical.map((skill) => skill.slug),
+            ["med-case-report", "med-medical", "med-trauma-assist", "med-trauma-stage-plan"],
+        );
+
+        const managementRead = await manager.read({
+            scope: "medical",
+            slug: "med-trauma-stage-plan",
+            projectKey: generalProject,
+        });
+        assert.match(managementRead.content, /med-trauma-stage-plan/u);
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+test("SkillManager updates user and med-medical availability", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pilotdeck-skill-manager-availability-"));
+    try {
+        const pilotHome = join(root, "pilot-home");
+        const medicalSkillsRoot = join(root, "plugins", "med-tools", "skills");
+        await writeSkill(join(pilotHome, "skills"), "custom", "Custom skill");
+        await writeSkill(medicalSkillsRoot, "med-medical", "Medical parser");
+        const manager = new SkillManager({ pilotHome, medicalSkillsRoot });
+
+        const userResult = await manager.setAvailability({
+            scope: "user",
+            slug: "custom",
+            availability: ["war_trauma"],
+        });
+        assert.deepEqual(userResult.skill.availability, ["war_trauma"]);
+        const userRead = await manager.read({ scope: "user", slug: "custom" });
+        assert.match(userRead.content, /availability:\n\s+- war_trauma/u);
+
+        const medicalResult = await manager.setAvailability({
+            scope: "medical",
+            slug: "med-medical",
+            availability: ["general_medicine"],
+        });
+        assert.deepEqual(medicalResult.skill.availability, ["general_medicine"]);
+
+        await assert.rejects(
+            () => manager.setAvailability({
+                scope: "medical",
+                slug: "med-trauma-assist",
+                availability: ["global"],
+            }),
+            (error) => {
+                assert.equal(error instanceof SkillManagerError, true);
+                assert.equal(error.code, "read_only");
+                return true;
+            },
+        );
+        await assert.rejects(
+            () => manager.setAvailability({
+                scope: "user",
+                slug: "custom",
+                availability: ["unknown"],
+            }),
+            (error) => {
+                assert.equal(error instanceof SkillManagerError, true);
+                assert.equal(error.code, "invalid_input");
+                return true;
+            },
+        );
+    } finally {
         await rm(root, { recursive: true, force: true });
     }
 });

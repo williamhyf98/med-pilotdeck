@@ -5,9 +5,14 @@ import type {
   ExtensionResolver,
   McpServerInstruction,
 } from "../extension/ExtensionResolver.js";
+import { projectMetaTypeFromProjectPath, type ProjectMetaType } from "../../pilot/paths.js";
+import { filterSkillsForProjectType } from "../../pilot/projectTypePolicy.js";
+import { getProjectTypePersona, promptCopy } from "./systemPromptCopy.js";
 
 export type PromptAssemblerInput = {
   cwd: string;
+  /** Immutable system-project type; inferred from typed cwd when omitted. */
+  projectType?: ProjectMetaType;
   provider: string;
   model: string;
   permissionMode: string;
@@ -86,22 +91,27 @@ export class PromptAssembler {
   }
 
   private buildDefaultSystemPrompt(input: PromptAssemblerInput): string[] {
+    const projectType = input.projectType ?? projectMetaTypeFromProjectPath(input.cwd);
+    const persona = getProjectTypePersona(projectType);
     const lines: string[] = [
-      "You are PilotDeck, an AI agent runtime. You execute tasks across CLI, TUI, web, and chat channels by calling structured tools and reasoning over their results.",
-      "Operate decisively: prefer using available tools to gather facts before answering, prefer concise replies, and surface uncertainty when present.",
+      persona.identityLine1,
+      persona.identityLine2,
       "",
-      "Documentation lookup policy:",
-      "When usage is unclear, rely only on local source, installed types, bundled skill recipes, and project docs. Do not attempt web search, URL fetch, curl, wget, or package installs. State uncertainty and proceed conservatively.",
+      persona.medicalPolicyTitle,
+      persona.medicalPolicyBody,
       "",
-      "Offline deployment policy:",
-      "This runtime is offline. Do not access the public internet, SaaS APIs, or ClawHub. Do not suggest curl, wget, pip install, npm install, or browsing. Allowed network use is limited to the configured on-site model HTTP endpoint invoked by the host — not by shell commands you run. If a task cannot be completed locally, explain what is missing instead of attempting outbound access.",
+      persona.scopeHandoffTitle,
+      persona.scopeHandoffBody,
+      "",
+      promptCopy.docsPolicyTitle,
+      promptCopy.docsPolicyBody,
+      "",
+      promptCopy.offlinePolicyTitle,
+      promptCopy.offlinePolicyBody,
+      "",
+      promptCopy.automationPolicyTitle,
+      promptCopy.automationPolicyBody,
     ];
-
-    lines.push(
-      "",
-      "Bundled automation policy:",
-      "Use registered tools and bundled skill entrypoints for all transformations. Stage tool inputs only as declarative content such as Markdown, JSON, CSV, or TSV. If no bundled tool supports the requested operation, explain the limitation instead of inventing a new implementation.",
-    );
 
     const permissionLine = formatPermissionMode(input.permissionMode);
     if (permissionLine) {
@@ -115,7 +125,7 @@ export class PromptAssembler {
 
     if (input.additionalWorkingDirectories.length > 0) {
       lines.push("");
-      lines.push("Additional working directories you may operate in:");
+      lines.push(promptCopy.additionalWorkingDirectories);
       for (const dir of input.additionalWorkingDirectories) {
         lines.push(`- ${dir}`);
       }
@@ -125,7 +135,7 @@ export class PromptAssembler {
     const mcpBlock = formatMcpInstructions(mcpInstructions);
     if (mcpBlock) {
       lines.push("");
-      lines.push("Connected MCP server instructions:");
+      lines.push(promptCopy.mcpInstructionsLead);
       lines.push(mcpBlock);
     }
 
@@ -136,14 +146,12 @@ export class PromptAssembler {
     const lines: string[] = [];
     lines.push("<user-context>");
     lines.push(`cwd: ${input.cwd}`);
-    lines.push("IMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \"foo.html\", not an absolute path like \"/home/user/foo.html\". If the user explicitly provides a path, respect their choice.");
+    lines.push(promptCopy.cwdRelativePathRule);
     lines.push(`model: ${input.provider}/${input.model}`);
     lines.push(`permission_mode: ${input.permissionMode}`);
     if (input.runMode) {
       lines.push(`run_mode: ${input.runMode}`);
     }
-    lines.push(`platform: ${process.platform}`);
-    lines.push(`node: ${process.version}`);
     lines.push("</user-context>");
     return [lines.join("\n")];
   }
@@ -161,7 +169,8 @@ export class PromptAssembler {
       sections.push(formatCommands(commands));
     }
 
-    const skills = this.extension.listSkills();
+    const projectType = input.projectType ?? projectMetaTypeFromProjectPath(input.cwd);
+    const skills = filterSkillsForProjectType(this.extension.listSkills(), projectType);
     if (skills.length > 0) {
       sections.push(formatSkills(skills));
     }
@@ -174,22 +183,22 @@ export class PromptAssembler {
 function formatPermissionMode(mode: string): string {
   switch (mode) {
     case "default":
-      return "Permission mode: default — write/shell tools require explicit approval.";
+      return promptCopy.permissionDefault;
     case "plan":
-      return "Permission mode: plan — read-only planning mode; implementation changes are blocked at tool runtime.";
+      return promptCopy.permissionPlan;
     case "bypassPermissions":
-      return "Permission mode: bypassPermissions — all tools are auto-approved; act conservatively.";
+      return promptCopy.permissionBypass;
     default:
-      return `Permission mode: ${mode}`;
+      return promptCopy.permissionOther(mode);
   }
 }
 
 function formatRunMode(mode: string | undefined): string | undefined {
   switch (mode) {
     case "ask":
-      return "Run mode: ask — read-only analysis mode; write/action tools are blocked at tool runtime even when permission mode is bypassPermissions.";
+      return promptCopy.runModeAsk;
     case "plan":
-      return "Run mode: plan — planning mode is active.";
+      return promptCopy.runModePlan;
     default:
       return undefined;
   }
@@ -235,9 +244,9 @@ function formatCommands(commands: ContributedCommand[]): string {
 function formatSkills(skills: ContributedSkill[]): string {
   const lines = [
     "<available-skills>",
-    "Use the read_skill tool to load the full content of any skill listed below. Each entry includes the exact SKILL.md selected by the runtime.",
-    "Resolve relative references, bundled entrypoints, and assets against the directory containing that SKILL.md.",
-    "Do not search the user's home directory to rediscover a skill or infer runtime/cache paths; use the listed file and paths or commands returned by the skill.",
+    promptCopy.skillsIntro1,
+    promptCopy.skillsIntro2,
+    promptCopy.skillsIntro3,
   ];
   for (const skill of skills) {
     const description = skill.description ? ` — ${skill.description}` : "";

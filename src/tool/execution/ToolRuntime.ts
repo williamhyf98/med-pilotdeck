@@ -33,6 +33,8 @@ import {
   isRequiredMedToolsSkillLoaded,
   normalizeLoadedSkillName,
 } from "../medToolsSkillGate.js";
+import { projectMetaTypeFromProjectPath } from "../../pilot/paths.js";
+import { isToolAvailableForProjectType } from "../../pilot/projectTypePolicy.js";
 
 export class ToolRuntime {
   private readonly loadedSkills = new Set<string>();
@@ -85,6 +87,18 @@ export class ToolRuntime {
         call.name,
         "tool_not_found",
         `Tool ${call.name} does not exist.`,
+        startedAt,
+        runtimeContext,
+      );
+    }
+
+    const projectType = projectMetaTypeFromProjectPath(runtimeContext.cwd);
+    if (!isToolAvailableForProjectType(tool.name, projectType)) {
+      return this.errorResult(
+        call.id,
+        tool.name,
+        "permission_denied",
+        `Tool ${tool.name} is not available for the ${projectType} project type.`,
         startedAt,
         runtimeContext,
       );

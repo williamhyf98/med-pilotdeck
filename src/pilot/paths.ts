@@ -46,6 +46,22 @@ export function projectTypeKeyFromProjectId(projectId: string | null | undefined
   return null;
 }
 
+/**
+ * Resolve the immutable project type from a typed system-project id or path.
+ * Unknown/legacy workspaces retain the historical general-medicine behavior.
+ */
+export function projectMetaTypeFromProjectPath(projectPath: string | null | undefined): ProjectMetaType {
+  const normalized = (projectPath ?? "").replace(/\\/gu, "/");
+  const segments = normalized.split("/").filter(Boolean);
+  if (
+    segments.includes(PROJECT_TYPE_KEYS.war_trauma)
+    || segments.some((segment) => segment.startsWith(`${PROJECT_TYPE_KEYS.war_trauma}-`))
+  ) {
+    return "war_trauma";
+  }
+  return "general_medicine";
+}
+
 /** True when value is a storage/id token, not a filesystem path. */
 export function isBareProjectId(value: string | null | undefined): boolean {
   if (!value) return false;

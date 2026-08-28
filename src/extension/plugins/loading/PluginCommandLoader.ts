@@ -1,5 +1,6 @@
 import { basename, dirname, join, relative } from "node:path";
 import { readdir, readFile, stat } from "node:fs/promises";
+import { parse as parseYaml } from "yaml";
 
 export type LoadedPluginCommand = {
   name: string;
@@ -117,27 +118,15 @@ function parseMarkdownFrontmatter(raw: string): { frontmatter: Record<string, un
   if (end === -1) {
     return { frontmatter: {}, content: raw };
   }
-  const frontmatter: Record<string, unknown> = {};
-  for (const line of raw.slice(fmBodyStart, end).split("\n")) {
-    const trimmed = line.replace(/\r$/u, "");
-    const separator = trimmed.indexOf(":");
-    if (separator === -1) {
-      continue;
+  let frontmatter: Record<string, unknown> = {};
+  try {
+    const parsed = parseYaml(raw.slice(fmBodyStart, end));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      frontmatter = parsed as Record<string, unknown>;
     }
-    const key = trimmed.slice(0, separator).trim();
-    const value = trimmed.slice(separator + 1).trim();
-    if (key) {
-      frontmatter[key] = parseScalar(value);
-    }
+  } catch {
+    // Invalid frontmatter is reported by the skill validator.
   }
   const contentStart = end + (raw[end + 4] === "\r" ? 6 : 5);
   return { frontmatter, content: raw.slice(contentStart) };
-}
-
-function parseScalar(value: string): unknown {
-  if (value === "true") return true;
-  if (value === "false") return false;
-  const numberValue = Number(value);
-  if (value !== "" && Number.isFinite(numberValue)) return numberValue;
-  return value.replace(/^["']|["']$/gu, "");
 }

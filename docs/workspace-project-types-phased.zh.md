@@ -1,6 +1,6 @@
 # 系统内项目 + 项目类型改造 — 分期实现清单
 
-/status: **P0.1 已完成；后续阶段待实施**（设计已定案，按阶段推进；每阶段必须自测通过后再开下一阶段）
+/status: **P0–P7 已完成（P7.1 除外）；下一步 P8**（设计已定案，按阶段推进；每阶段必须自测通过后再开下一阶段）
 
 日期：2026-08-27
 
@@ -8,6 +8,7 @@
 
 - 文件布局（已实施）：`[workspace-layout-reorg.zh.md](./workspace-layout-reorg.zh.md)`
 - 记忆与附件：`[memory-attachment-flow-guide.zh.md](./memory-attachment-flow-guide.zh.md)`
+- 系统提示词结构（中文试用）：`[system-prompt-anatomy.zh.md](./system-prompt-anatomy.zh.md)`
 
 ---
 
@@ -25,7 +26,7 @@
 | 内部 id        | `<typeKey>-<suffix>`；展示名可中文                                                                    |
 | 项目记忆         | `$PILOT_HOME/memory/<typeKey>/<projectId>/`（**直接用 projectId**，不用 hash）；用户画像仍在 `memory/global/` |
 | 删项目          | 会话 + 项目记忆删除；文件归档保留                                                                             |
-| 技能范围         | 仅**全局 + 类型级**；第一期 `med-trauma-stage-plan` → 仅战创伤                                               |
+| 技能范围         | 仅**全局 + 类型级**；内嵌医学技能按附录 C 矩阵；自创技能归属编辑属 P6                                         |
 | 旧「添加本地路径项目」  | **下线废弃**（P8）                                                                                   |
 
 
@@ -35,6 +36,8 @@
 - `$HOME` / `$PILOT_HOME` = Pilot 家目录（**不是**系统用户 `~`）  
 - `typeKey` = `general_med`  `trauma_med`  
 - `$WS` = `$HOME/workspaces/<typeKey>/<projectId>/`
+
+
 
 ### 0.1 类型化目录布局（P0 细则，2026-08-27 修订）
 
@@ -74,6 +77,8 @@ $PILOT_HOME/
 
 ---
 
+
+
 ## 1. 实施原则（保证系统始终可用）
 
 1. **一次只做一个阶段**；阶段内可拆 PR，但合入前必须完成本阶段自测清单。
@@ -89,29 +94,35 @@ $PILOT_HOME/
 
 ---
 
+
+
 ## 2. 阶段总览
 
 
-| 阶段     | 主题                          | 用户可见变化                                 | 风险    |
-| ------ | --------------------------- | -------------------------------------- | ----- |
-| **P0** | 项目元数据模型 + 系统内创建 API         | 可创建带类型的系统内项目；旧入口暂可并存                   | 低     |
-| **P1** | 身份统一：gateway key = 系统项目 id  | 会话/记忆绑 id；文件仍走 `$WS`（`<typeKey>/<id>`） | 中     |
-| **P2** | 去掉 general + 创建必选类型 + 禁聊空项目 | 必须建项目才能聊                               | 中     |
-| **P3** | 侧栏：通用医学 / 战创伤医学             | Tab 与列表按类型分组                           | 中（UI） |
-| **P4** | 类型人设（系统提示词）                 | 同模型下两套助手角色                             | 低～中   |
-| **P5** | 技能：类型范围（内嵌）                 | `med-trauma-stage-plan` 仅战创伤可见/可调      | 中     |
-| **P6** | 技能：自创归属 UI（多选）              | 技能页可配置全局/类型                            | 中     |
-| **P7** | 删除：会话+记忆删，文件归档              | 删项目行为符合定案                              | 中     |
-| **P7.1** | （后续）工作区/归档磁盘占用管理页           | 可查看并手动清理 `$WS` 与 archives 占用（暂不实现） | 中（UI） |
-| **P8** | 下线关联仓入口与遗留文案                | 产品面干净                                  | 低     |
-| **P9** | 文档 / 迁移说明 / 回归清单收口          | 交付可复制                                  | 低     |
+| 阶段       | 主题                          | 用户可见变化                                 | 风险    |
+| -------- | --------------------------- | -------------------------------------- | ----- |
+| **P0**   | 项目元数据模型 + 系统内创建 API         | 可创建带类型的系统内项目；旧入口暂可并存                   | 低     |
+| **P1**   | 身份统一：gateway key = 系统项目 id  | 会话/记忆绑 id；文件仍走 `$WS`（`<typeKey>/<id>`） | 中     |
+| **P2**   | 去掉 general + 创建必选类型 + 禁聊空项目 | 必须建项目才能聊                               | 中     |
+| **P3**   | 侧栏：通用医学 / 战创伤医学             | Tab 与列表按类型分组                           | 中（UI） |
+| **P4**   | 类型人设（系统提示词）                 | 同模型下两套助手角色                             | 低～中   |
+| **P5**   | 技能：类型范围（内嵌）                 | 两类型仅显示并读取各自 med-tools Skill            | 中     |
+| **P6**   | 技能：类型归属（现有 Skills 页）     | 左栏按归属分三组，可改项可拖拽；解析 MCP 跟 `med-medical` 走 | 中     |
+| **P7**   | 删除：会话+记忆删，文件归档              | 删项目行为符合定案                              | 中     |
+| **P7.1** | （后续）工作区/归档磁盘占用管理页           | 可查看并手动清理 `$WS` 与 archives 占用（暂不实现）     | 中（UI） |
+| **P8**   | 下线关联仓入口与遗留文案                | 产品面干净                                  | 低     |
+| **P9**   | 文档 / 迁移说明 / 回归清单收口          | 交付可复制                                  | 低     |
 
 
 **依赖顺序：** P0 → P1 → P2 → P3；P4 可与 P3 并行但建议 P3 后做；P5 → P6；P7 宜在 P1 稳定后；**P7.1 磁盘管理页不阻塞主线，可在 P7 后任意插入**；P8 最后；P9 贯穿但终检在末尾。
 
 ---
 
+
+
 ## 3. 分阶段详单
+
+
 
 ### P0 — 项目元数据与「系统内创建」
 
@@ -139,6 +150,8 @@ $PILOT_HOME/
 **不做（仍属后续阶段）：** 改侧栏 Tab 文案；强制删 general 入口（P2）；技能过滤；删除归档语义。
 
 ---
+
+
 
 ### P1 — 路径与身份统一（系统项目 id）
 
@@ -190,6 +203,8 @@ $PILOT_HOME/
 
 ---
 
+
+
 ### P2 — 取消 general，强制先建项目
 
 /status: **已完成（2026-08-27）** — 已去掉 virtual `general` 注入；无项目空态引导创建；侧栏不再默认 General Tab。
@@ -214,6 +229,8 @@ $PILOT_HOME/
 
 ---
 
+
+
 ### P3 — 侧栏信息架构（通用医学 / 战创伤医学）
 
 /status: **已完成（2026-08-27）** — Tab 改为「通用医学 / 战创伤医学」；列表按 `projectType`（及 id 前缀回退）过滤；列表头改为「新建项目」；项目行提供打开文件面板入口。
@@ -226,7 +243,7 @@ $PILOT_HOME/
 - 列表按 `meta.type` 过滤  
 - 当前选中项目切换时 session 列表正确  
 - 空类型下列空态（「暂无项目，去创建」）  
-- 列表头仅保留「新建项目」；项目行「文件」入口（打开 Files 面板），顶栏「文件」按钮迁出  
+- 列表头仅保留「新建项目」；项目行「文件」入口（打开 Files 面板），顶栏「文件」按钮迁出
 
 **不做：** 人设文案（P4）；技能过滤（P5）。
 
@@ -240,69 +257,176 @@ $PILOT_HOME/
 
 ---
 
+
+
 ### P4 — 项目类型人设（系统提示词）
 
 **目标：** 通用医学 / 战创伤医学使用不同角色说明，使助手行为可区分。
 
-**范围：**
+**状态：已完成（2026-08-28）。**
 
-- 两套 prompt 模板（可先放 `$HOME` 或仓库 `prompts/` / 配置；实现时定一处）  
-- Agent 建会话 / 每轮上下文时按当前项目 `type` 注入  
+- 两套完整 01 prompt 模板位于 `src/context/prompt/systemPromptCopy.ts`
+- 每轮按类型化 cwd 选择通用医学 / 战创伤医学人设；未知或旧工作区按通用医学处理
 - 类型不可变 → 人设不随中途切换（无切换入口）
+- 两套人设各含「适用范围与引导」段：问到另一类型的问题时仍尽力作答，同时提示用户新建对应类型项目的对话可获得更好答案（同一话题只提示一次，不得拒答）
 
 **不做：** 技能可见性（P5）。
 
 **自测：**
 
-- [ ] 同模型下，在两类型项目各问一句「你是谁/你擅长什么」→ 回答角色明显不同  
-- [ ] 切换项目后新 session 使用对应人设；旧 session 不要求改写历史  
+- [x] 同模型下，在两类型项目各问一句「你是谁/你擅长什么」→ 回答角色明显不同
+- [x] 切换项目后新 session 使用对应人设；旧 session 不要求改写历史
 
 ---
+
+
 
 ### P5 — 内嵌技能类型范围（第一期矩阵）
 
-**目标：** 内嵌技能带固定 `scopeTags`（全局 / 类型）；`med-trauma-stage-plan` 仅战创伤。
+**状态：已完成（2026-08-28）。** 内嵌 med-tools 技能与对应 MCP 工具按项目类型过滤；办公五件套两类型均可见。自创技能归属仍属 P6。
 
-**范围：**
+**策略源：** `src/pilot/projectTypePolicy.ts`（Skill 与 MCP 两张表；非 med-tools 一律放行）。
 
-- Skill 元数据或 registry：声明 `availability: global | war_trauma | general_medicine | …`  
-- Agent `skillsList` / `read_skill` / UI 列表：按**当前项目类型**过滤  
-- 通用医学项目中：不可见、不可调用 `med-trauma-stage-plan`  
-- 战创伤项目中：可见可调；办公 skills + 其余 med skills 仍全局
+**内嵌医学 Skill 归属：**
 
-**不做：** 用户自创归属编辑 UI（P6）；可先读死配置。
+| Skill | 通用医学 | 战创伤医学 |
+| --- | --- | --- |
+| `med-medical` | ✓ | ✓ |
+| `med-case-report` | ✓ | — |
+| `med-trauma-assist` | — | ✓ |
+| `med-trauma-stage-plan` | — | ✓ |
+
+**MCP 工具归属**（与 Skill 对齐；`med_tools_health` 两端都保留）：
+
+| MCP 工具 | 通用医学 | 战创伤医学 |
+| --- | --- | --- |
+| `mcp__med-tools__med_parse_medical` | ✓ | ✓ |
+| `mcp__med-tools__med_tools_health` | ✓ | ✓ |
+| `mcp__med-tools__med_trauma_rag_query` | — | ✓ |
+| `mcp__med-tools__med_trauma_rag_status` | — | ✓ |
+| `mcp__med-tools__med_trauma_stage_plan` | — | ✓ |
+
+**过滤落点（同一套函数）：**
+
+| 表面 | 文件 | 行为 |
+| --- | --- | --- |
+| Agent `<available-skills>` | `PromptAssembler.buildSystemContext` | 按类型化 cwd 过滤技能目录 |
+| `read_skill` 列举 / 加载 | `createLocalGateway` | 隐藏技能按名称也读不到 |
+| Skills 管理页面 | `SkillManager` / `SkillsV2` | P6 起全量读取并按归属分三栏；对话可见性仍按类型过滤 |
+| 发给模型的 tools schema | `AgentLoop` | 通用医学看不到战创伤 MCP |
+| 工具执行 | `ToolRuntime` | 即使硬调也被 `permission_denied` |
+
+办公五件套（`pdf` / `docx` / `pptx` / `spreadsheets` / `diagram-maker`）与其它非 med-tools 技能**两类型均可见**。用户自创（`$PILOT_HOME/skills/`）与项目实例技能（`$WS/.pilotdeck/skills/`）本阶段不过滤。
+
+**不做：** 用户自创归属编辑 UI（P6）。
 
 **自测：**
 
-- [ ] 战创伤项目：技能列表含 `med-trauma-stage-plan`，且能 `read_skill` / 按 skill 走通一轮（或至少工具可见）  
-- [ ] 通用医学项目：列表无该项；模型若硬调应被拒绝或找不到  
-- [ ] 全局技能（如 docx/pdf）两类型都在  
+- [x] 战创伤项目：提示词技能目录含 `med-trauma-assist` / `med-trauma-stage-plan`；通用医学不含（`tests/context/prompt-project-type.spec.ts`）
+- [x] Skills 管理页显示完整归属，Agent 与 `read_skill` 仍按类型过滤（`tests/extension/skills/skill-manager-builtin.spec.ts`）
+- [x] 通用医学模型工具清单不含战创伤 RAG / 分阶段方案；执行期硬拦（`prompt-project-type` + `tests/tool/med-tools-skill-gate.spec.ts`）
+- [x] 全局办公 skills 两类型都在（`isSkillAvailableForProjectType` 对非 med-tools 恒 true）
 
 ---
 
-### P6 — 自创技能归属（前端多选）
 
-**目标：** 技能页统一列表；用户对**自创**技能多选：全局 / 通用医学 / 战创伤；内嵌只展示不可改。
 
-**范围：**
+### P6 — 技能类型归属（现有 Skills 页）
 
-- 自创 skill 的归属持久化（建议 `$HOME/skills/<slug>/` 旁 meta，或统一 registry）  
-- SkillsList / 详情：内嵌显示「系统：全局|战创伤」只读；自创可编辑多选  
-- 过滤逻辑与 P5 共用一套「当前项目类型 → 可见集合」
+**状态：已完成（2026-08-28）。**
 
-**不做：** 项目实例级绑定。
+**目标：** 在**现有**技能页（左列表 + 右详情，`SkillsV2`）里配置「这个技能在哪类项目对 Agent 可见」。不新开页面。左侧改为按归属分三个子列表；可改归属的技能支持拖拽换栏。
+
+**谁可改 / 谁只展示（已定案）：**
+
+
+| 技能 | 默认归属 | 详情页 | 拖拽 |
+| --- | --- | --- | --- |
+| 办公五件套（`builtin`：pdf / docx / pptx / spreadsheets / diagram-maker） | 全局 | 只读标签「全局」 | 否 |
+| `med-medical`（DICOM / 多格式附件解析） | 全局（两类型，与 P5 默认一致） | **可改**勾选 | **可** |
+| 其余 med-tools（`med-case-report`、`med-trauma-assist`、`med-trauma-stage-plan`） | 仍按附录 C | 只读标签 | 否 |
+| 自创 `user`（`$PILOT_HOME/skills/<slug>/`） | 未配置时视为全局 | **可改**勾选 | **可** |
+| `project`（`$WS/.pilotdeck/skills/`） | 本阶段**忽略** | — | — |
+
+
+**左侧三个子列表（按归属分组，取代现在的 builtin / user / medical 分栏）：**
+
+1. **全局技能**
+2. **通用医学技能**
+3. **战创伤医学技能**
+
+每条技能只出现在**一个**子列表里（不重复）：
+
+- 归属为全局（含「两个类型都勾」，落盘 `["global"]`）→ 只在「全局技能」
+- 仅通用医学 → 只在「通用医学技能」
+- 仅战创伤医学 → 只在「战创伤医学技能」
+
+只读技能同样进对应子列表（办公 → 全局；`med-case-report` → 通用医学；两条战创伤技能 → 战创伤），但不能拖。三个子列表在 Skills 页**始终都显示**（不随当前打开的项目类型把某一栏藏掉）。Agent 提示词 / `read_skill` / 工具 schema **仍按当前项目类型过滤**。
+
+**拖拽（仅可改归属的技能）：**
+
+- 从子列表 A 拖到子列表 B，松手即更新归属并落盘；左侧所在栏与右侧勾选一起变。
+- 拖到「全局技能」→ `["global"]`
+- 拖到「通用医学技能」→ `["general_medicine"]`（不再是全局，也不再含战创伤）
+- 拖到「战创伤医学技能」→ `["war_trauma"]`
+- 拖到自己所在列表：无操作。只读技能不可拖起。
+- 拖拽与详情勾选是同一数据：勾选变化后行移到对应子列表；拖拽后详情勾选跟上。
+
+**勾选交互（右详情）：**
+
+- 三个选项：**全局** / **通用医学** / **战创伤医学**。
+- 「全局」与两个类型**互斥**：勾全局 → 清掉两个类型；勾任一类型 → 清掉全局。两个类型可以同时勾。
+- 两个类型都勾 ≡ 全局；落盘 `["global"]`，行回到「全局技能」。
+- 至少保留一项。办公 / 其余 med-tools：只显示只读标签，无勾选、无拖拽。
+
+**MCP（已定案：跟 `med-medical` 走）：**
+
+- `mcp__med-tools__med_parse_medical` 的模型可见性与执行许可 = `med-medical` 对当前类型是否可用。
+- 其余 MCP 仍按附录 C 死表（RAG / 分阶段方案仅战创伤；不随 UI 改）。
+- `med_tools_health` 保持两类型可用（体检工具，不跟解析归属走）。
+- 不把 `med-medical` 的归属写进插件目录里的 `SKILL.md`（插件更新会覆盖）。
+
+**持久化：**
+
+- `med-medical`：`$PILOT_HOME/skill-availability.json` 覆盖表，缺省 = 附录 C（全局）。
+- 自创 user：SKILL.md frontmatter `availability`（导入/复制跟着走）；缺省 = 全局。
+
+```yaml
+---
+name: my-intake-note
+description: …
+availability:
+  - general_medicine
+---
+```
+
+合法值：`global` | `general_medicine` | `war_trauma`。形状只能是 `["global"]` 或 1～2 个类型。
+
+**实现：**
+
+- 归属模型与 med-tools 覆盖存储：`src/pilot/skillAvailability.ts`
+- 策略入口：`src/pilot/projectTypePolicy.ts`
+- Skill CRUD / frontmatter 写回：`src/extension/skills/SkillManager.ts`
+- RPC：`skill_set_availability`；REST：`POST /api/skills/availability`
+- 现有页面三栏、详情勾选、原生拖拽：`ui/src/components/main-content-v2/SkillsV2.tsx`
+- 自创 skill 的 `availability` 随 PluginRuntime contribution 进入提示词过滤；修改后主动 `reloadExtensions`
+
+**过滤：** P5 的 `isSkillAvailableForProjectType` / `isToolAvailableForProjectType` 已扩展：只读技能继续读固定矩阵；`med-medical` 与自创分别读覆盖表/frontmatter。提示词目录、`read_skill`、Agent 工具列表和执行期均生效。Skills **管理列表**按归属分三栏全量展示。
+
+**不做：** 新页面；办公与其余 med-tools 的归属编辑或拖拽；项目实例技能的类型绑定；创建后改项目类型。
 
 **自测：**
 
-- [ ] 新建自创 skill，只勾「通用医学」→ 仅在通用医学项目可见  
-- [ ] 再勾「战创伤」→ 两类型都可见  
-- [ ] 勾「全局」→ 任意项目可见（与多选语义一致，实现时定义：全局是否隐含全类型）  
-- [ ] 内嵌 skill 无编辑归属入口  
-
-**产品微约定（实现时写进 UI 文案）：**  
-「全局」= 所有项目类型可用；与「同时勾选两个类型」等价时可只保留全局开关 + 类型多选互斥，避免三种状态打架——**实现 P6 前在 UI 上选定一种交互，本清单不强制。**
+- [x] 左侧三栏：办公在全局；`med-case-report` 在通用医学；战创伤两条在战创伤；只读项不可拖
+- [x] `med-medical` 归属可写覆盖表；`med_parse_medical` 的 schema 与执行许可同步（`tests/pilot/skill-availability.spec.ts`）
+- [x] 自创 skill 的 frontmatter 归属可写回，旧无字段按全局（`skill-manager-builtin.spec.ts`）
+- [x] 当前类型的提示词技能目录过滤自创 skill（`prompt-project-type.spec.ts`）
+- [x] 三栏归组、至少一项、双类型归一为全局（`SkillsV2.availability.test.ts`）
+- [x] 后端构建、UI 构建、相关 ESLint 与 16 个后端用例通过
 
 ---
+
+
 
 ### P7 — 删除项目：会话与记忆删除，文件归档
 
@@ -328,6 +452,8 @@ $PILOT_HOME/
 - [x] 归档目录存在且含原 exports/inbox 内容  
 - [x] 删除失败（磁盘满等）不出现「半删」无提示状态（归档失败则整体失败；后续步骤失败会带归档路径提示）  
 
+
+
 #### P7.1 — 工作区 / 归档磁盘占用管理页（需求已登记，**暂不实现**）
 
 /status: **待开始（仅需求）** — 挂在 P7 之后；不阻塞 P4–P6 / P8。
@@ -336,8 +462,8 @@ $PILOT_HOME/
 
 **页面展示：**
 
-1. **在用项目 `$WS`**：列出当前系统中每个项目对应的 `workspaces/<typeKey>/<id>/` 下文档（至少到文件级；可按项目分组），并显示**每个文件占用大小**、每个项目小计。  
-2. **`archives/` 残留**：同样列出 `archives/projects/<id>-<timestamp>/` 下文档及各自大小、每个归档包小计。  
+1. **在用项目** `$WS`：列出当前系统中每个项目对应的 `workspaces/<typeKey>/<id>/` 下文档（至少到文件级；可按项目分组），并显示**每个文件占用大小**、每个项目小计。
+2. `archives/` **残留**：同样列出 `archives/projects/<id>-<timestamp>/` 下文档及各自大小、每个归档包小计。
 3. **合计**：上述全部内容的总占用（可读单位：KB/MB/GB）。
 
 **交互：**
@@ -349,6 +475,8 @@ $PILOT_HOME/
 **不做（P7.1 仍可延后细化）：** 跨机器配额策略、自动清理策略、回收站二次恢复 UI。
 
 ---
+
+
 
 ### P8 — 下线关联仓 / 选路径入口
 
@@ -368,6 +496,8 @@ $PILOT_HOME/
 
 ---
 
+
+
 ### P9 — 文档与交付收口
 
 **目标：** 同事/服务器按文档可升级，不靠口头。
@@ -383,6 +513,8 @@ $PILOT_HOME/
 - [ ] 另一人仅凭文档能在干净 `$PILOT_HOME` 上走通：建两类项目 → 聊天 → 上传 → 删项目见归档  
 
 ---
+
+
 
 ## 4. 每阶段「最小冒烟」模板（复制使用）
 
@@ -405,6 +537,8 @@ npm run build
 
 ---
 
+
+
 ## 5. 明确不在本期做的事
 
 - 外置文件根 / 关联仓存上传与 exports  
@@ -416,6 +550,8 @@ npm run build
 - 把 `plugins/med-tools` 合并进根目录 `skills/`
 
 ---
+
+
 
 ## 附录 A — 旧数据过渡（P1/P2 必读）
 
@@ -442,34 +578,49 @@ npm run build
 
 ---
 
+
+
 ## 附录 B — 阶段状态跟踪
 
 
-| 阶段  | 状态           | 完成日期       | 备注                                                               |
-| --- | ------------ | ---------- | ---------------------------------------------------------------- |
-| P0  | **P0.1 已完成** | 2026-08-27 | 系统内创建 + 类型化嵌套布局 + `migrate-typed-projects`；侧栏 Tab/去 general 仍属后续 |
-| P1  | **已完成**      | 2026-08-27 | gateway key = 系统项目 id；cwd/文件仍 `$WS`；嵌套扫描已补；记忆归 typed 目录          |
-| P2  | **已完成**      | 2026-08-27 | 取消 virtual general；无项目不可聊；引导创建                                   |
-| P3  | **已完成**      | 2026-08-27 | 侧栏 Tab：通用医学 / 战创伤医学；列表头新建项目；项目行打开文件面板 |
-| P4  | 待开始          |            |                                                                  |
-| P5  | 待开始          |            |                                                                  |
-| P6  | 待开始          |            |                                                                  |
-| P7  | **已完成**      | 2026-08-27 | 删项目：chats+记忆删除；`$WS` → `archives/projects/<id>-<ts>/`；确认文案；**P7.1 磁盘管理页仅登记暂不实现** |
-| P7.1 | 待开始（仅需求）   |            | 工作区/归档占用列表 + 手动删除 + 合计刷新；见 §P7.1                                     |
-| P8  | 待开始          |            |                                                                  |
-| P9  | 待开始          |            |                                                                  |
+| 阶段   | 状态           | 完成日期       | 备注                                                                               |
+| ---- | ------------ | ---------- | -------------------------------------------------------------------------------- |
+| P0   | **P0.1 已完成** | 2026-08-27 | 系统内创建 + 类型化嵌套布局 + `migrate-typed-projects`；侧栏 Tab/去 general 仍属后续                 |
+| P1   | **已完成**      | 2026-08-27 | gateway key = 系统项目 id；cwd/文件仍 `$WS`；嵌套扫描已补；记忆归 typed 目录                          |
+| P2   | **已完成**      | 2026-08-27 | 取消 virtual general；无项目不可聊；引导创建                                                   |
+| P3   | **已完成**      | 2026-08-27 | 侧栏 Tab：通用医学 / 战创伤医学；列表头新建项目；项目行打开文件面板                                            |
+| P4   | **已完成**      | 2026-08-28 | 按类型化 cwd 选择两套完整 01 人设；未知/旧工作区回退通用医学                                              |
+| P5   | **已完成**      | 2026-08-28 | 内嵌 Skill/MCP 矩阵见附录 C；提示词目录、`read_skill`、Skills 页面与工具执行同步过滤                     |
+| P6   | **已完成**      | 2026-08-28 | Skills 左栏三组（全局/通用/战创伤）+ 详情勾选；可改项可拖拽；解析 MCP 跟 `med-medical` |
+| P7   | **已完成**      | 2026-08-27 | 删项目：chats+记忆删除；`$WS` → `archives/projects/<id>-<ts>/`；确认文案；**P7.1 磁盘管理页仅登记暂不实现** |
+| P7.1 | 待开始（仅需求）     |            | 工作区/归档占用列表 + 手动删除 + 合计刷新；见 §P7.1                                                 |
+| P8   | 待开始          |            |                                                                                  |
+| P9   | 待开始          |            |                                                                                  |
 
 
 ---
 
-## 附录 C — 第一期技能矩阵（P5）
 
 
-| Skill                                           | 范围         |
-| ----------------------------------------------- | ---------- |
-| 办公五件套（pdf/docx/pptx/spreadsheets/diagram-maker） | 全局         |
-| med-tools 下除下列外的 med-*                          | 全局         |
-| `med-trauma-stage-plan`                         | **仅战创伤医学** |
+## 附录 C — 内嵌技能与 MCP 矩阵（P5）
 
+**Skill（`MED_TOOLS_SKILLS`）：**
 
-后续类型专属技能在本表追加，勿在未更新本表时改过滤逻辑。
+| Skill | 范围 |
+| --- | --- |
+| 办公五件套（pdf / docx / pptx / spreadsheets / diagram-maker） | 全局（两类型） |
+| `med-medical` | 通用医学 + 战创伤医学 |
+| `med-case-report` | 仅通用医学 |
+| `med-trauma-assist` | 仅战创伤医学 |
+| `med-trauma-stage-plan` | 仅战创伤医学 |
+
+**MCP（`MED_TOOLS`，仅 `mcp__med-tools__*` 受限）：**
+
+| 工具 | 范围 |
+| --- | --- |
+| `med_parse_medical` / `med_tools_health` | 通用医学 + 战创伤医学 |
+| `med_trauma_rag_query` / `med_trauma_rag_status` / `med_trauma_stage_plan` | 仅战创伤医学 |
+
+执行期另有 skill gate（`src/tool/medToolsSkillGate.ts`）：工具可见后仍须先 `read_skill` 对应配方。类型过滤在 gate **之前**，通用医学项目里战创伤工具不会进入 gate。
+
+P6 仅允许改 `med-medical` 的类型归属；改完后 `med_parse_medical` 跟该技能走。其余行仍是系统默认，不可在 UI 改。自创技能不进本表。

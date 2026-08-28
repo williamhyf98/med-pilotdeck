@@ -65,10 +65,12 @@ import { loadPilotConfig, resolvePilotHome, type PilotProxyConfig } from "../pil
 import {
   ensureWorkspaceLayout,
   isGeneralProjectKey,
+  projectMetaTypeFromProjectPath,
   resolveAgentAdditionalWorkingDirectories,
   resolveAgentCwd,
   resolveGatewayProjectKey,
 } from "../pilot/paths.js";
+import { filterSkillsForProjectType } from "../pilot/projectTypePolicy.js";
 import { createPilotConfigStoreSync, type PilotConfigStore } from "../pilot/config/PilotConfigStore.js";
 import type { PilotAgentModelSelection, PilotConfigSnapshot } from "../pilot/config/types.js";
 import { DEFAULT_JUDGE_TIMEOUT_MS, DEFAULT_ALLOWED_TOOLS, DEFAULT_TRIGGER_TIERS, type RouterConfig } from "../router/config/schema.js";
@@ -762,13 +764,18 @@ class ProjectRuntimeRegistry {
     });
     const tools = createBuiltinRegistry({
       readSkill: {
-        loader: (name) => {
-          const info = pluginRuntime.getAllSkills().find((entry) => entry.name === name);
+        loader: (name, context) => {
+          const projectType = projectMetaTypeFromProjectPath(context.cwd);
+          const info = filterSkillsForProjectType(pluginRuntime.getAllSkills(), projectType)
+            .find((entry) => entry.name === name);
           // Runtime visibility: which skill the model actually invoked.
           console.log(`[skill] read_skill invoked: ${name}${info ? ` (${info.path})` : ""}`);
-          return pluginRuntime.loadSkillPrompt(name);
+          return info ? pluginRuntime.loadSkillPrompt(name) : Promise.resolve(undefined);
         },
-        lister: () => pluginRuntime.getAllSkills(),
+        lister: (context) => filterSkillsForProjectType(
+          pluginRuntime.getAllSkills(),
+          projectMetaTypeFromProjectPath(context.cwd),
+        ),
       },
     });
     for (const tool of this._extraTools) {
