@@ -14,6 +14,50 @@ RUNTIME_NPM_CACHE="${RUNTIME_CACHE_DIR}/npm"
 RUNTIME_PNPM_STORE="${RUNTIME_CACHE_DIR}/pnpm-store"
 RUNTIME_PIP_CACHE="${RUNTIME_CACHE_DIR}/pip"
 PILOT_HOME_DIR="${PILOTDECK_ROOT}/.pilotdeck-home"
+LOCAL_PORT_CONFIG="${_PILOTDECK_LIB_DIR}/config.env"
+
+# Load SERVER_PORT / PILOTDECK_GATEWAY_PORT / VITE_PORT from scripts/config.env.
+# Existing environment variables are left unchanged.
+load_local_port_config() {
+  local conf="${LOCAL_PORT_CONFIG}"
+  if [[ ! -f "$conf" ]]; then
+    echo "error: missing port config: ${conf}" >&2
+    return 1
+  fi
+
+  local key raw value current
+  while IFS= read -r raw || [[ -n "$raw" ]]; do
+    raw="${raw%$'\r'}"
+    [[ -z "${raw}" || "${raw}" =~ ^[[:space:]]*# ]] && continue
+    key="${raw%%=*}"
+    value="${raw#*=}"
+    key="${key%"${key##*[![:space:]]}"}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    if [[ "${value}" == \"*\" && "${value}" == *\" ]]; then
+      value="${value#\"}"
+      value="${value%\"}"
+    elif [[ "${value}" == \'*\' && "${value}" == *\' ]]; then
+      value="${value#\'}"
+      value="${value%\'}"
+    fi
+    case "$key" in
+      SERVER_PORT|PILOTDECK_GATEWAY_PORT|VITE_PORT)
+        current="${!key:-}"
+        if [[ -z "$current" ]]; then
+          export "${key}=${value}"
+        fi
+        ;;
+    esac
+  done < "$conf"
+
+  export SERVER_PORT="${SERVER_PORT:-3010}"
+  export PILOTDECK_GATEWAY_PORT="${PILOTDECK_GATEWAY_PORT:-18789}"
+  export VITE_PORT="${VITE_PORT:-5173}"
+}
+
+load_local_port_config
 
 NODE_VERSION_DEFAULT="22.23.2"
 # astral/python-build-standalone pin (install_only_stripped)

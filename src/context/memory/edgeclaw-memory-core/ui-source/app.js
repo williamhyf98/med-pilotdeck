@@ -2,7 +2,7 @@ import { renderTraceI18nText } from "./trace-i18n.js";
 
 const params = new URLSearchParams(window.location.search);
 
-const MEMORY_LOCALE = params.get("locale") === "zh" ? "zh" : "en";
+const MEMORY_LOCALE = params.get("locale") === "en" ? "en" : "zh";
 const MEMORY_THEME = params.get("theme") === "dark" ? "dark" : "light";
 const DATE_TIME_LOCALE = MEMORY_LOCALE === "zh" ? "zh-CN" : "en-US";
 
@@ -1314,7 +1314,9 @@ function renderProjectContext() {
   }
 
   const pm = state.workspace?.projectMeta;
-  const projectName = pm?.projectName || basename(state.projectPath);
+  const projectName = state.workspace?.projectDisplayName
+    || pm?.projectName
+    || basename(state.projectPath);
 
   const wrapper = el("div", "project-context-head");
   const copy = el("div", "project-context-copy");

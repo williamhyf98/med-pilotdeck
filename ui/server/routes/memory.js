@@ -21,6 +21,7 @@ import {
   runManualMemoryDream,
   runManualMemoryFlush,
 } from '../services/memoryService.js';
+import { getProjectDisplayNameForPath } from '../utils/projectDisplayName.js';
 
 const router = express.Router();
 const __filename = fileURLToPath(import.meta.url);
@@ -167,12 +168,21 @@ function annotateWorkspaceEntries(entries) {
   }));
 }
 
-function buildWorkspaceSnapshot(repository, { query = '', limit = 100, offset = 0, selectedProjectId = '' } = {}) {
+function buildWorkspaceSnapshot(repository, {
+  query = '',
+  limit = 100,
+  offset = 0,
+  selectedProjectId = '',
+  projectPath = '',
+} = {}) {
   const store = repository.getFileMemoryStore();
   const workspaceMode = typeof repository.getWorkspaceMode === 'function'
     ? repository.getWorkspaceMode()
     : store.getWorkspaceMode();
   const manifestPath = path.join(store.getRootDir(), 'MEMORY.md');
+  // Memory's own project.meta.md only knows generic names ("Current Project"),
+  // so the sidebar name comes from the pilot project's meta.json instead.
+  const projectDisplayName = getProjectDisplayNameForPath(projectPath);
 
   if (workspaceMode === 'general') {
     const generalProjects = repository
@@ -205,6 +215,7 @@ function buildWorkspaceSnapshot(repository, { query = '', limit = 100, offset = 
 
     return {
       workspaceMode,
+      projectDisplayName,
       generalProjects,
       selectedProjectId: selectedProject?.logicalProjectId ?? null,
       selectedProjectSource: selectedProject ? 'general_local' : null,
@@ -260,6 +271,7 @@ function buildWorkspaceSnapshot(repository, { query = '', limit = 100, offset = 
 
   return {
     workspaceMode,
+    projectDisplayName,
     projectMetaPath: projectMeta ? 'project.meta.md' : null,
     projectMeta,
     manifestPath: 'MEMORY.md',
@@ -280,7 +292,7 @@ function buildWorkspaceSnapshot(repository, { query = '', limit = 100, offset = 
   };
 }
 
-function buildDashboardSnapshot(service, repository, { query = '', selectedProjectId = '' } = {}) {
+function buildDashboardSnapshot(service, repository, { query = '', selectedProjectId = '', projectPath = '' } = {}) {
   return {
     overview: {
       ...service.overview(),
@@ -292,6 +304,7 @@ function buildDashboardSnapshot(service, repository, { query = '', selectedProje
       limit: 200,
       offset: 0,
       selectedProjectId,
+      projectPath,
     }),
     userSummary: service.getUserSummary(),
     caseTraces: service.listCaseTraces(12),
@@ -365,39 +378,42 @@ router.route('/settings')
     }));
 
 router.post('/index/run', async (req, res) =>
-  withMemoryService(req, res, async ({ dataDir, service, repository }) => {
+  withMemoryService(req, res, async ({ projectPath, dataDir, service, repository }) => {
     const result = await runManualMemoryFlush(service, dataDir, { reason: 'manual' });
     res.json({
       ...result,
       dashboard: buildDashboardSnapshot(service, repository, {
         query: getQuery(req),
         selectedProjectId: getSelectedProjectId(req),
+        projectPath,
       }),
     });
   }),
 );
 
 router.post('/dream/run', async (req, res) =>
-  withMemoryService(req, res, async ({ dataDir, service, repository }) => {
+  withMemoryService(req, res, async ({ projectPath, dataDir, service, repository }) => {
     const result = await runManualMemoryDream(service, dataDir);
     res.json({
       ...result,
       dashboard: buildDashboardSnapshot(service, repository, {
         query: getQuery(req),
         selectedProjectId: getSelectedProjectId(req),
+        projectPath,
       }),
     });
   }),
 );
 
 router.post('/dream/rollback-last', async (req, res) =>
-  withMemoryService(req, res, async ({ dataDir, service, repository }) => {
+  withMemoryService(req, res, async ({ projectPath, dataDir, service, repository }) => {
     const result = await rollbackLastMemoryDream(service, dataDir);
     res.json({
       ...result,
       dashboard: buildDashboardSnapshot(service, repository, {
         query: getQuery(req),
         selectedProjectId: getSelectedProjectId(req),
+        projectPath,
       }),
     });
   }),
@@ -481,13 +497,14 @@ router.route('/project-meta')
     }));
 
 router.get('/workspace', async (req, res) =>
-  withMemoryService(req, res, async ({ repository }) => {
+  withMemoryService(req, res, async ({ projectPath, repository }) => {
     res.json(
       buildWorkspaceSnapshot(repository, {
         query: getQuery(req),
         limit: parseLimit(req.query.limit, 100),
         offset: parseOffset(req.query.offset, 0),
         selectedProjectId: getSelectedProjectId(req),
+        projectPath,
       }),
     );
   }),
@@ -613,12 +630,13 @@ router.post('/clear', async (req, res) => {
         return;
       }
 
-      const { service } = await getMemoryServiceForRequest(req);
+      const { projectPath, service } = await getMemoryServiceForRequest(req);
       res.json({
         ...result,
         dashboard: buildDashboardSnapshot(service, service.repository, {
           query: getQuery(req),
           selectedProjectId: getSelectedProjectId(req),
+          projectPath,
         }),
       });
     } catch (error) {
@@ -629,13 +647,14 @@ router.post('/clear', async (req, res) => {
     return;
   }
 
-  return withMemoryService(req, res, async ({ service, repository }) => {
+  return withMemoryService(req, res, async ({ projectPath, service, repository }) => {
     const result = service.clear(scope);
     res.json({
       ...result,
       dashboard: buildDashboardSnapshot(service, repository, {
         query: getQuery(req),
         selectedProjectId: getSelectedProjectId(req),
+        projectPath,
       }),
     });
   });
