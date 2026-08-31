@@ -46,6 +46,8 @@ import type {
   SkillValidationResult,
   SkillWriteInput,
   SkillWriteResult,
+  SkillSetAvailabilityInput,
+  SkillSetAvailabilityResult,
   SkillsListInput,
   SkillsListResult,
 } from "../../extension/skills/types.js";
@@ -493,6 +495,7 @@ export interface Gateway {
   skillsList?(input: SkillsListInput): Promise<SkillsListResult>;
   skillRead?(input: SkillAddressInput): Promise<SkillReadResult>;
   skillWrite?(input: SkillWriteInput): Promise<SkillWriteResult>;
+  skillSetAvailability?(input: SkillSetAvailabilityInput): Promise<SkillSetAvailabilityResult>;
   skillCreate?(input: SkillCreateInput): Promise<SkillCreateResult>;
   skillDelete?(input: SkillDeleteInput): Promise<SkillDeleteResult>;
   skillImport?(input: SkillImportInput): Promise<SkillImportResult>;

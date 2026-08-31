@@ -278,6 +278,29 @@ router.post('/write', async (req, res) => {
   }
 });
 
+router.post('/availability', async (req, res) => {
+  try {
+    const { skillPath, projectPath, availability } = req.body || {};
+    const cls = classifySkillPath(skillPath, projectPath);
+    if (!cls.ok) return res.status(400).json({ error: cls.reason });
+    if (!Array.isArray(availability) || availability.length === 0) {
+      return res.status(400).json({ error: 'availability must contain at least one option' });
+    }
+    const result = await callGateway('skillSetAvailability', {
+      scope: cls.scope,
+      slug: cls.slug,
+      projectKey: cls.scope === 'project' ? gatewayProjectKey(projectPath) : null,
+      availability,
+    });
+    if (cls.scope === 'user') {
+      await callGateway('reloadExtensions', {});
+    }
+    res.json(result);
+  } catch (e) {
+    sendGatewayError(res, e);
+  }
+});
+
 router.post('/create', async (req, res) => {
   try {
     const { scope, projectPath, slug, name, description, body, content } = req.body || {};

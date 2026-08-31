@@ -9,7 +9,6 @@ source "${SCRIPT_DIR}/lib-local-runtime.sh"
 
 PID_FILE="${RUNTIME_DIR}/pilotdeck.pid"
 LOG_FILE="${RUNTIME_DIR}/logs/pilotdeck-dev.log"
-DEFAULT_PORTS=(3001 18789 5173)
 
 ensure_node22() {
   local ver major
@@ -35,6 +34,28 @@ ensure_node22() {
     echo "error: PilotDeck needs Node.js 22 (got ${ver:-unknown})." >&2
     echo "  brew install node@22" >&2
     echo "  # or: ${PILOTDECK_ROOT}/scripts/bootstrap-runtime.sh" >&2
+    return 1
+  fi
+}
+
+# Ports come from scripts/config.env and are hard-pinned, so the dev launcher
+# can no longer slide off a busy port. Fail loudly instead of half-starting:
+# a gateway that cannot bind leaves the UI answering 500 on every request.
+assert_ports_free() {
+  local busy=() entry name port
+  for entry in "SERVER_PORT:${SERVER_PORT}" \
+               "PILOTDECK_GATEWAY_PORT:${PILOTDECK_GATEWAY_PORT}" \
+               "VITE_PORT:${VITE_PORT}"; do
+    name="${entry%%:*}"
+    port="${entry##*:}"
+    if (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null; then
+      exec 3>&- 2>/dev/null || true
+      busy+=("${name}=${port}")
+    fi
+  done
+  if [[ "${#busy[@]}" -gt 0 ]]; then
+    echo "error: port(s) already in use: ${busy[*]}" >&2
+    echo "  edit ${LOCAL_PORT_CONFIG} and pick a free port, or stop the owner first" >&2
     return 1
   fi
 }
@@ -81,6 +102,8 @@ if already_running; then
   exit 0
 fi
 
+assert_ports_free
+
 run_llm_check
 
 mkdir -p "$(dirname "$LOG_FILE")"
@@ -91,7 +114,7 @@ echo "    root:  ${PILOTDECK_ROOT}"
 echo "    home:  ${PILOT_HOME}"
 echo "    node:  $(command -v node) ($(node -v))"
 echo "    log:   ${LOG_FILE}"
-echo "    ports: server=${SERVER_PORT:-3001} gateway=${PILOTDECK_GATEWAY_PORT:-18789} vite=${VITE_PORT:-5173}"
+echo "    ports: server=${SERVER_PORT} gateway=${PILOTDECK_GATEWAY_PORT} vite=${VITE_PORT}  (from ${LOCAL_PORT_CONFIG})"
 echo "    mcp timeout: ${PILOTDECK_MCP_TOOL_TIMEOUT_MS}ms"
 
 # Foreground mode when user passes --fg
@@ -115,7 +138,7 @@ if ! kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
 fi
 
 echo "    pid:   $(cat "$PID_FILE")"
-echo "    UI:    http://localhost:${VITE_PORT:-5173}"
-echo "    API:   http://localhost:${SERVER_PORT:-3001}"
+echo "    UI:    http://localhost:${VITE_PORT}"
+echo "    API:   http://localhost:${SERVER_PORT}"
 echo "    stop:  ${SCRIPT_DIR}/stop-local.sh"
 echo "    logs:  tail -f ${LOG_FILE}"

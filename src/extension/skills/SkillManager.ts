@@ -1,12 +1,21 @@
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, posix, resolve } from "node:path";
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import {
   getPilotExtensionPaths,
   isGeneralProjectKey,
 } from "../../pilot/paths.js";
+import {
+  GLOBAL_SKILL_AVAILABILITY,
+  isValidSkillAvailabilityInput,
+  MED_MEDICAL_SKILL,
+  normalizeSkillAvailability,
+  readSkillAvailabilityOverrideSync,
+  writeSkillAvailabilityOverride,
+  type SkillAvailability,
+} from "../../pilot/skillAvailability.js";
 import type {
   SkillAddressInput,
   SkillCreateInput,
@@ -26,6 +35,8 @@ import type {
   SkillValidationResult,
   SkillWriteInput,
   SkillWriteResult,
+  SkillSetAvailabilityInput,
+  SkillSetAvailabilityResult,
   SkillsListInput,
   SkillsListResult,
 } from "./types.js";
@@ -181,16 +192,17 @@ export class SkillManager {
     const effectiveProject = this.isGeneralCwd(projectKey) ? null : projectKey;
 
     const builtinSkills = this.builtinSkillsRootPath
-      ? await listSkillsIn(this.builtinSkillsRootPath, "builtin")
+      ? await listSkillsIn(this.builtinSkillsRootPath, "builtin", this.pilotHome)
       : [];
-    const userSkills = await listSkillsIn(this.userSkillsRoot(), "user");
+    const userSkills = await listSkillsIn(this.userSkillsRoot(), "user", this.pilotHome);
     const projectSkills = effectiveProject
-      ? await listSkillsIn(this.projectSkillsRoot(effectiveProject), "project")
+      ? await listSkillsIn(this.projectSkillsRoot(effectiveProject), "project", this.pilotHome)
       : [];
 
-    const medicalSkills = this.medicalSkillsRootPath
-      ? await listSkillsIn(this.medicalSkillsRootPath, "medical")
+    const allMedicalSkills = this.medicalSkillsRootPath
+      ? await listSkillsIn(this.medicalSkillsRootPath, "medical", this.pilotHome)
       : [];
+    const medicalSkills = allMedicalSkills;
 
     const builtinSlugs = new Set(builtinSkills.map((skill) => skill.slug));
     const userSlugs = new Set(userSkills.map((skill) => skill.slug));
@@ -231,7 +243,7 @@ export class SkillManager {
       }
       throw e;
     }
-    const skill = await readSkillMeta(skillDir, input.scope);
+    const skill = await readSkillMeta(skillDir, input.scope, this.pilotHome);
     return { content, scope: input.scope, slug: input.slug, skill };
   }
 
@@ -244,7 +256,49 @@ export class SkillManager {
     await fs.mkdir(skillDir, { recursive: true });
     const skillFile = join(skillDir, "SKILL.md");
     await fs.writeFile(skillFile, input.content, "utf8");
-    const skill = await readSkillMeta(skillDir, input.scope);
+    const skill = await readSkillMeta(skillDir, input.scope, this.pilotHome);
+    return { ok: true, scope: input.scope, slug: input.slug, skill };
+  }
+
+  async setAvailability(
+    input: SkillSetAvailabilityInput,
+  ): Promise<SkillSetAvailabilityResult> {
+    if (!isValidSkillAvailabilityInput(input.availability)) {
+      throw new SkillManagerError("invalid_input", "Skill availability contains an invalid option.");
+    }
+    const availability = normalizeSkillAvailability(input.availability);
+    if (availability.length === 0) {
+      throw new SkillManagerError("invalid_input", "At least one availability option is required.");
+    }
+    if (input.scope === "medical") {
+      if (input.slug !== MED_MEDICAL_SKILL) {
+        throw new SkillManagerError("read_only", `Medical skill "${input.slug}" has fixed availability.`);
+      }
+      await writeSkillAvailabilityOverride(input.slug, availability, this.pilotHome);
+    } else if (input.scope === "user") {
+      const skillDir = this.resolveSkillDir(input);
+      const skillFile = join(skillDir, "SKILL.md");
+      let content: string;
+      try {
+        content = await fs.readFile(skillFile, "utf8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          throw new SkillManagerError("not_found", `SKILL.md not found at ${skillFile}.`);
+        }
+        throw error;
+      }
+      await fs.writeFile(
+        skillFile,
+        replaceFrontmatterAvailability(content, availability),
+        "utf8",
+      );
+    } else {
+      throw new SkillManagerError("read_only", "This skill has fixed availability.");
+    }
+    const skill = await readSkillMeta(this.resolveSkillDir(input), input.scope, this.pilotHome);
+    if (!skill) {
+      throw new SkillManagerError("not_found", `Skill "${input.slug}" was not found.`);
+    }
     return { ok: true, scope: input.scope, slug: input.slug, skill };
   }
 
@@ -275,7 +329,7 @@ export class SkillManager {
           });
     const skillFile = join(skillDir, "SKILL.md");
     await fs.writeFile(skillFile, finalContent, "utf8");
-    const skill = await readSkillMeta(skillDir, input.scope);
+    const skill = await readSkillMeta(skillDir, input.scope, this.pilotHome);
     return {
       ok: true,
       scope: input.scope,
@@ -399,7 +453,7 @@ export class SkillManager {
       });
     }
 
-    const skill = await readSkillMeta(targetDir, input.scope);
+    const skill = await readSkillMeta(targetDir, input.scope, this.pilotHome);
     return {
       ok: true,
       mode: importMode,
@@ -612,7 +666,11 @@ function parseCompatFrontmatter(fmRaw: string): Record<string, unknown> {
   return result;
 }
 
-async function readSkillMeta(skillDir: string, scope: SkillScope): Promise<SkillSummary | null> {
+async function readSkillMeta(
+  skillDir: string,
+  scope: SkillScope,
+  pilotHome?: string,
+): Promise<SkillSummary | null> {
   const skillFile = join(skillDir, "SKILL.md");
   let content: string;
   try {
@@ -621,6 +679,12 @@ async function readSkillMeta(skillDir: string, scope: SkillScope): Promise<Skill
     return null;
   }
   const fm = parseSkillFrontmatter(content);
+  const availability = resolveSummaryAvailability(
+    basename(skillDir),
+    scope,
+    fm.availability,
+    pilotHome,
+  );
   let mtime: number | null = null;
   try {
     const stat = await fs.stat(skillFile);
@@ -643,7 +707,55 @@ async function readSkillMeta(skillDir: string, scope: SkillScope): Promise<Skill
     scope,
     readonly: scope === "builtin" || scope === "medical",
     mtime,
+    availability,
+    availabilityMutable:
+      scope === "user" || (scope === "medical" && basename(skillDir) === MED_MEDICAL_SKILL),
   };
+}
+
+function resolveSummaryAvailability(
+  slug: string,
+  scope: SkillScope,
+  frontmatterAvailability: unknown,
+  pilotHome?: string,
+): SkillAvailability[] {
+  if (scope === "medical") {
+    if (slug === MED_MEDICAL_SKILL) {
+      return readSkillAvailabilityOverrideSync(slug, pilotHome)
+        ?? [...GLOBAL_SKILL_AVAILABILITY];
+    }
+    if (slug === "med-case-report") return ["general_medicine"];
+    if (slug === "med-trauma-assist" || slug === "med-trauma-stage-plan") {
+      return ["war_trauma"];
+    }
+  }
+  if (scope === "user") {
+    const normalized = normalizeSkillAvailability(frontmatterAvailability);
+    return normalized.length > 0 ? normalized : [...GLOBAL_SKILL_AVAILABILITY];
+  }
+  return [...GLOBAL_SKILL_AVAILABILITY];
+}
+
+function replaceFrontmatterAvailability(
+  content: string,
+  availability: readonly SkillAvailability[],
+): string {
+  const normalizedContent = content.replace(/\r\n/gu, "\n");
+  if (!normalizedContent.startsWith("---\n")) {
+    return `---\navailability:\n${availability.map((entry) => `  - ${entry}`).join("\n")}\n---\n${normalizedContent}`;
+  }
+  const end = normalizedContent.indexOf("\n---", 4);
+  if (end === -1) {
+    throw new SkillManagerError("invalid_input", "SKILL.md frontmatter is not closed.");
+  }
+  const parsed = parseYaml(normalizedContent.slice(4, end)) as unknown;
+  const frontmatter = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : {};
+  frontmatter.availability = [...availability];
+  const bodyStart = end + (normalizedContent[end + 4] === "\n" ? 5 : 4);
+  const body = normalizedContent.slice(bodyStart).replace(/^\n/u, "");
+  return `---\n${stringifyYaml(frontmatter).trimEnd()}\n---\n${body}`;
 }
 
 async function buildSkillScanFolder(skillDir: string, folderName: string): Promise<SkillScanFolder> {
@@ -689,7 +801,11 @@ async function buildSkillScanFolder(skillDir: string, folderName: string): Promi
   };
 }
 
-async function listSkillsIn(root: string, scope: SkillScope): Promise<SkillSummary[]> {
+async function listSkillsIn(
+  root: string,
+  scope: SkillScope,
+  pilotHome?: string,
+): Promise<SkillSummary[]> {
   let entries: import("node:fs").Dirent[];
   try {
     entries = await fs.readdir(root, { withFileTypes: true });
@@ -712,7 +828,7 @@ async function listSkillsIn(root: string, scope: SkillScope): Promise<SkillSumma
       }
     }
     if (!isSkillDir) continue;
-    const meta = await readSkillMeta(join(root, entry.name), scope);
+    const meta = await readSkillMeta(join(root, entry.name), scope, pilotHome);
     if (!meta) continue;
     skills.push(meta);
   }

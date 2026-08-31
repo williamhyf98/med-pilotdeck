@@ -8,7 +8,7 @@ source "${SCRIPT_DIR}/lib-local-runtime.sh"
 
 PID_FILE="${RUNTIME_DIR}/pilotdeck.pid"
 LOG_FILE="${RUNTIME_DIR}/logs/pilotdeck-dev.log"
-PORTS=(3001 18789 5173)
+PORTS=("${SERVER_PORT}" "${PILOTDECK_GATEWAY_PORT}" "${VITE_PORT}")
 
 kill_tree() {
   local pid="$1"

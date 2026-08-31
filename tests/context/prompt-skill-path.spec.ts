@@ -23,6 +23,6 @@ test("available skills include the resolved SKILL.md path and bounded lookup gui
         now: () => new Date("2026-07-15T00:00:00.000Z"),
     }).joined;
     assert.match(prompt, /- spreadsheets — Create and edit spreadsheet files\. \(file: \/opt\/pilotdeck\/skills\/spreadsheets\/SKILL\.md\)/);
-    assert.match(prompt, /Resolve relative references, bundled entrypoints, and assets against the directory containing that SKILL\.md\./);
-    assert.match(prompt, /Do not search the user's home directory to rediscover a skill/);
+    assert.match(prompt, /相对该 SKILL\.md 所在目录解析|Resolve relative references, bundled entrypoints/);
+    assert.match(prompt, /不要搜索用户主目录来重新发现技能|Do not search the user's home directory to rediscover a skill/);
 });

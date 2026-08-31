@@ -43,6 +43,8 @@ import type { AgentRuntimeDependencies } from "../runtime/AgentRuntimeDependenci
 import type { LifecycleDispatchResult } from "../../lifecycle/index.js";
 import type { PilotDeckHookEvent } from "../../extension/hooks/protocol/events.js";
 import { NullContextRuntime } from "../../context/NullContextRuntime.js";
+import { projectMetaTypeFromProjectPath } from "../../pilot/paths.js";
+import { filterToolsForProjectType } from "../../pilot/projectTypePolicy.js";
 import type { AgentContextRuntime } from "../../context/ContextRuntime.js";
 import type { ContextRecoveryDecision, ContextSupplementalToolResultMessage, TokenBudgetSnapshot } from "../../context/index.js";
 import type { PermissionMode, PermissionRule, PermissionRuleSet } from "../../permission/index.js";
@@ -2040,8 +2042,11 @@ export class AgentLoop {
             .filter((tool) => requiresPromptCapability(tool, {}))
             .map((tool) => tool.name),
         );
-    let toolDefinitions = this.dependencies.tools.registry.list()
-      .filter((tool) => !promptBlockedToolNames.has(tool.name));
+    const projectType = projectMetaTypeFromProjectPath(this.config.cwd);
+    let toolDefinitions = filterToolsForProjectType(
+      this.dependencies.tools.registry.list(),
+      projectType,
+    ).filter((tool) => !promptBlockedToolNames.has(tool.name));
     const allowedTools = execution.allowedTools === undefined
       ? undefined
       : new Set(execution.allowedTools);
@@ -2093,10 +2098,11 @@ export class AgentLoop {
     }
 
     const materialized = await materializeMediaReferences(prepared.messages);
-    const preparedTools = prepared.tools.filter((tool) =>
-      (allowedTools === undefined || allowedTools.has(tool.name))
-      && !deniedTools.has(tool.name)
-    );
+    const preparedTools = filterToolsForProjectType(prepared.tools, projectType)
+      .filter((tool) =>
+        (allowedTools === undefined || allowedTools.has(tool.name))
+        && !deniedTools.has(tool.name)
+      );
     for (const diagnostic of materialized.diagnostics) {
       // eslint-disable-next-line no-console
       console.warn(

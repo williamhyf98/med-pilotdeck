@@ -39,6 +39,8 @@ export type {
   SkillValidationResult,
   SkillWriteInput,
   SkillWriteResult,
+  SkillSetAvailabilityInput,
+  SkillSetAvailabilityResult,
   SkillsListInput,
   SkillsListResult,
 } from "./types.js";

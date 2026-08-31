@@ -46,6 +46,22 @@ export function projectTypeKeyFromProjectId(projectId: string | null | undefined
   return null;
 }
 
+/**
+ * Resolve the immutable project type from a typed system-project id or path.
+ * Unknown/legacy workspaces retain the historical general-medicine behavior.
+ */
+export function projectMetaTypeFromProjectPath(projectPath: string | null | undefined): ProjectMetaType {
+  const normalized = (projectPath ?? "").replace(/\\/gu, "/");
+  const segments = normalized.split("/").filter(Boolean);
+  if (
+    segments.includes(PROJECT_TYPE_KEYS.war_trauma)
+    || segments.some((segment) => segment.startsWith(`${PROJECT_TYPE_KEYS.war_trauma}-`))
+  ) {
+    return "war_trauma";
+  }
+  return "general_medicine";
+}
+
 /** True when value is a storage/id token, not a filesystem path. */
 export function isBareProjectId(value: string | null | undefined): boolean {
   if (!value) return false;
@@ -279,18 +295,16 @@ function* listProjectMarkerCandidates(projectsDir: string): Generator<{ projectI
     if (!entry.isDirectory()) continue;
     if (PROJECT_TYPE_KEY_SET.has(entry.name)) {
       const typeDir = resolve(projectsDir, entry.name);
-      let nested: ReturnType<typeof readdirSync>;
       try {
-        nested = readdirSync(typeDir, { withFileTypes: true });
+        for (const child of readdirSync(typeDir, { withFileTypes: true })) {
+          if (!child.isDirectory()) continue;
+          yield {
+            projectId: child.name,
+            markerPath: resolve(typeDir, child.name, ".cwd"),
+          };
+        }
       } catch {
         continue;
-      }
-      for (const child of nested) {
-        if (!child.isDirectory()) continue;
-        yield {
-          projectId: child.name,
-          markerPath: resolve(typeDir, child.name, ".cwd"),
-        };
       }
       continue;
     }

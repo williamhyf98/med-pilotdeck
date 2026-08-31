@@ -19,19 +19,30 @@ const MEDICAL_TOOLS = [
 ] as const;
 
 function context(): PilotDeckToolRuntimeContext {
+  const cwd = "/pilot/workspaces/trauma_med/trauma_med-test";
   return {
     sessionId: "session",
     turnId: "turn",
-    cwd: process.cwd(),
+    cwd,
     permissionMode: "bypassPermissions",
     permissionContext: {
       mode: "bypassPermissions",
-      cwd: process.cwd(),
+      cwd,
       additionalWorkingDirectories: [],
       canPrompt: true,
       bypassAvailable: true,
       rules: { allow: [], deny: [], ask: [] },
     },
+  };
+}
+
+function generalContext(): PilotDeckToolRuntimeContext {
+  const base = context();
+  const cwd = "/pilot/workspaces/general_med/general_med-test";
+  return {
+    ...base,
+    cwd,
+    permissionContext: { ...base.permissionContext, cwd },
   };
 }
 
@@ -93,6 +104,19 @@ test("every med-tools MCP tool has a skill-gate mapping", () => {
     "future med-tools MCP tools must fail closed behind the default medical skill gate",
   );
   assert.equal(getMedToolsSkillRequirement("mcp__other__tool"), undefined);
+});
+
+test("general-medicine projects hard-block trauma MCP tools", async () => {
+  const toolName = "mcp__med-tools__med_trauma_rag_query";
+  const { runtime, executions } = createRuntime(toolName);
+  const result = await runtime.execute(
+    { id: "general-trauma-rag", name: toolName, input: {} },
+    generalContext(),
+  );
+  assert.equal(result.type, "error");
+  assert.equal(result.error.code, "permission_denied");
+  assert.match(result.error.message, /general_medicine project type/u);
+  assert.equal(executions.count, 0);
 });
 
 test("every med-tools MCP tool is blocked once, loads its skill, and executes on retry", async () => {

@@ -3,8 +3,8 @@
  *
  * Configures i18next for internationalization support.
  * Features:
- * - Language detection from localStorage
- * - Fallback to English for missing translations
+ * - Language detection from localStorage, defaulting to Simplified Chinese
+ * - Fallback to English for keys a locale bundle is still missing
  * - Development mode warnings for missing keys
  *
  * Supported locales: en, zh-CN. Other locales were retired during the
@@ -42,15 +42,30 @@ import zhCodeEditor from './locales/zh-CN/codeEditor.json';
 
 import { languages } from './languages.js';
 
+const DEFAULT_LANGUAGE = 'zh-CN';
+const LANGUAGE_STORAGE_KEY = 'userLanguage';
+// `languageChanged` also fires on init, so the previous English default was
+// written to storage even for users who never chose a language. Clear that
+// once, otherwise the stored value would keep overriding the new default.
+// Choices made after this migration are preserved.
+const DEFAULT_MIGRATION_KEY = 'userLanguageDefaultMigratedTo';
+
 const getSavedLanguage = () => {
   try {
-    const saved = localStorage.getItem('userLanguage');
+    const saved = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    if (localStorage.getItem(DEFAULT_MIGRATION_KEY) !== DEFAULT_LANGUAGE) {
+      localStorage.setItem(DEFAULT_MIGRATION_KEY, DEFAULT_LANGUAGE);
+      if (!saved || saved === 'en') {
+        localStorage.setItem(LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE);
+        return DEFAULT_LANGUAGE;
+      }
+    }
     if (saved && languages.some(lang => lang.value === saved)) {
       return saved;
     }
-    return 'en';
+    return DEFAULT_LANGUAGE;
   } catch {
-    return 'en';
+    return DEFAULT_LANGUAGE;
   }
 };
 

@@ -246,6 +246,11 @@ export class GatewayWsConnection {
         return requireSkillMethod(this.options.gateway.skillRead, this.options.gateway)(frame.params as never);
       case "skill_write":
         return requireSkillMethod(this.options.gateway.skillWrite, this.options.gateway)(frame.params as never);
+      case "skill_set_availability":
+        return requireSkillMethod(
+          this.options.gateway.skillSetAvailability,
+          this.options.gateway,
+        )(frame.params as never);
       case "skill_create":
         return requireSkillMethod(this.options.gateway.skillCreate, this.options.gateway)(frame.params as never);
       case "skill_delete":

@@ -18,6 +18,7 @@ import type { InstructionDiscovery, InstructionScope } from "./instructions/Inst
 import { MemoryAttachmentBuilder } from "./memory/MemoryAttachmentBuilder.js";
 import type { MemoryResolver } from "./memory/MemoryResolver.js";
 import { PromptAssembler } from "./prompt/PromptAssembler.js";
+import { promptCopy } from "./prompt/systemPromptCopy.js";
 import { MessageProjector } from "./projection/MessageProjector.js";
 import type {
   ContextCaptureTurnInput,
@@ -224,11 +225,10 @@ export class DefaultContextRuntime implements ContextRuntime {
         if (layers.length > 0) {
           const blocks = layers.map(l => {
             const desc = instructionScopeDescription(l.scope);
-            return `Contents of ${l.path}${desc}:\n\n${l.content}`;
+            return `${promptCopy.instructionFileLead} ${l.path}${desc}:\n\n${l.content}`;
           });
           parts.push(
-            `<project-instructions>\nProject instructions are shown below. Adhere to these instructions. ` +
-            `IMPORTANT: These instructions OVERRIDE any default behavior.\n\n` +
+            `<project-instructions>\n${promptCopy.projectInstructionsLead}\n\n` +
             `${blocks.join("\n\n")}\n</project-instructions>`,
           );
         }
@@ -636,18 +636,7 @@ function isAlwaysOnSession(sessionId: string): boolean {
 }
 
 function instructionScopeDescription(scope: InstructionScope): string {
-  switch (scope) {
-    case "managed":
-      return " (managed instructions, set by administrator)";
-    case "user":
-      return " (user's global instructions for all projects)";
-    case "project":
-      return " (project instructions, checked into the codebase)";
-    case "project-rules":
-      return " (project rule, checked into the codebase)";
-    case "local":
-      return " (user's private project instructions, not checked in)";
-  }
+  return promptCopy.instructionScope[scope];
 }
 
 function extractRecentUserText(messages: CanonicalMessage[]): string | undefined {

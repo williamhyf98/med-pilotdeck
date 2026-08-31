@@ -41,6 +41,8 @@ import type {
   SkillValidationResult,
   SkillWriteInput,
   SkillWriteResult,
+  SkillSetAvailabilityInput,
+  SkillSetAvailabilityResult,
   SkillsListInput,
   SkillsListResult,
 } from "../../extension/skills/types.js";
@@ -180,6 +182,12 @@ export class RemoteGateway implements Gateway {
 
   async skillWrite(input: SkillWriteInput): Promise<SkillWriteResult> {
     return (await this.client.request("skill_write", input)) as SkillWriteResult;
+  }
+
+  async skillSetAvailability(
+    input: SkillSetAvailabilityInput,
+  ): Promise<SkillSetAvailabilityResult> {
+    return (await this.client.request("skill_set_availability", input)) as SkillSetAvailabilityResult;
   }
 
   async skillCreate(input: SkillCreateInput): Promise<SkillCreateResult> {

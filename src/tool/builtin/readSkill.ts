@@ -1,12 +1,17 @@
-import type { PilotDeckToolDefinition } from "../protocol/types.js";
+import type { PilotDeckToolDefinition, PilotDeckToolRuntimeContext } from "../protocol/types.js";
 
 export type ReadSkillInput = {
   skillName: string;
 };
 
 export type ReadSkillDeps = {
-  loader: (name: string) => Promise<string | undefined>;
-  lister: () => { name: string; description?: string; path: string }[];
+  loader: (name: string, context: PilotDeckToolRuntimeContext) => Promise<string | undefined>;
+  lister: (context: PilotDeckToolRuntimeContext) => {
+    name: string;
+    description?: string;
+    path: string;
+    namespace?: string;
+  }[];
 };
 
 export function createReadSkillTool(deps: ReadSkillDeps): PilotDeckToolDefinition<ReadSkillInput> {
@@ -30,18 +35,16 @@ export function createReadSkillTool(deps: ReadSkillDeps): PilotDeckToolDefinitio
     },
     isReadOnly: () => true,
     isConcurrencySafe: () => true,
-    async execute(input) {
-      const content = await deps.loader(input.skillName);
-      const available = deps.lister();
-      if (content) {
-        const skill = available.find((entry) => entry.name === input.skillName);
-        if (!skill) {
-          return { content: [{ type: "text", text: content }] };
-        }
+    async execute(input, context) {
+      const available = deps.lister(context);
+      const requestedName = shortSkillName(input.skillName);
+      const selected = available.find((entry) => shortSkillName(entry.name) === requestedName);
+      const content = selected ? await deps.loader(selected.name, context) : undefined;
+      if (selected && content) {
         const text = [
           "<skill>",
-          `<name>${escapeXmlText(skill.name)}</name>`,
-          `<path>${escapeXmlText(skill.path)}</path>`,
+          `<name>${escapeXmlText(selected.name)}</name>`,
+          `<path>${escapeXmlText(selected.path)}</path>`,
           content,
           "</skill>",
         ].join("\n");
@@ -58,6 +61,11 @@ export function createReadSkillTool(deps: ReadSkillDeps): PilotDeckToolDefinitio
       };
     },
   };
+}
+
+function shortSkillName(value: string): string {
+  const separator = value.lastIndexOf(":");
+  return separator >= 0 ? value.slice(separator + 1) : value;
 }
 
 function escapeXmlText(value: string): string {
