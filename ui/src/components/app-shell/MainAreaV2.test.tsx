@@ -237,6 +237,7 @@ describe('MainAreaV2 dashboard switcher', () => {
     expect(menu.className).toContain('z-[90]');
     expect(menu.className).toContain('w-32');
     expect(screen.getByRole('menuitem', { name: 'tabs.memory' }).className).toContain('justify-center');
+    expect(screen.getByRole('menuitem', { name: 'tabs.storage' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'tabs.memory' }));
     expect(screen.getByTestId('main-content').getAttribute('data-active-tab')).toBe('memory');

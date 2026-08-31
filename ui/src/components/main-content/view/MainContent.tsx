@@ -45,6 +45,7 @@ const DashboardV2 = React.lazy(() => import('../../main-content-v2/DashboardV2')
 const TasksV2 = React.lazy(() => import('../../main-content-v2/TasksV2'));
 const MemoryPanel = React.lazy(() => import('./memory/MemoryPanel'));
 const SkillsV2 = React.lazy(() => import('../../main-content-v2/SkillsV2'));
+const StorageV2 = React.lazy(() => import('../../main-content-v2/StorageV2'));
 
 function TabSkeleton() {
   return (
@@ -386,6 +387,7 @@ function MainContent({
     !selectedProject
     && activeTab !== 'dashboard'
     && activeTab !== 'cron'
+    && activeTab !== 'storage'
   ) {
     return (
       <MainContentStateView
@@ -586,6 +588,7 @@ function SplitBody(props: SplitBodyProps) {
     'shell',
     'git',
     'cron',
+    'storage',
     'tasks',
   ]);
   const isFullScreenTool = fullScreenToolTabs.has(activeTab) || isPlugin;
@@ -785,6 +788,7 @@ function SplitBody(props: SplitBodyProps) {
     if (activeTab === 'dashboard') return <DashboardV2 projectFilter={selectedProject?.name} projectFullPath={selectedProject?.fullPath} onSelectProject={onSelectProjectByName} compact />;
     if (activeTab === 'memory') return <MemoryPanel selectedProject={selectedProject} />;
     if (activeTab === 'skills') return <SkillsV2 selectedProject={selectedProject} projects={projects} compact />;
+    if (activeTab === 'storage') return <StorageV2 />;
     if (renderTasksAsTool) return <TasksV2 isVisible />;
     if (isPlugin) {
       return (

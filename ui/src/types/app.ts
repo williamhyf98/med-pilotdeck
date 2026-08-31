@@ -12,6 +12,7 @@ export type AppTab =
   | 'tasks'
   | 'memory'
   | 'skills'
+  | 'storage'
   | 'preview'
   | 'dashboard'
   | `plugin:${string}`;
