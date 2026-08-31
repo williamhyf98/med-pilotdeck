@@ -6,6 +6,7 @@ import {
   Clock,
   Database,
   Folder,
+  HardDrive,
   MoreHorizontal,
   PanelLeftOpen,
   Radio,
@@ -51,6 +52,7 @@ const DASHBOARD_TABS: Tab[] = [
   { id: 'memory',    labelKey: 'tabs.memory',    icon: Database },
   { id: 'always-on', labelKey: 'tabs.alwaysOn',  icon: Radio },
   { id: 'cron',      labelKey: 'tabs.cron',      icon: Clock },
+  { id: 'storage',   labelKey: 'tabs.storage',   icon: HardDrive },
 ];
 
 const ACTIVE_TOOL_BUTTON_CLASS =
