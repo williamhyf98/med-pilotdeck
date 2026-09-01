@@ -9,6 +9,7 @@
 | PowerPoint | `skills/pptx/` | 已改造（本文第 3 节） |
 | 表格 | `skills/spreadsheets/` | 已改造（本文第 4 节） |
 | 图示 | `skills/diagram-maker/` | 已改造（本文第 6 节） |
+| HTML 展示 | `skills/frontend-slides/` | 离线改版（见 `docs/offline-skill-tool-restore.zh.md` 阶段 A；`write_file` 出 HTML，无 `*.sh` 生成器） |
 
 原则（五个 skill 共用，先在 PDF 上落地）：
 

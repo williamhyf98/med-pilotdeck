@@ -205,6 +205,17 @@ test("history replay shows document and SVG artifacts in general conversations",
             mimeType: "image/svg+xml",
             createdAt: "2026-08-21T10:00:00.000Z",
         }, {
+            id: "artifact-html",
+            name: "病例展示.html",
+            path: "exports/病例展示.html",
+            operation: "created",
+            source: "tool",
+            status: "complete",
+            size: 2048,
+            sha256: "c1".repeat(32),
+            mimeType: "text/html",
+            createdAt: "2026-08-21T10:00:00.000Z",
+        }, {
             id: "artifact-json",
             name: "trauma_care_plan_spec.json",
             path: "exports/trauma_care_plan_spec.json",
@@ -225,6 +236,7 @@ test("history replay shows document and SVG artifacts in general conversations",
             "exports/战创伤救治教学.pptx",
             "exports/战创伤救治统计.xlsx",
             "exports/战创伤救治流程.svg",
+            "exports/病例展示.html",
         ]);
     }
     finally {

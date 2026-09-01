@@ -343,6 +343,7 @@ $PILOT_HOME/
 | 技能 | 默认归属 | 详情页 | 拖拽 |
 | --- | --- | --- | --- |
 | 办公五件套（`builtin`：pdf / docx / pptx / spreadsheets / diagram-maker） | 全局 | 只读标签「全局」 | 否 |
+| `frontend-slides`（医学 HTML 展示） | 全局 | 只读标签「全局」 | 否 |
 | `med-medical`（DICOM / 多格式附件解析） | 全局（两类型，与 P5 默认一致） | **可改**勾选 | **可** |
 | 其余 med-tools（`med-case-report`、`med-trauma-assist`、`med-trauma-stage-plan`） | 仍按附录 C | 只读标签 | 否 |
 | 自创 `user`（`$PILOT_HOME/skills/<slug>/`） | 未配置时视为全局 | **可改**勾选 | **可** |
@@ -649,6 +650,7 @@ npm run build
 | Skill | 范围 |
 | --- | --- |
 | 办公五件套（pdf / docx / pptx / spreadsheets / diagram-maker） | 全局（两类型） |
+| `frontend-slides` | 全局（两类型） |
 | `med-medical` | 通用医学 + 战创伤医学 |
 | `med-case-report` | 仅通用医学 |
 | `med-trauma-assist` | 仅战创伤医学 |

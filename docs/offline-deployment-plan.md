@@ -10,7 +10,7 @@
 - 模型在另一台机器上，hostname 未知；禁止再写死 `10.31.112.13`。
 - `dist/` 与 `ui/dist/` 在打包机预构建；裸机目录包与 Docker 镜像都带上同一份产物。
 - 交付形态：**裸机打包 + Docker Compose 都要**，同一条构建流水线，两种启动外壳。
-- Skills：内置只留 `pdf` / `docx` / `pptx` / `spreadsheets` / `diagram-maker`；医学 skill 全部留在 `plugins/med-tools`；前端 Skills 列表分「通用技能 / 医学技能」两块。
+- Skills：内置留 `pdf` / `docx` / `pptx` / `spreadsheets` / `diagram-maker` / `frontend-slides`；医学 skill 全部留在 `plugins/med-tools`；前端 Skills 列表分「通用技能 / 医学技能」两块。
 - Gateway 内置工具只保留读/写/改文件、glob、grep、bash、`read_skill`、`todo_write`、`ask_user_question`、`get_current_time`；其余内置工具删除（含 `web_search` / `web_fetch` / `execute_code` 等）。
 
 **实施原则**
@@ -170,6 +170,7 @@ Compose **不能替代预下载依赖**；目标机还需要已安装 Docker Eng
 | `pptx` | 本地读写 PowerPoint |
 | `spreadsheets` | 本地读写 xlsx/csv 等 |
 | `diagram-maker` | 生成本地 SVG/流程图 |
+| `frontend-slides` | 工作区单文件医学 HTML 展示（无公网部署） |
 
 **医学技能（[`plugins/med-tools/skills/`](../plugins/med-tools/skills/)，只读）**
 
@@ -264,7 +265,7 @@ Compose **不能替代预下载依赖**；目标机还需要已安装 Docker Eng
 
 ```text
 通用技能
-  pdf, docx, pptx, spreadsheets, diagram-maker
+  pdf, docx, pptx, spreadsheets, diagram-maker, frontend-slides
   （若仍有 user/project 下非医学 skill，也归这一栏）
 
 医学技能
@@ -284,7 +285,7 @@ Compose **不能替代预下载依赖**；目标机还需要已安装 Docker Eng
 
 ### 2.7 步骤 2 验收
 
-- `skills/` 仅剩 `pdf` `docx` `pptx` `spreadsheets` `diagram-maker`
+- `skills/` 仅剩 `pdf` `docx` `pptx` `spreadsheets` `diagram-maker` `frontend-slides`
 - 前端 Skills 页可见两栏；医学三栏来自 med-tools，只读
 - 无 ClawHub / browser-use / `install:browser`
 - Agent 可调用的内置工具只有 2.3 保留列表 + `mcp__med-tools__*`
@@ -294,7 +295,7 @@ Compose **不能替代预下载依赖**；目标机还需要已安装 Docker Eng
 
 **实施记录（2026-08-19）**
 
-- `skills/` 只保留 `pdf` / `docx` / `pptx` / `spreadsheets` / `diagram-maker`。
+- `skills/` 只保留 `pdf` / `docx` / `pptx` / `spreadsheets` / `diagram-maker` / `frontend-slides`。
 - 已删除 browser-use 插件、`install:browser`，以及 `web_search` / `web_fetch` / `execute_code` / `agent` / 计划模式 / task / notebook / structured_output / send_attachment 实现。
 - `createBuiltinRegistry` 只注册 2.3 保留工具；Gateway 仍会额外挂上 cron / always-on / `mcp__med-tools__*`。
 - Skills 列表 API 增加 `medical` 数组，来源 `plugins/med-tools/skills/`；Skills 页分「通用技能 / 医学技能」，医学只读，已隐藏 New / ClawHub。

@@ -114,7 +114,7 @@ $HOME/                                    # 配置与系统态；Agent 默认不
       scratch/
 
 $REPO/                                    # 不进 git 的会话文件
-  skills/{pdf,docx,pptx,spreadsheets,diagram-maker}/
+  skills/{pdf,docx,pptx,spreadsheets,diagram-maker,frontend-slides}/
   plugins/med-tools/
   .runtime/cache/xdg/                     # Skill 隔离运行时（与 Gateway 一致）
 ```
@@ -165,7 +165,7 @@ $REPO/                                    # 不进 git 的会话文件
 
 | 用途 | 现状 | 建议 |
 | --- | --- | --- |
-| 通用文档 Skill | `$REPO/skills/{pdf,docx,pptx,spreadsheets,diagram-maker}/` | **不搬** |
+| 通用文档 Skill | `$REPO/skills/{pdf,docx,pptx,spreadsheets,diagram-maker,frontend-slides}/` | **不搬** |
 | 文档字体 | `$REPO/skills/pdf/assets/fonts/` | **不搬**（docx/pptx/spreadsheets 相对引用） |
 | 医学插件 | `$REPO/plugins/med-tools/` | **不搬进 `skills/`** |
 | 医学配方 | `$REPO/plugins/med-tools/skills/med-*/` | 仍跟插件 |
