@@ -290,6 +290,8 @@ https://github.com/user-attachments/assets/a7245467-ee3c-4939-a055-c56576ac56d1
 
 ## 📦 Installation & Quick Start
 
+**This fork (med-pilotdeck):** after `git clone`, follow the Chinese local-start guide **[docs/local-clone-and-start.zh.md](./docs/local-clone-and-start.zh.md)** (`bootstrap-runtime` + `start-local.sh`, project `.pilotdeck-home`). The one-liners below are upstream PilotDeck and use `~/.pilotdeck`.
+
 We provide one-line installers for macOS / Linux and Windows PowerShell, plus a source-based workflow for developers.
 
 ### Option A: One-line install (recommended, macOS / Linux)

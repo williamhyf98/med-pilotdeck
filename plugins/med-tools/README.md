@@ -113,7 +113,8 @@ Ordinary injury photos go in `image_paths` for G9 to read. DICOM/PDF: prefer `me
 ## Setup
 
 Prefer the project-local launcher so `PILOT_HOME` points at
-`.pilotdeck-home` (no `~/.pilotdeck`):
+`.pilotdeck-home` (no `~/.pilotdeck`). Full clone/bootstrap/start
+for Linux, macOS, and Windows: [`docs/local-clone-and-start.zh.md`](../../docs/local-clone-and-start.zh.md).
 
 ```bash
 # from repo root
