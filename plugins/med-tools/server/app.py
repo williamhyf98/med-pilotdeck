@@ -491,7 +491,8 @@ def med_tools_health() -> str:
     try:
         from .rag import rag_status
 
-        info["rag"] = rag_status(validate=False)
+        # Skip the local artifact reload (253 MB) but always probe the remote service.
+        info["rag"] = rag_status(validate=False, probe_remote=True)
     except Exception as exc:  # noqa: BLE001
         info["rag"] = {"ready": False, "reason": f"{type(exc).__name__}: {exc}"}
 
@@ -500,14 +501,15 @@ def med_tools_health() -> str:
 
 @mcp.tool()
 def med_trauma_rag_status(validate: bool = False) -> str:
-    """Report war-trauma RAG corpus readiness (rows, dimension, mode hints).
+    """Report war-trauma RAG readiness: remote service reachability + local corpus.
 
     Args:
-        validate: If true, load and SHA-256-check corpus/embedding artifacts now.
+        validate: If true, load and SHA-256-check the local corpus/embedding
+            artifacts now. The remote service is probed either way.
     """
     from .rag import rag_status
 
-    payload = rag_status(validate=bool(validate))
+    payload = rag_status(validate=bool(validate), probe_remote=True)
     payload["tool"] = "med_trauma_rag_status"
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
@@ -518,6 +520,7 @@ def med_trauma_rag_query(
     top_k: int = 3,
     min_score: float = 0.35,
     prefer_lexical: bool = False,
+    topic: Optional[str] = None,
 ) -> str:
     """Retrieve war-trauma textbook evidence for Q&A (not the formal stage plan).
 
@@ -525,11 +528,19 @@ def med_trauma_rag_query(
     the knowledge question and may add brief disposition tips. For a formal
     five-section graded care plan, use med_trauma_stage_plan instead.
 
+    Retrieval hits the remote med-rag service first and falls back to the local
+    corpus when it is unreachable; check `mode` / `retrieval_backend` in the
+    response to see which one answered.
+
     Args:
         query: Chinese/English search text (concept / keywords / injury question).
         top_k: Number of chunks to return (1–8, default 3).
-        min_score: Minimum cosine score for vector mode (ignored on lexical fallback).
-        prefer_lexical: Force deterministic lexical search (no embedding call).
+        min_score: Minimum cosine score. Applies to the LOCAL vector mode only —
+            remote scores use a different scale and are never thresholded here.
+        prefer_lexical: Force deterministic local lexical search (skips remote
+            and the embedding call).
+        topic: Remote topic filter. Omit for the war-trauma default; pass
+            "军事医学" / "未分类" to switch; pass "" to search the whole library.
     """
     from .rag import query_rag
 
@@ -538,6 +549,7 @@ def med_trauma_rag_query(
         top_k=top_k,
         min_score=min_score,
         prefer_lexical=prefer_lexical,
+        topic=topic,
     )
     payload["tool"] = "med_trauma_rag_query"
     return json.dumps(payload, ensure_ascii=False, indent=2)

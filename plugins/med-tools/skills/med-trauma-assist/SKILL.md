@@ -23,9 +23,22 @@ description: 通过 RAG 进行战创伤知识点问答。用于教材/概念类�
 1. **问答优先**：回答「是什么 / 怎么做要点」，不是五段正式方案。
 2. 工具**只返回证据**；作答由**主模型**完成（`generation_owner=pilotdeck`）。
 3. **禁止编造**未出现在 `chunks` 中的条文；区分检索文献与模型补充。
-4. 若 `mode` 为 `lexical-fallback`，简要说明检索降级。
+4. 按 `mode` 说明证据来源（见「检索后端与 mode」一节）：`remote` 正常作答不必声明；降级到本地时要简短说明。
 5. 用户明确要「生成救治方案 / 按某阶段出方案」→ **改走 `med-trauma-stage-plan`**，不要用本 Skill 硬写五段卡。
 6. **检索前必须改写 query**（见下节）；聊天气泡仍按用户原文理解与作答，不要把改写句当成用户原话展示。
+
+## 检索后端与 mode
+
+检索**默认走远程 med-rag 服务**（更大的语料、混合检索 + 重排）；服务不可达时自动降级回插件内置的本地战创伤语料。响应里 `retrieval_backend` 是 `remote` / `local`，`mode` 更细：
+
+| `mode` | 含义 | 作答时怎么说 |
+|--------|------|-------------|
+| `remote` | 远程知识库命中（正常路径） | 不必特别说明 |
+| `vector` | 远程不可达，已用本地向量检索 | 末尾一句「远程知识库暂不可达，本次基于本地战创伤语料」 |
+| `lexical` | 调用方显式要求本地词法检索 | 说明本次为关键词检索 |
+| `lexical-fallback` | 本地向量也失败，退到词法检索 | **必须说明**检索能力降级，结论需谨慎 |
+
+`warnings` 数组里会写明降级原因，若含「topic ... was not applied」说明本次只在本地战创伤语料里检索、topic 过滤未生效，要如实告知用户。
 
 ## 检索 query 改写（强制）
 
@@ -79,15 +92,25 @@ mcp__med-tools__med_trauma_rag_query(query=<改写后的检索句>)
 
 | 工具 | 用途 |
 |------|------|
-| `mcp__med-tools__med_trauma_rag_query` | 检索：`query` / 可选 `top_k`(≤8) / `min_score` |
-| `mcp__med-tools__med_trauma_rag_status` | 语料是否就绪 |
+| `mcp__med-tools__med_trauma_rag_query` | 检索：`query` / 可选 `top_k`(≤8) / `min_score` / `topic` |
+| `mcp__med-tools__med_trauma_rag_status` | 远程服务是否可达 + 本地语料是否就绪 |
 | `mcp__med-tools__med_tools_health` | 插件概况 |
+
+### `topic` 参数用法
+
+远程知识库除战创伤外还含临床指南/共识与军事医学语料，用 `topic` 控制检索范围：
+
+- **默认不传** → 只检索战创伤语料（与本 Skill 定位一致，绝大多数情况用这个）
+- `topic="军事医学"` / `topic="未分类"` → 切到对应分库
+- `topic=""` → **全库检索**。仅当用户明确要求「放宽范围 / 查一下通用指南」，或默认范围连续检索不到内容时才用
+
+`min_score` 只对本地向量检索生效，远程检索不受它影响，不必调。
 
 ## 建议输出结构
 
 1. **直接回答**  
 2. **简要处置要点**（可选，非正式方案）  
-3. **参考来源**（title / section / chunk_id）  
+3. **参考来源**（`title` / `section` / `chunk_id`；若 chunk 带 `evidence_grade`、`evidence_quality`、`data_layer`、`topic` 则一并标注证据级别。这些字段**可能缺失**（本地降级路径没有），有则标、无则略，不要编造）  
 4. **免责声明**
 
 边界：正式六阶段方案 → `med-trauma-stage-plan`；DICOM/PDF 解读 → `med-medical`。
