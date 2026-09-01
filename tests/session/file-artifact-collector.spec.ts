@@ -435,6 +435,29 @@ test("bash diagram.sh JSON output becomes an explicit SVG artifact without a wor
         await rm(projectRoot, { recursive: true, force: true });
     }
 });
+test("write_file HTML in exports is collected when html is on the allowlist", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "pilotdeck-artifact-html-write-"));
+    const htmlPath = join(projectRoot, "exports", "病例展示.html");
+    try {
+        await mkdir(join(projectRoot, "exports"), { recursive: true });
+        await writeFile(htmlPath, "<!DOCTYPE html><html lang=\"zh-CN\"><body>preview</body></html>");
+        const collector = await FileArtifactCollector.start({
+            cwd: projectRoot,
+            allowWorkspaceDiff: false,
+            allowedExtensions: [".pdf", ".docx", ".pptx", ".xlsx", ".svg", ".html"],
+        });
+        collector.observeToolResult({
+            ...toolResult("write_file"),
+            data: { filePath: htmlPath },
+        });
+        const artifacts = await collector.finish("complete");
+        assert.deepEqual(artifacts.map((artifact) => artifact.path), ["exports/病例展示.html"]);
+        assert.equal(artifacts[0]?.mimeType, "text/html");
+    }
+    finally {
+        await rm(projectRoot, { recursive: true, force: true });
+    }
+});
 test("general-chat PDF collection ignores non-pdf writes even when bash mutates the workspace", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "pilotdeck-artifact-pdf-filter-"));
     try {

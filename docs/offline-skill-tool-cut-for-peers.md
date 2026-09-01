@@ -32,9 +32,10 @@ ClawHub、browser-use、IM 适配器、遥测，也不是「内置工具」，�
 | `pptx`          | 本地读、建、改 PowerPoint                               |
 | `spreadsheets`  | 本地读、建、改 xlsx/csv 等                               |
 | `diagram-maker` | 在工作区生成 SVG / HTML / Excalidraw 图                 |
+| `frontend-slides` | 工作区单文件医学 HTML（无 CDN / 无公网部署）                 |
 
 
-这五个**不要求公网**。系统依赖（LibreOffice、Poppler 等）需打进离线包或在目标机预装。文档类 Skill 如何调用 `*.sh`、为何必须留 `bash` 并做加固，见 6.1。
+办公五件套与 HTML 展示**不要求公网**。系统依赖（LibreOffice、Poppler 等）需打进离线包或在目标机预装。文档类 Skill 如何调用 `*.sh`、为何必须留 `bash` 并做加固，见 6.1。`frontend-slides` 不走 `*.sh`，由模型 `write_file` 出 HTML。
 
 ### 2.2 明确依赖公网或云 SaaS
 
@@ -190,7 +191,7 @@ Linux 离线包通常没有这套图形环境和操作员工作流。即使 `.md
 
 | 项        | 例子                                                                                                                                           | 说明                                            |
 | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| 文档 Skill | `pdf` `docx` `pptx` `spreadsheets` `diagram-maker`                                                                                           | 对话里读/改/生成 Office 与 PDF。底层脚本是本机 Python，见 6.1   |
+| 文档 Skill | `pdf` `docx` `pptx` `spreadsheets` `diagram-maker` `frontend-slides`                                                                                           | 对话里读/改/生成 Office、PDF、医学 HTML。底层脚本是本机 Python（HTML 由模型写文件），见 6.1   |
 | 3.1 本地工具 | `read_file` / `write_file` / `edit_file` / `glob` / `grep` / `bash` / `read_skill` / `todo_write` / `ask_user_question` / `get_current_time` | 文档 Skill 目前靠 `bash` 调 `*.sh`；领域能力走插件 MCP，不走这些 |
 
 

@@ -1040,6 +1040,7 @@ function isGeneralDocumentArtifact(artifact: { path?: string; name?: string; mim
     || artifact.mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     || artifact.mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     || artifact.mimeType === "image/svg+xml"
+    || artifact.mimeType === "text/html"
   ) {
     return true;
   }
@@ -1048,7 +1049,9 @@ function isGeneralDocumentArtifact(artifact: { path?: string; name?: string; mim
     || name.endsWith(".docx")
     || name.endsWith(".pptx")
     || name.endsWith(".xlsx")
-    || name.endsWith(".svg");
+    || name.endsWith(".svg")
+    || name.endsWith(".html")
+    || name.endsWith(".htm");
 }
 
 function injectFileArtifactMessages(

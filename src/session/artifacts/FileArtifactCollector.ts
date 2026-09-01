@@ -649,5 +649,5 @@ function collectDocumentOutputFields(value: unknown, add: (pathValue: string) =>
 
 function isDocumentFilePath(value: string): boolean {
   const trimmed = value.trim().split(/[?#]/u)[0] ?? "";
-  return /\.(?:pdf|docx|pptx|xlsx|svg)$/i.test(trimmed);
+  return /\.(?:pdf|docx|pptx|xlsx|svg|html?)$/i.test(trimmed);
 }

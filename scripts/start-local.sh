@@ -104,6 +104,9 @@ fi
 
 assert_ports_free
 
+# Create .pilotdeck-home + default pilotdeck.yaml when missing (before LLM check).
+node "${SCRIPT_DIR}/bootstrap-pilotdeck-config.mjs"
+
 run_llm_check
 
 mkdir -p "$(dirname "$LOG_FILE")"
