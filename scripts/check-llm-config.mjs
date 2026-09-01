@@ -102,13 +102,19 @@ function unique(urls) {
 function isUsableProvider(providerId, provider, modelId) {
   if (!provider || typeof provider !== 'object') return { ok: false, reason: 'provider missing' };
   if (providerId === PLACEHOLDER_PROVIDER) {
-    return { ok: false, reason: 'placeholder provider — ship a real pilotdeck.yaml' };
+    return {
+      ok: false,
+      reason: 'placeholder provider — edit pilotdeck.yaml model.providers with a real OpenAI-compatible endpoint',
+    };
   }
   const url = typeof provider.url === 'string' ? provider.url.trim() : '';
   if (!url) return { ok: false, reason: 'missing url' };
   const apiKey = typeof provider.apiKey === 'string' ? provider.apiKey.trim() : '';
   if (apiKey === PLACEHOLDER_API_KEY) {
-    return { ok: false, reason: 'placeholder apiKey — replace with a real credential' };
+    return {
+      ok: false,
+      reason: 'placeholder apiKey — replace PLACEHOLDER_RUN_ONBOARDING_TO_REPLACE in pilotdeck.yaml (use EMPTY if the server ignores auth)',
+    };
   }
   if (!providerAllowsMissingApiKey(providerId) && !apiKey) {
     return { ok: false, reason: 'missing apiKey' };
@@ -384,7 +390,9 @@ async function main() {
   console.log(`    config: ${configPath}`);
 
   if (!existsSync(configPath)) {
-    fail(`pilotdeck.yaml not found at ${configPath}. Provide a preconfigured yaml before start-local.`);
+    fail(
+      `pilotdeck.yaml not found at ${configPath}. Run node scripts/bootstrap-pilotdeck-config.mjs (start-local does this automatically), then edit model url/apiKey/model id.`,
+    );
   }
 
   let config;

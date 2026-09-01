@@ -50,6 +50,7 @@ jspm_packages/
 # Project-local PilotDeck user home (config, chats, plugins). Isolated via PILOT_HOME.
 # Created by scripts/start-local.sh / bootstrap-runtime.sh — do not commit secrets.
 .pilotdeck-home/
+.tmp-bootstrap-*/
 
 # Plugin Python venvs (created by bootstrap / setup.sh)
 plugins/**/.venv/
