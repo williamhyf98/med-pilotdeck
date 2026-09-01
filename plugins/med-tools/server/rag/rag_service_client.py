@@ -168,6 +168,7 @@ def remote_result_to_item(result: Mapping[str, Any], index: int) -> dict[str, An
         "retrieval_blocked_by_assets": bool(
             result.get("retrieval_blocked_by_assets")
         ),
+        "image_refs": result.get("image_refs") or [],
     }
     # Only present when the service runs a reranker — never assume.
     if "rerank_score" in result:

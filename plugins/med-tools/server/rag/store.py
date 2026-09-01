@@ -298,6 +298,7 @@ def _chunk_to_item(chunk: Mapping[str, Any], score: float, index: int) -> dict[s
         "text": text,
         "preview": " ".join(text.split())[:500],
         "index": index,
+        "image_refs": chunk.get("image_refs") or [],
     }
 
 
