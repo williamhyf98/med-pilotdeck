@@ -163,8 +163,28 @@ Restart PilotDeck (or reload plugins) after changing `plugin.json` env.
 | `MED_EMBEDDING_ENDPOINT` | `{API_BASE}/embeddings` | Full embeddings URL |
 | `MED_EMBEDDING_MODEL` | `qwen3-vl-embedding` | Embedding model id |
 | `MED_EMBEDDING_DIMENSION` | `2048` | Expected vector dim |
+| `MED_RAG_SERVICE_ENABLED` | `1` | Query the remote med-rag service first; `0` = local corpus only |
+| `MED_RAG_SERVICE_API_BASE` | `http://127.0.0.1:18080` | med-rag service base (no `/v1`; not OpenAI-shaped) |
+| `MED_RAG_SERVICE_ENDPOINT` | `{API_BASE}/retrieve` | Override the retrieve URL |
+| `MED_RAG_SERVICE_HEALTH_ENDPOINT` | `{API_BASE}/health` | Override the health URL |
+| `MED_RAG_SERVICE_TIMEOUT_SECONDS` | `60` | Retrieve timeout; on timeout we degrade to the local corpus |
+| `MED_RAG_SERVICE_MAX_CHARS_PER_CHUNK` | `1800` | Per-chunk text budget passed to the service |
+| `MED_RAG_SERVICE_API_KEY` | *(empty)* | Bearer token; the service is unauthenticated today |
+| `MED_RAG_TOPIC` | `战创伤` | Default topic filter; empty string = whole library |
 | `MED_RAG_MANIFEST` | `<plugin>/data/rag/manifest.json` | Override manifest path (tests) |
 | `MED_DICOM_DERIVED_DIR` / `MED_DERIVED_DIR` | `<parent>/.med-tools-derived` | Preview/PNG output dir |
+
+`med_trauma_rag_query` hits the remote med-rag service (`POST /retrieve`, evidence
+only — generation stays with the PilotDeck main model) and falls back to the
+in-plugin corpus when the service is unreachable. Check `retrieval_backend`
+(`remote` / `local`) and `mode` (`remote` / `vector` / `lexical` /
+`lexical-fallback`) in the response. Note that remote scores are RRF fusion
+values on a different scale from local cosine, so `min_score` is applied to the
+local vector path only. `med_trauma_rag_status` probes the service and reports
+`rag_service.reachable` plus `active_backend`.
+
+Only `MED_RAG_SERVICE_API_BASE` normally needs setting — the retrieve and health
+URLs derive from it.
 
 When `MED_VLM_FALLBACK_*` are unset, med-tools reads `$PILOT_HOME/pilotdeck.yaml` (then `.pilotdeck-home/pilotdeck.yaml` / `~/.pilotdeck/pilotdeck.yaml`) and uses `agent.model` plus that provider's `url` / `apiKey`.
 
