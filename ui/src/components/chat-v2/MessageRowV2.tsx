@@ -17,6 +17,7 @@ import {
 import type {
   ChatAttachment,
   ChatMessage,
+  CitationMetadata,
   PilotDeckPermissionSuggestion,
   SessionPermissionGrantResult,
 } from '../chat/types/types';
@@ -139,6 +140,30 @@ function MessageRowV2({
     () => (Array.isArray(message.artifacts) ? message.artifacts : []),
     [message.artifacts],
   );
+  // 从 prevMessage（工具调用消息）中提取 med_trauma_rag_query 的 chunks 构造 citations
+  const citations = useMemo((): CitationMetadata[] | undefined => {
+    const prev = prevMessage as ChatMessage | null;
+    if (!prev) return undefined;
+    const toolName = String(prev.toolName || '');
+    if (!toolName.includes('med_trauma_rag_query')) return undefined;
+    const result = prev.toolResult;
+    if (!result) return undefined;
+    const content = typeof result.content === 'string' ? result.content : '';
+    if (!content) return undefined;
+    try {
+      const parsed = JSON.parse(content);
+      const chunks = Array.isArray(parsed.chunks) ? parsed.chunks : [];
+      return chunks.map((chunk: Record<string, unknown>, i: number) => ({
+        index: (chunk.rank as number) || (i + 1),
+        title: String(chunk.title || chunk.source || ''),
+        section: String(chunk.section || ''),
+        evidenceGrade: chunk.evidence_grade ? String(chunk.evidence_grade) : undefined,
+        evidenceQuality: chunk.evidence_quality ? String(chunk.evidence_quality) : undefined,
+      }));
+    } catch {
+      return undefined;
+    }
+  }, [prevMessage]);
   const messageAttachments = useMemo(
     () =>
       Array.isArray(message.attachments)
