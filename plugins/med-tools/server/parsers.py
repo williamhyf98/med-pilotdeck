@@ -240,6 +240,36 @@ def _parse_xml(path: Path, artifact_id: str, derived_dir: Path, max_chars: int) 
     title = _first_element_text(root, {"title"}) or path.stem
     root_name = _local_name(getattr(root, "tag", ""))
     is_cda = root_name.lower() == "clinicaldocument"
+    if is_cda:
+        from .cda_parser import summarize_cda_root
+
+        rendered, cda_meta, cda_warnings = summarize_cda_root(root, max_chars=max_chars)
+        warnings.extend(cda_warnings)
+        preview_ref = _write_text_preview(derived_dir, artifact_id, rendered)
+        structured = bool(
+            (cda_meta.get("lab_item_count") or 0) > 0
+            or (cda_meta.get("observation_pair_count") or 0) > 0
+            or (rendered and len(rendered) > 40)
+        )
+        status = "ready" if structured else "degraded"
+        if not structured:
+            warnings.append("CDA 未抽到可用的结构化检验/观察项，已降级为标题与叙述摘要。")
+        return ParseOutcome(
+            kind="document",
+            subtype="cda_xml",
+            status=status,
+            summary=f"CDA 文档\n{_cap(rendered, max_chars)}",
+            metadata={
+                "parser": parser_backend,
+                "root_element": root_name,
+                "title": cda_meta.get("title") or title,
+                **{k: v for k, v in cda_meta.items() if k != "title"},
+            },
+            warnings=warnings,
+            preview_kind="text",
+            preview_ref=preview_ref,
+        )
+
     sections = _xml_sections(root)
     narrative = _xml_narrative(root)
     lines = [f"标题：{title}", f"根元素：{root_name}"]
@@ -249,13 +279,11 @@ def _parse_xml(path: Path, artifact_id: str, derived_dir: Path, max_chars: int) 
         lines.append(narrative)
     rendered = "\n".join(lines)
     preview_ref = _write_text_preview(derived_dir, artifact_id, rendered)
-    status = "degraded" if parser_backend == "ElementTree" else "ready"
-    subtype = "cda_xml" if is_cda else "xml"
     return ParseOutcome(
         kind="document",
-        subtype=subtype,
-        status=status,
-        summary=f"{'CDA' if is_cda else 'XML'} 文档\n{_cap(rendered, max_chars)}",
+        subtype="xml",
+        status="ready" if (sections or narrative) else "degraded",
+        summary=f"XML 文档\n{_cap(rendered, max_chars)}",
         metadata={
             "parser": parser_backend,
             "root_element": root_name,

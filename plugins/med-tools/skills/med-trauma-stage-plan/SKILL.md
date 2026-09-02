@@ -62,7 +62,7 @@ description: 生成战创伤分级救治方案（插件内 G9，主 Agent 模型
        · 用户文字已是合格伤情述说 → 直接引用，不要无故缩短
        · 否则根据用户文本整理成规范伤情述说
        · 禁止：主 Agent 根据普通照片自行写影像所见
-  → 若有 DICOM/PDF/报告类附件：先 med_parse_medical，把 report/summary 并入 injury_text
+  → 若有 DICOM/PDF/报告类附件：先 med_parse_medical（`continuation_mode: "material"`），把 report/summary 并入 injury_text；不要把本轮当成已结束
   → 普通伤情照片：把绝对路径放入 image_paths，交给工具内 G9 看图
   → 调用 mcp__med-tools__med_trauma_stage_plan(stage, injury_text, image_paths?)
   → 不强制 RAG

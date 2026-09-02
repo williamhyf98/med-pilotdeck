@@ -1261,6 +1261,9 @@ export async function runChatViaGateway(
             message: command ?? '',
             runMode,
             mode: resolvedMode,
+            // The web UI has an elicitation channel, so the agent may propose
+            // switching a complex medical workspace task into plan mode.
+            allowPlanModeTools: true,
             runId,
             ...(basePermissionMode ? { basePermissionMode } : {}),
             ...(attachments.length > 0 ? { attachments } : {}),

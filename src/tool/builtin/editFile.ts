@@ -27,7 +27,7 @@ export function createEditFileTool(): PilotDeckToolDefinition<EditFileInput> {
     name: "edit_file",
     aliases: ["Edit"],
     description:
-      "Edit a declarative workspace text file, or an outside-workspace text file after explicit host permission, by replacing an exact string match.\n\nUsage:\n- Use this tool for document content and bundled-tool inputs such as Markdown, JSON, CSV, TSV, and plain text.\n- You may create a new declarative file directly by setting old_string to an empty string.\n- You must read an existing target file with read_file before editing it. This tool will reject edits to existing files that have not been read in this session.\n- old_string must exactly match the file content character-by-character, including indentation. Copy old_string directly from read_file output without adding or removing spaces.\n- Use this tool for targeted changes to an existing declarative file.\n- old_string must appear in the target file unless you are creating a new file with old_string: \"\".\n- If old_string is not unique, either provide a more specific old_string or set replace_all to update every occurrence.\n- Use replace_all when renaming or replacing repeated text across the same file.\n- Paths outside the workspace require explicit user permission before execution.",
+      "通过精确字符串匹配替换，编辑工作区内的声明式文本文件；若要编辑工作区之外的文本文件，需先获得宿主明确授权。\n\n用法：\n- 用于文档内容和随附工具的输入，例如 Markdown、JSON、CSV、TSV 和纯文本。\n- 把 old_string 设为空字符串，可以直接创建一个新的声明式文件。\n- 编辑已存在的目标文件前，必须先用 read_file 读取；本会话中未读取过的已有文件，编辑会被拒绝。\n- old_string 必须与文件内容逐字符完全一致，包括缩进。请直接从 read_file 的输出中复制 old_string，不要增删空格。\n- 对已有声明式文件做定点修改时使用本工具。\n- 除非用 old_string: \"\" 创建新文件，否则 old_string 必须出现在目标文件中。\n- 若 old_string 不唯一，要么给出更具体的 old_string，要么设置 replace_all 以替换全部匹配。\n- 在同一文件中重命名或替换重复文本时使用 replace_all。\n- 工作区之外的路径在执行前需要用户明确授权。",
     kind: "filesystem",
     inputSchema: {
       type: "object",
@@ -36,20 +36,20 @@ export function createEditFileTool(): PilotDeckToolDefinition<EditFileInput> {
       properties: {
         file_path: {
           type: "string",
-          description: "Relative or absolute path of the file to edit. Paths outside the workspace require explicit user permission.",
+          description: "要编辑的文件路径，可为相对路径或绝对路径。工作区之外的路径需要用户明确授权。",
         },
         old_string: {
           type: "string",
-          description: "The exact substring to find and replace. It must appear in the target file.",
+          description: "要查找并被替换的精确子串，必须出现在目标文件中。",
         },
         new_string: {
           type: "string",
-          description: "The replacement string that will replace old_string.",
+          description: "用来替换 old_string 的新字符串。",
         },
         replace_all: {
           type: "boolean",
           description:
-            "When true, replace all occurrences of old_string. Defaults to false, which requires old_string to be unique.",
+            "为 true 时替换 old_string 的全部匹配。默认 false，此时要求 old_string 在文件中唯一。",
         },
       },
     },

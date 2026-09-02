@@ -4,6 +4,7 @@ import { createEditFileTool } from "../builtin/editFile.js";
 import { createGlobTool } from "../builtin/glob.js";
 import { createGrepTool } from "../builtin/grep.js";
 import { createGetCurrentTimeTool } from "../builtin/getCurrentTime.js";
+import { createEnterPlanModeTool, createExitPlanModeTool } from "../builtin/planMode.js";
 import { createReadFileTool } from "../builtin/readFile.js";
 import { createReadSkillTool, type ReadSkillDeps } from "../builtin/readSkill.js";
 import { createTodoWriteTool } from "../builtin/todoWrite.js";
@@ -21,6 +22,11 @@ export type CreateBuiltinRegistryOptions = {
    * `ask_user_question` builtin. Registered by default. Pass `false` to skip.
    */
   askUserQuestion?: false;
+  /**
+   * `enter_plan_mode` / `exit_plan_mode` builtins. Registered by default.
+   * Pass `false` for non-interactive or otherwise constrained hosts.
+   */
+  planMode?: false;
 };
 
 export function createBuiltinRegistry(options?: CreateBuiltinRegistryOptions): ToolRegistry {
@@ -34,6 +40,10 @@ export function createBuiltinRegistry(options?: CreateBuiltinRegistryOptions): T
   registry.register(createBashTool(options?.bash));
   if (options?.askUserQuestion !== false) {
     registry.register(createAskUserQuestionTool());
+  }
+  if (options?.planMode !== false) {
+    registry.register(createEnterPlanModeTool());
+    registry.register(createExitPlanModeTool());
   }
   registry.register(createTodoWriteTool());
   if (options?.readSkill) {

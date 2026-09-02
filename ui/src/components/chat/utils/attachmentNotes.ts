@@ -53,7 +53,7 @@ export function buildMedicalFolderPathNote(folder: MedicalFolderPathNote): strin
     }
   }
   lines.push(
-    '- instruction: Call mcp__med-tools__med_parse_medical with path set to the folder above (not individual files). Do not use read_file on DICOM/PDF/CDA/ECG binaries. Show the returned report field verbatim.',
+    '- instruction: Call mcp__med-tools__med_parse_medical with path set to the folder above (not individual files). Do not use read_file on DICOM/PDF/CDA/ECG binaries. For pure interpretation use continuation_mode="terminal" (default) and do not rewrite a non-empty report. If this parse is only one step of a larger planned task (case report / HTML / care plan), use continuation_mode="material" and continue unfinished steps after the streamed report.',
   );
   return `\n\n${MEDICAL_FOLDER_NOTE_MARKER}\n${lines.join('\n')}\n${MEDICAL_FOLDER_NOTE_END_MARKER}\n`;
 }

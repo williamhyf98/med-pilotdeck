@@ -16,12 +16,37 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 MEDICAL_PROMPT_PATH = PLUGIN_ROOT / "prompts" / "medical_read.md"
 DICOM_PROMPT_PATH = PLUGIN_ROOT / "prompts" / "dicom_read.md"
 
-PRESENTATION = (
-    "若 report 非空：将 report 字段原样展示给用户；不要改写、压缩、转述或重新组织。"
+PRESENTATION_TERMINAL = (
+    "continuation_mode=terminal。"
+    "若 report 非空：报告已由运行时流式写入并作为本轮最终回答；不要改写、压缩、转述或重新粘贴。"
     "最多可在报告前后各加 1–2 句说明（来源模型/是否回退/文件名/错误）。"
     "若 report 为空且 agent_continue=true：主 Agent 必须根据 summary / png_paths / warnings "
     "继续完成结构化中文医学解读，不要因 VLM 失败而中止任务。"
 )
+
+PRESENTATION_MATERIAL = (
+    "continuation_mode=material。"
+    "report/summary 是后续步骤的事实材料，不是整轮任务的终点。"
+    "若 report 非空：不要复述或改写整份报告；把它与 summary/png_paths 一并作为输入，"
+    "继续完成计划中尚未完成的步骤（例如病例报告模版、HTML、Word/PDF、救治方案）。"
+    "若 report 为空且 agent_continue=true：先根据 summary / png_paths / warnings 完成必要医学解读，"
+    "再继续后续交付步骤；不要因 VLM 失败而中止整轮任务。"
+)
+
+# Backward-compatible alias used by older tests / callers.
+PRESENTATION = PRESENTATION_TERMINAL
+
+VALID_CONTINUATION_MODES = frozenset({"terminal", "material"})
+
+
+def _normalize_continuation_mode(value: Any) -> str:
+    mode = str(value or "terminal").strip().lower()
+    return mode if mode in VALID_CONTINUATION_MODES else "terminal"
+
+
+def _presentation_for_mode(mode: str) -> str:
+    return PRESENTATION_MATERIAL if mode == "material" else PRESENTATION_TERMINAL
+
 
 mcp = FastMCP(
     "med-tools",
@@ -31,7 +56,11 @@ mcp = FastMCP(
         f"(suffixes: {', '.join(sorted(SUPPORTED_SUFFIXES))}): parse locally, "
         "then call on-box G9-V-Med for a structured report "
         "(falls back to the main agent model when G9 is unavailable). "
-        "If report is non-empty, show it verbatim. "
+        "Use continuation_mode='terminal' for pure attachment interpretation "
+        "(default; runtime may end the turn after a successful report). "
+        "Use continuation_mode='material' when the parse is only one step of a "
+        "larger task (case report, HTML, Word/PDF, care plan) so the main agent "
+        "continues after the streamed report. "
         "If report is empty and agent_continue=true, continue the medical "
         "interpretation yourself using summary/png_paths. "
         "For war-trauma knowledge Q&A: call med_trauma_rag_query, then the main "
@@ -95,6 +124,7 @@ def _prepare_medical_parse(
     max_items: int = 64,
     max_frames: int = 8,
     skip_vlm: bool = False,
+    continuation_mode: str = "terminal",
     tool_name: str = "med_parse_medical",
 ) -> Dict[str, Any]:
     """Parse phase only (no VLM). Returns the base payload plus VLM inputs.
@@ -106,6 +136,7 @@ def _prepare_medical_parse(
     derived_dir = _resolve_derived_dir(root)
     max_items = max(1, min(int(max_items or 64), 64))
     max_frames = max(1, min(int(max_frames or 8), 32))
+    mode = _normalize_continuation_mode(continuation_mode)
 
     payload: Dict[str, Any] = {
         "tool": tool_name,
@@ -125,7 +156,8 @@ def _prepare_medical_parse(
         "agent_continue": False,
         "primary_model": None,
         "primary_error": "",
-        "presentation": PRESENTATION,
+        "continuation_mode": mode,
+        "presentation": _presentation_for_mode(mode),
     }
 
     if not root.exists():
@@ -275,6 +307,7 @@ def _run_medical_parse(
     max_items: int = 64,
     max_frames: int = 8,
     skip_vlm: bool = False,
+    continuation_mode: str = "terminal",
     tool_name: str = "med_parse_medical",
 ) -> Dict[str, Any]:
     """Blocking parse + non-streaming VLM report (used by tests / fallback callers)."""
@@ -283,6 +316,7 @@ def _run_medical_parse(
         max_items=max_items,
         max_frames=max_frames,
         skip_vlm=skip_vlm,
+        continuation_mode=continuation_mode,
         tool_name=tool_name,
     )
     vlm_plan = payload.pop("_vlm", {"run": False})
@@ -306,6 +340,7 @@ async def _run_medical_parse_stream(
     max_items: int = 64,
     max_frames: int = 8,
     skip_vlm: bool = False,
+    continuation_mode: str = "terminal",
     tool_name: str = "med_parse_medical",
 ) -> Dict[str, Any]:
     """Parse then stream the G9 report through ``on_text`` (with main-agent fallback)."""
@@ -316,6 +351,7 @@ async def _run_medical_parse_stream(
         max_items=max_items,
         max_frames=max_frames,
         skip_vlm=skip_vlm,
+        continuation_mode=continuation_mode,
         tool_name=tool_name,
     )
     vlm_plan = payload.pop("_vlm", {"run": False})
@@ -345,6 +381,7 @@ async def med_parse_medical(
     max_items: int = 64,
     max_frames: int = 8,
     skip_vlm: bool = False,
+    continuation_mode: str = "terminal",
 ) -> str:
     """Unified medical attachment parser + G9-V-Med report (301-aligned suffixes).
 
@@ -353,22 +390,27 @@ async def med_parse_medical(
     .json/.xml1, .hea/.dat and other ECG-related names (some degraded).
 
     Steps:
-    1. Local parse (metadata / text / preview images).
+    1. Local parse (metadata / text / preview images), including structured CDA
+       lab/observation extraction when applicable.
     2. Unless skip_vlm, call G9-V-Med and return one structured Chinese report.
 
-    Agent presentation rule (important):
-    If `report` is non-empty, show it VERBATIM (do not rewrite).
+    continuation_mode:
+    - terminal (default): pure attachment interpretation. On a successful
+      non-empty report, the runtime may treat the streamed report as the final
+      answer for this turn. Do not paste the report again.
+    - material: the report/summary is material for later steps in the same turn
+      (case report, HTML, Word/PDF, care plan). Do not rewrite the report; keep
+      working on unfinished planned steps.
+
     If `report` is empty and `agent_continue` is true, continue the medical
     interpretation yourself with the main agent using summary/png_paths.
-
-    The G9 report streams live to the chat while it is generated; on success the
-    runtime shows `report` directly, so do not paste it again.
 
     Args:
         path: Absolute or relative path to a medical file or folder.
         max_items: Max files to parse from a directory (default 64, max 64).
         max_frames: Max DICOM frames / images per file for VLM (default 8).
         skip_vlm: If true, only parse; do not call the 27B model.
+        continuation_mode: "terminal" or "material" (default "terminal").
     """
     streamed_chars = 0
     pending_chunks: List[str] = []
@@ -394,6 +436,7 @@ async def med_parse_medical(
         max_items=max_items,
         max_frames=max_frames,
         skip_vlm=skip_vlm,
+        continuation_mode=continuation_mode,
         tool_name="med_parse_medical",
     )
     await flush_text()

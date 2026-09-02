@@ -33,6 +33,6 @@ test("model-visible write and bash descriptions do not recommend generated progr
     createBashTool().description,
   ].join("\n");
 
-  assert.match(descriptions, /declarative/u);
+  assert.match(descriptions, /声明式|declarative/u);
   assert.doesNotMatch(descriptions, /reusable scripts|generators|python -|node -e|heredoc/iu);
 });

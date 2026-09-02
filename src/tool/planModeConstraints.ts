@@ -15,6 +15,7 @@ export const PLAN_MODE_ALLOWED_TOOLS = new Set([
   "glob",
   "ask_user_question",
   "todo_write",
+  "exit_plan_mode",
   "read_skill",
   "bash",
   "write_file",
@@ -27,14 +28,14 @@ export function buildPlanModeViolationMessage(toolName: string): string {
   return [
     `${PLAN_MODE_VIOLATION_HEADER} Tool "${toolName}" is BLOCKED in plan mode.`,
     "",
-    "You are in READ-ONLY plan mode. This tool cannot be executed.",
+    "当前是只读计划模式，用户批准计划前不能执行这个工具。",
     "",
-    "What you should do instead:",
-    "1. Use read-only tools (read_file, grep, glob, bash with read-only commands) to explore",
-    "2. Write your plan as markdown under .pilotdeck/plans/",
-    "3. Present the plan in your reply and wait for the user to leave plan mode",
+    "现在应当：",
+    "1. 用 read_file、grep、glob 或只读 bash 查看工作区材料",
+    "2. 只在 .pilotdeck/plans/ 下写 markdown 计划",
+    "3. 用 exit_plan_mode(plan_file_path) 提交计划供用户审核",
     "",
-    "Do NOT retry this tool. It will fail again.",
+    "不要重试这个工具；在计划模式下仍会失败。",
   ].join("\n");
 }
 
@@ -43,9 +44,9 @@ export function buildPlanModeBashViolationMessage(command: string): string {
   return [
     `${PLAN_MODE_VIOLATION_HEADER} bash command "${truncated}" is BLOCKED — write/modify commands are not allowed in plan mode.`,
     "",
-    "In plan mode, bash is restricted to READ-ONLY commands only (ls, cat, git status, git log, git diff, pwd, find, head, wc, etc.).",
+    "计划模式只允许只读 bash 命令（例如 ls、git status、git log、git diff、pwd、wc）。",
     "",
-    "Rewrite your command as a read-only operation, or use read_file/grep/glob instead.",
+    "请改成只读命令，或使用 read_file、grep、glob。",
   ].join("\n");
 }
 

@@ -24,28 +24,29 @@ Wire names in chat: `mcp__med-tools__<tool>`.
 用户
   │
   ├─【解读附件】── Skill med-medical
-  │                  └─ med_parse_medical → report 原样展示
+  │                  └─ med_parse_medical(continuation_mode=terminal)
+  │                     → report 流式展示并可作为本轮终局
   │
   ├─【战创伤知识点问答】── Skill med-trauma-assist
   │                  └─ med_trauma_rag_query → 主模型作答（可附简短要点）
   │
   ├─【正式分阶段救治方案】── Skill med-trauma-stage-plan
-  │                  ├─ (可选) med_parse_medical 并入可见伤情
-  │                  └─ med_trauma_stage_plan → care_plan 原样展示
+  │                  ├─ (可选) med_parse_medical(continuation_mode=material) 并入可见伤情
+  │                  └─ med_trauma_stage_plan → care_plan 流式展示，本轮可继续导出
   │
-  ├─【按模版生成病例报告】── Skill med-case-report
-  │                  ├─ (可选) med_parse_medical 并入附件解读
-  │                  └─ 主模型按固定 9 段模版 + 诊断四步方案撰写
+  ├─【按模版生成病例报告 / HTML】── Skill med-case-report
+  │                  ├─ med_parse_medical(continuation_mode=material) 并入附件解读
+  │                  └─ 主模型继续写固定 9 段模版 / 后续交付物
   │
   └─【纯问答】────── 主模型直接答
 ```
 
 Skills:
 
-- `med-medical` — 附件解读；`report` 原样展示
+- `med-medical` — 附件解读；`continuation_mode=terminal`；`report` 可作为本轮终局
 - `med-trauma-assist` — RAG 知识点问答；非正式五段方案
-- `med-trauma-stage-plan` — 六阶段正式方案；`care_plan` 原样展示
-- `med-case-report` — 固定 9 段模版病例报告（med-mas scribe 契约）；主模型生成
+- `med-trauma-stage-plan` — 六阶段正式方案；先 parse 时用 `material`；`care_plan` 流式展示后本轮可继续
+- `med-case-report` — 固定 9 段模版病例报告；附件解析必须用 `material`，解析后继续写报告/HTML
 
 ### MCP 调用前的 Skill 门禁
 
@@ -69,9 +70,17 @@ Skills:
 Unified entry (aligned with offline-301 suffixes):
 
 1. Accept a **file or directory** (for chat/Files folder uploads, pass the folder root once).
-2. Parse locally by type: DICOM, PDF, images, CDA/XML, text/markdown, JSON, WFDB/ECG (some ECG types degraded).
+2. Parse locally by type: DICOM, PDF, images, **structured CDA/XML** (CLUSTER labs, observation pairs), text/markdown, JSON, WFDB/ECG (some ECG types degraded).
 3. Call local **G9-V-Med** for one structured Chinese report.
-4. Agent should show the returned `report` **verbatim**.
+4. Choose continuation:
+   - `continuation_mode="terminal"` (default, `med-medical`): streamed `report` may end the turn.
+   - `continuation_mode="material"` (`med-case-report` / multi-step plans): streamed `report` is material; the main agent continues unfinished steps.
+
+CDA notes:
+
+- Lab items prefer the CD `code` on `检验结果代码` (e.g. `cTnI`) over hospital internal ids.
+- If only an internal id like `5581` exists, it is kept verbatim and marked **项目名称未提供** — never guessed from order.
+- `status=ready/degraded` follows structured extraction quality, not whether `lxml` is installed.
 
 Directory batches default to `max_items=64` (max 64); truncated folders surface a warning with discovered vs parsed counts.
 

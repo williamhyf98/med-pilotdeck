@@ -92,10 +92,10 @@ const CIRCUIT_BREAKER_GRACE_PROMPT = [
   "(3) if you believe the tool should work, try once more with corrected input.",
 ].join(" ");
 const PLAN_MODE_REMINDER_MESSAGE = [
-  "Plan mode is active.",
-  "Read first using read-only tools, then write or refine plan markdown only under `.pilotdeck/plans/`.",
-  "Do not make implementation changes while planning.",
-  "When the plan is ready for user review, present it in your reply and wait for the user to leave plan mode.",
+  "计划模式已启用。",
+  "先用只读工具查看工作区材料与可用 skill；只可在 `.pilotdeck/plans/` 下写或修改计划 markdown。",
+  "规划期间不要调用医学处理、文档转换或修改业务文件。",
+  "计划完成后调用 exit_plan_mode(plan_file_path) 交给用户审核，不要只在普通回复里贴出计划后等待。",
 ].join("\n");
 
 function logAutoCompactFailure(

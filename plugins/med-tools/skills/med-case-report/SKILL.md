@@ -62,7 +62,7 @@ description: 固定模版病例报告生成。当用户要求为常规临床病�
 
 ## 附件处理
 
-- **DICOM / PDF / 检验报告等医学附件**：先调用 `mcp__med-tools__med_parse_medical`（同 `med-medical` 流程），把返回的 `report` / `summary` 并入材料，再按模版撰写。不要 `read_file` 这些二进制/医学文件自己解析。
+- **DICOM / PDF / 检验报告等医学附件**：先调用 `mcp__med-tools__med_parse_medical`，并传 **`continuation_mode: "material"`**（本 Skill 是多步骤任务，解析只是材料准备）。把返回的 `report` / `summary` 并入材料，再按模版撰写。**不要**复述或改写整份 G9 报告；解析成功后必须继续未完成的病例报告 / HTML 等步骤。不要 `read_file` 这些二进制/医学文件自己解析。
 - **普通照片（皮损/伤口等）**：主 Agent 直接查看图片，只描述可见所见，禁止虚构照片外的影像细节。
 - **纯文字病例**：直接用用户叙述撰写。
 
@@ -70,7 +70,7 @@ description: 固定模版病例报告生成。当用户要求为常规临床病�
 
 | 意图 | Skill |
 |------|------|
-| 「这张 CT / 这份 PDF 是什么」 | `med-medical`（先解读；解读后如需正式病例报告，再回到本 Skill） |
+| 「这张 CT / 这份 PDF 是什么」 | `med-medical`（`continuation_mode: "terminal"`；先解读；解读后如需正式病例报告，再回到本 Skill） |
 | 「四级救治是哪四级」「怎么止血」 | `med-trauma-assist` + RAG |
 | 「按伤员发生地/手术组出六阶段救治方案」 | `med-trauma-stage-plan` |
-| 「按模版出病例报告 / 诊断与治疗方案」 | **本 Skill** |
+| 「按模版出病例报告 / 诊断与治疗方案」 | **本 Skill**（附件解析必须用 `material`） |

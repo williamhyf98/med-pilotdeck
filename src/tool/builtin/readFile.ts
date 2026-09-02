@@ -44,24 +44,24 @@ export function createReadFileTool(): PilotDeckToolDefinition<ReadFileInput> {
     name: "read_file",
     aliases: ["Read"],
     description:
-      "Reads a file from the current workspace. You can access workspace files directly by using this tool.\n"
-      + "If the User provides a path to a file, assume that path is valid as long as it resolves inside the current workspace. "
-      + "It is okay to read a file that does not exist; an error will be returned.\n\nUsage:\n"
-      + "- The file_path parameter may be a workspace-relative path or an absolute path, but it must resolve inside the current workspace\n"
-      + "- If the user asks you to send or share a file, give them the workspace path; do not inspect arbitrary binary files unless a document skill or medical MCP tool is the right next step\n"
-      + "- By default, offset is 1 and the tool reads from the beginning of the file\n"
-      + "- You can optionally specify offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters\n"
-      + "- Results are returned using cat -n format, with line numbers starting at 1\n"
-      + "- For image files, screenshots, extracted video frames, and PDFs, use this tool to inspect the visual/document content directly\n"
-      + "- When the current model supports image input, image files are returned as model-visible image content\n"
-      + "- When the current model supports PDF input, small PDF files are returned as model-visible PDF content. When specific PDF pages are requested, pages are rendered as model-visible images if the model supports image input\n"
-      + "- Do not manually base64-encode local images/PDFs or route them through another vision/document API unless read_file reports that the current model cannot read that content\n"
-      + "- When the current model does not support the required modality, reading the file returns a text notice explaining that the current model cannot read it\n"
-      + "- For large PDFs, provide the pages parameter to validate specific page ranges (e.g., pages: \"1-5\"). Maximum 20 pages per request\n"
-      + "- This tool can read Jupyter notebooks (.ipynb files) and returns a text rendering of notebook cells and outputs\n"
-      + "- This tool can only read files, not directories\n"
-      + "- If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents\n"
-      + "- If a previous tool result says it was persisted, truncated, or preview-only, read the file_path shown in that notice with read_file",
+      "读取当前工作区中的文件。可以用本工具直接访问工作区内的文件。\n"
+      + "用户给出文件路径时，只要该路径解析后位于当前工作区内，就按有效路径处理。"
+      + "读取不存在的文件也没问题，会返回一个错误。\n\n用法：\n"
+      + "- file_path 可以是相对工作区的路径或绝对路径，但解析后必须位于当前工作区内\n"
+      + "- 用户要求发送或分享文件时，给出其工作区路径；除非下一步确实要用文档技能或医学 MCP 工具，否则不要随意查看二进制文件\n"
+      + "- offset 默认为 1，即从文件开头开始读取\n"
+      + "- 可以选填 offset 和 limit（读长文件时尤其方便），但建议不传这两个参数，直接读取整个文件\n"
+      + "- 结果按 cat -n 格式返回，行号从 1 开始\n"
+      + "- 图片文件、截图、抽取的视频帧和 PDF，都用本工具直接查看其视觉/文档内容\n"
+      + "- 当前模型支持图像输入时，图片文件会作为模型可见的图像内容返回\n"
+      + "- 当前模型支持 PDF 输入时，小体积 PDF 会作为模型可见的 PDF 内容返回；若指定了 PDF 页码，且模型支持图像输入，这些页会渲染成模型可见的图像\n"
+      + "- 不要手动把本地图片/PDF 编码成 base64，也不要转给其他视觉/文档 API 处理，除非 read_file 明确提示当前模型无法读取该内容\n"
+      + "- 当前模型不支持所需模态时，读取该文件会返回一段文字提示，说明当前模型无法读取\n"
+      + "- 大体积 PDF 请用 pages 参数指定要核对的页码范围（例如 pages: \"1-5\"），单次最多 20 页\n"
+      + "- 本工具可以读取 Jupyter notebook（.ipynb 文件），返回其单元格与输出的文本呈现\n"
+      + "- 本工具只能读取文件，不能读取目录\n"
+      + "- 若文件存在但内容为空，返回的不是文件内容，而是一条系统提醒\n"
+      + "- 若此前某个工具结果提示内容已落盘、被截断或仅为预览，请用 read_file 读取该提示中给出的 file_path",
     kind: "filesystem",
     inputSchema: {
       type: "object",
@@ -71,22 +71,22 @@ export function createReadFileTool(): PilotDeckToolDefinition<ReadFileInput> {
         file_path: {
           type: "string",
           description:
-            "The relative or absolute path to the file to read. The path must resolve inside the current workspace.",
+            "要读取的文件路径，可为相对路径或绝对路径。该路径解析后必须位于当前工作区内。",
         },
         offset: {
           type: "integer",
           description:
-            "The 1-based line number to start reading from. Only provide if the file is too large to read at once.",
+            "开始读取的行号，从 1 开始计数。仅在文件过大、无法一次读完时才传。",
         },
         limit: {
           type: "integer",
           description:
-            "The number of lines to read. Only provide if the file is too large to read at once.",
+            "要读取的行数。仅在文件过大、无法一次读完时才传。",
         },
         pages: {
           type: "string",
           description:
-            "Page range for PDF files (e.g., \"1-5\", \"3\", \"10-20\"). Only applicable to PDF files. Maximum 20 pages per request.",
+            "PDF 文件的页码范围（例如 \"1-5\"、\"3\"、\"10-20\"）。仅对 PDF 有效，单次最多 20 页。",
         },
       },
     },

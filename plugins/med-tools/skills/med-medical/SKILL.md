@@ -14,14 +14,14 @@ description: 解析多种格式医疗附件（DICOM、PDF 报告、报告截图�
 
 按以下步骤处理：
 
-1. 调用 **`mcp__med-tools__med_parse_medical`**（统一入口）。
+1. 调用 **`mcp__med-tools__med_parse_medical`**（统一入口），并传 **`continuation_mode: "terminal"`**（默认值；纯附件解读用它）。
 2. `path` 尽量传绝对路径（文件**或**目录）。
-3. **不要**用 `read_file` 或自行临时解析打开这些文件——该工具在本地解析，并优先使用本机 **G9-V-Med**（`:8030`）。若 G9 不可用，工具可能在插件内回退到**已配置的主 Agent 模型**（来自 `pilotdeck.yaml` 的 `agent.model`，除非被 `MED_VLM_FALLBACK_*` 覆盖）。
+3. **不要**用 `read_file` 或自行临时解析打开这些文件——该工具在本地解析（含结构化 CDA 检验/观察项），并优先使用本机 **G9-V-Med**（`:8030`）。若 G9 不可用，工具可能在插件内回退到**已配置的主 Agent 模型**（来自 `pilotdeck.yaml` 的 `agent.model`，除非被 `MED_VLM_FALLBACK_*` 覆盖）。
 4. 工具返回 JSON 之后：
    - 若 `report` 非空：报告已由运行时**实时流式写入对话并保存为最终回答**。**不要**再粘贴或改写一遍。调用工具前不要写任何前言——前导文字会混入流式报告。（兼容行为：若流式不可用，仍应原样展示。）
    - 若 `report` 为空且 `agent_continue` 为 true：**不要停止**。使用 `summary`、`png_paths`、`warnings` 和 `vlm_error`，用**主 Agent 模型**继续医学解读，并遵循 med-tools 所要求的同一套中文结构化报告章节。须明确说明 G9 不可用，本次为主 Agent 回退解读。
 
-边界：战创伤**知识点问答** → `med-trauma-assist`（RAG）；**规定格式六阶段救治方案** → `med-trauma-stage-plan`（G9，原样展示 `care_plan`）；本 Skill 专注附件解析与结构化报告。
+边界：战创伤**知识点问答** → `med-trauma-assist`（RAG）；**规定格式六阶段救治方案** → `med-trauma-stage-plan`（G9，原样展示 `care_plan`）；本 Skill 专注附件解析与结构化报告。若后续还要写正式 9 段病例报告 / HTML，应改走 `med-case-report`，并对 `med_parse_medical` 使用 `continuation_mode: "material"`。
 
 ## 对话附件
 

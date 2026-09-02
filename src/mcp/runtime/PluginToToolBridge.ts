@@ -81,7 +81,6 @@ function buildToolDefinition(
         const streamSpec = directStreamSpec(spec.serverId, spec.toolName);
         const directStream = streamSpec !== undefined;
         const directFinalField = streamSpec?.field;
-        const endTurn = streamSpec?.endTurn === true;
         let streamedText = "";
         const emitDelta = (chunk: string): void => {
           if (!chunk || !context.progress) return;
@@ -134,6 +133,11 @@ function buildToolDefinition(
             emitDelta(finalText.slice(streamedText.length));
           }
         }
+        const effectiveEndTurn = shouldEndTurnAfterDirectStream(
+          spec.toolName,
+          input,
+          parsedPayload?.continuation_mode,
+        );
         return {
           content: marshalMcpContent(content, client.spec.transport === "stdio" ? client.spec.cwd : undefined),
           data: parsedPayload ?? content,
@@ -142,7 +146,7 @@ function buildToolDefinition(
             ...(finalText
               ? {
                   generationOwner: "plugin-vlm",
-                  ...(endTurn ? { directFinalAssistantText: finalText } : {}),
+                  ...(effectiveEndTurn ? { directFinalAssistantText: finalText } : {}),
                 }
               : {}),
           },
@@ -182,6 +186,10 @@ function buildToolDefinition(
  * follow-up like Word/PDF export can run in the same user turn).
  * `endTurn` true: also set `directFinalAssistantText` and finish the turn
  * without a second main-model rewrite.
+ *
+ * For `med_parse_medical`, the default remains terminal (`endTurn: true`), but
+ * callers may pass `continuation_mode: "material"` so the streamed report is
+ * treated as material and the main agent continues unfinished planned steps.
  */
 const DIRECT_STREAM_FIELDS: Record<string, Record<string, { field: string; endTurn: boolean }>> = {
   "med-tools": {
@@ -189,6 +197,42 @@ const DIRECT_STREAM_FIELDS: Record<string, Record<string, { field: string; endTu
     med_parse_medical: { field: "report", endTurn: true },
   },
 };
+
+function readContinuationMode(input: unknown): string | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+  const value = (input as Record<string, unknown>).continuation_mode;
+  return typeof value === "string" ? value.trim().toLowerCase() : undefined;
+}
+
+function resolveDirectStreamEndTurn(
+  streamSpec: { field: string; endTurn: boolean } | undefined,
+  input: unknown,
+  toolName: string,
+): boolean {
+  if (!streamSpec) return false;
+  if (toolName === "med_parse_medical" && readContinuationMode(input) === "material") {
+    return false;
+  }
+  return streamSpec.endTurn === true;
+}
+
+/** Exported for unit tests covering continuation_mode endTurn switching. */
+export function shouldEndTurnAfterDirectStream(
+  toolName: string,
+  input: unknown,
+  payloadContinuationMode?: unknown,
+): boolean {
+  const streamSpec = directStreamSpec("med-tools", toolName);
+  const endTurn = resolveDirectStreamEndTurn(streamSpec, input, toolName);
+  if (!endTurn) return false;
+  if (
+    typeof payloadContinuationMode === "string"
+    && payloadContinuationMode.trim().toLowerCase() === "material"
+  ) {
+    return false;
+  }
+  return true;
+}
 
 function directStreamSpec(
   serverId: string,
