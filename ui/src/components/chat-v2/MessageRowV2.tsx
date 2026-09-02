@@ -17,6 +17,7 @@ import {
 import type {
   ChatAttachment,
   ChatMessage,
+  CitationMetadata,
   PilotDeckPermissionSuggestion,
   SessionPermissionGrantResult,
 } from '../chat/types/types';
@@ -139,6 +140,28 @@ function MessageRowV2({
     () => (Array.isArray(message.artifacts) ? message.artifacts : []),
     [message.artifacts],
   );
+  // 从前一条 med_trauma_rag_query 工具结果中提取 citations 元数据
+  const citations = useMemo(() => {
+    const prev = prevMessage as ChatMessage | undefined;
+    if (!prev || prev.type !== 'user' || !prev.toolResult) return undefined;
+    const toolName = String(prev.toolName || '');
+    if (!toolName.includes('med_trauma_rag_query')) return undefined;
+    const content = typeof prev.toolResult.content === 'string' ? prev.toolResult.content : '';
+    if (!content) return undefined;
+    try {
+      const parsed = JSON.parse(content);
+      const chunks = Array.isArray(parsed.chunks) ? parsed.chunks : [];
+      return chunks.map((chunk: Record<string, unknown>, i: number) => ({
+        index: (chunk.rank as number) || (i + 1),
+        title: String(chunk.title || chunk.source || ''),
+        section: String(chunk.section || ''),
+        evidenceGrade: chunk.evidence_grade ? String(chunk.evidence_grade) : undefined,
+        evidenceQuality: chunk.evidence_quality ? String(chunk.evidence_quality) : undefined,
+      }));
+    } catch {
+      return undefined;
+    }
+  }, [prevMessage]);
   const messageAttachments = useMemo(
     () =>
       Array.isArray(message.attachments)
@@ -431,7 +454,7 @@ function MessageRowV2({
         <span className="inline-block h-4 w-2 animate-pulse bg-neutral-400 dark:bg-neutral-500" />
       ) : (
         <Markdown className="prose prose-sm prose-neutral max-w-none dark:prose-invert prose-headings:mb-2 prose-headings:mt-4 prose-h2:text-lg prose-h3:text-base prose-p:my-2 prose-pre:my-3 prose-ol:my-2 prose-ul:my-2 prose-table:my-0 prose-hr:my-4" projectName={selectedProject?.name}
-        onFileOpen={onFileOpen} isStreaming={message.isStreaming} artifactFiles={assistantArtifacts}>{contentDisplayText}</Markdown>
+        onFileOpen={onFileOpen} isStreaming={message.isStreaming} artifactFiles={assistantArtifacts} citations={citations}>{contentDisplayText}</Markdown>
       )}
       {assistantArtifacts.length > 0 ? (
         <AgentFileArtifactGroup
