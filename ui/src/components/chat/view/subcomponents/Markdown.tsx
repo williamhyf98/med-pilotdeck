@@ -10,6 +10,9 @@ import {
   createRemarkArtifactFileTextPlugin,
   type MarkdownArtifactFile,
 } from '../../utils/remarkArtifactFileText';
+import { createRemarkCitationPlugin } from '../../utils/remarkCitationPlugin';
+import { CitationPopover } from '../../utils/CitationPopover';
+import type { CitationMetadata } from '../../types/types';
 
 type MarkdownProps = {
   children: React.ReactNode;
@@ -18,13 +21,17 @@ type MarkdownProps = {
   isStreaming?: boolean;
   onFileOpen?: (filePath: string) => void;
   artifactFiles?: MarkdownArtifactFile[];
+  citations?: CitationMetadata[];
 };
 
 const fullRehypePlugins = [rehypeKatex];
 
 const linkClassName = 'text-blue-600 hover:underline dark:text-blue-400';
 
-function createMarkdownComponents(onFileOpen?: (filePath: string) => void): Components {
+function createMarkdownComponents(
+  onFileOpen?: (filePath: string) => void,
+  citations?: CitationMetadata[],
+): Components {
   return {
     a: ({ href, children, ...props }) => {
       const filePath = resolveMarkdownFileHref(href);
@@ -56,6 +63,12 @@ function createMarkdownComponents(onFileOpen?: (filePath: string) => void): Comp
         </a>
       );
     },
+    cite: (props: Record<string, unknown>) => (
+      <CitationPopover
+        data-citation-index={props['data-citation-index'] as string}
+        citations={citations}
+      />
+    ),
   };
 }
 
@@ -65,6 +78,7 @@ export function Markdown({
   isStreaming,
   onFileOpen,
   artifactFiles,
+  citations,
 }: MarkdownProps) {
   const content = useMemo(
     () => normalizeInlineCodeFences(String(children ?? '')),
@@ -72,14 +86,20 @@ export function Markdown({
   );
 
   const components = useMemo(
-    () => (onFileOpen ? createMarkdownComponents(onFileOpen) : undefined),
-    [onFileOpen],
+    () => createMarkdownComponents(onFileOpen, citations),
+    [onFileOpen, citations],
   );
   const remarkPlugins = useMemo(() => {
     if (isStreaming) return [remarkGfm];
-    if (artifactFiles === undefined) return [remarkGfm, remarkMath];
-    return [remarkGfm, remarkMath, createRemarkArtifactFileTextPlugin(artifactFiles)];
-  }, [artifactFiles, isStreaming]);
+    const base = [remarkGfm, remarkMath];
+    if (citations && citations.length > 0) {
+      base.push(createRemarkCitationPlugin(citations));
+    }
+    if (artifactFiles !== undefined) {
+      base.push(createRemarkArtifactFileTextPlugin(artifactFiles));
+    }
+    return base;
+  }, [artifactFiles, citations, isStreaming]);
 
   // Only apply streaming-fade-in on the initial mount while streaming.
   // Once streaming ends, never re-apply it — prevents old content from
