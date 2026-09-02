@@ -110,9 +110,9 @@ mcp__med-tools__med_trauma_rag_query(query=<改写后的检索句>)
 
 ## 建议输出结构
 
-1. **直接回答**  
-2. **简要处置要点**（可选，非正式方案）  
-3. **参考来源**（`title` / `section` / `chunk_id`；若 chunk 带 `evidence_grade`、`evidence_quality`、`data_layer`、`topic` 则一并标注证据级别。这些字段**可能缺失**（本地降级路径没有），有则标、无则略，不要编造）  
+1. **直接回答**（正文中引用检索资料事实时，在句末标注 `[N]`，N 为 chunks 中该条目的 rank 编号）
+2. **简要处置要点**（可选，非正式方案）
+3. **参考来源**（正文结束后列出，格式为 `[N] title > section`。有 evidence_grade、evidence_quality 则标注在章节路径后。不要输出 chunk_id、score、doc_id 等机器标识。若某条 chunk 的 title / section 为空，改写成可读的文献名+章节名再列）
 4. **免责声明**
 
 边界：正式六阶段方案 → `med-trauma-stage-plan`；DICOM/PDF 解读 → `med-medical`。
