@@ -4,6 +4,7 @@ import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
+import rehypeRaw from 'rehype-raw';
 import { normalizeInlineCodeFences } from '../../utils/chatFormatting';
 import { resolveMarkdownFileHref } from '../../utils/resolveMarkdownFileHref';
 import {
@@ -24,7 +25,7 @@ type MarkdownProps = {
   citations?: CitationMetadata[];
 };
 
-const fullRehypePlugins = [rehypeKatex];
+const fullRehypePlugins = [rehypeKatex, rehypeRaw];
 
 const linkClassName = 'text-blue-600 hover:underline dark:text-blue-400';
 
