@@ -86,6 +86,26 @@ export function resolveTypedProjectMemoryDir(projectId: string, pilotHome: strin
   return resolve(pilotHome, "memory", typeKey, projectId);
 }
 
+/** Per-session war-trauma Case State directory under typed project memory. */
+export function resolveTraumaCaseDir(
+  projectId: string,
+  sessionId: string,
+  pilotHome: string,
+): string {
+  if (projectTypeKeyFromProjectId(projectId) !== PROJECT_TYPE_KEYS.war_trauma) {
+    throw new Error(`Expected a war_trauma project id: ${projectId}`);
+  }
+  const sanitized = sessionId.replace(/[^A-Za-z0-9._-]/g, "_");
+  const safeSessionId = sanitized === "." || sanitized === ".." || sanitized.length === 0
+    ? createHash("sha256").update(sessionId).digest("hex").slice(0, 24)
+    : sanitized;
+  return resolve(
+    resolveTypedProjectMemoryDir(projectId, pilotHome),
+    "cases",
+    safeSessionId,
+  );
+}
+
 /**
  * On-disk memory data directory for a project key / agent cwd.
  *
