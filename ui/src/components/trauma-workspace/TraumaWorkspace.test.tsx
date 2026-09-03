@@ -133,7 +133,7 @@ describe('TraumaWorkspace demo workflow', () => {
     expect(screen.getByRole('button', { name: '调整救治阶段' })).not.toBeNull();
   });
 
-  it('lets an empty case enter the real chat to create its first snapshot', () => {
+  it('shows the real chat for an empty case and keeps the demo one click away', () => {
     render(
       <TraumaWorkspace
         resetKey="trauma:empty"
@@ -142,9 +142,14 @@ describe('TraumaWorkspace demo workflow', () => {
         chatInterface={<div>空病例真实会话</div>}
       />,
     );
-    expect(screen.getByLabelText('演示案例对话')).not.toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '开始真实推演' }));
     expect(screen.getByText('空病例真实会话')).not.toBeNull();
     expect(screen.queryByLabelText('演示案例对话')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '查看演示案例' }));
+    expect(screen.getByLabelText('演示案例对话')).not.toBeNull();
+    expect(screen.queryByText('空病例真实会话')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '返回真实对话' }));
+    expect(screen.getByText('空病例真实会话')).not.toBeNull();
   });
 });

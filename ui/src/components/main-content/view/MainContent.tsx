@@ -991,7 +991,7 @@ function SplitBody(props: SplitBodyProps) {
               resetKey={`${selectedProject?.name ?? ''}:${selectedSession?.id ?? ''}`}
               projectKey={selectedProject?.fullPath || selectedProject?.path || selectedProject?.name}
               sessionId={selectedSession?.id}
-              chatInterface={selectedSession ? chatInterface : undefined}
+              chatInterface={chatInterface}
             />
           ) : chatInterface}
           </ErrorBoundary>

@@ -25,7 +25,7 @@ export default function TraumaWorkspace({
   const [currentRoundIndex, setCurrentRoundIndex] = useState(0);
   const [selectedMemoId, setSelectedMemoId] = useState<string | null>(null);
   const [showStageOverride, setShowStageOverride] = useState(false);
-  const [forceLiveChat, setForceLiveChat] = useState(false);
+  const [showDemoTranscript, setShowDemoTranscript] = useState(false);
   const caseStore = useCaseStore(projectKey, sessionId);
   const liveRounds = useMemo(
     () => snapshotsToRounds(caseStore.snapshots, caseStore.current),
@@ -38,7 +38,7 @@ export default function TraumaWorkspace({
     setCurrentRoundIndex(0);
     setSelectedMemoId(null);
     setShowStageOverride(false);
-    setForceLiveChat(false);
+    setShowDemoTranscript(false);
   }, [resetKey]);
 
   useEffect(() => {
@@ -88,7 +88,7 @@ export default function TraumaWorkspace({
           aria-label="伤情推演对话"
           className="min-h-0 min-w-0 overflow-hidden border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950 lg:rounded-xl lg:border lg:shadow-sm"
         >
-          {(hasLiveCase || forceLiveChat) && chatInterface
+          {chatInterface && !(showDemoTranscript && !hasLiveCase)
             ? chatInterface
             : <DemoTranscript rounds={DEMO_TRAUMA_ROUNDS} currentRoundIndex={currentRoundIndex} />}
         </section>
@@ -158,17 +158,17 @@ export default function TraumaWorkspace({
                   <p className="text-[9px] leading-4 text-neutral-500 dark:text-neutral-400">
                     {hasLiveCase
                       ? '当前流程树由真实病例快照驱动；阶段转换只有确认或带审计的人工覆盖后才会生效。'
-                      : forceLiveChat
-                        ? '请在左侧提交首轮伤情信息，首个病例快照生成后流程树会自动切换。'
-                        : '当前尚无真实病例快照，展示固定案例用于说明工作台交互。'}
+                      : showDemoTranscript
+                        ? '当前显示固定演示案例，仅用于说明工作台交互。'
+                        : '请在左侧提交首轮伤情信息，首个病例快照生成后流程树会切换为真实病例。'}
                   </p>
-                  {!hasLiveCase && !forceLiveChat && chatInterface ? (
+                  {!hasLiveCase && chatInterface ? (
                     <button
                       type="button"
-                      onClick={() => setForceLiveChat(true)}
+                      onClick={() => setShowDemoTranscript((current) => !current)}
                       className="mt-1.5 rounded-md border border-neutral-300 bg-white px-2 py-1 text-[9px] font-medium text-neutral-700 hover:bg-neutral-100 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-200"
                     >
-                      开始真实推演
+                      {showDemoTranscript ? '返回真实对话' : '查看演示案例'}
                     </button>
                   ) : null}
                 </div>

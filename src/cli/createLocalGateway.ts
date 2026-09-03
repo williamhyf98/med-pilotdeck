@@ -66,6 +66,7 @@ import {
   ensureWorkspaceLayout,
   isGeneralProjectKey,
   projectMetaTypeFromProjectPath,
+  projectTypeKeyFromProjectId,
   resolveAgentAdditionalWorkingDirectories,
   resolveAgentCwd,
   resolveGatewayProjectKey,
@@ -665,6 +666,9 @@ class ProjectRuntimeRegistry {
   async readTraumaCase(projectKey: string, sessionKey: string) {
     const projectId = projectKey.replace(/\\/gu, "/").split("/").filter(Boolean).at(-1)
       ?? projectKey;
+    if (projectTypeKeyFromProjectId(projectId) !== "trauma_med") {
+      return { current: null, snapshots: [] };
+    }
     const store = createTraumaCaseStore(resolveTraumaCaseDir(
       projectId,
       sessionKey,
