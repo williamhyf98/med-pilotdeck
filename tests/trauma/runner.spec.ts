@@ -10,6 +10,12 @@ import { createTraumaTurnRunner } from "../../src/trauma/runner.js";
 import { initialCaseState } from "../../src/trauma/stageConfig.js";
 import { createTraumaCaseStore } from "../../src/trauma/store.js";
 import type { ExtractedTurnFacts } from "../../src/trauma/types.js";
+import { traumaTurnEvents } from "../../src/trauma/events.js";
+import {
+  DEMO_ROUND_2_EXTRACTED,
+  DEMO_ROUND_2_REASONER_OUTPUT,
+  DEMO_ROUND_2_USER_TEXT,
+} from "./demoRound2.fixture.js";
 
 const now = "2026-09-03T15:09:00+08:00";
 
@@ -100,6 +106,7 @@ function reasonPayload() {
 
 function fakeModel(options: {
   extract?: ExtractedTurnFacts;
+  reason?: unknown;
   planQueries?: Array<{ query: string; reason: string }>;
   failAt?: "trauma_extract" | "trauma_plan" | "trauma_reason";
 }): StructuredModelClient {
@@ -112,7 +119,7 @@ function fakeModel(options: {
         ? (options.extract ?? extractedVitals())
         : input.name === "trauma_plan"
           ? { queries: options.planQueries ?? [] }
-          : reasonPayload();
+          : (options.reason ?? reasonPayload());
       if (!input.validate(payload)) {
         throw new Error("schema validation failed");
       }
@@ -181,6 +188,60 @@ test("happy path keeps the stage, stores pending transition and one memo", async
     assert.equal(saved?.round, 1);
     assert.equal(saved?.version, 1);
     assert.equal(saved?.transport.gateStatus, "READY");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("round 2 fixture keeps initial aid while raising a READY confirmation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-runner-round-2-"));
+  try {
+    const store = createTraumaCaseStore(root);
+    const previous = initialCaseState({
+      projectId: "trauma_med-demo",
+      sessionId: "web:s_demo",
+      now: "2026-09-03T14:55:00+08:00",
+    });
+    previous.version = 1;
+    previous.round = 1;
+    previous.timeline.injuryTime = "2026-09-03T14:55:00+08:00";
+    await store.saveTurn(previous, {
+      eventType: "agent_turn",
+      round: 1,
+      createdAt: previous.updatedAt,
+      triggerMessageId: "message-1",
+      state: previous,
+    });
+
+    const runner = createTraumaTurnRunner({
+      store,
+      model: fakeModel({
+        extract: DEMO_ROUND_2_EXTRACTED,
+        reason: DEMO_ROUND_2_REASONER_OUTPUT,
+      }),
+      rag: fakeRag({ count: 0 }),
+    });
+    const response = await runner.runTurn({
+      projectId: "trauma_med-demo",
+      sessionId: "web:s_demo",
+      messageId: "message-2",
+      userText: DEMO_ROUND_2_USER_TEXT,
+      now,
+    });
+    const saved = await store.load();
+    const confirmation = traumaTurnEvents({
+      response,
+      runId: "run-2",
+      version: response.caseVersion,
+    }).find((event) => event.type === "elicitation_request");
+
+    assert.equal(response.timeline.timingStatus, "exceeded");
+    assert.equal(response.stage.sub, "primary_first_aid");
+    assert.equal(saved?.currentSubStage, "primary_first_aid");
+    assert.equal(response.transition.status, "READY");
+    assert.equal(response.memo.title, "生命体征补充");
+    assert.match(confirmation?.questions[0]?.question ?? "", /高级急救/);
+    assert.doesNotMatch(JSON.stringify({ response, saved }), /营救护站/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
