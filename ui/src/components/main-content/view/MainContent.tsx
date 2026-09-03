@@ -13,7 +13,9 @@ import {
   Sparkles,
   type LucideIcon,
 } from 'lucide-react';
+import { resolveProjectType } from '../../app-shell/appShellSelection';
 import ChatInterfaceV2 from '../../chat-v2/ChatInterfaceV2';
+import TraumaWorkspace from '../../trauma-workspace/TraumaWorkspace';
 import PluginTabContent from '../../plugins/view/PluginTabContent';
 import { cn } from '../../../lib/utils.js';
 import type { MainContentProps } from '../types/types';
@@ -816,6 +818,40 @@ function SplitBody(props: SplitBodyProps) {
     && !editorExpanded
     && !isMobile
     && !assistantVisible;
+  const isWarTraumaProject = selectedProject
+    ? resolveProjectType(selectedProject) === 'war_trauma'
+    : false;
+  const chatInterface = (
+    <ChatInterfaceV2
+      selectedProject={selectedProject}
+      selectedSession={selectedSession}
+      ws={ws}
+      sendMessage={sendMessage}
+      latestMessage={latestMessage}
+      onFileOpen={handleFileOpen}
+      onInputFocusChange={onInputFocusChange}
+      onSessionActive={onSessionActive}
+      onSessionInactive={onSessionInactive}
+      onSessionProcessing={onSessionProcessing}
+      onSessionNotProcessing={onSessionNotProcessing}
+      onSessionActivityBump={onSessionActivityBump}
+      processingSessions={processingSessions}
+      onReplaceTemporarySession={onReplaceTemporarySession}
+      onNavigateToSession={onNavigateToSession}
+      onShowSettings={onShowSettings}
+      autoExpandTools={autoExpandTools}
+      showRawParameters={showRawParameters}
+      showThinking={showThinking}
+      inlineThinking={inlineThinking}
+      autoScrollToBottom={autoScrollToBottom}
+      sendByCtrlEnter={sendByCtrlEnter}
+      externalMessageUpdate={externalMessageUpdate}
+      onShowAllTasks={tasksEnabled ? () => setActiveTab('tasks') : null}
+      forceWelcome={false}
+      onExitWelcome={isFiles ? undefined : () => setActiveTab('chat')}
+      compact={isFiles}
+    />
+  );
   return (
     <div
       ref={filesSplitContainerRef}
@@ -950,35 +986,9 @@ function SplitBody(props: SplitBodyProps) {
           </div>
         ) : null}
         <ErrorBoundary showDetails>
-            <ChatInterfaceV2
-              selectedProject={selectedProject}
-              selectedSession={selectedSession}
-              ws={ws}
-              sendMessage={sendMessage}
-              latestMessage={latestMessage}
-              onFileOpen={handleFileOpen}
-              onInputFocusChange={onInputFocusChange}
-              onSessionActive={onSessionActive}
-              onSessionInactive={onSessionInactive}
-              onSessionProcessing={onSessionProcessing}
-              onSessionNotProcessing={onSessionNotProcessing}
-              onSessionActivityBump={onSessionActivityBump}
-              processingSessions={processingSessions}
-              onReplaceTemporarySession={onReplaceTemporarySession}
-              onNavigateToSession={onNavigateToSession}
-              onShowSettings={onShowSettings}
-              autoExpandTools={autoExpandTools}
-              showRawParameters={showRawParameters}
-              showThinking={showThinking}
-              inlineThinking={inlineThinking}
-              autoScrollToBottom={autoScrollToBottom}
-              sendByCtrlEnter={sendByCtrlEnter}
-              externalMessageUpdate={externalMessageUpdate}
-              onShowAllTasks={tasksEnabled ? () => setActiveTab('tasks') : null}
-              forceWelcome={false}
-              onExitWelcome={isFiles ? undefined : () => setActiveTab('chat')}
-              compact={isFiles}
-            />
+          {isWarTraumaProject && !isFiles ? (
+            <TraumaWorkspace resetKey={`${selectedProject?.name ?? ''}:${selectedSession?.id ?? ''}`} />
+          ) : chatInterface}
           </ErrorBoundary>
       </div>
 

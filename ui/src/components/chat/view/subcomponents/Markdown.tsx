@@ -1,4 +1,4 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -12,8 +12,11 @@ import {
   type MarkdownArtifactFile,
 } from '../../utils/remarkArtifactFileText';
 import { createRemarkCitationPlugin } from '../../utils/remarkCitationPlugin';
+import { remarkGroupImageParagraphs } from '../../utils/remarkGroupImages';
+import { collectMarkdownImages } from '../../utils/markdownImages';
 import { CitationPopover } from '../../utils/CitationPopover';
 import type { CitationMetadata } from '../../types/types';
+import ImageLightbox, { type LightboxImage } from './ImageLightbox';
 
 type MarkdownProps = {
   children: React.ReactNode;
@@ -28,6 +31,38 @@ type MarkdownProps = {
 const fullRehypePlugins = [rehypeKatex, rehypeRaw];
 
 const linkClassName = 'text-blue-600 hover:underline dark:text-blue-400';
+
+// Retrieved figures arrive at full resolution, so they are shown as
+// proportionally scaled thumbnails and opened in the lightbox on click.
+const imageThumbnailClassName = 'block h-auto max-h-[180px] w-auto max-w-[min(240px,100%)] object-contain';
+const imageButtonClassName = 'not-prose m-0 inline-block cursor-zoom-in overflow-hidden rounded-md border border-neutral-200 bg-neutral-50 p-0 align-top focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800';
+const imageRowClassName = 'not-prose my-3 flex flex-wrap items-start gap-2';
+
+type HastNode = {
+  type?: string;
+  tagName?: string;
+  value?: string;
+  children?: HastNode[];
+};
+
+const isBlankHastText = (node: HastNode): boolean => (
+  node.type === 'text' && !(node.value ?? '').trim()
+);
+
+const isHastImage = (node: HastNode): boolean => {
+  if (node.tagName === 'img') return true;
+  if (node.tagName !== 'a' || !Array.isArray(node.children)) return false;
+  const meaningful = node.children.filter((child) => !isBlankHastText(child));
+  return meaningful.length > 0 && meaningful.every((child) => child.tagName === 'img');
+};
+
+/** True when a paragraph holds nothing but images, so it can become an image row. */
+const isImageOnlyParagraph = (node: unknown): boolean => {
+  const children = (node as HastNode | undefined)?.children;
+  if (!Array.isArray(children)) return false;
+  const meaningful = children.filter((child) => !isBlankHastText(child));
+  return meaningful.length > 0 && meaningful.every(isHastImage);
+};
 
 /** 从回答文本中提取 <details> 内的引用信息：- [N] title > section */
 const CITATION_LINE_RE = /^\s*-\s*\[(\d+)\]\s+(.+?)\s*>\s*(.+?)\s*$/;
@@ -54,10 +89,39 @@ function extractCitationsFromContent(text: string): CitationMetadata[] {
 }
 
 function createMarkdownComponents(
+  onImageZoom: (src: string) => void,
   onFileOpen?: (filePath: string) => void,
   citations?: CitationMetadata[],
 ): Components {
   return {
+    p: ({ children, node, ...props }) => {
+      if (isImageOnlyParagraph(node)) {
+        return <div className={imageRowClassName}>{children}</div>;
+      }
+      return <p {...props}>{children}</p>;
+    },
+    img: ({ src, alt, node: _node, ...props }) => {
+      const source = typeof src === 'string' ? src.trim() : '';
+      if (!source) return null;
+      const caption = typeof alt === 'string' ? alt.trim() : '';
+      return (
+        <button
+          type="button"
+          className={imageButtonClassName}
+          title={caption || undefined}
+          aria-label={caption ? `Preview ${caption}` : 'Preview image'}
+          onClick={() => onImageZoom(source)}
+        >
+          <img
+            {...props}
+            src={source}
+            alt={caption}
+            loading="lazy"
+            className={imageThumbnailClassName}
+          />
+        </button>
+      );
+    },
     a: ({ href, children, ...props }) => {
       const filePath = resolveMarkdownFileHref(href);
       if (filePath && onFileOpen) {
@@ -88,9 +152,9 @@ function createMarkdownComponents(
         </a>
       );
     },
-    cite: (props: Record<string, unknown>) => (
+    cite: (props) => (
       <CitationPopover
-        data-citation-index={props['data-citation-index'] as string}
+        data-citation-index={(props as Record<string, unknown>)['data-citation-index'] as string}
         citations={citations}
       />
     ),
@@ -116,13 +180,30 @@ export function Markdown({
     [citations, content],
   );
 
+  const [zoomedSrc, setZoomedSrc] = useState<string | null>(null);
+  const handleImageZoom = useCallback((src: string) => setZoomedSrc(src), []);
+
+  const lightboxImages = useMemo<LightboxImage[]>(
+    () => collectMarkdownImages(content).map((image) => ({
+      data: image.url,
+      name: image.caption || undefined,
+    })),
+    [content],
+  );
+  const zoomIndex = zoomedSrc
+    ? lightboxImages.findIndex((image) => image.data === zoomedSrc)
+    : -1;
+  const activeLightboxImages = zoomIndex >= 0
+    ? lightboxImages
+    : (zoomedSrc ? [{ data: zoomedSrc }] : []);
+
   const components = useMemo(
-    () => createMarkdownComponents(onFileOpen, resolvedCitations),
-    [onFileOpen, resolvedCitations],
+    () => createMarkdownComponents(handleImageZoom, onFileOpen, resolvedCitations),
+    [handleImageZoom, onFileOpen, resolvedCitations],
   );
   const remarkPlugins = useMemo(() => {
-    if (isStreaming) return [remarkGfm];
-    const base = [remarkGfm, remarkMath];
+    if (isStreaming) return [remarkGfm, remarkGroupImageParagraphs];
+    const base = [remarkGfm, remarkMath, remarkGroupImageParagraphs];
     if (resolvedCitations && resolvedCitations.length > 0) {
       base.push(createRemarkCitationPlugin(resolvedCitations));
     }
@@ -148,6 +229,13 @@ export function Markdown({
       >
         {content}
       </ReactMarkdown>
+      {activeLightboxImages.length > 0 ? (
+        <ImageLightbox
+          images={activeLightboxImages}
+          startIndex={zoomIndex >= 0 ? zoomIndex : 0}
+          onClose={() => setZoomedSrc(null)}
+        />
+      ) : null}
     </div>
   );
 }

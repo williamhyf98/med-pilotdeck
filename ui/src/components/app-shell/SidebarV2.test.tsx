@@ -91,12 +91,13 @@ describe('SidebarV2 type tabs (P3)', () => {
     expect(props.onCreateProject).toHaveBeenCalledTimes(1);
   });
 
-  it('shows the redesign empty state and no create control for War Trauma', () => {
-    renderSidebar(generalMed, [generalMed]);
+  it('allows creating a project from the War Trauma section', () => {
+    const { props } = renderSidebar(generalMed, [generalMed]);
     fireEvent.click(screen.getByRole('tab', { name: 'War Trauma' }));
 
-    expect(screen.queryByRole('button', { name: 'New Project' })).toBeNull();
-    expect(screen.getByText(/being redesigned/u)).toBeTruthy();
+    expect(screen.getByText('No projects in this type yet. Create one above.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'New Project' }));
+    expect(props.onCreateProject).toHaveBeenCalledTimes(1);
   });
 
   it('opens project files from the folder action next to new chat', () => {

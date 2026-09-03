@@ -4,6 +4,7 @@ import { api } from '../../utils/api';
 
 export const SYSTEM_PROJECT_TYPES = [
   { id: 'general_medicine', label: '通用医学' },
+  { id: 'war_trauma', label: '战创伤医学' },
 ] as const;
 
 export type SystemProjectTypeId = (typeof SYSTEM_PROJECT_TYPES)[number]['id'];
@@ -20,6 +21,7 @@ export default function SystemProjectCreateDialog({
   onOpenLegacyPathWizard,
 }: SystemProjectCreateDialogProps) {
   const [displayName, setDisplayName] = useState('');
+  const [projectType, setProjectType] = useState<SystemProjectTypeId>('general_medicine');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -34,7 +36,7 @@ export default function SystemProjectCreateDialog({
     try {
       const response = await api.createSystemProject({
         displayName: name,
-        type: 'general_medicine',
+        type: projectType,
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -49,7 +51,7 @@ export default function SystemProjectCreateDialog({
     } finally {
       setSubmitting(false);
     }
-  }, [displayName, onCreated]);
+  }, [displayName, onCreated, projectType]);
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4">
@@ -63,7 +65,7 @@ export default function SystemProjectCreateDialog({
           创建项目
         </h2>
         <p className="mt-1 text-[13px] text-neutral-500 dark:text-neutral-400">
-          当前新建项目统一归入通用医学；战创伤医学正在改版。
+          项目类型创建后不可更改。战创伤医学将使用专用伤情推演工作台。
         </p>
 
         <label className="mt-4 block text-[12px] font-medium text-neutral-700 dark:text-neutral-300">
@@ -82,8 +84,32 @@ export default function SystemProjectCreateDialog({
 
         <div className="mt-4">
           <p className="text-[12px] font-medium text-neutral-700 dark:text-neutral-300">项目类型</p>
-          <div className="mt-2 rounded-md bg-neutral-100 px-3 py-2 text-[13px] text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100">
-            通用医学
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {SYSTEM_PROJECT_TYPES.map((type) => {
+              const selected = type.id === projectType;
+              return (
+                <button
+                  key={type.id}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => setProjectType(type.id)}
+                  disabled={submitting}
+                  className={`rounded-md border px-3 py-2 text-left text-[13px] transition ${
+                    selected
+                      ? 'border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900'
+                      : 'border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-800'
+                  }`}
+                >
+                  <span className="block font-medium">{type.label}</span>
+                  <span className={`mt-0.5 block text-[11px] ${
+                    selected ? 'text-neutral-300 dark:text-neutral-600' : 'text-neutral-500 dark:text-neutral-400'
+                  }`}
+                  >
+                    {type.id === 'war_trauma' ? '连续伤情推演与分级救治' : '临床问答与病例分析'}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
 

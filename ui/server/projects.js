@@ -61,7 +61,10 @@ export const PROJECT_TYPE_LABELS = Object.freeze({
 
 const PROJECT_META_FILE = 'meta.json';
 const ALLOWED_PROJECT_TYPES = new Set(Object.values(PROJECT_TYPES));
-const CREATABLE_PROJECT_TYPES = new Set([PROJECT_TYPES.GENERAL_MEDICINE]);
+const CREATABLE_PROJECT_TYPES = new Set([
+    PROJECT_TYPES.GENERAL_MEDICINE,
+    PROJECT_TYPES.WAR_TRAUMA,
+]);
 
 function isAllowedProjectType(type) {
     return typeof type === 'string' && ALLOWED_PROJECT_TYPES.has(type);
@@ -122,11 +125,7 @@ async function createSystemProject({ displayName, type }) {
         throw err;
     }
     if (!CREATABLE_PROJECT_TYPES.has(type)) {
-        const err = new Error(
-            type === PROJECT_TYPES.WAR_TRAUMA
-                ? 'war_trauma projects are temporarily unavailable while the experience is being redesigned'
-                : `type must be one of: ${[...CREATABLE_PROJECT_TYPES].join(', ')}`,
-        );
+        const err = new Error(`type must be one of: ${[...CREATABLE_PROJECT_TYPES].join(', ')}`);
         err.code = 'invalid_input';
         throw err;
     }

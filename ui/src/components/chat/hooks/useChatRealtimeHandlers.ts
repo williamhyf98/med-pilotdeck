@@ -52,6 +52,7 @@ type LatestChatMessage = {
   tokenBudget?: unknown;
   newSessionId?: string;
   aborted?: boolean;
+  runId?: string;
   [key: string]: any;
 };
 
@@ -374,16 +375,17 @@ export function useChatRealtimeHandlers({
                 .filter((message) => message.kind === 'tool_use' && typeof message.toolId === 'string')
                 .map((message) => message.toolId as string),
             );
+            const activeTurnMessages = msg.activeTurnMessages as LatestChatMessage[];
             const activeTurnToolIds = new Set(
-              msg.activeTurnMessages
+              activeTurnMessages
                 .filter((message) => message?.kind === 'tool_use' && typeof message?.toolId === 'string')
                 .map((message) => message.toolId as string),
             );
             const hasReplayedCurrentTurnToolUse = activeTurnToolIds.size > 0
               && [...activeTurnToolIds].some((toolId) => replayedToolIds.has(toolId));
-            const volatileSignature = msg.activeTurnMessages
+            const volatileSignature = activeTurnMessages
               .filter((message) => ['thinking', 'stream_delta', 'stream_end'].includes(String(message?.kind)))
-              .map((message) => `${message.kind}:${message.id || ''}:${message.content || ''}`)
+              .map((message) => `${String(message.kind)}:${message.id || ''}:${message.content || ''}`)
               .join('||');
             const previousVolatileSignature = activeTurnReplaySignatureRef.current.get(statusSessionId);
             const hasSeenSameVolatileReplay = Boolean(
@@ -396,7 +398,7 @@ export function useChatRealtimeHandlers({
             const skipVolatileReplay =
               hasLiveStreaming || hasReplayedCurrentTurnToolUse || hasSeenSameVolatileReplay;
             const activeTurnMessagesToApply = getActiveTurnReplayMessagesToApply(
-              msg.activeTurnMessages,
+              activeTurnMessages,
               {
                 realtimeMessages: slot?.realtimeMessages || [],
                 serverMessages: slot?.serverMessages || [],
@@ -412,7 +414,7 @@ export function useChatRealtimeHandlers({
           }
 
           if (isCurrentSession && Array.isArray(msg.activitySnapshot)) {
-            const activities = msg.activitySnapshot.map((activity) => {
+            const activities = (msg.activitySnapshot as LatestChatMessage[]).map((activity) => {
               const normalized = activity as NormalizedMessage;
               if (getExplicitSessionId(normalized)) return normalized;
               return { ...normalized, sessionId: statusSessionId };

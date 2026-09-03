@@ -43,13 +43,18 @@ test('createSystemProject writes typed meta and workspace dirs', async () => {
     await access(join(pilotHome, 'projects', 'general_med', general.name, '.cwd'));
     await access(join(pilotHome, 'projects', 'general_med', general.name, 'chats'));
 
-    await assert.rejects(
-      () => mod.createSystemProject({
-        displayName: '测试-战创伤',
-        type: mod.PROJECT_TYPES.WAR_TRAUMA,
-      }),
-      /temporarily unavailable/,
+    const trauma = await mod.createSystemProject({
+      displayName: '测试-战创伤',
+      type: mod.PROJECT_TYPES.WAR_TRAUMA,
+    });
+    assert.equal(trauma.displayName, '测试-战创伤');
+    assert.equal(trauma.projectType, 'war_trauma');
+    assert.match(trauma.name, /^trauma_med-/);
+    assert.ok(
+      trauma.fullPath.endsWith(join('workspaces', 'trauma_med', trauma.name)),
     );
+    await access(join(pilotHome, 'projects', 'trauma_med', trauma.name, 'chats'));
+    await access(join(pilotHome, 'workspaces', 'trauma_med', trauma.name, 'inbox'));
 
     await assert.rejects(
       () => mod.createSystemProject({ displayName: 'x', type: 'invalid' }),

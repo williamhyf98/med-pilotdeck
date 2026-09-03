@@ -220,3 +220,32 @@ describe('MainContent file workspace routing', () => {
     }).getAttribute('aria-valuenow')).toBe('396');
   });
 });
+
+describe('MainContent project-type workspace routing', () => {
+  it('wraps war-trauma chat in the dedicated treatment workspace', () => {
+    const traumaProject: Project = {
+      ...project,
+      name: 'trauma_med-demo',
+      displayName: '战创伤演练',
+    };
+    render(
+      <MainContent
+        {...propsFor('chat')}
+        projects={[traumaProject]}
+        selectedProject={traumaProject}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: '分级救治全过程' })).not.toBeNull();
+    expect(screen.getByText('爆炸冲击后胸部损伤 · 右小腿开放伤')).not.toBeNull();
+    expect(screen.getByLabelText('演示案例对话')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open workspace file' })).toBeNull();
+  });
+
+  it('keeps general-medicine chat on the standard surface', () => {
+    render(<MainContent {...propsFor('chat')} />);
+
+    expect(screen.queryByRole('heading', { name: '分级救治全过程' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Open workspace file' })).not.toBeNull();
+  });
+});

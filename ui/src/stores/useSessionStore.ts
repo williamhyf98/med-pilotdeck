@@ -54,7 +54,11 @@ export interface NormalizedMessage {
   // kind-specific fields (flat for simplicity)
   role?: 'user' | 'assistant';
   content?: string;
+  /** 思考帧的推理正文，OpenAI 兼容 provider 走这个字段而非 `content`。 */
+  reasoningContent?: string;
   contentI18n?: { key: string; params?: Record<string, unknown> };
+  /** 错误帧的可读处置建议，由 pilotdeck-bridge 透传。 */
+  userHint?: string;
   userHintI18n?: { key: string; params?: Record<string, unknown> };
   images?: string[];
   attachments?: Array<{
