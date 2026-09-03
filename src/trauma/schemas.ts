@@ -144,3 +144,71 @@ export function validatePlannerOutput(value: unknown): value is PlannerStationOu
   );
 }
 
+const GATE_STATUSES = new Set(["ASSESSING", "STAY", "BLOCKED", "READY"]);
+
+function withinLimit(value: unknown, max: number): boolean {
+  return typeof value === "string" && value.length <= max;
+}
+
+function isStringArray(value: unknown, maxItemLength: number): boolean {
+  return Array.isArray(value) && value.every((item) => typeof item === "string" && item.length <= maxItemLength);
+}
+
+export const REASONER_OUTPUT_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  required: [
+    "naturalLanguageAnswer",
+    "classification",
+    "treatmentPlan",
+    "missingInformation",
+    "transition",
+    "gateAssessment",
+    "memo",
+  ],
+};
+
+export type ReasonerStationOutput = {
+  naturalLanguageAnswer: string;
+  classification: Record<string, unknown>;
+  treatmentPlan: Array<Record<string, unknown>>;
+  missingInformation: string[];
+  transition: {
+    status: "ASSESSING" | "STAY" | "BLOCKED" | "READY";
+    targetStage?: string;
+    targetSubStage?: string;
+    reason: string;
+    requiresUserConfirmation: boolean;
+  };
+  gateAssessment: Record<string, unknown>;
+  memo: {
+    round: number;
+    mainStage: string;
+    subStage: string;
+    title: string;
+    inputPoints: string[];
+    actionPoints: string[];
+    conclusion: string;
+  };
+};
+
+export function validateReasonerOutput(value: unknown): value is ReasonerStationOutput {
+  if (!isRecord(value)) return false;
+  if (typeof value.naturalLanguageAnswer !== "string") return false;
+  if (!isRecord(value.classification) || !Array.isArray(value.treatmentPlan)) return false;
+  if (!Array.isArray(value.missingInformation)) return false;
+  if (!isRecord(value.transition) || !GATE_STATUSES.has(String(value.transition.status))) return false;
+  if (typeof value.transition.reason !== "string") return false;
+  if (typeof value.transition.requiresUserConfirmation !== "boolean") return false;
+  if (!isRecord(value.gateAssessment) || !Array.isArray(value.gateAssessment.evidenceChunkIds)) return false;
+  if (!isRecord(value.memo)) return false;
+  if (!withinLimit(value.memo.title, 10)) return false;
+  if (!isStringArray(value.memo.inputPoints, 30)) return false;
+  if (!isStringArray(value.memo.actionPoints, 30)) return false;
+  if (!withinLimit(value.memo.conclusion, 40)) return false;
+  for (const action of value.treatmentPlan) {
+    if (!isRecord(action) || !Array.isArray(action.evidenceChunkIds)) return false;
+  }
+  return true;
+}
+
+
