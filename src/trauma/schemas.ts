@@ -104,3 +104,43 @@ export function validateExtractedTurnFacts(value: unknown): value is ExtractedTu
   }
   return true;
 }
+
+export type PlannerStationOutput = {
+  queries: Array<{
+    query: string;
+    reason: string;
+    critical?: boolean;
+  }>;
+};
+
+export const PLANNER_OUTPUT_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  required: ["queries"],
+  properties: {
+    queries: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["query", "reason"],
+        properties: {
+          query: { type: "string" },
+          reason: { type: "string" },
+          critical: { type: "boolean" },
+        },
+      },
+    },
+  },
+};
+
+export function validatePlannerOutput(value: unknown): value is PlannerStationOutput {
+  if (!isRecord(value) || !Array.isArray(value.queries)) return false;
+  return value.queries.every((item) =>
+    isRecord(item)
+    && typeof item.query === "string"
+    && typeof item.reason === "string"
+    && (item.critical === undefined || typeof item.critical === "boolean"),
+  );
+}
+
