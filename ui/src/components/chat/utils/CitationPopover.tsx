@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import Tooltip from '../../../shared/view/ui/Tooltip';
-import type { CitationMetadata } from '../../types/types';
+import type { CitationMetadata } from '../types/types';
 
 type CitationPopoverProps = {
   citations: CitationMetadata[];

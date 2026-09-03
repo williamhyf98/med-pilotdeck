@@ -1,486 +1,607 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="战伤分级救治多轮对话流程演示原型" />
-  <title>战伤分级救治智能推演系统 · 交互演示</title>
+  <meta name="description" content="战创伤推演工作台原型：三层救治流程树 + 轮次纪要 + 伤员状态" />
+  <title>战创伤推演工作台 · 交互原型</title>
   <style>
     :root {
-      --navy-950: #081523;
-      --navy-900: #0c2033;
-      --navy-800: #17344d;
-      --navy-700: #28516e;
-      --teal-600: #087f83;
-      --teal-500: #0f9fa2;
-      --teal-100: #d9f1f1;
-      --teal-50: #edf9f8;
-      --amber-600: #b66b0f;
-      --amber-100: #ffedc7;
-      --red-600: #bd3d3a;
-      --red-100: #fbe2df;
-      --green-600: #397c5c;
-      --green-100: #deeee5;
-      --ink: #182532;
-      --muted: #617181;
-      --line: #d9e1e8;
-      --surface: #ffffff;
-      --canvas: #eef2f5;
-      --shadow: 0 12px 34px rgba(13, 37, 57, 0.08);
-      --radius: 14px;
+      color-scheme: light;
+      --canvas: hsl(0 0% 98%);
+      --surface: hsl(0 0% 100%);
+      --surface-2: hsl(0 0% 96%);
+      --surface-3: hsl(0 0% 93%);
+      --border: hsl(0 0% 90%);
+      --border-strong: hsl(0 0% 82%);
+      --fg: hsl(0 0% 9%);
+      --fg-soft: hsl(0 0% 32%);
+      --muted: hsl(0 0% 45%);
+      --info: #0f766e;
+      --info-bg: #ecfdf5;
+      --info-border: #99f6e4;
+      --ok: #15803d;
+      --ok-bg: #f0fdf4;
+      --ok-border: #bbf7d0;
+      --warn: #b45309;
+      --warn-bg: #fffbeb;
+      --warn-border: #fde68a;
+      --danger: #b91c1c;
+      --danger-bg: #fef2f2;
+      --danger-border: #fecaca;
+      --radius: 8px;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 8px 24px rgba(0, 0, 0, .04);
+    }
+
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --canvas: hsl(0 0% 4%);
+      --surface: hsl(0 0% 7%);
+      --surface-2: hsl(0 0% 11%);
+      --surface-3: hsl(0 0% 15%);
+      --border: hsl(0 0% 18%);
+      --border-strong: hsl(0 0% 26%);
+      --fg: hsl(0 0% 96%);
+      --fg-soft: hsl(0 0% 82%);
+      --muted: hsl(0 0% 64%);
+      --info: #2dd4bf;
+      --info-bg: hsl(174 60% 12%);
+      --info-border: hsl(174 45% 26%);
+      --ok: #4ade80;
+      --ok-bg: hsl(142 45% 11%);
+      --ok-border: hsl(142 35% 24%);
+      --warn: #fbbf24;
+      --warn-bg: hsl(38 60% 11%);
+      --warn-border: hsl(38 45% 24%);
+      --danger: #f87171;
+      --danger-bg: hsl(0 50% 12%);
+      --danger-border: hsl(0 40% 26%);
+      --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 8px 24px rgba(0, 0, 0, .35);
     }
 
     * { box-sizing: border-box; }
-
     html, body { height: 100%; overflow: hidden; }
 
     body {
       margin: 0;
-      color: var(--ink);
+      color: var(--fg);
       background: var(--canvas);
-      font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, -apple-system, sans-serif;
+      font-family: "InterVariable", Inter, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, -apple-system, sans-serif;
       font-size: 15px;
-      line-height: 1.55;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
     }
 
-    button, textarea { font: inherit; }
+    button, textarea { font: inherit; color: inherit; }
     button { cursor: pointer; }
 
     .app-shell {
       height: 100vh;
       min-height: 0;
       display: grid;
-      grid-template-rows: 66px auto minmax(0, 1fr);
+      grid-template-rows: 46px auto minmax(0, 1fr);
       overflow: hidden;
     }
 
-    .topbar {
+    /* 宿主壳层：产品中由 med-pilotdeck 现有 App Shell 提供，这里仅作占位示意 */
+    .shell-bar {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 24px;
-      padding: 0 28px;
-      color: #fff;
-      background: linear-gradient(112deg, var(--navy-950), var(--navy-800));
-      box-shadow: 0 4px 18px rgba(8, 21, 35, 0.25);
-      position: relative;
-      z-index: 4;
+      gap: 16px;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
     }
-
-    .brand { display: flex; align-items: center; gap: 13px; min-width: 0; }
-    .brand-mark {
-      width: 36px; height: 36px; flex: 0 0 auto;
-      display: grid; place-items: center;
-      border: 1px solid rgba(255,255,255,.24);
-      background: rgba(255,255,255,.1);
-      border-radius: 10px;
+    .shell-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .shell-crumb { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); min-width: 0; }
+    .shell-crumb strong { color: var(--fg); font-weight: 600; }
+    .shell-crumb .sep { color: var(--border-strong); }
+    .shell-tag {
+      flex: 0 0 auto;
+      padding: 2px 7px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--muted);
+      font-size: 11px;
     }
-    .brand-mark svg { width: 22px; height: 22px; }
-    .brand-name { font-size: 18px; font-weight: 650; letter-spacing: .06em; white-space: nowrap; }
-    .brand-sub { color: #a8c0d2; font-size: 12px; letter-spacing: .08em; white-space: nowrap; }
-
-    .top-actions { display: flex; align-items: center; gap: 12px; color: #d9e6ef; font-size: 13px; }
-    .live-pill {
-      display: inline-flex; align-items: center; gap: 8px;
-      border: 1px solid rgba(255,255,255,.16);
-      background: rgba(255,255,255,.07);
-      border-radius: 999px; padding: 6px 11px;
+    .shell-right { display: flex; align-items: center; gap: 8px; }
+    .ghost-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 5px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--fg-soft);
+      font-size: 12px;
+      transition: background .15s ease, border-color .15s ease;
     }
-    .live-dot { width: 7px; height: 7px; border-radius: 50%; background: #5bd1c4; box-shadow: 0 0 0 4px rgba(91,209,196,.13); }
+    .ghost-btn:hover { background: var(--surface-2); border-color: var(--border-strong); }
 
-    .case-band {
+    /* 案例状态细条 */
+    .case-strip {
       display: grid;
-      grid-template-columns: minmax(270px, 1.6fr) repeat(4, minmax(130px, .72fr));
-      gap: 1px;
-      padding: 0 28px;
-      background: var(--line);
-      border-bottom: 1px solid #cfd9e1;
+      grid-template-columns: minmax(240px, 1.7fr) repeat(4, minmax(120px, .7fr));
+      gap: 18px;
+      padding: 9px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
     }
-    .case-cell { background: #fff; padding: 12px 16px; min-width: 0; }
-    .case-cell:first-child { padding-left: 0; }
-    .case-kicker { color: var(--muted); font-size: 12px; letter-spacing: .05em; margin-bottom: 2px; }
-    .case-value { font-size: 14px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .case-value.accent { color: var(--teal-600); }
-    .case-value.warning { color: var(--amber-600); }
-    .case-value.danger { color: var(--red-600); }
+    .case-cell { min-width: 0; }
+    .case-kicker { color: var(--muted); font-size: 11px; letter-spacing: .02em; }
+    .case-value {
+      font-size: 13px; font-weight: 600; margin-top: 1px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .case-value.info { color: var(--info); }
+    .case-value.warn { color: var(--warn); }
+    .case-value.danger { color: var(--danger); }
+    .case-value.ok { color: var(--ok); }
 
     .workspace {
       display: grid;
       grid-template-columns: minmax(0, 60%) minmax(0, 40%);
-      grid-template-rows: minmax(0, 1fr) auto;
-      gap: 14px;
-      padding: 14px;
+      gap: 12px;
+      padding: 12px;
       min-height: 0;
       overflow: hidden;
-      transition: grid-template-columns .24s ease;
+      transition: grid-template-columns .2s ease;
     }
     .workspace.detail-visible { grid-template-columns: minmax(0, 54%) minmax(0, 46%); }
 
     .panel {
       background: var(--surface);
-      border: 1px solid #dce4ea;
-      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      border-radius: 12px;
       box-shadow: var(--shadow);
       min-height: 0;
       overflow: hidden;
     }
-
     .panel-head {
-      min-height: 58px;
-      display: flex; align-items: center; justify-content: space-between; gap: 16px;
-      padding: 0 18px;
-      border-bottom: 1px solid var(--line);
+      min-height: 52px;
+      display: flex; align-items: center; justify-content: space-between; gap: 14px;
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--border);
     }
-    .panel-title { font-size: 16px; font-weight: 700; }
-    .panel-subtitle { color: var(--muted); font-size: 12px; margin-top: 1px; }
+    .panel-title { font-size: 14px; font-weight: 650; }
+    .panel-subtitle { color: var(--muted); font-size: 11.5px; margin-top: 1px; }
 
+    /* ── 左：对话（产品中复用 ChatV2） ── */
     .conversation-panel { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; min-height: 0; }
 
     .round-nav {
-      display: flex;
-      gap: 7px;
-      padding: 11px 16px;
-      border-bottom: 1px solid var(--line);
+      display: flex; gap: 6px;
+      padding: 9px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface-2);
       overflow-x: auto;
       scrollbar-width: thin;
-      background: #fbfcfd;
     }
     .round-tab {
-      flex: 0 0 auto;
-      min-width: 72px;
-      border: 1px solid #cfd9e1;
-      border-radius: 9px;
-      padding: 7px 10px;
+      flex: 0 0 auto; min-width: 96px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 5px 9px;
+      background: var(--surface);
       color: var(--muted);
-      background: #fff;
       text-align: left;
-      transition: .18s ease;
+      transition: .15s ease;
     }
-    .round-tab span { display: block; font-size: 11px; }
-    .round-tab strong { display: block; color: var(--ink); font-size: 13px; font-weight: 650; margin-top: 1px; }
-    .round-tab.is-active { border-color: var(--teal-500); background: var(--teal-50); box-shadow: inset 0 -2px var(--teal-500); }
+    .round-tab span { display: block; font-size: 10.5px; }
+    .round-tab strong { display: block; color: var(--fg); font-size: 12.5px; font-weight: 600; }
+    .round-tab.is-active { border-color: var(--info); color: var(--info); background: var(--info-bg); }
+    .round-tab.is-active strong { color: var(--info); }
     .round-tab.is-future { opacity: .5; }
 
     .messages {
       min-height: 0;
+      overflow-y: auto;
       overflow-x: hidden;
-      overflow-y: scroll;
-      padding: 18px 18px 24px;
-      scroll-behavior: smooth;
+      padding: 18px 20px 26px;
       scrollbar-width: thin;
-      scrollbar-color: #7793a6 #e9eef2;
-      background:
-        linear-gradient(rgba(255,255,255,.94), rgba(255,255,255,.94)),
-        radial-gradient(circle at 15% 0%, rgba(15,159,162,.08), transparent 35%);
     }
-    .messages::-webkit-scrollbar { width: 9px; }
-    .messages::-webkit-scrollbar-track { background: #e9eef2; }
-    .messages::-webkit-scrollbar-thumb { background: #7793a6; border: 2px solid #e9eef2; border-radius: 999px; }
-    .messages::-webkit-scrollbar-thumb:hover { background: #536f82; }
-    .message { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 16px; animation: enter .28s ease both; }
-    .message.user { flex-direction: row-reverse; }
-    .avatar {
-      width: 30px; height: 30px; flex: 0 0 auto; display: grid; place-items: center;
-      border-radius: 9px; font-size: 12px; font-weight: 700;
-    }
-    .assistant .avatar { color: #fff; background: var(--navy-800); }
-    .user .avatar { color: var(--teal-600); background: var(--teal-100); }
-    .bubble {
-      max-width: calc(100% - 62px);
-      padding: 11px 13px;
-      border-radius: 5px 14px 14px 14px;
-      background: #f2f5f7;
-      border: 1px solid #e0e7ec;
-      color: #263746;
+    .messages::-webkit-scrollbar { width: 10px; }
+    .messages::-webkit-scrollbar-thumb { background: var(--border-strong); border: 3px solid var(--surface); border-radius: 999px; }
+    .msg-wrap { max-width: 720px; margin: 0 auto; }
+    .msg { margin: 0 0 20px; animation: enter .2s ease both; }
+    .msg-label { color: var(--muted); font-size: 11px; margin-bottom: 5px; }
+    .msg.user { display: flex; justify-content: flex-end; }
+    .msg.user .bubble {
+      max-width: 86%;
+      padding: 9px 13px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface-2);
+      color: var(--fg);
       white-space: pre-line;
+      font-size: 14.5px;
     }
-    .user .bubble { background: var(--navy-800); border-color: var(--navy-800); color: #fff; border-radius: 14px 5px 14px 14px; }
-    .bubble-label { font-size: 11px; opacity: .62; margin-bottom: 4px; }
-    .message-tag {
-      display: inline-flex; align-items: center; gap: 5px;
-      margin-top: 8px; padding: 3px 7px; border-radius: 5px;
-      color: var(--teal-600); background: var(--teal-100); font-size: 11px; font-weight: 650;
+    .msg.assistant .body {
+      color: var(--fg-soft);
+      white-space: pre-line;
+      font-size: 15px;
     }
+    .msg-tag {
+      display: inline-flex; align-items: center; gap: 6px;
+      margin-top: 10px; padding: 3px 8px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .confirm-card {
+      margin-top: 12px;
+      border: 1px solid var(--warn-border);
+      border-radius: var(--radius);
+      background: var(--warn-bg);
+      padding: 11px 12px;
+    }
+    .confirm-card .q { font-size: 13px; font-weight: 600; color: var(--fg); }
+    .confirm-card .hint { color: var(--muted); font-size: 11.5px; margin-top: 3px; }
+    .confirm-opts { display: flex; gap: 7px; margin-top: 9px; flex-wrap: wrap; }
+    .confirm-opt {
+      padding: 4px 10px;
+      border: 1px solid var(--border-strong);
+      border-radius: 999px;
+      background: var(--surface);
+      font-size: 12px;
+      color: var(--fg-soft);
+    }
+    .confirm-opt.picked { border-color: var(--ok); color: var(--ok); background: var(--ok-bg); font-weight: 600; }
 
-    .composer {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 10px;
-      padding: 12px 14px;
-      border-top: 1px solid var(--line);
-      background: #fff;
+    .composer { padding: 12px 14px; border-top: 1px solid var(--border); background: var(--surface); }
+    .composer-card {
+      display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 9px 10px;
+      background: var(--surface-2);
     }
     .composer textarea {
-      height: 44px; resize: none; border: 1px solid #cfd9e1; border-radius: 10px;
-      padding: 10px 12px; color: #7a8792; background: #f8fafb; outline: none;
+      height: 40px; resize: none; border: 0; outline: none;
+      background: transparent; color: var(--muted); padding: 4px 2px;
+      font-size: 14px;
     }
-    .primary-btn, .secondary-btn, .icon-btn {
-      border: 0; border-radius: 9px; transition: .18s ease;
-      display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    .send-btn {
+      width: 32px; height: 32px;
+      display: grid; place-items: center;
+      border: 1px solid var(--border-strong);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--muted);
     }
-    .primary-btn { min-width: 102px; padding: 0 15px; color: #fff; background: var(--teal-600); font-weight: 650; }
-    .primary-btn:hover { background: #066d70; transform: translateY(-1px); }
-    .primary-btn:disabled { opacity: .48; cursor: not-allowed; transform: none; }
-    .secondary-btn { padding: 7px 11px; border: 1px solid #cfd9e1; color: var(--navy-700); background: #fff; font-size: 13px; }
-    .secondary-btn:hover { border-color: #aebdc8; background: #f5f8fa; }
+    .composer-foot {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      margin-top: 9px;
+    }
+    .composer-note { color: var(--muted); font-size: 11px; }
+    .demo-controls { display: flex; gap: 7px; }
+    .primary-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px;
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+      background: var(--fg);
+      color: var(--surface);
+      font-size: 12px; font-weight: 600;
+      transition: opacity .15s ease;
+    }
+    .primary-btn:hover { opacity: .88; }
+    .primary-btn:disabled { opacity: .4; cursor: not-allowed; }
 
+    /* ── 右：三层流程树 ── */
     .process-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
-    .process-head-right { display: flex; align-items: center; gap: 8px; }
-    .legend { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 11px; }
-    .legend i { width: 8px; height: 8px; display: inline-block; border-radius: 50%; margin-right: 3px; }
-    .legend .done { background: var(--green-600); }
-    .legend .current { background: var(--teal-500); box-shadow: 0 0 0 3px var(--teal-100); }
-    .legend .transfer { background: var(--amber-600); }
-    .legend .future { background: #fff; border: 1px solid #9facb7; }
+    .legend { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 11px; flex-wrap: wrap; }
+    .legend i { width: 7px; height: 7px; display: inline-block; border-radius: 50%; margin-right: 4px; }
+    .legend .done { background: var(--ok); }
+    .legend .current { background: var(--info); }
+    .legend .transfer { background: var(--warn); }
+    .legend .blocked { background: var(--danger); }
+    .legend .future { background: transparent; border: 1px solid var(--border-strong); }
 
     .process-body {
-      display: grid;
-      grid-template-columns: 1fr;
-      min-height: 0;
-      overflow: hidden;
-      transition: grid-template-columns .24s ease;
+      display: grid; grid-template-columns: 1fr;
+      min-height: 0; overflow: hidden;
+      transition: grid-template-columns .2s ease;
     }
-    .process-body.details-open {
-      grid-template-columns: minmax(220px, 38%) minmax(0, 62%);
+    .process-body.details-open { grid-template-columns: minmax(230px, 38%) minmax(0, 62%); }
+
+    .stage-map { min-height: 0; overflow: auto; padding: 16px 14px 26px; background: var(--surface); }
+    .process-body.details-open .stage-map { border-right: 1px solid var(--border); }
+    .map-hint { margin: 0 2px 14px; color: var(--muted); font-size: 11.5px; }
+
+    /* 第一层：主级 */
+    .main-group { margin-bottom: 6px; }
+    .main-node {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 9px 11px;
+      background: var(--surface-2);
     }
-    .stage-map {
-      min-height: 0;
-      overflow: auto;
-      padding: 18px 16px 30px;
-      color: #fff;
-      background:
-        linear-gradient(rgba(8, 21, 35, .97), rgba(12, 32, 51, .98)),
-        radial-gradient(circle at top right, #215679, transparent 48%);
+    .main-node.is-current { border-color: var(--info); background: var(--info-bg); }
+    .main-node.is-done { border-color: var(--ok-border); background: var(--ok-bg); }
+    .main-node.is-future { opacity: .55; }
+    .main-index { color: var(--muted); font-size: 11px; font-weight: 700; margin-right: 5px; }
+    .main-name { font-size: 14px; font-weight: 650; }
+    .node-note { color: var(--muted); font-size: 10.5px; margin-top: 1px; }
+
+    /* 第二层：子级 */
+    .sub-wrap {
+      margin: 7px 0 0 16px;
+      padding-left: 14px;
+      border-left: 1px solid var(--border);
+      display: grid; gap: 7px;
     }
-    .process-body.details-open .stage-map { border-right: 1px solid var(--line); }
-    .stage-map-inner {
-      width: 100%; max-width: 660px; margin: 0 auto;
-      transition: max-width .24s ease;
+    .sub-node {
+      position: relative;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 7px 10px;
+      background: var(--surface);
     }
-    .process-body.details-open .stage-map-inner { max-width: 420px; }
-    .map-label {
-      color: #7fa2b8; font-size: 11px; letter-spacing: .12em;
-      text-transform: uppercase; margin: 0 4px 12px;
-    }
-    .map-hint { margin: -5px 4px 15px; color: #87a3b5; font-size: 11px; }
-    .stage-group { position: relative; padding: 0 0 18px 29px; }
-    .stage-group:not(.is-last)::after {
-      content: ""; position: absolute; top: 26px; bottom: -3px; left: 10px;
-      width: 2px; background: #345168;
-    }
-    .stage-group.is-done:not(.is-last)::after { background: var(--green-600); }
-    .stage-dot {
-      position: absolute; left: 0; top: 10px; z-index: 2;
-      width: 21px; height: 21px; border-radius: 50%;
-      display: grid; place-items: center;
-      border: 2px solid #668097; background: var(--navy-900); color: transparent;
-      font-size: 11px; font-weight: 800;
-    }
-    .stage-group.is-done > .stage-dot { color: #fff; border-color: var(--green-600); background: var(--green-600); }
-    .stage-group.is-current > .stage-dot { border: 5px solid var(--teal-100); background: var(--teal-500); box-shadow: 0 0 0 2px var(--teal-500); }
-    .level-node, .sub-node {
-      width: 100%; border: 1px solid #36536a; border-radius: 10px;
-      padding: 10px 11px; text-align: left; color: #c9d7e2;
-      background: rgba(255,255,255,.035); transition: .18s ease;
-    }
-    .level-node:hover, .sub-node:hover,
-    .level-node.is-selected, .sub-node.is-selected {
-      border-color: #65a9c8; background: rgba(255,255,255,.09);
-      box-shadow: 0 0 0 1px rgba(101,169,200,.18);
-    }
-    .level-node:disabled, .sub-node:disabled {
-      cursor: not-allowed; opacity: .52; border-color: #30495d;
-      background: rgba(255,255,255,.02); box-shadow: none;
-    }
-    .level-node:disabled:hover, .sub-node:disabled:hover {
-      border-color: #30495d; background: rgba(255,255,255,.02); box-shadow: none;
-    }
-    .level-node.is-current, .sub-node.is-current {
-      border-color: rgba(64,199,196,.65); background: rgba(15,159,162,.15);
-    }
-    .level-node.is-done, .sub-node.is-done {
-      border-color: rgba(83,151,112,.58); background: rgba(57,124,92,.12);
-    }
-    .level-node.is-transfer, .sub-node.is-transfer {
-      border-color: rgba(210,145,60,.75); background: rgba(182,107,15,.14);
-    }
-    .node-row { display: flex; justify-content: space-between; gap: 9px; align-items: center; }
-    .node-copy { min-width: 0; }
-    .stage-index { color: #7896aa; font-size: 11px; font-weight: 700; margin-right: 4px; }
-    .stage-name { color: #fff; font-size: 14px; font-weight: 700; }
-    .node-note { color: #86a0b2; font-size: 10px; margin-top: 2px; }
-    .stage-status {
-      flex: 0 0 auto; font-size: 10px; padding: 2px 6px; border-radius: 999px;
-      color: #9fb3c2; border: 1px solid #466278; white-space: nowrap;
-    }
-    .is-current .stage-status { color: #bff5ef; border-color: #3ba9aa; background: rgba(15,159,162,.12); }
-    .is-done .stage-status { color: #bde3ca; border-color: #397c5c; background: rgba(57,124,92,.18); }
-    .is-transfer .stage-status { color: #ffdda0; border-color: #a86e24; background: rgba(182,107,15,.18); }
-    .branch-list {
-      position: relative; display: grid; gap: 8px;
-      margin: 9px 0 0 26px; padding-left: 19px;
-    }
-    .branch-list::before {
-      content: ""; position: absolute; left: 0; top: -9px; bottom: 20px;
-      width: 1px; background: #49667b;
-    }
-    .sub-node { position: relative; padding: 8px 10px; }
     .sub-node::before {
-      content: ""; position: absolute; left: -20px; top: 50%; width: 19px;
-      border-top: 1px solid #49667b;
+      content: ""; position: absolute; left: -14px; top: 17px; width: 13px;
+      border-top: 1px solid var(--border);
     }
-    .sub-node-name { color: #e7f0f5; font-size: 12px; font-weight: 650; }
-    .sub-node .stage-status { font-size: 9px; }
+    .sub-node.is-current { border-color: var(--info); background: var(--info-bg); }
+    .sub-node.is-done { border-color: var(--ok-border); background: var(--ok-bg); }
+    .sub-node.is-transfer { border-color: var(--warn-border); background: var(--warn-bg); }
+    .sub-node.is-blocked { border-color: var(--danger-border); background: var(--danger-bg); }
+    .sub-node.is-future { opacity: .5; }
+    .sub-name { font-size: 12.5px; font-weight: 600; }
+    .node-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .status-chip {
+      flex: 0 0 auto;
+      font-size: 10px; padding: 1px 7px;
+      border: 1px solid var(--border-strong);
+      border-radius: 999px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .is-current > .node-row .status-chip, .is-current .status-chip { color: var(--info); border-color: var(--info-border); }
+    .is-done > .node-row .status-chip, .is-done .status-chip { color: var(--ok); border-color: var(--ok-border); }
+    .is-transfer .status-chip { color: var(--warn); border-color: var(--warn-border); }
+    .is-blocked .status-chip { color: var(--danger); border-color: var(--danger-border); }
+
+    /* 第三层：轮次纪要叶子 */
+    .leaf-wrap {
+      margin: 7px 0 2px 14px;
+      padding-left: 13px;
+      border-left: 1px dashed var(--border-strong);
+      display: grid; gap: 6px;
+    }
+    .leaf {
+      position: relative;
+      width: 100%;
+      display: block;
+      text-align: left;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 7px 9px;
+      background: var(--surface);
+      transition: .15s ease;
+    }
+    .leaf::before {
+      content: ""; position: absolute; left: -13px; top: 15px; width: 12px;
+      border-top: 1px dashed var(--border-strong);
+    }
+    .leaf:hover { border-color: var(--border-strong); background: var(--surface-2); }
+    .leaf.is-selected { border-color: var(--info); background: var(--info-bg); box-shadow: 0 0 0 1px var(--info-border); }
+    .leaf-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .leaf-title { font-size: 12px; font-weight: 600; }
+    .leaf-round { color: var(--muted); font-size: 10px; font-weight: 700; margin-right: 5px; }
+    .leaf-points { margin: 4px 0 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+    .leaf-points li { color: var(--muted); font-size: 10.5px; padding-left: 9px; position: relative; }
+    .leaf-points li::before { content: "·"; position: absolute; left: 2px; }
+    .leaf-empty { color: var(--muted); font-size: 10.5px; padding: 3px 0 0 3px; }
+
     .transfer-chip {
-      margin: -8px 0 10px 49px; display: none; align-items: center; gap: 7px;
-      color: #ffd898; font-size: 11px;
+      display: none; align-items: center; gap: 7px;
+      margin: 8px 0 2px 16px;
+      color: var(--warn); font-size: 11px;
     }
     .transfer-chip.show { display: flex; }
-    .transfer-line { flex: 1; max-width: 52px; border-top: 1px dashed #b57b31; }
+    .transfer-chip .line { flex: 0 0 34px; border-top: 1px dashed var(--warn); }
 
-    .detail-area { min-height: 0; overflow: auto; padding: 17px; background: #f7f9fb; }
+    /* ── 详情面板 ── */
+    .detail-area { min-height: 0; overflow: auto; padding: 15px; background: var(--canvas); }
     .detail-area[hidden] { display: none; }
-    .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
-    .info-card { background: #fff; border: 1px solid var(--line); border-radius: 11px; padding: 13px; min-width: 0; }
-    .info-card.full { grid-column: 1 / -1; }
-    .info-card.warning { background: #fffaf0; border-color: #efcf98; }
-    .info-card.success { background: #f3faf6; border-color: #c2dfce; }
-    .info-card.danger { background: #fff7f6; border-color: #edc1bd; }
+    .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      min-width: 0;
+    }
+    .card.full { grid-column: 1 / -1; }
+    .card.warn { background: var(--warn-bg); border-color: var(--warn-border); }
+    .card.ok { background: var(--ok-bg); border-color: var(--ok-border); }
+    .card.danger { background: var(--danger-bg); border-color: var(--danger-border); }
     .card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
-    .card-title { font-size: 13px; font-weight: 750; color: var(--navy-800); display: flex; align-items: center; gap: 7px; }
-    .card-title::before { content: ""; width: 3px; height: 13px; background: var(--teal-500); border-radius: 2px; }
+    .card-title { font-size: 12.5px; font-weight: 700; display: flex; align-items: center; gap: 7px; }
+    .card-title::before { content: ""; width: 3px; height: 12px; background: var(--info); border-radius: 2px; }
     .card-meta { color: var(--muted); font-size: 11px; }
-    .metric-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 5px 0; border-bottom: 1px dashed #e5eaee; }
+    .detail-path { color: var(--muted); font-size: 11px; margin-bottom: 2px; }
+    .detail-name { font-size: 15px; font-weight: 700; }
+
+    .metric-row {
+      display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+      padding: 5px 0; border-bottom: 1px dashed var(--border);
+    }
     .metric-row:last-child { border-bottom: 0; }
-    .metric-label { color: var(--muted); font-size: 12px; }
-    .metric-value { color: var(--ink); font-size: 13px; font-weight: 650; text-align: right; }
-    .metric-value.teal { color: var(--teal-600); }
-    .metric-value.amber { color: var(--amber-600); }
-    .metric-value.red { color: var(--red-600); }
-    .badge { display: inline-flex; align-items: center; padding: 3px 7px; border-radius: 5px; font-size: 11px; font-weight: 650; }
-    .badge.teal { color: var(--teal-600); background: var(--teal-100); }
-    .badge.amber { color: var(--amber-600); background: var(--amber-100); }
-    .badge.red { color: var(--red-600); background: var(--red-100); }
-    .badge.green { color: var(--green-600); background: var(--green-100); }
-    .soft-note { margin-top: 8px; padding: 7px 8px; color: #725323; background: #fff4db; border-radius: 7px; font-size: 11px; }
-    .gate {
-      display: flex; align-items: flex-start; gap: 10px;
-      padding: 10px; border-radius: 8px; background: #f6f8fa;
+    .metric-label { color: var(--muted); font-size: 11.5px; }
+    .metric-value { font-size: 12.5px; font-weight: 600; text-align: right; }
+    .metric-value.info { color: var(--info); }
+    .metric-value.warn { color: var(--warn); }
+    .metric-value.danger { color: var(--danger); }
+    .metric-value.ok { color: var(--ok); }
+
+    .badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 5px; font-size: 11px; font-weight: 600; border: 1px solid transparent; }
+    .badge.info { color: var(--info); background: var(--info-bg); border-color: var(--info-border); }
+    .badge.warn { color: var(--warn); background: var(--warn-bg); border-color: var(--warn-border); }
+    .badge.danger { color: var(--danger); background: var(--danger-bg); border-color: var(--danger-border); }
+    .badge.ok { color: var(--ok); background: var(--ok-bg); border-color: var(--ok-border); }
+    .badge.mute { color: var(--muted); background: var(--surface-2); border-color: var(--border); }
+
+    /* 伤员状态块 */
+    .state-line { display: flex; align-items: baseline; gap: 8px; padding-bottom: 9px; margin-bottom: 9px; border-bottom: 1px solid var(--border); }
+    .state-line .k { color: var(--muted); font-size: 11.5px; flex: 0 0 auto; }
+    .state-line .v { font-size: 13px; font-weight: 600; }
+    .vitals { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 7px; }
+    .vital {
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 7px 8px;
+      background: var(--surface-2);
     }
-    .gate-icon { width: 24px; height: 24px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 50%; font-size: 12px; font-weight: 800; }
-    .gate.blocked .gate-icon { color: var(--red-600); background: var(--red-100); }
-    .gate.ready .gate-icon { color: var(--green-600); background: var(--green-100); }
-    .gate.neutral .gate-icon { color: var(--amber-600); background: var(--amber-100); }
-    .gate-title { font-size: 13px; font-weight: 700; }
-    .gate-desc { color: var(--muted); font-size: 11px; margin-top: 2px; }
-    .actions-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
-    .actions-list li { display: flex; align-items: flex-start; gap: 8px; color: #344655; font-size: 12px; }
-    .actions-list li::before { content: attr(data-n); flex: 0 0 auto; width: 19px; height: 19px; display: grid; place-items: center; color: var(--teal-600); background: var(--teal-100); border-radius: 5px; font-size: 10px; font-weight: 700; }
-    .rule-list { display: flex; flex-wrap: wrap; gap: 6px; }
-    .rule-ref { padding: 5px 7px; color: #526878; background: #f0f4f6; border: 1px solid #dde5ea; border-radius: 6px; font-size: 11px; }
-    .knowledge-accordion { border: 1px solid #d7e1e7; border-radius: 9px; overflow: hidden; background: #fff; }
-    .knowledge-accordion summary {
+    .vital.abnormal { border-color: var(--warn-border); background: var(--warn-bg); }
+    .vital.unknown { opacity: .62; }
+    .vital-k { color: var(--muted); font-size: 10.5px; }
+    .vital-v { font-size: 13.5px; font-weight: 700; margin-top: 1px; display: flex; align-items: center; gap: 4px; }
+    .vital.abnormal .vital-v { color: var(--warn); }
+    .trend { font-size: 10px; color: var(--muted); }
+    .state-sub { color: var(--muted); font-size: 11px; font-weight: 600; margin: 11px 0 6px; }
+    .injury-list, .plain-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 5px; }
+    .injury-list li {
+      display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+      font-size: 12px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 6px 8px;
+      background: var(--surface-2);
+    }
+    .plain-list li { color: var(--fg-soft); font-size: 12px; padding-left: 12px; position: relative; }
+    .plain-list li::before { content: "▸"; position: absolute; left: 0; color: var(--muted); font-size: 10px; }
+    .missing-list { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px; }
+    .missing-list li {
+      font-size: 11.5px; padding: 3px 8px;
+      border: 1px dashed var(--warn-border); border-radius: 999px;
+      color: var(--warn); background: var(--warn-bg);
+    }
+
+    .memo-block { display: grid; gap: 10px; }
+    .memo-group .memo-k { color: var(--muted); font-size: 11px; font-weight: 600; margin-bottom: 4px; }
+    .memo-conclusion {
+      border-left: 2px solid var(--info);
+      padding: 4px 0 4px 10px;
+      font-size: 12.5px;
+      color: var(--fg);
+    }
+
+    .gate { display: flex; align-items: flex-start; gap: 10px; }
+    .gate-icon { width: 22px; height: 22px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 50%; font-size: 11px; font-weight: 800; }
+    .gate.blocked .gate-icon { color: var(--danger); background: var(--danger-bg); border: 1px solid var(--danger-border); }
+    .gate.ready .gate-icon, .gate.completed .gate-icon { color: var(--ok); background: var(--ok-bg); border: 1px solid var(--ok-border); }
+    .gate.assessing .gate-icon { color: var(--warn); background: var(--warn-bg); border: 1px solid var(--warn-border); }
+    .gate-title { font-size: 12.5px; font-weight: 700; }
+    .gate-desc { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+    .note-box {
+      margin-top: 9px; padding: 8px 9px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--surface-2);
+      font-size: 11.5px; color: var(--fg-soft);
+    }
+    .note-box b { color: var(--fg); }
+
+    .actions-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+    .actions-list li { display: flex; align-items: flex-start; gap: 8px; color: var(--fg-soft); font-size: 12px; }
+    .actions-list li::before {
+      content: attr(data-n); flex: 0 0 auto;
+      width: 18px; height: 18px; display: grid; place-items: center;
+      color: var(--info); background: var(--info-bg); border: 1px solid var(--info-border);
+      border-radius: 5px; font-size: 10px; font-weight: 700;
+    }
+    .next-stage-note { margin-top: 9px; padding: 7px 8px; border-radius: 7px; background: var(--surface-2); color: var(--muted); font-size: 11px; }
+
+    .knowledge { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
+    .knowledge summary {
       display: flex; align-items: center; justify-content: space-between; gap: 12px;
-      padding: 11px 12px; color: var(--navy-800); background: #f4f8fa;
-      font-size: 12px; font-weight: 700; cursor: pointer; list-style: none;
+      padding: 10px 11px; background: var(--surface-2);
+      font-size: 12px; font-weight: 650; cursor: pointer; list-style: none;
     }
-    .knowledge-accordion summary::-webkit-details-marker { display: none; }
-    .knowledge-accordion summary::after { content: "＋"; color: var(--teal-600); font-size: 16px; font-weight: 500; }
-    .knowledge-accordion[open] summary::after { content: "－"; }
-    .knowledge-body { display: grid; gap: 8px; padding: 10px; border-top: 1px solid #dfe7ec; }
-    .chunk-card { padding: 10px; border: 1px solid #e1e8ed; border-radius: 8px; background: #fbfcfd; }
-    .chunk-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
-    .chunk-title { color: var(--navy-800); font-size: 11px; font-weight: 750; }
-    .chunk-score { color: var(--teal-600); font-size: 10px; }
-    .chunk-text { margin: 0; color: #506473; font-size: 11px; line-height: 1.65; }
+    .knowledge summary::-webkit-details-marker { display: none; }
+    .knowledge summary::after { content: "＋"; color: var(--muted); font-size: 15px; font-weight: 400; }
+    .knowledge[open] summary::after { content: "－"; }
+    .knowledge-body { display: grid; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
+    .chunk { padding: 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-2); }
+    .chunk-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; flex-wrap: wrap; }
+    .chunk-title { font-size: 11.5px; font-weight: 700; }
+    .chunk-metas { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+    .chunk-score { color: var(--info); font-size: 10px; }
+    .chunk-text { margin: 0; color: var(--fg-soft); font-size: 11.5px; line-height: 1.7; }
 
     .logic-strip {
-      display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px;
-      margin-top: 11px; padding: 11px; background: var(--navy-900); border-radius: 11px;
+      display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px;
+      margin-top: 10px; padding: 10px;
+      border: 1px solid var(--border); border-radius: 10px;
+      background: var(--surface);
     }
-    .logic-item { position: relative; min-width: 0; color: #a8bdcc; font-size: 10px; }
-    .logic-item strong { display: block; color: #fff; font-size: 11px; margin-bottom: 2px; }
-    .logic-item:not(:last-child)::after { content: "›"; position: absolute; top: 7px; right: -6px; color: #5a778d; font-size: 17px; }
-    .logic-item.active strong { color: #79ded7; }
-    .logic-item.soft strong { color: #f0bd70; }
+    .logic-item { min-width: 0; color: var(--muted); font-size: 10px; }
+    .logic-item strong { display: block; color: var(--fg-soft); font-size: 11px; margin-bottom: 2px; }
+    .logic-item.active strong { color: var(--info); }
+    .logic-item.soft strong { color: var(--warn); }
 
     .footer-note {
       grid-column: 1 / -1;
-      color: #687986;
-      font-size: 11px;
-      text-align: right;
-      padding: 0 4px;
+      color: var(--muted); font-size: 11px; text-align: right; padding: 0 4px;
     }
 
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 
-    @keyframes enter { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
 
-    @media (max-width: 1120px) {
-      .case-band { grid-template-columns: repeat(4, 1fr); padding: 0 16px; }
-      .case-cell:first-child { grid-column: 1 / -1; padding-left: 16px; }
-    }
-
-    @media (max-width: 820px) {
-      html, body { height: auto; overflow: auto; }
-      .app-shell { height: auto; min-height: 100vh; grid-template-rows: 66px auto auto; overflow: visible; }
-      .workspace, .workspace.detail-visible { grid-template-columns: 1fr; grid-template-rows: auto; overflow: visible; }
-      .panel { min-height: 690px; }
-      .conversation-panel { min-height: 720px; }
-    }
-
-    @media (max-width: 720px) {
-      .topbar { padding: 0 14px; }
-      .brand-sub, .top-actions > span:not(.live-pill) { display: none; }
-      .brand-name { font-size: 15px; }
-      .case-band { grid-template-columns: repeat(2, 1fr); padding: 0; }
+    @media (max-width: 1180px) {
+      .case-strip { grid-template-columns: repeat(4, 1fr); }
       .case-cell:first-child { grid-column: 1 / -1; }
-      .workspace { padding: 8px; gap: 8px; }
+    }
+
+    @media (max-width: 900px) {
+      html, body { height: auto; overflow: auto; }
+      .app-shell { height: auto; min-height: 100vh; grid-template-rows: auto auto auto; overflow: visible; }
+      .workspace, .workspace.detail-visible { grid-template-columns: 1fr; overflow: visible; }
+      .panel { min-height: 640px; }
       .process-body, .process-body.details-open { grid-template-columns: 1fr; }
-      .stage-map { max-height: 510px; border-right: 0; border-bottom: 1px solid var(--line); }
+      .stage-map { max-height: 520px; border-right: 0; border-bottom: 1px solid var(--border); }
       .detail-grid { grid-template-columns: 1fr; }
-      .info-card.full { grid-column: auto; }
-      .legend { display: none; }
       .logic-strip { grid-template-columns: 1fr; }
-      .logic-item:not(:last-child)::after { display: none; }
-      .composer { grid-template-columns: 1fr; }
-      .primary-btn { min-height: 42px; }
     }
 
     @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after { animation-duration: .01ms !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
+      *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
     }
   </style>
 </head>
 <body>
   <div class="app-shell">
-    <header class="topbar">
-      <div class="brand">
-        <div class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none">
-            <path d="M12 2.7 20 6v5.3c0 5-3.2 8.3-8 10-4.8-1.7-8-5-8-10V6l8-3.3Z" stroke="currentColor" stroke-width="1.5"/>
-            <path d="M12 7v9M7.5 11.5h9" stroke="#69d4cd" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-        </div>
-        <div>
-          <div class="brand-name">战伤分级救治智能推演系统</div>
-          <div class="brand-sub">WAR INJURY TREATMENT WORKFLOW</div>
+    <!-- 宿主壳层占位：产品中由 med-pilotdeck 现有 App Shell 渲染 -->
+    <header class="shell-bar">
+      <div class="shell-left">
+        <div class="shell-crumb">
+          <span class="shell-tag">战创伤医学</span>
+          <strong>爆炸伤救治演练</strong>
+          <span class="sep">/</span>
+          <span>会话：胸部伤 + 右小腿开放伤</span>
         </div>
       </div>
-      <div class="top-actions">
-        <span>案例编号 WTR-2026-017</span>
-        <span class="live-pill"><i class="live-dot"></i>演示模式</span>
+      <div class="shell-right">
+        <span class="shell-tag">推演工作台原型</span>
+        <button class="ghost-btn" id="themeBtn" type="button">切换明暗</button>
       </div>
     </header>
 
-    <section class="case-band" aria-label="案例实时状态">
+    <section class="case-strip" aria-label="案例状态">
       <div class="case-cell">
         <div class="case-kicker">案例概况</div>
         <div class="case-value">爆炸冲击后胸部损伤风险 · 右小腿开放性创伤伴出血</div>
       </div>
       <div class="case-cell">
         <div class="case-kicker">当前救治位置</div>
-        <div class="case-value accent" id="facilityValue">连抢救组</div>
+        <div class="case-value info" id="facilityValue">连抢救组</div>
       </div>
       <div class="case-cell">
         <div class="case-kicker">当前阶段</div>
@@ -488,7 +609,7 @@
       </div>
       <div class="case-cell">
         <div class="case-kicker">伤后时间</div>
-        <div class="case-value warning" id="elapsedValue">06 min</div>
+        <div class="case-value" id="elapsedValue">06 min</div>
       </div>
       <div class="case-cell">
         <div class="case-kicker">阶段转换</div>
@@ -496,20 +617,28 @@
       </div>
     </section>
 
-    <main class="workspace">
+    <main class="workspace" id="workspace">
       <section class="panel conversation-panel" aria-labelledby="conversationTitle">
         <div class="panel-head">
           <div>
-            <div class="panel-title" id="conversationTitle">多轮协同对话</div>
-            <div class="panel-subtitle">每轮信息将触发 Case State 更新与重新评估</div>
+            <div class="panel-title" id="conversationTitle">推演对话</div>
+            <div class="panel-subtitle">复用现有会话能力；每轮信息触发 Case State 更新与重新评估</div>
           </div>
-          <button class="secondary-btn" id="restartBtn" type="button">↺ 重新演示</button>
+          <button class="ghost-btn" id="restartBtn" type="button">↺ 重新演示</button>
         </div>
         <nav class="round-nav" id="roundNav" aria-label="对话轮次"></nav>
         <div class="messages" id="messages" aria-live="polite"></div>
         <div class="composer">
-          <textarea aria-label="演示输入框" readonly>演示模式：点击“下一轮”查看预设案例如何推动救治流程变化</textarea>
-          <button class="primary-btn" id="nextBtn" type="button">下一轮 <span aria-hidden="true">→</span></button>
+          <div class="composer-card">
+            <textarea aria-label="演示输入框" readonly>原型模式：点击「下一轮」查看预设案例如何推动救治流程变化</textarea>
+            <button class="send-btn" type="button" disabled aria-label="发送（原型不可用）">↑</button>
+          </div>
+          <div class="composer-foot">
+            <span class="composer-note">产品中此处为 ComposerV2，轮次由真实对话产生</span>
+            <div class="demo-controls">
+              <button class="primary-btn" id="nextBtn" type="button">下一轮 →</button>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -517,371 +646,607 @@
         <div class="panel-head">
           <div>
             <div class="panel-title" id="processTitle">分级救治全过程</div>
-            <div class="panel-subtitle">主流程展示救治级别，节点内部承载动态分类、时效、后送与规则依据</div>
+            <div class="panel-subtitle">主级 → 子级 → 轮次纪要；仅纪要叶子可展开详情</div>
           </div>
-          <div class="process-head-right">
-            <div class="legend" aria-label="流程状态图例">
-              <span><i class="done"></i>完成</span>
-              <span><i class="current"></i>当前</span>
-              <span><i class="transfer"></i>转运</span>
-              <span><i class="future"></i>未开始</span>
-            </div>
+          <div class="legend" aria-label="流程状态图例">
+            <span><i class="done"></i>完成</span>
+            <span><i class="current"></i>当前</span>
+            <span><i class="transfer"></i>转运</span>
+            <span><i class="blocked"></i>阻塞</span>
+            <span><i class="future"></i>未开始</span>
           </div>
         </div>
 
         <div class="process-body" id="processBody">
-          <aside class="stage-map" aria-label="分级救治主流程">
-            <div class="stage-map-inner">
-              <div class="map-label">Treatment pathway</div>
-              <div class="map-hint">点击任一主级或分支节点展开详情；再次点击收起</div>
-              <div id="stageMap"></div>
-            </div>
+          <aside class="stage-map" aria-label="分级救治三层流程树">
+            <p class="map-hint">主级与子级为流程定位，不可点击；点击子级下的轮次纪要可查看该轮伤员状态与研判详情。</p>
+            <div id="stageMap"></div>
           </aside>
-          <section class="detail-area" id="detailArea" aria-label="节点详情" hidden></section>
+          <section class="detail-area" id="detailArea" aria-label="轮次纪要详情" hidden></section>
         </div>
       </section>
 
-      <div class="footer-note">本页面为产品交互原型，案例与研判结果仅用于系统演示；实际救治应由具备资质的专业人员依据现场情况复核。</div>
+      <div class="footer-note">本页面为产品交互原型，案例、伤员状态与研判结果均为演示数据；实际救治应由具备资质的专业人员依据现场情况复核。</div>
     </main>
   </div>
 
   <script>
+    /* ── 第一层 / 第二层：固定流程地图 ── */
     const stages = [
       {
-        id: "initial", index: "Ⅰ级", name: "战现场急救",
-        note: "首次、简易、快速处置",
-        description: "在负伤地点附近迅速控制损伤、挽救生命，区分初级急救和高级急救。",
-        rule: "第七条【战现场急救】战现场急救（Ⅰ级）。为迅速控制损伤、挽救生命，在负伤地点附近对伤员实施的首次、简易、快速处置。",
+        id: "initial", index: "Ⅰ级", name: "战现场急救", note: "首次、简易、快速处置",
         substeps: [
-          { name: "初级急救", note: "连抢救组", description: "重点完成检伤评估、止血、通气、包扎、固定、搬运和必要的基础生命支持。" },
-          { name: "高级急救", note: "营救护站", description: "在初级急救基础上进一步实施检伤分类、气道与呼吸维持、生命支持和更完整的伤情评估。" }
+          { name: "初级急救", note: "连抢救组" },
+          { name: "高级急救", note: "营救护站" }
         ]
       },
       {
-        id: "early", index: "Ⅱ级", name: "早期救治",
-        note: "控制伤情发展",
-        description: "为控制伤情发展、维持组织器官功能并争取后送和后续治疗时机，实施外科处置与休克复苏等措施。",
-        rule: "第八条【早期救治】早期救治（Ⅱ级）。救治范围区分紧急处置和外科复苏。",
+        id: "early", index: "Ⅱ级", name: "早期救治", note: "控制伤情发展",
         substeps: [
-          { name: "紧急处置", note: "旅（团）救护所", description: "开展检伤分类、辅助检查、紧急外科或内科处置、抗休克治疗与生命体征监测。" },
-          { name: "外科复苏", note: "增强手术力量", description: "在紧急处置基础上增加损伤控制手术、休克复苏监护和器官功能支持。" }
+          { name: "紧急处置", note: "旅（团）救护所" },
+          { name: "外科复苏", note: "增强手术力量" }
         ]
       },
       {
-        id: "specialist", index: "Ⅲ级", name: "专科治疗",
-        note: "消除损伤危害",
-        description: "通过专科手术与系统性治疗控制并发症、恢复组织器官功能。",
-        rule: "第九条【专科治疗】专科治疗（Ⅲ级）。救治范围区分野战专科救治和确定性专科治疗。",
+        id: "specialist", index: "Ⅲ级", name: "专科治疗", note: "消除损伤危害",
         substeps: [
-          { name: "野战专科救治", note: "野战医疗所", description: "实施野战专科手术、重症监护与复苏及战伤并发症防治。" },
-          { name: "确定性专科治疗", note: "后方医院", description: "完成系统性治疗、确定性专科手术和功能恢复性手术。" }
+          { name: "野战专科救治", note: "野战医疗所" },
+          { name: "确定性专科治疗", note: "后方医院" }
         ]
       },
       {
-        id: "rehab", index: "Ⅳ级", name: "康复治疗",
-        note: "促进身心功能恢复",
-        description: "围绕生理功能和精神心理恢复实施评估、训练、治疗与矫治。",
-        rule: "第十条【康复治疗】康复治疗（Ⅳ级）。主要包括功能训练、物理治疗、心理治疗、中医治疗等技术。",
+        id: "rehab", index: "Ⅳ级", name: "康复治疗", note: "促进身心功能恢复",
         substeps: [
-          { name: "功能恢复", note: "功能评估与训练", description: "开展功能测定、物理治疗、运动与日常生活能力训练。" },
-          { name: "身心康复", note: "心理与适应支持", description: "开展心理治疗、言语训练、中医治疗及义具适配等综合康复。" }
+          { name: "功能恢复", note: "功能评估与训练" },
+          { name: "身心康复", note: "心理与适应支持" }
         ]
       }
     ];
 
+    /* ── 每轮快照：第三层纪要叶子 + 伤员状态 + 研判详情 ── */
     const rounds = [
       {
-        title: "首次报告", time: "15:01", elapsed: "06 min", facility: "连抢救组",
-        stage: "Ⅰ级 · 初级急救", currentStage: "initial", currentSubstep: 0,
+        id: "r1", title: "首次报告", time: "15:01", elapsed: "06 min",
+        stageId: "initial", subIndex: 0,
+        facility: "连抢救组", capability: "初级急救",
         transition: "等待补充信息", transitionTone: "",
-        severity: "待进一步评估", treatmentPriority: "待分类", transportPriority: "尚未判断",
-        classification: "急救分类 · v1", timeWindow: "初级急救宜在伤后 10 分钟内实施", timingStatus: "处于建议时限内",
-        gateState: "neutral", gateTitle: "暂不触发阶段转换", gateDesc: "当前信息不足，先完成伤情评估与本级处置。",
-        target: "待判断", capability: "初级急救",
-        actions: ["确认呼吸、循环、意识状态与活动性出血", "在本级技术范围内完成止血、通气、包扎固定等处置", "补充关键生命体征后重新分类"],
-        rules: ["第七条 · 战现场急救", "第十六条 · 急救分类", "第二十四条 · 初级急救"],
+        target: "待判断",
+        classification: { label: "急救分类 · v1", severity: "待进一步评估", treatmentPriority: "待分类", transportPriority: "尚未判断" },
+        timing: { window: "初级急救宜在伤后 10 分钟内实施", status: "处于建议时限内", tone: "" },
+        gate: {
+          state: "assessing", title: "暂不触发阶段转换",
+          desc: "当前信息不足，先完成伤情评估与本级处置。",
+          confirm: { state: "none", text: "Gate 未达 READY，本轮不发起阶段转换确认。" }
+        },
+        memo: {
+          input: ["爆炸后伤员，胸痛、呼吸急促", "右小腿伤口活动性出血", "意识清楚，可正常对答"],
+          action: ["按气道—呼吸—循环顺序检伤", "小腿伤口直接压迫止血", "包扎固定并准备安全搬运"],
+          conclusion: "先排查危及生命问题，并补齐关键生命体征后重新分类。"
+        },
+        patient: {
+          updatedAt: "15:01 · 伤后 06 min",
+          consciousness: "清醒，能正常对答（GCS 15）",
+          vitals: [
+            { k: "呼吸", v: "未测", trend: "unknown" },
+            { k: "收缩压", v: "未测", trend: "unknown" },
+            { k: "心率", v: "未测", trend: "unknown" },
+            { k: "血氧", v: "未测", trend: "unknown" },
+            { k: "体温", v: "未测", trend: "unknown" }
+          ],
+          injuries: [
+            { label: "胸部损伤（胸痛 + 呼吸急促）", certainty: "疑似", status: "活动" },
+            { label: "右小腿开放性创伤伴出血", certainty: "已确认", status: "活动性出血" }
+          ],
+          treatments: ["初步检伤评估（进行中）", "右小腿伤口直接压迫止血（进行中）"],
+          missing: ["呼吸频率", "收缩压", "心率", "血氧饱和度", "胸部是否开放伤", "压迫后止血效果"]
+        },
+        actions: [
+          "确认呼吸、循环、意识状态与活动性出血",
+          "在本级技术范围内完成止血、通气、包扎固定等处置",
+          "补充关键生命体征后重新分类"
+        ],
+        nextStageNote: "暂无越级措施；胸部伤进一步评估需高级急救及以上能力。",
+        knowledge: [
+          { title: "Chunk 01 · 第二十四条【战现场急救—初级急救】", score: "相关度 0.96", source: "远程知识库", used: true, text: "（一）初级急救：1.检伤评估；2.止血，包括止血带、止血绷带、敷料止血等；3.通气，包括手法开通气道、口（鼻）咽通气管通气法等；4.包扎、固定与搬运，包括绷带、三角巾加压包扎，保护性包扎，肢体固定，徒手搬运、担架搬运等。" },
+          { title: "Chunk 02 · 第一〇五条【胸部伤战现场急救】", score: "相关度 0.92", source: "远程知识库", used: true, text: "胸部伤战现场急救应当采取下列措施：（一）清除口腔异物，保持呼吸道通畅。（二）包扎固定。胸部开放性伤口用胸腔封闭贴或不透气的敷料紧密包扎。（三）镇痛镇静吸氧。给止痛剂和镇静剂，有条件时，吸氧。" },
+          { title: "Chunk 03 · 第十六条【急救分类】", score: "相关度 0.88", source: "远程知识库", used: false, text: "伤病员急救分类，应当根据伤病员生命体征和伤情等，初步判断伤员的伤势程度，确定伤病员救治与后送优先顺序，按要求佩戴伤标。通常由现场军医、卫生员实施。" }
+        ],
         messages: [
           { role: "user", text: "爆炸后有一名伤员，胸口受伤，现在呼吸很急、胸部疼痛，右小腿还有伤口在流血，人目前能正常回答问题。" },
-          { role: "assistant", text: "已结合检索到的《战伤救治规则》战现场急救、胸部伤现场处置和急救分类知识块进行研判。\n\n【初步研判】当前位于Ⅰ级战现场急救—初级急救。伤员意识尚清楚，但存在呼吸急促、胸痛和右小腿活动性出血，应先按气道、呼吸、循环顺序排查危及生命的问题；现阶段只能确认“胸部伤与四肢开放伤风险”，暂不能仅凭描述判定具体胸部伤类型。\n\n【当前救治方案】立即检查口腔及气道是否通畅，持续观察呼吸费力、胸廓起伏是否对称；对右小腿伤口实施直接压迫并评估止血效果，随后完成包扎、固定和安全搬运准备。检查胸壁是否存在开放伤口、反常呼吸或明显变形；如确认开放性胸壁伤，应由现场专业人员依据规则实施封闭包扎。同步记录负伤时间、处置时间和意识变化。\n\n【需要补充】请尽快提供呼吸频率、收缩压、心率、血氧饱和度（如有）、胸部是否开放伤、双侧呼吸音/胸廓起伏是否对称，以及压迫后小腿出血能否控制。补充后系统将重新分类，并判断是否需转入高级急救。", tag: "RAG 已检索 3 个知识块 · 等待关键生命体征" }
+          { role: "assistant", text: "已结合检索到的《战伤救治规则》战现场急救、胸部伤现场处置和急救分类知识块进行研判。\n\n【初步研判】当前位于Ⅰ级战现场急救—初级急救。伤员意识尚清楚，但存在呼吸急促、胸痛和右小腿活动性出血，应先按气道、呼吸、循环顺序排查危及生命的问题；现阶段只能确认「胸部伤与四肢开放伤风险」，暂不能仅凭描述判定具体胸部伤类型。\n\n【当前救治方案】立即检查口腔及气道是否通畅，持续观察呼吸费力、胸廓起伏是否对称；对右小腿伤口实施直接压迫并评估止血效果，随后完成包扎、固定和安全搬运准备。检查胸壁是否存在开放伤口、反常呼吸或明显变形；如确认开放性胸壁伤，应由现场专业人员依据规则实施封闭包扎。同步记录负伤时间、处置时间和意识变化。\n\n【需要补充】请尽快提供呼吸频率、收缩压、心率、血氧饱和度（如有）、胸部是否开放伤、双侧呼吸音/胸廓起伏是否对称，以及压迫后小腿出血能否控制。\n\n仅供辅助，须具备资质的医务人员复核。", tag: "已检索 3 个知识块 · 等待关键生命体征" }
         ]
       },
       {
-        title: "生命体征", time: "15:09", elapsed: "14 min", facility: "连抢救组",
-        stage: "Ⅰ级 · 初级急救", currentStage: "initial", currentSubstep: 0,
-        transition: "准备后送高级急救", transitionTone: "warning",
-        severity: "重伤风险 · 需复评", treatmentPriority: "高优先级", transportPriority: "优先后送",
-        classification: "急救分类 · v2", timeWindow: "初级急救宜在伤后 10 分钟内实施", timingStatus: "超过建议时限 4 分钟",
-        gateState: "ready", gateTitle: "允许准备后送", gateDesc: "小腿出血已控制；当前伤情需要更高救治能力，启动高级急救后送准备。",
-        target: "营救护站 · 高级急救", capability: "初级急救 → 能力不足",
-        actions: ["持续监测呼吸、血压、心率与意识变化", "维持已经取得的止血效果并完成后送固定", "携带伤情与已处置信息，优先转入高级急救单元"],
-        rules: ["第十三条 · 尽早救治", "第二十条 · 救送结合", "第二十一条 · 救送时机"],
+        id: "r2", title: "生命体征补充", time: "15:09", elapsed: "14 min",
+        stageId: "initial", subIndex: 0,
+        facility: "连抢救组", capability: "初级急救 → 能力不足",
+        transition: "已确认转入高级急救", transitionTone: "warn",
+        target: "营救护站 · 高级急救",
+        classification: { label: "急救分类 · v2", severity: "重伤风险 · 需复评", treatmentPriority: "高优先级", transportPriority: "优先后送" },
+        timing: { window: "初级急救宜在伤后 10 分钟内实施", status: "超过建议时限 4 分钟", tone: "warn" },
+        gate: {
+          state: "ready", title: "满足后送条件，等待用户确认",
+          desc: "小腿出血已控制，当前伤情需要更高救治能力；模型给出 READY，转换由用户确认后生效。",
+          confirm: { state: "confirmed", text: "15:10 已通过提问卡片确认「转入Ⅰ级·高级急救（营救护站）」。" }
+        },
+        memo: {
+          input: ["呼吸 32 次/分，收缩压 95，心率 120", "胸壁无明显开放伤，右胸呼吸时剧痛", "小腿压迫后基本止血"],
+          action: ["维持止血效果并完成后送固定", "持续监测呼吸、血压、心率与意识", "携伤情与已处置信息准备转运"],
+          conclusion: "主要风险转向胸部与循环，优先级上调并请求转入高级急救。"
+        },
+        patient: {
+          updatedAt: "15:09 · 伤后 14 min",
+          consciousness: "清醒，能对答，主诉右胸剧痛",
+          vitals: [
+            { k: "呼吸", v: "32 次/分", trend: "up", abnormal: true },
+            { k: "收缩压", v: "95 mmHg", trend: "down", abnormal: true },
+            { k: "心率", v: "120 次/分", trend: "up", abnormal: true },
+            { k: "血氧", v: "未测", trend: "unknown" },
+            { k: "体温", v: "36.6 ℃", trend: "flat" }
+          ],
+          injuries: [
+            { label: "胸部闭合性损伤（待排张力性气胸 / 血胸）", certainty: "疑似", status: "持续" },
+            { label: "右小腿开放性创伤", certainty: "已确认", status: "出血已控制" },
+            { label: "胸壁开放性伤口", certainty: "已排除", status: "本轮体检未见" }
+          ],
+          treatments: ["右小腿直接压迫止血（已完成）", "加压包扎与肢体固定（已完成）", "持续生命体征监测（进行中）"],
+          missing: ["血氧饱和度", "双侧呼吸音对比", "皮肤颜色与末梢循环", "血压变化趋势"]
+        },
+        actions: [
+          "持续监测呼吸、血压、心率与意识变化",
+          "维持已取得的止血效果并完成后送固定",
+          "携带伤情与已处置信息，优先转入高级急救单元"
+        ],
+        nextStageNote: "胸腔穿刺减压、容量复苏等属高级急救及以上能力，本级不执行。",
+        knowledge: [
+          { title: "Chunk 01 · 第十六条【急救分类】", score: "相关度 0.95", source: "远程知识库", used: true, text: "伤病员急救分类，应当根据伤病员生命体征和伤情等，初步判断伤员的伤势程度，确定伤病员救治与后送优先顺序，按要求佩戴伤标。通常由现场军医、卫生员实施。" },
+          { title: "Chunk 02 · 第一〇五条【胸部伤战现场急救】", score: "相关度 0.93", source: "远程知识库", used: true, text: "胸部伤战现场急救应当采取下列措施：清除口腔异物，保持呼吸道通畅；包扎固定；气胸处理；镇痛镇静吸氧，有条件时吸氧。" },
+          { title: "Chunk 03 · 第二十一条【救送结合原则】", score: "相关度 0.91", source: "远程知识库", used: true, text: "伤情稳定时应当尽快组织后送；伤情恶化危及生命时应当优先稳定伤情，保证在生命体征稳定状态下实施后送。" }
+        ],
         messages: [
           { role: "user", text: "呼吸大约每分钟32次，胸口没有明显开放伤，但右侧胸部呼吸时疼得厉害。收缩压95，心率120。小腿压迫后基本止住血了。" },
-          { role: "assistant", text: "已结合急救分类、胸部伤战现场急救和救送结合知识块重新研判。\n\n【伤情变化】呼吸32次/分、收缩压95mmHg、心率120次/分提示呼吸与循环状态异常；右小腿压迫后基本止血，说明当前主要风险已转向胸部损伤及循环不稳定。系统将救治优先级上调为高优先级，但仍需排查张力性气胸、血胸、肺挫伤或持续失血等可能原因。\n\n【当前救治方案】继续保持气道通畅，给予持续生命体征监测；有条件时由专业人员给予吸氧。复查小腿伤口和包扎是否继续有效，完成肢体固定；避免因搬运导致再次出血。胸部没有明显开放伤，因此不直接执行开放性胸伤处置，但应持续观察呼吸困难是否加重、胸廓是否不对称及意识是否改变。\n\n【阶段建议】当前连抢救组的初级急救能力不足以完成进一步胸部伤评估，应一边维持现有处置，一边准备优先后送至具备高级急救能力的营救护站。后送前请补充血氧饱和度、双侧呼吸音、皮肤颜色和血压趋势；若生命状态快速恶化，应先由现场专业人员完成必要稳定处置，再实施转运。", tag: "RAG 已检索 3 个知识块 · 阶段转换建议" }
+          {
+            role: "assistant",
+            text: "已结合急救分类、胸部伤战现场急救和救送结合知识块重新研判。\n\n【伤情变化】呼吸32次/分、收缩压95mmHg、心率120次/分提示呼吸与循环状态异常；右小腿压迫后基本止血，主要风险已转向胸部损伤及循环不稳定。救治优先级上调为高优先级，仍需排查张力性气胸、血胸、肺挫伤或持续失血。\n\n【当前救治方案】继续保持气道通畅并持续监测生命体征；有条件时由专业人员给予吸氧。复查小腿包扎是否继续有效并完成肢体固定，避免搬运再次出血。胸部无明显开放伤，不直接执行开放性胸伤处置，但应持续观察呼吸困难是否加重、胸廓是否对称、意识是否改变。\n\n【阶段建议】连抢救组的初级急救能力不足以完成进一步胸部伤评估，建议优先后送至具备高级急救能力的营救护站。Gate = READY，是否执行转换需要您确认。\n\n仅供辅助，须具备资质的医务人员复核。",
+            tag: "已检索 3 个知识块 · Gate READY",
+            confirm: {
+              q: "是否确认将救治阶段转入「Ⅰ级 · 高级急救（营救护站）」？",
+              hint: "理由：胸部伤评估需更高能力；后送优先级=优先；转运条件=已满足。阶段仅在您确认后变更。",
+              options: [
+                { label: "确认转入高级急救", picked: true },
+                { label: "暂不转换，继续本级处置", picked: false }
+              ]
+            }
+          }
         ]
       },
       {
-        title: "到达营站", time: "15:25", elapsed: "30 min", facility: "营救护站",
-        stage: "Ⅰ级 · 高级急救", currentStage: "initial", currentSubstep: 1,
+        id: "r3", title: "到达营救护站", time: "15:25", elapsed: "30 min",
+        stageId: "initial", subIndex: 1,
+        facility: "营救护站", capability: "高级急救",
         transition: "已进入高级急救", transitionTone: "",
-        severity: "重伤风险 · 持续", treatmentPriority: "高优先级", transportPriority: "待重新评估",
-        classification: "急救分类 · v3", timeWindow: "高级急救宜在伤后 1 小时内实施", timingStatus: "处于建议时限内",
-        gateState: "neutral", gateTitle: "当前阶段继续处置", gateDesc: "到达新救治单元后重新评估，不能直接沿用上一阶段分类结果。",
-        target: "视复评结果确定", capability: "高级急救",
-        actions: ["重新检伤、评估与分类", "对呼吸、循环状态实施本级能力范围内的支持与监护", "判断当前能力是否满足后续救治需要"],
-        rules: ["第十一条 · 分级救治任务", "第二十四条 · 高级急救", "第十六条 · 急救分类"],
+        target: "视复评结果确定",
+        classification: { label: "急救分类 · v3", severity: "重伤风险 · 持续", treatmentPriority: "高优先级", transportPriority: "待重新评估" },
+        timing: { window: "高级急救宜在伤后 1 小时内实施", status: "处于建议时限内", tone: "" },
+        gate: {
+          state: "assessing", title: "当前阶段继续处置",
+          desc: "到达新救治单元后重新评估，不沿用上一阶段分类结果。",
+          confirm: { state: "none", text: "本轮 Gate 为 ASSESSING，未发起阶段转换确认。" }
+        },
+        memo: {
+          input: ["已送达营救护站", "收缩压仍约 95，呼吸仍快", "首次测得血氧 92%"],
+          action: ["重新检伤、评估与分类", "吸氧与持续生命体征监护", "复查胸部体征排查胸部急症"],
+          conclusion: "到站后异常无明显改善，生成急救分类 v3 并继续本级处置。"
+        },
+        patient: {
+          updatedAt: "15:25 · 伤后 30 min",
+          consciousness: "清醒，反应稍迟，持续诉右胸痛",
+          vitals: [
+            { k: "呼吸", v: "30 次/分", trend: "flat", abnormal: true },
+            { k: "收缩压", v: "96 mmHg", trend: "flat", abnormal: true },
+            { k: "心率", v: "118 次/分", trend: "flat", abnormal: true },
+            { k: "血氧", v: "92 %", trend: "unknown", abnormal: true },
+            { k: "体温", v: "36.4 ℃", trend: "flat" }
+          ],
+          injuries: [
+            { label: "胸部闭合性损伤（张力性气胸 / 血胸未排除）", certainty: "疑似", status: "未改善" },
+            { label: "右小腿开放性创伤", certainty: "已确认", status: "出血控制中" }
+          ],
+          treatments: ["吸氧（进行中）", "连续生命体征监护（进行中）", "重新检伤与急救分类 v3（已完成）", "小腿包扎与远端循环复查（已完成）"],
+          missing: ["双侧呼吸音对比", "床旁超声 / X线是否可用", "液体复苏后血压趋势"]
+        },
+        actions: [
+          "重新检伤、评估与分类",
+          "对呼吸、循环状态实施本级能力范围内的支持与监护",
+          "判断当前能力是否满足后续救治需要"
+        ],
+        nextStageNote: "辅助检查（X线、B超、血气）与胸腔闭式引流属Ⅱ级早期救治能力。",
+        knowledge: [
+          { title: "Chunk 01 · 第二十四条【高级急救】", score: "相关度 0.97", source: "远程知识库", used: true, text: "（二）高级急救：1.检伤、评估与分类；2.止血控制；3.气道开通与呼吸维持，包括气管吸引术、环甲膜穿刺或切开术、简易呼吸器应用，胸腔穿刺减压术等；4.包扎、固定与搬运；5.生命支持，包括心肺复苏、静脉穿刺输液术、容量复苏等。" },
+          { title: "Chunk 02 · 第十一条【分级救治任务】", score: "相关度 0.94", source: "远程知识库", used: true, text: "营救护站（所）及相当级别救治机构，主要执行高级急救技术范围。" },
+          { title: "Chunk 03 · 第一〇五条【胸部伤战现场急救】", score: "相关度 0.90", source: "远程知识库", used: false, text: "胸部伤战现场急救应当采取下列措施：清除口腔异物，保持呼吸道通畅；对胸部开放性伤口实施紧密包扎；对张力性气胸、开放性气胸按规则处理；有条件时吸氧。" }
+        ],
         messages: [
           { role: "user", text: "现在已经送到营救护站了，血压还是95左右，呼吸仍然很快。" },
-          { role: "assistant", text: "已结合高级急救技术范围、胸部伤救治和救送结合知识块完成到站复评。\n\n【阶段确认】伤员已经到达营救护站，当前转入Ⅰ级战现场急救—高级急救。系统不能直接沿用上一个地点的分类结论，已生成急救分类 v3。血压仍约95mmHg且呼吸持续增快，说明异常没有明显改善。\n\n【当前救治方案】营救护站应重新完成检伤、评估与分类，连续监测呼吸、血压、心率、意识和血氧变化；复核胸部体征并重点排查张力性气胸、血气胸等危及生命的胸部伤。按照高级急救能力建立必要的生命支持与复苏条件；任何穿刺、切开等侵入性处置必须在明确指征后由具备资质的专业人员实施。右小腿继续复查止血与远端循环，防止后送过程中再次出血。\n\n【下一步判断】请补充血氧、双侧呼吸音、胸廓起伏、液体复苏后的血压趋势以及是否具备床旁检查条件。若高级急救后呼吸循环仍不改善，或需要X线/B超、血气检查、抗休克治疗及进一步胸部处置，则应启动进入Ⅱ级早期救治的评估。", tag: "RAG 已检索 3 个知识块 · Classification v3" }
+          { role: "assistant", text: "已结合高级急救技术范围、分级救治任务和胸部伤救治知识块完成到站复评。\n\n【阶段确认】伤员已到达营救护站，当前处于Ⅰ级战现场急救—高级急救。系统不沿用上一地点的分类结论，已生成急救分类 v3。血压仍约95mmHg、呼吸持续增快、血氧92%，说明异常没有明显改善。\n\n【当前救治方案】重新完成检伤、评估与分类，连续监测呼吸、血压、心率、意识与血氧；复核胸部体征并重点排查张力性气胸、血气胸等危及生命的胸部伤。按高级急救能力建立必要生命支持与复苏条件；任何穿刺、切开等侵入性处置必须在明确指征后由具备资质的专业人员实施。右小腿继续复查止血与远端循环。\n\n【阶段建议】Gate = ASSESSING，暂不发起转换。若高级急救后呼吸循环仍不改善，或需要X线/B超、血气检查与抗休克治疗，则启动进入Ⅱ级早期救治的评估。\n\n仅供辅助，须具备资质的医务人员复核。", tag: "已检索 3 个知识块 · 急救分类 v3" }
         ]
       },
       {
-        title: "后送受阻", time: "15:39", elapsed: "44 min", facility: "营救护站",
-        stage: "Ⅰ级 · 高级急救", currentStage: "initial", currentSubstep: 1,
+        id: "r4", title: "后送受阻", time: "15:39", elapsed: "44 min",
+        stageId: "initial", subIndex: 1,
+        facility: "营救护站", capability: "高级急救 → 需早期救治",
         transition: "后送 Gate 暂缓", transitionTone: "danger",
-        severity: "重伤风险 · 未改善", treatmentPriority: "紧急关注", transportPriority: "紧急后送",
-        classification: "急救分类 · v4", timeWindow: "高级急救宜在伤后 1 小时内实施", timingStatus: "接近建议时限",
-        gateState: "blocked", gateTitle: "需要后送，但暂不满足转运条件", gateDesc: "伤情未稳定。先完成当前必要稳定处置，达到转运条件后立即进入Ⅱ级。",
-        target: "旅（团）救护所 · 早期救治", capability: "高级急救 → 需早期救治",
-        actions: ["继续必要的稳定处置与连续监护", "同步完成早期救治机构联络与后送准备", "以生命体征趋势作为再次评估输入"],
-        rules: ["第二十条 · 通过性救治", "第二十一条 · 先稳定后送", "第二十二条 · 后送前医学评估"],
+        target: "旅（团）救护所 · 早期救治",
+        classification: { label: "急救分类 · v4", severity: "重伤风险 · 未改善", treatmentPriority: "紧急关注", transportPriority: "紧急后送" },
+        timing: { window: "高级急救宜在伤后 1 小时内实施", status: "接近建议时限", tone: "warn" },
+        gate: {
+          state: "blocked", title: "需要后送，但暂不满足转运条件",
+          desc: "伤情未稳定。先完成必要稳定处置，达到转运条件后再评估。",
+          confirm: { state: "blocked", text: "后送优先级=紧急，但转运条件=不满足；Gate 阻塞，本轮不发起阶段转换确认。" }
+        },
+        memo: {
+          input: ["本级处置后仍呼吸困难", "血压无明显改善，血氧下降至 90%", "心率升至 126 次/分"],
+          action: ["维持气道与呼吸支持并连续监护", "按指征实施容量复苏", "联络接收机构并准备后送资料"],
+          conclusion: "已需Ⅱ级能力，但伤情未稳定，阶段转换暂缓。"
+        },
+        patient: {
+          updatedAt: "15:39 · 伤后 44 min",
+          consciousness: "清醒但烦躁，回答简短",
+          vitals: [
+            { k: "呼吸", v: "34 次/分", trend: "up", abnormal: true },
+            { k: "收缩压", v: "92 mmHg", trend: "down", abnormal: true },
+            { k: "心率", v: "126 次/分", trend: "up", abnormal: true },
+            { k: "血氧", v: "90 %", trend: "down", abnormal: true },
+            { k: "体温", v: "36.2 ℃", trend: "down" }
+          ],
+          injuries: [
+            { label: "胸部闭合性损伤（疑张力性气胸 / 血胸）", certainty: "疑似", status: "恶化" },
+            { label: "失血性 / 梗阻性休克倾向", certainty: "疑似", status: "进展" },
+            { label: "右小腿开放性创伤", certainty: "已确认", status: "出血已控制" }
+          ],
+          treatments: ["气道与呼吸支持（进行中）", "按指征容量复苏（进行中）", "连续监护（进行中）", "后送资料与接收机构联络（进行中）"],
+          missing: ["血气 / 床旁超声结果", "容量复苏后反应", "途中监护与转运条件"]
+        },
+        actions: [
+          "继续必要的稳定处置与连续监护",
+          "同步完成早期救治机构联络与后送准备",
+          "以生命体征趋势作为再次评估输入"
+        ],
+        nextStageNote: "胸腔闭式引流、输血抗休克与辅助检查需Ⅱ级紧急处置能力，达到转运条件后执行。",
+        knowledge: [
+          { title: "Chunk 01 · 第二十一条【救送结合原则】", score: "相关度 0.98", source: "远程知识库", used: true, text: "伤情稳定时应当尽快组织后送；伤情恶化危及生命时应当优先稳定伤情，保证在生命体征稳定状态下实施后送。" },
+          { title: "Chunk 02 · 第二十二条【救送结合实施】", score: "相关度 0.95", source: "远程知识库", used: true, text: "后送前应当组织医学评估，准确把握后送指征；后送途中应做好连续性医疗监护和巡查，实施继承性治疗及急救措施。" },
+          { title: "Chunk 03 · 第一〇六条【胸部伤早期救治】", score: "相关度 0.92", source: "远程知识库", used: true, text: "紧急处置包括：对张力性气胸或血气胸做胸腔闭式引流术；对心包积血的伤员做心包腔穿刺引流；对伴失血性休克者采取输血输液抗休克措施；保持呼吸道通畅。" }
+        ],
         messages: [
           { role: "user", text: "经过当前处置后，伤员仍然呼吸困难，血压也没有明显改善。" },
-          { role: "assistant", text: "已结合救送结合原则、后送前医学评估和胸部伤早期救治知识块进行阶段转换判断。\n\n【能力判断】高级急救后呼吸困难和低血压仍无明显改善，当前伤情已经需要Ⅱ级早期救治能力，包括辅助检查、持续抗休克治疗和按明确诊断实施的紧急胸部处置。因此，医学后送目标确定为具备早期救治能力的旅（团）救护所，后送优先级为紧急。\n\n【当前救治方案】在营救护站继续严密监测呼吸循环和意识，维持气道与呼吸支持，复核是否存在可立即纠正的危及生命因素；保持小腿止血与固定有效。同时完成伤情摘要、已实施处置、生命体征趋势和后送途中监护方案，提前联络接收机构。\n\n【Stage Gate】“紧急需要后送”不代表“立即具备转运条件”。当前状态仍未稳定，阶段转换暂缓；应先完成必要的稳定处置。请继续提供血压、呼吸、血氧和意识的连续变化，一旦达到可转运状态，系统即触发后送进入Ⅱ级，而不是因为接近1小时时限自动跳级。", tag: "RAG 已检索 3 个知识块 · Transport Gate BLOCKED" }
+          { role: "assistant", text: "已结合救送结合原则、后送前医学评估和胸部伤早期救治知识块进行阶段转换判断。\n\n【能力判断】高级急救后呼吸困难与低血压仍无明显改善，血氧降至90%，当前伤情已需要Ⅱ级早期救治能力，包括辅助检查、持续抗休克治疗和按明确诊断实施的紧急胸部处置。医学后送目标为具备早期救治能力的旅（团）救护所，后送优先级为紧急。\n\n【当前救治方案】继续严密监测呼吸循环与意识，维持气道与呼吸支持，复核是否存在可立即纠正的危及生命因素；保持小腿止血与固定有效。同时完成伤情摘要、已实施处置、生命体征趋势和途中监护方案，提前联络接收机构。\n\n【Stage Gate】「紧急需要后送」不等于「立即具备转运条件」。当前 Gate = BLOCKED，本轮不发起阶段转换确认，也不会因接近1小时时限自动跳级。请继续提供血压、呼吸、血氧和意识的连续变化；达到可转运状态后系统将再次给出 READY 并请您确认。\n\n仅供辅助，须具备资质的医务人员复核。", tag: "已检索 3 个知识块 · Gate BLOCKED" }
         ]
       },
       {
-        title: "进入Ⅱ级", time: "15:52", elapsed: "57 min", facility: "旅（团）救护所",
-        stage: "Ⅱ级 · 紧急处置", currentStage: "early", currentSubstep: 0,
-        transition: "阶段转换已完成", transitionTone: "",
-        severity: "重伤风险 · 已稳定", treatmentPriority: "紧急救治", transportPriority: "后送已完成",
-        classification: "收容分类 · v5", timeWindow: "早期救治宜在伤后 3 小时内实施", timingStatus: "处于建议时限内",
-        gateState: "ready", gateTitle: "后送条件满足，阶段转换完成", gateDesc: "生命状态趋稳并具备转运条件，系统自动进入Ⅱ级早期救治，而非由用户手动点击下一阶段。",
-        target: "Ⅱ级 · 紧急处置", capability: "早期救治",
-        actions: ["到达机构后复查伤情并执行收容分类", "进入相应医疗组，重新确定救治措施与优先顺序", "结合辅助检查结果继续评估是否需要外科复苏或专科治疗"],
-        rules: ["第八条 · 早期救治", "第十七条 · 收容分类", "第二十五条 · 紧急处置"],
+        id: "r5", title: "进入Ⅱ级", time: "15:52", elapsed: "57 min",
+        stageId: "early", subIndex: 0,
+        facility: "旅（团）救护所", capability: "早期救治",
+        transition: "阶段转换已完成", transitionTone: "ok",
+        target: "Ⅱ级 · 紧急处置",
+        classification: { label: "收容分类 · v5", severity: "重伤风险 · 趋稳", treatmentPriority: "紧急救治", transportPriority: "后送已完成" },
+        timing: { window: "早期救治宜在伤后 3 小时内实施", status: "处于建议时限内", tone: "" },
+        gate: {
+          state: "completed", title: "用户确认后完成阶段转换",
+          desc: "生命状态趋稳并具备转运条件，Gate 由 BLOCKED → READY，经确认后写入Ⅱ级紧急处置。",
+          confirm: { state: "confirmed", text: "15:50 已通过提问卡片确认「后送并转入Ⅱ级·紧急处置」，15:52 到达后写入新阶段。" }
+        },
+        memo: {
+          input: ["稳定处置后血压与呼吸好转", "已具备转运条件并完成后送", "已到达旅（团）救护所"],
+          action: ["复查伤情并执行收容分类", "开具胸部影像、血气与血常规等辅助检查", "按指征继续抗休克与胸部处置准备"],
+          conclusion: "阶段转换完成，进入Ⅱ级紧急处置并生成收容分类 v5。"
+        },
+        patient: {
+          updatedAt: "15:52 · 伤后 57 min",
+          consciousness: "清醒，对答顺畅，烦躁缓解",
+          vitals: [
+            { k: "呼吸", v: "26 次/分", trend: "down", abnormal: true },
+            { k: "收缩压", v: "104 mmHg", trend: "up", abnormal: true },
+            { k: "心率", v: "106 次/分", trend: "down", abnormal: true },
+            { k: "血氧", v: "95 %", trend: "up" },
+            { k: "体温", v: "36.5 ℃", trend: "up" }
+          ],
+          injuries: [
+            { label: "胸部闭合性损伤（待辅助检查明确类型）", certainty: "疑似", status: "趋于稳定" },
+            { label: "失血性 / 梗阻性休克倾向", certainty: "疑似", status: "初步纠正" },
+            { label: "右小腿开放性创伤", certainty: "已确认", status: "出血控制，待清创" }
+          ],
+          treatments: ["稳定处置后完成后送（已完成）", "到达后复查伤情与伤票核对（已完成）", "收容分类 v5（已完成）", "辅助检查开单（进行中）"],
+          missing: ["胸部 X线 / B超结果", "血气与血常规结果", "小腿伤口污染程度与清创方案"]
+        },
+        actions: [
+          "到达机构后复查伤情并执行收容分类",
+          "进入相应医疗组，重新确定救治措施与优先顺序",
+          "结合辅助检查结果继续评估是否需要外科复苏或专科治疗"
+        ],
+        nextStageNote: "确定性专科手术属Ⅲ级能力；本轮不预设下一次跳级。",
+        knowledge: [
+          { title: "Chunk 01 · 第二十五条【早期救治—紧急处置】", score: "相关度 0.98", source: "远程知识库", used: true, text: "（一）紧急处置：1.检伤分类与伤情评估；2.辅助检查，包括X线、B超、心电图检查，常规化验、血生化、血气化验检查，采配血技术等；4.紧急外科处置；5.紧急内科处置，包括抗休克治疗、野战输血、主动复温、生命体征监测、酸碱平衡紊乱防治等。" },
+          { title: "Chunk 02 · 第十七条【收容分类】", score: "相关度 0.96", source: "远程知识库", used: true, text: "收容分类应复查伤情、判断伤势，区分需要紧急手术、重症处置、隔离、洗消、后送等伤病员，并送往相应组（室）处置。" },
+          { title: "Chunk 03 · 第一〇六条【胸部伤早期救治】", score: "相关度 0.94", source: "远程知识库", used: true, text: "对伴失血性休克者，应采取输血输液抗休克措施。有条件时可利用无污染的胸腔积血做自体血回输，好转后迅速后送；保持呼吸道通畅，必要时进一步处理。" }
+        ],
         messages: [
           { role: "user", text: "经过处理后，血压和呼吸状态有所稳定，可以转运。现在已经到达旅救护所。" },
-          { role: "assistant", text: "已结合早期救治技术范围、收容分类和胸部伤早期救治知识块完成阶段更新。\n\n【阶段转换】生命体征趋于稳定并已到达旅（团）救护所，后送 Gate 由 BLOCKED 更新为 READY。系统自动完成“高级急救 → Ⅱ级早期救治—紧急处置”的转换，并生成收容分类 v5。\n\n【当前救治方案】到达后首先复查伤情、核对伤票和既往处置，按收容分类送入相应医疗组。当前应开展胸部X线或B超、心电图、血常规/血生化/血气及采配血等辅助检查，持续监测生命体征并评估休克状态；根据检查结果确认是否存在气胸、血胸、肋骨骨折或其他胸部损伤。若明确达到相应指征，由专业人员在紧急处置范围内实施胸部伤处置和抗休克治疗。\n\n【后续计划】右小腿伤口需重新检查止血效果、污染和软组织损伤情况，并确定清创与固定方案。完成本轮诊断与处置后，再评估是否需要外科复苏或Ⅲ级专科治疗；当前不因流程到达Ⅱ级而预设下一次跳级。", tag: "RAG 已检索 3 个知识块 · Stage Transition COMPLETED" }
+          {
+            role: "assistant",
+            text: "已结合早期救治技术范围、收容分类和胸部伤早期救治知识块完成阶段更新。\n\n【阶段转换】生命体征趋于稳定并已到达旅（团）救护所，Gate 由 BLOCKED 更新为 READY；经您确认后，系统写入「高级急救 → Ⅱ级早期救治—紧急处置」，并生成收容分类 v5。\n\n【当前救治方案】到达后首先复查伤情、核对伤票和既往处置，按收容分类送入相应医疗组。当前应开展胸部X线或B超、心电图、血常规/血生化/血气及采配血等辅助检查，持续监测生命体征并评估休克状态；根据检查结果确认是否存在气胸、血胸、肋骨骨折或其他胸部损伤。达到指征时由专业人员在紧急处置范围内实施胸部伤处置与抗休克治疗。\n\n【后续计划】右小腿伤口需重新检查止血效果、污染与软组织损伤情况，确定清创与固定方案。完成本轮诊断与处置后，再评估是否需要外科复苏或Ⅲ级专科治疗。\n\n仅供辅助，须具备资质的医务人员复核。",
+            tag: "已检索 3 个知识块 · Gate COMPLETED",
+            confirm: {
+              q: "是否确认执行后送并将阶段转入「Ⅱ级 · 紧急处置（旅（团）救护所）」？",
+              hint: "理由：需早期救治能力且已具备转运条件；后送优先级=紧急。",
+              options: [
+                { label: "确认后送并转换", picked: true },
+                { label: "继续本级稳定处置", picked: false }
+              ]
+            }
+          }
         ]
       }
-    ];
-
-    const roundKnowledge = [
-      [
-        {
-          title: "Chunk 01 · 第二十四条【战现场急救—初级急救】",
-          score: "相关度 0.96",
-          text: "（一）初级急救：1.检伤评估；2.止血，包括止血带、止血绷带、敷料止血等；3.通气，包括手法开通气道、口（鼻）咽通气管通气法等；4.包扎、固定与搬运，包括绷带、三角巾加压包扎，保护性包扎，肢体固定，徒手搬运、担架搬运等。"
-        },
-        {
-          title: "Chunk 02 · 第一〇五条【胸部伤战现场急救】",
-          score: "相关度 0.92",
-          text: "胸部伤战现场急救应当采取下列措施：（一）清除口腔异物，保持呼吸道通畅。（二）包扎固定。胸部开放性伤口用胸腔封闭贴或不透气的敷料紧密包扎。（三）镇痛镇静吸氧。给止痛剂和镇静剂，有条件时，吸氧。"
-        },
-        {
-          title: "Chunk 03 · 第十六条【急救分类】",
-          score: "相关度 0.88",
-          text: "伤病员急救分类，应当根据伤病员生命体征和伤情等，初步判断伤员的伤势程度，确定伤病员救治与后送优先顺序，按要求佩戴伤标。通常由现场军医、卫生员实施。"
-        }
-      ],
-      [
-        {
-          title: "Chunk 01 · 第十六条【急救分类】",
-          score: "相关度 0.95",
-          text: "伤病员急救分类，应当根据伤病员生命体征和伤情等，初步判断伤员的伤势程度，确定伤病员救治与后送优先顺序，按要求佩戴伤标。通常由现场军医、卫生员实施。"
-        },
-        {
-          title: "Chunk 02 · 第一〇五条【胸部伤战现场急救】",
-          score: "相关度 0.93",
-          text: "胸部伤战现场急救应当采取下列措施：（一）清除口腔异物，保持呼吸道通畅。（二）包扎固定。（二）气胸处理。（三）镇痛镇静吸氧。给止痛剂和镇静剂，有条件时，吸氧。"
-        },
-        {
-          title: "Chunk 03 · 第二十一条【救送结合原则】",
-          score: "相关度 0.91",
-          text: "伤情稳定时应当尽快组织后送；伤情恶化危及生命时应当优先稳定伤情，保证在生命体征稳定状态下实施后送。"
-        }
-      ],
-      [
-        {
-          title: "Chunk 01 · 第二十四条【高级急救】",
-          score: "相关度 0.97",
-          text: "（二）高级急救：1.检伤、评估与分类；2.止血控制；3.气道开通与呼吸维持，包括气管吸引术、环甲膜穿刺或切开术、简易呼吸器应用，胸腔穿刺减压术等；4.包扎、固定与搬运；6.生命支持，包括心肺复苏、静脉穿刺输液术、容量复苏等。"
-        },
-        {
-          title: "Chunk 02 · 第十一条【分级救治任务】",
-          score: "相关度 0.94",
-          text: "营救护站（所）及相当级别救治机构，主要执行高级急救技术范围。"
-        },
-        {
-          title: "Chunk 03 · 第一〇五条【胸部伤战现场急救】",
-          score: "相关度 0.90",
-          text: "第一〇五条【胸部伤战现场急救】胸部伤战现场急救应当采取下列措施：清除口腔异物，保持呼吸道通畅；对胸部开放性伤口实施紧密包扎；对张力性气胸、开放性气胸按规则处理；有条件时吸氧。"
-        }
-      ],
-      [
-        {
-          title: "Chunk 01 · 第二十一条【救送结合原则】",
-          score: "相关度 0.98",
-          text: "伤情稳定时应当尽快组织后送；伤情恶化危及生命时应当优先稳定伤情，保证在生命体征稳定状态下实施后送。"
-        },
-        {
-          title: "Chunk 02 · 第二十二条【救送结合实施】",
-          score: "相关度 0.95",
-          text: "后送前应当组织医学评估，准确把握后送指征；后送途中应做好连续性医疗监护和巡查，实施继承性治疗及急救措施。"
-        },
-        {
-          title: "Chunk 03 · 第一〇六条【胸部伤早期救治】",
-          score: "相关度 0.92",
-          text: "第一〇六条【胸部伤早期救治】紧急处置包括：对张力性气胸或血气胸做胸腔闭式引流术；对心包积血的伤员做心包腔穿刺引流；对伴失血性休克者采取输血输液抗休克措施；保持呼吸道通畅；对肋骨骨折疼痛剧烈的伤员按重伤员紧急后送。"
-        }
-      ],
-      [
-        {
-          title: "Chunk 01 · 第二十五条【早期救治—紧急处置】",
-          score: "相关度 0.98",
-          text: "（一）紧急处置：1.检伤分类与伤情评估；2.辅助检查，包括X线、B超、心电图检查，常规化验、血生化、血气化验检查，采配血技术等；4.紧急外科处置；5.紧急内科处置，包括抗休克治疗、野战输血、主动复温、生命体征监测、酸碱平衡紊乱防治等。"
-        },
-        {
-          title: "Chunk 02 · 第十七条【收容分类】",
-          score: "相关度 0.96",
-          text: "收容分类应复查伤情、判断伤势，区分需要紧急手术、重症处置、隔离、洗消、后送等伤病员，并送往相应组（室）处置。"
-        },
-        {
-          title: "Chunk 03 · 第一〇六条【胸部伤早期救治】",
-          score: "相关度 0.94",
-          text: "第一〇六条【胸部伤早期救治】对伴失血性休克者，应采取输血输液抗休克措施。有条件时可利用无污染的胸腔积血做自体血回输，好转后迅速后送；保持呼吸道通畅，必要时进一步处理。"
-        }
-      ]
     ];
 
     let currentRound = 0;
-    let selectedNode = null;
+    let selectedMemo = null;
 
     const $ = (id) => document.getElementById(id);
-    const escapeHtml = (value) => String(value)
+    const esc = (value) => String(value)
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;")
       .replaceAll("'", "&#039;");
 
-    function stageStatus(stageId, round) {
-      const order = stages.findIndex(s => s.id === stageId);
-      const currentOrder = stages.findIndex(s => s.id === round.currentStage);
+    const stageOrder = (stageId) => stages.findIndex(s => s.id === stageId);
+
+    function mainStatus(stageId) {
+      const round = rounds[currentRound];
+      const order = stageOrder(stageId);
+      const currentOrder = stageOrder(round.stageId);
       if (order < currentOrder) return "done";
       if (order === currentOrder) return "current";
       return "future";
     }
 
-    function substepStatus(stage, subIndex, round) {
-      const groupState = stageStatus(stage.id, round);
-      if (groupState === "done") return "done";
-      if (groupState === "future") return "future";
-      if (subIndex < round.currentSubstep) return "done";
-      if (subIndex > round.currentSubstep) return "future";
-      if (round.transitionTone === "warning" && stage.id === "initial") return "transfer";
+    function subStatus(stage, subIndex) {
+      const round = rounds[currentRound];
+      const group = mainStatus(stage.id);
+      if (group === "done") return "done";
+      if (group === "future") return "future";
+      if (subIndex < round.subIndex) return "done";
+      if (subIndex > round.subIndex) return "future";
+      if (round.gate.state === "blocked") return "blocked";
+      if (round.transitionTone === "warn") return "transfer";
       return "current";
     }
 
     function statusLabel(state) {
-      return { done: "已完成", current: "当前", transfer: "转运准备", future: "未开始" }[state];
+      return {
+        done: "已完成", current: "当前", transfer: "转运准备",
+        blocked: "阻塞", future: "未开始"
+      }[state];
+    }
+
+    /** 该子级下已经生成的轮次纪要叶子（未开始的子级不产生叶子）。 */
+    function memosFor(stage, subIndex) {
+      return rounds
+        .map((round, index) => ({ round, index }))
+        .filter(item => item.index <= currentRound
+          && item.round.stageId === stage.id
+          && item.round.subIndex === subIndex);
     }
 
     function renderRoundNav() {
       $("roundNav").innerHTML = rounds.map((round, index) => `
-        <button type="button" class="round-tab ${index === currentRound ? "is-active" : ""} ${index > currentRound ? "is-future" : ""}" data-round="${index}" aria-current="${index === currentRound ? "step" : "false"}">
-          <span>ROUND ${index + 1} · ${escapeHtml(round.time)}</span>
-          <strong>${escapeHtml(round.title)}</strong>
+        <button type="button"
+          class="round-tab ${index === currentRound ? "is-active" : ""} ${index > currentRound ? "is-future" : ""}"
+          data-round="${index}" aria-current="${index === currentRound ? "step" : "false"}">
+          <span>ROUND ${index + 1} · ${esc(round.time)}</span>
+          <strong>${esc(round.title)}</strong>
         </button>
       `).join("");
       document.querySelectorAll("[data-round]").forEach(btn => {
         btn.addEventListener("click", () => {
           currentRound = Number(btn.dataset.round);
-          selectedNode = null;
+          selectedMemo = null;
           render();
         });
       });
+    }
+
+    function renderConfirmCard(confirm) {
+      if (!confirm) return "";
+      return `
+        <div class="confirm-card">
+          <div class="q">${esc(confirm.q)}</div>
+          <div class="hint">${esc(confirm.hint)}</div>
+          <div class="confirm-opts">
+            ${confirm.options.map(opt => `
+              <span class="confirm-opt ${opt.picked ? "picked" : ""}">${opt.picked ? "✓ " : ""}${esc(opt.label)}</span>
+            `).join("")}
+          </div>
+        </div>
+      `;
     }
 
     function renderMessages() {
       const visible = rounds.slice(0, currentRound + 1).flatMap((round, roundIndex) =>
         round.messages.map(message => ({ ...message, roundIndex }))
       );
-      $("messages").innerHTML = visible.map((message, index) => `
-        <article class="message ${message.role}" style="animation-delay:${Math.min(index * 25, 160)}ms">
-          <div class="avatar" aria-hidden="true">${message.role === "user" ? "人员" : "AI"}</div>
-          <div class="bubble">
-            <div class="bubble-label">${message.role === "user" ? `现场信息 · Round ${message.roundIndex + 1}` : "流程研判 Agent"}</div>
-            ${escapeHtml(message.text)}
-            ${message.tag ? `<div class="message-tag">● ${escapeHtml(message.tag)}</div>` : ""}
-          </div>
-        </article>
-      `).join("");
+      $("messages").innerHTML = `<div class="msg-wrap">${visible.map(message => {
+        if (message.role === "user") {
+          return `
+            <article class="msg user">
+              <div class="bubble">${esc(message.text)}</div>
+            </article>
+          `;
+        }
+        return `
+          <article class="msg assistant">
+            <div class="msg-label">流程研判 · Round ${message.roundIndex + 1}</div>
+            <div class="body">${esc(message.text)}</div>
+            ${message.tag ? `<div class="msg-tag">${esc(message.tag)}</div>` : ""}
+            ${renderConfirmCard(message.confirm)}
+          </article>
+        `;
+      }).join("")}</div>`;
       requestAnimationFrame(() => { $("messages").scrollTop = $("messages").scrollHeight; });
     }
 
     function renderStageMap() {
       const round = rounds[currentRound];
-      $("stageMap").innerHTML = stages.map((stage) => {
-        const state = stageStatus(stage.id, round);
-        const transferAfterInitial = stage.id === "initial" && round.transitionTone === "warning";
-        const transferToEarly = stage.id === "initial" && round.transitionTone === "danger";
-        const levelNodeId = `level:${stage.id}`;
-        const levelInteractive = state !== "future";
+      $("stageMap").innerHTML = stages.map(stage => {
+        const state = mainStatus(stage.id);
         return `
-          <div class="stage-group is-${state} ${stage.id === stages[stages.length - 1].id ? "is-last" : ""}">
-            <span class="stage-dot">${state === "done" ? "✓" : ""}</span>
-            <button type="button" class="level-node is-${state} ${selectedNode === levelNodeId ? "is-selected" : ""}" ${levelInteractive ? `data-node="${levelNodeId}" aria-expanded="${selectedNode === levelNodeId}"` : "disabled aria-disabled=\"true\""}>
-              <div class="node-row">
-                <div class="node-copy">
-                  <div><span class="stage-index">${stage.index}</span><span class="stage-name">${stage.name}</span></div>
-                  <div class="node-note">${stage.note}</div>
-                </div>
-                <span class="stage-status">${statusLabel(state)}</span>
+          <div class="main-group">
+            <div class="main-node is-${state}" aria-disabled="true">
+              <div>
+                <div><span class="main-index">${stage.index}</span><span class="main-name">${esc(stage.name)}</span></div>
+                <div class="node-note">${esc(stage.note)}</div>
               </div>
-            </button>
-            <div class="branch-list">
+              <span class="status-chip">${statusLabel(state)}</span>
+            </div>
+
+            <div class="sub-wrap">
               ${stage.substeps.map((substep, subIndex) => {
-                const subState = substepStatus(stage, subIndex, round);
-                const subNodeId = `sub:${stage.id}:${subIndex}`;
-                const subInteractive = subState !== "future";
+                const sState = subStatus(stage, subIndex);
+                const memos = memosFor(stage, subIndex);
                 return `
-                  <button type="button" class="sub-node is-${subState} ${selectedNode === subNodeId ? "is-selected" : ""}" ${subInteractive ? `data-node="${subNodeId}" aria-expanded="${selectedNode === subNodeId}"` : "disabled aria-disabled=\"true\""}>
-                    <div class="node-row">
-                      <div class="node-copy"><div class="sub-node-name">${substep.name}</div><div class="node-note">${substep.note}</div></div>
-                      <span class="stage-status">${statusLabel(subState)}</span>
+                  <div>
+                    <div class="sub-node is-${sState}" aria-disabled="true">
+                      <div class="node-row">
+                        <div>
+                          <div class="sub-name">${esc(substep.name)}</div>
+                          <div class="node-note">${esc(substep.note)}</div>
+                        </div>
+                        <span class="status-chip">${statusLabel(sState)}</span>
+                      </div>
                     </div>
-                  </button>
+                    ${sState === "future" ? "" : `
+                      <div class="leaf-wrap">
+                        ${memos.length === 0
+                          ? `<div class="leaf-empty">本子级暂无轮次纪要</div>`
+                          : memos.map(({ round: memoRound, index }) => `
+                            <button type="button"
+                              class="leaf ${selectedMemo === memoRound.id ? "is-selected" : ""}"
+                              data-memo="${memoRound.id}"
+                              aria-expanded="${selectedMemo === memoRound.id}">
+                              <div class="leaf-head">
+                                <div class="leaf-title"><span class="leaf-round">R${index + 1}</span>${esc(memoRound.title)}</div>
+                                <span class="status-chip">${index === currentRound ? "本轮" : "已归档"}</span>
+                              </div>
+                              <ul class="leaf-points">
+                                ${memoRound.memo.input.slice(0, 2).map(point => `<li>${esc(point)}</li>`).join("")}
+                                <li>${esc(memoRound.memo.conclusion)}</li>
+                              </ul>
+                            </button>
+                          `).join("")}
+                      </div>
+                    `}
+                  </div>
                 `;
               }).join("")}
             </div>
-          </div>
-          <div class="transfer-chip ${(transferAfterInitial || transferToEarly) ? "show" : ""}">
-            <span class="transfer-line"></span>
-            ${transferAfterInitial ? "准备转入高级急救" : "后送需求紧急 · Gate 暂缓"}
+
+            <div class="transfer-chip ${stage.id === round.stageId && (round.transitionTone === "warn" || round.gate.state === "blocked") ? "show" : ""}">
+              <span class="line"></span>
+              ${round.gate.state === "blocked" ? "后送需求紧急 · Gate 暂缓" : "已确认转入下一子级"}
+            </div>
           </div>
         `;
       }).join("");
-      document.querySelectorAll("[data-node]").forEach(btn => {
+
+      document.querySelectorAll("[data-memo]").forEach(btn => {
         btn.addEventListener("click", () => {
-          const clickedNode = btn.dataset.node;
-          selectedNode = selectedNode === clickedNode ? null : clickedNode;
+          const clicked = btn.dataset.memo;
+          selectedMemo = selectedMemo === clicked ? null : clicked;
           renderStageMap();
           renderDetails();
         });
       });
     }
 
-    function renderKnowledgeAccordion(chunks) {
+    function trendMark(trend) {
+      return { up: "↑", down: "↓", flat: "→", unknown: "" }[trend] || "";
+    }
+
+    function renderPatientState(round) {
+      const patient = round.patient;
       return `
-        <details class="knowledge-accordion">
+        <article class="card full">
+          <div class="card-head">
+            <div class="card-title">当前伤员状态</div>
+            <span class="card-meta">${esc(patient.updatedAt)}</span>
+          </div>
+
+          <div class="state-line">
+            <span class="k">意识</span>
+            <span class="v">${esc(patient.consciousness)}</span>
+          </div>
+
+          <div class="state-sub">生命体征</div>
+          <div class="vitals">
+            ${patient.vitals.map(vital => `
+              <div class="vital ${vital.abnormal ? "abnormal" : ""} ${vital.trend === "unknown" && !vital.abnormal ? "unknown" : ""}">
+                <div class="vital-k">${esc(vital.k)}</div>
+                <div class="vital-v">${esc(vital.v)}<span class="trend">${trendMark(vital.trend)}</span></div>
+              </div>
+            `).join("")}
+          </div>
+
+          <div class="state-sub">伤情</div>
+          <ul class="injury-list">
+            ${patient.injuries.map(injury => `
+              <li>
+                <span>${esc(injury.label)}</span>
+                <span class="badge ${injury.certainty === "已确认" ? "info" : injury.certainty === "已排除" ? "mute" : "warn"}">${esc(injury.certainty)}</span>
+                <span class="badge mute">${esc(injury.status)}</span>
+              </li>
+            `).join("")}
+          </ul>
+
+          <div class="state-sub">已实施处置</div>
+          <ul class="plain-list">
+            ${patient.treatments.map(item => `<li>${esc(item)}</li>`).join("")}
+          </ul>
+
+          <div class="state-sub">当前机构与能力</div>
+          <div class="metric-row">
+            <span class="metric-label">救治机构</span>
+            <span class="metric-value">${esc(round.facility)}</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">机构能力</span>
+            <span class="metric-value info">${esc(round.capability)}</span>
+          </div>
+
+          <div class="state-sub">影响下一步判断的缺失信息</div>
+          <ul class="missing-list">
+            ${patient.missing.map(item => `<li>${esc(item)}</li>`).join("")}
+          </ul>
+        </article>
+      `;
+    }
+
+    function renderKnowledge(chunks) {
+      return `
+        <details class="knowledge">
           <summary>知识库依据 · ${chunks.length} 个 RAG Chunk</summary>
           <div class="knowledge-body">
             ${chunks.map(chunk => `
-              <article class="chunk-card">
-                <div class="chunk-head"><span class="chunk-title">${escapeHtml(chunk.title)}</span><span class="chunk-score">${escapeHtml(chunk.score)}</span></div>
-                <p class="chunk-text">${escapeHtml(chunk.text)}</p>
+              <article class="chunk">
+                <div class="chunk-head">
+                  <span class="chunk-title">${esc(chunk.title)}</span>
+                  <span class="chunk-metas">
+                    <span class="chunk-score">${esc(chunk.score)}</span>
+                    <span class="badge mute">${esc(chunk.source)}</span>
+                    <span class="badge ${chunk.used ? "info" : "mute"}">${chunk.used ? "本轮已使用" : "未使用"}</span>
+                  </span>
+                </div>
+                <p class="chunk-text">${esc(chunk.text)}</p>
               </article>
             `).join("")}
           </div>
@@ -889,11 +1254,20 @@
       `;
     }
 
+    function gateBadge(state) {
+      return {
+        blocked: { cls: "danger", label: "BLOCKED", mark: "!" },
+        ready: { cls: "warn", label: "READY · 待确认", mark: "?" },
+        completed: { cls: "ok", label: "COMPLETED", mark: "✓" },
+        assessing: { cls: "mute", label: "ASSESSING", mark: "·" }
+      }[state];
+    }
+
     function bindCloseDetail() {
       const closeButton = document.querySelector("[data-close-detail]");
       if (closeButton) {
         closeButton.addEventListener("click", () => {
-          selectedNode = null;
+          selectedMemo = null;
           renderStageMap();
           renderDetails();
         });
@@ -903,8 +1277,9 @@
     function renderDetails() {
       const area = $("detailArea");
       const body = $("processBody");
-      const workspace = document.querySelector(".workspace");
-      if (!selectedNode) {
+      const workspace = $("workspace");
+
+      if (!selectedMemo) {
         area.hidden = true;
         area.innerHTML = "";
         body.classList.remove("details-open");
@@ -916,86 +1291,108 @@
       body.classList.add("details-open");
       workspace.classList.add("detail-visible");
 
-      const round = rounds[currentRound];
-      const [nodeType, stageId, subIndexText] = selectedNode.split(":");
-      const stage = stages.find(item => item.id === stageId);
-      const subIndex = nodeType === "sub" ? Number(subIndexText) : null;
-      const substep = subIndex === null ? null : stage.substeps[subIndex];
-      const state = substep ? substepStatus(stage, subIndex, round) : stageStatus(stage.id, round);
-      const isActive = stage.id === round.currentStage && (substep === null || subIndex === round.currentSubstep);
-      const nodeTitle = substep ? `${stage.index} · ${substep.name}` : `${stage.index} · ${stage.name}`;
-      const nodeDescription = substep ? substep.description : stage.description;
+      const roundIndex = rounds.findIndex(item => item.id === selectedMemo);
+      const round = rounds[roundIndex];
+      const stage = stages.find(item => item.id === round.stageId);
+      const substep = stage.substeps[round.subIndex];
+      const gate = gateBadge(round.gate.state);
+      const isLatest = roundIndex === currentRound;
 
-      if (!isActive) {
-        const stateCopy = state === "done"
-          ? "该节点已经完成，历史状态与相关规则仍可回看。"
-          : "该节点尚未开始；只有 Case State 和阶段转换条件满足后，流程才会自动进入。";
-        const genericKnowledge = [{ title: `${stage.index} · ${stage.name}规则`, score: "规则原文", text: stage.rule }];
-        area.innerHTML = `
-          <div class="detail-grid">
-            <article class="info-card full">
-              <div class="card-head">
-                <div class="card-title">${escapeHtml(nodeTitle)}</div>
-                <button class="secondary-btn" type="button" data-close-detail>收起 ×</button>
-              </div>
-              <div class="metric-row"><span class="metric-label">节点状态</span><span class="metric-value">${statusLabel(state)}</span></div>
-              <p style="margin:10px 0 0;color:var(--muted);font-size:13px">${escapeHtml(nodeDescription)}</p>
-              <p style="margin:7px 0 0;color:var(--muted);font-size:12px">${escapeHtml(stateCopy)}</p>
-            </article>
-            <article class="info-card full">
-              ${renderKnowledgeAccordion(genericKnowledge)}
-            </article>
-          </div>
-        `;
-        bindCloseDetail();
-        return;
-      }
-
-      const gateBadge = round.gateState === "blocked" ? "red" : round.gateState === "ready" ? "green" : "amber";
-      const gateMark = round.gateState === "blocked" ? "!" : round.gateState === "ready" ? "✓" : "·";
-      const timingTone = round.timingStatus.includes("超过") || round.timingStatus.includes("接近") ? "amber" : "teal";
       area.innerHTML = `
         <div class="detail-grid">
-          <article class="info-card full">
+          <article class="card full">
             <div class="card-head">
-              <div class="card-title">${escapeHtml(nodeTitle)}</div>
-              <button class="secondary-btn" type="button" data-close-detail>收起 ×</button>
+              <div>
+                <div class="detail-path">${esc(stage.index)} ${esc(stage.name)} › ${esc(substep.name)} › Round ${roundIndex + 1}</div>
+                <div class="detail-name">${esc(round.memo.title || round.title)}</div>
+              </div>
+              <button class="ghost-btn" type="button" data-close-detail>收起 ×</button>
             </div>
-            <div class="metric-row"><span class="metric-label">当前救治机构</span><span class="metric-value">${escapeHtml(round.facility)}</span></div>
-            <div class="metric-row"><span class="metric-label">当前救治阶段</span><span class="metric-value teal">${escapeHtml(round.stage)}</span></div>
-            <div class="metric-row"><span class="metric-label">机构能力</span><span class="metric-value teal">${escapeHtml(round.capability)}</span></div>
-            <div class="metric-row"><span class="metric-label">下一医学目标</span><span class="metric-value">${escapeHtml(round.target)}</span></div>
-          </article>
-
-          <article class="info-card">
-            <div class="card-head"><div class="card-title">动态分类</div><span class="badge teal">${escapeHtml(round.classification)}</span></div>
-            <div class="metric-row"><span class="metric-label">伤势状态</span><span class="metric-value">${escapeHtml(round.severity)}</span></div>
-            <div class="metric-row"><span class="metric-label">救治优先级</span><span class="metric-value ${round.treatmentPriority.includes("紧急") ? "red" : "teal"}">${escapeHtml(round.treatmentPriority)}</span></div>
-            <div class="metric-row"><span class="metric-label">后送优先级</span><span class="metric-value">${escapeHtml(round.transportPriority)}</span></div>
-          </article>
-
-          <article class="info-card warning">
-            <div class="card-head"><div class="card-title">时效提示</div><span class="badge ${timingTone}">软约束</span></div>
-            <div class="metric-row"><span class="metric-label">伤后时间</span><span class="metric-value ${timingTone}">${escapeHtml(round.elapsed)}</span></div>
-            <div class="metric-row"><span class="metric-label">当前状态</span><span class="metric-value ${timingTone}">${escapeHtml(round.timingStatus)}</span></div>
-            <div class="soft-note">${escapeHtml(round.timeWindow)}。时间用于提示与规划，不单独强制触发阶段转换。</div>
-          </article>
-
-          <article class="info-card full ${round.gateState === "blocked" ? "danger" : round.gateState === "ready" ? "success" : "warning"}">
-            <div class="card-head"><div class="card-title">阶段转换 Gate</div><span class="badge ${gateBadge}">${round.gateState === "blocked" ? "BLOCKED" : round.gateState === "ready" ? "READY" : "ASSESSING"}</span></div>
-            <div class="gate ${round.gateState}">
-              <div class="gate-icon">${gateMark}</div>
-              <div><div class="gate-title">${escapeHtml(round.gateTitle)}</div><div class="gate-desc">${escapeHtml(round.gateDesc)}</div></div>
+            <div class="metric-row">
+              <span class="metric-label">快照时间</span>
+              <span class="metric-value">${esc(round.time)} · 伤后 ${esc(round.elapsed)}</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-label">快照类型</span>
+              <span class="metric-value ${isLatest ? "info" : ""}">${isLatest ? "本轮最新状态" : "历史轮次快照（不随最新状态刷新）"}</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-label">下一医学目标</span>
+              <span class="metric-value">${esc(round.target)}</span>
             </div>
           </article>
 
-          <article class="info-card full">
-            <div class="card-head"><div class="card-title">当前行动计划</div><span class="card-meta">限定于当前救治级别</span></div>
-            <ol class="actions-list">${round.actions.map((action, i) => `<li data-n="${i + 1}">${escapeHtml(action)}</li>`).join("")}</ol>
+          ${renderPatientState(round)}
+
+          <article class="card full">
+            <div class="card-head">
+              <div class="card-title">本轮纪要</div>
+              <span class="card-meta">输入与输出要点概括</span>
+            </div>
+            <div class="memo-block">
+              <div class="memo-group">
+                <div class="memo-k">本轮输入要点</div>
+                <ul class="plain-list">${round.memo.input.map(item => `<li>${esc(item)}</li>`).join("")}</ul>
+              </div>
+              <div class="memo-group">
+                <div class="memo-k">本轮处置要点</div>
+                <ul class="plain-list">${round.memo.action.map(item => `<li>${esc(item)}</li>`).join("")}</ul>
+              </div>
+              <div class="memo-group">
+                <div class="memo-k">本轮结论</div>
+                <div class="memo-conclusion">${esc(round.memo.conclusion)}</div>
+              </div>
+            </div>
           </article>
 
-          <article class="info-card full">
-            ${renderKnowledgeAccordion(roundKnowledge[currentRound])}
+          <article class="card">
+            <div class="card-head">
+              <div class="card-title">动态分类</div>
+              <span class="badge info">${esc(round.classification.label)}</span>
+            </div>
+            <div class="metric-row"><span class="metric-label">伤势状态</span><span class="metric-value">${esc(round.classification.severity)}</span></div>
+            <div class="metric-row"><span class="metric-label">救治优先级</span><span class="metric-value ${round.classification.treatmentPriority.includes("紧急") ? "danger" : "info"}">${esc(round.classification.treatmentPriority)}</span></div>
+            <div class="metric-row"><span class="metric-label">后送优先级</span><span class="metric-value ${round.classification.transportPriority.includes("紧急") ? "danger" : ""}">${esc(round.classification.transportPriority)}</span></div>
+          </article>
+
+          <article class="card ${round.timing.tone === "warn" ? "warn" : ""}">
+            <div class="card-head">
+              <div class="card-title">时效提示</div>
+              <span class="badge ${round.timing.tone === "warn" ? "warn" : "mute"}">软约束</span>
+            </div>
+            <div class="metric-row"><span class="metric-label">伤后时间</span><span class="metric-value ${round.timing.tone === "warn" ? "warn" : ""}">${esc(round.elapsed)}</span></div>
+            <div class="metric-row"><span class="metric-label">当前状态</span><span class="metric-value ${round.timing.tone === "warn" ? "warn" : ""}">${esc(round.timing.status)}</span></div>
+            <div class="note-box">${esc(round.timing.window)}。时间仅用于提示与规划，不单独触发阶段转换。</div>
+          </article>
+
+          <article class="card full ${round.gate.state === "blocked" ? "danger" : round.gate.state === "completed" ? "ok" : round.gate.state === "ready" ? "warn" : ""}">
+            <div class="card-head">
+              <div class="card-title">阶段转换 Gate</div>
+              <span class="badge ${gate.cls}">${esc(gate.label)}</span>
+            </div>
+            <div class="gate ${round.gate.state}">
+              <div class="gate-icon">${gate.mark}</div>
+              <div>
+                <div class="gate-title">${esc(round.gate.title)}</div>
+                <div class="gate-desc">${esc(round.gate.desc)}</div>
+              </div>
+            </div>
+            <div class="note-box">
+              <b>用户确认：</b>${esc(round.gate.confirm.text)}
+            </div>
+          </article>
+
+          <article class="card full">
+            <div class="card-head">
+              <div class="card-title">当前行动计划</div>
+              <span class="card-meta">限定于当前救治级别</span>
+            </div>
+            <ol class="actions-list">${round.actions.map((action, i) => `<li data-n="${i + 1}">${esc(action)}</li>`).join("")}</ol>
+            <div class="next-stage-note">下一阶段所需能力：${esc(round.nextStageNote)}</div>
+          </article>
+
+          <article class="card full">
+            ${renderKnowledge(round.knowledge)}
           </article>
         </div>
 
@@ -1004,25 +1401,27 @@
           <div class="logic-item active"><strong>分类救治</strong>动态优先级</div>
           <div class="logic-item active"><strong>专项规则</strong>当前做什么</div>
           <div class="logic-item soft"><strong>时效救治</strong>时间软提示</div>
-          <div class="logic-item ${round.gateState === "blocked" ? "soft" : "active"}"><strong>救送结合</strong>转换 Gate</div>
+          <div class="logic-item ${round.gate.state === "blocked" ? "soft" : "active"}"><strong>救送结合</strong>Gate + 用户确认</div>
         </div>
       `;
       bindCloseDetail();
     }
 
-    function renderHeader() {
+    function renderCaseStrip() {
       const round = rounds[currentRound];
+      const stage = stages.find(item => item.id === round.stageId);
       $("facilityValue").textContent = round.facility;
-      $("stageValue").textContent = round.stage;
+      $("stageValue").textContent = `${stage.index} · ${stage.substeps[round.subIndex].name}`;
       $("elapsedValue").textContent = round.elapsed;
+      $("elapsedValue").className = `case-value ${round.timing.tone === "warn" ? "warn" : ""}`;
       $("transitionValue").textContent = round.transition;
       $("transitionValue").className = `case-value ${round.transitionTone}`;
       $("nextBtn").disabled = currentRound === rounds.length - 1;
-      $("nextBtn").innerHTML = currentRound === rounds.length - 1 ? "演示完成 ✓" : "下一轮 <span aria-hidden=\"true\">→</span>";
+      $("nextBtn").textContent = currentRound === rounds.length - 1 ? "演示完成 ✓" : "下一轮 →";
     }
 
     function render() {
-      renderHeader();
+      renderCaseStrip();
       renderRoundNav();
       renderMessages();
       renderStageMap();
@@ -1032,22 +1431,27 @@
     $("nextBtn").addEventListener("click", () => {
       if (currentRound < rounds.length - 1) {
         currentRound += 1;
-        selectedNode = null;
+        selectedMemo = null;
         render();
       }
     });
 
     $("restartBtn").addEventListener("click", () => {
       currentRound = 0;
-      selectedNode = null;
+      selectedMemo = null;
       render();
+    });
+
+    $("themeBtn").addEventListener("click", () => {
+      const root = document.documentElement;
+      root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
     });
 
     document.addEventListener("keydown", (event) => {
       if (event.key === "ArrowRight" && currentRound < rounds.length - 1) $("nextBtn").click();
       if (event.key === "ArrowLeft" && currentRound > 0) {
         currentRound -= 1;
-        selectedNode = null;
+        selectedMemo = null;
         render();
       }
     });

@@ -1084,37 +1084,31 @@ export default function SidebarV2({
           </div>
         ) : (
           <section className="pt-2">
-            {activeSection === 'general_medicine' ? (
-              <div className="flex items-center px-2 pb-1">
-                <button
-                  type="button"
-                  onClick={onCreateProject}
-                  aria-label={t('sidebar:projects.newProject', { defaultValue: 'New Project' }) as string}
-                  title={t('sidebar:projects.newProject', { defaultValue: 'New Project' }) as string}
-                  className={cn(
-                    'inline-flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-[12px] font-medium transition-colors',
-                    'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900',
-                    'dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-neutral-100',
-                  )}
-                >
-                  <Plus className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
-                  <span className="truncate">
-                    {t('sidebar:projects.newProject', { defaultValue: 'New Project' })}
-                  </span>
-                </button>
-              </div>
-            ) : null}
+            <div className="flex items-center px-2 pb-1">
+              <button
+                type="button"
+                onClick={onCreateProject}
+                aria-label={t('sidebar:projects.newProject', { defaultValue: 'New Project' }) as string}
+                title={t('sidebar:projects.newProject', { defaultValue: 'New Project' }) as string}
+                className={cn(
+                  'inline-flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-[12px] font-medium transition-colors',
+                  'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900',
+                  'dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-neutral-100',
+                )}
+              >
+                <Plus className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+                <span className="truncate">
+                  {t('sidebar:projects.newProject', { defaultValue: 'New Project' })}
+                </span>
+              </button>
+            </div>
 
             {visibleProjects.length === 0 ? (
               <div className="px-3 py-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-400">
                 <p>
-                  {activeSection === 'war_trauma'
-                    ? t('sidebar:types.warTraumaUpcoming', {
-                      defaultValue: 'The War Trauma Medicine experience is being redesigned. New projects are temporarily unavailable.',
-                    })
-                    : t('sidebar:types.empty', {
-                      defaultValue: 'No projects in this type yet. Create one above.',
-                    })}
+                  {t('sidebar:types.empty', {
+                    defaultValue: 'No projects in this type yet. Create one above.',
+                  })}
                 </p>
               </div>
             ) : (
