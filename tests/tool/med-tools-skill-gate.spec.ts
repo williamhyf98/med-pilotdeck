@@ -106,16 +106,19 @@ test("every med-tools MCP tool has a skill-gate mapping", () => {
   assert.equal(getMedToolsSkillRequirement("mcp__other__tool"), undefined);
 });
 
-test("general-medicine projects hard-block trauma MCP tools", async () => {
+test("general-medicine projects can load the trauma RAG skill gate", async () => {
   const toolName = "mcp__med-tools__med_trauma_rag_query";
   const { runtime, executions } = createRuntime(toolName);
   const result = await runtime.execute(
     { id: "general-trauma-rag", name: toolName, input: {} },
     generalContext(),
   );
-  assert.equal(result.type, "error");
-  assert.equal(result.error.code, "permission_denied");
-  assert.match(result.error.message, /general_medicine project type/u);
+  assert.equal(result.type, "success");
+  assert.equal(
+    (result.metadata?.medToolsSkillGate as { retryRequired?: boolean } | undefined)
+      ?.retryRequired,
+    true,
+  );
   assert.equal(executions.count, 0);
 });
 

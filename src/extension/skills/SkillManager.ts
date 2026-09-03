@@ -10,10 +10,7 @@ import {
 import {
   GLOBAL_SKILL_AVAILABILITY,
   isValidSkillAvailabilityInput,
-  MED_MEDICAL_SKILL,
   normalizeSkillAvailability,
-  readSkillAvailabilityOverrideSync,
-  writeSkillAvailabilityOverride,
   type SkillAvailability,
 } from "../../pilot/skillAvailability.js";
 import type {
@@ -271,10 +268,7 @@ export class SkillManager {
       throw new SkillManagerError("invalid_input", "At least one availability option is required.");
     }
     if (input.scope === "medical") {
-      if (input.slug !== MED_MEDICAL_SKILL) {
-        throw new SkillManagerError("read_only", `Medical skill "${input.slug}" has fixed availability.`);
-      }
-      await writeSkillAvailabilityOverride(input.slug, availability, this.pilotHome);
+      throw new SkillManagerError("read_only", `Medical skill "${input.slug}" has fixed global availability.`);
     } else if (input.scope === "user") {
       const skillDir = this.resolveSkillDir(input);
       const skillFile = join(skillDir, "SKILL.md");
@@ -669,7 +663,7 @@ function parseCompatFrontmatter(fmRaw: string): Record<string, unknown> {
 async function readSkillMeta(
   skillDir: string,
   scope: SkillScope,
-  pilotHome?: string,
+  _pilotHome?: string,
 ): Promise<SkillSummary | null> {
   const skillFile = join(skillDir, "SKILL.md");
   let content: string;
@@ -680,10 +674,8 @@ async function readSkillMeta(
   }
   const fm = parseSkillFrontmatter(content);
   const availability = resolveSummaryAvailability(
-    basename(skillDir),
     scope,
     fm.availability,
-    pilotHome,
   );
   let mtime: number | null = null;
   try {
@@ -708,26 +700,16 @@ async function readSkillMeta(
     readonly: scope === "builtin" || scope === "medical",
     mtime,
     availability,
-    availabilityMutable:
-      scope === "user" || (scope === "medical" && basename(skillDir) === MED_MEDICAL_SKILL),
+    availabilityMutable: scope === "user",
   };
 }
 
 function resolveSummaryAvailability(
-  slug: string,
   scope: SkillScope,
   frontmatterAvailability: unknown,
-  pilotHome?: string,
 ): SkillAvailability[] {
   if (scope === "medical") {
-    if (slug === MED_MEDICAL_SKILL) {
-      return readSkillAvailabilityOverrideSync(slug, pilotHome)
-        ?? [...GLOBAL_SKILL_AVAILABILITY];
-    }
-    if (slug === "med-case-report") return ["general_medicine"];
-    if (slug === "med-trauma-assist" || slug === "med-trauma-stage-plan") {
-      return ["war_trauma"];
-    }
+    return [...GLOBAL_SKILL_AVAILABILITY];
   }
   if (scope === "user") {
     const normalized = normalizeSkillAvailability(frontmatterAvailability);

@@ -30,7 +30,8 @@
   "types": {
     "generalMedicine": "General Med",
     "warTrauma": "War Trauma",
-    "empty": "No projects in this type yet. Create one above."
+    "empty": "No projects in this type yet. Create one above.",
+    "warTraumaUpcoming": "The War Trauma Medicine experience is being redesigned. New projects are temporarily unavailable."
   },
   "sectionToggle": {
     "label": "Project type"

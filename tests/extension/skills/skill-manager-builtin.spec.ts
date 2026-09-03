@@ -112,9 +112,11 @@ test("SkillManager lists all medical skills for management with fixed availabili
             general.medical.map((skill) => skill.slug),
             ["med-case-report", "med-medical", "med-trauma-assist", "med-trauma-stage-plan"],
         );
-        assert.deepEqual(general.medical.find((skill) => skill.slug === "med-case-report")?.availability, ["general_medicine"]);
-        assert.deepEqual(general.medical.find((skill) => skill.slug === "med-trauma-assist")?.availability, ["war_trauma"]);
-        assert.equal(general.medical.find((skill) => skill.slug === "med-medical")?.availabilityMutable, true);
+        assert.equal(
+            general.medical.every((skill) => skill.availability?.[0] === "global"),
+            true,
+        );
+        assert.equal(general.medical.find((skill) => skill.slug === "med-medical")?.availabilityMutable, false);
         const trauma = await manager.list({ projectKey: traumaProject });
         assert.deepEqual(
             trauma.medical.map((skill) => skill.slug),
@@ -132,7 +134,7 @@ test("SkillManager lists all medical skills for management with fixed availabili
     }
 });
 
-test("SkillManager updates user and med-medical availability", async () => {
+test("SkillManager updates user availability and keeps medical skills global", async () => {
     const root = await mkdtemp(join(tmpdir(), "pilotdeck-skill-manager-availability-"));
     try {
         const pilotHome = join(root, "pilot-home");
@@ -150,17 +152,10 @@ test("SkillManager updates user and med-medical availability", async () => {
         const userRead = await manager.read({ scope: "user", slug: "custom" });
         assert.match(userRead.content, /availability:\n\s+- war_trauma/u);
 
-        const medicalResult = await manager.setAvailability({
-            scope: "medical",
-            slug: "med-medical",
-            availability: ["general_medicine"],
-        });
-        assert.deepEqual(medicalResult.skill.availability, ["general_medicine"]);
-
         await assert.rejects(
             () => manager.setAvailability({
                 scope: "medical",
-                slug: "med-trauma-assist",
+                slug: "med-medical",
                 availability: ["global"],
             }),
             (error) => {
