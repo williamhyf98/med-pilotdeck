@@ -1,8 +1,12 @@
-export type MainStageId = 'initial' | 'early' | 'specialist' | 'rehab';
+export type MainStageId =
+  | 'battlefield_first_aid'
+  | 'early_treatment'
+  | 'specialist_treatment'
+  | 'rehabilitation';
 
 export type WorkflowStatus = 'future' | 'current' | 'done' | 'transfer' | 'blocked';
 
-export type GateStatus = 'ASSESSING' | 'READY' | 'BLOCKED' | 'COMPLETED';
+export type GateStatus = 'ASSESSING' | 'STAY' | 'READY' | 'BLOCKED' | 'COMPLETED';
 
 export type Trend = 'up' | 'down' | 'flat' | 'unknown';
 
@@ -50,6 +54,7 @@ export type DemoMessage = {
 
 export type RoundMemo = {
   id: string;
+  snapshotVersion?: number;
   round: number;
   title: string;
   time: string;

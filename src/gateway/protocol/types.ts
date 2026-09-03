@@ -273,6 +273,20 @@ export type GatewayTraumaConfirmTransitionInput = {
   expectedVersion: number;
 };
 
+export type GatewayTraumaCaseInput = {
+  sessionKey: string;
+  projectKey: string;
+};
+
+export type GatewayTraumaOverrideStageInput = GatewayTraumaCaseInput & {
+  actorId: string;
+  toStage: import("../../trauma/types.js").MainStage;
+  toSubStage: import("../../trauma/types.js").SubStage;
+  reason: string;
+  riskAcknowledged: true;
+  blockedOverrideConfirmed?: boolean;
+};
+
 /**
  * Web-facing permission decision input. Mirrors the elicitation
  * round-trip pattern: the agent (via `GatewayPermissionBus`) emits a
@@ -419,6 +433,13 @@ export interface Gateway {
   respondElicitation(input: GatewayElicitationResponseInput): Promise<{ delivered: boolean }>;
   traumaConfirmTransition?(
     input: GatewayTraumaConfirmTransitionInput,
+  ): Promise<import("../../trauma/types.js").CaseSnapshot>;
+  traumaGetCase?(input: GatewayTraumaCaseInput): Promise<{
+    current: import("../../trauma/types.js").CaseState | null;
+    snapshots: import("../../trauma/types.js").CaseSnapshot[];
+  }>;
+  traumaOverrideStage?(
+    input: GatewayTraumaOverrideStageInput,
   ): Promise<import("../../trauma/types.js").CaseSnapshot>;
   /**
    * Web Phase 2 — host responds to a `permission_request` event surfaced

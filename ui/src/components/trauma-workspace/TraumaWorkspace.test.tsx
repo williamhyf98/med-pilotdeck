@@ -2,6 +2,18 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import TraumaWorkspace from './TraumaWorkspace';
+import { initialUiCaseState } from './testFixtures';
+
+const caseStoreMock = vi.hoisted(() => ({
+  current: null as any,
+  snapshots: [] as any[],
+  loading: false,
+  refresh: vi.fn(),
+}));
+
+vi.mock('./store/useCaseStore', () => ({
+  useCaseStore: () => caseStoreMock,
+}));
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -9,7 +21,11 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  caseStoreMock.current = null;
+  caseStoreMock.snapshots = [];
+});
 
 describe('TraumaWorkspace demo workflow', () => {
   it('keeps stage nodes non-interactive and opens details only from memo leaves', () => {
@@ -77,5 +93,58 @@ describe('TraumaWorkspace demo workflow', () => {
 
     expect(screen.getByRole('button', { name: /R4后送受阻.*阻塞/ })).not.toBeNull();
     expect(screen.getByRole('button', { name: /^R1首次报告/ }).textContent).not.toContain('当前');
+  });
+
+  it('uses the live chat and snapshot tree when real snapshots exist', () => {
+    const state = initialUiCaseState();
+    state.memos = [{
+      id: 'memo-live',
+      round: 1,
+      createdAt: state.updatedAt,
+      mainStage: 'battlefield_first_aid',
+      subStage: 'primary_first_aid',
+      title: '真实病例',
+      inputPoints: ['呼吸32次'],
+      actionPoints: ['继续止血'],
+      conclusion: '继续评估',
+      snapshotVersion: 1,
+    }];
+    caseStoreMock.current = state;
+    caseStoreMock.snapshots = [{
+      eventType: 'agent_turn',
+      round: 1,
+      createdAt: state.updatedAt,
+      triggerMessageId: 'message-1',
+      state,
+    }];
+
+    render(
+      <TraumaWorkspace
+        resetKey="trauma:live"
+        projectKey="trauma_med-demo"
+        sessionId="web:s_live"
+        chatInterface={<div>真实会话界面</div>}
+      />,
+    );
+
+    expect(screen.getByText('真实会话界面')).not.toBeNull();
+    expect(screen.queryByLabelText('演示案例对话')).toBeNull();
+    expect(screen.getByRole('button', { name: /R1真实病例/ })).not.toBeNull();
+    expect(screen.getByRole('button', { name: '调整救治阶段' })).not.toBeNull();
+  });
+
+  it('lets an empty case enter the real chat to create its first snapshot', () => {
+    render(
+      <TraumaWorkspace
+        resetKey="trauma:empty"
+        projectKey="trauma_med-demo"
+        sessionId="web:s_empty"
+        chatInterface={<div>空病例真实会话</div>}
+      />,
+    );
+    expect(screen.getByLabelText('演示案例对话')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '开始真实推演' }));
+    expect(screen.getByText('空病例真实会话')).not.toBeNull();
+    expect(screen.queryByLabelText('演示案例对话')).toBeNull();
   });
 });

@@ -58,6 +58,7 @@ test("case store writes current state and appends snapshots", async () => {
 
     assert.equal((await readFile(join(root, "snapshots.jsonl"), "utf8")).trim().split("\n").length, 2);
     assert.equal((await store.load())?.version, 2);
+    assert.deepEqual(await store.loadSnapshots(), [firstSnapshot, secondSnapshot]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

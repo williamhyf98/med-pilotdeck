@@ -322,6 +322,8 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
     setSessionCwd: (sessionKey, cwd) => registry.setSessionCwd(sessionKey, cwd),
     traumaRunnerFactory: ({ projectKey, sessionKey }) =>
       registry.createTraumaRunner(projectKey, sessionKey),
+    traumaCaseReader: ({ projectKey, sessionKey }) =>
+      registry.readTraumaCase(projectKey, sessionKey),
     async recordTraumaTurn(input) {
       const storage = createAgentProjectSessionStorage({
         projectRoot: input.projectKey,
@@ -658,6 +660,21 @@ class ProjectRuntimeRegistry {
       rag,
       now: () => this.options.now().toISOString(),
     });
+  }
+
+  async readTraumaCase(projectKey: string, sessionKey: string) {
+    const projectId = projectKey.replace(/\\/gu, "/").split("/").filter(Boolean).at(-1)
+      ?? projectKey;
+    const store = createTraumaCaseStore(resolveTraumaCaseDir(
+      projectId,
+      sessionKey,
+      this.options.pilotHome,
+    ));
+    const [current, snapshots] = await Promise.all([
+      store.load(),
+      store.loadSnapshots(),
+    ]);
+    return { current, snapshots };
   }
 
   private emitBackgroundTaskCompletion(event: BackgroundTaskCompletionEvent): void {

@@ -987,7 +987,12 @@ function SplitBody(props: SplitBodyProps) {
         ) : null}
         <ErrorBoundary showDetails>
           {isWarTraumaProject && !isFiles ? (
-            <TraumaWorkspace resetKey={`${selectedProject?.name ?? ''}:${selectedSession?.id ?? ''}`} />
+            <TraumaWorkspace
+              resetKey={`${selectedProject?.name ?? ''}:${selectedSession?.id ?? ''}`}
+              projectKey={selectedProject?.fullPath || selectedProject?.path || selectedProject?.name}
+              sessionId={selectedSession?.id}
+              chatInterface={selectedSession ? chatInterface : undefined}
+            />
           ) : chatInterface}
           </ErrorBoundary>
       </div>

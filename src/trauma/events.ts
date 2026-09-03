@@ -49,7 +49,7 @@ export function traumaTurnEvents(input: {
           question: `是否确认将救治阶段转入「${target}」？`,
           options: [
             {
-              label: "确认转换",
+              label: `确认转入${target}`,
               description: "应用建议的目标救治阶段并继续推演",
             },
             {

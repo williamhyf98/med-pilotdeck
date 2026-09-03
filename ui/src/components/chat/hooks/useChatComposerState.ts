@@ -1542,6 +1542,29 @@ export function useChatComposerState({
       validIds.forEach((requestId) => {
         const pending = pendingPermissionRequests.find((r) => r.requestId === requestId);
         if (pending?.isElicitation) {
+          const traumaMetadata = (
+            pending.input as { metadata?: { source?: string; version?: number } } | undefined
+          )?.metadata;
+          if (
+            traumaMetadata?.source === 'trauma_pending_transition'
+            && typeof traumaMetadata.version === 'number'
+          ) {
+            const submitted = (decision?.updatedInput as {
+              answers?: Record<string, string | string[]>;
+            } | undefined) ?? {};
+            const selected = Object.values(submitted.answers ?? {}).flat().join(' ');
+            sendMessage({
+              type: 'trauma-transition-response',
+              requestId,
+              sessionId: pending.sessionId,
+              projectKey: selectedProject?.fullPath || selectedProject?.path || selectedProject?.name,
+              answer: decision?.allow && /确认转换|确认转入/.test(selected)
+                ? 'confirmed'
+                : 'declined',
+              expectedVersion: traumaMetadata.version,
+            });
+            return;
+          }
           // Elicitation flow (e.g. `ask_user_question`): submit selections
           // through GatewayElicitationBus, not GatewayPermissionBus.
           const submitted =
@@ -1591,7 +1614,16 @@ export function useChatComposerState({
         return next;
       });
     },
-    [pendingPermissionRequests, sendMessage, setClaudeStatus, setPilotDeckStatus, setPendingPermissionRequests],
+    [
+      pendingPermissionRequests,
+      selectedProject?.fullPath,
+      selectedProject?.name,
+      selectedProject?.path,
+      sendMessage,
+      setClaudeStatus,
+      setPilotDeckStatus,
+      setPendingPermissionRequests,
+    ],
   );
 
   const [isInputFocused, setIsInputFocused] = useState(false);

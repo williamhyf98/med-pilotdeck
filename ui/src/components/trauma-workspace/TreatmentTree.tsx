@@ -1,4 +1,4 @@
-import { Check, Circle, LockKeyhole, MoveRight } from 'lucide-react';
+import { Check, Circle, LockKeyhole, MoveRight, Settings2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { MainStageId, RoundMemo, StageDefinition, WorkflowStatus } from './types';
 
@@ -8,6 +8,8 @@ type TreatmentTreeProps = {
   currentRoundIndex: number;
   selectedMemoId: string | null;
   onSelectMemo: (memoId: string) => void;
+  onRequestStageOverride?: () => void;
+  canOverrideStage?: boolean;
 };
 
 function statusLabel(status: WorkflowStatus): string {
@@ -102,12 +104,26 @@ export default function TreatmentTree({
   currentRoundIndex,
   selectedMemoId,
   onSelectMemo,
+  onRequestStageOverride,
+  canOverrideStage = true,
 }: TreatmentTreeProps) {
   const visibleRounds = rounds.slice(0, currentRoundIndex + 1);
   const currentRound = rounds[currentRoundIndex];
 
   return (
     <div className="space-y-2 pb-4">
+      {onRequestStageOverride && canOverrideStage ? (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onRequestStageOverride}
+            className="inline-flex items-center gap-1.5 rounded-md border border-neutral-200 px-2 py-1.5 text-[10px] font-medium text-neutral-600 hover:bg-neutral-50 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-900"
+          >
+            <Settings2 className="h-3 w-3" />
+            调整救治阶段
+          </button>
+        </div>
+      ) : null}
       {stages.map((stage) => {
         const mainStatus = getMainStatus(stages, stage.id, currentRound);
         return (

@@ -2374,3 +2374,19 @@ export async function traumaConfirmTransitionViaGateway({
         expectedVersion,
     });
 }
+
+export async function traumaGetCaseViaGateway({ projectKey, sessionKey }) {
+    const gw = await ensureGateway();
+    if (typeof gw.traumaGetCase !== 'function') {
+        throw new Error('The active gateway does not support trauma case reads.');
+    }
+    return gw.traumaGetCase({ projectKey, sessionKey });
+}
+
+export async function traumaOverrideStageViaGateway(input) {
+    const gw = await ensureGateway();
+    if (typeof gw.traumaOverrideStage !== 'function') {
+        throw new Error('The active gateway does not support trauma stage overrides.');
+    }
+    return gw.traumaOverrideStage(input);
+}

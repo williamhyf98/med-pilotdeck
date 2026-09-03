@@ -23,7 +23,9 @@ import type {
   GatewayActiveTurnSnapshot,
   GatewayActiveTurnSnapshotInput,
   GatewayElicitationResponseInput,
+  GatewayTraumaCaseInput,
   GatewayTraumaConfirmTransitionInput,
+  GatewayTraumaOverrideStageInput,
   GatewayEvent,
   GatewayPermissionDecisionInput,
   GatewayRecordAgentStatusMessageInput,
@@ -188,6 +190,10 @@ export type InProcessGatewayOptions = {
     userText: string;
     assistantText: string;
   }) => void | Promise<void>;
+  traumaCaseReader?: (input: GatewayTraumaCaseInput) => Promise<{
+    current: import("../../trauma/types.js").CaseState | null;
+    snapshots: import("../../trauma/types.js").CaseSnapshot[];
+  }>;
 };
 
 const ACTIVE_TURN_EVENT_LIMIT = 500;
@@ -754,6 +760,33 @@ export class InProcessGateway implements Gateway {
       sessionId: input.sessionKey,
       answer: input.answer,
       expectedVersion: input.expectedVersion,
+    });
+  }
+
+  async traumaGetCase(input: GatewayTraumaCaseInput) {
+    if (!this.options.traumaCaseReader || !isTraumaProject(input.projectKey)) {
+      throw new Error("war_trauma case reader is not configured");
+    }
+    return this.options.traumaCaseReader(input);
+  }
+
+  async traumaOverrideStage(input: GatewayTraumaOverrideStageInput) {
+    if (!this.options.traumaRunnerFactory || !isTraumaProject(input.projectKey)) {
+      throw new Error("war_trauma runner is not configured");
+    }
+    const runner = await this.options.traumaRunnerFactory({
+      projectKey: input.projectKey,
+      sessionKey: input.sessionKey,
+    });
+    return runner.overrideStage({
+      projectId: input.projectKey,
+      sessionId: input.sessionKey,
+      actorId: input.actorId,
+      toStage: input.toStage,
+      toSubStage: input.toSubStage,
+      reason: input.reason,
+      riskAcknowledged: input.riskAcknowledged,
+      blockedOverrideConfirmed: input.blockedOverrideConfirmed,
     });
   }
 

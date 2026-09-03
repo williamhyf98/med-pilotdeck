@@ -80,6 +80,8 @@ import {
     getActiveSessionIdsViaGateway,
     elicitationRespondViaGateway,
     traumaConfirmTransitionViaGateway,
+    traumaGetCaseViaGateway,
+    traumaOverrideStageViaGateway,
     getRouterDashboardData,
     getRouterSessionStats,
     getRouterStatsSummary,
@@ -843,6 +845,41 @@ app.get('/api/projects/:projectName/sessions', authenticateToken, async (req, re
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/trauma/cases/:sessionId', authenticateToken, async (req, res) => {
+    try {
+        const projectKey = typeof req.query.projectKey === 'string' ? req.query.projectKey : '';
+        if (!projectKey) {
+            return res.status(400).json({ error: 'projectKey is required' });
+        }
+        const result = await traumaGetCaseViaGateway({
+            projectKey,
+            sessionKey: req.params.sessionId,
+        });
+        return res.json(result);
+    } catch (error) {
+        return res.status(500).json({ error: error?.message || 'Failed to read trauma case' });
+    }
+});
+
+app.post('/api/trauma/cases/:sessionId/override', authenticateToken, async (req, res) => {
+    try {
+        const body = req.body ?? {};
+        const snapshot = await traumaOverrideStageViaGateway({
+            projectKey: body.projectKey,
+            sessionKey: req.params.sessionId,
+            actorId: body.actorId || 'web-user',
+            toStage: body.toStage,
+            toSubStage: body.toSubStage,
+            reason: body.reason,
+            riskAcknowledged: body.riskAcknowledged,
+            blockedOverrideConfirmed: body.blockedOverrideConfirmed,
+        });
+        return res.json({ snapshot });
+    } catch (error) {
+        return res.status(400).json({ error: error?.message || 'Failed to override trauma stage' });
     }
 });
 

@@ -6,6 +6,7 @@ import type { CaseSnapshot, CaseState } from "./types.js";
 
 export type TraumaCaseStore = {
   load(): Promise<CaseState | null>;
+  loadSnapshots(): Promise<CaseSnapshot[]>;
   saveTurn(state: CaseState, snapshot: CaseSnapshot): Promise<void>;
 };
 
@@ -23,6 +24,19 @@ export function createTraumaCaseStore(directory: string): TraumaCaseStore {
         return JSON.parse(await readFile(currentPath, "utf8")) as CaseState;
       } catch (error) {
         if (isMissingFile(error)) return null;
+        throw error;
+      }
+    },
+
+    async loadSnapshots(): Promise<CaseSnapshot[]> {
+      try {
+        const lines = (await readFile(snapshotsPath, "utf8"))
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean);
+        return lines.map((line) => JSON.parse(line) as CaseSnapshot);
+      } catch (error) {
+        if (isMissingFile(error)) return [];
         throw error;
       }
     },
