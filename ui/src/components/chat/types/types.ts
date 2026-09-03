@@ -54,6 +54,19 @@ export interface ChatAttachment {
   relativePath?: string;
 }
 
+export interface CitationMetadata {
+  /** 引用编号，对应正文中的 [N] */
+  index: number;
+  /** 文献名 */
+  title: string;
+  /** 章节路径 */
+  section: string;
+  /** 证据等级 */
+  evidenceGrade?: string;
+  /** 证据质量 */
+  evidenceQuality?: string;
+}
+
 export interface ChatFileArtifact {
   id: string;
   name: string;
@@ -148,6 +161,8 @@ export interface ChatMessage {
   toolCallCount?: number;
   toolErrorCount?: number;
   ragSearchCount?: number;
+  /** 行内引用元数据（从 RAG 工具返回的 chunks 中提取），供 Markdown 渲染 [N] 角标时使用 */
+  citations?: CitationMetadata[];
   editedFileCount?: number;
   exploredFileCount?: number;
   commandCount?: number;

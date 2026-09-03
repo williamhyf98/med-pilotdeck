@@ -837,7 +837,8 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, o
                   // Normal rendering for non-JSON content
                   return message.type === 'assistant' ? (
                     <Markdown className="prose prose-sm prose-gray max-w-none dark:prose-invert" projectName={selectedProject?.name}
-                      onFileOpen={onFileOpen}>
+                      onFileOpen={onFileOpen}
+                      citations={message.citations as import('../../types/types').CitationMetadata[] | undefined}>
                       {content}
                     </Markdown>
                   ) : (

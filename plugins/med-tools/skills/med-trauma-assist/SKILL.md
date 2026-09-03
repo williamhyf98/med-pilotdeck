@@ -26,6 +26,7 @@ description: 通过 RAG 进行战创伤知识点问答。用于教材/概念类�
 4. 按 `mode` 说明证据来源（见「检索后端与 mode」一节）：`remote` 正常作答不必声明；降级到本地时要简短说明。
 5. 用户明确要「生成救治方案 / 按某阶段出方案」→ **改走 `med-trauma-stage-plan`**，不要用本 Skill 硬写五段卡。
 6. **检索前必须改写 query**（见下节）；聊天气泡仍按用户原文理解与作答，不要把改写句当成用户原话展示。
+7. **图片引用**：检索结果每条 `chunks[i]` 可能包含 `image_refs` 数组（字段：`url`、`caption`）。回答中涉及具体操作步骤、器材使用、解剖结构时，必须从对应 chunk 的 `image_refs` 中选取相关图片，用 Markdown 格式 `![caption](url)` 嵌入对应段落。`caption` 为空时用 `图` 代替。不要堆砌与回答内容无关的图片，也不要引用工具未返回的图片 URL。**禁止使用 shell 命令（find/ls 等）搜索本地文件系统来寻找图片；图片的唯一来源是 RAG 工具返回的 `image_refs`。**
 
 ## 检索后端与 mode
 
@@ -103,14 +104,15 @@ mcp__med-tools__med_trauma_rag_query(query=<改写后的检索句>)
 - **默认不传** → 只检索战创伤语料（与本 Skill 定位一致，绝大多数情况用这个）
 - `topic="军事医学"` / `topic="未分类"` → 切到对应分库
 - `topic=""` → **全库检索**。仅当用户明确要求「放宽范围 / 查一下通用指南」，或默认范围连续检索不到内容时才用
+- **图片检索**：战创伤分库（中华战创伤学）不含图片，军事医学分库（军事医学丛书）有大量操作图。当用户要求带图/示意图/操作图时，必须用 `topic="军事医学"` 或 `topic=""` 检索，否则 image_refs 会为空。
 
 `min_score` 只对本地向量检索生效，远程检索不受它影响，不必调。
 
 ## 建议输出结构
 
-1. **直接回答**  
-2. **简要处置要点**（可选，非正式方案）  
-3. **参考来源**（`title` / `section` / `chunk_id`；若 chunk 带 `evidence_grade`、`evidence_quality`、`data_layer`、`topic` 则一并标注证据级别。这些字段**可能缺失**（本地降级路径没有），有则标、无则略，不要编造）  
+1. **直接回答**（正文中引用检索资料事实时，在句末标注 `[N]`，N 为 chunks 中该条目的 rank 编号）
+2. **简要处置要点**（可选，非正式方案）
+3. **参考来源**（正文结束后，用 `<details><summary>参考来源（点击展开）</summary>` 包裹，内部每条引用单独一行，格式为 `- [N] title > section`（用 markdown 无序列表，每行 `-` 开头）。有 evidence_grade、evidence_quality 则标注在章节路径后。不要输出 chunk_id、score、doc_id 等机器标识。若某条 chunk 的 title / section 为空，改写成可读的文献名+章节名再列。最后 `</details>` 闭合）
 4. **免责声明**
 
 边界：正式六阶段方案 → `med-trauma-stage-plan`；DICOM/PDF 解读 → `med-medical`。
