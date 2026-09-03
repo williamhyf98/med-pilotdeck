@@ -284,3 +284,149 @@ test("station failure leaves the previous current state unchanged", async () => 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("stale confirmation is rejected without writing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-confirm-stale-"));
+  try {
+    const store = createTraumaCaseStore(root);
+    const runner = createTraumaTurnRunner({ store, model: fakeModel({}), rag: fakeRag({ count: 0 }) });
+    await runner.runTurn({
+      projectId: "trauma_med-demo",
+      sessionId: "web:s_demo",
+      messageId: "message-2",
+      userText: "呼吸32次",
+      now,
+    });
+    await assert.rejects(() => runner.confirmTransition({
+      projectId: "trauma_med-demo",
+      sessionId: "web:s_demo",
+      answer: "confirmed",
+      expectedVersion: 0,
+    }));
+    assert.equal((await store.load())?.version, 1);
+    assert.equal((await store.load())?.currentSubStage, "primary_first_aid");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("confirmed transition completes the gate without a new memo leaf", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-confirm-ok-"));
+  try {
+    const store = createTraumaCaseStore(root);
+    const runner = createTraumaTurnRunner({ store, model: fakeModel({}), rag: fakeRag({ count: 0 }) });
+    await runner.runTurn({
+      projectId: "trauma_med-demo",
+      sessionId: "web:s_demo",
+      messageId: "message-2",
+      userText: "呼吸32次",
+      now,
+    });
+    const snapshot = await runner.confirmTransition({
+      projectId: "trauma_med-demo",
+      sessionId: "web:s_demo",
+      answer: "confirmed",
+      expectedVersion: 1,
+    });
+    assert.equal(snapshot.eventType, "transition_confirmation");
+    assert.equal(snapshot.state.currentSubStage, "advanced_first_aid");
+    assert.equal(snapshot.state.transport.gateStatus, "COMPLETED");
+    assert.equal(snapshot.state.pendingTransition, undefined);
+    assert.equal(snapshot.state.memos.length, 1);
+    assert.equal(snapshot.state.round, 1);
+    assert.equal(snapshot.state.version, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("declined transition keeps the stage and does not add a memo", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-confirm-no-"));
+  try {
+    const store = createTraumaCaseStore(root);
+    const runner = createTraumaTurnRunner({ store, model: fakeModel({}), rag: fakeRag({ count: 0 }) });
+    await runner.runTurn({
+      projectId: "trauma_med-demo",
+      sessionId: "web:s_demo",
+      messageId: "message-2",
+      userText: "呼吸32次",
+      now,
+    });
+    const snapshot = await runner.confirmTransition({
+      projectId: "trauma_med-demo",
+      sessionId: "web:s_demo",
+      answer: "declined",
+      expectedVersion: 1,
+    });
+    assert.equal(snapshot.state.currentSubStage, "primary_first_aid");
+    assert.equal(snapshot.state.transport.confirmation?.answer, "declined");
+    assert.equal(snapshot.state.memos.length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("manual override can jump forward but not backward and does not call RAG", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-override-"));
+  try {
+    const store = createTraumaCaseStore(root);
+    const previous = initialCaseState({
+      projectId: "trauma_med-demo",
+      sessionId: "web:s_demo",
+      now,
+    });
+    previous.version = 1;
+    previous.transport.gateStatus = "BLOCKED";
+    previous.currentFacility = { name: "连抢救组", type: "company_aid_team", capabilities: ["止血"] };
+    previous.currentCapabilities = ["止血"];
+    await store.saveTurn(previous, {
+      eventType: "agent_turn",
+      round: 1,
+      createdAt: now,
+      triggerMessageId: "message-1",
+      state: previous,
+    });
+    const ragCalls = { count: 0 };
+    const runner = createTraumaTurnRunner({ store, model: fakeModel({}), rag: fakeRag(ragCalls) });
+    await assert.rejects(() => runner.overrideStage({
+      projectId: "trauma_med-demo",
+      sessionId: "web:s_demo",
+      actorId: "user-1",
+      toStage: "battlefield_first_aid",
+      toSubStage: "primary_first_aid",
+      reason: "too early",
+      riskAcknowledged: true,
+      blockedOverrideConfirmed: true,
+    }));
+    await assert.rejects(() => runner.overrideStage({
+      projectId: "trauma_med-demo",
+      sessionId: "web:s_demo",
+      actorId: "user-1",
+      toStage: "early_treatment",
+      toSubStage: "emergency_treatment",
+      reason: "force",
+      riskAcknowledged: true,
+    }));
+    const snapshot = await runner.overrideStage({
+      projectId: "trauma_med-demo",
+      sessionId: "web:s_demo",
+      actorId: "user-1",
+      toStage: "early_treatment",
+      toSubStage: "emergency_treatment",
+      reason: "现场指挥要求",
+      riskAcknowledged: true,
+      blockedOverrideConfirmed: true,
+    });
+    assert.equal(ragCalls.count, 0);
+    assert.equal(snapshot.eventType, "manual_stage_override");
+    assert.equal(snapshot.state.currentSubStage, "emergency_treatment");
+    assert.equal(snapshot.state.currentFacility.name, "连抢救组");
+    assert.deepEqual(snapshot.state.currentCapabilities, ["止血"]);
+    assert.equal(snapshot.state.transport.gateStatus, "COMPLETED");
+    assert.equal(snapshot.state.manualStageOverrides[0]?.originalGateStatus, "BLOCKED");
+    assert.ok((snapshot.state.manualStageOverrides[0]?.unresolvedRisks.length ?? 0) >= 0);
+    assert.equal(snapshot.state.memos.length, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

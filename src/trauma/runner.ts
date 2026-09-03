@@ -6,7 +6,7 @@ import type { StructuredModelClient } from "./modelClient.js";
 import { TRAUMA_RAG_TOP_K, type TraumaRagClient } from "./rag/client.js";
 import { mergeRetrieval } from "./rag/merge.js";
 import { buildBaselineQueries } from "./rag/queryPlan.js";
-import { initialCaseState } from "./stageConfig.js";
+import { initialCaseState, isLaterSubStage, SUBSTAGE_TO_MAIN } from "./stageConfig.js";
 import { createExtractorStation } from "./stations/extractor.js";
 import { createPlannerStation } from "./stations/planner.js";
 import { createReasonerStation } from "./stations/reasoner.js";
@@ -267,12 +267,104 @@ export function createTraumaTurnRunner(deps: {
       return response;
     },
 
-    async confirmTransition() {
-      throw new Error("confirmTransition is not implemented");
+    async confirmTransition(input) {
+      const current = await deps.store.load();
+      if (!current) {
+        throw new Error("no case state to confirm");
+      }
+      if (!current.pendingTransition) {
+        throw new Error("no pending transition");
+      }
+      if (input.expectedVersion !== current.version) {
+        throw new Error("stale confirmation version");
+      }
+      const now = deps.now?.() ?? new Date().toISOString();
+      const confirmed = input.answer === "confirmed";
+      const next: CaseState = {
+        ...current,
+        version: current.version + 1,
+        updatedAt: now,
+        currentStage: confirmed ? current.pendingTransition.targetStage : current.currentStage,
+        currentSubStage: confirmed ? current.pendingTransition.targetSubStage : current.currentSubStage,
+        pendingTransition: undefined,
+        transport: {
+          ...current.transport,
+          gateStatus: confirmed ? "COMPLETED" : current.transport.gateStatus === "READY" ? "STAY" : current.transport.gateStatus,
+          confirmation: {
+            ...current.pendingTransition,
+            answeredAt: now,
+            answer: input.answer,
+          },
+        },
+      };
+      const snapshot: CaseSnapshot = {
+        eventType: "transition_confirmation",
+        round: next.round,
+        createdAt: now,
+        triggerMessageId: `confirmation:${input.answer}`,
+        state: next,
+      };
+      await deps.store.saveTurn(next, snapshot);
+      return snapshot;
     },
 
-    async overrideStage() {
-      throw new Error("overrideStage is not implemented");
+    async overrideStage(input) {
+      const current = await deps.store.load();
+      if (!current) {
+        throw new Error("no case state to override");
+      }
+      if (SUBSTAGE_TO_MAIN[input.toSubStage] !== input.toStage) {
+        throw new Error("stage mapping mismatch");
+      }
+      if (!isLaterSubStage(current.currentSubStage, input.toSubStage)) {
+        throw new Error("cannot override to an earlier or current substage");
+      }
+      if (current.transport.gateStatus === "BLOCKED" && input.blockedOverrideConfirmed !== true) {
+        throw new Error("blocked override requires secondary confirmation");
+      }
+      const now = deps.now?.() ?? new Date().toISOString();
+      const unresolvedRisks = [
+        ...current.transport.blockingReason ? [current.transport.blockingReason] : [],
+        ...current.missingInformation,
+      ];
+      const override = {
+        id: randomUUID(),
+        actorId: input.actorId,
+        createdAt: now,
+        fromStage: current.currentStage,
+        fromSubStage: current.currentSubStage,
+        toStage: input.toStage,
+        toSubStage: input.toSubStage,
+        reason: input.reason,
+        originalGateStatus: current.transport.gateStatus,
+        unresolvedRisks,
+        riskAcknowledged: true as const,
+        blockedOverrideConfirmed: input.blockedOverrideConfirmed === true,
+      };
+      const next: CaseState = {
+        ...current,
+        version: current.version + 1,
+        updatedAt: now,
+        currentStage: input.toStage,
+        currentSubStage: input.toSubStage,
+        currentFacility: current.currentFacility,
+        currentCapabilities: current.currentCapabilities,
+        pendingTransition: undefined,
+        manualStageOverrides: [...current.manualStageOverrides, override],
+        transport: {
+          ...current.transport,
+          gateStatus: "COMPLETED",
+        },
+      };
+      const snapshot: CaseSnapshot = {
+        eventType: "manual_stage_override",
+        round: next.round,
+        createdAt: now,
+        triggerMessageId: override.id,
+        state: next,
+      };
+      await deps.store.saveTurn(next, snapshot);
+      return snapshot;
     },
   };
 }
