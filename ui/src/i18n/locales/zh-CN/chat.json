@@ -192,11 +192,11 @@
     "title": "实施计划",
     "exitMode": {
       "header": "计划已准备好",
-      "subtitle": "确认后会退出 Plan 模式，并让模型开始按计划执行。",
+      "subtitle": "确认后会退出计划模式，并让智能体按步骤处理工作区任务。",
       "syncingPlan": "计划正文正在同步，请确认是否执行。",
       "feedbackLabel": "继续讨论时可以补充说明",
-      "feedbackPlaceholder": "例如：再补充测试方案，或者先不要改数据库。",
-      "continueButton": "发送继续交流消息",
+      "feedbackPlaceholder": "例如：先只解析附件，暂不生成 HTML。",
+      "continueButton": "继续完善计划",
       "executeButton": "按计划执行"
     },
     "approvedCard": {

@@ -39,7 +39,7 @@ export function createWriteFileTool(): PilotDeckToolDefinition<WriteFileInput, W
     name: "write_file",
     aliases: ["Write"],
     description:
-      "Writes a UTF-8 declarative content file inside the workspace, or outside the workspace after explicit host permission.\n\nUsage:\n- Use this tool for document content and bundled-tool inputs such as Markdown, JSON, CSV, TSV, and plain text.\n- The file_path parameter may be relative to the current workspace or an absolute path. Paths outside the workspace require explicit user permission before execution.\n- You may create a new file directly; use ls/glob/git status if you need to confirm it does not exist.\n- This tool will overwrite the existing file if there is one.\n- You must read an existing file with read_file before writing to it. This tool will fail if an existing file was not read first.\n- If the target file changed after the last read, this tool will fail and you must read it again before writing.\n- Prefer the edit_file tool for modifying existing declarative files. Only use this tool to create new files or for complete rewrites.\n- The returned filePath is always the resolved absolute path.\n- Do not create documentation files (*.md) or README files unless explicitly requested by the User or required as an input to a bundled skill.\n- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.",
+      "在工作区内写入 UTF-8 声明式内容文件；若要写到工作区之外，需先获得宿主明确授权。\n\n用法：\n- 用于文档内容和随附工具的输入，例如 Markdown、JSON、CSV、TSV 和纯文本。\n- file_path 可以是相对当前工作区的路径，也可以是绝对路径。工作区之外的路径在执行前需要用户明确授权。\n- 可以直接创建新文件；如需确认文件不存在，用 ls/glob/git status 查看。\n- 目标文件已存在时，本工具会直接覆盖。\n- 写入已存在的文件前，必须先用 read_file 读取；未先读取会导致本次写入失败。\n- 若目标文件在上次读取之后发生了变化，本工具会失败，必须重新读取后再写入。\n- 修改已有的声明式文件时优先使用 edit_file。本工具只用于创建新文件或整体重写。\n- 返回的 filePath 始终是解析后的绝对路径。\n- 除非用户明确要求，或某个随附技能需要它作为输入，否则不要创建文档文件（*.md）或 README 文件。\n- 仅在用户明确要求时使用 emoji；未经要求不要把 emoji 写入文件。",
     kind: "filesystem",
     inputSchema: {
       type: "object",
@@ -49,11 +49,11 @@ export function createWriteFileTool(): PilotDeckToolDefinition<WriteFileInput, W
         file_path: {
           type: "string",
           description:
-            "The path to the file to write. It may be relative to the current workspace or absolute. Paths outside the workspace require explicit user permission.",
+            "要写入的文件路径，可以是相对当前工作区的路径或绝对路径。工作区之外的路径需要用户明确授权。",
         },
         content: {
           type: "string",
-          description: "The content to write to the file.",
+          description: "要写入该文件的内容。",
         },
       },
     },

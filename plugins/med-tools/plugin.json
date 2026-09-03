@@ -1,7 +1,7 @@
 {
   "name": "med-tools",
-  "version": "0.4.0",
-  "description": "Medical MCP tools: parse + G9 reports + war-trauma RAG Q&A + six-stage care plans; Skills drive routing (no registered agent profile)",
+  "version": "0.5.0",
+  "description": "Medical MCP tools: parse + G9 reports + war-trauma RAG Q&A (remote med-rag service, local corpus fallback) + six-stage care plans; Skills drive routing (no registered agent profile)",
   "skills": "skills",
   "agents": [],
   "mcpServers": {
@@ -20,7 +20,12 @@
         "MED_EMBEDDING_ENDPOINT": "http://10.31.112.13:65507/v1/embeddings",
         "MED_EMBEDDING_MODEL": "qwen3-vl-embedding",
         "MED_EMBEDDING_API_KEY": "EMPTY",
-        "MED_EMBEDDING_DIMENSION": "2048"
+        "MED_EMBEDDING_DIMENSION": "2048",
+        "MED_RAG_SERVICE_ENABLED": "1",
+        "MED_RAG_SERVICE_API_BASE": "http://127.0.0.1:18080",
+        "MED_RAG_SERVICE_TIMEOUT_SECONDS": "60",
+        "MED_RAG_SERVICE_MAX_CHARS_PER_CHUNK": "1800",
+        "MED_RAG_TOPIC": "战创伤"
       }
     }
   }

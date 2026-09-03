@@ -83,6 +83,24 @@ class MedicalParseStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("ok", payload)
         self.assertNotIn("_vlm", payload)
 
+    async def test_continuation_mode_material_is_echoed_in_payload(self) -> None:
+        payload = app._prepare_medical_parse(
+            path="/tmp/does-not-exist-for-mode-check",
+            skip_vlm=True,
+            continuation_mode="material",
+        )
+        self.assertEqual(payload["continuation_mode"], "material")
+        self.assertIn("continuation_mode=material", payload["presentation"])
+        self.assertIn("后续步骤", payload["presentation"])
+
+    async def test_continuation_mode_defaults_to_terminal(self) -> None:
+        payload = app._prepare_medical_parse(
+            path="/tmp/does-not-exist-for-mode-check",
+            skip_vlm=True,
+        )
+        self.assertEqual(payload["continuation_mode"], "terminal")
+        self.assertIn("continuation_mode=terminal", payload["presentation"])
+
 
 if __name__ == "__main__":
     unittest.main()

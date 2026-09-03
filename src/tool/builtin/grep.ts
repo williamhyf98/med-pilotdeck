@@ -45,7 +45,7 @@ export function createGrepTool(): PilotDeckToolDefinition<GrepInput> {
     name: "grep",
     aliases: ["Grep"],
     description:
-      "A ripgrep-powered search tool for workspace file contents.\n\nUsage:\n- ALWAYS use `grep` for content search tasks. Do NOT invoke `grep` or `rg` through `bash` when this tool can express the search.\n- Supports full regular expressions, `type` filters, glob filters, and multiline search.\n- Output modes: `content` shows matching lines, `files_with_matches` lists file paths, and `count` shows per-file match counts.\n- `head_limit` and `offset` work in every output mode. Pass `head_limit: 0` only when you truly need unlimited results.\n- For open-ended multi-step exploration, prefer the `agent` tool's `explore` subagent instead of repeatedly broadening searches in the parent agent.",
+      "基于 ripgrep 的工作区文件内容搜索工具。\n\n用法：\n- 内容检索一律使用 `grep`。只要本工具能表达这次搜索，就不要通过 `bash` 调用 `grep` 或 `rg`。\n- 支持完整正则表达式、`type` 类型过滤、glob 过滤和跨行搜索。\n- 输出模式：`content` 显示匹配行，`files_with_matches` 列出文件路径，`count` 显示每个文件的匹配数。\n- `head_limit` 和 `offset` 在所有输出模式下都有效。确实需要不限量结果时才传 `head_limit: 0`。\n- 面对开放式的多步探查，优先使用 `agent` 工具的 `explore` 子代理，而不是在主代理里反复放宽搜索条件。",
     kind: "filesystem",
     inputSchema: {
       type: "object",
@@ -54,66 +54,66 @@ export function createGrepTool(): PilotDeckToolDefinition<GrepInput> {
       properties: {
         pattern: {
           type: "string",
-          description: "The regular expression pattern to search for in file contents.",
+          description: "在文件内容中搜索所用的正则表达式。",
         },
         path: {
           type: "string",
-          description: "File or directory to search within. Defaults to the workspace root.",
+          description: "搜索所在的文件或目录，默认为工作区根目录。",
         },
         glob: {
           type: "string",
           description:
-            "Glob pattern to filter files (for example '*.js' or '*.{ts,tsx}'). Maps to ripgrep's --glob.",
+            "用于过滤文件的 glob 模式（例如 '*.js' 或 '*.{ts,tsx}'），对应 ripgrep 的 --glob。",
         },
         output_mode: {
           type: "string",
           enum: ["content", "files_with_matches", "count"],
           description:
-            "Output mode: 'content' shows matching lines, 'files_with_matches' lists file paths, and 'count' shows per-file counts. Defaults to 'files_with_matches'.",
+            "输出模式：'content' 显示匹配行，'files_with_matches' 列出文件路径，'count' 显示每个文件的匹配数。默认为 'files_with_matches'。",
         },
         "-B": {
           type: "integer",
-          description: "Number of lines to show before each match (content mode only).",
+          description: "每处匹配前额外显示的行数（仅 content 模式有效）。",
         },
         "-A": {
           type: "integer",
-          description: "Number of lines to show after each match (content mode only).",
+          description: "每处匹配后额外显示的行数（仅 content 模式有效）。",
         },
         "-C": {
           type: "integer",
-          description: "Alias for context: number of lines to show before and after each match.",
+          description: "context 的别名：每处匹配前后各额外显示的行数。",
         },
         context: {
           type: "integer",
-          description: "Number of lines to show before and after each match (content mode only).",
+          description: "每处匹配前后各额外显示的行数（仅 content 模式有效）。",
         },
         "-n": {
           type: "boolean",
           description:
-            "When false, hide line numbers in content mode output. Defaults to true. Ignored in other modes.",
+            "设为 false 时，content 模式的输出不显示行号。默认为 true。其他模式下忽略该参数。",
         },
         "-i": {
           type: "boolean",
-          description: "When true, perform case-insensitive matching.",
+          description: "设为 true 时，匹配不区分大小写。",
         },
         type: {
           type: "string",
           description:
-            "File type to search (for example 'js', 'ts', 'py'). Maps to ripgrep's --type filter.",
+            "要搜索的文件类型（例如 'js'、'ts'、'py'），对应 ripgrep 的 --type 过滤。",
         },
         head_limit: {
           type: "integer",
           description:
-            "Maximum number of output entries to return. Applies to all output modes. Defaults to 250; pass 0 for unlimited.",
+            "最多返回的输出条目数，对所有输出模式均生效。默认 250；传 0 表示不限量。",
         },
         offset: {
           type: "integer",
-          description: "Skip this many output entries before returning results.",
+          description: "返回结果前先跳过的输出条目数。",
         },
         multiline: {
           type: "boolean",
           description:
-            "When true, enable multiline mode where . matches newlines and patterns can span lines.",
+            "设为 true 时启用跨行模式，此时 . 可以匹配换行符，模式可以跨行匹配。",
         },
       },
     },

@@ -24,28 +24,29 @@ Wire names in chat: `mcp__med-tools__<tool>`.
 用户
   │
   ├─【解读附件】── Skill med-medical
-  │                  └─ med_parse_medical → report 原样展示
+  │                  └─ med_parse_medical(continuation_mode=terminal)
+  │                     → report 流式展示并可作为本轮终局
   │
   ├─【战创伤知识点问答】── Skill med-trauma-assist
   │                  └─ med_trauma_rag_query → 主模型作答（可附简短要点）
   │
   ├─【正式分阶段救治方案】── Skill med-trauma-stage-plan
-  │                  ├─ (可选) med_parse_medical 并入可见伤情
-  │                  └─ med_trauma_stage_plan → care_plan 原样展示
+  │                  ├─ (可选) med_parse_medical(continuation_mode=material) 并入可见伤情
+  │                  └─ med_trauma_stage_plan → care_plan 流式展示，本轮可继续导出
   │
-  ├─【按模版生成病例报告】── Skill med-case-report
-  │                  ├─ (可选) med_parse_medical 并入附件解读
-  │                  └─ 主模型按固定 9 段模版 + 诊断四步方案撰写
+  ├─【按模版生成病例报告 / HTML】── Skill med-case-report
+  │                  ├─ med_parse_medical(continuation_mode=material) 并入附件解读
+  │                  └─ 主模型继续写固定 9 段模版 / 后续交付物
   │
   └─【纯问答】────── 主模型直接答
 ```
 
 Skills:
 
-- `med-medical` — 附件解读；`report` 原样展示
+- `med-medical` — 附件解读；`continuation_mode=terminal`；`report` 可作为本轮终局
 - `med-trauma-assist` — RAG 知识点问答；非正式五段方案
-- `med-trauma-stage-plan` — 六阶段正式方案；`care_plan` 原样展示
-- `med-case-report` — 固定 9 段模版病例报告（med-mas scribe 契约）；主模型生成
+- `med-trauma-stage-plan` — 六阶段正式方案；先 parse 时用 `material`；`care_plan` 流式展示后本轮可继续
+- `med-case-report` — 固定 9 段模版病例报告；附件解析必须用 `material`，解析后继续写报告/HTML
 
 ### MCP 调用前的 Skill 门禁
 
@@ -69,9 +70,17 @@ Skills:
 Unified entry (aligned with offline-301 suffixes):
 
 1. Accept a **file or directory** (for chat/Files folder uploads, pass the folder root once).
-2. Parse locally by type: DICOM, PDF, images, CDA/XML, text/markdown, JSON, WFDB/ECG (some ECG types degraded).
+2. Parse locally by type: DICOM, PDF, images, **structured CDA/XML** (CLUSTER labs, observation pairs), text/markdown, JSON, WFDB/ECG (some ECG types degraded).
 3. Call local **G9-V-Med** for one structured Chinese report.
-4. Agent should show the returned `report` **verbatim**.
+4. Choose continuation:
+   - `continuation_mode="terminal"` (default, `med-medical`): streamed `report` may end the turn.
+   - `continuation_mode="material"` (`med-case-report` / multi-step plans): streamed `report` is material; the main agent continues unfinished steps.
+
+CDA notes:
+
+- Lab items prefer the CD `code` on `检验结果代码` (e.g. `cTnI`) over hospital internal ids.
+- If only an internal id like `5581` exists, it is kept verbatim and marked **项目名称未提供** — never guessed from order.
+- `status=ready/degraded` follows structured extraction quality, not whether `lxml` is installed.
 
 Directory batches default to `max_items=64` (max 64); truncated folders surface a warning with discovered vs parsed counts.
 
@@ -113,7 +122,8 @@ Ordinary injury photos go in `image_paths` for G9 to read. DICOM/PDF: prefer `me
 ## Setup
 
 Prefer the project-local launcher so `PILOT_HOME` points at
-`.pilotdeck-home` (no `~/.pilotdeck`):
+`.pilotdeck-home` (no `~/.pilotdeck`). Full clone/bootstrap/start
+for Linux, macOS, and Windows: [`docs/local-clone-and-start.zh.md`](../../docs/local-clone-and-start.zh.md).
 
 ```bash
 # from repo root
@@ -163,8 +173,28 @@ Restart PilotDeck (or reload plugins) after changing `plugin.json` env.
 | `MED_EMBEDDING_ENDPOINT` | `{API_BASE}/embeddings` | Full embeddings URL |
 | `MED_EMBEDDING_MODEL` | `qwen3-vl-embedding` | Embedding model id |
 | `MED_EMBEDDING_DIMENSION` | `2048` | Expected vector dim |
+| `MED_RAG_SERVICE_ENABLED` | `1` | Query the remote med-rag service first; `0` = local corpus only |
+| `MED_RAG_SERVICE_API_BASE` | `http://127.0.0.1:18080` | med-rag service base (no `/v1`; not OpenAI-shaped) |
+| `MED_RAG_SERVICE_ENDPOINT` | `{API_BASE}/retrieve` | Override the retrieve URL |
+| `MED_RAG_SERVICE_HEALTH_ENDPOINT` | `{API_BASE}/health` | Override the health URL |
+| `MED_RAG_SERVICE_TIMEOUT_SECONDS` | `60` | Retrieve timeout; on timeout we degrade to the local corpus |
+| `MED_RAG_SERVICE_MAX_CHARS_PER_CHUNK` | `1800` | Per-chunk text budget passed to the service |
+| `MED_RAG_SERVICE_API_KEY` | *(empty)* | Bearer token; the service is unauthenticated today |
+| `MED_RAG_TOPIC` | `战创伤` | Default topic filter; empty string = whole library |
 | `MED_RAG_MANIFEST` | `<plugin>/data/rag/manifest.json` | Override manifest path (tests) |
 | `MED_DICOM_DERIVED_DIR` / `MED_DERIVED_DIR` | `<parent>/.med-tools-derived` | Preview/PNG output dir |
+
+`med_trauma_rag_query` hits the remote med-rag service (`POST /retrieve`, evidence
+only — generation stays with the PilotDeck main model) and falls back to the
+in-plugin corpus when the service is unreachable. Check `retrieval_backend`
+(`remote` / `local`) and `mode` (`remote` / `vector` / `lexical` /
+`lexical-fallback`) in the response. Note that remote scores are RRF fusion
+values on a different scale from local cosine, so `min_score` is applied to the
+local vector path only. `med_trauma_rag_status` probes the service and reports
+`rag_service.reachable` plus `active_backend`.
+
+Only `MED_RAG_SERVICE_API_BASE` normally needs setting — the retrieve and health
+URLs derive from it.
 
 When `MED_VLM_FALLBACK_*` are unset, med-tools reads `$PILOT_HOME/pilotdeck.yaml` (then `.pilotdeck-home/pilotdeck.yaml` / `~/.pilotdeck/pilotdeck.yaml`) and uses `agent.model` plus that provider's `url` / `apiKey`.
 

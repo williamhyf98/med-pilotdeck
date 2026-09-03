@@ -1,5 +1,9 @@
 # 源码安装指南
 
+> **med-pilotdeck 克隆后怎么启动：** 请优先阅读 **[docs/local-clone-and-start.zh.md](./docs/local-clone-and-start.zh.md)**。那份文档覆盖 Linux / macOS / Windows、`bootstrap-runtime`、`start-local.sh`，以及仓库内 `.pilotdeck-home/pilotdeck.yaml`（无网页 Onboarding）。
+>
+> 下文仍描述上游「系统 Node + pnpm + `~/.pilotdeck`」路径，其中「首次 Onboarding」已与当前 `start-local` 行为不一致，不要按那一节给同事配模型。
+
 本文档适合希望直接从源码运行 PilotDeck 的开发者。如果只是想快速体验，建议优先使用一键安装脚本或 Docker。
 
 ## 环境要求

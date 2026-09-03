@@ -12,6 +12,8 @@ const KEPT_WITHOUT_READ_SKILL = [
   "write_file",
   "bash",
   "ask_user_question",
+  "enter_plan_mode",
+  "exit_plan_mode",
   "todo_write",
 ];
 
@@ -32,12 +34,16 @@ test("createBuiltinRegistry registers only the offline kept builtins", () => {
     "execute_code",
     "send_attachment",
     "agent",
-    "enter_plan_mode",
-    "exit_plan_mode",
     "task_create",
     "edit_notebook",
     "structured_output",
   ]) {
     assert.equal(registry.has(removed), false);
   }
+});
+
+test("createBuiltinRegistry can disable plan mode tools for constrained hosts", () => {
+  const registry = createBuiltinRegistry({ planMode: false });
+  assert.equal(registry.has("enter_plan_mode"), false);
+  assert.equal(registry.has("exit_plan_mode"), false);
 });

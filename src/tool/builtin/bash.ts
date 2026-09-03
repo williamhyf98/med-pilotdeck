@@ -37,21 +37,21 @@ export type BashOutput = {
   assertions: BashOutputAssertions;
 };
 
-const BASH_TOOL_DESCRIPTION = `Run a shell command in the PilotDeck workspace.
+const BASH_TOOL_DESCRIPTION = `在 PilotDeck 工作区内执行 shell 命令。
 
-Usage:
-- The \`command\` parameter is passed to the system shell (\`cmd.exe\` on Windows, \`/bin/sh\` on macOS/Linux).
-- The shell runs in the current workspace directory and inherits the tool runtime environment.
-- Use \`timeout\` to override the command timeout in milliseconds. When omitted, the default is 30000ms. Values above 600000ms are rejected.
-- Use \`description\` to provide a short, clear label for logs and audits. Prefer 3-10 words that say what the command does.
-- Use this tool for short local inspection/file-management commands and for running bundled skill entrypoints (for example pdf.sh / docx.sh).
-- All transformations must go through registered tools or bundled skill entrypoints. If no bundled command supports an operation, report the limitation instead of implementing a replacement.
-- Read-only shell commands (for example \`pwd\`, \`ls\`, \`git status\`, \`git diff\`, \`git log\`) are treated as read-only. Commands with side effects require permission, and known-dangerous commands are denied outright.
-- Offline deployment: do not use curl, wget, pip install, npm install, npx, or other outbound network/package-manager commands. If dependencies are missing, say so instead of trying to download them.
-- The tool returns stdout, stderr, exit code, and duration. Non-zero exits raise a tool error, and timeouts raise \`tool_timeout\`.
-- Successful results begin with \`BASH_RESULT[success][...]\` plus Assertions. Read \`retrieved_data_available\` before treating \`exit_code: 0\` as task progress: exit code 0 only proves the process succeeded, not that useful task data was retrieved.
-- If a task needs content but the result is \`empty_stdout\` or \`stderr_only\`, run a follow-up command that prints or verifies the needed data instead of assuming progress.
-- If you have no command to run, respond with text instead of calling bash.`;
+用法：
+- \`command\` 参数会传给系统 shell（Windows 上是 \`cmd.exe\`，macOS/Linux 上是 \`/bin/sh\`）。
+- shell 在当前工作区目录下运行，并继承工具运行时的环境变量。
+- 用 \`timeout\` 覆盖命令超时时间，单位毫秒。不传时默认 30000ms，超过 600000ms 的取值会被拒绝。
+- 用 \`description\` 给出简短清晰的中文说明，供日志与审计使用，用一句话说明这条命令做什么。
+- 本工具用于本地的短小查看/文件管理命令，以及运行随附技能的入口脚本（例如 pdf.sh / docx.sh）。
+- 所有转换类操作都必须走已注册工具或随附技能入口。若没有随附命令支持某项操作，请说明限制，不要自行另造实现。
+- 只读命令（例如 \`pwd\`、\`ls\`、\`git status\`、\`git diff\`、\`git log\`）按只读处理；有副作用的命令需要授权；已知的危险命令会被直接拒绝。
+- 离线部署：不要使用 curl、wget、pip install、npm install、npx 等对外联网或包管理器安装命令。缺少依赖时如实说明，不要尝试下载。
+- 本工具返回 stdout、stderr、退出码和耗时。非零退出会抛出工具错误，超时会抛出 \`tool_timeout\`。
+- 成功结果以 \`BASH_RESULT[success][...]\` 开头，并附带 Assertions。在把 \`exit_code: 0\` 当作任务进展之前，先看 \`retrieved_data_available\`：退出码 0 只说明进程执行成功，并不代表拿到了有用的数据。
+- 若任务需要具体内容，但结果是 \`empty_stdout\` 或 \`stderr_only\`，应再执行一条命令把所需数据打印或校验出来，不要想当然地认为已有进展。
+- 如果没有需要执行的命令，直接用文字回复，不要调用 bash。`;
 
 const LONG_TASK_HINT =
   "Use timeout=600000 or less for foreground bash. Long-running commands may time out; keep skill script invocations bounded.";
@@ -86,15 +86,15 @@ export function createBashTool(options?: CreateBashToolOptions): PilotDeckToolDe
       properties: {
         command: {
           type: "string",
-          description: "The shell command to execute (passed to the system shell).",
+          description: "要执行的 shell 命令（会传给系统 shell）。",
         },
         timeout: {
           type: "integer",
-          description: "Optional timeout in milliseconds. Defaults to 30000. Max 600000; larger values are rejected. Use timeout=600000 or less for foreground bash. Offline deployments reject curl, wget, and package-manager install commands.",
+          description: "可选，超时时间，单位毫秒。默认 30000，最大 600000，更大的取值会被拒绝。前台 bash 请使用不超过 600000 的 timeout。离线部署会拒绝 curl、wget 以及包管理器安装类命令。",
         },
         description: {
           type: "string",
-          description: "Clear, concise description of what this command does in active voice. Prefer 3-10 words.",
+          description: "用一句简短清晰的中文说明这条命令做什么。",
         },
       },
     },

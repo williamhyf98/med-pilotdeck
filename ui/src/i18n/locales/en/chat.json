@@ -188,15 +188,15 @@
     "current": "Current Todo List"
   },
   "plan": {
-    "viewPlan": "📋 View implementation plan",
-    "title": "Implementation Plan",
+    "viewPlan": "📋 View task plan",
+    "title": "Task Plan",
     "exitMode": {
       "header": "Plan is ready",
-      "subtitle": "Confirming will exit Plan mode and let the model execute the plan.",
+      "subtitle": "Confirming will exit Plan mode and let the agent process the workspace task.",
       "syncingPlan": "Plan content is syncing, please confirm whether to execute.",
       "feedbackLabel": "Optional notes for continued discussion",
-      "feedbackPlaceholder": "e.g. Add a test plan, or do not modify the database yet.",
-      "continueButton": "Continue Discussion",
+      "feedbackPlaceholder": "e.g. Parse the attachments first and do not generate HTML yet.",
+      "continueButton": "Refine Plan",
       "executeButton": "Execute Plan"
     },
     "approvedCard": {

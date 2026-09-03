@@ -290,6 +290,8 @@ https://github.com/user-attachments/assets/a7245467-ee3c-4939-a055-c56576ac56d1
 
 ## 📦 安装与快速开始
 
+**本仓库（med-pilotdeck）从 Git 克隆后的本地开发启动**请看 [docs/local-clone-and-start.zh.md](./docs/local-clone-and-start.zh.md)（Linux / macOS / Windows、自动生成 `.pilotdeck-home/pilotdeck.yaml`、`start-local.sh`）。下文「一键安装」来自上游 PilotDeck，状态写在 `~/.pilotdeck`，**不是**同事联调用的那条路径。
+
 我们提供了 macOS/Linux 与 Windows PowerShell 下的一键安装脚本，以及适合开发者的源码启动方式。
 
 ### 方式一：一键安装 (推荐, macOS/Linux)

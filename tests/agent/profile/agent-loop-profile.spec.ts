@@ -383,6 +383,138 @@ test("direct-final tool output completes without a second agent model call", asy
   assert.equal(durable.at(-1)?.metadata?.directToolOutput, true);
 });
 
+test("material continuation keeps the agent loop open after streamed report", async () => {
+  const toolName = "mcp__med-tools__med_parse_medical";
+  const tools = new ToolRegistry();
+  tools.register(fakeTool(toolName));
+  tools.register(fakeTool("write_file"));
+  let modelCalls = 0;
+  const router = {
+    invalidateSticky: () => ({ orchestrating: false }),
+    async decide(input: any) {
+      return {
+        provider: input.request.provider,
+        model: input.request.model,
+        scenarioType: "explicit",
+        isSubagent: false,
+        orchestrating: false,
+        resolvedFrom: "explicit",
+        mutations: {},
+      };
+    },
+    async *execute() {
+      modelCalls += 1;
+      yield { type: "message_start", role: "assistant" };
+      if (modelCalls === 1) {
+        yield {
+          type: "tool_call_end",
+          toolCall: {
+            id: "call-parse",
+            name: toolName,
+            input: { continuation_mode: "material" },
+          },
+        };
+        yield { type: "message_end", finishReason: "tool_call" };
+        return;
+      }
+      if (modelCalls === 2) {
+        yield {
+          type: "tool_call_end",
+          toolCall: {
+            id: "call-write",
+            name: "write_file",
+            input: { file_path: "scratch/病例报告.md", content: "# 报告" },
+          },
+        };
+        yield { type: "message_end", finishReason: "tool_call" };
+        return;
+      }
+      yield {
+        type: "content_block_delta",
+        delta: { type: "text", text: "病例报告已写好。" },
+      };
+      yield { type: "message_end", finishReason: "stop" };
+    },
+    async *stream() {
+      yield { type: "message_end", finishReason: "stop" };
+    },
+  };
+  const config: AgentRuntimeConfig = {
+    provider: "openai",
+    model: "default-model",
+    cwd: process.cwd(),
+    permissionMode: "bypassPermissions",
+    permissionContext: createDefaultPermissionContext({
+      cwd: process.cwd(),
+      mode: "bypassPermissions",
+      bypassAvailable: true,
+      canPrompt: false,
+    }),
+  };
+  const reportText = "一、资料概况\n检验报告材料。";
+  const executed: string[] = [];
+  const loop = new AgentLoop(config, {
+    router,
+    tools: {
+      registry: tools,
+      scheduler: {
+        async executeAll(calls: any[]) {
+          const now = new Date().toISOString();
+          return calls.map((call) => {
+            executed.push(call.name);
+            if (call.name === toolName) {
+              return {
+                type: "success" as const,
+                toolCallId: call.id,
+                toolName: call.name,
+                content: [{ type: "text", text: JSON.stringify({ ok: true, report: reportText }) }],
+                data: {
+                  ok: true,
+                  report: reportText,
+                  continuation_mode: "material",
+                },
+                metadata: {
+                  // material mode streams but MUST NOT set directFinalAssistantText
+                  generationOwner: "plugin-vlm",
+                },
+                startedAt: now,
+                completedAt: now,
+              };
+            }
+            return {
+              type: "success" as const,
+              toolCallId: call.id,
+              toolName: call.name,
+              content: [{ type: "text", text: "Wrote scratch/病例报告.md" }],
+              data: { type: "create" },
+              metadata: {},
+              startedAt: now,
+              completedAt: now,
+            };
+          });
+        },
+      },
+    },
+  } as any);
+
+  const events = [];
+  for await (const event of loop.run({
+    sessionId: "session-material-continue",
+    turnId: "turn-material-continue",
+    messages: [{ role: "user", content: [{ type: "text", text: "解析后写病例报告" }] }],
+  })) {
+    events.push(event);
+  }
+
+  assert.ok(modelCalls >= 2, `expected a second main-model call after material parse, got ${modelCalls}`);
+  assert.deepEqual(executed.slice(0, 2), [toolName, "write_file"]);
+  assert.equal(events.at(-1)?.type, "turn_completed");
+  const directFinal = events.find((event) =>
+    event.type === "assistant_message" && event.message?.metadata?.directToolOutput === true
+  );
+  assert.equal(directFinal, undefined);
+});
+
 test("tool runtime enforces profile policy even for direct or nested calls", async () => {
   const tools = new ToolRegistry();
   let executed = false;

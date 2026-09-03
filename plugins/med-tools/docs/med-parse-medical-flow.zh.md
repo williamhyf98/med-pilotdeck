@@ -4,7 +4,7 @@
 > 对应 MCP 工具：`mcp__med-tools__med_parse_medical`  
 > 主要代码：`plugins/med-tools/server/app.py`、`parsers.py`、`dicom_parse.py`、`vlm_client.py`
 
-本文说明从用户上传医学附件，到本地解析、G9-V-Med 流式出报告、前端直出终局的完整链路。
+本文说明从用户上传医学附件，到本地解析、G9-V-Med 流式出报告、以及按 `continuation_mode` 决定「本轮终局」还是「继续主 Agent」的完整链路。
 
 ---
 
@@ -12,18 +12,19 @@
 
 工具做两件事：
 
-1. **本地解析**：按后缀抽取摘要 / 元数据 / 预览图
-2. **VLM 报告**：把摘要 + 预览图送给 G9-V-Med（失败可回退到 `pilotdeck.yaml` 配置的主 Agent 模型），流式直出到聊天，并作为本轮最终答案
+1. **本地解析**：按后缀抽取摘要 / 元数据 / 预览图；CDA 走结构化抽取（CLUSTER 化验项、observation 配对）
+2. **VLM 报告**：把摘要 + 预览图送给 G9-V-Med（失败可回退到 `pilotdeck.yaml` 配置的主 Agent 模型），流式直出到聊天
 
-Skill `med-medical` 本身不解析文件，只规定：看到医学附件就调这个工具，不要自己 `read_file`。
+Skill 本身不解析文件，只规定何时调工具、传什么 `continuation_mode`。
 
 
 | 层                             | 作用                                                          |
 | ----------------------------- | ----------------------------------------------------------- |
-| `skills/med-medical/SKILL.md` | 告诉 Agent：何时调、传 `path`、如何对待 `report`                         |
+| `skills/med-medical/SKILL.md` | 纯解读：`continuation_mode=terminal`；如何对待 `report`              |
+| `skills/med-case-report/...`  | 多步骤：`continuation_mode=material`；解析后继续写模版/HTML               |
 | `plugin.json`                 | 注册 MCP server `med-tools`、VLM/Embedding 环境变量                |
 | PilotDeck AgentLoop           | 选 Skill → 调 MCP → 收到 progress / 最终 JSON                     |
-| `PluginToToolBridge`          | 把 `report` 流式映射到气泡，并设 `directFinalAssistantText`，跳过第二次主模型改写 |
+| `PluginToToolBridge`          | 流式映射到气泡；仅在 `terminal` 且 `ok+report` 时设 `directFinalAssistantText` |
 
 
 ---
@@ -35,16 +36,18 @@ Skill `med-medical` 本身不解析文件，只规定：看到医学附件就调
 `med-medical` 专注**附件解析与结构化报告**。相邻 Skill：
 
 
-| 场景        | Skill                   | 工具                      |
-| --------- | ----------------------- | ----------------------- |
-| 医学附件解读    | `med-medical`           | `med_parse_medical`     |
-| 战创伤知识点问答  | `med-trauma-assist`     | `med_trauma_rag_query`  |
-| 正式六阶段救治方案 | `med-trauma-stage-plan` | `med_trauma_stage_plan` |
+| 场景        | Skill                   | 工具 / 模式                                      |
+| --------- | ----------------------- | --------------------------------------------- |
+| 医学附件解读    | `med-medical`           | `med_parse_medical` + `terminal`              |
+| 病例报告 / HTML | `med-case-report`     | `med_parse_medical` + `material` → 主模型续写     |
+| 战创伤知识点问答  | `med-trauma-assist`     | `med_trauma_rag_query`                        |
+| 正式六阶段救治方案 | `med-trauma-stage-plan` | 可选 `material` parse → `med_trauma_stage_plan` |
 
 
 Agent 展示规则（摘要）：
 
-- `report` 非空：已流式展示并由 runtime 保存为最终答案，**不要再粘贴或改写**  
+- `continuation_mode=terminal` 且 `report` 非空：已流式展示并由 runtime 保存为最终答案，**不要再粘贴或改写**
+- `continuation_mode=material` 且 `report` 非空：报告是后续步骤的材料，**不要复述全文**，继续未完成的计划项
 - `report` 空且 `agent_continue=true`：主 Agent 用 `summary` / `png_paths` 继续写结构化报告，并说明 G9 不可用
 
 ---
@@ -56,10 +59,10 @@ Agent 展示规则（摘要）：
 ```mermaid
 flowchart TD
   A[用户上传附件 / 文件夹<br/>或 @ 工作区路径] --> B[前端写入 .tmp/chat-attachments<br/>消息里附绝对路径 note]
-  B --> C[主 Agent 加载 med-medical Skill]
-  C --> D[调用 mcp__med-tools__med_parse_medical<br/>path / max_items / max_frames / skip_vlm]
+  B --> C[主 Agent 加载对应 Skill]
+  C --> D[调用 mcp__med-tools__med_parse_medical<br/>path + continuation_mode]
   D --> E[MCP FastMCP: med_parse_medical async]
-  E --> F[_prepare_medical_parse<br/>发现文件 + 逐个本地解析]
+  E --> F[_prepare_medical_parse<br/>发现文件 + 逐个本地解析<br/>含 CDA 结构抽取]
   F --> G{skip_vlm 或无可解析内容?}
   G -->|是| H[返回 JSON: summary/png_paths<br/>report 空]
   G -->|否| I[analyze_medical_with_vlm_stream]
@@ -69,10 +72,11 @@ flowchart TD
   K --> L
   L --> M[PluginToToolBridge<br/>assistant_text_delta]
   M --> N[前端气泡实时显示报告]
-  L --> O[工具返回 JSON<br/>ok + report + summary + ...]
-  O --> P{report 非空?}
-  P -->|是| Q[directFinalAssistantText<br/>本轮直接结束]
-  P -->|否且 agent_continue| R[主 Agent 用 summary/png_paths<br/>自己写结构化报告]
+  L --> O[工具返回 JSON<br/>ok + report + continuation_mode + ...]
+  O --> P{continuation_mode?}
+  P -->|terminal 且 report 非空| Q[directFinalAssistantText<br/>本轮直接结束]
+  P -->|material| S[不设 directFinal<br/>主 Agent 继续未完成步骤]
+  P -->|report 空且 agent_continue| R[主 Agent 用 summary/png_paths<br/>自己写结构化报告]
 ```
 
 
@@ -147,7 +151,7 @@ flowchart LR
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- |
 | 文本 `.txt/.md`                                               | 读文件，截断约 6k 字进 summary；磁盘可留更长 preview                                                                                                                               | 标准库                       |
 | JSON `.json/.xml1`                                          | 解析 JSON，列 top keys / 截断正文                                                                                                                                          | `json`                    |
-| XML/CDA                                                     | `xml.etree.ElementTree` 抽 section/text                                                                                                                             | 标准库                       |
+| XML/CDA                                                     | `ClinicalDocument` 走 `cda_parser.py`：CLUSTER 化验项配对（优先 `检验结果代码` CD code）、observation 键值、BATTERY 血压等；非 CDA XML 仍用章节/叙述摘要。`status` 按结构化抽取质量判定，不因缺少 lxml 一律 degraded | 标准库 ElementTree；可选 lxml |
 | PDF                                                         | **三条路（见下）**：先抽文本，抽不到再渲页图                                                                                                                                           | **pypdf**、**pymupdf**（可选） |
 | 普通图                                                         | Pillow 限制长边 ≤1600，写出派生 PNG 供 VLM                                                                                                                                   | **Pillow**                |
 | DICOM                                                       | `pydicom` 读元数据；像素 → numpy 窗宽/归一化 → Pillow 存 PNG；均匀抽帧 ≤`max_frames`                                                                                                 | **pydicom、numpy、Pillow**  |
@@ -319,6 +323,7 @@ flowchart LR
 | `skills/med-medical/SKILL.md` | Agent 路由与展示规则        |
 | `server/app.py`               | MCP 工具入口、流式 progress |
 | `server/parsers.py`           | 多源本地解析               |
+| `server/cda_parser.py`        | CDA ClinicalDocument 结构抽取 |
 | `server/dicom_parse.py`       | DICOM 专用解析           |
 | `server/vlm_client.py`        | G9 / 主 Agent 回退调用与流式       |
 | `prompts/medical_read.md`     | 报告系统提示词              |
@@ -393,5 +398,5 @@ PDF 入
 
 ## 10. 一句话总结
 
-Skill 只负责路由；真正干活的是插件里「按后缀本地解析 → 拼摘要与预览图 → G9 流式出报告 → 运行时直出终局」。  
+Skill 只负责路由；真正干活的是插件里「按后缀本地解析（含结构化 CDA）→ 拼摘要与预览图 → G9 流式出报告 → 按 `continuation_mode` 决定终局或续跑」。  
 **注意：** 后缀白名单里的心电格式多数仍是占位；不要理解为系统已能完善解析各类 ECG。PDF 扫描件当前无 OCR；MinerU 仅作可选演进备忘，**尚未接入**。

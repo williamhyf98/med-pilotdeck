@@ -240,6 +240,23 @@ Skill **不是**新引擎：没有独立「总结服务」或「幻灯片渲染�
 3. 提示词（`PromptAssembler`）在无 web 工具的离线策略块中：多文件、多步骤、多种产物时优先 `enter_plan_mode`。
 4. 自测：多需求一句话 → 进入 plan → 只出现计划文件 → 点执行后才出现解析/写文件；点继续规划则不写业务文件。
 
+**实施记录（2026-09-01）：** 已从 `origin/master` 恢复 `src/tool/builtin/planMode.ts`，并在离线 `createBuiltinRegistry` 中默认注册 `enter_plan_mode` / `exit_plan_mode`（受限 host 可传 `planMode: false`）。Web 对话允许模型主动提出进入计划模式；IM 频道原有的禁用策略不变。工具描述、计划中提醒、运行时拦截提示和审核面板文案均已改为「查看工作区材料 → 判断医学 MCP / RAG / 办公 skill → 用户批准后处理业务产物」，去掉探索代码库与 start coding。多材料 + 医学处理 + 多交付物时优先规划，简单问答和单一明确产物直接执行。
+
+**缺陷修复（2026-09-01，`exit_plan_mode` 被自身规则拦截）：** 首次实测中模型写完计划后调用 `exit_plan_mode`，得到 `TOOL_ERROR[plan_mode_violation]`。原因是离线化裁剪 `PLAN_MODE_ALLOWED_TOOLS` 时，连同 `web_search` / `web_fetch` / `agent` / `task_*` 一起把 `exit_plan_mode` 也删掉了（当时 plan 工具尚未恢复）。后果是审核卡片永远不会出现，模型只能在正文里自称"已提交审核"，下一轮恢复成 agent 模式后直接开始执行，等于绕过了整个批准闸门。已把 `exit_plan_mode` 加回白名单，并在 `tests/tool/plan-mode-medical.spec.ts` 增加断言。`enter_plan_mode` 与上游一致不在白名单内（plan 模式下重复调用由运行时拦截提示处理）。
+
+**补充实施（2026-09-01，输出语言）：** 实测本地模型的思考过程仍是英文。原因不在 plan 工具文案（已中文化并已生效），而在两点：一是整条提示词没有任何语言约束，二是内置工具描述与参数说明仍是英文，token 量远超已中文化的部分，把模型带回英文推理。处理办法：
+
+1. `systemPromptCopy.ts` 新增 `languageTitle` / `languageBody`，由 `PromptAssembler.buildDefaultSystemPrompt` 紧跟身份两行注入，明确要求思考过程、回复、待办、提问、计划与文档一律用简体中文，并声明工具说明或工具返回为英文不改变输出语言；工具名、参数名、路径、命令、代码、引用原文保持原样不译。EN 备份同步给出对应英文版本（跟随用户语言）。
+2. 中文化 8 个高频内置工具的 description 与 inputSchema 字段说明：`read_file`、`write_file`、`edit_file`、`bash`、`grep`、`glob`、`todo_write`、`ask_user_question`。只译自然语言，保留工具名、参数名、枚举值、`BASH_RESULT[...]`、`- [x]` 等字面量与阈值。
+3. 回归：新增 `tests/context/prompt-output-language.spec.ts`（校验提示词含语言约束、8 个工具描述为中文且不再保留英文 Usage 块）；`tests/context/prompt-automation-policy.spec.ts` 的 `declarative` 断言放宽为 `声明式|declarative`。`tests/tool/tool-result-workspace-path.spec.ts` 在干净分支上同样失败，属沙箱 HOME 布局导致的既有问题，与本次无关。
+
+**补充实施（2026-09-01，CDA 结构解析 + 主 Agent 续跑）：** 实测批准计划后 `med_parse_medical` 一成功就停，病例报告/HTML 未做。根因不是 G9「默认结束任务」，而是 `PluginToToolBridge` 对 `med_parse_medical` 写死 `endTurn: true`：`ok+report` → `directFinalAssistantText` → `AgentLoop` 硬 return。同时 CDA 检验 XML 只有裸 value 串，模型靠 grep/python 补解析且撞上自动化策略。处理办法：
+
+1. 在现有 `med-tools` 增加 `server/cda_parser.py`，由 `parsers.py` 的 `ClinicalDocument` 分支调用；抽取 CLUSTER 化验项（`检验项目代码` / `检验定量结果` / `检验结果代码`）、observation 配对、BATTERY 血压等。优先用 CD `code`（如 `cTnI`）；仅有院内码时标注「项目名称未提供」，禁止按顺序猜测。不新增 MCP 工具。
+2. `med_parse_medical` 增加显式 `continuation_mode`：`terminal`（默认，纯解读可终局）/ `material`（多步骤材料，流式后继续主 Agent）。`agent_continue` 仍只表示「G9 未形成报告需主 Agent 接手解读」。
+3. `PluginToToolBridge` 按入参/返回的 `continuation_mode` 动态决定是否设 `directFinalAssistantText`；`med-medical` 用 terminal，`med-case-report` / `med-trauma-stage-plan` 先 parse 时用 material；计划批准提示强调 material 后继续未完成项。
+4. 回归：`tests/test_cda_parser.py`、continuation payload 测试、`plugin-to-tool-bridge-continuation.spec.ts`、AgentLoop material 续跑测试；8 份附件 batch `skip_vlm` 验收 CDA 为 `ready` 且 summary 含 `cTnI`。
+
 ### 2.3 阶段 C — 用户自创 Skill（对话 + Skills 页 → `$PILOT_HOME/skills/`）
 
 **排期：** 阶段 B 完成后再做。本阶段不是恢复 `skill-creator`。
@@ -357,7 +374,7 @@ Skill **不是**新引擎：没有独立「总结服务」或「幻灯片渲染�
 | 阶段 | 内容 | 验收 |
 | --- | --- | --- |
 | **A** | **配方已落地（2026-08-31）** | 见 `skills/frontend-slides/`；对话验收需重启 gateway 后试一轮 |
-| **B** | 改版 plan mode 并注册 | 多需求先计划；确认前不写业务文件；确认后按计划调医学/办公工具 |
+| **B** | **已落地（2026-09-01）** | 多需求先计划；确认前仅可查看材料并写 `.pilotdeck/plans/*.md`；确认后先 `todo_write`，再按计划调医学/办公工具 |
 | **C** | 用户自创 skill（Skills 页 + 对话；可本地脚本、禁止下载） | `$PILOT_HOME/skills/` 出现新目录；刷新后模型能 `read_skill`；断网可跑；不恢复 `skill-creator` |
 | D（观察） | 白名单 browser-use | 仅本地 HTML；离线包含浏览器 |
 | E（观察） | 受限 execute_code | 无网无 bash helper；不能当医学解析批处理 |
@@ -375,7 +392,7 @@ Skill **不是**新引擎：没有独立「总结服务」或「幻灯片渲染�
 | `web_*` `agent` `task_*` `edit_notebook` `structured_output` `send_attachment` | 不恢复 |
 | `frontend-slides` | **阶段 A 已改版落地**（一条、通用、自由布局、三套医学预览） |
 | `frontend-design` | **不恢复**（视觉并进 slides 的 `med-visual.md`） |
-| `enter_plan_mode` `exit_plan_mode` | **阶段 B 改版恢复** |
+| `enter_plan_mode` `exit_plan_mode` | **阶段 B 已改版恢复**（2026-09-01） |
 | 用户自创 skill（`$PILOT_HOME/skills/`） | **阶段 C**（页 + 对话；可本地代码、禁止任何下载；不恢复 `skill-creator`） |
 | 白名单 browser-use、受限 execute_code | 观察（阶段 D / E） |
 | 新 summarize skill | 不做（用现有读文件 + 提示） |
