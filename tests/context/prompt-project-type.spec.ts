@@ -46,21 +46,21 @@ function assemble(cwd: string): string {
   }).joined;
 }
 
-test("general-medicine projects receive their persona and medical skills only", () => {
+test("general-medicine projects receive their persona and all medical skills", () => {
   const prompt = assemble("/pilot/workspaces/general_med/general_med-example");
   assert.match(prompt, /九格通用医学智能体助手/u);
   assert.match(prompt, /med-tools:med-case-report/u);
   assert.match(prompt, /med-tools:med-medical/u);
-  assert.doesNotMatch(prompt, /med-tools:med-trauma-assist/u);
-  assert.doesNotMatch(prompt, /med-tools:med-trauma-stage-plan/u);
+  assert.match(prompt, /med-tools:med-trauma-assist/u);
+  assert.match(prompt, /med-tools:med-trauma-stage-plan/u);
   assert.match(prompt, /general-custom/u);
   assert.doesNotMatch(prompt, /trauma-custom/u);
 });
 
-test("war-trauma projects receive their persona and trauma skills", () => {
+test("war-trauma projects retain their persona and receive all medical skills", () => {
   const prompt = assemble("/pilot/workspaces/trauma_med/trauma_med-example");
   assert.match(prompt, /九格战创伤医学智能体助手/u);
-  assert.doesNotMatch(prompt, /med-tools:med-case-report/u);
+  assert.match(prompt, /med-tools:med-case-report/u);
   assert.match(prompt, /med-tools:med-medical/u);
   assert.match(prompt, /med-tools:med-trauma-assist/u);
   assert.match(prompt, /med-tools:med-trauma-stage-plan/u);
@@ -68,15 +68,16 @@ test("war-trauma projects receive their persona and trauma skills", () => {
   assert.doesNotMatch(prompt, /general-custom/u);
 });
 
-test("each persona guides cross-type questions to the other project type", () => {
+test("personas describe the shared full medical capability set", () => {
   const general = assemble("/pilot/workspaces/general_med/general_med-example");
-  assert.match(general, /建议用户新建或切换到「战创伤医学」项目提问/u);
+  assert.match(general, /可使用当前系统已注册的全部医学能力/u);
+  assert.doesNotMatch(general, /建议用户新建或切换到「战创伤医学」项目提问/u);
 
   const trauma = assemble("/pilot/workspaces/trauma_med/trauma_med-example");
-  assert.match(trauma, /建议用户新建或切换到「通用医学」项目提问/u);
+  assert.match(trauma, /可使用当前系统已注册的全部医学能力/u);
 });
 
-test("general-medicine model tool catalog omits trauma MCP tools", () => {
+test("general-medicine model tool catalog includes trauma MCP tools", () => {
   const tools = [
     { name: "read_file" },
     { name: "mcp__med-tools__med_parse_medical" },
@@ -86,6 +87,6 @@ test("general-medicine model tool catalog omits trauma MCP tools", () => {
   ];
   assert.deepEqual(
     filterToolsForProjectType(tools, "general_medicine").map((tool) => tool.name),
-    ["read_file", "mcp__med-tools__med_parse_medical"],
+    tools.map((tool) => tool.name),
   );
 });

@@ -4,7 +4,6 @@ import { api } from '../../utils/api';
 
 export const SYSTEM_PROJECT_TYPES = [
   { id: 'general_medicine', label: '通用医学' },
-  { id: 'war_trauma', label: '战创伤医学' },
 ] as const;
 
 export type SystemProjectTypeId = (typeof SYSTEM_PROJECT_TYPES)[number]['id'];
@@ -21,7 +20,6 @@ export default function SystemProjectCreateDialog({
   onOpenLegacyPathWizard,
 }: SystemProjectCreateDialogProps) {
   const [displayName, setDisplayName] = useState('');
-  const [projectType, setProjectType] = useState<SystemProjectTypeId>('general_medicine');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -36,7 +34,7 @@ export default function SystemProjectCreateDialog({
     try {
       const response = await api.createSystemProject({
         displayName: name,
-        type: projectType,
+        type: 'general_medicine',
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -51,7 +49,7 @@ export default function SystemProjectCreateDialog({
     } finally {
       setSubmitting(false);
     }
-  }, [displayName, onCreated, projectType]);
+  }, [displayName, onCreated]);
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4">
@@ -65,7 +63,7 @@ export default function SystemProjectCreateDialog({
           创建项目
         </h2>
         <p className="mt-1 text-[13px] text-neutral-500 dark:text-neutral-400">
-          项目将保存在系统目录内。创建后不可更改项目类型。
+          当前新建项目统一归入通用医学；战创伤医学正在改版。
         </p>
 
         <label className="mt-4 block text-[12px] font-medium text-neutral-700 dark:text-neutral-300">
@@ -82,26 +80,12 @@ export default function SystemProjectCreateDialog({
           />
         </label>
 
-        <fieldset className="mt-4">
-          <legend className="text-[12px] font-medium text-neutral-700 dark:text-neutral-300">项目类型</legend>
-          <div className="mt-2 space-y-2">
-            {SYSTEM_PROJECT_TYPES.map((option) => (
-              <label
-                key={option.id}
-                className="flex cursor-pointer items-center gap-2 rounded-md border border-neutral-200 px-3 py-2 text-[13px] dark:border-neutral-700"
-              >
-                <input
-                  type="radio"
-                  name="projectType"
-                  value={option.id}
-                  checked={projectType === option.id}
-                  onChange={() => setProjectType(option.id)}
-                />
-                <span className="text-neutral-900 dark:text-neutral-100">{option.label}</span>
-              </label>
-            ))}
+        <div className="mt-4">
+          <p className="text-[12px] font-medium text-neutral-700 dark:text-neutral-300">项目类型</p>
+          <div className="mt-2 rounded-md bg-neutral-100 px-3 py-2 text-[13px] text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100">
+            通用医学
           </div>
-        </fieldset>
+        </div>
 
         {error ? (
           <p className="mt-3 text-[12px] text-red-600 dark:text-red-400" role="alert">

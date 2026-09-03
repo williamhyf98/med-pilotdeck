@@ -30,7 +30,8 @@
   "types": {
     "generalMedicine": "通用医学",
     "warTrauma": "战创伤医学",
-    "empty": "此类型下暂无项目。点击上方「新建项目」创建。"
+    "empty": "此类型下暂无项目。点击上方「新建项目」创建。",
+    "warTraumaUpcoming": "战创伤医学正在进行全新改版，暂不开放新建项目。"
   },
   "sectionToggle": {
     "label": "项目类型"

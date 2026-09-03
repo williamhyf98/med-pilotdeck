@@ -10,6 +10,18 @@
 - 记忆与附件：`[memory-attachment-flow-guide.zh.md](./memory-attachment-flow-guide.zh.md)`
 - 系统提示词结构（中文试用）：`[system-prompt-anatomy.zh.md](./system-prompt-anatomy.zh.md)`
 
+## 2026-09-02 过渡期调整（覆盖下方历史分期矩阵）
+
+- 新建项目仅允许 `general_medicine`；`war_trauma` 类型和侧栏 Tab 保留，作为后续全新 Agent 体验的入口，当前显示「正在改版」且不能新建。
+- 所有内嵌医学 Skills 与 `mcp__med-tools__*` 工具改为全局能力，两种类型均可见、可执行；Skills 管理页统一归入「全局技能」。
+- 通用医学人设不再声明缺少战创伤检索或分阶段救治能力，也不再引导用户切换到战创伤项目。
+- 现有战创伤项目使用 `scripts/migrate-trauma-to-general.mjs` 改型为通用医学。脚本支持 `--dry-run`、目标冲突预检、失败回滚和幂等重跑，并同步迁移 `projects` / `workspaces` / `memory`、修正 `meta.json` / `.cwd` / 文本路径引用及技能归属覆盖。
+
+```bash
+node scripts/migrate-trauma-to-general.mjs --pilot-home .pilotdeck-home --dry-run
+node scripts/migrate-trauma-to-general.mjs --pilot-home .pilotdeck-home
+```
+
 ---
 
 ## 0. 定案摘要（实现时勿偏离）

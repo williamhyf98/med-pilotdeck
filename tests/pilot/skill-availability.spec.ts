@@ -7,7 +7,7 @@ import test from "node:test";
 import { isToolAvailableForProjectType } from "../../src/pilot/projectTypePolicy.js";
 import { writeSkillAvailabilityOverride } from "../../src/pilot/skillAvailability.js";
 
-test("med_parse_medical follows the configurable med-medical availability", async () => {
+test("medical tools stay global despite legacy med-medical overrides", async () => {
   const pilotHome = await mkdtemp(join(tmpdir(), "pilotdeck-skill-availability-"));
   const previousPilotHome = process.env.PILOT_HOME;
   try {
@@ -25,12 +25,19 @@ test("med_parse_medical follows the configurable med-medical availability", asyn
         "mcp__med-tools__med_parse_medical",
         "war_trauma",
       ),
-      false,
+      true,
     );
     assert.equal(
       isToolAvailableForProjectType(
         "mcp__med-tools__med_tools_health",
         "war_trauma",
+      ),
+      true,
+    );
+    assert.equal(
+      isToolAvailableForProjectType(
+        "mcp__med-tools__med_trauma_stage_plan",
+        "general_medicine",
       ),
       true,
     );
