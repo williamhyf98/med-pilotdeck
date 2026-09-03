@@ -266,6 +266,13 @@ export type GatewayElicitationResponseInput = {
   answer: PilotDeckElicitationAnswer;
 };
 
+export type GatewayTraumaConfirmTransitionInput = {
+  sessionKey: string;
+  projectKey: string;
+  answer: "confirmed" | "declined";
+  expectedVersion: number;
+};
+
 /**
  * Web-facing permission decision input. Mirrors the elicitation
  * round-trip pattern: the agent (via `GatewayPermissionBus`) emits a
@@ -410,6 +417,9 @@ export interface Gateway {
    * or the session has ended).
    */
   respondElicitation(input: GatewayElicitationResponseInput): Promise<{ delivered: boolean }>;
+  traumaConfirmTransition?(
+    input: GatewayTraumaConfirmTransitionInput,
+  ): Promise<import("../../trauma/types.js").CaseSnapshot>;
   /**
    * Web Phase 2 — host responds to a `permission_request` event surfaced
    * through `submitTurn`. Resolves the agent-side permission promise so the

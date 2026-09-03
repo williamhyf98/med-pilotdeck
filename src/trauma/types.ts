@@ -294,6 +294,7 @@ export type CaseState = {
 
 export type AgentTurnResponse = {
   messageId: string;
+  caseVersion: number;
   round: number;
   naturalLanguageAnswer: string;
   stage: {

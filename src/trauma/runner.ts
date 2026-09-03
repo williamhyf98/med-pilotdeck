@@ -72,6 +72,7 @@ function idleClassification(now: string): ClassificationRecord {
 function idleResponse(state: CaseState, message: string, now: string): AgentTurnResponse {
   return {
     messageId: "idle",
+    caseVersion: state.version,
     round: state.round,
     naturalLanguageAnswer: message,
     stage: { main: state.currentStage, sub: state.currentSubStage },
@@ -235,6 +236,7 @@ export function createTraumaTurnRunner(deps: {
 
       const response: AgentTurnResponse = {
         messageId: input.messageId,
+        caseVersion: version,
         round,
         naturalLanguageAnswer: reasoned.naturalLanguageAnswer,
         stage: { main: next.currentStage, sub: next.currentSubStage },

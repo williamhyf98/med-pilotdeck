@@ -23,6 +23,7 @@ import type {
   GatewayActiveTurnSnapshot,
   GatewayActiveTurnSnapshotInput,
   GatewayElicitationResponseInput,
+  GatewayTraumaConfirmTransitionInput,
   GatewayEvent,
   GatewayPermissionDecisionInput,
   GatewayRecordAgentStatusMessageInput,
@@ -87,10 +88,20 @@ import type {
 import { createVisibleErrorStatusDetail } from "../../status/agentStatus.js";
 import type { TelemetryClient } from "../../telemetry/index.js";
 import type { TelemetryExecutionKind, TelemetryModule } from "../../telemetry/index.js";
+import {
+  projectMetaTypeFromProjectPath,
+  projectTypeKeyFromProjectId,
+} from "../../pilot/paths.js";
+import { traumaTurnEvents, type TraumaTurnRunner } from "../../trauma/index.js";
 
 const PLAN_COMMAND_USAGE = "用法：/plan <任务>\n例如：/plan 设计一个新功能";
 const MAX_GATEWAY_TOOL_RESULT_PREVIEW_CHARS = 20_000;
 const MAX_GATEWAY_TOOL_DATA_STRING_CHARS = 4_000;
+
+function isTraumaProject(projectKey: string | undefined): projectKey is string {
+  return projectTypeKeyFromProjectId(projectKey) === "trauma_med"
+    || projectMetaTypeFromProjectPath(projectKey) === "war_trauma";
+}
 
 export type InProcessGatewayOptions = {
   now?: () => Date;
@@ -164,6 +175,19 @@ export type InProcessGatewayOptions = {
     runId: string;
   }) => void;
   telemetry?: TelemetryClient;
+  /** Builds the deterministic runner used by war_trauma turns. */
+  traumaRunnerFactory?: (input: {
+    projectKey: string;
+    sessionKey: string;
+  }) => TraumaTurnRunner | Promise<TraumaTurnRunner>;
+  /** Persists the bypassed user/assistant pair to the normal transcript. */
+  recordTraumaTurn?: (input: {
+    projectKey: string;
+    sessionKey: string;
+    runId: string;
+    userText: string;
+    assistantText: string;
+  }) => void | Promise<void>;
 };
 
 const ACTIVE_TURN_EVENT_LIMIT = 500;
@@ -407,6 +431,41 @@ export class InProcessGateway implements Gateway {
               // cannot defeat the hard turn timeout.
             }
           }, input.timeoutMs);
+        }
+        if (isTraumaProject(input.projectKey)) {
+          if (!this.options.traumaRunnerFactory) {
+            throw new Error("war_trauma runner is not configured");
+          }
+          const runner = await this.options.traumaRunnerFactory({
+            projectKey: input.projectKey,
+            sessionKey: input.sessionKey,
+          });
+          const response = await runner.runTurn({
+            projectId: input.projectKey,
+            sessionId: input.sessionKey,
+            messageId: runId,
+            userText: input.message,
+            now: this.now().toISOString(),
+            attachmentSummary: input.attachments?.length
+              ? input.attachments.map((attachment) => attachment.name ?? attachment.path).join("、")
+              : undefined,
+          });
+          await this.options.recordTraumaTurn?.({
+            projectKey: input.projectKey,
+            sessionKey: input.sessionKey,
+            runId,
+            userText: input.message,
+            assistantText: response.naturalLanguageAnswer,
+          });
+          for (const gatewayEvent of traumaTurnEvents({
+            response,
+            runId,
+            version: response.caseVersion,
+          })) {
+            this.recordActiveTurnEvent(input.sessionKey, gatewayEvent);
+            queue.enqueue(gatewayEvent);
+          }
+          return;
         }
         const permissionSettings = readPermissionSettings();
         const inputMode = normalizeGatewayModeForLegacyInput((input as { mode?: unknown }).mode);
@@ -680,6 +739,22 @@ export class InProcessGateway implements Gateway {
     entry.resolve(input.answer);
     this.options.dispatchHookForSession?.(input.sessionKey, "ElicitationResult", { requestId: input.requestId, delivered: true });
     return { delivered: true };
+  }
+
+  async traumaConfirmTransition(input: GatewayTraumaConfirmTransitionInput) {
+    if (!this.options.traumaRunnerFactory || !isTraumaProject(input.projectKey)) {
+      throw new Error("war_trauma runner is not configured");
+    }
+    const runner = await this.options.traumaRunnerFactory({
+      projectKey: input.projectKey,
+      sessionKey: input.sessionKey,
+    });
+    return runner.confirmTransition({
+      projectId: input.projectKey,
+      sessionId: input.sessionKey,
+      answer: input.answer,
+      expectedVersion: input.expectedVersion,
+    });
   }
 
   async permissionDecide(input: GatewayPermissionDecisionInput): Promise<{ delivered: boolean }> {

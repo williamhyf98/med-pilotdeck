@@ -79,6 +79,7 @@ import {
     getActiveTurnSnapshotFramesViaGateway,
     getActiveSessionIdsViaGateway,
     elicitationRespondViaGateway,
+    traumaConfirmTransitionViaGateway,
     getRouterDashboardData,
     getRouterSessionStats,
     getRouterStatsSummary,
@@ -2570,6 +2571,19 @@ function handleChatConnection(ws, request) {
                     granted: result.granted === true,
                     ...(typeof result.entry === 'string' ? { grantedEntry: result.entry } : {}),
                 }));
+            } else if (data.type === 'trauma-transition-response') {
+                const snapshot = await traumaConfirmTransitionViaGateway({
+                    projectKey: data.projectKey,
+                    sessionKey: data.sessionId,
+                    answer: data.answer,
+                    expectedVersion: data.expectedVersion,
+                });
+                writer.send({
+                    type: 'trauma-transition-result',
+                    requestId: data.requestId ?? null,
+                    sessionId: data.sessionId,
+                    snapshot,
+                });
             } else if (data.type === 'elicitation-response') {
                 if (data.requestId) {
                     await elicitationRespondViaGateway(data.requestId, data.answer);

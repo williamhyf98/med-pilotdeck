@@ -2356,3 +2356,21 @@ export async function elicitationRespondViaGateway(requestId, answer) {
     }
     return false;
 }
+
+export async function traumaConfirmTransitionViaGateway({
+    projectKey,
+    sessionKey,
+    answer,
+    expectedVersion,
+}) {
+    const gw = await ensureGateway();
+    if (typeof gw.traumaConfirmTransition !== 'function') {
+        throw new Error('The active gateway does not support trauma stage confirmation.');
+    }
+    return gw.traumaConfirmTransition({
+        projectKey,
+        sessionKey,
+        answer,
+        expectedVersion,
+    });
+}
