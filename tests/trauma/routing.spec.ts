@@ -92,8 +92,10 @@ function createTestGateway(projectKey) {
   });
   const gateway = new InProcessGateway(router, {
     traumaRunnerFactory: async () => ({
-      async runTurn() {
+      async runTurn(input) {
         counter.trauma += 1;
+        input.onProgress?.({ phase: "extract", status: "started" });
+        input.onProgress?.({ phase: "extract", status: "finished", ok: true, detail: "turnKind=case_update" });
         return fakeResponse();
       },
       async confirmTransition() {
@@ -122,6 +124,18 @@ test("war_trauma submitTurn uses TraumaTurnRunner instead of AgentSession.submit
   assert.equal(counter.submit, 0);
   assert.equal(counter.trauma, 1);
   assert.ok(events.some((event) => event.type === "assistant_text_delta"));
+
+  // 推演开始就要有 turn_started 和阶段进度，等待期间界面才不会停在「连接中」。
+  assert.equal(events.filter((event) => event.type === "turn_started").length, 1);
+  assert.equal(events[0]?.type, "turn_started");
+  const progressStarted = events.find((event) => event.type === "tool_call_started");
+  assert.equal(progressStarted?.name, "抽取伤情事实");
+  assert.ok(events.some((event) =>
+    event.type === "tool_call_finished" && event.toolName === "抽取伤情事实" && event.ok === true));
+  assert.ok(
+    events.indexOf(progressStarted) < events.findIndex((event) => event.type === "assistant_text_delta"),
+  );
+
   const question = events.find((event) => event.type === "elicitation_request");
   assert.equal(question?.metadata?.source, "trauma_pending_transition");
   assert.equal(question?.metadata?.version, 2);

@@ -94,7 +94,7 @@ import {
   projectMetaTypeFromProjectPath,
   projectTypeKeyFromProjectId,
 } from "../../pilot/paths.js";
-import { traumaTurnEvents, type TraumaTurnRunner } from "../../trauma/index.js";
+import { traumaProgressEvents, traumaTurnEvents, type TraumaTurnRunner } from "../../trauma/index.js";
 
 const PLAN_COMMAND_USAGE = "用法：/plan <任务>\n例如：/plan 设计一个新功能";
 const MAX_GATEWAY_TOOL_RESULT_PREVIEW_CHARS = 20_000;
@@ -446,6 +446,13 @@ export class InProcessGateway implements Gateway {
             projectKey: input.projectKey,
             sessionKey: input.sessionKey,
           });
+          // 一轮推演要跑三次模型和多次检索，先把 turn_started 和逐阶段进度推给宿主，
+          // 否则界面在整轮结束前只能一直显示「连接中」。
+          const emit = (gatewayEvent: GatewayEvent) => {
+            this.recordActiveTurnEvent(input.sessionKey, gatewayEvent);
+            queue.enqueue(gatewayEvent);
+          };
+          emit({ type: "turn_started", runId });
           const response = await runner.runTurn({
             projectId: input.projectKey,
             sessionId: input.sessionKey,
@@ -455,6 +462,11 @@ export class InProcessGateway implements Gateway {
             attachmentSummary: input.attachments?.length
               ? input.attachments.map((attachment) => attachment.name ?? attachment.path).join("、")
               : undefined,
+            onProgress: (progress) => {
+              for (const gatewayEvent of traumaProgressEvents({ progress, runId })) {
+                emit(gatewayEvent);
+              }
+            },
           });
           await this.options.recordTraumaTurn?.({
             projectKey: input.projectKey,
@@ -467,9 +479,9 @@ export class InProcessGateway implements Gateway {
             response,
             runId,
             version: response.caseVersion,
+            turnStartedAlreadyEmitted: true,
           })) {
-            this.recordActiveTurnEvent(input.sessionKey, gatewayEvent);
-            queue.enqueue(gatewayEvent);
+            emit(gatewayEvent);
           }
           return;
         }

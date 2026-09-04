@@ -21,6 +21,13 @@ import type {
   SubStage,
 } from "./types.js";
 
+/** 一轮推演里对用户可见的阶段，用于在等待期间给出进度反馈。 */
+export type TraumaTurnPhase = "extract" | "retrieve" | "reason";
+
+export type TraumaTurnProgress =
+  | { phase: TraumaTurnPhase; status: "started"; detail?: string }
+  | { phase: TraumaTurnPhase; status: "finished"; ok: boolean; detail?: string };
+
 export type TraumaTurnInput = {
   projectId: string;
   sessionId: string;
@@ -28,6 +35,7 @@ export type TraumaTurnInput = {
   userText: string;
   now: string;
   attachmentSummary?: string;
+  onProgress?: (progress: TraumaTurnProgress) => void;
 };
 
 export type TransitionConfirmationInput = {
@@ -128,10 +136,25 @@ export function createTraumaTurnRunner(deps: {
         now,
       });
 
-      const facts = await extractor.extract({
-        userText: input.userText,
-        previous,
-        attachmentSummary: input.attachmentSummary,
+      const report = input.onProgress ?? (() => {});
+
+      report({ phase: "extract", status: "started" });
+      let facts;
+      try {
+        facts = await extractor.extract({
+          userText: input.userText,
+          previous,
+          attachmentSummary: input.attachmentSummary,
+        });
+      } catch (error) {
+        report({ phase: "extract", status: "finished", ok: false, detail: String(error) });
+        throw error;
+      }
+      report({
+        phase: "extract",
+        status: "finished",
+        ok: true,
+        detail: `turnKind=${facts.turnKind}`,
       });
 
       if (facts.turnKind === "no_case_update") {
@@ -147,6 +170,7 @@ export function createTraumaTurnRunner(deps: {
       });
       candidate.timeline = timeline;
 
+      report({ phase: "retrieve", status: "started" });
       const baseline = buildBaselineQueries(candidate);
       const firstWaveResults = await Promise.all(baseline.map(async (query) => {
         const result = await deps.rag.query({ query: query.query, top_k: TRAUMA_RAG_TOP_K });
@@ -168,12 +192,26 @@ export function createTraumaTurnRunner(deps: {
         queries: [...baseline, ...supplemental],
         results: [...firstWaveResults, ...secondWaveResults],
       });
-
-      const reasoned = await reasoner.reason({
-        state: candidate,
-        timeline,
-        promptChunks: merged.promptChunks,
+      report({
+        phase: "retrieve",
+        status: "finished",
+        ok: true,
+        detail: `检索 ${merged.retrieval.totalCalls} 次，选用 ${merged.promptChunks.length} 个知识块`,
       });
+
+      report({ phase: "reason", status: "started" });
+      let reasoned;
+      try {
+        reasoned = await reasoner.reason({
+          state: candidate,
+          timeline,
+          promptChunks: merged.promptChunks,
+        });
+      } catch (error) {
+        report({ phase: "reason", status: "finished", ok: false, detail: String(error) });
+        throw error;
+      }
+      report({ phase: "reason", status: "finished", ok: true });
       const gateStatus = resolveGate(reasoned.gateAssessment, merged.retrieval);
       const requiresUserConfirmation = gateStatus === "READY";
       const pendingTransition = gateStatus === "READY" && reasoned.transition.targetStage && reasoned.transition.targetSubStage

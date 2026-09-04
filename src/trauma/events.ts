@@ -1,5 +1,42 @@
 import type { GatewayEvent } from "../gateway/protocol/types.js";
+import type { TraumaTurnProgress } from "./runner.js";
 import type { AgentTurnResponse } from "./types.js";
+
+const PHASE_LABELS: Record<TraumaTurnProgress["phase"], string> = {
+  extract: "抽取伤情事实",
+  retrieve: "检索战伤救治规则",
+  reason: "综合研判与分级",
+};
+
+/**
+ * 把推演阶段映射成工具调用事件，让等待期间的界面有可见进度，
+ * 而不是整轮结束前一直停在「连接中」。
+ */
+export function traumaProgressEvents(input: {
+  progress: TraumaTurnProgress;
+  runId: string;
+}): GatewayEvent[] {
+  const { progress, runId } = input;
+  const toolCallId = `trauma-${progress.phase}:${runId}`;
+  const name = PHASE_LABELS[progress.phase];
+  if (progress.status === "started") {
+    return [{
+      type: "tool_call_started",
+      toolCallId,
+      name,
+      argsPreview: progress.detail,
+      runId,
+    }];
+  }
+  return [{
+    type: "tool_call_finished",
+    toolCallId,
+    toolName: name,
+    ok: progress.ok,
+    resultPreview: progress.detail,
+    runId,
+  }];
+}
 
 const SUBSTAGE_LABELS: Record<string, string> = {
   primary_first_aid: "初级急救",
@@ -21,9 +58,13 @@ export function traumaTurnEvents(input: {
   response: AgentTurnResponse;
   runId: string;
   version: number;
+  /** 宿主已在推演开始时发过 turn_started 时置为 true，避免重复。 */
+  turnStartedAlreadyEmitted?: boolean;
 }): GatewayEvent[] {
   const events: GatewayEvent[] = [
-    { type: "turn_started", runId: input.runId },
+    ...input.turnStartedAlreadyEmitted
+      ? []
+      : [{ type: "turn_started", runId: input.runId } satisfies GatewayEvent],
     {
       type: "assistant_text_delta",
       text: input.response.naturalLanguageAnswer,
