@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
@@ -36,6 +37,8 @@ mcp = FastMCP(
         "interpretation yourself using summary/png_paths. "
         "For war-trauma knowledge Q&A: call med_trauma_rag_query, then the main "
         "model answers from chunks (brief tips OK; not the formal five-section plan). "
+        "For adding document-ingest chunks to RAG, call med_trauma_rag_import_mineru_bundle; "
+        "it creates a new merged bundle and does not activate it unless explicitly requested. "
         "For a formal six-stage graded care plan: call med_trauma_stage_plan "
         "(G9 inside the plugin; show care_plan verbatim)."
     ),
@@ -492,7 +495,7 @@ def med_tools_health() -> str:
 
 @mcp.tool()
 def med_trauma_rag_status(validate: bool = False) -> str:
-    """Report war-trauma RAG corpus readiness (rows, dimension, mode hints).
+    """Report military-medicine RAG corpus readiness (rows, dimension, mode hints).
 
     Args:
         validate: If true, load and SHA-256-check corpus/embedding artifacts now.
@@ -511,11 +514,17 @@ def med_trauma_rag_query(
     min_score: float = 0.35,
     prefer_lexical: bool = False,
 ) -> str:
-    """Retrieve war-trauma textbook evidence for Q&A (not the formal stage plan).
+    """Retrieve military-medicine textbook evidence for Q&A (not the formal stage plan).
 
-    Returns evidence only (`chunks` + sources). The PilotDeck main model answers
-    the knowledge question and may add brief disposition tips. For a formal
-    five-section graded care plan, use med_trauma_stage_plan instead.
+    Returns evidence only (`chunks`, `context_chunks`, sources, and optional
+    `interleave_context` image attachments). The PilotDeck main model answers
+    the knowledge question and may add brief disposition tips. For process /
+    step / figure questions, prefer one dominant source corpus and use any
+    `context_chunks` only as adjacent context from the same source; do not mix
+    unrelated books into one answer. Use this for textbook evidence and
+    textbook figures; do not use web_search/web_fetch to find replacement
+    textbook figures. For a formal five-section graded care plan, use
+    med_trauma_stage_plan instead.
 
     Args:
         query: Chinese/English search text (concept / keywords / injury question).
@@ -532,6 +541,100 @@ def med_trauma_rag_query(
         prefer_lexical=prefer_lexical,
     )
     payload["tool"] = "med_trauma_rag_query"
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def med_trauma_rag_import_mineru_bundle(
+    ingest_manifest_path: str,
+    target_corpus_id: str,
+    base_manifest_path: str = "",
+    name: str = "",
+    version: str = "",
+    license_id: str = "",
+    destination: str = "",
+    activate: bool = False,
+    validate: bool = True,
+) -> str:
+    """Append a MinerU ingest bundle to the current RAG corpus as a new version.
+
+    This never mutates the base bundle in place.  It reads the active/base RAG
+    manifest, appends chunks from the MinerU ingest bundle, embeds only the new
+    chunks, and writes a new self-contained RAG bundle.  Pass ``activate=true``
+    only after you intentionally want PilotDeck RAG to switch to the new
+    manifest.
+
+    Args:
+        ingest_manifest_path: Absolute path to MinerU job/batch bundle manifest.
+        target_corpus_id: Stable id for the newly merged RAG corpus version.
+        base_manifest_path: Optional base RAG manifest; defaults to active RAG.
+        name: Display name for the new corpus; defaults to target_corpus_id.
+        version: Version string; defaults to target_corpus_id.
+        license_id: Optional license/auth id; defaults to the base manifest's id.
+        destination: Optional exact output directory; defaults beside base bundle.
+        activate: If true, validate and switch the personal RAG manifest pointer.
+        validate: If true, load/check the produced bundle before returning.
+    """
+
+    from .rag.rag_bundle import build_incremental_rag_bundle
+    from .rag.store import activate_manifest, get_active_manifest_path
+
+    target = str(target_corpus_id or "").strip()
+    if not target:
+        raise ValueError("target_corpus_id is required")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", target):
+        raise ValueError("target_corpus_id must be a safe directory name: letters/digits/._-, max 128 chars")
+    base_manifest = Path(base_manifest_path).expanduser().resolve() if base_manifest_path.strip() else get_active_manifest_path()
+    if destination.strip():
+        destination_path = Path(destination).expanduser().resolve()
+    else:
+        destination_path = base_manifest.parent.parent / target
+    payload = build_incremental_rag_bundle(
+        base_manifest_path=base_manifest,
+        ingest_manifest_path=Path(ingest_manifest_path),
+        destination=destination_path,
+        corpus_id=target,
+        name=name.strip() or target,
+        version=version.strip() or target,
+        license_id=license_id.strip() or None,
+        validate=bool(validate),
+    )
+    if activate:
+        pointer = activate_manifest(Path(payload["manifest_path"]))
+        payload["activated"] = True
+        payload["active_pointer_path"] = str(pointer)
+    payload["summary"] = {
+        "base_manifest_path": str(base_manifest),
+        "ingest_manifest_path": str(Path(ingest_manifest_path).expanduser().resolve()),
+        "old_chunk_count": payload.get("old_chunk_count"),
+        "new_chunk_count": payload.get("new_chunk_count"),
+        "total_chunk_count": payload.get("total_chunk_count"),
+        "embedding_dimension": payload.get("embedding_dimension"),
+        "asset_count": payload.get("asset_count"),
+        "activated": payload.get("activated"),
+    }
+    payload["next_step"] = (
+        "Run med_trauma_rag_status validate=true and query the new corpus"
+        if payload.get("activated")
+        else "Inspect validation/summary, then call med_trauma_rag_activate_manifest with manifest_path when ready"
+    )
+    payload["tool"] = "med_trauma_rag_import_mineru_bundle"
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def med_trauma_rag_activate_manifest(manifest_path: str) -> str:
+    """Validate and switch the personal RAG manifest pointer to an existing bundle."""
+
+    from .rag.store import activate_manifest
+
+    pointer = activate_manifest(Path(manifest_path))
+    payload = {
+        "tool": "med_trauma_rag_activate_manifest",
+        "activated": True,
+        "manifest_path": str(Path(manifest_path).expanduser().resolve()),
+        "active_pointer_path": str(pointer),
+    }
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 

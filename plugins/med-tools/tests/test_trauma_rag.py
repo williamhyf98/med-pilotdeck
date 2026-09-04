@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -80,6 +81,41 @@ class TraumaRagFixtureTests(unittest.TestCase):
         self.assertTrue(any("lexical-fallback" in w for w in result["warnings"]))
         self.assertIn("气道", result["chunks"][0]["text"])
 
+    def test_explicit_manifest_env_wins_over_personal_pointer(self) -> None:
+        from server.rag import store as store_mod
+
+        with mock.patch.object(
+            store_mod,
+            "_rag_manifest_pointer_path",
+            return_value=Path("/definitely/not/read"),
+        ):
+            self.assertEqual(store_mod._manifest_path_from_env(), FIXTURE_MANIFEST)
+
+    def test_personal_pointer_selects_manifest_when_env_is_unset(self) -> None:
+        from server.rag import store as store_mod
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pointer = Path(temp_dir) / "rag-manifest-path"
+            pointer.write_text(f"{FIXTURE_MANIFEST}\n", encoding="utf-8")
+            with mock.patch.dict(os.environ, {"MED_RAG_MANIFEST": ""}, clear=False):
+                with mock.patch.object(
+                    store_mod, "_rag_manifest_pointer_path", return_value=pointer
+                ):
+                    self.assertEqual(store_mod._manifest_path_from_env(), FIXTURE_MANIFEST)
+
+    def test_invalid_personal_pointer_does_not_silently_use_default(self) -> None:
+        from server.rag import store as store_mod
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pointer = Path(temp_dir) / "rag-manifest-path"
+            pointer.write_text("relative/manifest.json\n", encoding="utf-8")
+            with mock.patch.dict(os.environ, {"MED_RAG_MANIFEST": ""}, clear=False):
+                with mock.patch.object(
+                    store_mod, "_rag_manifest_pointer_path", return_value=pointer
+                ):
+                    with self.assertRaisesRegex(ValueError, "must be absolute"):
+                        store_mod._manifest_path_from_env()
+
     def test_mcp_tools_json(self) -> None:
         from server.app import med_trauma_rag_query, med_trauma_rag_status
 
@@ -91,6 +127,34 @@ class TraumaRagFixtureTests(unittest.TestCase):
         self.assertEqual(payload["tool"], "med_trauma_rag_query")
         self.assertEqual(payload["status"], "ready")
         self.assertGreaterEqual(payload["chunk_count"], 1)
+
+    def test_chunk_items_include_browser_ready_assets(self) -> None:
+        from server.rag.store import _chunk_to_item
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            image = root / "assets" / "ab" / "figure.jpg"
+            image.parent.mkdir(parents=True)
+            image.write_bytes(b"fake image")
+            item = _chunk_to_item(
+                {
+                    "chunk_id": "with-image",
+                    "text": "图2-1 展示测试图。",
+                    "image_refs": [{
+                        "path": "assets/ab/figure.jpg",
+                        "caption": "图2-1 测试图",
+                        "page": 2,
+                        "relation": "caption",
+                    }],
+                },
+                0.5,
+                0,
+                manifest_root=root,
+            )
+
+        self.assertEqual(item["assets"][0]["url"], "/api/plugins/med-tools/rag-assets/assets/ab/figure.jpg")
+        self.assertTrue(item["assets"][0]["available"])
+        self.assertEqual(item["image_refs"][0]["asset_id"], item["assets"][0]["asset_id"])
 
 
 class RealCorpusSmokeTests(unittest.TestCase):

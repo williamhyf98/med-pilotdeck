@@ -4,6 +4,7 @@ import {
   getActiveTurnReplayMessagesToApply,
   getDuplicateAssistantStreamTextState,
   isSessionForActiveView,
+  stripInlineThinkBlocks,
 } from '../components/chat/hooks/useChatRealtimeHandlers';
 import {
   computeMerged,
@@ -12,6 +13,7 @@ import {
   getUnpersistedRealtimeTurnMessages,
   isRealtimeMessageRepresentedOnServer,
   patchMergedStreamingMessage,
+  sanitizeServerMessagesForDisplay,
   shouldKeepRealtimeAfterServerRefresh,
   upsertRealtimeMessages,
   type NormalizedMessage,
@@ -19,6 +21,39 @@ import {
 } from './useSessionStore';
 
 const PROVIDER = 'pilotdeck' as SessionProvider;
+
+describe('stripInlineThinkBlocks', () => {
+  it('removes complete inline think blocks from visible assistant text', () => {
+    expect(stripInlineThinkBlocks('<think>reasoning</think>\nFinal answer')).toBe('\nFinal answer');
+  });
+
+  it('hides an unterminated think block while streaming', () => {
+    expect(stripInlineThinkBlocks('prefix <think>still reasoning')).toBe('prefix ');
+  });
+
+  it('drops orphan closing tags after an earlier hidden think block', () => {
+    expect(stripInlineThinkBlocks('</think>\nFinal answer')).toBe('\nFinal answer');
+  });
+});
+
+describe('sanitizeServerMessagesForDisplay', () => {
+  it('removes inline think blocks from persisted assistant text', () => {
+    const messages = sanitizeServerMessagesForDisplay([
+      textMessage('assistant-1', '<think>hidden</think>Visible'),
+      {
+        id: 'user-1',
+        sessionId: 'web:s_test',
+        timestamp: '2026-05-28T00:00:00.000Z',
+        provider: PROVIDER,
+        kind: 'text',
+        role: 'user',
+        content: '<think>kept for user text</think>',
+      },
+    ]);
+    expect(messages[0].content).toBe('Visible');
+    expect(messages[1].content).toBe('<think>kept for user text</think>');
+  });
+});
 
 function makeSlot(overrides: Partial<SessionSlot> = {}): SessionSlot {
   return {

@@ -575,13 +575,7 @@ export function gatewayEventToFrames(event, sessionId, provider) {
                 }),
             ];
         case 'assistant_thinking_delta':
-            return [
-                createNormalizedMessage({
-                    ...base,
-                    kind: 'thinking',
-                    content: event.text,
-                }),
-            ];
+            return [];
         case 'file_artifacts':
             return [
                 createNormalizedMessage({
@@ -1018,12 +1012,7 @@ function createSubagentDetailFrames(event, base, detail) {
                 content: detail.text || '',
             })];
         case 'subagent_thinking_delta':
-            return [createNormalizedMessage({
-                ...detailBase,
-                id: `subagent_detail_thinking_${sanitizeMessageId(detailSessionId)}_${Date.now()}`,
-                kind: 'thinking',
-                content: detail.text || '',
-            })];
+            return [];
         case 'subagent_tool_call_started': {
             const toolCallId = String(detail.toolCallId || randomUUID());
             return [createNormalizedMessage({

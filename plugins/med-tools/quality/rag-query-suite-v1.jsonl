@@ -1,0 +1,24 @@
+{"id":"rq-001","query":"粉尘毒剂为什么会增加化学战剂对防护服的穿透性？如果有相关图片请展示。","topic":"chemical-dust-agent","expected_terms":["粉毒剂","防护服","穿透性"],"expected_image":"required","notes":"验证文字命中与同页图片引用。"}
+{"id":"rq-002","query":"稠毒剂为什么会使洗消更加困难？","topic":"thickened-agent","expected_terms":["稠毒剂","洗消","黏附"],"expected_image":"optional","notes":"验证相邻化学剂主题不误召粉毒剂。"}
+{"id":"rq-003","query":"神经毒剂中毒治疗时，为什么医疗处理人员要先保护自己？","topic":"nerve-agent-treatment","expected_terms":["神经毒剂","保护","治疗"],"expected_image":"optional","notes":"验证化学伤害治疗主题。"}
+{"id":"rq-004","query":"CS 催泪剂暴露后常见症状有哪些？","topic":"cs-agent","expected_terms":["氯苯亚甲基丙二腈","流泪","烧灼感"],"expected_image":"optional","notes":"验证英文缩写和中文术语混合召回。"}
+{"id":"rq-005","query":"鼠疫主要通过哪些方式感染人类，历史上有哪些大流行？","topic":"plague","expected_terms":["鼠疫","气溶胶","跳蚤","大流行"],"expected_image":"none","notes":"验证无图片 chunk 的纯文本召回。"}
+{"id":"rq-006","query":"战时核事故医学应急救护的基本任务是什么？","topic":"nuclear-emergency","expected_terms":["战时核","医学应急","救护"],"expected_image":"none","notes":"验证核化生应急流程主题。"}
+{"id":"rq-007","query":"骨盆骨折为什么可能导致严重内出血，检查时应注意什么？如果有图请展示。","topic":"pelvic-fracture","expected_terms":["骨盆骨折","内出血","触诊"],"expected_image":"required","notes":"验证战场医学图文页。"}
+{"id":"rq-008","query":"标准止血带应该放在什么位置，拧紧到什么程度？如果有步骤图请展示。","topic":"tourniquet","expected_terms":["止血带","心脏与伤口之间","远端脉搏"],"expected_image":"required","notes":"验证 68W 止血带步骤图。"}
+{"id":"rq-009","query":"安装针头和针管时，如何避免污染无菌部位？","topic":"needle-syringe","expected_terms":["针头","针管","无菌"],"expected_image":"optional","notes":"验证医疗操作流程图文页。"}
+{"id":"rq-010","query":"气道机械阻塞和舌后坠为什么会导致通气量减少？如果有图请展示。","topic":"airway-obstruction","expected_terms":["机械阻塞","舌后坠","通气量"],"expected_image":"required","notes":"验证 PHTLS 气道页和图片引用。"}
+{"id":"rq-011","query":"局部止血剂适用于什么情况，使用时还应配合什么措施？","topic":"hemostatic-agent","expected_terms":["局部止血剂","直接按压","失血"],"expected_image":"none","notes":"验证无图纯文本创伤处理。"}
+{"id":"rq-012","query":"气压抗休克服有哪些争议、适应情况和禁忌证？","topic":"pneumatic-anti-shock-garment","expected_terms":["气压抗休克服","失血性休克","禁忌证"],"expected_image":"none","notes":"验证同一主题多 chunk 聚合。"}
+{"id":"rq-013","query":"生物武器项目中提到苏联曾研究或使用过哪些病原体？","topic":"biological-weapons-history","expected_terms":["兔热病","Q热","炭疽"],"expected_image":"none","notes":"验证生物武器历史纯文本召回。"}
+{"id":"rq-014","query":"流感病毒为什么能造成严重流行，1918 年流感造成了多大规模死亡？","topic":"influenza","expected_terms":["流感","1918年","2500万"],"expected_image":"optional","notes":"验证流感主题召回。"}
+{"id":"rq-015","query":"动能损伤中，质量和速度哪一个对动能影响更大？如果有相关图请展示。","topic":"kinetic-energy-trauma","expected_terms":["动能","质量","速度"],"expected_image":"required","notes":"验证战场医学公式/图文页。"}
+{"id":"rq-016","query":"人体撞击坚硬物体时，损伤取决于哪些因素？","topic":"energy-transfer-trauma","expected_terms":["坚硬物体","组织的致密度","接触的面积"],"expected_image":"optional","notes":"验证能量交换主题。"}
+{"id":"rq-017","query":"气管插管时 ET 管置入和套囊充气有哪些关键步骤？如果有图请展示。","topic":"endotracheal-intubation","expected_terms":["气管插管","ET管","套囊"],"expected_image":"required","notes":"验证气道操作图文页。"}
+{"id":"rq-018","query":"对受伤四肢末端进行绷带加压包扎时，应该如何缠绕和固定？如果有步骤图请展示。","topic":"pressure-bandage","expected_terms":["绷带","控制出血","固定"],"expected_image":"required","notes":"验证包扎步骤图页。"}
+{"id":"rq-019","query":"俯卧或半俯卧伤员进行固定和翻转时，护颈圈什么时候佩戴？","topic":"prone-patient-immobilization","expected_terms":["俯卧","护颈圈","中立位"],"expected_image":"optional","notes":"验证脊柱固定操作。"}
+{"id":"rq-020","query":"放射性核素钚进入体内的途径和体内行为是什么？","topic":"plutonium-toxicology","expected_terms":["钚","呼吸道","消化道"],"expected_image":"none","notes":"验证核素毒理文本。"}
+{"id":"rq-021","query":"镭进入人体后主要分布在哪里，可能通过哪些途径进入体内？","topic":"radium-toxicology","expected_terms":["镭","骨骼","呼吸道"],"expected_image":"none","notes":"验证镭毒理文本。"}
+{"id":"rq-022","query":"氰化物中毒救治中，高铁血红蛋白形成剂的作用机制是什么？","topic":"cyanide-methemoglobin","expected_terms":["高铁血红蛋白","氰离子","亚硝酸"],"expected_image":"none","notes":"验证抗毒药物文本。"}
+{"id":"rq-023","query":"生物战剂线源施放污染区是如何形成和划定的？如果有图请展示。","topic":"biological-line-source-contamination","expected_terms":["线源施放","风向","污染区"],"expected_image":"required","notes":"验证核化生污染区图文页。"}
+{"id":"rq-024","query":"创伤事件发生前阶段为什么强调预防，医务人员有哪些责任？","topic":"trauma-prevention","expected_terms":["事件发生前阶段","创伤预防","卫生保健系统"],"expected_image":"optional","notes":"验证 PHTLS 事件阶段召回。"}

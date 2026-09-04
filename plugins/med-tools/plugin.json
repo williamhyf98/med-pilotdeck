@@ -22,6 +22,16 @@
         "MED_EMBEDDING_API_KEY": "EMPTY",
         "MED_EMBEDDING_DIMENSION": "2048"
       }
+    },
+    "mineru-ingest-tools": {
+      "command": "${env:PILOT_HOME}/plugins/med-tools/run-mineru-ingest.sh",
+      "args": [],
+      "timeoutMs": 300000,
+      "env": {
+        "HOME": "${env:HOME}",
+        "PATH": "${env:PATH}",
+        "MED_RAG_MINERU_CONFIG_FILE": "${env:PILOT_HOME}/med-tools/mineru-ingest.env"
+      }
     }
   }
 }

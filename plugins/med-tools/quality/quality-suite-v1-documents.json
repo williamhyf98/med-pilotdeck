@@ -1,0 +1,9 @@
+{
+  "books": {
+    "wmd": {"source": "军事医学/军事医学/军事医学丛书 大规模杀伤性武器与恐怖袭击应对手册.pdf", "sha256": "03e629f2100c9a2c70dab79e26ddca6a48f9df4fd5a6d623985b49524fd00bad"},
+    "68w": {"source": "军事医学/军事医学/军事医学丛书 美军战地医务人员（68W）高级战场急救技能训练手册.pdf", "sha256": "a64535949b69ebcd717d0c5dcd830d46c8a4efbb4a725916128f80aa8dc34d70"},
+    "ncb": {"source": "军事医学/军事医学/军事医学丛书 核化生应急医学救援.pdf", "sha256": "a616002f83a144d7f8eca547b3af85673436d7a3a40a6c6a011ed89794f5d88c"},
+    "battlefield": {"source": "军事医学/军事医学/军事医学丛书 战场医学.pdf", "sha256": "dbd393e96582e2dd86a13a9c91b20ca0dae1ebb10671f3858d23d61804d69b71"},
+    "phtls": {"source": "军事医学/军事医学/军事医学丛书 院前创伤生命支持 第7版.pdf", "sha256": "2e96ffb12e4bf6f836348583755f631162b60b3c7fededca5415e17eda5f79b2"}
+  }
+}

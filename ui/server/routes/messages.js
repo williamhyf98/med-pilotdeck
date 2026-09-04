@@ -26,6 +26,14 @@ function isSearchToolName(name) {
   return normalized === 'grep' || normalized === 'glob';
 }
 
+function stripInlineThinkBlocks(value) {
+  if (typeof value !== 'string' || !value) return '';
+  return value
+    .replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, '')
+    .replace(/<think\b[^>]*>[\s\S]*$/gi, '')
+    .replace(/<\/think>/gi, '');
+}
+
 router.get('/:sessionId/messages', async (req, res) => {
   try {
     const { sessionId } = req.params;
@@ -53,7 +61,9 @@ router.get('/:sessionId/messages', async (req, res) => {
         : {}),
     });
 
-    const messages = result.messages.map((message) => mapWebMessageToNormalized(message, sessionId));
+    const messages = result.messages
+      .map((message) => mapWebMessageToNormalized(message, sessionId))
+      .filter(Boolean);
     const totalKnown = typeof result.total === 'number' ? result.total : messages.length + offset;
     const hasMore = result.nextCursor !== undefined && result.nextCursor !== null;
 
@@ -129,9 +139,9 @@ router.get('/:sessionId/subagent/:subagentId/messages', async (req, res) => {
         : {}),
     });
 
-    const messages = result.messages.map((message) =>
-      mapWebMessageToNormalized(message, `${sessionId}::sub::${subagentId}`)
-    );
+    const messages = result.messages
+      .map((message) => mapWebMessageToNormalized(message, `${sessionId}::sub::${subagentId}`))
+      .filter(Boolean);
 
     return res.json({
       messages,
@@ -144,7 +154,7 @@ router.get('/:sessionId/subagent/:subagentId/messages', async (req, res) => {
   }
 });
 
-function mapWebMessageToNormalized(message, sessionId) {
+export function mapWebMessageToNormalized(message, sessionId) {
   const payload = message.payload && typeof message.payload === 'object'
     ? message.payload
     : {};
@@ -164,11 +174,14 @@ function mapWebMessageToNormalized(message, sessionId) {
   };
   switch (message.kind) {
     case 'text': {
+      const role = message.role === 'user' ? 'user' : 'assistant';
       return createNormalizedMessage({
         ...base,
         kind: 'text',
-        role: message.role === 'user' ? 'user' : 'assistant',
-        content: message.text || '',
+        role,
+        content: role === 'assistant'
+          ? stripInlineThinkBlocks(message.text || '')
+          : message.text || '',
         ...(Array.isArray(message.images) && message.images.length > 0
           ? { images: message.images.map((image) => image?.data).filter(Boolean) }
           : {}),
@@ -186,7 +199,7 @@ function mapWebMessageToNormalized(message, sessionId) {
       });
     }
     case 'thinking':
-      return createNormalizedMessage({ ...base, kind: 'thinking', content: message.text || '' });
+      return null;
     case 'file_artifacts':
       return createNormalizedMessage({
         ...base,

@@ -12,6 +12,24 @@ import type { SessionProvider } from '../types/app';
 import { authenticatedFetch, readAgentStatusErrorFromResponse } from '../utils/api';
 import { parseUserAttachmentNote } from '../components/chat/utils/attachmentNotes';
 
+export function stripInlineThinkBlocksFromText(value?: string): string {
+  if (typeof value !== 'string' || !value) return '';
+  return value
+    .replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, '')
+    .replace(/<think\b[^>]*>[\s\S]*$/gi, '')
+    .replace(/<\/think>/gi, '');
+}
+
+export function sanitizeServerMessagesForDisplay(messages: NormalizedMessage[]): NormalizedMessage[] {
+  return messages.map((message) => {
+    if (message.kind !== 'text' || message.role !== 'assistant' || typeof message.content !== 'string') {
+      return message;
+    }
+    const content = stripInlineThinkBlocksFromText(message.content);
+    return content === message.content ? message : { ...message, content };
+  });
+}
+
 // ─── NormalizedMessage (mirrors server/adapters/types.js) ────────────────────
 
 export type MessageKind =
@@ -864,7 +882,7 @@ export function useSessionStore() {
       const data = await response.json();
       if (requestGeneration < slot._serverAppliedGeneration) return slot;
       slot._serverAppliedGeneration = requestGeneration;
-      const messages: NormalizedMessage[] = data.messages || [];
+      const messages: NormalizedMessage[] = sanitizeServerMessagesForDisplay(data.messages || []);
 
       slot.serverMessages = messages;
       slot.total = data.total ?? messages.length;
@@ -1265,7 +1283,7 @@ export function useSessionStore() {
         throw new Error(statusError.message);
       }
       const data = await response.json();
-      const incomingMessages = data.messages || [];
+      const incomingMessages = sanitizeServerMessagesForDisplay(data.messages || []);
       if (requestGeneration < slot._serverAppliedGeneration) return;
       // A just-opened session may still have its authoritative full-history
       // request in flight. An empty background refresh is commonly the

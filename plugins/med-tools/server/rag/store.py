@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,9 +14,13 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
+from .presentation import build_image_asset
+
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RAG_ROOT = PLUGIN_ROOT / "data" / "rag"
 DEFAULT_MANIFEST = DEFAULT_RAG_ROOT / "manifest.json"
+RAG_MANIFEST_POINTER_RELATIVE = Path("med-tools") / "rag-manifest-path"
+INTERNAL_MAX_TOP_K = 64
 
 
 class RagUnavailableError(RuntimeError):
@@ -135,7 +140,7 @@ class RagStore:
         nonzero = row_norms > 0
         scores[nonzero] = dots[nonzero] / (row_norms[nonzero] * q_norm)
 
-        top_k = max(1, min(int(top_k), self.manifest.max_top_k, matrix.shape[0]))
+        top_k = max(1, min(int(top_k), INTERNAL_MAX_TOP_K, matrix.shape[0]))
         # argpartition then sort
         if top_k >= matrix.shape[0]:
             indices = np.argsort(-scores)
@@ -148,7 +153,12 @@ class RagStore:
             score = float(scores[int(index)])
             if score < min_score:
                 continue
-            items.append(_chunk_to_item(self._chunks[int(index)], score, int(index)))
+            items.append(_chunk_to_item(
+                self._chunks[int(index)],
+                score,
+                int(index),
+                manifest_root=self.manifest.root,
+            ))
             if len(items) >= top_k:
                 break
         return items
@@ -159,13 +169,13 @@ class RagStore:
         tokens = _lexical_tokens(query)
         if not tokens:
             raise ValueError("rag query has no searchable terms")
-        top_k = max(1, min(int(top_k), self.manifest.max_top_k))
+        top_k = max(1, min(int(top_k), INTERNAL_MAX_TOP_K))
         normalized_query = " ".join(query.lower().split())
         ranked: list[tuple[float, int]] = []
         for index, chunk in enumerate(self._chunks):
             searchable = " ".join(
-                str(chunk.get(key, ""))
-                for key in ("title", "chapter_path", "contents", "text", "content")
+                [str(chunk.get(key, "")) for key in ("title", "chapter_path", "contents", "text", "content")]
+                + [_image_ref_search_text(chunk)]
             ).lower()
             matched = sum(1 for token in tokens if token in searchable)
             score = matched / len(tokens)
@@ -176,9 +186,81 @@ class RagStore:
             ranked.append((score, index))
         ranked.sort(key=lambda item: (-item[0], item[1]))
         return [
-            _chunk_to_item(self._chunks[index], score, index)
+            _chunk_to_item(
+                self._chunks[index],
+                score,
+                index,
+                manifest_root=self.manifest.root,
+            )
             for score, index in ranked[:top_k]
         ]
+
+    def search_image_captions(self, *, query: str, top_k: int) -> list[dict[str, Any]]:
+        """Find chunks whose attached image captions directly match the query."""
+
+        self._ensure_loaded()
+        assert self._chunks is not None
+        top_k = max(1, min(int(top_k), INTERNAL_MAX_TOP_K))
+        ranked: list[tuple[float, int]] = []
+        for index, chunk in enumerate(self._chunks):
+            score = _image_caption_match_score(query, chunk)
+            if score <= 0:
+                continue
+            ranked.append((score, index))
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        return [
+            _chunk_to_item(
+                self._chunks[index],
+                score,
+                index,
+                manifest_root=self.manifest.root,
+            )
+            for score, index in ranked[:top_k]
+        ]
+
+    def neighbor_chunks(
+        self,
+        *,
+        index: int,
+        window: int = 1,
+        same_source: bool = True,
+        same_doc: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Return nearby chunks as lightweight context evidence.
+
+        Neighbor chunks are useful for step/process questions where a single
+        MinerU chunk may only contain one sentence from a numbered procedure.
+        """
+
+        self._ensure_loaded()
+        assert self._chunks is not None
+        if index < 0 or index >= len(self._chunks):
+            return []
+        if window < 1:
+            return []
+        base = self._chunks[index]
+        base_source = _chunk_source_key(base)
+        base_doc = str(base.get("doc_id") or "")
+        start = max(0, index - window)
+        stop = min(len(self._chunks), index + window + 1)
+        context: list[dict[str, Any]] = []
+        for neighbor_index in range(start, stop):
+            if neighbor_index == index:
+                continue
+            neighbor = self._chunks[neighbor_index]
+            if same_source and _chunk_source_key(neighbor) != base_source:
+                continue
+            if same_doc and str(neighbor.get("doc_id") or "") != base_doc:
+                continue
+            item = _chunk_to_item(
+                neighbor,
+                0.0,
+                neighbor_index,
+                manifest_root=self.manifest.root,
+            )
+            item["evidence_role"] = "context"
+            context.append(item)
+        return context
 
     def _ensure_loaded(self) -> None:
         if self._chunks is not None and self._matrix is not None:
@@ -237,11 +319,69 @@ def reset_default_store_for_tests() -> None:
         _STORE = None
 
 
+def get_active_manifest_path() -> Path:
+    return _manifest_path_from_env().expanduser().resolve()
+
+
+def activate_manifest(manifest_path: Path) -> Path:
+    path = manifest_path.expanduser().resolve()
+    if not path.is_file():
+        raise RagUnavailableError(f"RAG manifest missing: {path}")
+    # Validate before switching the pointer, so a bad bundle cannot become
+    # active accidentally.
+    status = RagStore(RagManifest.load(path)).status(validate=True)
+    if not status.get("ready"):
+        raise RagUnavailableError(f"RAG manifest is not ready: {status.get('reason')}")
+    pointer = _rag_manifest_pointer_path()
+    pointer.parent.mkdir(parents=True, exist_ok=True)
+    pointer.write_text(f"{path}\n", encoding="utf-8")
+    reset_default_store_for_tests()
+    return pointer
+
+
 def _manifest_path_from_env() -> Path:
     override = os.environ.get("MED_RAG_MANIFEST", "").strip()
     if override:
         return Path(override)
+    pointer = _rag_manifest_pointer_path()
+    if pointer.is_file():
+        configured = _read_manifest_pointer(pointer)
+        return Path(configured)
     return DEFAULT_MANIFEST
+
+
+def _rag_manifest_pointer_path() -> Path:
+    """Return the user-local manifest selector without baking paths into Git.
+
+    MCP launchers may whitelist their child-process environment, so a shell
+    ``MED_RAG_MANIFEST`` export is not always inherited.  A one-line pointer
+    below PilotDeck's private home is therefore the durable development
+    configuration.  In a source checkout, retain a deterministic fallback for
+    direct Python/MCP launches that do not supply ``PILOT_HOME``.
+    """
+
+    pilot_home = os.environ.get("PILOT_HOME", "").strip()
+    if pilot_home:
+        return Path(pilot_home).expanduser() / RAG_MANIFEST_POINTER_RELATIVE
+    project_root = PLUGIN_ROOT.parents[1]
+    return project_root / ".pilotdeck-home" / RAG_MANIFEST_POINTER_RELATIVE
+
+
+def _read_manifest_pointer(pointer: Path) -> str:
+    lines = [line.strip() for line in pointer.read_text(encoding="utf-8").splitlines()]
+    values = [line for line in lines if line and not line.startswith("#")]
+    if len(values) != 1:
+        raise ValueError(
+            f"RAG manifest pointer must contain exactly one path: {pointer}"
+        )
+    path = Path(values[0]).expanduser()
+    if not path.is_absolute():
+        raise ValueError(f"RAG manifest pointer path must be absolute: {pointer}")
+    if not path.is_file():
+        raise RagUnavailableError(
+            f"RAG manifest configured by pointer is missing: {path}"
+        )
+    return str(path)
 
 
 def _resolve_under(root: Path, relative: str) -> Path:
@@ -279,26 +419,137 @@ def _load_jsonl(path: Path, *, max_rows: int) -> list[dict[str, Any]]:
     return chunks
 
 
-def _chunk_to_item(chunk: Mapping[str, Any], score: float, index: int) -> dict[str, Any]:
+def _chunk_to_item(
+    chunk: Mapping[str, Any],
+    score: float,
+    index: int,
+    *,
+    manifest_root: Path | None = None,
+) -> dict[str, Any]:
     # Prefer plain text body for evidence; fall back to contents with headers.
     text = str(chunk.get("text") or chunk.get("contents") or chunk.get("content") or "")
     text = text[:20_000]
     source_raw = str(chunk.get("source_file") or chunk.get("source") or "")
     source = Path(source_raw.replace("\\", "/")).name[:500] if source_raw else ""
     title = str(chunk.get("title") or chunk.get("volume") or "")[:500]
-    return {
+    item = {
         "rank": None,  # filled by caller if needed
         "score": round(float(score), 6) if math.isfinite(score) else 0.0,
         "chunk_id": str(chunk.get("chunk_id") or f"chunk-{index:08d}"),
         "doc_id": str(chunk.get("doc_id") or "")[:500],
+        "source_corpus_id": str(chunk.get("source_corpus_id") or "")[:200],
+        "source_bundle_corpus_path": str(chunk.get("source_bundle_corpus_path") or "")[:1_000],
         "title": title,
         "volume": str(chunk.get("volume") or "")[:200],
         "section": str(chunk.get("chapter_path") or "")[:1000],
         "source": source,
         "text": text,
         "preview": " ".join(text.split())[:500],
+        "page_start": _optional_positive_int(chunk.get("page_start")),
+        "page_end": _optional_positive_int(chunk.get("page_end")),
         "index": index,
     }
+    image_refs = chunk.get("image_refs")
+    if isinstance(image_refs, list):
+        assets = []
+        for ref in image_refs:
+            if not isinstance(ref, Mapping):
+                continue
+            safe_ref = _safe_image_ref(ref)
+            if safe_ref is None:
+                continue
+            asset = build_image_asset(safe_ref, bundle_root=manifest_root)
+            if asset is None:
+                continue
+            assets.append({**safe_ref, **asset})
+        item["image_refs"] = assets
+        item["assets"] = assets
+    else:
+        item["image_refs"] = []
+        item["assets"] = []
+    return item
+
+
+def _chunk_source_key(chunk: Mapping[str, Any]) -> str:
+    return (
+        str(chunk.get("source_corpus_id") or "")
+        or str(chunk.get("source_bundle_corpus_path") or "")
+        or str(chunk.get("doc_id") or "")
+        or str(chunk.get("title") or "")
+    )
+
+
+def _image_ref_search_text(chunk: Mapping[str, Any]) -> str:
+    refs = chunk.get("image_refs")
+    if not isinstance(refs, list):
+        return ""
+    values: list[str] = []
+    for ref in refs:
+        if not isinstance(ref, Mapping):
+            continue
+        caption = str(ref.get("caption") or "").strip()
+        if caption:
+            values.append(caption)
+    return " ".join(values)
+
+
+def _image_caption_match_score(query: str, chunk: Mapping[str, Any]) -> float:
+    refs = chunk.get("image_refs")
+    if not isinstance(refs, list):
+        return 0.0
+    normalized_query = _normalize_caption_match_text(query)
+    best = 0.0
+    for ref in refs:
+        if not isinstance(ref, Mapping):
+            continue
+        caption = str(ref.get("caption") or "")
+        normalized_caption = _normalize_caption_match_text(caption)
+        if not normalized_caption:
+            continue
+        caption_without_label = _strip_figure_label(normalized_caption)
+        if normalized_caption and normalized_caption in normalized_query:
+            best = max(best, 1.0)
+        elif normalized_query and normalized_query in normalized_caption:
+            best = max(best, 1.0)
+        elif caption_without_label and caption_without_label in normalized_query:
+            best = max(best, 0.98)
+        elif _figure_label(normalized_caption) and _figure_label(normalized_caption) in normalized_query:
+            best = max(best, 0.9)
+    return best
+
+
+def _normalize_caption_match_text(value: str) -> str:
+    return re.sub(r"\s+", "", value.lower())
+
+
+def _figure_label(value: str) -> str:
+    match = re.match(r"^(?:图|表|fig(?:ure)?|table)[0-9一二三四五六七八九十ivxvxlcdm_.-]*", value, flags=re.I)
+    return match.group(0) if match else ""
+
+
+def _strip_figure_label(value: str) -> str:
+    label = _figure_label(value)
+    return value[len(label) :] if label else value
+
+
+def _safe_image_ref(ref: Mapping[str, Any]) -> dict[str, Any] | None:
+    path = str(ref.get("path") or "").strip().replace("\\", "/")
+    if not path or path.startswith("/") or ".." in Path(path).parts:
+        return None
+    return {
+        "path": path[:2_000],
+        "caption": str(ref.get("caption") or "")[:1_000],
+        "page": _optional_positive_int(ref.get("page")),
+        "relation": str(ref.get("relation") or "same_page")[:50],
+    }
+
+
+def _optional_positive_int(value: Any) -> int | None:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
 
 
 def _lexical_tokens(query: str) -> tuple[str, ...]:

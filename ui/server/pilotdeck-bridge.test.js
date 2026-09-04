@@ -83,6 +83,28 @@ describe('getGatewayTurnSafetyOverrides', () => {
 });
 
 describe('gatewayEventToFrames agent status errors', () => {
+    it('does not expose assistant thinking deltas as visible chat messages', () => {
+        const frames = gatewayEventToFrames({
+            type: 'assistant_thinking_delta',
+            text: 'internal reasoning',
+        }, 'web:s_test', 'pilotdeck');
+
+        expect(frames).toEqual([]);
+    });
+
+    it('does not expose subagent thinking deltas as visible chat messages', () => {
+        const frames = gatewayEventToFrames({
+            type: 'agent_status',
+            event: 'subagent_thinking_delta',
+            detail: {
+                subagentId: 'agent-1',
+                text: 'internal subagent reasoning',
+            },
+        }, 'web:s_test', 'pilotdeck');
+
+        expect(frames).toEqual([]);
+    });
+
     it('maps tool result detail availability to a mergeable tool_result frame', () => {
         const frames = gatewayEventToFrames({
             type: 'tool_result_detail_available',

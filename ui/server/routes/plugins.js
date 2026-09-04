@@ -53,6 +53,29 @@ router.get('/:name/manifest', (req, res) => {
   }
 });
 
+// GET /:name/rag-assets/* — Serve image assets from the active, external RAG bundle.
+// Unlike ordinary plugin assets, RAG bundles intentionally live on a data disk.
+// The resolver permits only the active manifest's assets/ subtree.
+router.get('/:name/rag-assets/*', (req, res) => {
+  const pluginName = req.params.name;
+  const assetPath = req.params[0];
+  const resolvedPath = resolveConfiguredRagAssetPath(pluginName, assetPath);
+  if (!resolvedPath) {
+    return res.status(404).json({ error: 'RAG image asset not found' });
+  }
+
+  const contentType = mime.lookup(resolvedPath) || 'application/octet-stream';
+  if (!String(contentType).startsWith('image/')) {
+    return res.status(404).json({ error: 'RAG asset is not an image' });
+  }
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  return fs.createReadStream(resolvedPath)
+    .on('error', () => res.status(500).end())
+    .pipe(res);
+});
+
 // GET /:name/assets/* — Serve plugin static files
 router.get('/:name/assets/*', (req, res) => {
   const pluginName = req.params.name;
@@ -95,6 +118,68 @@ router.get('/:name/assets/*', (req, res) => {
   });
   stream.pipe(res);
 });
+
+function resolveConfiguredRagAssetPath(pluginName, assetPath) {
+  if (pluginName !== 'med-tools' || typeof assetPath !== 'string') {
+    return null;
+  }
+  const normalizedAssetPath = normalizeRagAssetPath(assetPath);
+  if (!normalizedAssetPath) return null;
+
+  const pluginDir = resolveMedToolsPluginDir();
+  if (!pluginDir) return null;
+
+  const pilotHome = process.env.PILOT_HOME
+    || path.resolve(pluginDir, '..', '..', '.pilotdeck-home');
+  const pointer = path.join(pilotHome, 'med-tools', 'rag-manifest-path');
+  let manifestPath = path.join(pluginDir, 'data', 'rag', 'manifest.json');
+  try {
+    if (fs.existsSync(pointer)) {
+      const values = fs.readFileSync(pointer, 'utf8')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line && !line.startsWith('#'));
+      if (values.length !== 1 || !path.isAbsolute(values[0])) return null;
+      manifestPath = values[0];
+    }
+    if (!fs.existsSync(manifestPath)) return null;
+    const root = path.dirname(fs.realpathSync(manifestPath));
+    const candidate = path.resolve(root, normalizedAssetPath);
+    if (!fs.existsSync(candidate)) return null;
+    const realCandidate = fs.realpathSync(candidate);
+    const realAssetsRoot = fs.realpathSync(path.join(root, 'assets'));
+    if (!realCandidate.startsWith(realAssetsRoot + path.sep)) return null;
+    return realCandidate;
+  } catch {
+    return null;
+  }
+}
+
+function resolveMedToolsPluginDir() {
+  const candidates = [
+    path.join(getPluginsDir(), 'med-tools'),
+    path.resolve(process.cwd(), '..', 'plugins', 'med-tools'),
+    path.resolve(process.cwd(), 'plugins', 'med-tools'),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const realCandidate = fs.realpathSync(candidate);
+      if (fs.existsSync(path.join(realCandidate, 'plugin.json'))) {
+        return realCandidate;
+      }
+    } catch {
+      // Try the next known project-local location.
+    }
+  }
+  return null;
+}
+
+function normalizeRagAssetPath(assetPath) {
+  const cleaned = assetPath.replace(/^\/+/, '');
+  if (!cleaned || cleaned.includes('\0')) return null;
+  if (!cleaned.startsWith('assets/')) return null;
+  return cleaned;
+}
 
 // PUT /:name/enable — Toggle plugin enabled/disabled (starts/stops server if applicable)
 router.put('/:name/enable', async (req, res) => {

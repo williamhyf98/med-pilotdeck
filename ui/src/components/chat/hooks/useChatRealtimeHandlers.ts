@@ -55,6 +55,14 @@ type LatestChatMessage = {
   [key: string]: any;
 };
 
+export function stripInlineThinkBlocks(value?: string): string {
+  if (typeof value !== 'string' || !value) return '';
+  return value
+    .replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, '')
+    .replace(/<think\b[^>]*>[\s\S]*$/gi, '')
+    .replace(/<\/think>/gi, '');
+}
+
 function normalizeAssistantStreamText(value?: string): string {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
 }
@@ -563,7 +571,7 @@ export function useChatRealtimeHandlers({
       const streamId = `__streaming_${streamKey}`;
       const existing = slot?.realtimeMessages.find((m: any) => m.id === streamId);
       const currentText = existing?.content || '';
-      sessionStore.updateStreaming(sid, currentText + text, provider, msgRunId);
+      sessionStore.updateStreaming(sid, stripInlineThinkBlocks(currentText + text), provider, msgRunId);
       return;
     }
 
@@ -627,6 +635,9 @@ export function useChatRealtimeHandlers({
       sessionStore.finalizeStreaming(sid, duplicateStreamTextState.activeStreamRunId ?? undefined);
     }
     if (!duplicateStreamTextState.isDuplicate) {
+      if (msg.kind === 'text' && msg.role === 'assistant') {
+        msg.content = stripInlineThinkBlocks(msg.content);
+      }
       sessionStore.appendRealtime(sid, msg as NormalizedMessage);
     }
 

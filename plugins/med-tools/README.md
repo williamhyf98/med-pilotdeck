@@ -77,6 +77,17 @@ Flow for **Skill `med-trauma-assist`**:
 
 If the embedding service is down, the tool uses **lexical-fallback** and sets `mode` accordingly.
 
+### 图片交错展示
+
+`med_trauma_rag_query` 仍然只做**文字检索**。当文字 chunk 与 MinerU 图片存在关联时，返回：
+
+- `chunks[].image_refs`：图片路径、图注、页码和关联强度；
+- `interleave_context`：按 `text → image → text` 顺序排列的展示片段。
+
+主 Agent 应使用 `med-trauma-assist` Skill 调用 RAG；如果前端支持图片附件，就渲染
+`interleave_context` 中的 `image` 片段。普通直接问答不会自动调用该工具，也不会自动附图。
+图片只作为文字证据的附件，不代表系统理解了图片中未被图注或正文支持的视觉语义。
+
 ## Formal six-stage care plan
 
 Tool `med_trauma_stage_plan(stage, injury_text, image_paths?)`:
@@ -127,12 +138,41 @@ Restart PilotDeck (or reload plugins) after changing `plugin.json` env.
 | `MED_EMBEDDING_ENDPOINT` | `{API_BASE}/embeddings` | Full embeddings URL |
 | `MED_EMBEDDING_MODEL` | `qwen3-vl-embedding` | Embedding model id |
 | `MED_EMBEDDING_DIMENSION` | `2048` | Expected vector dim |
-| `MED_RAG_MANIFEST` | `<plugin>/data/rag/manifest.json` | Override manifest path (tests) |
+| `MED_RAG_MANIFEST` | `<plugin>/data/rag/manifest.json` | Highest-priority manifest override |
 | `MED_DICOM_DERIVED_DIR` / `MED_DERIVED_DIR` | `<parent>/.med-tools-derived` | Preview/PNG output dir |
 
 When `MED_VLM_FALLBACK_*` are unset, med-tools reads `$PILOT_HOME/pilotdeck.yaml` (then `.pilotdeck-home/pilotdeck.yaml` / `~/.pilotdeck/pilotdeck.yaml`) and uses `agent.model` plus that provider's `url` / `apiKey`.
 
+### Personal RAG manifest selection
+
+Some MCP launchers whitelist child-process environment variables, so an export
+from the shell running PilotDeck may not reach med-tools. For a user-local,
+non-Git configuration, write exactly one absolute manifest path to:
+
+```text
+$PILOT_HOME/med-tools/rag-manifest-path
+```
+
+Selection order is `MED_RAG_MANIFEST` → this pointer file → the bundled
+default manifest. A malformed or missing pointed-to manifest is an error; it
+never silently falls back to another corpus.
+
+Bundles may contain image attachments under `assets/`. Their returned URLs use
+the same PilotDeck origin at `/api/plugins/med-tools/rag-assets/assets/...`.
+The server resolves only under the active bundle's `assets/` directory; it does
+not expose arbitrary data-disk paths.
+
 Optional Python deps (degraded if missing): `pymupdf`, `wfdb`.
+
+## MinerU 通用入库 MCP
+
+`mineru-ingest-tools` 可将授权 PDF、DOC/DOCX 和常见文本异步转换为统一的
+chunks/pages/assets bundle，后续再按需导入 RAG。默认使用不占端口的 stdio MCP；
+也可按需启动仅监听本机的 Streamable HTTP MCP。部署配置、9 个工具、并发边界和
+完整验收步骤见 [docs/mineru-ingest-service.zh.md](docs/mineru-ingest-service.zh.md)。
+MinerU 可执行环境、模型和数据盘路径通过个人的 `$PILOT_HOME/med-tools/`
+`mineru-ingest.env` 配置，不提交到 Git；模板见
+[mineru-ingest.env.example](mineru-ingest.env.example)。
 
 ## Tests
 

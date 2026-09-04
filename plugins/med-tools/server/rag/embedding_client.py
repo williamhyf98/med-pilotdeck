@@ -46,7 +46,9 @@ def embed_texts(texts: Sequence[str]) -> list[list[float]]:
         "Authorization": f"Bearer {cfg['api_key']}",
     }
     try:
-        with httpx.Client(timeout=float(cfg["timeout_seconds"] or 30)) as client:
+        # The shared server shell may have an outbound Clash/HTTP proxy set.
+        # Embedding defaults to loopback, which must never be sent through it.
+        with httpx.Client(timeout=float(cfg["timeout_seconds"] or 30), trust_env=False) as client:
             response = client.post(str(cfg["endpoint"]), json=payload, headers=headers)
             response.raise_for_status()
             body = response.json()
