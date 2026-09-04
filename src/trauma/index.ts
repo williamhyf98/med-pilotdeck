@@ -1,4 +1,6 @@
 export { traumaProgressEvents, traumaTurnEvents } from "./events.js";
+export { createTraumaAuditLogger } from "./auditLog.js";
+export type { TraumaAuditLogger, TraumaAuditRecord } from "./auditLog.js";
 export { createStructuredModelClient } from "./modelClient.js";
 export { createMcpTraumaRagClient } from "./rag/client.js";
 export { createTraumaTurnRunner } from "./runner.js";

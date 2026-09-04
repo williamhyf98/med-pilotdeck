@@ -99,10 +99,12 @@ import { SkillManager, migrateLegacyBundledSkillCopies } from "../extension/skil
 import { ExtensionWatchManager, type ExtensionWatchEvent } from "./ExtensionWatchManager.js";
 import { createTelemetryCollector, type TelemetryClient } from "../telemetry/index.js";
 import {
+  createTraumaAuditLogger,
   createMcpTraumaRagClient,
   createStructuredModelClient,
   createTraumaCaseStore,
   createTraumaTurnRunner,
+  type TraumaAuditLogger,
   type TraumaTurnRunner,
 } from "../trauma/index.js";
 
@@ -594,6 +596,7 @@ class ProjectRuntimeRegistry {
 
   private _extraTools: PilotDeckToolDefinition[];
   private _sessionOverrides: SessionConfigOverrides | undefined;
+  private readonly traumaAudit: TraumaAuditLogger;
   private readonly sharedSessionStore = new SessionRouterStore({
     now: () => this.options.now().getTime(),
   });
@@ -601,6 +604,7 @@ class ProjectRuntimeRegistry {
   constructor(private readonly options: ProjectRuntimeRegistryOptions) {
     this._extraTools = options.extraTools ? [...options.extraTools] : [];
     this._sessionOverrides = options.sessionOverrides;
+    this.traumaAudit = createTraumaAuditLogger({ pilotHome: options.pilotHome });
   }
 
   /**
@@ -659,6 +663,7 @@ class ProjectRuntimeRegistry {
       store: createTraumaCaseStore(caseDirectory),
       model,
       rag,
+      audit: this.traumaAudit,
       now: () => this.options.now().toISOString(),
     });
   }

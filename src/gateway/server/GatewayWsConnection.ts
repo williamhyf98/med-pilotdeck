@@ -207,6 +207,21 @@ export class GatewayWsConnection {
         return this.options.gateway.cronRunNow(frame.params as never);
       case "elicitation_respond":
         return this.options.gateway.respondElicitation(frame.params as never);
+      case "trauma_confirm_transition":
+        if (!this.options.gateway.traumaConfirmTransition) {
+          throw new Error("Trauma stage confirmation is not configured.");
+        }
+        return this.options.gateway.traumaConfirmTransition(frame.params as never);
+      case "trauma_get_case":
+        if (!this.options.gateway.traumaGetCase) {
+          throw new Error("Trauma case reads are not configured.");
+        }
+        return this.options.gateway.traumaGetCase(frame.params as never);
+      case "trauma_override_stage":
+        if (!this.options.gateway.traumaOverrideStage) {
+          throw new Error("Trauma stage override is not configured.");
+        }
+        return this.options.gateway.traumaOverrideStage(frame.params as never);
       case "permission_decide":
         return this.options.gateway.permissionDecide(frame.params as never);
       case "grant_session_permission":

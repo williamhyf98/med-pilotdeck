@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import type { TraumaAuditLogger, TraumaAuditRecord } from "./auditLog.js";
 import { mergeExtractedFacts } from "./factMerge.js";
 import { resolveGate } from "./gate.js";
 import type { StructuredModelClient } from "./modelClient.js";
@@ -121,6 +122,7 @@ export function createTraumaTurnRunner(deps: {
   store: TraumaCaseStore;
   model: StructuredModelClient;
   rag: TraumaRagClient;
+  audit?: TraumaAuditLogger;
   now?: () => string;
 }): TraumaTurnRunner {
   const extractor = createExtractorStation(deps.model);
@@ -130,46 +132,132 @@ export function createTraumaTurnRunner(deps: {
   return {
     async runTurn(input) {
       const now = input.now ?? deps.now?.() ?? new Date().toISOString();
-      const previous = await deps.store.load() ?? initialCaseState({
+      const auditBase = {
+        runId: input.messageId,
         projectId: input.projectId,
         sessionId: input.sessionId,
-        now,
+      };
+      let activeStep: { number: number; phase: string; startedAt: number } | undefined;
+      const recordAudit = async (
+        entry: Omit<TraumaAuditRecord, "timestamp" | "runId" | "projectId" | "sessionId">,
+      ) => {
+        await deps.audit?.record({
+          timestamp: deps.now?.() ?? new Date().toISOString(),
+          ...auditBase,
+          ...entry,
+        });
+      };
+      const beginStep = async (number: number, phase: string) => {
+        activeStep = { number, phase, startedAt: Date.now() };
+        await recordAudit({
+          level: "INFO",
+          event: "step_started",
+          step: number,
+          phase,
+          status: "started",
+        });
+      };
+      const completeStep = async (details?: Record<string, unknown>) => {
+        if (!activeStep) return;
+        await recordAudit({
+          level: "INFO",
+          event: "step_completed",
+          step: activeStep.number,
+          phase: activeStep.phase,
+          status: "ok",
+          durationMs: Date.now() - activeStep.startedAt,
+          details,
+        });
+        activeStep = undefined;
+      };
+
+      await recordAudit({
+        level: "INFO",
+        event: "turn_started",
+        status: "started",
+        details: {
+          inputCharacters: input.userText.length,
+          hasAttachments: Boolean(input.attachmentSummary),
+        },
       });
 
       const report = input.onProgress ?? (() => {});
-
-      report({ phase: "extract", status: "started" });
-      let facts;
       try {
+        await beginStep(1, "load_case_state");
+        const previous = await deps.store.load() ?? initialCaseState({
+          projectId: input.projectId,
+          sessionId: input.sessionId,
+          now,
+        });
+        await completeStep({ version: previous.version, round: previous.round });
+
+        await beginStep(2, "extract_facts");
+        report({ phase: "extract", status: "started" });
+        let facts;
         facts = await extractor.extract({
           userText: input.userText,
           previous,
           attachmentSummary: input.attachmentSummary,
         });
-      } catch (error) {
-        report({ phase: "extract", status: "finished", ok: false, detail: String(error) });
-        throw error;
-      }
-      report({
-        phase: "extract",
-        status: "finished",
-        ok: true,
-        detail: `turnKind=${facts.turnKind}`,
-      });
+        report({
+          phase: "extract",
+          status: "finished",
+          ok: true,
+          detail: `turnKind=${facts.turnKind}`,
+        });
+        await completeStep({
+          turnKind: facts.turnKind,
+          vitalCount: facts.vitalSigns.length,
+          injuryCount: facts.injuryFindings.length,
+          treatmentCount: facts.treatmentEvents.length,
+          careTransportCount: facts.careAndTransportFacts.length,
+        });
 
-      if (facts.turnKind === "no_case_update") {
-        const isFirstEmpty = previous.round === 0 && previous.injuries.length === 0 && previous.vitalSignsHistory.length === 0;
-        return idleResponse(previous, isFirstEmpty ? FIRST_CASE_GUIDE : CONTINUE_CASE_HINT, now);
-      }
+        await beginStep(3, "classify_turn");
+        if (facts.turnKind === "no_case_update") {
+          await completeStep({ fullPipeline: false });
+          const isFirstEmpty = previous.round === 0 && previous.injuries.length === 0 && previous.vitalSignsHistory.length === 0;
+          const response = idleResponse(previous, isFirstEmpty ? FIRST_CASE_GUIDE : CONTINUE_CASE_HINT, now);
+          await recordAudit({
+            level: "INFO",
+            event: "turn_completed",
+            status: "ok",
+            details: { fullPipeline: false, version: previous.version, round: previous.round },
+          });
+          return response;
+        }
+        await completeStep({ fullPipeline: true });
 
+        await beginStep(4, "merge_candidate_state");
       const candidate = mergeExtractedFacts(previous, facts, now);
+        await completeStep({
+          injuryCount: candidate.injuries.length,
+          vitalHistoryCount: candidate.vitalSignsHistory.length,
+        });
+
+        await beginStep(5, "lock_current_stage");
+        // 阶段与机构只读取既有 Case State；模型不得在本步骤自行升级。
+        candidate.currentStage = previous.currentStage;
+        candidate.currentSubStage = previous.currentSubStage;
+        candidate.currentFacility = previous.currentFacility;
+        await completeStep({
+          currentStage: candidate.currentStage,
+          currentSubStage: candidate.currentSubStage,
+        });
+
+        await beginStep(6, "compute_timeline");
       const timeline = computeTimeline({
         injuryTime: candidate.timeline.injuryTime,
         now,
         currentSubStage: candidate.currentSubStage,
       });
       candidate.timeline = timeline;
+        await completeStep({
+          elapsedMinutes: timeline.elapsedMinutes,
+          timingStatus: timeline.timingStatus,
+        });
 
+        await beginStep(7, "baseline_retrieval");
       report({ phase: "retrieve", status: "started" });
       const baseline = buildBaselineQueries(candidate);
       const firstWaveResults = await Promise.all(baseline.map(async (query) => {
@@ -177,17 +265,34 @@ export function createTraumaTurnRunner(deps: {
         return { query, chunks: result.chunks, backend: result.retrieval_backend };
       }));
       const firstWave = mergeRetrieval({ queries: baseline, results: firstWaveResults }).retrieval;
+        await completeStep({
+          queryCount: baseline.length,
+          chunkCount: firstWave.allChunkIds.length,
+          coverageGapCount: firstWave.criticalCoverageGaps.length,
+        });
+
+        await beginStep(8, "plan_supplemental_queries");
       const supplemental = await planner.plan({
         state: candidate,
         firstWave,
         remainingBudget: Math.max(0, 6 - baseline.length),
       });
+        await completeStep({ plannedQueryCount: supplemental.length });
+
+        await beginStep(9, "supplemental_retrieval");
       const secondWaveResults = supplemental.length === 0
         ? []
         : await Promise.all(supplemental.map(async (query) => {
           const result = await deps.rag.query({ query: query.query, top_k: TRAUMA_RAG_TOP_K });
           return { query, chunks: result.chunks, backend: result.retrieval_backend };
         }));
+        await completeStep({
+          skipped: supplemental.length === 0,
+          queryCount: supplemental.length,
+          chunkCount: secondWaveResults.reduce((sum, result) => sum + result.chunks.length, 0),
+        });
+
+        await beginStep(10, "merge_retrieval");
       const merged = mergeRetrieval({
         queries: [...baseline, ...supplemental],
         results: [...firstWaveResults, ...secondWaveResults],
@@ -198,22 +303,37 @@ export function createTraumaTurnRunner(deps: {
         ok: true,
         detail: `检索 ${merged.retrieval.totalCalls} 次，选用 ${merged.promptChunks.length} 个知识块`,
       });
+        await completeStep({
+          totalCalls: merged.retrieval.totalCalls,
+          allChunkCount: merged.retrieval.allChunkIds.length,
+          promptChunkCount: merged.promptChunks.length,
+          coverageGapCount: merged.retrieval.criticalCoverageGaps.length,
+        });
 
+        await beginStep(11, "reason");
       report({ phase: "reason", status: "started" });
-      let reasoned;
-      try {
-        reasoned = await reasoner.reason({
+        const reasoned = await reasoner.reason({
           state: candidate,
           timeline,
           promptChunks: merged.promptChunks,
         });
-      } catch (error) {
-        report({ phase: "reason", status: "finished", ok: false, detail: String(error) });
-        throw error;
-      }
       report({ phase: "reason", status: "finished", ok: true });
+        await completeStep({
+          treatmentActionCount: reasoned.treatmentPlan.length,
+          missingInformationCount: reasoned.missingInformation.length,
+          modelTransitionStatus: reasoned.transition.status,
+        });
+
+        await beginStep(12, "resolve_gate");
       const gateStatus = resolveGate(reasoned.gateAssessment, merged.retrieval);
       const requiresUserConfirmation = gateStatus === "READY";
+        await completeStep({
+          gateStatus,
+          confidence: reasoned.gateAssessment.confidence,
+          requiresUserConfirmation,
+        });
+
+        await beginStep(13, "prepare_transition");
       const pendingTransition = gateStatus === "READY" && reasoned.transition.targetStage && reasoned.transition.targetSubStage
         ? {
           askedAt: now,
@@ -222,7 +342,13 @@ export function createTraumaTurnRunner(deps: {
           reason: reasoned.transition.reason,
         }
         : undefined;
+        await completeStep({
+          pendingTransition: Boolean(pendingTransition),
+          targetStage: pendingTransition?.targetStage,
+          targetSubStage: pendingTransition?.targetSubStage,
+        });
 
+        await beginStep(14, "mark_evidence");
       const cited = new Set([
         ...reasoned.treatmentPlan.flatMap((action) => action.evidenceChunkIds),
         ...reasoned.gateAssessment.evidenceChunkIds,
@@ -231,7 +357,12 @@ export function createTraumaTurnRunner(deps: {
         ...chunk,
         usedInAnswer: cited.has(chunk.id),
       }));
+        await completeStep({
+          evidenceCount: evidence.length,
+          citedEvidenceCount: cited.size,
+        });
 
+        await beginStep(15, "build_response_and_snapshot");
       const round = previous.round + 1;
       const version = previous.version + 1;
       const memo = {
@@ -293,7 +424,9 @@ export function createTraumaTurnRunner(deps: {
         memo,
         evidence,
       };
+        await completeStep({ version, round, memoId: memo.id });
 
+        await beginStep(16, "persist_snapshot");
       await deps.store.saveTurn(next, {
         eventType: "agent_turn",
         round,
@@ -303,8 +436,47 @@ export function createTraumaTurnRunner(deps: {
         retrieval: merged.retrieval,
         response,
       });
+        await completeStep({ version, round, snapshotEventType: "agent_turn" });
 
+        await recordAudit({
+          level: "INFO",
+          event: "turn_completed",
+          status: "ok",
+          details: { version, round, gateStatus },
+        });
       return response;
+      } catch (error) {
+        if (activeStep) {
+          await recordAudit({
+            level: "ERROR",
+            event: "step_failed",
+            step: activeStep.number,
+            phase: activeStep.phase,
+            status: "error",
+            durationMs: Date.now() - activeStep.startedAt,
+            error,
+          });
+        }
+        report({
+          phase: activeStep?.phase === "extract_facts"
+            ? "extract"
+            : activeStep?.phase === "reason" ? "reason" : "retrieve",
+          status: "finished",
+          ok: false,
+          detail: String(error),
+        });
+        await recordAudit({
+          level: "ERROR",
+          event: "turn_failed",
+          status: "error",
+          details: {
+            failedStep: activeStep?.number,
+            failedPhase: activeStep?.phase,
+          },
+          error,
+        });
+        throw error;
+      }
     },
 
     async confirmTransition(input) {

@@ -8,6 +8,7 @@ const caseStoreMock = vi.hoisted(() => ({
   current: null as any,
   snapshots: [] as any[],
   loading: false,
+  error: null as string | null,
   refresh: vi.fn(),
 }));
 
@@ -25,6 +26,7 @@ afterEach(() => {
   cleanup();
   caseStoreMock.current = null;
   caseStoreMock.snapshots = [];
+  caseStoreMock.error = null;
 });
 
 describe('TraumaWorkspace demo workflow', () => {
@@ -157,5 +159,20 @@ describe('TraumaWorkspace demo workflow', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '返回真实对话' }));
     expect(screen.getByText('空病例真实会话')).not.toBeNull();
+  });
+
+  it('shows a case loading error instead of implying that a memo is still generating', () => {
+    caseStoreMock.error = '病例接口不可用';
+    render(
+      <TraumaWorkspace
+        resetKey="trauma:error"
+        projectKey="trauma_med-demo"
+        sessionId="web:s_error"
+        chatInterface={<div>真实会话</div>}
+      />,
+    );
+
+    expect(screen.getByText(/病例状态加载失败：病例接口不可用/)).not.toBeNull();
+    expect(screen.queryByText('等待首轮推演生成轮次纪要')).toBeNull();
   });
 });

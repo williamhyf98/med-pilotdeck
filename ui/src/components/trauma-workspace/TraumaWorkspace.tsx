@@ -206,16 +206,25 @@ export default function TraumaWorkspace({
                   ) : null}
                 </div>
               </div>
-              <TreatmentTree
-                stages={TRAUMA_STAGES}
-                rounds={rounds}
-                currentRoundIndex={currentRoundIndex}
-                position={position}
-                selectedMemoId={selectedMemoId}
-                onSelectMemo={(memoId) => setSelectedMemoId((current) => current === memoId ? null : memoId)}
-                onRequestStageOverride={hasLiveCase ? () => setShowStageOverride(true) : undefined}
-                canOverrideStage={!viewingHistoricalSnapshot}
-              />
+              {caseStore.error ? (
+                <div
+                  role="alert"
+                  className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[10px] text-red-700 dark:border-red-900 dark:bg-red-950/25 dark:text-red-300"
+                >
+                  病例状态加载失败：{caseStore.error}
+                </div>
+              ) : (
+                <TreatmentTree
+                  stages={TRAUMA_STAGES}
+                  rounds={rounds}
+                  currentRoundIndex={currentRoundIndex}
+                  position={position}
+                  selectedMemoId={selectedMemoId}
+                  onSelectMemo={(memoId) => setSelectedMemoId((current) => current === memoId ? null : memoId)}
+                  onRequestStageOverride={hasLiveCase ? () => setShowStageOverride(true) : undefined}
+                  canOverrideStage={!viewingHistoricalSnapshot}
+                />
+              )}
               {showStageOverride && caseStore.current && !viewingHistoricalSnapshot ? (
                 <div className="mt-3">
                   <StageOverrideDialog

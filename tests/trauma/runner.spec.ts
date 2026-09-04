@@ -193,6 +193,43 @@ test("happy path keeps the stage, stores pending transition and one memo", async
   }
 });
 
+test("successful turn writes an audit entry for every orchestration step", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-runner-audit-"));
+  try {
+    const records: Array<{ event: string; step?: number; status: string }> = [];
+    const runner = createTraumaTurnRunner({
+      store: createTraumaCaseStore(root),
+      model: fakeModel({}),
+      rag: fakeRag({ count: 0 }),
+      audit: {
+        path: "/tmp/trauma-agent.jsonl",
+        async record(entry) {
+          records.push(entry);
+        },
+      },
+    });
+
+    await runner.runTurn({
+      projectId: "trauma_med-demo",
+      sessionId: "web:s_demo",
+      messageId: "run-audit",
+      userText: "呼吸32次",
+      now,
+    });
+
+    assert.equal(records[0]?.event, "turn_started");
+    assert.deepEqual(
+      records
+        .filter((record) => record.event === "step_completed")
+        .map((record) => record.step),
+      Array.from({ length: 16 }, (_, index) => index + 1),
+    );
+    assert.equal(records.at(-1)?.event, "turn_completed");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("round 2 fixture keeps initial aid while raising a READY confirmation", async () => {
   const root = await mkdtemp(join(tmpdir(), "trauma-runner-round-2-"));
   try {
