@@ -7,7 +7,14 @@ import StageOverrideDialog from './detail/StageOverrideDialog';
 import { snapshotsToRounds } from './domain/snapshotAdapter';
 import MemoDetailPanel from './MemoDetailPanel';
 import { useCaseStore } from './store/useCaseStore';
-import TreatmentTree from './TreatmentTree';
+import TreatmentTree, { type TreePosition } from './TreatmentTree';
+
+/** 全新病例的流程落点：Ⅰ级 · 初级急救，尚无任何轮次纪要。 */
+const INITIAL_POSITION: TreePosition = {
+  stageId: TRAUMA_STAGES[0]!.id,
+  substepIndex: 0,
+  round: null,
+};
 
 type TraumaWorkspaceProps = {
   resetKey: string;
@@ -32,7 +39,14 @@ export default function TraumaWorkspace({
     [caseStore.current, caseStore.snapshots],
   );
   const hasLiveCase = Boolean(caseStore.current && liveRounds.length > 0);
-  const rounds = hasLiveCase ? liveRounds : DEMO_TRAUMA_ROUNDS;
+  /**
+   * 只有主动查看演示、或根本没有可用的真实对话时才回放固定案例；
+   * 全新病例的流程树从零开始。
+   */
+  const showDemoCase = !hasLiveCase && (showDemoTranscript || !chatInterface);
+  const rounds = hasLiveCase
+    ? liveRounds
+    : showDemoCase ? DEMO_TRAUMA_ROUNDS : [];
 
   useEffect(() => {
     setCurrentRoundIndex(0);
@@ -45,9 +59,20 @@ export default function TraumaWorkspace({
     if (hasLiveCase) setCurrentRoundIndex(Math.max(0, liveRounds.length - 1));
   }, [hasLiveCase, liveRounds.length]);
 
-  const currentRound = rounds[Math.min(currentRoundIndex, rounds.length - 1)];
-  const stage = TRAUMA_STAGES.find((item) => item.id === currentRound.stageId);
-  const substep = stage?.substeps[currentRound.substepIndex];
+  const currentRound = rounds.length > 0
+    ? rounds[Math.min(currentRoundIndex, rounds.length - 1)]
+    : undefined;
+  const position: TreePosition = currentRound
+    ? {
+      stageId: currentRound.stageId,
+      substepIndex: currentRound.substepIndex,
+      round: currentRound.round,
+      blocked: currentRound.gate.status === 'BLOCKED',
+      transferPending: currentRound.transitionTone === 'warning',
+    }
+    : INITIAL_POSITION;
+  const stage = TRAUMA_STAGES.find((item) => item.id === position.stageId);
+  const substep = stage?.substeps[position.substepIndex];
   const selectedMemo = useMemo(
     () => rounds.find((round) => round.id === selectedMemoId) ?? null,
     [rounds, selectedMemoId],
@@ -69,12 +94,18 @@ export default function TraumaWorkspace({
         <StatusCell
           className="col-span-2 sm:col-span-1"
           label="案例概况"
-          value={hasLiveCase ? `${caseStore.current?.injuries.length ?? 0} 项伤情记录` : '爆炸冲击后胸部损伤 · 右小腿开放伤'}
+          value={hasLiveCase
+            ? `${caseStore.current?.injuries.length ?? 0} 项伤情记录`
+            : showDemoCase ? '爆炸冲击后胸部损伤 · 右小腿开放伤' : '暂无伤情记录'}
         />
-        <StatusCell label="当前位置" value={currentRound.facility} tone="info" />
+        <StatusCell label="当前位置" value={currentRound?.facility ?? substep?.note ?? '—'} tone="info" />
         <StatusCell label="当前阶段" value={`${stage?.index} · ${substep?.name}`} />
-        <StatusCell label="伤后时间" value={currentRound.elapsed} tone={currentRound.timing.warning ? 'warning' : undefined} />
-        <StatusCell label="阶段转换" value={currentRound.transitionLabel} tone={currentRound.transitionTone} />
+        <StatusCell label="伤后时间" value={currentRound?.elapsed ?? '—'} tone={currentRound?.timing.warning ? 'warning' : undefined} />
+        <StatusCell
+          label="阶段转换"
+          value={currentRound?.transitionLabel ?? '待首轮推演'}
+          tone={currentRound?.transitionTone}
+        />
       </div>
 
       <div className={cn(
@@ -88,7 +119,7 @@ export default function TraumaWorkspace({
           aria-label="伤情推演对话"
           className="min-h-0 min-w-0 overflow-hidden border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950 lg:rounded-xl lg:border lg:shadow-sm"
         >
-          {chatInterface && !(showDemoTranscript && !hasLiveCase)
+          {chatInterface && !showDemoCase
             ? chatInterface
             : <DemoTranscript rounds={DEMO_TRAUMA_ROUNDS} currentRoundIndex={currentRoundIndex} />}
         </section>
@@ -103,7 +134,7 @@ export default function TraumaWorkspace({
               <p className="truncate text-[9px] text-neutral-400">主级 → 子级 → 轮次纪要</p>
             </div>
             <div className="flex shrink-0 items-center gap-1">
-              {!hasLiveCase ? (
+              {showDemoCase ? (
                 <>
               <button
                 type="button"
@@ -137,7 +168,9 @@ export default function TraumaWorkspace({
               </button>
                 </>
               ) : (
-                <span className="text-[9px] text-neutral-500">实时病例 · R{currentRound.round}</span>
+                <span className="text-[9px] text-neutral-500">
+                  {hasLiveCase ? `实时病例 · R${position.round}` : '等待首轮推演'}
+                </span>
               )}
             </div>
           </header>
@@ -158,9 +191,9 @@ export default function TraumaWorkspace({
                   <p className="text-[9px] leading-4 text-neutral-500 dark:text-neutral-400">
                     {hasLiveCase
                       ? '当前流程树由真实病例快照驱动；阶段转换只有确认或带审计的人工覆盖后才会生效。'
-                      : showDemoTranscript
+                      : showDemoCase
                         ? '当前显示固定演示案例，仅用于说明工作台交互。'
-                        : '请在左侧提交首轮伤情信息，首个病例快照生成后流程树会切换为真实病例。'}
+                        : '新建病例尚无轮次纪要。请在左侧提交首轮伤情信息，流程树会从Ⅰ级·初级急救开始记录。'}
                   </p>
                   {!hasLiveCase && chatInterface ? (
                     <button
@@ -177,6 +210,7 @@ export default function TraumaWorkspace({
                 stages={TRAUMA_STAGES}
                 rounds={rounds}
                 currentRoundIndex={currentRoundIndex}
+                position={position}
                 selectedMemoId={selectedMemoId}
                 onSelectMemo={(memoId) => setSelectedMemoId((current) => current === memoId ? null : memoId)}
                 onRequestStageOverride={hasLiveCase ? () => setShowStageOverride(true) : undefined}
@@ -213,7 +247,7 @@ export default function TraumaWorkspace({
               <aside aria-label="轮次纪要详情" className="min-h-0 min-w-0 overflow-y-auto overflow-x-hidden bg-neutral-50/60 p-3 dark:bg-neutral-900/25">
                 <MemoDetailPanel
                   memo={selectedMemo}
-                  isLatest={selectedMemo.round === currentRound.round}
+                  isLatest={selectedMemo.round === position.round}
                   onClose={() => setSelectedMemoId(null)}
                 />
               </aside>

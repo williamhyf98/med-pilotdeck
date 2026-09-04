@@ -145,6 +145,12 @@ describe('TraumaWorkspace demo workflow', () => {
     expect(screen.getByText('空病例真实会话')).not.toBeNull();
     expect(screen.queryByLabelText('演示案例对话')).toBeNull();
 
+    // 全新病例的流程树不应残留演示轮次，只保留主级/子级骨架。
+    expect(screen.queryByRole('button', { name: /R1首次报告/ })).toBeNull();
+    expect(screen.getByText('等待首轮推演')).not.toBeNull();
+    expect(screen.getAllByText('等待首轮推演生成轮次纪要')).toHaveLength(1);
+    expect(screen.getByText('待首轮推演')).not.toBeNull();
+
     fireEvent.click(screen.getByRole('button', { name: '查看演示案例' }));
     expect(screen.getByLabelText('演示案例对话')).not.toBeNull();
     expect(screen.queryByText('空病例真实会话')).toBeNull();

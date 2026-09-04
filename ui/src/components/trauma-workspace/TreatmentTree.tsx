@@ -2,10 +2,24 @@ import { Check, Circle, LockKeyhole, MoveRight, Settings2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { MainStageId, RoundMemo, StageDefinition, WorkflowStatus } from './types';
 
+/**
+ * 流程树只依赖「当前落点」，不再直接依赖某一轮纪要，
+ * 这样全新病例（尚无任何轮次）也能渲染出完整的主级/子级骨架。
+ */
+export type TreePosition = {
+  stageId: MainStageId;
+  substepIndex: number;
+  /** null 表示尚未产生任何轮次纪要。 */
+  round: number | null;
+  blocked?: boolean;
+  transferPending?: boolean;
+};
+
 type TreatmentTreeProps = {
   stages: StageDefinition[];
   rounds: RoundMemo[];
   currentRoundIndex: number;
+  position: TreePosition;
   selectedMemoId: string | null;
   onSelectMemo: (memoId: string) => void;
   onRequestStageOverride?: () => void;
@@ -67,10 +81,10 @@ function StatusBadge({ status, currentTone = 'teal' }: { status: WorkflowStatus;
 function getMainStatus(
   stages: StageDefinition[],
   stageId: MainStageId,
-  currentRound: RoundMemo,
+  position: TreePosition,
 ): WorkflowStatus {
   const index = stages.findIndex((stage) => stage.id === stageId);
-  const currentIndex = stages.findIndex((stage) => stage.id === currentRound.stageId);
+  const currentIndex = stages.findIndex((stage) => stage.id === position.stageId);
   if (index < currentIndex) return 'done';
   if (index > currentIndex) return 'future';
   return 'current';
@@ -78,21 +92,20 @@ function getMainStatus(
 
 function getSubStatus(
   mainStatus: WorkflowStatus,
-  stageId: MainStageId,
   substepIndex: number,
-  currentRound: RoundMemo,
+  position: TreePosition,
 ): WorkflowStatus {
   if (mainStatus === 'done') return 'done';
   if (mainStatus === 'future') return 'future';
-  if (substepIndex < currentRound.substepIndex) return 'done';
-  if (substepIndex > currentRound.substepIndex) return 'future';
-  if (currentRound.gate.status === 'BLOCKED') return 'blocked';
-  if (currentRound.transitionTone === 'warning') return 'transfer';
+  if (substepIndex < position.substepIndex) return 'done';
+  if (substepIndex > position.substepIndex) return 'future';
+  if (position.blocked) return 'blocked';
+  if (position.transferPending) return 'transfer';
   return 'current';
 }
 
-function getMemoStatus(memo: RoundMemo, currentRound: RoundMemo): WorkflowStatus {
-  if (memo.round !== currentRound.round) return 'done';
+function getMemoStatus(memo: RoundMemo, position: TreePosition): WorkflowStatus {
+  if (memo.round !== position.round) return 'done';
   if (memo.gate.status === 'BLOCKED') return 'blocked';
   if (memo.transitionTone === 'warning') return 'transfer';
   return 'current';
@@ -102,13 +115,13 @@ export default function TreatmentTree({
   stages,
   rounds,
   currentRoundIndex,
+  position,
   selectedMemoId,
   onSelectMemo,
   onRequestStageOverride,
   canOverrideStage = true,
 }: TreatmentTreeProps) {
   const visibleRounds = rounds.slice(0, currentRoundIndex + 1);
-  const currentRound = rounds[currentRoundIndex];
 
   return (
     <div className="space-y-2 pb-4">
@@ -125,7 +138,7 @@ export default function TreatmentTree({
         </div>
       ) : null}
       {stages.map((stage) => {
-        const mainStatus = getMainStatus(stages, stage.id, currentRound);
+        const mainStatus = getMainStatus(stages, stage.id, position);
         return (
           <section key={stage.id}>
             <div
@@ -146,7 +159,7 @@ export default function TreatmentTree({
 
             <div className="ml-3 border-l border-neutral-200 pl-3 pt-1.5 dark:border-neutral-800">
               {stage.substeps.map((substep, substepIndex) => {
-                const subStatus = getSubStatus(mainStatus, stage.id, substepIndex, currentRound);
+                const subStatus = getSubStatus(mainStatus, substepIndex, position);
                 const memos = subStatus === 'future'
                   ? []
                   : visibleRounds.filter(
@@ -172,8 +185,8 @@ export default function TreatmentTree({
                       <div className="ml-3 border-l border-dashed border-neutral-300 pl-3 pt-1.5 dark:border-neutral-700">
                         {memos.map((memo) => {
                           const selected = selectedMemoId === memo.id;
-                          const memoStatus = getMemoStatus(memo, currentRound);
-                          const isCurrentMemo = memo.round === currentRound.round;
+                          const memoStatus = getMemoStatus(memo, position);
+                          const isCurrentMemo = memo.round === position.round;
                           return (
                             <div className="relative mb-1.5" key={memo.id}>
                               <span className="absolute -left-3 top-4 w-3 border-t border-dashed border-neutral-300 dark:border-neutral-700" />
@@ -207,6 +220,15 @@ export default function TreatmentTree({
                             </div>
                           );
                         })}
+                      </div>
+                    ) : position.round === null && subStatus === 'current' ? (
+                      <div className="ml-3 border-l border-dashed border-neutral-300 pl-3 pt-1.5 dark:border-neutral-700">
+                        <div className="relative">
+                          <span className="absolute -left-3 top-4 w-3 border-t border-dashed border-neutral-300 dark:border-neutral-700" />
+                          <p className="rounded-md border border-dashed border-neutral-300 px-2.5 py-2 text-[9px] text-neutral-400 dark:border-neutral-700 dark:text-neutral-500">
+                            等待首轮推演生成轮次纪要
+                          </p>
+                        </div>
                       </div>
                     ) : null}
                   </div>
