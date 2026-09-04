@@ -168,8 +168,10 @@ Optional Python deps (degraded if missing): `pymupdf`, `wfdb`.
 
 `mineru-ingest-tools` 可将授权 PDF、DOC/DOCX 和常见文本异步转换为统一的
 chunks/pages/assets bundle，后续再按需导入 RAG。默认使用不占端口的 stdio MCP；
-也可按需启动仅监听本机的 Streamable HTTP MCP。部署配置、9 个工具、并发边界和
-完整验收步骤见 [docs/mineru-ingest-service.zh.md](docs/mineru-ingest-service.zh.md)。
+也可按需启动仅监听本机的 Streamable HTTP MCP。面向验收人员的三工具包边界、两种
+transport、队列策略和端到端测试见
+[docs/mineru-rag-acceptance.zh.md](docs/mineru-rag-acceptance.zh.md)；部署配置和全部
+9 个 ingest 工具契约见 [docs/mineru-ingest-service.zh.md](docs/mineru-ingest-service.zh.md)。
 MinerU 可执行环境、模型和数据盘路径通过个人的 `$PILOT_HOME/med-tools/`
 `mineru-ingest.env` 配置，不提交到 Git；模板见
 [mineru-ingest.env.example](mineru-ingest.env.example)。
