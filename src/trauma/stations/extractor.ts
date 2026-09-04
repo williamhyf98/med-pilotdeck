@@ -10,7 +10,10 @@ const EXTRACTOR_SYSTEM_PROMPT = `你是战创伤病例事实抽取工位。只�
 问候、闲聊或与伤情无关的内容使用 no_case_update，六组核心字段仍要给出（数组可为空）。
 
 每条事实必须包含 sourceQuote、certainty、confidence、sourceMessageId。
-sourceMessageId 使用 user。不要编造原文没有的数值或机构。`;
+sourceMessageId 使用 user。不要编造原文没有的数值或机构。
+
+Schema 中所有字段都必须给出：本轮没有的可空字段（measuredAt、supersedesFactId、context 三项、status、effect、血压舒张压等）一律填 null。
+生命体征的 value：血压填 {"systolic": 数值, "diastolic": 数值或 null}，其余指标直接填数值。`;
 
 function compactPrevious(previous: CaseState): unknown {
   const latestVitals = previous.vitalSignsHistory.at(-1);
