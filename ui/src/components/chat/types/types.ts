@@ -309,6 +309,10 @@ export interface ChatInterfaceProps {
   // Files workbench: render a quieter, narrow-panel empty state and keep the
   // composer docked to the bottom instead of using the large welcome hero.
   compact?: boolean;
+  // Runtime-only host: keep realtime/session handlers and message cards mounted,
+  // but never expose the standard chat composer or welcome shortcut.
+  hideComposer?: boolean;
+  hiddenComposerNotice?: string;
   // Optional workspace-level overrides used by native feature surfaces while
   // retaining the same Gateway-backed chat implementation.
   modelOverride?: string;

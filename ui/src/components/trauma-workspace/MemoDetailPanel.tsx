@@ -1,6 +1,7 @@
 import { ChevronDown, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { TRAUMA_STAGES } from './demoCase';
+import { gateStatusLabel } from './domain/displayLabels';
 import type { GateStatus, RoundMemo, Trend } from './types';
 
 type MemoDetailPanelProps = {
@@ -69,7 +70,7 @@ function GateBadge({ status }: { status: GateStatus }) {
       status === 'COMPLETED' && 'border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-300',
     )}
     >
-      {status}
+      {gateStatusLabel(status)}
     </span>
   );
 }
@@ -84,7 +85,7 @@ export default function MemoDetailPanel({ memo, isLatest, onClose }: MemoDetailP
         <header className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="truncate text-[9px] text-neutral-400">
-              {stage?.index} {stage?.name} › {substep?.name} › Round {memo.round}
+              {stage?.index} {stage?.name} › {substep?.name} › 第 {memo.round} 轮
             </p>
             <h2 className="mt-0.5 text-[14px] font-semibold">{memo.title}</h2>
           </div>
@@ -97,7 +98,7 @@ export default function MemoDetailPanel({ memo, isLatest, onClose }: MemoDetailP
             <X className="h-3.5 w-3.5" />
           </button>
         </header>
-        <Metric label="快照时间" value={`${memo.time} · 伤后 ${memo.elapsed}`} />
+        <Metric label="快照时间" value={memo.time} />
         <Metric label="快照类型" value={isLatest ? '本轮最新状态' : '历史轮次快照'} tone={isLatest ? 'info' : undefined} />
         <Metric label="下一医学目标" value={memo.nextTarget} />
       </section>
@@ -179,21 +180,14 @@ export default function MemoDetailPanel({ memo, isLatest, onClose }: MemoDetailP
         <p className="mt-2.5 border-l-2 border-teal-500 pl-2 text-[10px] font-medium">{memo.conclusion}</p>
       </Card>
 
-      <div className="grid grid-cols-2 gap-2.5">
-        <Card title="动态分类" meta={memo.classification.label}>
-          <Metric label="伤势状态" value={memo.classification.severity} />
-          <Metric label="救治优先级" value={memo.classification.treatmentPriority} />
-          <Metric label="后送优先级" value={memo.classification.transportPriority} />
-        </Card>
-        <Card title="时效提示" meta="软约束" className={memo.timing.warning ? 'border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/20' : undefined}>
-          <Metric label="伤后时间" value={memo.elapsed} tone={memo.timing.warning ? 'warning' : undefined} />
-          <Metric label="当前状态" value={memo.timing.status} tone={memo.timing.warning ? 'warning' : undefined} />
-          <p className="mt-2 text-[9px] leading-4 text-neutral-500">{memo.timing.window}。时间不单独触发阶段转换。</p>
-        </Card>
-      </div>
+      <Card title="动态分类" meta={memo.classification.label}>
+        <Metric label="伤势状态" value={memo.classification.severity} />
+        <Metric label="救治优先级" value={memo.classification.treatmentPriority} />
+        <Metric label="后送优先级" value={memo.classification.transportPriority} />
+      </Card>
 
       <Card
-        title="阶段转换 Gate"
+        title="阶段转换状态"
         meta={<GateBadge status={memo.gate.status} />}
         className={cn(
           memo.gate.status === 'BLOCKED' && 'border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/20',
@@ -203,7 +197,7 @@ export default function MemoDetailPanel({ memo, isLatest, onClose }: MemoDetailP
         <p className="text-[11px] font-semibold">{memo.gate.title}</p>
         <p className="mt-1 text-[10px] leading-4 text-neutral-500 dark:text-neutral-400">{memo.gate.description}</p>
         <div className="mt-2 rounded-md border border-neutral-200 bg-white/70 px-2 py-1.5 text-[9px] leading-4 text-neutral-600 dark:border-neutral-800 dark:bg-neutral-950/50 dark:text-neutral-300">
-          <strong>用户确认：</strong>{memo.gate.confirmation}
+          <strong>执行状态：</strong>{memo.gate.confirmation}
         </div>
       </Card>
 
@@ -225,7 +219,7 @@ export default function MemoDetailPanel({ memo, isLatest, onClose }: MemoDetailP
 
       <details className="group overflow-hidden rounded-lg border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950">
         <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2.5 text-[11px] font-semibold">
-          知识库依据 · {memo.evidence.length} 个 RAG Chunk
+          知识库依据 · {memo.evidence.length} 条知识块
           <ChevronDown className="h-3.5 w-3.5 text-neutral-400 transition group-open:rotate-180" />
         </summary>
         <div className="space-y-2 border-t border-neutral-200 p-2.5 dark:border-neutral-800">

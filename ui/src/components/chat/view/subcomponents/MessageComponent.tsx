@@ -22,6 +22,7 @@ import { formatUsageLimitText } from '../../utils/chatFormatting';
 import { getPilotDeckPermissionSuggestion } from '../../utils/chatPermissions';
 import type { Project } from '../../../../types/app';
 import { ToolRenderer, shouldHideToolResult } from '../../tools';
+import { getToolDisplayName } from '../../tools/configs/toolConfigs';
 import { CollapsibleDisplay } from '../../tools/components';
 import DocumentReferenceChip from '../../../chat-v2/DocumentReferenceChip';
 import { Markdown } from './Markdown';
@@ -477,10 +478,10 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, o
                                 <Search className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
                                 <div className="min-w-0 flex-1">
                                   <div className="text-sm font-medium text-amber-800 dark:text-amber-200">
-                                    {t('toolUseError.webSearchNotConfigured.title', { defaultValue: 'Web Search Not Ready' })}
+                                    {t('toolUseError.webSearchNotConfigured.title', { defaultValue: '网页搜索未就绪' })}
                                   </div>
                                   <div className="mt-1 text-xs leading-5 text-amber-700/90 dark:text-amber-300/80">
-                                    {t('toolUseError.webSearchNotConfigured.description', { defaultValue: 'The search API key is missing or invalid. Please go to Settings -> Config -> Search to check your search provider and API key.' })}
+                                    {t('toolUseError.webSearchNotConfigured.description', { defaultValue: '搜索 API 密钥缺失或无效。请前往设置中的配置 > 搜索，检查搜索提供方和密钥。' })}
                                   </div>
                                   <button
                                     type="button"
@@ -494,7 +495,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, o
                                     className="mt-2.5 inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-white/80 px-3 py-1.5 text-xs font-medium text-amber-800 transition-colors hover:bg-white dark:border-amber-700/60 dark:bg-amber-900/30 dark:text-amber-200 dark:hover:bg-amber-900/50"
                                   >
                                     <Settings className="h-3 w-3" />
-                                    {t('toolUseError.webSearchNotConfigured.openSettings', { defaultValue: 'Go to Settings' })}
+                                    {t('toolUseError.webSearchNotConfigured.openSettings', { defaultValue: '前往设置' })}
                                   </button>
                                 </div>
                               </div>
@@ -515,7 +516,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, o
                               </svg>
                               <div className="min-w-0 flex-1">
                                 <div className="text-sm font-medium text-amber-800 dark:text-amber-200">
-                                  {t('setupRequired.title', { defaultValue: 'Configuration needed' })}
+                                  {t('setupRequired.title', { defaultValue: '需要配置' })}
                                 </div>
                                 <div className="mt-0.5 text-xs text-amber-700 dark:text-amber-300/80">
                                   {renderedErrorContent}
@@ -536,7 +537,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, o
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                                     </svg>
-                                    {t('setupRequired.openSettings', { defaultValue: 'Open Settings' })}
+                                    {t('setupRequired.openSettings', { defaultValue: '打开设置' })}
                                   </button>
                                 )}
                               </div>
@@ -549,7 +550,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, o
                             <CollapsibleDisplay
                               toolName={message.toolName || 'UnknownTool'}
                               toolId={message.toolId}
-                              title={t('toolUseError.title', { defaultValue: 'Tool error' })}
+                              title={t('toolUseError.title', { defaultValue: '工具错误' })}
                               defaultOpen={false}
                               toolCategory="default"
                               autoExpandable={false}
@@ -579,13 +580,13 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, o
                                 </svg>
                                 <span>
                                   {recoverableToolError
-                                    ? t('toolUseError.title', { defaultValue: 'Tool error' })
-                                    : t('messageTypes.error', { defaultValue: 'Error' })}
+                                    ? t('toolUseError.title', { defaultValue: '工具错误' })
+                                    : t('messageTypes.error', { defaultValue: '错误' })}
                                 </span>
                                 {message.toolName ? (
                                   <>
                                     <span className="text-red-400/80 dark:text-red-300/60">/</span>
-                                    <span className="font-normal text-red-500 dark:text-red-300/90">{message.toolName}</span>
+                                    <span className="font-normal text-red-500 dark:text-red-300/90">{getToolDisplayName(message.toolName)}</span>
                                   </>
                                 ) : null}
                               </summary>

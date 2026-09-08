@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { cn } from '../../lib/utils';
 import MessageRowV2 from '../chat-v2/MessageRowV2';
 import type { ChatMessage } from '../chat/types/types';
+import { toChineseDisplayText } from './domain/displayLabels';
 import type { RoundMemo } from './types';
 
 type DemoTranscriptProps = {
@@ -19,7 +20,7 @@ function buildMessages(rounds: RoundMemo[]): ChatMessage[] {
       id: baseId,
       entryId: baseId,
       type: message.role,
-      content: message.text,
+      content: toChineseDisplayText(message.text),
       timestamp,
     }];
 
@@ -35,12 +36,18 @@ function buildMessages(rounds: RoundMemo[]): ChatMessage[] {
         toolId: `${baseId}-ask`,
         toolInput: {
           questions: [{
-            header: message.ask.header,
-            question: message.ask.question,
-            options: message.ask.options,
+            header: toChineseDisplayText(message.ask.header),
+            question: toChineseDisplayText(message.ask.question),
+            options: message.ask.options.map((option) => ({
+              ...option,
+              label: toChineseDisplayText(option.label),
+              description: option.description
+                ? toChineseDisplayText(option.description)
+                : option.description,
+            })),
             multiSelect: false,
           }],
-          answers: { [message.ask.question]: message.ask.answer },
+          answers: { [toChineseDisplayText(message.ask.question)]: toChineseDisplayText(message.ask.answer) },
         },
       });
     }

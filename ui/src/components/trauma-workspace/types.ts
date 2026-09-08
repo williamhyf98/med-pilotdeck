@@ -1,8 +1,6 @@
 export type MainStageId =
   | 'battlefield_first_aid'
-  | 'early_treatment'
-  | 'specialist_treatment'
-  | 'rehabilitation';
+  | 'early_treatment';
 
 export type WorkflowStatus = 'future' | 'current' | 'done' | 'transfer' | 'blocked';
 
@@ -58,9 +56,9 @@ export type RoundMemo = {
   round: number;
   title: string;
   time: string;
-  elapsed: string;
   stageId: MainStageId;
   substepIndex: number;
+  unplaced?: boolean;
   facility: string;
   capability: string;
   transitionLabel: string;
@@ -75,11 +73,6 @@ export type RoundMemo = {
     severity: string;
     treatmentPriority: string;
     transportPriority: string;
-  };
-  timing: {
-    window: string;
-    status: string;
-    warning?: boolean;
   };
   gate: {
     status: GateStatus;

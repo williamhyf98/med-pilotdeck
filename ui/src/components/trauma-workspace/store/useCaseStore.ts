@@ -44,5 +44,22 @@ export function useCaseStore(projectKey?: string, sessionId?: string) {
     return () => window.clearInterval(timer);
   }, [projectKey, refresh, sessionId]);
 
+  useEffect(() => {
+    if (!projectKey || !sessionId) return undefined;
+    const handleTurnComplete = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        sessionId?: string;
+        projectName?: string;
+        projectPath?: string;
+      }>).detail;
+      if (detail?.sessionId !== sessionId) return;
+      const eventProjectKeys = [detail.projectName, detail.projectPath].filter(Boolean);
+      if (eventProjectKeys.length > 0 && !eventProjectKeys.includes(projectKey)) return;
+      void refresh();
+    };
+    window.addEventListener('pilotdeck:agent-turn-complete', handleTurnComplete);
+    return () => window.removeEventListener('pilotdeck:agent-turn-complete', handleTurnComplete);
+  }, [projectKey, refresh, sessionId]);
+
   return { ...data, loading, error, refresh };
 }

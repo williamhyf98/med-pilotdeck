@@ -316,18 +316,22 @@ class RemoteRagServiceTests(unittest.TestCase):
             any("was not applied" in w for w in result["warnings"]), result["warnings"]
         )
 
-    def test_remote_zero_results_does_not_fall_back(self) -> None:
+    def test_remote_zero_results_falls_back_to_local(self) -> None:
         from server.rag import query_rag
+        from server.rag.store import get_default_store
 
+        store = get_default_store()
+        store.status(validate=True)
+        row0 = np.asarray(store._matrix[0], dtype=np.float32).tolist()  # type: ignore[index]
         with mock.patch(
             "server.rag.query.retrieve_remote", return_value={"results": []}
-        ) as remote, mock.patch("server.rag.query.embed_texts") as embed:
-            result = query_rag(query="不存在的主题", top_k=3)
+        ) as remote, mock.patch("server.rag.query.embed_texts", return_value=[row0]):
+            result = query_rag(query="不存在的主题", top_k=3, min_score=0.0)
 
-        self.assertEqual(result["mode"], "remote")
-        self.assertEqual(result["chunk_count"], 0)
+        self.assertEqual(result["mode"], "vector")
+        self.assertEqual(result["retrieval_backend"], "local")
+        self.assertGreater(result["chunk_count"], 0)
         self.assertEqual(remote.call_count, 1)
-        embed.assert_not_called()
         self.assertTrue(any("returned 0 chunks" in w for w in result["warnings"]))
 
     def test_disabled_switch_skips_remote(self) -> None:

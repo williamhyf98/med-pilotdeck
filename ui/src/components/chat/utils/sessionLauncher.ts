@@ -1,4 +1,5 @@
 import type { Project, ProjectSession } from '../../../types/app';
+import type { TurnFormInput } from '../../trauma-workspace/domain/types';
 import type {
   ChatAttachment,
   ChatRunMode,
@@ -8,7 +9,7 @@ import type {
 } from '../types/types';
 import { getPilotDeckSettings, safeLocalStorage } from './chatStorage';
 
-type StartSessionOptions = {
+export type StartSessionOptions = {
   sendMessage: (message: unknown) => void;
   selectedProject: Project;
   command: string;
@@ -31,6 +32,7 @@ type StartSessionOptions = {
   alwaysOnExecutionToken?: string;
   workspaceCwd?: string;
   forceStart?: boolean;
+  traumaForm?: TurnFormInput;
 };
 
 const VALID_PERMISSION_MODES = new Set<PermissionMode>([
@@ -111,6 +113,7 @@ export function startSessionCommand({
   alwaysOnExecutionToken,
   workspaceCwd,
   forceStart,
+  traumaForm,
 }: StartSessionOptions): string {
   const sessionToActivate =
     sessionId || temporarySessionId || createTemporarySessionId();
@@ -142,6 +145,7 @@ export function startSessionCommand({
       ...(Array.isArray(attachments) && attachments.length > 0 ? { attachments } : {}),
       ...(workspaceCwd ? { workspaceCwd } : {}),
       ...(forceStart ? { forceStart: true } : {}),
+      ...(traumaForm ? { traumaForm } : {}),
     },
   });
 

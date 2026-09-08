@@ -1,18 +1,12 @@
 export type MainStage =
   | "battlefield_first_aid"
-  | "early_treatment"
-  | "specialist_treatment"
-  | "rehabilitation";
+  | "early_treatment";
 
 export type SubStage =
   | "primary_first_aid"
   | "advanced_first_aid"
   | "emergency_treatment"
-  | "surgical_resuscitation"
-  | "field_specialist_treatment"
-  | "definitive_specialist_treatment"
-  | "functional_recovery"
-  | "psychophysical_rehabilitation";
+  | "surgical_resuscitation";
 
 export type NodeStatus =
   | "not_started"
@@ -29,28 +23,32 @@ export type ClassificationType =
   | "treatment_triage"
   | "evacuation_triage";
 
-export type VitalSigns = {
-  measuredAt: string;
-  sourceMessageId: string;
-  respiratoryRate?: number;
-  systolicBloodPressure?: number;
-  diastolicBloodPressure?: number;
-  heartRate?: number;
-  spo2?: number;
-  gcs?: number;
-  temperature?: number;
+export type VitalItemKey =
+  | "respiratoryRate"
+  | "systolicBloodPressure"
+  | "gcs"
+  | "heartRate"
+  | "temperature";
+
+export type TurnFormInput = {
+  statedSubStage: SubStage | null;
+  injuryNarrative: string;
+  treatmentNarrative: string;
+  evacuationNarrative: string;
+  note: string;
+  vitals: Partial<Record<VitalItemKey, number>>;
 };
 
-export type InjuryFinding = {
-  id: string;
-  category: string;
-  bodyPart: string;
-  finding: string;
-  certainty: "suspected" | "confirmed" | "excluded";
-  status: "active" | "controlled" | "worsening" | "improving";
-  sourceMessageId: string;
-  sourceQuote: string;
-  confidence: number;
+export type NarrativeEntry = {
+  round: number;
+  createdAt: string;
+  text: string;
+};
+
+export type VitalsRoundRecord = {
+  round: number;
+  recordedAt: string;
+  values: Partial<Record<VitalItemKey, number>>;
 };
 
 export type ClassificationRecord = {
@@ -82,15 +80,6 @@ export type TransportState = {
   targetFacilityType?: string;
   actualFacilityId?: string;
   confirmation?: StageTransitionConfirmation;
-};
-
-export type TimelineState = {
-  injuryTime: string;
-  currentTime: string;
-  elapsedMinutes: number;
-  recommendedWindowMinutes?: number;
-  timingStatus: "within_window" | "approaching" | "exceeded";
-  isHardGate: false;
 };
 
 export type EvidenceChunk = {
@@ -139,62 +128,21 @@ export type TreatmentAction = {
   professionalConfirmationRequired: boolean;
 };
 
-export type ExtractedFact<T = unknown> = {
-  value: T;
-  sourceMessageId: string;
-  sourceQuote: string;
-  measuredAt?: string;
-  certainty: "confirmed" | "suspected" | "excluded" | "unknown";
-  confidence: number;
-  supersedesFactId?: string;
-};
-
-export type ExtractedVital = {
-  type:
-    | "respiratory_rate"
-    | "blood_pressure"
-    | "heart_rate"
-    | "spo2"
-    | "gcs"
-    | "temperature";
-  value: number | { systolic: number; diastolic?: number };
-  unit: string;
-};
-
-export type ExtractedTurnFacts = {
-  turnKind: "case_update" | "correction" | "question" | "no_case_update";
-  context: {
-    eventTime?: ExtractedFact<string>;
-    location?: ExtractedFact<string>;
-    facility?: ExtractedFact<string>;
-  };
-  vitalSigns: Array<ExtractedFact<ExtractedVital>>;
-  injuryFindings: Array<ExtractedFact<{
-    bodyPart: string;
-    finding: string;
-    status?: "active" | "controlled" | "worsening" | "improving";
-  }>>;
-  treatmentEvents: Array<ExtractedFact<{
-    action: string;
-    status: "planned" | "in_progress" | "completed";
-    effect?: "effective" | "ineffective" | "worsened" | "unknown";
-  }>>;
-  careAndTransportFacts: Array<ExtractedFact<{
-    type: "capability" | "capability_gap" | "destination" | "transport_mode" | "transport_constraint";
-    description: string;
-  }>>;
-  correctionsAndProvenance: {
-    conflictingFactIds: string[];
-  };
-  extensions?: Array<ExtractedFact<{ type: string; data: unknown }>>;
+export type PlacementAssessment = {
+  determined: boolean;
+  source: "user_stated" | "definition" | "undetermined" | "out_of_scope";
+  stage: MainStage | null;
+  subStage: SubStage | null;
+  rationale: string;
+  definitionReferences: string[];
 };
 
 export type RoundMemo = {
   id: string;
   round: number;
   createdAt: string;
-  mainStage: MainStage;
-  subStage: SubStage;
+  mainStage: MainStage | null;
+  subStage: SubStage | null;
   title: string;
   inputPoints: string[];
   actionPoints: string[];
@@ -247,8 +195,8 @@ export type ManualStageOverride = {
   id: string;
   actorId: string;
   createdAt: string;
-  fromStage: MainStage;
-  fromSubStage: SubStage;
+  fromStage: MainStage | null;
+  fromSubStage: SubStage | null;
   toStage: MainStage;
   toSubStage: SubStage;
   reason: string;
@@ -272,24 +220,25 @@ export type CaseState = {
   version: number;
   round: number;
   updatedAt: string;
-  currentFacility: CurrentFacility;
-  currentStage: MainStage;
-  currentSubStage: SubStage;
-  injuries: InjuryFinding[];
-  vitalSignsHistory: VitalSigns[];
-  completedActions: TreatmentAction[];
-  currentActions: TreatmentAction[];
+  currentFacility: CurrentFacility | null;
+  currentStage: MainStage | null;
+  currentSubStage: SubStage | null;
+  placementRationale?: string;
+  placementEvidenceChunkIds?: string[];
+  injuryNarratives: NarrativeEntry[];
+  treatmentNarratives: NarrativeEntry[];
+  evacuationNarratives: NarrativeEntry[];
+  notes: NarrativeEntry[];
+  vitalSignsHistory: VitalsRoundRecord[];
   requiredCapabilities: string[];
   currentCapabilities: string[];
   classificationHistory: ClassificationRecord[];
   transport: TransportState;
   pendingTransition?: StageTransitionConfirmation;
   manualStageOverrides: ManualStageOverride[];
-  timeline: TimelineState;
   evidence: EvidenceChunk[];
   memos: RoundMemo[];
   missingInformation: string[];
-  conflictingFactIds: string[];
 };
 
 export type AgentTurnResponse = {
@@ -298,13 +247,12 @@ export type AgentTurnResponse = {
   round: number;
   naturalLanguageAnswer: string;
   stage: {
-    main: MainStage;
-    sub: SubStage;
+    main: MainStage | null;
+    sub: SubStage | null;
   };
   classification: ClassificationRecord;
   treatmentPlan: TreatmentAction[];
   missingInformation: string[];
-  timeline: TimelineState;
   transition: {
     status: Exclude<GateStatus, "COMPLETED">;
     targetStage?: MainStage;
@@ -313,6 +261,7 @@ export type AgentTurnResponse = {
     requiresUserConfirmation: boolean;
   };
   gateAssessment: ClinicalGateAssessment;
+  placement: PlacementAssessment;
   memo: Omit<RoundMemo, "id" | "createdAt" | "snapshotVersion">;
   evidence: EvidenceChunk[];
 };
@@ -323,6 +272,7 @@ export type CaseSnapshot = {
   createdAt: string;
   triggerMessageId: string;
   state: CaseState;
+  form?: TurnFormInput;
   retrieval?: RetrievalTrace;
   response?: AgentTurnResponse;
 };

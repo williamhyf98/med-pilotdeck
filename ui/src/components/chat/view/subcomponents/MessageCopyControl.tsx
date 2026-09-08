@@ -56,11 +56,11 @@ const MessageCopyControl = ({
     () => [
       {
         format: 'markdown',
-        label: t('copyMessage.copyAsMarkdown', { defaultValue: 'Copy as markdown' }),
+        label: t('copyMessage.copyAsMarkdown', { defaultValue: '复制为 Markdown' }),
       },
       {
         format: 'text',
-        label: t('copyMessage.copyAsText', { defaultValue: 'Copy as text' }),
+        label: t('copyMessage.copyAsText', { defaultValue: '复制为文本' }),
       },
     ],
     [t]
@@ -68,7 +68,7 @@ const MessageCopyControl = ({
 
   const selectedFormatTag = selectedFormat === 'markdown'
     ? t('copyMessage.markdownShort', { defaultValue: 'MD' })
-    : t('copyMessage.textShort', { defaultValue: 'TXT' });
+    : t('copyMessage.textShort', { defaultValue: '文本' });
 
   const copyPayload = useMemo(() => {
     if (selectedFormat === 'markdown') {
@@ -173,8 +173,8 @@ const MessageCopyControl = ({
             type="button"
             onClick={() => setIsDropdownOpen((prev) => !prev)}
             className={`rounded px-1 py-0.5 transition-colors ${toneClass}`}
-            aria-label={t('copyMessage.selectFormat', { defaultValue: 'Select copy format' })}
-            title={t('copyMessage.selectFormat', { defaultValue: 'Select copy format' })}
+            aria-label={t('copyMessage.selectFormat', { defaultValue: '选择复制格式' })}
+            title={t('copyMessage.selectFormat', { defaultValue: '选择复制格式' })}
           >
             <svg
               className={`h-3 w-3 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`}

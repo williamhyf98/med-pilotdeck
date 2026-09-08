@@ -1,155 +1,159 @@
-import { createHash } from "node:crypto";
-
 import type {
   CaseState,
-  ExtractedFact,
-  ExtractedTurnFacts,
-  InjuryFinding,
-  TreatmentAction,
-  VitalSigns,
+  NarrativeEntry,
+  TurnFormInput,
+  VitalItemKey,
 } from "./types.js";
 
-function stableId(prefix: string, ...parts: string[]): string {
-  return `${prefix}-${createHash("sha1").update(parts.join("\0")).digest("hex").slice(0, 12)}`;
-}
+const VITAL_RANGES: Record<VitalItemKey, readonly [number, number]> = {
+  respiratoryRate: [0, 80],
+  systolicBloodPressure: [20, 300],
+  gcs: [3, 15],
+  heartRate: [0, 300],
+  temperature: [20, 45],
+};
 
-function vitalKey(fact: ExtractedFact): string {
-  return `${fact.measuredAt ?? ""}\0${fact.sourceMessageId}`;
-}
+const TEXT_LIMITS = {
+  injuryNarrative: 1_000,
+  treatmentNarrative: 800,
+  evacuationNarrative: 500,
+  note: 500,
+} as const;
 
-function appendVitals(state: CaseState, facts: ExtractedTurnFacts["vitalSigns"], now: string): void {
-  const grouped = new Map<string, VitalSigns>();
-  for (const fact of facts) {
-    if (fact.certainty === "excluded" || fact.certainty === "unknown") continue;
-    const key = vitalKey(fact);
-    const vital = grouped.get(key) ?? {
-      measuredAt: fact.measuredAt ?? now,
-      sourceMessageId: fact.sourceMessageId,
-    };
-    const value = fact.value.value;
-    switch (fact.value.type) {
-      case "respiratory_rate":
-        if (typeof value === "number") vital.respiratoryRate = value;
-        break;
-      case "blood_pressure":
-        if (typeof value === "object") {
-          vital.systolicBloodPressure = value.systolic;
-          vital.diastolicBloodPressure = value.diastolic;
-        }
-        break;
-      case "heart_rate":
-        if (typeof value === "number") vital.heartRate = value;
-        break;
-      case "spo2":
-        if (typeof value === "number") vital.spo2 = value;
-        break;
-      case "gcs":
-        if (typeof value === "number") vital.gcs = value;
-        break;
-      case "temperature":
-        if (typeof value === "number") vital.temperature = value;
-        break;
-    }
-    grouped.set(key, vital);
+const FORM_SUBSTAGES = new Set([
+  "primary_first_aid",
+  "advanced_first_aid",
+  "emergency_treatment",
+  "surgical_resuscitation",
+]);
+
+export function validateTurnFormInput(value: unknown): value is TurnFormInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const input = value as Record<string, unknown>;
+  const allowedKeys = new Set(["statedSubStage", ...Object.keys(TEXT_LIMITS), "vitals"]);
+  if (Object.keys(input).some((key) => !allowedKeys.has(key))) return false;
+  if (!("statedSubStage" in input)) return false;
+  if (input.statedSubStage !== null && !FORM_SUBSTAGES.has(String(input.statedSubStage))) {
+    return false;
   }
-  state.vitalSignsHistory.push(...grouped.values());
-}
 
-function mergeInjuries(state: CaseState, facts: ExtractedTurnFacts["injuryFindings"]): void {
-  for (const fact of facts) {
-    const existing = state.injuries.find(
-      injury => injury.bodyPart === fact.value.bodyPart
-        && injury.finding === fact.value.finding,
-    );
-    const certainty: InjuryFinding["certainty"] = fact.certainty === "unknown"
-      ? "suspected"
-      : fact.certainty;
-    if (existing) {
-      existing.certainty = certainty;
-      existing.status = fact.value.status ?? existing.status;
-      existing.sourceMessageId = fact.sourceMessageId;
-      existing.sourceQuote = fact.sourceQuote;
-      existing.confidence = fact.confidence;
-      continue;
-    }
-    state.injuries.push({
-      id: stableId("injury", fact.value.bodyPart, fact.value.finding),
-      category: "extracted",
-      bodyPart: fact.value.bodyPart,
-      finding: fact.value.finding,
-      certainty,
-      status: fact.value.status ?? "active",
-      sourceMessageId: fact.sourceMessageId,
-      sourceQuote: fact.sourceQuote,
-      confidence: fact.confidence,
-    });
+  const hasNarrative = Object.keys(TEXT_LIMITS).some((key) => {
+    const text = input[key];
+    return typeof text === "string" && text.trim().length > 0;
+  });
+  for (const [key, limit] of Object.entries(TEXT_LIMITS)) {
+    const text = input[key];
+    if (typeof text !== "string" || text.length > limit) return false;
   }
-}
 
-function mergeTreatments(state: CaseState, facts: ExtractedTurnFacts["treatmentEvents"]): void {
-  for (const fact of facts) {
-    const action: TreatmentAction = {
-      id: stableId("action", fact.sourceMessageId, fact.value.action),
-      title: fact.value.action,
-      description: fact.sourceQuote,
-      scope: "current_stage",
-      priority: 0,
-      evidenceChunkIds: [],
-      professionalConfirmationRequired: false,
-    };
-    if (fact.value.status === "completed") {
-      if (!state.completedActions.some(item => item.id === action.id)) {
-        state.completedActions.push(action);
-      }
-    } else if (!state.currentActions.some(item => item.id === action.id)) {
-      state.currentActions.push(action);
+  const vitals = input.vitals;
+  if (!vitals || typeof vitals !== "object" || Array.isArray(vitals)) return false;
+  let hasVital = false;
+  for (const [key, raw] of Object.entries(vitals)) {
+    if (!(key in VITAL_RANGES) || typeof raw !== "number" || !Number.isFinite(raw)) return false;
+    const vitalKey = key as VitalItemKey;
+    const [minimum, maximum] = VITAL_RANGES[vitalKey];
+    if (raw < minimum || raw > maximum) return false;
+    if (vitalKey === "temperature") {
+      if (!Number.isInteger(raw * 10)) return false;
+    } else if (!Number.isInteger(raw)) {
+      return false;
     }
+    hasVital = true;
   }
+  return hasNarrative || hasVital;
 }
 
-function mergeCareFacts(state: CaseState, facts: ExtractedTurnFacts["careAndTransportFacts"]): void {
-  for (const fact of facts) {
-    const { description, type } = fact.value;
-    if (type === "capability" && !state.currentCapabilities.includes(description)) {
-      state.currentCapabilities.push(description);
-    }
-    if (type === "capability_gap" && !state.requiredCapabilities.includes(description)) {
-      state.requiredCapabilities.push(description);
-    }
-    if (type === "destination") {
-      state.transport.targetFacilityType = description;
-    }
-    if (type === "transport_constraint") {
-      state.transport.blockingReason = description;
-      state.transport.readiness = "not_ready";
-    }
-  }
+function appendNarrative(
+  entries: NarrativeEntry[],
+  text: string,
+  round: number,
+  createdAt: string,
+): void {
+  const trimmed = text.trim();
+  if (trimmed) entries.push({ round, createdAt, text: trimmed });
 }
 
-export function mergeExtractedFacts(
+export function mergeFormInput(
   previous: CaseState,
-  facts: ExtractedTurnFacts,
+  input: TurnFormInput,
+  round: number,
   now: string,
 ): CaseState {
   const state = structuredClone(previous);
   state.updatedAt = now;
-
-  const eventTime = facts.context.eventTime?.value;
-  if (eventTime && !state.timeline.injuryTime) {
-    state.timeline.injuryTime = eventTime;
+  appendNarrative(state.injuryNarratives, input.injuryNarrative, round, now);
+  appendNarrative(state.treatmentNarratives, input.treatmentNarrative, round, now);
+  appendNarrative(state.evacuationNarratives, input.evacuationNarrative, round, now);
+  appendNarrative(state.notes, input.note, round, now);
+  if (Object.keys(input.vitals).length > 0) {
+    state.vitalSignsHistory.push({
+      round,
+      recordedAt: now,
+      values: { ...input.vitals },
+    });
   }
-  if (facts.context.facility?.value) {
-    state.currentFacility.name = facts.context.facility.value;
-  }
-
-  appendVitals(state, facts.vitalSigns, now);
-  mergeInjuries(state, facts.injuryFindings);
-  mergeTreatments(state, facts.treatmentEvents);
-  mergeCareFacts(state, facts.careAndTransportFacts);
-  state.conflictingFactIds = Array.from(new Set([
-    ...state.conflictingFactIds,
-    ...facts.correctionsAndProvenance.conflictingFactIds,
-  ]));
-
   return state;
+}
+
+function recentNarratives(entries: NarrativeEntry[]): NarrativeEntry[] {
+  return entries
+    .slice()
+    .sort((left, right) => right.round - left.round)
+    .slice(0, 6)
+    .map((entry) => ({ ...entry, text: entry.text.slice(0, 300) }));
+}
+
+export function compactCaseStateForDownstream(state: CaseState) {
+  const latestVitals = state.vitalSignsHistory.at(-1);
+  const recentVitalRecords = state.vitalSignsHistory
+    .slice(-6)
+    .reverse()
+    .map((record) => ({
+      ...record,
+      values: { ...record.values },
+    }));
+  const latestByField: Partial<Record<
+    VitalItemKey,
+    { value: number; round: number; stale: boolean }
+  >> = {};
+  const latestValues: Partial<Record<VitalItemKey, number>> = {};
+  const vitalKeys = Object.keys(VITAL_RANGES) as VitalItemKey[];
+  for (let index = state.vitalSignsHistory.length - 1; index >= 0; index -= 1) {
+    const record = state.vitalSignsHistory[index];
+    if (!record) continue;
+    for (const key of vitalKeys) {
+      const value = record.values[key];
+      if (value === undefined || latestByField[key]) continue;
+      latestByField[key] = {
+        value,
+        round: record.round,
+        stale: record.round !== state.round,
+      };
+      latestValues[key] = value;
+    }
+  }
+  let latestNote: NarrativeEntry | null = null;
+  for (let index = state.notes.length - 1; index >= 0; index -= 1) {
+    if (state.notes[index]?.round === state.round) {
+      latestNote = state.notes[index] ?? null;
+      break;
+    }
+  }
+  return {
+    currentStage: state.currentStage,
+    currentSubStage: state.currentSubStage,
+    facility: state.currentFacility,
+    injuryNarratives: recentNarratives(state.injuryNarratives),
+    treatmentNarratives: recentNarratives(state.treatmentNarratives),
+    evacuationNarratives: recentNarratives(state.evacuationNarratives),
+    note: latestNote,
+    vitals: {
+      recentRecords: recentVitalRecords,
+      latestByField,
+      latestMeasuredRound: latestVitals?.round ?? null,
+      measuredThisRound: latestVitals?.round === state.round,
+      values: latestValues,
+    },
+  };
 }

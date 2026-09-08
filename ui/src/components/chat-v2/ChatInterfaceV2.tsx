@@ -18,13 +18,58 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { getDraftInputStorageKey, safeLocalStorage } from '../chat/utils/chatStorage';
 import { useSessionWatch } from '../../hooks/useSessionWatch';
 import MessagesPaneV2 from './MessagesPaneV2';
-import ComposerV2 from './ComposerV2';
+import ComposerV2, { PermissionRequestsSlot } from './ComposerV2';
 import { buildReconnectStatusMessage, refreshSessionAfterReconnect, shouldRefreshSessionOnReconnect } from './reconnectRecovery';
 
 type PendingViewSession = {
   sessionId: string | null;
   startedAt: number;
 };
+
+export function ChatInterfaceLayout({
+  hideComposer,
+  isWelcomeMode,
+  compact: _compact,
+  messagePane,
+  composerSlot,
+  permissionSlot,
+  hiddenComposerNotice,
+  welcome,
+}: {
+  hideComposer: boolean;
+  isWelcomeMode: boolean;
+  compact: boolean;
+  messagePane: React.ReactNode;
+  composerSlot: React.ReactNode;
+  permissionSlot?: React.ReactNode;
+  hiddenComposerNotice?: string;
+  welcome: React.ReactNode;
+}) {
+  if (hideComposer) {
+    return (
+      <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-white dark:bg-neutral-950">
+        {messagePane}
+        {permissionSlot || hiddenComposerNotice ? (
+          <div className="shrink-0 border-t border-neutral-200 bg-white px-3 pt-3 dark:border-neutral-800 dark:bg-neutral-950">
+            {hiddenComposerNotice ? (
+              <p role="note" className="mb-3 text-[10px] leading-4 text-neutral-500 dark:text-neutral-400">
+                {hiddenComposerNotice}
+              </p>
+            ) : null}
+            {permissionSlot}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+  if (isWelcomeMode) return <>{welcome}</>;
+  return (
+    <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-white dark:bg-neutral-950">
+      {messagePane}
+      {composerSlot}
+    </div>
+  );
+}
 
 // V2 chat wrapper. Reuses all business-logic hooks from legacy
 // `ChatInterface` so streaming, file-mentions, slash commands, permissions,
@@ -63,6 +108,8 @@ function ChatInterfaceV2({
   forceWelcome,
   onExitWelcome,
   compact = false,
+  hideComposer = false,
+  hiddenComposerNotice,
   modelOverride,
   profileOverride,
   thinkingModeOverride,
@@ -615,6 +662,70 @@ function ChatInterfaceV2({
     </div>
   );
 
+  const messagePane = (
+    <MessagesPaneV2
+      scrollContainerRef={scrollContainerRef}
+      onWheel={handleScroll}
+      onTouchMove={handleScroll}
+      isLoadingSessionMessages={isLoadingSessionMessages}
+      sessionLoadError={sessionLoadError}
+      onRetrySessionLoad={handleWebSocketReconnect}
+      chatMessages={chatMessages}
+      activityMessages={activityMessages}
+      visibleMessages={visibleMessages}
+      visibleMessageCount={visibleMessageCount}
+      isLoadingMoreMessages={isLoadingMoreMessages}
+      hasMoreMessages={hasMoreMessages}
+      totalMessages={totalMessages}
+      loadEarlierMessages={loadEarlierMessages}
+      loadAllMessages={loadAllMessages}
+      allMessagesLoaded={allMessagesLoaded}
+      isLoadingAllMessages={isLoadingAllMessages}
+      provider={'pilotdeck' as Provider}
+      selectedProject={selectedProject}
+      selectedSession={selectedSession}
+      createDiff={createDiff}
+      onFileOpen={onFileOpen}
+      onShowSettings={onShowSettings}
+      onGrantSessionToolPermission={handleGrantSessionToolPermission}
+      autoExpandTools={autoExpandTools}
+      showRawParameters={showRawParameters}
+      showThinking={showThinking}
+      inlineThinking={inlineThinking}
+      setInput={setInput}
+      isAssistantWorking={isLoading}
+      workingStatus={claudeStatus || pilotDeckStatus}
+      runMode={runMode}
+      planModeActive={effectivePermissionMode === 'plan'}
+      sessionStore={sessionStore}
+      onFork={sessionIsReadOnly ? undefined : handleFork}
+      forkDisabled={isForkPending}
+    />
+  );
+  const permissionSlot = (
+    <PermissionRequestsSlot
+      pendingPermissionRequests={pendingPermissionRequests}
+      handlePermissionDecision={handlePermissionDecision}
+      handleGrantToolPermission={handleGrantToolPermission}
+      onPlanExecutionApproved={handlePlanExecutionApproved}
+    />
+  );
+
+  if (hideComposer) {
+    return (
+      <ChatInterfaceLayout
+        hideComposer
+        isWelcomeMode={isWelcomeMode}
+        compact={compact}
+        messagePane={messagePane}
+        composerSlot={composerSlot}
+        permissionSlot={pendingPermissionRequests.length > 0 ? permissionSlot : null}
+        hiddenComposerNotice={hiddenComposerNotice}
+        welcome={null}
+      />
+    );
+  }
+
   if (isWelcomeMode) {
     const projectName = selectedProject?.displayName || selectedProject?.name || '';
     if (compact) {
@@ -664,47 +775,16 @@ function ChatInterfaceV2({
   }
 
   return (
-    <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-white dark:bg-neutral-950">
-      <MessagesPaneV2
-        scrollContainerRef={scrollContainerRef}
-        onWheel={handleScroll}
-        onTouchMove={handleScroll}
-        isLoadingSessionMessages={isLoadingSessionMessages}
-        sessionLoadError={sessionLoadError}
-        onRetrySessionLoad={handleWebSocketReconnect}
-        chatMessages={chatMessages}
-        activityMessages={activityMessages}
-        visibleMessages={visibleMessages}
-        visibleMessageCount={visibleMessageCount}
-        isLoadingMoreMessages={isLoadingMoreMessages}
-        hasMoreMessages={hasMoreMessages}
-        totalMessages={totalMessages}
-        loadEarlierMessages={loadEarlierMessages}
-        loadAllMessages={loadAllMessages}
-        allMessagesLoaded={allMessagesLoaded}
-        isLoadingAllMessages={isLoadingAllMessages}
-        provider={'pilotdeck' as Provider}
-        selectedProject={selectedProject}
-        selectedSession={selectedSession}
-        createDiff={createDiff}
-        onFileOpen={onFileOpen}
-        onShowSettings={onShowSettings}
-        onGrantSessionToolPermission={handleGrantSessionToolPermission}
-        autoExpandTools={autoExpandTools}
-        showRawParameters={showRawParameters}
-        showThinking={showThinking}
-        inlineThinking={inlineThinking}
-        setInput={setInput}
-        isAssistantWorking={isLoading}
-        workingStatus={claudeStatus || pilotDeckStatus}
-        runMode={runMode}
-        planModeActive={effectivePermissionMode === 'plan'}
-        sessionStore={sessionStore}
-        onFork={sessionIsReadOnly ? undefined : handleFork}
-        forkDisabled={isForkPending}
-      />
-      {composerSlot}
-    </div>
+    <ChatInterfaceLayout
+      hideComposer={false}
+      isWelcomeMode={false}
+      compact={compact}
+      messagePane={messagePane}
+      composerSlot={composerSlot}
+      permissionSlot={null}
+      hiddenComposerNotice={undefined}
+      welcome={null}
+    />
   );
 }
 

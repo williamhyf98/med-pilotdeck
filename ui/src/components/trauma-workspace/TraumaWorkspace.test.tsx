@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import TraumaWorkspace from './TraumaWorkspace';
 import { initialUiCaseState } from './testFixtures';
+import { snapshotsToRounds } from './domain/snapshotAdapter';
 
 const caseStoreMock = vi.hoisted(() => ({
   current: null as any,
@@ -16,108 +17,110 @@ vi.mock('./store/useCaseStore', () => ({
   useCaseStore: () => caseStoreMock,
 }));
 
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    t: (key: string, options?: { defaultValue?: string }) => options?.defaultValue || key,
-  }),
-}));
-
 afterEach(() => {
   cleanup();
   caseStoreMock.current = null;
   caseStoreMock.snapshots = [];
   caseStoreMock.error = null;
+  caseStoreMock.refresh.mockReset();
 });
 
-describe('TraumaWorkspace demo workflow', () => {
-  it('keeps stage nodes non-interactive and opens details only from memo leaves', () => {
-    render(<TraumaWorkspace resetKey="trauma:session-1" />);
+describe('TraumaWorkspace', () => {
+  it('renders the focused form and can host the chat surface without the old timeline', () => {
+    render(
+      <TraumaWorkspace
+        resetKey="trauma:empty"
+        onSubmitForm={vi.fn()}
+        runtimePanel={<div>runtime chat surface</div>}
+      />,
+    );
 
-    expect(screen.queryByRole('button', { name: /战现场急救/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: /初级急救/ })).toBeNull();
-
-    const firstMemo = screen.getByRole('button', { name: /R1首次报告/ });
-    fireEvent.click(firstMemo);
-    expect(screen.getByRole('heading', { name: '当前伤员状态' })).not.toBeNull();
-    expect(screen.getByText('清醒，能正常对答（GCS 15）')).not.toBeNull();
-    expect(screen.getByText('本轮最新状态')).not.toBeNull();
-
-    fireEvent.click(firstMemo);
-    expect(screen.queryByRole('heading', { name: '当前伤员状态' })).toBeNull();
+    const facilityStatus = screen.getByText('当前位置').parentElement!;
+    expect(within(facilityStatus).getByText('未定级')).not.toBeNull();
+    expect(screen.getByRole('region', { name: '推演对话' })).not.toBeNull();
+    expect(screen.getByText('runtime chat surface')).not.toBeNull();
+    expect(screen.getByRole('form', { name: '本轮伤情录入' })).not.toBeNull();
+    expect(screen.getByRole('button', { name: '提交本轮信息' })).not.toBeNull();
+    expect(screen.queryByPlaceholderText(/发送消息/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /沿用/ })).toBeNull();
+    expect(screen.queryByLabelText('推演轮次时间线')).toBeNull();
   });
 
-  it('adds memo leaves under their historical substage as the demo advances', () => {
-    render(<TraumaWorkspace resetKey="trauma:session-1" />);
-
-    expect(screen.getAllByRole('button', { name: /^R\d/ })).toHaveLength(1);
-    const nextButton = screen.getByRole('button', { name: '下一轮演示' });
-    fireEvent.click(nextButton);
-    fireEvent.click(nextButton);
-    fireEvent.click(nextButton);
-    fireEvent.click(nextButton);
-
-    expect(screen.getAllByRole('button', { name: /^R\d/ })).toHaveLength(5);
-    expect(screen.getByText('Ⅱ级 · 紧急处置')).not.toBeNull();
-
-    const earlyStageMemo = screen.getByRole('button', { name: /R5进入Ⅱ级/ });
-    fireEvent.click(earlyStageMemo);
-    const detail = screen.getByLabelText('轮次纪要详情');
-    expect(within(detail).getByText('Ⅱ级 早期救治 › 紧急处置 › Round 5')).not.toBeNull();
-    expect(within(detail).getByText('本轮最新状态')).not.toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: /R2生命体征补充/ }));
-    expect(within(detail).getByText('历史轮次快照')).not.toBeNull();
-  });
-
-  it('renders the demo conversation through the standard chat message rows', () => {
-    render(<TraumaWorkspace resetKey="trauma:session-1" />);
-
-    const transcript = screen.getByLabelText('演示案例对话');
-    const userMessage = within(transcript).getByText(/爆炸后有一名伤员/);
-    expect(userMessage.closest('.rounded-\\[22px\\]')).not.toBeNull();
-    expect(within(transcript).queryByText(/呼吸大约每分钟32次/)).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: '下一轮演示' }));
-    expect(within(transcript).getByText(/呼吸大约每分钟32次/)).not.toBeNull();
-    expect(within(transcript).getByText('是否确认将救治阶段转入「Ⅰ级 · 高级急救（营救护站）」？')).not.toBeNull();
-    expect(within(transcript).getByText('确认转入高级急救')).not.toBeNull();
-  });
-
-  it('marks the current round leaf with its gate status', () => {
-    render(<TraumaWorkspace resetKey="trauma:session-1" />);
-
-    expect(screen.getByRole('button', { name: /R1首次报告.*当前/ })).not.toBeNull();
-
-    const nextButton = screen.getByRole('button', { name: '下一轮演示' });
-    fireEvent.click(nextButton);
-    fireEvent.click(nextButton);
-    fireEvent.click(nextButton);
-
-    expect(screen.getByRole('button', { name: /R4后送受阻.*阻塞/ })).not.toBeNull();
-    expect(screen.getByRole('button', { name: /^R1首次报告/ }).textContent).not.toContain('当前');
-  });
-
-  it('uses the live chat and snapshot tree when real snapshots exist', () => {
+  it('keeps the raw conversation surface mounted while removing the old timeline panel', () => {
     const state = initialUiCaseState();
+    state.round = 3;
+    caseStoreMock.snapshots = [{
+      eventType: 'agent_turn',
+      round: 3,
+      createdAt: state.updatedAt,
+      triggerMessageId: 'message-form',
+      state,
+      response: {
+        naturalLanguageAnswer: '继续观察。',
+        treatmentPlan: [],
+        placement: { source: 'definition', subStage: 'primary_first_aid' },
+        transition: { status: 'STAY', reason: '留在本级' },
+      },
+    }];
+
+    render(
+      <TraumaWorkspace
+        resetKey="trauma:exact-form"
+        onSubmitForm={vi.fn()}
+        runtimePanel={<div>runtime chat surface</div>}
+      />,
+    );
+    expect(screen.getByRole('region', { name: '推演对话' })).not.toBeNull();
+    expect(screen.getByText('runtime chat surface')).not.toBeNull();
+    expect(screen.queryByLabelText('推演轮次时间线')).toBeNull();
+  });
+
+  it('keeps the live conversation area available with the assistant response surface', () => {
+    const state = initialUiCaseState();
+    state.round = 2;
+    state.version = 2;
+    state.injuryNarratives = [
+      { round: 1, createdAt: state.updatedAt, text: '右小腿开放伤' },
+      { round: 2, createdAt: state.updatedAt, text: '胸痛加重' },
+    ];
+    state.treatmentNarratives = [
+      { round: 2, createdAt: state.updatedAt, text: '已加压包扎' },
+    ];
+    state.evacuationNarratives = [
+      { round: 1, createdAt: state.updatedAt, text: '车辆待命' },
+    ];
+    state.notes = [{ round: 2, createdAt: state.updatedAt, text: '意识清楚' }];
+    state.vitalSignsHistory = [
+      {
+        round: 2,
+        recordedAt: state.updatedAt,
+        values: { respiratoryRate: 32, systolicBloodPressure: 92 },
+      },
+    ];
     state.memos = [{
       id: 'memo-live',
-      round: 1,
+      round: 2,
       createdAt: state.updatedAt,
       mainStage: 'battlefield_first_aid',
-      subStage: 'primary_first_aid',
+      subStage: 'advanced_first_aid',
       title: '真实病例',
-      inputPoints: ['呼吸32次'],
-      actionPoints: ['继续止血'],
+      inputPoints: [],
+      actionPoints: [],
       conclusion: '继续评估',
-      snapshotVersion: 1,
+      snapshotVersion: 2,
     }];
     caseStoreMock.current = state;
     caseStoreMock.snapshots = [{
       eventType: 'agent_turn',
-      round: 1,
+      round: 2,
       createdAt: state.updatedAt,
-      triggerMessageId: 'message-1',
+      triggerMessageId: 'message-2',
       state,
+      response: {
+        naturalLanguageAnswer: '## 处置建议\n- 继续止血并密切复查循环状态。',
+        transition: { status: 'STAY', reason: '留在本级' },
+        treatmentPlan: [],
+      },
     }];
 
     render(
@@ -125,54 +128,113 @@ describe('TraumaWorkspace demo workflow', () => {
         resetKey="trauma:live"
         projectKey="trauma_med-demo"
         sessionId="web:s_live"
-        chatInterface={<div>真实会话界面</div>}
+        onSubmitForm={vi.fn()}
+        runtimePanel={<div>runtime chat surface</div>}
       />,
     );
 
-    expect(screen.getByText('真实会话界面')).not.toBeNull();
-    expect(screen.queryByLabelText('演示案例对话')).toBeNull();
-    expect(screen.getByRole('button', { name: /R1真实病例/ })).not.toBeNull();
-    expect(screen.getByRole('button', { name: '调整救治阶段' })).not.toBeNull();
+    expect(screen.getByRole('region', { name: '推演对话' })).not.toBeNull();
+    expect(screen.getByText('runtime chat surface')).not.toBeNull();
+    expect(screen.queryByLabelText('推演轮次时间线')).toBeNull();
+    expect(screen.getByText(/阶段转换建议不会自动执行/)).not.toBeNull();
+    expect(screen.queryByText(/阶段转换只有确认/)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /R2真实病例/ }));
+    expect(screen.getByText('执行状态：')).not.toBeNull();
+    expect(screen.queryByText('用户确认：')).toBeNull();
   });
 
-  it('shows the real chat for an empty case and keeps the demo one click away', () => {
-    render(
-      <TraumaWorkspace
-        resetKey="trauma:empty"
-        projectKey="trauma_med-demo"
-        sessionId="web:s_empty"
-        chatInterface={<div>空病例真实会话</div>}
-      />,
-    );
-    expect(screen.getByText('空病例真实会话')).not.toBeNull();
-    expect(screen.queryByLabelText('演示案例对话')).toBeNull();
+  it('removes injury-count and elapsed-time status assumptions', () => {
+    render(<TraumaWorkspace resetKey="trauma:empty" onSubmitForm={vi.fn()} />);
 
-    // 全新病例的流程树不应残留演示轮次，只保留主级/子级骨架。
-    expect(screen.queryByRole('button', { name: /R1首次报告/ })).toBeNull();
-    expect(screen.getByText('等待首轮推演')).not.toBeNull();
-    expect(screen.getAllByText('等待首轮推演生成轮次纪要')).toHaveLength(1);
-    expect(screen.getByText('待首轮推演')).not.toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: '查看演示案例' }));
-    expect(screen.getByLabelText('演示案例对话')).not.toBeNull();
-    expect(screen.queryByText('空病例真实会话')).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: '返回真实对话' }));
-    expect(screen.getByText('空病例真实会话')).not.toBeNull();
+    expect(screen.queryByText(/项伤情记录/)).toBeNull();
+    expect(screen.queryByText('伤后时间')).toBeNull();
+    expect(screen.queryByText('时效提示')).toBeNull();
+    expect(screen.getByText('医务中心')).not.toBeNull();
   });
 
-  it('shows a case loading error instead of implying that a memo is still generating', () => {
-    caseStoreMock.error = '病例接口不可用';
-    render(
+  it('keeps the realtime runtime mounted and exposes it while submitting', () => {
+    const runtime = <div data-testid="trauma-runtime">实时处理与确认</div>;
+    const { rerender } = render(
       <TraumaWorkspace
-        resetKey="trauma:error"
-        projectKey="trauma_med-demo"
-        sessionId="web:s_error"
-        chatInterface={<div>真实会话</div>}
+        resetKey="trauma:runtime"
+        runtimePanel={runtime}
+        onSubmitForm={vi.fn()}
       />,
     );
 
-    expect(screen.getByText(/病例状态加载失败：病例接口不可用/)).not.toBeNull();
-    expect(screen.queryByText('等待首轮推演生成轮次纪要')).toBeNull();
+    expect(screen.getByRole('region', { name: '推演对话' })).not.toBeNull();
+
+    rerender(
+      <TraumaWorkspace
+        resetKey="trauma:runtime"
+        runtimePanel={runtime}
+        onSubmitForm={vi.fn()}
+        submitting
+      />,
+    );
+    expect(screen.getByText('实时处理与确认')).not.toBeNull();
+  });
+
+  it('preserves form input until a persisted case version appears', async () => {
+    caseStoreMock.current = initialUiCaseState();
+    const submit = vi.fn();
+    const props = {
+      resetKey: 'trauma:persisted-reset',
+      onSubmitForm: submit,
+    };
+    const { rerender } = render(<TraumaWorkspace {...props} />);
+
+    fireEvent.change(screen.getByLabelText('伤情描述'), {
+      target: { value: '等待持久化后清空' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '提交本轮信息' }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(caseStoreMock.refresh).not.toHaveBeenCalled();
+    expect((screen.getByLabelText('伤情描述') as HTMLTextAreaElement).value)
+      .toBe('等待持久化后清空');
+
+    rerender(<TraumaWorkspace {...props} />);
+    expect((screen.getByLabelText('伤情描述') as HTMLTextAreaElement).value)
+      .toBe('等待持久化后清空');
+
+    caseStoreMock.current = {
+      ...caseStoreMock.current,
+      version: 2,
+      round: 2,
+    };
+    rerender(<TraumaWorkspace {...props} />);
+    expect((screen.getByLabelText('伤情描述') as HTMLTextAreaElement).value).toBe('');
+  });
+
+  it('describes READY as advice without implying a second confirmation', () => {
+    const state = initialUiCaseState();
+    state.transport.gateStatus = 'READY';
+    state.memos = [{
+      id: 'memo-ready',
+      round: 1,
+      createdAt: state.updatedAt,
+      mainStage: 'battlefield_first_aid',
+      subStage: 'primary_first_aid',
+      title: '建议后送',
+      inputPoints: [],
+      actionPoints: [],
+      conclusion: '建议转级',
+      snapshotVersion: 1,
+    }];
+    const [round] = snapshotsToRounds([{
+      eventType: 'agent_turn',
+      round: 1,
+      createdAt: state.updatedAt,
+      triggerMessageId: 'message-ready',
+      state,
+      response: {
+        naturalLanguageAnswer: '建议转送。',
+        treatmentPlan: [],
+        transition: { status: 'READY', reason: '需要更高能力' },
+      },
+    }], state);
+
+    expect(round?.gate.confirmation).toBe('医学建议，未自动执行');
   });
 });

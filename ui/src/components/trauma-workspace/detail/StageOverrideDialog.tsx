@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react';
 import { laterSubStages, SUBSTAGE_LABELS, SUBSTAGE_TO_MAIN } from '../domain/stageConfig';
-import type { CaseState, SubStage } from '../domain/types';
+import type { CaseState, MainStage, SubStage } from '../domain/types';
 
 type StageOverrideDialogProps = {
   state: CaseState;
   onClose: () => void;
   onSubmit: (input: {
-    toStage: CaseState['currentStage'];
+    toStage: MainStage;
     toSubStage: SubStage;
     reason: string;
     riskAcknowledged: true;

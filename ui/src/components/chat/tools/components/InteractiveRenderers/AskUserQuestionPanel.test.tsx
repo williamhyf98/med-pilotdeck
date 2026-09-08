@@ -32,8 +32,8 @@ describe('AskUserQuestionPanel IME behavior', () => {
 
     render(<AskUserQuestionPanel request={request} onDecision={onDecision} />);
 
-    fireEvent.click(screen.getByText('Other...'));
-    const otherInput = screen.getByPlaceholderText('Type your answer...');
+    fireEvent.click(screen.getByText('其他…'));
+    const otherInput = screen.getByPlaceholderText('请输入你的回答…');
     fireEvent.change(otherInput, { target: { value: 'nihao' } });
 
     fireEvent.keyDown(otherInput, {

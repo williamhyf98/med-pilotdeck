@@ -18,12 +18,8 @@ describe('StageOverrideDialog', () => {
     const select = screen.getByLabelText('目标阶段') as HTMLSelectElement;
     expect(Array.from(select.options).map((option) => option.text)).toEqual([
       '高级急救',
-      '紧急救治',
-      '紧急手术复苏',
-      '野战专科治疗',
-      '确定性专科治疗',
-      '功能恢复',
-      '身心康复',
+      '紧急处置',
+      '外科复苏',
     ]);
     expect(Array.from(select.options).some((option) => option.text === '初级急救')).toBe(false);
   });
@@ -42,5 +38,14 @@ describe('StageOverrideDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: '确认调整' }));
     expect(submit).toHaveBeenCalledOnce();
     expect(submit.mock.calls[0]?.[0].blockedOverrideConfirmed).toBe(true);
+  });
+
+  it('does not offer supported overrides from a legacy unsupported stage', () => {
+    const state = initialUiCaseState();
+    state.currentSubStage = 'field_specialist_treatment' as never;
+    render(<StageOverrideDialog state={state} onClose={() => {}} onSubmit={() => {}} />);
+
+    const select = screen.getByLabelText('目标阶段') as HTMLSelectElement;
+    expect(select.options).toHaveLength(0);
   });
 });

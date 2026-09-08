@@ -5,6 +5,7 @@ import {
   SUBSTAGE_ORDER,
   deriveNodeStatus,
   isLaterSubStage,
+  typicalFacilityForSubStage,
 } from "../../src/trauma/stageConfig.js";
 import type { CaseState } from "../../src/trauma/types.js";
 
@@ -14,14 +15,16 @@ test("later-stage order matches the specification", () => {
     "advanced_first_aid",
     "emergency_treatment",
     "surgical_resuscitation",
-    "field_specialist_treatment",
-    "definitive_specialist_treatment",
-    "functional_recovery",
-    "psychophysical_rehabilitation",
   ]);
   assert.equal(isLaterSubStage("primary_first_aid", "advanced_first_aid"), true);
   assert.equal(isLaterSubStage("emergency_treatment", "primary_first_aid"), false);
   assert.equal(isLaterSubStage("primary_first_aid", "primary_first_aid"), false);
+  assert.equal(typicalFacilityForSubStage("surgical_resuscitation").name, "医务中心");
+  assert.equal(
+    isLaterSubStage(null, "field_specialist_treatment" as never),
+    false,
+    "legacy or forged unsupported substages must be rejected at runtime",
+  );
 });
 
 test("node status follows current stage and Gate state", () => {
@@ -60,4 +63,13 @@ test("node status follows current stage and Gate state", () => {
     } as typeof base, "primary_first_aid"),
     "completed",
   );
+  assert.equal(
+    deriveNodeStatus({
+      currentSubStage: null,
+      transport: { gateStatus: "ASSESSING" },
+      pendingTransition: undefined,
+    } as Pick<CaseState, "currentSubStage" | "transport" | "pendingTransition">, "primary_first_aid"),
+    "not_started",
+  );
+  assert.equal(isLaterSubStage(null, "emergency_treatment"), true);
 });

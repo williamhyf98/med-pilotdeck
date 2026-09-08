@@ -2,6 +2,9 @@ import type { CaseState } from './domain/types';
 
 export function initialUiCaseState(): CaseState {
   return {
+    caseId: 'case-test',
+    sessionId: 'web:s-test',
+    projectId: 'trauma_med-demo',
     version: 1,
     round: 1,
     updatedAt: '2026-09-03T15:09:00+08:00',
@@ -15,18 +18,18 @@ export function initialUiCaseState(): CaseState {
     currentCapabilities: ['止血'],
     requiredCapabilities: [],
     vitalSignsHistory: [],
-    injuries: [],
-    completedActions: [],
-    currentActions: [],
+    injuryNarratives: [],
+    treatmentNarratives: [],
+    evacuationNarratives: [],
+    notes: [],
     classificationHistory: [],
     transport: {
+      needed: false,
+      priority: 'pending',
       gateStatus: 'ASSESSING',
       readiness: 'unknown',
     },
-    timeline: {
-      elapsedMinutes: 0,
-      timingStatus: 'within_window',
-    },
+    manualStageOverrides: [],
     missingInformation: [],
     memos: [],
     evidence: [],

@@ -1,4 +1,5 @@
 import type { StructuredModelClient } from "../modelClient.js";
+import { compactCaseStateForDownstream } from "../factMerge.js";
 import { PLANNER_OUTPUT_SCHEMA, validatePlannerOutput } from "../schemas.js";
 import type { PlannedRagQuery } from "../rag/queryPlan.js";
 import type { CaseState, RetrievalTrace } from "../types.js";
@@ -25,11 +26,7 @@ export function createPlannerStation(model: StructuredModelClient): {
         system: PLANNER_SYSTEM_PROMPT,
         user: JSON.stringify({
           remainingBudget,
-          currentStage: input.state.currentSubStage,
-          injuries: input.state.injuries.map((injury) => ({
-            bodyPart: injury.bodyPart,
-            finding: injury.finding,
-          })),
+          caseHistory: compactCaseStateForDownstream(input.state),
           firstWave: input.firstWave,
         }),
         schema: PLANNER_OUTPUT_SCHEMA,

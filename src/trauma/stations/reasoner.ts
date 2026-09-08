@@ -1,11 +1,11 @@
 import { StructuredOutputSchemaError, type StructuredModelClient } from "../modelClient.js";
+import { compactCaseStateForDownstream } from "../factMerge.js";
 import { REASONER_OUTPUT_SCHEMA, validateReasonerOutput } from "../schemas.js";
 import { PRIMARY_FIRST_AID_CAPABILITIES } from "../stageConfig.js";
 import type {
   AgentTurnResponse,
   CaseState,
   EvidenceChunk,
-  TimelineState,
   TreatmentAction,
 } from "../types.js";
 import { REASONER_SYSTEM_PROMPT } from "./reasonerPrompt.js";
@@ -27,7 +27,11 @@ export type ReasonerResult = Pick<
   | "memo"
 >;
 
-function assertKnownEvidence(actions: unknown, assessment: unknown, promptIds: Set<string>): void {
+function assertKnownEvidence(
+  actions: unknown,
+  assessment: unknown,
+  promptIds: Set<string>,
+): void {
   const cited: string[] = [];
   if (Array.isArray(actions)) {
     for (const action of actions) {
@@ -63,10 +67,22 @@ function rewritePrimaryAidActions(plan: TreatmentAction[], subStage: CaseState["
   });
 }
 
+const OUT_OF_SCOPE_ACTION_PATTERN = /专科治疗|康复治疗|野战专科|确定性专科|功能恢复|身心康复/u;
+
+function constrainTreatmentPlan(
+  plan: TreatmentAction[],
+  subStage: CaseState["currentSubStage"],
+): TreatmentAction[] {
+  return rewritePrimaryAidActions(plan, subStage).filter((action) => {
+    const text = `${action.title}${action.description}`;
+    if (OUT_OF_SCOPE_ACTION_PATTERN.test(text)) return false;
+    return subStage !== "surgical_resuscitation" || action.scope !== "next_stage";
+  });
+}
+
 export function createReasonerStation(model: StructuredModelClient): {
   reason(input: {
     state: CaseState;
-    timeline: TimelineState;
     promptChunks: EvidenceChunk[];
   }): Promise<ReasonerResult>;
 } {
@@ -77,15 +93,13 @@ export function createReasonerStation(model: StructuredModelClient): {
         name: "trauma_reason",
         system: REASONER_SYSTEM_PROMPT,
         user: JSON.stringify({
-          state: {
+          confirmedPlacement: {
             currentStage: input.state.currentStage,
             currentSubStage: input.state.currentSubStage,
             facility: input.state.currentFacility,
-            injuries: input.state.injuries,
-            latestVitals: input.state.vitalSignsHistory.at(-1) ?? null,
-            capabilities: input.state.currentCapabilities,
+            rationale: input.state.placementRationale ?? null,
           },
-          timeline: input.timeline,
+          state: compactCaseStateForDownstream(input.state),
           promptChunks: input.promptChunks.map((chunk) => ({
             id: chunk.id,
             title: chunk.documentTitle,
@@ -99,14 +113,14 @@ export function createReasonerStation(model: StructuredModelClient): {
 
       assertKnownEvidence(raw.treatmentPlan, raw.gateAssessment, promptIds);
 
-      const treatmentPlan = rewritePrimaryAidActions(
+      const treatmentPlan = constrainTreatmentPlan(
         raw.treatmentPlan as TreatmentAction[],
         input.state.currentSubStage,
       );
       const transition = {
         ...raw.transition,
         status: raw.transition.status,
-        requiresUserConfirmation: raw.transition.status === "READY" ? true : raw.transition.requiresUserConfirmation,
+        requiresUserConfirmation: false,
       } as ReasonerResult["transition"];
 
       return {

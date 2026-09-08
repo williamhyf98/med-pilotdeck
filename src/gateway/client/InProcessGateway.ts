@@ -14,6 +14,7 @@ import type { AgentError } from "../../agent/index.js";
 import { contentToText } from "../../tool/index.js";
 import type { SessionRouter } from "../SessionRouter.js";
 import { GatewayElicitationBus } from "../elicitation/GatewayElicitationBus.js";
+import { GatewayElicitationChannel } from "../elicitation/GatewayElicitationChannel.js";
 import { GatewayPermissionBus } from "../permission/GatewayPermissionBus.js";
 import { AsyncQueue } from "../util/AsyncQueue.js";
 import type {
@@ -51,6 +52,9 @@ import type {
   WebForkSessionInput,
   WebForkSessionResult,
 } from "../protocol/types.js";
+import { normalizeChineseDisplayText, subStageLabel } from "../../trauma/displayLabels.js";
+import { validateTurnFormInput } from "../../trauma/factMerge.js";
+import type { TurnFormInput } from "../../trauma/types.js";
 import type {
   CronCreateInput,
   CronCreateResult,
@@ -94,7 +98,14 @@ import {
   projectMetaTypeFromProjectPath,
   projectTypeKeyFromProjectId,
 } from "../../pilot/paths.js";
-import { traumaProgressEvents, traumaTurnEvents, type TraumaTurnRunner } from "../../trauma/index.js";
+import {
+  PLACEMENT_QUESTION,
+  parsePlacementConfirmation,
+  placementConfirmationOptions,
+  traumaProgressEvents,
+  traumaTurnEvents,
+  type TraumaTurnRunner,
+} from "../../trauma/index.js";
 
 const PLAN_COMMAND_USAGE = "用法：/plan <任务>\n例如：/plan 设计一个新功能";
 const MAX_GATEWAY_TOOL_RESULT_PREVIEW_CHARS = 20_000;
@@ -103,6 +114,29 @@ const MAX_GATEWAY_TOOL_DATA_STRING_CHARS = 4_000;
 function isTraumaProject(projectKey: string | undefined): projectKey is string {
   return projectTypeKeyFromProjectId(projectKey) === "trauma_med"
     || projectMetaTypeFromProjectPath(projectKey) === "war_trauma";
+}
+
+function summarizeTraumaForm(form: TurnFormInput): string {
+  const vitalLabels: Array<[keyof TurnFormInput["vitals"], string]> = [
+    ["respiratoryRate", "呼吸"],
+    ["systolicBloodPressure", "收缩压"],
+    ["gcs", "GCS"],
+    ["heartRate", "心率"],
+    ["temperature", "体温"],
+  ];
+  const vitalSummary = vitalLabels
+    .filter(([key]) => form.vitals[key] !== undefined)
+    .map(([key, label]) => `${label} ${form.vitals[key]}`)
+    .join("，");
+  const parts = [
+    `救治级别：${form.statedSubStage ? subStageLabel(form.statedSubStage) : "由系统判定"}`,
+    form.injuryNarrative.trim() ? `伤情：${form.injuryNarrative.trim()}` : null,
+    form.treatmentNarrative.trim() ? `已做处置：${form.treatmentNarrative.trim()}` : null,
+    form.evacuationNarrative.trim() ? `后送条件：${form.evacuationNarrative.trim()}` : null,
+    form.note.trim() ? `补充说明：${form.note.trim()}` : null,
+    vitalSummary ? `生命体征：${vitalSummary}` : null,
+  ].filter((part): part is string => Boolean(part));
+  return parts.map((part) => `- ${part}`).join("\n");
 }
 
 export type InProcessGatewayOptions = {
@@ -439,6 +473,9 @@ export class InProcessGateway implements Gateway {
           }, input.timeoutMs);
         }
         if (isTraumaProject(input.projectKey)) {
+          if (!validateTurnFormInput(input.traumaForm)) {
+            throw new Error("war_trauma turns require a valid traumaForm");
+          }
           if (!this.options.traumaRunnerFactory) {
             throw new Error("war_trauma runner is not configured");
           }
@@ -452,31 +489,57 @@ export class InProcessGateway implements Gateway {
             this.recordActiveTurnEvent(input.sessionKey, gatewayEvent);
             queue.enqueue(gatewayEvent);
           };
+          const elicitation = new GatewayElicitationChannel({
+            sessionKey: input.sessionKey,
+            bus: this.elicitationBus,
+            emit,
+            uuid: this.uuid,
+          });
           emit({ type: "turn_started", runId });
           const response = await runner.runTurn({
             projectId: input.projectKey,
             sessionId: input.sessionKey,
             messageId: runId,
-            userText: input.message,
+            form: input.traumaForm,
             now: this.now().toISOString(),
-            attachmentSummary: input.attachments?.length
-              ? input.attachments.map((attachment) => attachment.name ?? attachment.path).join("、")
-              : undefined,
             onProgress: (progress) => {
               for (const gatewayEvent of traumaProgressEvents({ progress, runId })) {
                 emit(gatewayEvent);
               }
+            },
+            requestPlacementConfirmation: async (request) => {
+              const answer = await elicitation.askUser({
+                toolCallId: `trauma-placement:${runId}`,
+                toolName: "ask_user_question",
+                questions: [{
+                  header: "确认推演级别",
+                  question: PLACEMENT_QUESTION,
+                  options: placementConfirmationOptions(request),
+                }],
+                metadata: {
+                  source: "trauma_pending_placement",
+                  proposedStage: request.proposed.stage,
+                  proposedSubStage: request.proposed.subStage,
+                },
+              });
+              if (answer.type !== "answered") return { choice: "current" };
+              const selected = Object.values(answer.answers).flat()[0];
+              return parsePlacementConfirmation(request, selected);
             },
           });
           await this.options.recordTraumaTurn?.({
             projectKey: input.projectKey,
             sessionKey: input.sessionKey,
             runId,
-            userText: input.message,
-            assistantText: response.naturalLanguageAnswer,
+            userText: summarizeTraumaForm(input.traumaForm),
+            assistantText: normalizeChineseDisplayText(response.naturalLanguageAnswer),
           });
+          const displayResponse = {
+            ...response,
+            naturalLanguageAnswer: normalizeChineseDisplayText(response.naturalLanguageAnswer),
+          };
           for (const gatewayEvent of traumaTurnEvents({
-            response,
+            response: displayResponse,
             runId,
             version: response.caseVersion,
             turnStartedAlreadyEmitted: true,

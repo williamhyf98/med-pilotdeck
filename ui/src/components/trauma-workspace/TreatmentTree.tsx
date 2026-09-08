@@ -13,6 +13,8 @@ export type TreePosition = {
   round: number | null;
   blocked?: boolean;
   transferPending?: boolean;
+  /** 尚未根据分级定义落位时，主级/子级均显示未开始。 */
+  unplaced?: boolean;
 };
 
 type TreatmentTreeProps = {
@@ -85,6 +87,7 @@ function getMainStatus(
 ): WorkflowStatus {
   const index = stages.findIndex((stage) => stage.id === stageId);
   const currentIndex = stages.findIndex((stage) => stage.id === position.stageId);
+  if (position.unplaced || currentIndex < 0) return 'future';
   if (index < currentIndex) return 'done';
   if (index > currentIndex) return 'future';
   return 'current';
@@ -125,6 +128,11 @@ export default function TreatmentTree({
 
   return (
     <div className="space-y-2 pb-4">
+      {position.unplaced && position.round === null ? (
+        <p className="rounded-md border border-dashed border-neutral-300 px-2.5 py-2 text-[9px] text-neutral-400 dark:border-neutral-700 dark:text-neutral-500">
+          等待首轮推演生成轮次纪要
+        </p>
+      ) : null}
       {onRequestStageOverride && canOverrideStage ? (
         <div className="flex justify-end">
           <button
@@ -221,7 +229,7 @@ export default function TreatmentTree({
                           );
                         })}
                       </div>
-                    ) : position.round === null && subStatus === 'current' ? (
+                    ) : position.round === null && subStatus === 'current' && !position.unplaced ? (
                       <div className="ml-3 border-l border-dashed border-neutral-300 pl-3 pt-1.5 dark:border-neutral-700">
                         <div className="relative">
                           <span className="absolute -left-3 top-4 w-3 border-t border-dashed border-neutral-300 dark:border-neutral-700" />

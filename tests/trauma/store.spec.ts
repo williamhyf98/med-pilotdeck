@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -95,6 +95,52 @@ test("serialization failure does not replace current state", async () => {
       /circular/i,
     );
     assert.equal((await store.load())?.version, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("load migrates legacy structured facts and drops extractor-era fields", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pilotdeck-trauma-migrate-"));
+  try {
+    const legacy = initialCaseState({
+      projectId: "trauma_med-demo", sessionId: "web:s_demo", now,
+    }) as unknown as Record<string, unknown>;
+    delete legacy.injuryNarratives;
+    delete legacy.treatmentNarratives;
+    legacy.injuries = [{
+      bodyPart: "右小腿", finding: "开放伤", certainty: "confirmed", status: "controlled",
+    }];
+    legacy.completedActions = [{ title: "加压包扎" }];
+    legacy.currentActions = [{ title: "持续监测" }];
+    legacy.vitalSignsHistory = [
+      { measuredAt: "2026-09-03T15:00:00+08:00", systolicBloodPressure: 92, gcs: 15, spo2: 95 },
+      { measuredAt: now, respiratoryRate: 28, heartRate: 118 },
+    ];
+    legacy.timeline = { elapsedMinutes: 14 };
+    legacy.conflictingFactIds = ["old"];
+    await writeFile(join(root, "current.json"), JSON.stringify(legacy), "utf8");
+
+    const migrated = await createTraumaCaseStore(root).load();
+    assert.match(migrated?.injuryNarratives[0]?.text ?? "", /右小腿开放伤/);
+    assert.match(migrated?.treatmentNarratives[0]?.text ?? "", /加压包扎.*持续监测/);
+    assert.deepEqual(migrated?.vitalSignsHistory.map((record) => record.round), [1, 2]);
+    assert.deepEqual(migrated?.vitalSignsHistory.map((record) => record.values), [
+      { systolicBloodPressure: 92, gcs: 15 },
+      { respiratoryRate: 28, heartRate: 118 },
+    ]);
+    assert.equal("timeline" in (migrated ?? {}), false);
+    assert.equal("injuries" in (migrated ?? {}), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("load rejects corrupt state instead of replacing it with an empty case", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pilotdeck-trauma-corrupt-"));
+  try {
+    await writeFile(join(root, "current.json"), JSON.stringify({ caseId: "broken" }), "utf8");
+    await assert.rejects(() => createTraumaCaseStore(root).load(), /migration failed/i);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

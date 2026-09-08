@@ -1,9 +1,16 @@
 import type { GatewayEvent } from "../gateway/protocol/types.js";
-import type { TraumaTurnProgress } from "./runner.js";
+import type {
+  PlacementConfirmationDecision,
+  PlacementConfirmationRequest,
+  TraumaTurnProgress,
+} from "./runner.js";
 import type { AgentTurnResponse } from "./types.js";
+import { normalizeChineseDisplayText } from "./displayLabels.js";
+import { typicalFacilityForSubStage } from "./stageConfig.js";
 
 const PHASE_LABELS: Record<TraumaTurnProgress["phase"], string> = {
-  extract: "抽取伤情事实",
+  validate: "校验并合并表单",
+  place: "判断救治级别",
   retrieve: "检索战伤救治规则",
   reason: "综合研判与分级",
 };
@@ -41,18 +48,55 @@ export function traumaProgressEvents(input: {
 const SUBSTAGE_LABELS: Record<string, string> = {
   primary_first_aid: "初级急救",
   advanced_first_aid: "高级急救",
-  emergency_treatment: "紧急救治",
-  surgical_resuscitation: "紧急手术复苏",
-  field_specialist_treatment: "野战专科治疗",
-  definitive_specialist_treatment: "确定性专科治疗",
-  functional_recovery: "功能恢复",
-  psychophysical_rehabilitation: "身心康复",
+  emergency_treatment: "紧急处置",
+  surgical_resuscitation: "外科复苏",
 };
 
+const MAIN_STAGE_LABELS: Record<string, string> = {
+  battlefield_first_aid: "Ⅰ级·战现场急救",
+  early_treatment: "Ⅱ级·早期救治",
+};
+
+export const PLACEMENT_QUESTION = "请选择本轮后续推演采用的主级和子级";
+
+function placementLabel(stage: string, subStage: string, facility?: string | null): string {
+  const main = MAIN_STAGE_LABELS[stage] ?? stage;
+  const sub = SUBSTAGE_LABELS[subStage] ?? subStage;
+  return `${main} · ${sub}${facility ? `（${facility}）` : ""}`;
+}
+
+export function placementConfirmationOptions(request: PlacementConfirmationRequest) {
+  const options = [{
+    label: `采用建议：${placementLabel(
+      request.proposed.stage!,
+      request.proposed.subStage!,
+      typicalFacilityForSubStage(request.proposed.subStage!).name,
+    )}`,
+    description: request.proposed.rationale,
+  }];
+  if (request.current.stage && request.current.subStage) {
+    options.push({
+      label: `保持当前：${placementLabel(
+        request.current.stage,
+        request.current.subStage,
+        request.current.facilityName,
+      )}`,
+      description: "按当前已采用级别继续检索并生成方案",
+    });
+  }
+  return options;
+}
+
+export function parsePlacementConfirmation(
+  request: PlacementConfirmationRequest,
+  selected: string | undefined,
+): PlacementConfirmationDecision {
+  if (selected?.startsWith("采用建议：")) return { choice: "proposed" };
+  return { choice: "current" };
+}
+
 /**
- * The READY question is intentionally non-blocking. It resembles an
- * ask_user_question card, but its answer is sent to trauma.confirmTransition
- * instead of Gateway.respondElicitation.
+ * 工位 B 完成后的 Gate 只作为建议随正文返回，不再产生第二张确认卡。
  */
 export function traumaTurnEvents(input: {
   response: AgentTurnResponse;
@@ -67,46 +111,10 @@ export function traumaTurnEvents(input: {
       : [{ type: "turn_started", runId: input.runId } satisfies GatewayEvent],
     {
       type: "assistant_text_delta",
-      text: input.response.naturalLanguageAnswer,
+      text: normalizeChineseDisplayText(input.response.naturalLanguageAnswer),
       runId: input.runId,
     },
   ];
-
-  if (
-    input.response.transition.status === "READY"
-    && input.response.transition.targetSubStage
-  ) {
-    const target = SUBSTAGE_LABELS[input.response.transition.targetSubStage]
-      ?? input.response.transition.targetSubStage;
-    const toolCallId = `trauma-transition:${input.runId}`;
-    events.push({
-      type: "elicitation_request",
-      requestId: toolCallId,
-      toolCallId,
-      toolName: "ask_user_question",
-      questions: [
-        {
-          header: "阶段转换",
-          question: `是否确认将救治阶段转入「${target}」？`,
-          options: [
-            {
-              label: `确认转入${target}`,
-              description: "应用建议的目标救治阶段并继续推演",
-            },
-            {
-              label: "暂不转换",
-              description: "保留当前救治阶段，继续补充信息或处置",
-            },
-          ],
-        },
-      ],
-      metadata: {
-        source: "trauma_pending_transition",
-        version: input.version,
-      },
-      runId: input.runId,
-    });
-  }
 
   events.push({
     type: "turn_completed",

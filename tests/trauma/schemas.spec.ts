@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  EXTRACTED_TURN_FACTS_SCHEMA,
+  PLACEMENT_OUTPUT_SCHEMA,
   PLANNER_OUTPUT_SCHEMA,
   REASONER_OUTPUT_SCHEMA,
-  validateExtractedTurnFacts,
+  validatePlacementAssessment,
   validateReasonerOutput,
 } from "../../src/trauma/schemas.js";
 
@@ -48,33 +48,25 @@ function assertStrictCompatible(node: unknown, path: string): void {
 }
 
 test("trauma structured-output schemas satisfy OpenAI strict mode", () => {
-  assertStrictCompatible(EXTRACTED_TURN_FACTS_SCHEMA, "extract");
+  assertStrictCompatible(PLACEMENT_OUTPUT_SCHEMA, "place");
   assertStrictCompatible(PLANNER_OUTPUT_SCHEMA, "plan");
   assertStrictCompatible(REASONER_OUTPUT_SCHEMA, "reason");
 });
 
-test("extractor validator still accepts facts once nullable placeholders are stripped", () => {
-  assert.equal(
-    validateExtractedTurnFacts({
-      turnKind: "case_update",
-      context: {},
-      vitalSigns: [{
-        value: { type: "respiratory_rate", value: 32, unit: "/min" },
-        sourceMessageId: "user",
-        sourceQuote: "呼吸32次",
-        certainty: "confirmed",
-        confidence: 0.9,
-      }],
-      injuryFindings: [],
-      treatmentEvents: [],
-      careAndTransportFacts: [],
-      correctionsAndProvenance: { conflictingFactIds: [] },
-    }),
-    true,
-  );
+test("model placement schema rejects user_stated and contains no timing guidance", () => {
+  assert.equal(validatePlacementAssessment({
+    determined: true,
+    source: "user_stated",
+    stage: "battlefield_first_aid",
+    subStage: "primary_first_aid",
+    rationale: "用户明示",
+    definitionReferences: [],
+  }), false);
+  assert.doesNotMatch(JSON.stringify(PLACEMENT_OUTPUT_SCHEMA), /user_stated/);
+  assert.doesNotMatch(JSON.stringify(REASONER_OUTPUT_SCHEMA), /建议时间|超过.*时间|时效/);
 });
 
-test("reasoner validator rejects an over-long memo title", () => {
+test("reasoner validator accepts over-long memo fields (length is a soft hint, not a hard error)", () => {
   const base = {
     naturalLanguageAnswer: "回答",
     classification: {},
@@ -93,8 +85,27 @@ test("reasoner validator rejects an over-long memo title", () => {
     },
   };
   assert.equal(validateReasonerOutput(base), true);
+  // over-long title, inputPoints items, actionPoints items, and conclusion are all accepted
   assert.equal(
-    validateReasonerOutput({ ...base, memo: { ...base.memo, title: "一".repeat(11) } }),
+    validateReasonerOutput({
+      ...base,
+      memo: {
+        ...base.memo,
+        title: "一".repeat(20),
+        inputPoints: ["一".repeat(50)],
+        actionPoints: ["一".repeat(50)],
+        conclusion: "一".repeat(80),
+      },
+    }),
+    true,
+  );
+  // structural errors (wrong types) still reject
+  assert.equal(
+    validateReasonerOutput({ ...base, memo: { ...base.memo, title: 123 } }),
+    false,
+  );
+  assert.equal(
+    validateReasonerOutput({ ...base, memo: { ...base.memo, inputPoints: "不是数组" } }),
     false,
   );
 });

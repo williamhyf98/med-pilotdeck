@@ -145,6 +145,31 @@ export type ComposerV2Props = {
   chromeMode?: 'default' | 'medical';
 };
 
+export function PermissionRequestsSlot({
+  pendingPermissionRequests,
+  handlePermissionDecision,
+  handleGrantToolPermission,
+  onPlanExecutionApproved,
+}: Pick<
+  ComposerV2Props,
+  | 'pendingPermissionRequests'
+  | 'handlePermissionDecision'
+  | 'handleGrantToolPermission'
+  | 'onPlanExecutionApproved'
+>) {
+  if (pendingPermissionRequests.length === 0) return null;
+  return (
+    <div className="mb-3">
+      <PermissionRequestsBanner
+        pendingPermissionRequests={pendingPermissionRequests}
+        handlePermissionDecision={handlePermissionDecision}
+        handleGrantToolPermission={handleGrantToolPermission}
+        onPlanExecutionApproved={onPlanExecutionApproved}
+      />
+    </div>
+  );
+}
+
 type ContextStatus = {
   known: boolean;
   used: number;
@@ -485,16 +510,12 @@ export default function ComposerV2({
       )}
     >
       <div className={cn('min-w-0', chromeless ? '' : 'mx-auto max-w-[720px]')}>
-        {pendingPermissionRequests.length > 0 ? (
-          <div className="mb-3">
-            <PermissionRequestsBanner
-              pendingPermissionRequests={pendingPermissionRequests}
-              handlePermissionDecision={handlePermissionDecision}
-              handleGrantToolPermission={handleGrantToolPermission}
-              onPlanExecutionApproved={onPlanExecutionApproved}
-            />
-          </div>
-        ) : null}
+        <PermissionRequestsSlot
+          pendingPermissionRequests={pendingPermissionRequests}
+          handlePermissionDecision={handlePermissionDecision}
+          handleGrantToolPermission={handleGrantToolPermission}
+          onPlanExecutionApproved={onPlanExecutionApproved}
+        />
 
         {!hasBlockingPermissionPanel ? (
           <form

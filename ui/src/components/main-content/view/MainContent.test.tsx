@@ -8,6 +8,7 @@ import MainContent from './MainContent';
 const mocks = vi.hoisted(() => ({
   handleFileOpen: vi.fn(),
   onMisroutedFileUrlHandled: vi.fn(),
+  chatProps: [] as any[],
 }));
 
 vi.mock('../../../contexts/TaskMasterContext', () => ({
@@ -80,11 +81,21 @@ vi.mock('../../code-editor/view/EditorSidebar', () => ({
 }));
 
 vi.mock('../../chat-v2/ChatInterfaceV2', () => ({
-  default: ({ onFileOpen }: { onFileOpen: (filePath: string) => void }) => (
-    <button type="button" onClick={() => onFileOpen('/workspace/PilotDeck/generated.pptx')}>
-      Open workspace file
-    </button>
-  ),
+  default: (props: {
+    onFileOpen: (filePath: string) => void;
+    hideComposer?: boolean;
+    hiddenComposerNotice?: string;
+  }) => {
+    mocks.chatProps.push(props);
+    return (
+      <div data-testid="runtime-chat" data-hide-composer={String(Boolean(props.hideComposer))}>
+        {props.hiddenComposerNotice ? <p role="note">{props.hiddenComposerNotice}</p> : null}
+        <button type="button" onClick={() => props.onFileOpen('/workspace/PilotDeck/generated.pptx')}>
+          Open workspace file
+        </button>
+      </div>
+    );
+  },
 }));
 
 vi.mock('../../main-content-v2/FilesV2', () => ({
@@ -144,6 +155,7 @@ beforeEach(() => {
   localStorage.clear();
   mocks.handleFileOpen.mockReset();
   mocks.onMisroutedFileUrlHandled.mockReset();
+  mocks.chatProps.length = 0;
 });
 
 afterEach(() => {
@@ -237,9 +249,63 @@ describe('MainContent project-type workspace routing', () => {
     );
 
     expect(screen.getByRole('heading', { name: '分级救治全过程' })).not.toBeNull();
-    expect(screen.getByText('爆炸冲击后胸部损伤 · 右小腿开放伤')).not.toBeNull();
-    expect(screen.getByLabelText('演示案例对话')).not.toBeNull();
-    expect(screen.queryByRole('button', { name: 'Open workspace file' })).toBeNull();
+    expect(screen.getByRole('form', { name: '本轮伤情录入' })).not.toBeNull();
+    expect(screen.getByRole('region', { name: '推演对话' })).not.toBeNull();
+    expect(screen.getByTestId('runtime-chat').getAttribute('data-hide-composer')).toBe('true');
+    expect(mocks.chatProps.some((props) => props.hideComposer === true)).toBe(true);
+  });
+
+  it('launches a structured trauma form while the realtime runtime stays mounted', async () => {
+    const traumaProject: Project = {
+      ...project,
+      name: 'trauma_med-demo',
+      displayName: '战创伤演练',
+    };
+    const props = propsFor('chat');
+    const { rerender } = render(
+      <MainContent
+        {...props}
+        projects={[traumaProject]}
+        selectedProject={traumaProject}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText('伤情描述'), {
+      target: { value: '右小腿开放伤' },
+    });
+    fireEvent.change(screen.getByLabelText('心率'), { target: { value: '118' } });
+    fireEvent.click(screen.getByRole('button', { name: '提交本轮信息' }));
+
+    await waitFor(() => expect(props.sendMessage).toHaveBeenCalled());
+    expect(props.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'pilotdeck-command',
+      options: expect.objectContaining({
+        traumaForm: expect.objectContaining({
+          injuryNarrative: '右小腿开放伤',
+          vitals: { heartRate: 118 },
+        }),
+        userVisibleInput: expect.stringContaining('\n- 伤情：右小腿开放伤'),
+      }),
+    }));
+    expect(screen.getByTestId('runtime-chat')).not.toBeNull();
+    expect(screen.getByRole('region', { name: '推演对话' })).not.toBeNull();
+
+    rerender(
+      <MainContent
+        {...props}
+        projects={[traumaProject]}
+        selectedProject={traumaProject}
+        selectedSession={{ id: 'web:s-created' } as any}
+      />,
+    );
+    expect(screen.getByTestId('runtime-chat')).not.toBeNull();
+
+    window.dispatchEvent(new CustomEvent('pilotdeck:agent-turn-complete', {
+      detail: { projectName: traumaProject.name, sessionId: 'web:s-created' },
+    }));
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: '推演实时进度' })).toBeNull();
+    });
   });
 
   it('keeps general-medicine chat on the standard surface', () => {
@@ -247,5 +313,23 @@ describe('MainContent project-type workspace routing', () => {
 
     expect(screen.queryByRole('heading', { name: '分级救治全过程' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Open workspace file' })).not.toBeNull();
+  });
+
+  it('directs trauma Files users to the structured form workspace', () => {
+    const traumaProject: Project = {
+      ...project,
+      name: 'trauma_med-demo',
+      displayName: '战创伤演练',
+    };
+    render(
+      <MainContent
+        {...propsFor('files')}
+        projects={[traumaProject]}
+        selectedProject={traumaProject}
+      />,
+    );
+
+    expect(screen.getByRole('note').textContent).toContain('切换到对话工作区');
+    expect(mocks.chatProps.some((props) => props.hideComposer === true)).toBe(true);
   });
 });

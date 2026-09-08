@@ -4,7 +4,7 @@ import test from "node:test";
 import type { CompleteJsonInput, StructuredModelClient } from "../../src/trauma/modelClient.js";
 import { initialCaseState } from "../../src/trauma/stageConfig.js";
 import { createReasonerStation } from "../../src/trauma/stations/reasoner.js";
-import type { EvidenceChunk, TimelineState } from "../../src/trauma/types.js";
+import type { EvidenceChunk } from "../../src/trauma/types.js";
 
 const now = "2026-09-03T15:09:00+08:00";
 const state = initialCaseState({
@@ -12,14 +12,8 @@ const state = initialCaseState({
   sessionId: "web:s_demo",
   now,
 });
-const timeline: TimelineState = {
-  injuryTime: "2026-09-03T14:55:00+08:00",
-  currentTime: now,
-  elapsedMinutes: 14,
-  recommendedWindowMinutes: 10,
-  timingStatus: "exceeded",
-  isHardGate: false,
-};
+state.currentStage = "battlefield_first_aid";
+state.currentSubStage = "primary_first_aid";
 const promptChunks: EvidenceChunk[] = [{
   id: "chunk-stage",
   knowledgeBase: "trauma",
@@ -114,7 +108,7 @@ test("rejects current_stage actions that cite unknown chunk ids", async () => {
     }],
   })));
   await assert.rejects(
-    () => reason({ state, timeline, promptChunks }),
+    () => reason({ state, promptChunks }),
     /schema/i,
   );
 });
@@ -131,27 +125,59 @@ test("rewrites out-of-scope current_stage actions at primary first aid", async (
       professionalConfirmationRequired: false,
     }],
   })));
-  const result = await reason({ state, timeline, promptChunks });
+  const result = await reason({ state, promptChunks });
   assert.equal(result.treatmentPlan[0]?.scope, "next_stage");
   assert.equal(result.treatmentPlan[0]?.professionalConfirmationRequired, true);
 });
 
-test("rejects memos that exceed point and conclusion limits", async () => {
+test("removes concrete treatment actions beyond early treatment", async () => {
+  const surgicalState = structuredClone(state);
+  surgicalState.currentStage = "early_treatment";
+  surgicalState.currentSubStage = "surgical_resuscitation";
+  const { reason } = createReasonerStation(fakeClient(validPayload({
+    treatmentPlan: [{
+      id: "act-specialist",
+      title: "确定性专科手术",
+      description: "转入专科治疗后实施确定性手术",
+      scope: "next_stage",
+      priority: 1,
+      evidenceChunkIds: ["chunk-stage"],
+      professionalConfirmationRequired: true,
+    }],
+    memo: {
+      round: 2,
+      mainStage: "early_treatment",
+      subStage: "surgical_resuscitation",
+      title: "外科复苏",
+      inputPoints: ["需要更高能力"],
+      actionPoints: ["建议后送"],
+      conclusion: "建议转入专科治疗（Ⅲ级）",
+    },
+  })));
+
+  const result = await reason({ state: surgicalState, promptChunks });
+
+  assert.deepEqual(result.treatmentPlan, []);
+});
+
+test("accepts memos whose points exceed the suggested length instead of failing the turn", async () => {
+  // 长度只是 schema 描述里的软提示：偶尔超出不应中断整轮推演，展示层负责截断。
+  const longPoint = "这是一条远远超过三十个字的输入要点，但不应该让整轮推演直接失败";
   const { reason } = createReasonerStation(fakeClient(validPayload({
     memo: {
       round: 2,
       mainStage: "battlefield_first_aid",
       subStage: "primary_first_aid",
       title: "生命体征补充",
-      inputPoints: ["这是一条远远超过三十个字的输入要点所以应当被 schema 拒绝掉"],
+      inputPoints: [longPoint],
       actionPoints: ["继续止血"],
       conclusion: "建议确认转入高级急救",
     },
   })));
-  await assert.rejects(
-    () => reason({ state, timeline, promptChunks }),
-    /schema/i,
-  );
+
+  const result = await reason({ state, promptChunks });
+
+  assert.deepEqual(result.memo.inputPoints, [longPoint]);
 });
 
 test("rejects COMPLETED transition suggestions", async () => {
@@ -163,12 +189,12 @@ test("rejects COMPLETED transition suggestions", async () => {
     },
   })));
   await assert.rejects(
-    () => reason({ state, timeline, promptChunks }),
+    () => reason({ state, promptChunks }),
     /schema/i,
   );
 });
 
-test("READY suggestions require user confirmation", async () => {
+test("READY gate remains advice and never requires another confirmation", async () => {
   const { reason } = createReasonerStation(fakeClient(validPayload({
     transition: {
       status: "READY",
@@ -178,6 +204,6 @@ test("READY suggestions require user confirmation", async () => {
       requiresUserConfirmation: false,
     },
   })));
-  const result = await reason({ state, timeline, promptChunks });
-  assert.equal(result.transition.requiresUserConfirmation, true);
+  const result = await reason({ state, promptChunks });
+  assert.equal(result.transition.requiresUserConfirmation, false);
 });

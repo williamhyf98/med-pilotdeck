@@ -1,4 +1,11 @@
 import type { RoundMemo } from '../types';
+import {
+  gateStatusLabel,
+  priorityLabel,
+  severityLabel,
+  subStageLabel,
+  toChineseDisplayText,
+} from './displayLabels';
 import { derivePatientStateView } from './patientStateView';
 import { SUBSTAGE_ORDER, SUBSTAGE_TO_MAIN } from './stageConfig';
 import type { CaseSnapshot, CaseState, MainStage, SubStage } from './types';
@@ -6,8 +13,6 @@ import type { CaseSnapshot, CaseState, MainStage, SubStage } from './types';
 const MAIN_ORDER: MainStage[] = [
   'battlefield_first_aid',
   'early_treatment',
-  'specialist_treatment',
-  'rehabilitation',
 ];
 
 function substepIndex(substage: SubStage): number {
@@ -38,12 +43,12 @@ export function snapshotsToRounds(
           hour: '2-digit',
           minute: '2-digit',
         }),
-        elapsed: `${snapshot.state.timeline.elapsedMinutes} 分钟`,
-        stageId: memo.mainStage,
-        substepIndex: substepIndex(memo.subStage),
-        facility: displayState.currentFacility.name,
+        stageId: memo.mainStage ?? 'battlefield_first_aid',
+        substepIndex: memo.subStage ? substepIndex(memo.subStage) : 0,
+        unplaced: !memo.mainStage || !memo.subStage,
+        facility: displayState.currentFacility?.name ?? '未定级',
         capability: displayState.currentCapabilities.join('、') || '未记录',
-        transitionLabel: gateStatus,
+        transitionLabel: gateStatusLabel(gateStatus),
         transitionTone: gateStatus === 'READY'
           ? 'warning' as const
           : gateStatus === 'BLOCKED'
@@ -51,31 +56,26 @@ export function snapshotsToRounds(
             : gateStatus === 'COMPLETED'
               ? 'success' as const
               : undefined,
-        nextTarget: snapshot.response?.transition.targetSubStage ?? '继续当前阶段',
+        nextTarget: snapshot.response?.transition.targetSubStage
+          ? subStageLabel(snapshot.response.transition.targetSubStage)
+          : '继续当前阶段',
         inputPoints: memo.inputPoints,
         actionPoints: memo.actionPoints,
         conclusion: memo.conclusion,
         patient: derivePatientStateView(displayState),
         classification: {
           label: `V${classification?.version ?? snapshot.state.version}`,
-          severity: classification?.severity ?? 'unknown',
-          treatmentPriority: classification?.treatmentPriority ?? 'pending',
-          transportPriority: classification?.transportPriority ?? 'pending',
-        },
-        timing: {
-          window: displayState.timeline.recommendedWindowMinutes
-            ? `建议窗口 ${displayState.timeline.recommendedWindowMinutes} 分钟`
-            : '未配置建议窗口',
-          status: displayState.timeline.timingStatus,
-          warning: displayState.timeline.timingStatus !== 'within_window',
+          severity: severityLabel(classification?.severity),
+          treatmentPriority: priorityLabel(classification?.treatmentPriority),
+          transportPriority: priorityLabel(classification?.transportPriority),
         },
         gate: {
           status: gateStatus,
-          title: snapshot.response?.transition.reason ?? gateStatus,
-          description: displayState.transport.blockingReason ?? memo.conclusion,
-          confirmation: gateStatus === 'READY' ? '等待用户确认' : '无需确认',
+          title: toChineseDisplayText(snapshot.response?.transition.reason ?? gateStatusLabel(gateStatus)),
+          description: toChineseDisplayText(displayState.transport.blockingReason ?? memo.conclusion),
+          confirmation: gateStatus === 'READY' ? '医学建议，未自动执行' : '无需确认',
         },
-        actions: snapshot.response?.treatmentPlan.map((action) => action.description) ?? memo.actionPoints,
+        actions: snapshot.response?.treatmentPlan.map((action) => toChineseDisplayText(action.description)) ?? memo.actionPoints,
         nextStageCapability: displayState.requiredCapabilities.join('、') || '暂未识别',
         messages: [],
         evidence: displayState.evidence.map((item) => ({

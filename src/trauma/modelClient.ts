@@ -8,6 +8,8 @@ export type CompleteJsonInput<T> = {
   user: string;
   schema: Record<string, unknown>;
   validate: (value: unknown) => value is T;
+  /** Applied after null-stripping and before validate. Use to drop leaked extra keys. */
+  normalize?: (value: unknown) => unknown;
 };
 
 export type StructuredModelClient = {
@@ -74,7 +76,9 @@ export function createStructuredModelClient(
       if (!extracted.ok) {
         throw new StructuredOutputSchemaError(`schema validation failed: ${extracted.reason}`);
       }
-      const value = stripNulls(extracted.value);
+      const value = input.normalize
+        ? input.normalize(stripNulls(extracted.value))
+        : stripNulls(extracted.value);
       if (!input.validate(value)) {
         throw new StructuredOutputSchemaError("schema validation failed: schema_mismatch");
       }

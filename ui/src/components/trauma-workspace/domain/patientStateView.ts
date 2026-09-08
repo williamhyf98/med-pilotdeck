@@ -1,4 +1,4 @@
-import type { CaseState } from './types';
+import type { CaseState, VitalItemKey } from './types';
 
 export type PatientStateView = {
   updatedAt: string;
@@ -11,7 +11,7 @@ export type PatientStateView = {
   }>;
   injuries: Array<{
     label: string;
-    certainty: '已确认' | '疑似' | '已排除';
+    certainty: '已确认';
     status: string;
   }>;
   treatments: string[];
@@ -25,59 +25,51 @@ function trend(current?: number, previous?: number): PatientStateView['vitals'][
   return 'flat';
 }
 
-export function derivePatientStateView(state: CaseState): PatientStateView {
-  const current = state.vitalSignsHistory.at(-1);
-  const previous = state.vitalSignsHistory.at(-2);
-  const vitals: PatientStateView['vitals'] = [];
-  if (current?.respiratoryRate !== undefined) {
-    vitals.push({
-      label: '呼吸',
-      value: `${current.respiratoryRate} 次/分`,
-      trend: trend(current.respiratoryRate, previous?.respiratoryRate),
-      abnormal: current.respiratoryRate > 20,
-    });
-  }
-  if (current?.systolicBloodPressure !== undefined) {
-    vitals.push({
-      label: '收缩压',
-      value: `${current.systolicBloodPressure} mmHg`,
-      trend: trend(current.systolicBloodPressure, previous?.systolicBloodPressure),
-      abnormal: current.systolicBloodPressure < 90,
-    });
-  }
-  if (current?.heartRate !== undefined) {
-    vitals.push({
-      label: '心率',
-      value: `${current.heartRate} 次/分`,
-      trend: trend(current.heartRate, previous?.heartRate),
-      abnormal: current.heartRate > 100,
-    });
-  }
-  if (current?.spo2 !== undefined) {
-    vitals.push({
-      label: 'SpO₂',
-      value: `${current.spo2}%`,
-      trend: trend(current.spo2, previous?.spo2),
-      abnormal: current.spo2 < 94,
-    });
-  }
+const vitalDefinitions: Array<{
+  key: VitalItemKey;
+  label: string;
+  unit: string;
+  abnormal: (value: number) => boolean;
+}> = [
+  { key: 'respiratoryRate', label: '呼吸', unit: '次/分', abnormal: (value) => value > 20 },
+  { key: 'systolicBloodPressure', label: '收缩压', unit: 'mmHg', abnormal: (value) => value < 90 },
+  { key: 'gcs', label: 'GCS', unit: '', abnormal: (value) => value < 15 },
+  { key: 'heartRate', label: '心率', unit: '次/分', abnormal: (value) => value > 100 },
+  { key: 'temperature', label: '体温', unit: '℃', abnormal: (value) => value < 36 || value > 37.5 },
+];
 
-  const certainty = {
-    confirmed: '已确认',
-    suspected: '疑似',
-    excluded: '已排除',
-  } as const;
+function measuredValues(state: CaseState, key: VitalItemKey) {
+  return state.vitalSignsHistory
+    .filter((record) => record.values[key] !== undefined)
+    .map((record) => ({ round: record.round, value: record.values[key]! }));
+}
+
+export function derivePatientStateView(state: CaseState): PatientStateView {
+  const vitals = vitalDefinitions.map((definition) => {
+    const records = measuredValues(state, definition.key);
+    const current = records.at(-1);
+    const previous = records.at(-2);
+    return {
+      label: definition.label,
+      value: current
+        ? `${current.value}${definition.unit ? ` ${definition.unit}` : ''} · R${current.round}`
+        : '未测',
+      trend: trend(current?.value, previous?.value),
+      abnormal: current ? definition.abnormal(current.value) : false,
+    };
+  });
+  const latestGcs = measuredValues(state, 'gcs').at(-1);
 
   return {
     updatedAt: new Date(state.updatedAt).toLocaleString(),
-    consciousness: current?.gcs !== undefined ? `GCS ${current.gcs}` : '尚未记录',
+    consciousness: latestGcs ? `GCS ${latestGcs.value} · R${latestGcs.round}` : '尚未记录',
     vitals,
-    injuries: state.injuries.map((injury) => ({
-      label: `${injury.bodyPart} · ${injury.finding}`,
-      certainty: certainty[injury.certainty],
-      status: injury.status,
+    injuries: state.injuryNarratives.map((entry) => ({
+      label: `R${entry.round} · ${entry.text}`,
+      certainty: '已确认',
+      status: '叙述记录',
     })),
-    treatments: state.completedActions.map((action) => action.title),
+    treatments: state.treatmentNarratives.map((entry) => `R${entry.round} · ${entry.text}`),
     missingInformation: state.missingInformation,
   };
 }
