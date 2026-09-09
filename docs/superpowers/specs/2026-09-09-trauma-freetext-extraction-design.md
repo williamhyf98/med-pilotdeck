@@ -104,6 +104,7 @@
 │ 后送条件  [ 预填，可改 ]                     │
 │ 补充说明  [ 预填，可改 ]                     │
 │ 心率 92 ⓘ「心率92次」  呼吸 __  收缩压 __ … │
+│ 救治级别: (由系统判定 ▾)                     │
 │                     [ 重新整理 ] [ 确认推演 ]│
 └──────────────────────────────────────────────┘
         │ 点「确认推演」
@@ -121,7 +122,9 @@
 
 ### 4.3 救治级别不交给模型
 
-`statedSubStage` 由输入框旁的独立单选控件产出，默认「由系统判定」（`null`），走程序直传。工位 F 的输出 schema 里**根本不存在这个字段**，模型无法影响定级。这消除 §1.2 风险 2。
+`statedSubStage` 由用户的独立单选控件产出，默认「由系统判定」（`null`），走程序直传。工位 F 的输出 schema 里**根本不存在这个字段**，模型无法影响定级。这消除 §1.2 风险 2。
+
+该控件在输入框旁和确认卡里各出现一次，绑同一份状态；用户在看到整理结果后仍可改级别，以确认卡提交时的值为准。
 
 ### 4.4 折叠的精确录入
 
@@ -235,7 +238,7 @@ export type ExtractedTurnForm = {
 | `src/trauma/runner.ts` | **只有一处**：`runTurn` 入参新增可选 `rawInput`，透传进快照 |
 | `src/trauma/auditLog.ts` | 无需改动；抽取在 `trauma_extract_form` 内单独记一条 `extract_form` 审计 |
 
-`factMerge.ts`、`placer.ts`、`reasoner.ts`、`rag/*`、`gate.ts`、`store.ts` **不改**。
+`factMerge.ts`、`placer.ts`、`reasoner.ts`、`rag/*`、`gate.ts`、`store.ts` **不改**（`rawInput` 是 `CaseSnapshot` 上的可选字段，旧快照读到 `undefined` 即可，无需迁移逻辑）。
 
 ### 7.1 服务端桥接
 
@@ -248,7 +251,7 @@ export type ExtractedTurnForm = {
 | 文件 | 改动 |
 |---|---|
 | `ui/src/components/trauma-workspace/TraumaComposer.tsx` | 新建：textarea + 级别单选 + 「整理」按钮 + loading/错误态 |
-| `ui/src/components/trauma-workspace/TraumaTurnForm.tsx` | 新增 `initialValues`、`vitalSpans`、`sourceText`、`mode: "manual" \| "confirm"` 四个可选 prop；确认态下顶部显示只读原文、体征旁显示 span、按钮文案改为「确认推演」+「重新整理」 |
+| `ui/src/components/trauma-workspace/TraumaTurnForm.tsx` | 新增 `initialValues`、`vitalSpans`、`sourceText`、`mode: "manual" \| "confirm"` 四个可选 prop；确认态下顶部显示只读原文、体征旁显示 span、按钮文案改为「确认推演」+「重新整理」。救治级别 select 已存在（`:86-90`），确认态直接沿用，无需新增控件 |
 | `ui/src/components/trauma-workspace/TraumaWorkspace.tsx` | 组合 composer / 确认卡 / 折叠精确录入的状态机 |
 | `ui/src/components/main-content/view/MainContent.tsx` | `submitTraumaForm` 的 `command` 改用原文（`:205-241`）；新增 `extractTraumaForm` 调用 |
 | `ui/src/components/chat/utils/sessionLauncher.ts` | `options` 透传 `traumaRawInput` |
@@ -296,7 +299,7 @@ export type ExtractedTurnForm = {
 
 ## 11. 考虑过但不做（YAGNI）
 
-- **程序侧「是否改写」自动检测**（把叙述与原文做归一化后的覆盖率比对）——见 §12 未决问题 1。
+- **程序侧「是否改写」自动检测**——已决定不做（§12.1）。靠确认卡并列展示原文由人核对。
 - **抽取结果直接进流水线、不确认**——即前述方案 B。已否决：`vitals` 错位会静默写错病历。
 - **抽取器兼判救治级别**——见 §4.3。
 - **多轮追问式补全**——工位 B 的 `missingInformation` 已经承担追问职责，不在输入端重复。
@@ -305,8 +308,8 @@ export type ExtractedTurnForm = {
 
 ---
 
-## 12. 未决问题
+## 12. 已决事项
 
-1. **要不要加程序侧的「改写检测」？** 把每段叙述归一化（去空白与标点）后与原文比对覆盖率，低于阈值时在确认卡上打「已改写」角标（仅警告，永不阻断）。收益是自动兜住 §6 硬约束 1，成本是一个带测试的小纯函数 + 中文标点归一化的边界情况。倾向：先不做，靠确认卡并列展示原文；若人工验收发现改写现象再加。
-2. **确认卡里是否允许用户改救治级别？** 当前设计把级别单选放在输入框旁（抽取前）。若用户在看到整理结果后想改级别，需要回到 `idle`。是否在确认卡里也放一份该控件？倾向：放，成本极低。
-3. **`traumaRawInput` 要不要写进 `CaseSnapshot`？** 本稿按「写」设计（可选字段，对旧快照向后兼容）。好处是审计与回放能看到用户原话；代价是快照体积略增。
+1. **不加程序侧的「改写检测」。** 靠确认卡并列展示原文由人核对。若人工验收（§10）发现改写现象，再回头改提示词或补 few-shot，而不是加检测代码。
+2. **确认卡里也放一份救治级别控件。** 用户看到整理结果后可直接改级别，不必退回 `idle`。两处控件绑同一份状态，以确认卡提交时的值为准。
+3. **`traumaRawInput` 写进 `CaseSnapshot`。** 作为可选字段新增，对旧快照向后兼容（`store.load()` 读到没有该字段的旧快照时按 `undefined` 处理，不触发迁移报错）。审计与回放能看到用户原话，快照体积的增加可接受。
