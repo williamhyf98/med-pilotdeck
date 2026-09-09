@@ -4,7 +4,7 @@
 
 对照文档：
 
-- `docs/trauma-turn-workflow.md`（当前 14 步实现）
+- `docs/trauma-turn-workflow.md`（当前 11 步实现）
 - `docs/战伤分级救治智能推演系统-项目实施说明书.md`（业务与类型约定）
 
 ---
@@ -27,7 +27,7 @@
 - 内容是用户原话 → 不存在翻译、改写、编造
 - 提交即增量，程序确定性合并 → 不需要模型判断「是否更新」
 
-结论：**工位 A 已取消**。抽取和分类两步一起消失，模型只保留工位 P（定级）、R（补检规划）、B（研判）。
+结论：**工位 A 已取消**。抽取和分类两步一起消失，模型只保留工位 P（定级）和 B（研判）。
 
 ---
 
@@ -69,7 +69,7 @@
 
 五项。前三项对应《战伤救治规则》第二十九条「简易战伤计分」：**呼吸次数、收缩期血压、意识状况**。意识按附件 1 用 GCS 总分（3–15）填写，不拆成睁眼/语言/运动三栏。另加 **心率、体温**：规则在抗休克、心肺复苏、低体温/中暑等专章里反复用这两项，现场也常一起报。
 
-舒张压、SpO₂ 不进表单；需要时写进伤情、后送条件或补充说明。
+舒张压不进表单，需要时写进伤情、后送条件或补充说明。SpO₂ 已于 2026-09-09 加入封闭体征集（键 `spo2`），依据与设计见 `docs/superpowers/specs/2026-09-09-trauma-freetext-extraction-design.md` §5.4。
 
 | 项 | 输入 | 单位 | 合法范围 | 依据 |
 |---|---|---|---|---|
@@ -236,7 +236,7 @@ export type VitalsRoundRecord = {
 - 体征：`recentRecords` 保留最近 6 条记录（新到旧）；`latestByField` 给出每项最近值、来源轮次与 `stale`；另有聚合 `values`、`latestMeasuredRound`、`measuredThisRound`
 - 已确认主级 / 子级 / 派生机构
 
-工位 P、工位 R、工位 B 吃这份压缩视图（伤情/处置/后送倒序最多 6 条、各截断约 300 字）。第一波 RAG 问句用平行逻辑直接读 `CaseState`（同样最近 6 条伤情叙述、最近体征轮次、派生机构），不经过该 helper。后一轮叙述与前一轮冲突时，提示词写明**后一轮覆盖前一轮**。
+工位 P、工位 B 吃这份压缩视图（伤情/处置/后送倒序最多 6 条、各截断约 300 字）。检索问句用平行逻辑直接读 `CaseState`（同样最近 6 条伤情叙述、最近体征轮次、派生机构），不经过该 helper。后一轮叙述与前一轮冲突时，提示词写明**后一轮覆盖前一轮**。
 
 ---
 
@@ -284,7 +284,7 @@ export type VitalsRoundRecord = {
 
 ## 6. Runner 当前路径（已落地）
 
-完整成功路径固定 14 步：
+完整成功路径固定 11 步：
 
 | 步 | phase | 执行者 |
 |---|---|---|
@@ -293,27 +293,24 @@ export type VitalsRoundRecord = {
 | 3 | `assess_placement` | 工位 P（明示时短路） |
 | 4 | `confirm_placement` | 程序 + 用户 |
 | 5 | `baseline_retrieval` | 程序 + RAG |
-| 6 | `plan_supplemental_queries` | 工位 R |
-| 7 | `supplemental_retrieval` | 程序 + RAG |
-| 8 | `merge_retrieval` | 程序 |
-| 9 | `reason` | 工位 B |
-| 10 | `resolve_gate` | 程序 |
-| 11 | `prepare_transition_advice` | 程序 |
-| 12 | `mark_evidence` | 程序 |
-| 13 | `build_response_and_snapshot` | 程序 |
-| 14 | `persist_snapshot` | 程序 |
+| 6 | `merge_retrieval` | 程序 |
+| 7 | `reason` | 工位 B |
+| 8 | `resolve_gate` | 程序 |
+| 9 | `mark_evidence` | 程序 |
+| 10 | `build_response_and_snapshot` | 程序 |
+| 11 | `persist_snapshot` | 程序 |
 
-每轮模型调用最多 3 次（明示级别时 2 次）。若已校验表单最终为 `undetermined` / `out_of_scope`，则在步骤 1–4 后执行 `build_partial_response_and_snapshot`、`persist_partial_snapshot`，形成 **6 步短路径**：合并后的表单以部分 `agent_turn` 持久化，`version` / `round` 各加 1，响应 `messageId` 使用真实 runId；不调用 RAG、工位 R 或工位 B。
+每轮模型调用最多 2 次（明示级别时 1 次）。若已校验表单最终为 `undetermined` / `out_of_scope`，则在步骤 1–4 后执行 `build_partial_response_and_snapshot`、`persist_partial_snapshot`，形成 **6 步短路径**：合并后的表单以部分 `agent_turn` 持久化，`version` / `round` 各加 1，响应 `messageId` 使用真实 runId；不调用 RAG 或工位 B。
 
 ---
 
 ## 7. 当前实现与测试入口
 
 - `src/trauma/factMerge.ts`：`validateTurnFormInput` / `mergeFormInput` / `compactCaseStateForDownstream`
-- `src/trauma/runner.ts`：14 步完整路径与 6 步未落位短路径
+- `src/trauma/runner.ts`：11 步完整路径与 6 步未落位短路径
 - `src/trauma/store.ts`：病例迁移与持久化
 - `tests/trauma/factMerge.spec.ts`：表单校验、确定性合并、体征历史压缩与陈旧标记
-- `tests/trauma/runner.spec.ts`：模型调用、14 步完整路径、6 步部分持久化路径
+- `tests/trauma/runner.spec.ts`：模型调用、11 步完整路径、6 步部分持久化路径
 - `tests/trauma/store.spec.ts`：旧病例迁移
 - 根目录 `npm test` 与 `cd ui && npm test`
 
