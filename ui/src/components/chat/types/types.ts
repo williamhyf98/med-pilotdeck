@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { MutableRefObject, ReactNode } from 'react';
 import type {
   Project,
   ProjectSession,
@@ -329,4 +329,10 @@ export interface ChatInterfaceProps {
   composerFooterStart?: ReactNode;
   composerFooterEnd?: ReactNode;
   composerChrome?: 'default' | 'medical';
+  /**
+   * Trauma form submissions use the same optimistic message path as the
+   * standard composer. The parent owns only this narrow imperative bridge;
+   * message/session state remains inside ChatInterfaceV2.
+   */
+  traumaOptimisticMessageRef?: MutableRefObject<((text: string, targetSessionId?: string | null, runId?: string) => void) | null>;
 }

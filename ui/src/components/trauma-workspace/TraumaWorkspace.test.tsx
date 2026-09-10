@@ -39,8 +39,9 @@ describe('TraumaWorkspace', () => {
     expect(within(facilityStatus).getByText('未定级')).not.toBeNull();
     expect(screen.getByRole('region', { name: '推演对话' })).not.toBeNull();
     expect(screen.getByText('runtime chat surface')).not.toBeNull();
-    expect(screen.getByRole('form', { name: '本轮伤情录入' })).not.toBeNull();
-    expect(screen.getByRole('button', { name: '提交本轮信息' })).not.toBeNull();
+    // The free-text composer is the primary surface; the manual form is behind the disclosure.
+    expect(screen.getByLabelText('本轮伤情自由输入')).not.toBeNull();
+    expect(screen.getByRole('button', { name: '整理' })).not.toBeNull();
     expect(screen.queryByPlaceholderText(/发送消息/)).toBeNull();
     expect(screen.queryByRole('button', { name: /沿用/ })).toBeNull();
     expect(screen.queryByLabelText('推演轮次时间线')).toBeNull();
@@ -176,35 +177,31 @@ describe('TraumaWorkspace', () => {
     expect(screen.getByText('实时处理与确认')).not.toBeNull();
   });
 
-  it('preserves form input until a persisted case version appears', async () => {
-    caseStoreMock.current = initialUiCaseState();
+  it('preserves form input across a case persistence and a version bump', async () => {
     const submit = vi.fn();
     const props = {
       resetKey: 'trauma:persisted-reset',
       onSubmitForm: submit,
     };
+    // Mount onto an already-persisted case (v1) so the composer key is stable.
+    caseStoreMock.current = { ...initialUiCaseState(), version: 1, round: 1 };
     const { rerender } = render(<TraumaWorkspace {...props} />);
 
-    fireEvent.change(screen.getByLabelText('伤情描述'), {
+    fireEvent.change(screen.getByLabelText('本轮伤情自由输入'), {
       target: { value: '等待持久化后清空' },
     });
-    fireEvent.click(screen.getByRole('button', { name: '提交本轮信息' }));
-    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
-    expect(caseStoreMock.refresh).not.toHaveBeenCalled();
-    expect((screen.getByLabelText('伤情描述') as HTMLTextAreaElement).value)
+
+    // A new persisted version for the same case must NOT clear the draft;
+    // the composer is keyed by caseId, so a live refresh keeps user input.
+    caseStoreMock.current = { ...initialUiCaseState(), version: 2, round: 2 };
+    rerender(<TraumaWorkspace {...props} />);
+    expect((screen.getByLabelText('本轮伤情自由输入') as HTMLTextAreaElement).value)
       .toBe('等待持久化后清空');
 
-    rerender(<TraumaWorkspace {...props} />);
-    expect((screen.getByLabelText('伤情描述') as HTMLTextAreaElement).value)
-      .toBe('等待持久化后清空');
-
-    caseStoreMock.current = {
-      ...caseStoreMock.current,
-      version: 2,
-      round: 2,
-    };
-    rerender(<TraumaWorkspace {...props} />);
-    expect((screen.getByLabelText('伤情描述') as HTMLTextAreaElement).value).toBe('');
+    // Switching to a different case (new resetKey) remounts and clears it.
+    caseStoreMock.current = { ...initialUiCaseState(), caseId: 'case-other', version: 1, round: 1 };
+    rerender(<TraumaWorkspace {...props} resetKey="trauma:other" />);
+    expect((screen.getByLabelText('本轮伤情自由输入') as HTMLTextAreaElement).value).toBe('');
   });
 
   it('describes READY as advice without implying a second confirmation', () => {

@@ -81,15 +81,17 @@ function constrainTreatmentPlan(
 }
 
 export function createReasonerStation(model: StructuredModelClient): {
-  reason(input: {
-    state: CaseState;
-    promptChunks: EvidenceChunk[];
-  }): Promise<ReasonerResult>;
+	  reason(input: {
+	    state: CaseState;
+	    promptChunks: EvidenceChunk[];
+	    onNaturalLanguageDelta?: (text: string) => void | Promise<void>;
+	    onNaturalLanguageEnd?: () => void | Promise<void>;
+	  }): Promise<ReasonerResult>;
 } {
   return {
     async reason(input) {
       const promptIds = new Set(input.promptChunks.map((chunk) => chunk.id));
-      const raw = await model.completeJson({
+      const request = {
         name: "trauma_reason",
         system: REASONER_SYSTEM_PROMPT,
         user: JSON.stringify({
@@ -109,7 +111,13 @@ export function createReasonerStation(model: StructuredModelClient): {
         }),
         schema: REASONER_OUTPUT_SCHEMA,
         validate: validateReasonerOutput,
-      });
+      };
+      const raw = model.streamJson
+	        ? await model.streamJson(request, {
+	          onNaturalLanguageDelta: input.onNaturalLanguageDelta,
+	          onNaturalLanguageEnd: input.onNaturalLanguageEnd,
+	        })
+        : await model.completeJson(request);
 
       assertKnownEvidence(raw.treatmentPlan, raw.gateAssessment, promptIds);
 

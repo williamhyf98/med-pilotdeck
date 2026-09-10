@@ -225,7 +225,11 @@ export async function* streamModel(
       return;
     }
 
-    const state = createStreamNormalizerState(provider.protocol, currentRequest.model);
+    const state = createStreamNormalizerState(
+      provider.protocol,
+      currentRequest.model,
+      currentRequest.thinking,
+    );
     let streamCompleted = false;
     let sawCompletionSentinel = false;
 

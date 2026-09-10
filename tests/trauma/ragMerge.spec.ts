@@ -6,9 +6,9 @@ import type { PlannedRagQuery } from "../../src/trauma/rag/queryPlan.js";
 import type { TraumaRagHit } from "../../src/trauma/rag/client.js";
 
 const queries: PlannedRagQuery[] = [
-  { wave: 1, kind: "stage", query: "初级急救规则", reason: "stage", critical: true },
-  { wave: 1, kind: "classification_transport", query: "分类后送", reason: "triage", critical: true },
-  { wave: 1, kind: "primary_injury", query: "胸部伤", reason: "injury", critical: true },
+  { kind: "stage", query: "初级急救规则", reason: "stage", critical: true },
+  { kind: "classification_transport", query: "分类后送", reason: "triage", critical: true },
+  { kind: "primary_injury", query: "胸部伤", reason: "injury", critical: true },
 ];
 
 function hit(id: string, score: number, backend: "remote" | "local" = "remote"): TraumaRagHit {

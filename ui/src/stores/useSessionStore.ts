@@ -281,6 +281,7 @@ function isConfirmedUserMessageDuplicate(
   const realtimeText = normalizeUserVisibleText(realtimeMessage.content);
   if (!realtimeText) return false;
 
+  const realtimeTurnId = getMessageTurnId(realtimeMessage);
   const realtimeTimestamp = parseTimestampMs(realtimeMessage.timestamp);
 
   return serverMessages.some((serverMessage) => {
@@ -290,6 +291,11 @@ function isConfirmedUserMessageDuplicate(
 
     if (normalizeUserVisibleText(serverMessage.content) !== realtimeText) {
       return false;
+    }
+
+    const serverTurnId = getMessageTurnId(serverMessage);
+    if (realtimeTurnId) {
+      return serverTurnId === realtimeTurnId;
     }
 
     if (realtimeTimestamp == null) {

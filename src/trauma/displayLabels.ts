@@ -20,19 +20,80 @@ export const GATE_STATUS_LABELS: Record<GateStatus, string> = {
   COMPLETED: "转换完成",
 };
 
-const DISPLAY_REPLACEMENTS: Array<[RegExp, string]> = [
-  [/\bbattlefield_first_aid\b/g, MAIN_STAGE_LABELS.battlefield_first_aid],
-  [/\bearly_treatment\b/g, MAIN_STAGE_LABELS.early_treatment],
-  [/\bprimary_first_aid\b/g, SUBSTAGE_LABELS.primary_first_aid],
-  [/\badvanced_first_aid\b/g, SUBSTAGE_LABELS.advanced_first_aid],
-  [/\bemergency_treatment\b/g, SUBSTAGE_LABELS.emergency_treatment],
-  [/\bsurgical_resuscitation\b/g, SUBSTAGE_LABELS.surgical_resuscitation],
-  [/\bASSESSING\b/g, GATE_STATUS_LABELS.ASSESSING],
-  [/\bREADY\b/g, GATE_STATUS_LABELS.READY],
-  [/\bBLOCKED\b/g, GATE_STATUS_LABELS.BLOCKED],
-  [/\bCOMPLETED\b/g, GATE_STATUS_LABELS.COMPLETED],
-  [/\bSTAY\b/g, GATE_STATUS_LABELS.STAY],
+const DISPLAY_TOKEN_REPLACEMENTS: Array<[string, string]> = [
+  ["battlefield_first_aid", MAIN_STAGE_LABELS.battlefield_first_aid],
+  ["early_treatment", MAIN_STAGE_LABELS.early_treatment],
+  ["primary_first_aid", SUBSTAGE_LABELS.primary_first_aid],
+  ["advanced_first_aid", SUBSTAGE_LABELS.advanced_first_aid],
+  ["emergency_treatment", SUBSTAGE_LABELS.emergency_treatment],
+  ["surgical_resuscitation", SUBSTAGE_LABELS.surgical_resuscitation],
+  ["ASSESSING", GATE_STATUS_LABELS.ASSESSING],
+  ["READY", GATE_STATUS_LABELS.READY],
+  ["BLOCKED", GATE_STATUS_LABELS.BLOCKED],
+  ["COMPLETED", GATE_STATUS_LABELS.COMPLETED],
+  ["STAY", GATE_STATUS_LABELS.STAY],
 ];
+
+const DISPLAY_REPLACEMENTS: Array<[RegExp, string]> = DISPLAY_TOKEN_REPLACEMENTS.map(([token, label]) => [
+  new RegExp(`\\b${escapeRegExp(token)}\\b`, "g"),
+  label,
+]);
+
+const MAX_DISPLAY_TOKEN_LENGTH = Math.max(...DISPLAY_TOKEN_REPLACEMENTS.map(([token]) => token.length));
+
+const WORD_CHAR_PATTERN = /[A-Za-z0-9_]/u;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function trailingDisplayTokenPrefixLength(value: string): number {
+  const start = Math.max(0, value.length - MAX_DISPLAY_TOKEN_LENGTH + 1);
+  let best = 0;
+  for (let index = start; index < value.length; index += 1) {
+    const suffix = value.slice(index);
+    if (!suffix) continue;
+    const previous = index > 0 ? value[index - 1] : "";
+    if (previous && WORD_CHAR_PATTERN.test(previous)) continue;
+    if (DISPLAY_TOKEN_REPLACEMENTS.some(([token]) =>
+      suffix.length <= token.length && token.startsWith(suffix)
+    )) {
+      best = Math.max(best, suffix.length);
+    }
+  }
+  return best;
+}
+
+export type ChineseDisplayStreamNormalizer = {
+  push(delta: string): string;
+  flush(): string;
+};
+
+export function createChineseDisplayStreamNormalizer(): ChineseDisplayStreamNormalizer {
+  let raw = "";
+  let safeRawLength = 0;
+  let emittedNormalized = "";
+  const next = (final: boolean): string => {
+    const hold = final ? 0 : trailingDisplayTokenPrefixLength(raw);
+    const nextSafeRawLength = raw.length - hold;
+    if (nextSafeRawLength <= safeRawLength && !final) return "";
+    safeRawLength = Math.max(safeRawLength, nextSafeRawLength);
+    const normalized = normalizeChineseDisplayText(raw.slice(0, safeRawLength));
+    const delta = normalized.slice(emittedNormalized.length);
+    emittedNormalized = normalized;
+    return delta;
+  };
+  return {
+    push(delta: string) {
+      raw += delta;
+      return next(false);
+    },
+    flush() {
+      safeRawLength = raw.length;
+      return next(true);
+    },
+  };
+}
 
 export function mainStageLabel(value: MainStage | null | undefined): string {
   return value ? MAIN_STAGE_LABELS[value] : "未定级";

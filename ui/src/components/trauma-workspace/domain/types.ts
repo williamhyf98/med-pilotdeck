@@ -24,6 +24,25 @@ export type TurnFormInput = {
   vitals: Partial<Record<VitalItemKey, number>>;
 };
 
+export type ExtractedNarrativeItem = {
+  text: string;
+  confidence?: number;
+};
+
+export type ExtractedVitalItem = {
+  field: VitalItemKey;
+  value: number;
+  confidence?: number;
+};
+
+export type ExtractedTurnForm = {
+  injuryNarratives: ExtractedNarrativeItem[];
+  treatmentNarratives: ExtractedNarrativeItem[];
+  evacuationNarratives: ExtractedNarrativeItem[];
+  notes: ExtractedNarrativeItem[];
+  vitals: ExtractedVitalItem[];
+};
+
 export type NarrativeEntry = {
   round: number;
   createdAt: string;

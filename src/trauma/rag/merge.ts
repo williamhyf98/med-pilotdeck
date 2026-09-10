@@ -62,7 +62,7 @@ export function mergeRetrieval(input: MergeRetrievalInput): MergeRetrievalResult
       tagsById.set(hit.chunk_id, tags);
       ids.push(hit.chunk_id);
     }
-    chunkIdsByQuery.set(`${result.query.wave}:${result.query.kind}:${result.query.query}`, ids);
+    chunkIdsByQuery.set(`${result.query.kind}:${result.query.query}`, ids);
   }
 
   const ranked = [...hitsById.values()].sort((left, right) => {
@@ -89,12 +89,11 @@ export function mergeRetrieval(input: MergeRetrievalInput): MergeRetrievalResult
 
   const retrieval: RetrievalTrace = {
     queries: input.queries.map((query) => ({
-      wave: query.wave,
       kind: query.kind,
       query: query.query,
       reason: query.reason,
       critical: query.critical,
-      chunkIds: chunkIdsByQuery.get(`${query.wave}:${query.kind}:${query.query}`) ?? [],
+      chunkIds: chunkIdsByQuery.get(`${query.kind}:${query.query}`) ?? [],
     })),
     totalCalls: input.results.length,
     allChunkIds: evidence.map((chunk) => chunk.id),

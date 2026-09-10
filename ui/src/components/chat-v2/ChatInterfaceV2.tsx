@@ -124,6 +124,7 @@ function ChatInterfaceV2({
   composerFooterStart,
   composerFooterEnd,
   composerChrome = 'default',
+  traumaOptimisticMessageRef,
 }: ChatInterfaceProps) {
   const { t } = useTranslation('chat');
   const { tasksEnabled: _tasksEnabled, isTaskMasterInstalled: _isTaskMasterInstalled } =
@@ -246,6 +247,34 @@ function ChatInterfaceV2({
     pendingViewSessionRef,
     sessionStore,
   });
+
+  const addOptimisticTraumaMessage = useCallback((text: string, targetSessionId?: string | null, runId?: string) => {
+    const content = text.trim();
+    if (!content) return;
+    // A null target deliberately uses the hook's pending-message handoff so
+    // the bubble remains visible while a new session is being created.
+    if (!targetSessionId) {
+      pendingViewSessionRef.current = { sessionId: null, startedAt: Date.now() };
+    }
+    addMessage({
+      type: 'user',
+      content,
+      timestamp: new Date(),
+      ...(runId ? { runId, turnId: runId } : {}),
+    }, targetSessionId ?? null);
+    setIsUserScrolledUp(false);
+    setTimeout(() => scrollToBottom(), 100);
+  }, [addMessage, pendingViewSessionRef, scrollToBottom, setIsUserScrolledUp]);
+
+  useEffect(() => {
+    if (!traumaOptimisticMessageRef) return undefined;
+    traumaOptimisticMessageRef.current = addOptimisticTraumaMessage;
+    return () => {
+      if (traumaOptimisticMessageRef.current === addOptimisticTraumaMessage) {
+        traumaOptimisticMessageRef.current = null;
+      }
+    };
+  }, [addOptimisticTraumaMessage, traumaOptimisticMessageRef]);
 
   const watchedSessionId = selectedSession?.id || currentSessionId || null;
   useSessionWatch({ sessionId: watchedSessionId, ws, sendMessage });

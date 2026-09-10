@@ -100,6 +100,7 @@ import { ExtensionWatchManager, type ExtensionWatchEvent } from "./ExtensionWatc
 import { createTelemetryCollector, type TelemetryClient } from "../telemetry/index.js";
 import {
   createTraumaAuditLogger,
+  createExtractionStation,
   createMcpTraumaRagClient,
   createStructuredModelClient,
   createTraumaCaseStore,
@@ -325,6 +326,8 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
     setSessionCwd: (sessionKey, cwd) => registry.setSessionCwd(sessionKey, cwd),
     traumaRunnerFactory: ({ projectKey, sessionKey }) =>
       registry.createTraumaRunner(projectKey, sessionKey),
+    traumaExtractorFactory: ({ projectKey, sessionKey }) =>
+      registry.createExtractionStation(projectKey, sessionKey),
     traumaCaseReader: ({ projectKey, sessionKey }) =>
       registry.readTraumaCase(projectKey, sessionKey),
     async recordTraumaTurn(input) {
@@ -342,6 +345,13 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
           content: [{ type: "text", text: input.userText }],
         },
       );
+      for (const processMessage of input.processMessages ?? []) {
+        await storage.transcript.recordDurableMessage(
+          input.sessionKey,
+          input.runId,
+          processMessage,
+        );
+      }
       await storage.transcript.recordDurableMessage(
         input.sessionKey,
         input.runId,
@@ -637,6 +647,7 @@ class ProjectRuntimeRegistry {
     const modelSelection = runtime.snapshot.config.agent.model;
     const model = createStructuredModelClient({
       complete: runtime.model.complete.bind(runtime.model),
+      stream: runtime.model.stream.bind(runtime.model),
       provider: modelSelection.provider,
       model: modelSelection.model,
     });
@@ -666,6 +677,19 @@ class ProjectRuntimeRegistry {
       audit: this.traumaAudit,
       now: () => this.options.now().toISOString(),
     });
+  }
+
+  async createExtractionStation(projectKey: string, sessionKey: string) {
+    const runtime = this.resolve(projectKey);
+    await runtime.pluginRuntime.refresh();
+    const modelSelection = runtime.snapshot.config.agent.model;
+    const model = createStructuredModelClient({
+      complete: runtime.model.complete.bind(runtime.model),
+      stream: runtime.model.stream.bind(runtime.model),
+      provider: modelSelection.provider,
+      model: modelSelection.model,
+    });
+    return createExtractionStation(model);
   }
 
   async readTraumaCase(projectKey: string, sessionKey: string) {

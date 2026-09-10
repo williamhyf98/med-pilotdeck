@@ -28,7 +28,28 @@ export type VitalItemKey =
   | "systolicBloodPressure"
   | "gcs"
   | "heartRate"
-  | "temperature";
+  | "temperature"
+  | "spo2";
+
+export type ExtractedNarrativeItem = {
+  text: string;
+  sourceSpan: string;
+};
+
+export type ExtractedVitalItem = {
+  field: VitalItemKey;
+  value: number;
+  unit: string;
+  sourceSpan: string;
+};
+
+export type ExtractedTurnForm = {
+  injuryNarratives: ExtractedNarrativeItem[];
+  treatmentNarratives: ExtractedNarrativeItem[];
+  evacuationNarratives: ExtractedNarrativeItem[];
+  notes: ExtractedNarrativeItem[];
+  vitals: ExtractedVitalItem[];
+};
 
 export type TurnFormInput = {
   statedSubStage: SubStage | null;
@@ -100,12 +121,10 @@ export type EvidenceChunk = {
 export type RagQueryKind =
   | "stage"
   | "classification_transport"
-  | "primary_injury"
-  | "supplemental";
+  | "primary_injury";
 
 export type RetrievalTrace = {
   queries: Array<{
-    wave: 1 | 2;
     kind: RagQueryKind;
     query: string;
     reason: string;
@@ -273,6 +292,7 @@ export type CaseSnapshot = {
   triggerMessageId: string;
   state: CaseState;
   form?: TurnFormInput;
+  rawInput?: string;
   retrieval?: RetrievalTrace;
   response?: AgentTurnResponse;
 };

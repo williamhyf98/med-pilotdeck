@@ -157,6 +157,11 @@ async function readJsonPayload<T>(response: Response): Promise<T | null> {
   }
 }
 
+function createClientRunId(): string {
+  return globalThis.crypto?.randomUUID?.()
+    ?? `client-run-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function MainContent({
   projects,
   selectedProject,
@@ -198,8 +203,11 @@ function MainContent({
   const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings() as TasksSettingsContextValue;
   const [toast, setToast] = useState<MainContentToast>(null);
   const [traumaSubmitting, setTraumaSubmitting] = useState(false);
+  const traumaOptimisticMessageRef = useRef<(
+    (text: string, targetSessionId?: string | null, runId?: string) => void
+  ) | null>(null);
 
-  const submitTraumaForm = useCallback((form: TurnFormInput) => {
+  const submitTraumaForm = useCallback((form: TurnFormInput, rawInput = '') => {
     if (!selectedProject || traumaSubmitting) return;
     const selectedSessionId = selectedSession?.id;
     const concreteSessionId = selectedSessionId && !isTemporarySessionId(selectedSessionId)
@@ -209,8 +217,10 @@ function MainContent({
       ? undefined
       : selectedSessionId || createTemporarySessionId();
     const summary = summarizeTraumaForm(form);
+    const runId = createClientRunId();
     setTraumaSubmitting(true);
     try {
+      traumaOptimisticMessageRef.current?.(summary, concreteSessionId, runId);
       const activatedSessionId = startSessionCommand({
         sendMessage,
         selectedProject,
@@ -219,7 +229,9 @@ function MainContent({
         sessionId: concreteSessionId,
         temporarySessionId,
         sessionSummary: summary,
+        runId,
         traumaForm: form,
+        traumaRawInput: rawInput,
       });
       onSessionActive?.(activatedSessionId);
       if (concreteSessionId) onSessionProcessing?.(concreteSessionId);
@@ -516,6 +528,7 @@ function MainContent({
           onSessionActivityBump={onSessionActivityBump}
           processingSessions={processingSessions}
           submitTraumaForm={submitTraumaForm}
+          traumaOptimisticMessageRef={traumaOptimisticMessageRef}
           traumaSubmitting={traumaSubmitting}
           unreadSessionIds={unreadSessionIds}
           onReplaceTemporarySession={onReplaceTemporarySession}
@@ -601,7 +614,8 @@ type SplitBodyProps = {
     optimisticTitle?: string,
   ) => void;
   processingSessions: Set<string>;
-  submitTraumaForm: (form: TurnFormInput) => void;
+  submitTraumaForm: (form: TurnFormInput, rawInput?: string) => void;
+  traumaOptimisticMessageRef: React.MutableRefObject<((text: string, targetSessionId?: string | null, runId?: string) => void) | null>;
   traumaSubmitting: boolean;
   unreadSessionIds: Set<string>;
   onReplaceTemporarySession: any;
@@ -652,6 +666,7 @@ function SplitBody(props: SplitBodyProps) {
     onSessionActivityBump,
     processingSessions,
     submitTraumaForm,
+    traumaOptimisticMessageRef,
     traumaSubmitting,
     unreadSessionIds,
     onReplaceTemporarySession,
@@ -947,6 +962,7 @@ function SplitBody(props: SplitBodyProps) {
       onExitWelcome={isFiles ? undefined : () => setActiveTab('chat')}
       compact={isFiles}
       hideComposer={isWarTraumaProject}
+      traumaOptimisticMessageRef={traumaOptimisticMessageRef}
       hiddenComposerNotice={isWarTraumaProject && isFiles
         ? '战创伤病例请切换到对话工作区，通过结构化表单提交本轮信息。'
         : undefined}

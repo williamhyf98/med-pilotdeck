@@ -23,6 +23,7 @@ describe('startSessionCommand trauma form contract', () => {
       sessionId: 'web:s1',
       command: '战创伤推演：初级急救；伤情：右小腿开放伤；心率 118 次/分',
       userVisibleInput: '初级急救 · 伤情：右小腿开放伤 · 心率 118 次/分',
+      runId: 'run-trauma-1',
       traumaForm,
     });
 
@@ -32,6 +33,7 @@ describe('startSessionCommand trauma form contract', () => {
       options: expect.objectContaining({
         sessionId: 'web:s1',
         resume: true,
+        runId: 'run-trauma-1',
         traumaForm,
         userVisibleInput: '初级急救 · 伤情：右小腿开放伤 · 心率 118 次/分',
       }),

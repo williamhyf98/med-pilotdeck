@@ -222,6 +222,11 @@ export class GatewayWsConnection {
           throw new Error("Trauma stage override is not configured.");
         }
         return this.options.gateway.traumaOverrideStage(frame.params as never);
+      case "trauma_extract_form":
+        if (!this.options.gateway.traumaExtractForm) {
+          throw new Error("Trauma form extraction is not configured.");
+        }
+        return this.options.gateway.traumaExtractForm(frame.params as never);
       case "permission_decide":
         return this.options.gateway.permissionDecide(frame.params as never);
       case "grant_session_permission":

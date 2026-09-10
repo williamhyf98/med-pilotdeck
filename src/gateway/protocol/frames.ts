@@ -36,6 +36,7 @@ export type WsGatewayMethod =
   | "trauma_confirm_transition"
   | "trauma_get_case"
   | "trauma_override_stage"
+  | "trauma_extract_form"
   | "permission_decide"
   | "grant_session_permission"
   | "read_session_messages"

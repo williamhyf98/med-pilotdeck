@@ -47,6 +47,7 @@ type WebGatewayEventMetadata = {
 export type WebGatewayEvent = WebGatewayEventMetadata & (
   | { type: "turn_started"; runId: string }
   | { type: "assistant_text_delta"; text: string }
+  | { type: "assistant_text_end" }
   | { type: "assistant_thinking_delta"; text: string }
   | { type: "file_artifacts"; artifacts: import("../../session/artifacts/FileArtifact.js").FileArtifact[] }
   | {
@@ -160,6 +161,8 @@ export type WebSubmitTurnInput = {
   message: string;
   projectKey?: string;
   attachments?: WebChannelAttachment[];
+  traumaForm?: unknown;
+  traumaRawInput?: string;
   runMode?: WebAgentRunMode;
   mode?: WebGatewayMode;
   basePermissionMode?: WebGatewayMode;

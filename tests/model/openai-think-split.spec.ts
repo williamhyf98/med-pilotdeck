@@ -6,6 +6,10 @@ import {
   normalizeOpenAIStreamEvent,
   splitThinkContent,
 } from "../../src/model/providers/openai/stream.js";
+import {
+  createStreamNormalizerState,
+  normalizeStreamEvent,
+} from "../../src/model/streaming/normalizeStreamEvent.js";
 
 test("Qwen3-style bare </think> splits reasoning from answer text", () => {
   const state = createOpenAIStreamState();
@@ -76,4 +80,37 @@ test("openai stream event routes bare-close reasoning into thinking deltas", () 
   const types = events.map((e) => e.type);
   assert.ok(types.includes("thinking_delta"), JSON.stringify(types));
   assert.ok(types.includes("text_delta"), JSON.stringify(types));
+});
+
+test("explicitly disabled Qwen thinking does not hold back structured JSON text", () => {
+  const state = createStreamNormalizerState(
+    "openai",
+    "Qwen3.8-27B",
+    { enabled: false, mode: "off" },
+  );
+  const first = normalizeStreamEvent("openai", {
+    id: "cmpl-structured-1",
+    object: "chat.completion.chunk",
+    choices: [{
+      index: 0,
+      delta: { content: '{"naturalLanguageAnswer":"当前' },
+      finish_reason: null,
+    }],
+  }, state);
+  const second = normalizeStreamEvent("openai", {
+    id: "cmpl-structured-2",
+    object: "chat.completion.chunk",
+    choices: [{
+      index: 0,
+      delta: { content: '正在处理。"}' },
+      finish_reason: null,
+    }],
+  }, state);
+
+  assert.deepEqual(
+    [...first, ...second]
+      .filter((event) => event.type === "text_delta")
+      .map((event) => event.text),
+    ['{"naturalLanguageAnswer":"当前', '正在处理。"}'],
+  );
 });

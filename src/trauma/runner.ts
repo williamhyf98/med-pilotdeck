@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { TraumaAuditLogger, TraumaAuditRecord } from "./auditLog.js";
 import { mergeFormInput, validateTurnFormInput } from "./factMerge.js";
-import { mainStageLabel, normalizeChineseDisplayText, subStageLabel } from "./displayLabels.js";
+import { normalizeChineseDisplayText } from "./displayLabels.js";
 import { resolveGate } from "./gate.js";
 import { resolveStagePlacement } from "./placement.js";
 import type { StructuredModelClient } from "./modelClient.js";
@@ -28,15 +28,38 @@ export type TraumaTurnPhase = "validate" | "place" | "retrieve" | "reason";
 
 export type TraumaTurnProgress =
   | { phase: TraumaTurnPhase; status: "started"; detail?: string }
-  | { phase: TraumaTurnPhase; status: "finished"; ok: boolean; detail?: string };
+  | { phase: TraumaTurnPhase; status: "finished"; ok: boolean; detail?: string }
+  | {
+      kind: "runner_step";
+      step: number;
+      phase: string;
+      status: "started";
+      title?: string;
+      detail?: string;
+    }
+  | {
+      kind: "runner_step";
+      step: number;
+      phase: string;
+      status: "finished";
+      ok: boolean;
+      title?: string;
+      detail?: string;
+      durationMs?: number;
+      details?: Record<string, unknown>;
+    };
 
 export type TraumaTurnInput = {
   projectId: string;
   sessionId: string;
   messageId: string;
   form: TurnFormInput;
+  /** 用户本轮原始自由文本，存入快照供审计与回溯，不参与推演逻辑。 */
+  rawInput?: string;
   now: string;
   onProgress?: (progress: TraumaTurnProgress) => void;
+  onAssistantTextDelta?: (text: string) => void | Promise<void>;
+  onAssistantTextEnd?: () => void | Promise<void>;
   requestPlacementConfirmation?: (
     request: PlacementConfirmationRequest,
   ) => Promise<PlacementConfirmationDecision>;
@@ -170,8 +193,10 @@ export function createTraumaTurnRunner(deps: {
           ...entry,
         });
       };
+      const report = input.onProgress ?? (() => {});
       const beginStep = async (number: number, phase: string) => {
         activeStep = { number, phase, startedAt: Date.now() };
+        report({ kind: "runner_step", step: number, phase, status: "started" });
         await recordAudit({
           level: "INFO",
           event: "step_started",
@@ -182,13 +207,23 @@ export function createTraumaTurnRunner(deps: {
       };
       const completeStep = async (details?: Record<string, unknown>) => {
         if (!activeStep) return;
+        const durationMs = Date.now() - activeStep.startedAt;
+        report({
+          kind: "runner_step",
+          step: activeStep.number,
+          phase: activeStep.phase,
+          status: "finished",
+          ok: true,
+          durationMs,
+          details,
+        });
         await recordAudit({
           level: "INFO",
           event: "step_completed",
           step: activeStep.number,
           phase: activeStep.phase,
           status: "ok",
-          durationMs: Date.now() - activeStep.startedAt,
+          durationMs,
           details,
         });
         activeStep = undefined;
@@ -207,7 +242,6 @@ export function createTraumaTurnRunner(deps: {
         },
       });
 
-      const report = input.onProgress ?? (() => {});
       try {
         await beginStep(1, "load_case_state");
         const previous = await deps.store.load() ?? initialCaseState({
@@ -218,7 +252,6 @@ export function createTraumaTurnRunner(deps: {
         await completeStep({ version: previous.version, round: previous.round });
 
         await beginStep(2, "validate_and_merge_form");
-        report({ phase: "validate", status: "started" });
         if (!validateTurnFormInput(input.form)) {
           throw new Error("invalid trauma form input");
         }
@@ -226,7 +259,6 @@ export function createTraumaTurnRunner(deps: {
         const nextRound = previous.round + 1;
         const candidate = mergeFormInput(previous, submittedForm, nextRound, now);
         candidate.round = nextRound;
-        report({ phase: "validate", status: "finished", ok: true });
         await completeStep({
           narrativeCount: candidate.injuryNarratives.length
             + candidate.treatmentNarratives.length
@@ -236,7 +268,6 @@ export function createTraumaTurnRunner(deps: {
         });
 
         await beginStep(3, "assess_placement");
-        report({ phase: "place", status: "started" });
         const proposedPlacement: PlacementAssessment = input.form.statedSubStage
           ? {
             determined: true,
@@ -247,14 +278,6 @@ export function createTraumaTurnRunner(deps: {
             definitionReferences: [],
           }
           : await placer.place({ state: candidate });
-        report({
-          phase: "place",
-          status: "finished",
-          ok: true,
-          detail: proposedPlacement.determined
-            ? `${mainStageLabel(proposedPlacement.stage)} / ${subStageLabel(proposedPlacement.subStage)}`
-            : "未能定级",
-        });
         await completeStep({
           determined: proposedPlacement.determined,
           source: proposedPlacement.source,
@@ -362,6 +385,7 @@ export function createTraumaTurnRunner(deps: {
             triggerMessageId: input.messageId,
             state: partialState,
             form: structuredClone(submittedForm),
+            rawInput: input.rawInput,
             response,
           });
           await completeStep({
@@ -384,187 +408,165 @@ export function createTraumaTurnRunner(deps: {
         }
 
         await beginStep(5, "baseline_retrieval");
-      report({ phase: "retrieve", status: "started" });
-      const baseline = buildBaselineQueries(candidate);
-      const firstWaveResults = await Promise.all(baseline.map(async (query) => {
-        const result = await deps.rag.query({ query: query.query, top_k: TRAUMA_RAG_TOP_K, topic: TRAUMA_RAG_TOPIC });
-        return { query, chunks: result.chunks, backend: result.retrieval_backend };
-      }));
-      const merged = mergeRetrieval({
-        queries: baseline,
-        results: firstWaveResults,
-      });
-      await completeStep({
-        queries: merged.retrieval.queries.map((item, index) => ({
-          index: index + 1,
-          kind: item.kind,
-          critical: item.critical,
-          reason: item.reason,
-          query: item.query,
-          chunkCount: item.chunkIds.length,
-          chunkIds: item.chunkIds,
-          chunks: firstWaveResults[index]?.chunks.map(summarizeRagHit) ?? [],
-          backend: firstWaveResults[index]?.backend ?? "local",
-        })),
-        queryCount: baseline.length,
-        totalCalls: merged.retrieval.totalCalls,
-        allChunkCount: merged.retrieval.allChunkIds.length,
-        promptChunkCount: merged.promptChunks.length,
-        coverageGapCount: merged.retrieval.criticalCoverageGaps.length,
-      });
-
-        await beginStep(6, "plan_supplemental_queries");
-        await completeStep({ skipped: true, plannedQueryCount: 0, reason: "single_wave_mode" });
-
-        await beginStep(7, "supplemental_retrieval");
+        const baseline = buildBaselineQueries(candidate);
+        const firstWaveResults = await Promise.all(baseline.map(async (query) => {
+          const result = await deps.rag.query({ query: query.query, top_k: TRAUMA_RAG_TOP_K, topic: TRAUMA_RAG_TOPIC });
+          return { query, chunks: result.chunks, backend: result.retrieval_backend };
+        }));
+        const merged = mergeRetrieval({
+          queries: baseline,
+          results: firstWaveResults,
+        });
         await completeStep({
-          skipped: true,
-          queryCount: 0,
-          chunkCount: 0,
-          reason: "single_wave_mode",
+          queries: merged.retrieval.queries.map((item, index) => ({
+            index: index + 1,
+            kind: item.kind,
+            critical: item.critical,
+            reason: item.reason,
+            query: item.query,
+            chunkCount: item.chunkIds.length,
+            chunkIds: item.chunkIds,
+            chunks: firstWaveResults[index]?.chunks.map(summarizeRagHit) ?? [],
+            backend: firstWaveResults[index]?.backend ?? "local",
+          })),
+          queryCount: baseline.length,
+          totalCalls: merged.retrieval.totalCalls,
+          allChunkCount: merged.retrieval.allChunkIds.length,
+          promptChunkCount: merged.promptChunks.length,
+          coverageGapCount: merged.retrieval.criticalCoverageGaps.length,
         });
 
-        await beginStep(8, "merge_retrieval");
-      report({
-        phase: "retrieve",
-        status: "finished",
-        ok: true,
-        detail: `检索 ${merged.retrieval.totalCalls} 次，选用 ${merged.promptChunks.length} 个知识块`,
-      });
-      await completeStep({
-        totalCalls: merged.retrieval.totalCalls,
-        allChunkCount: merged.retrieval.allChunkIds.length,
-        promptChunkCount: merged.promptChunks.length,
-        coverageGapCount: merged.retrieval.criticalCoverageGaps.length,
-      });
+        await beginStep(6, "merge_retrieval");
+        await completeStep({
+          totalCalls: merged.retrieval.totalCalls,
+          allChunkCount: merged.retrieval.allChunkIds.length,
+          promptChunkCount: merged.promptChunks.length,
+          coverageGapCount: merged.retrieval.criticalCoverageGaps.length,
+        });
 
-        await beginStep(9, "reason");
-      report({ phase: "reason", status: "started" });
-      const reasoned = await reasoner.reason({
-        state: candidate,
-        promptChunks: merged.promptChunks,
-      });
-      report({ phase: "reason", status: "finished", ok: true });
-      await completeStep({
-        treatmentActionCount: reasoned.treatmentPlan.length,
-        missingInformationCount: reasoned.missingInformation.length,
-        modelTransitionStatus: reasoned.transition.status,
-        placement: selectedPlacement.subStage,
-      });
+        await beginStep(7, "reason");
+        const reasoned = await reasoner.reason({
+          state: candidate,
+          promptChunks: merged.promptChunks,
+          onNaturalLanguageDelta: input.onAssistantTextDelta,
+          onNaturalLanguageEnd: input.onAssistantTextEnd,
+        });
+        await completeStep({
+          treatmentActionCount: reasoned.treatmentPlan.length,
+          missingInformationCount: reasoned.missingInformation.length,
+          modelTransitionStatus: reasoned.transition.status,
+          placement: selectedPlacement.subStage,
+        });
 
-        await beginStep(10, "resolve_gate");
-      const gateStatus = resolveGate(reasoned.gateAssessment, merged.retrieval);
-      const requiresUserConfirmation = false;
-      await completeStep({
-        gateStatus,
-        confidence: reasoned.gateAssessment.confidence,
-        requiresUserConfirmation,
-      });
-
-        await beginStep(11, "prepare_transition_advice");
-      const pendingTransition = undefined;
-      await completeStep({
-        pendingTransition: Boolean(pendingTransition),
-      });
-
-        await beginStep(12, "mark_evidence");
-      const cited = new Set([
-        ...reasoned.treatmentPlan.flatMap((action) => action.evidenceChunkIds),
-        ...reasoned.gateAssessment.evidenceChunkIds,
-      ]);
-      const evidence = merged.evidence.map((chunk) => ({
-        ...chunk,
-        usedInAnswer: cited.has(chunk.id),
-      }));
-      await completeStep({
-        evidenceCount: evidence.length,
-        citedEvidenceCount: cited.size,
-      });
-
-        await beginStep(13, "build_response_and_snapshot");
-      const round = nextRound;
-      const version = previous.version + 1;
-      const memo = {
-        ...reasoned.memo,
-        id: randomUUID(),
-        round,
-        createdAt: now,
-        mainStage: candidate.currentStage,
-        subStage: candidate.currentSubStage,
-        title: normalizeChineseDisplayText(reasoned.memo.title),
-        inputPoints: reasoned.memo.inputPoints.map((item) => normalizeChineseDisplayText(item)),
-        actionPoints: reasoned.memo.actionPoints.map((item) => normalizeChineseDisplayText(item)),
-        conclusion: normalizeChineseDisplayText(reasoned.memo.conclusion),
-        snapshotVersion: version,
-      };
-
-      const next: CaseState = {
-        ...candidate,
-        version,
-        round,
-        updatedAt: now,
-        currentStage: candidate.currentStage,
-        currentSubStage: candidate.currentSubStage,
-        currentFacility: candidate.currentFacility,
-        currentCapabilities: candidate.currentCapabilities,
-        classificationHistory: [...candidate.classificationHistory, reasoned.classification],
-        requiredCapabilities: [...reasoned.gateAssessment.requiredCapabilities],
-        transport: {
-          ...candidate.transport,
-          needed: gateStatus === "READY" || gateStatus === "BLOCKED",
+        await beginStep(8, "resolve_gate");
+        const gateStatus = resolveGate(reasoned.gateAssessment, merged.retrieval);
+        const requiresUserConfirmation = false;
+        await completeStep({
           gateStatus,
-          readiness: reasoned.gateAssessment.transportReadiness,
-          medicalTargetLevel: reasoned.transition.targetSubStage ?? reasoned.transition.targetStage,
-          targetFacilityType: reasoned.transition.targetSubStage
-            ? typicalFacilityForSubStage(reasoned.transition.targetSubStage).name
-            : undefined,
-          blockingReason: reasoned.gateAssessment.blockingFactors.join("；") || undefined,
-          confirmation: pendingTransition,
-        },
-        pendingTransition,
-        evidence,
-        memos: [...candidate.memos, memo],
-        missingInformation: reasoned.missingInformation,
-      };
-
-      const response: AgentTurnResponse = {
-        messageId: input.messageId,
-        caseVersion: version,
-        round,
-        naturalLanguageAnswer: normalizeChineseDisplayText(reasoned.naturalLanguageAnswer),
-        stage: { main: next.currentStage, sub: next.currentSubStage },
-        classification: reasoned.classification,
-        treatmentPlan: reasoned.treatmentPlan.map((item) => ({
-          ...item,
-          title: normalizeChineseDisplayText(item.title),
-          description: normalizeChineseDisplayText(item.description),
-        })),
-        missingInformation: reasoned.missingInformation.map((item) => normalizeChineseDisplayText(item)),
-        transition: {
-          status: gateStatus,
-          targetStage: reasoned.transition.targetStage,
-          targetSubStage: reasoned.transition.targetSubStage,
-          reason: normalizeChineseDisplayText(reasoned.transition.reason),
+          confidence: reasoned.gateAssessment.confidence,
           requiresUserConfirmation,
-        },
-        gateAssessment: reasoned.gateAssessment,
-        placement: selectedPlacement,
-        memo,
-        evidence,
-      };
+        });
+
+        await beginStep(9, "mark_evidence");
+        const cited = new Set([
+          ...reasoned.treatmentPlan.flatMap((action) => action.evidenceChunkIds),
+          ...reasoned.gateAssessment.evidenceChunkIds,
+        ]);
+        const evidence = merged.evidence.map((chunk) => ({
+          ...chunk,
+          usedInAnswer: cited.has(chunk.id),
+        }));
+        await completeStep({
+          evidenceCount: evidence.length,
+          citedEvidenceCount: cited.size,
+        });
+
+        await beginStep(10, "build_response_and_snapshot");
+        const round = nextRound;
+        const version = previous.version + 1;
+        const memo = {
+          ...reasoned.memo,
+          id: randomUUID(),
+          round,
+          createdAt: now,
+          mainStage: candidate.currentStage,
+          subStage: candidate.currentSubStage,
+          title: normalizeChineseDisplayText(reasoned.memo.title),
+          inputPoints: reasoned.memo.inputPoints.map((item) => normalizeChineseDisplayText(item)),
+          actionPoints: reasoned.memo.actionPoints.map((item) => normalizeChineseDisplayText(item)),
+          conclusion: normalizeChineseDisplayText(reasoned.memo.conclusion),
+          snapshotVersion: version,
+        };
+
+        const next: CaseState = {
+          ...candidate,
+          version,
+          round,
+          updatedAt: now,
+          currentStage: candidate.currentStage,
+          currentSubStage: candidate.currentSubStage,
+          currentFacility: candidate.currentFacility,
+          currentCapabilities: candidate.currentCapabilities,
+          classificationHistory: [...candidate.classificationHistory, reasoned.classification],
+          requiredCapabilities: [...reasoned.gateAssessment.requiredCapabilities],
+          transport: {
+            ...candidate.transport,
+            needed: gateStatus === "READY" || gateStatus === "BLOCKED",
+            gateStatus,
+            readiness: reasoned.gateAssessment.transportReadiness,
+            medicalTargetLevel: reasoned.transition.targetSubStage ?? reasoned.transition.targetStage,
+            targetFacilityType: reasoned.transition.targetSubStage
+              ? typicalFacilityForSubStage(reasoned.transition.targetSubStage).name
+              : undefined,
+            blockingReason: reasoned.gateAssessment.blockingFactors.join("；") || undefined,
+            // READY 只是后送的医学建议，本轮不生成待确认事项（见 reasonerPrompt 的说明）。
+            confirmation: undefined,
+          },
+          pendingTransition: undefined,
+          evidence,
+          memos: [...candidate.memos, memo],
+          missingInformation: reasoned.missingInformation,
+        };
+
+        const response: AgentTurnResponse = {
+          messageId: input.messageId,
+          caseVersion: version,
+          round,
+          naturalLanguageAnswer: normalizeChineseDisplayText(reasoned.naturalLanguageAnswer),
+          stage: { main: next.currentStage, sub: next.currentSubStage },
+          classification: reasoned.classification,
+          treatmentPlan: reasoned.treatmentPlan.map((item) => ({
+            ...item,
+            title: normalizeChineseDisplayText(item.title),
+            description: normalizeChineseDisplayText(item.description),
+          })),
+          missingInformation: reasoned.missingInformation.map((item) => normalizeChineseDisplayText(item)),
+          transition: {
+            status: gateStatus,
+            targetStage: reasoned.transition.targetStage,
+            targetSubStage: reasoned.transition.targetSubStage,
+            reason: normalizeChineseDisplayText(reasoned.transition.reason),
+            requiresUserConfirmation,
+          },
+          gateAssessment: reasoned.gateAssessment,
+          placement: selectedPlacement,
+          memo,
+          evidence,
+        };
         await completeStep({ version, round, memoId: memo.id });
 
-        await beginStep(14, "persist_snapshot");
-      await deps.store.saveTurn(next, {
-        eventType: "agent_turn",
-        round,
-        createdAt: now,
-        triggerMessageId: input.messageId,
-        state: next,
-        form: structuredClone(submittedForm),
-        retrieval: merged.retrieval,
-        response,
-      });
+        await beginStep(11, "persist_snapshot");
+        await deps.store.saveTurn(next, {
+          eventType: "agent_turn",
+          round,
+          createdAt: now,
+          triggerMessageId: input.messageId,
+          state: next,
+          form: structuredClone(submittedForm),
+          rawInput: input.rawInput,
+          retrieval: merged.retrieval,
+          response,
+        });
         await completeStep({ version, round, snapshotEventType: "agent_turn" });
 
         await recordAudit({
@@ -573,29 +575,29 @@ export function createTraumaTurnRunner(deps: {
           status: "ok",
           details: { version, round, gateStatus },
         });
-      return response;
+        return response;
       } catch (error) {
         if (activeStep) {
+          const durationMs = Date.now() - activeStep.startedAt;
+          report({
+            kind: "runner_step",
+            step: activeStep.number,
+            phase: activeStep.phase,
+            status: "finished",
+            ok: false,
+            durationMs,
+            detail: String(error),
+          });
           await recordAudit({
             level: "ERROR",
             event: "step_failed",
             step: activeStep.number,
             phase: activeStep.phase,
             status: "error",
-            durationMs: Date.now() - activeStep.startedAt,
+            durationMs,
             error,
           });
         }
-        report({
-          phase: activeStep?.phase === "validate_and_merge_form"
-            ? "validate"
-            : activeStep?.phase === "assess_placement" || activeStep?.phase === "confirm_placement"
-              ? "place"
-            : activeStep?.phase === "reason" ? "reason" : "retrieve",
-          status: "finished",
-          ok: false,
-          detail: String(error),
-        });
         await recordAudit({
           level: "ERROR",
           event: "turn_failed",

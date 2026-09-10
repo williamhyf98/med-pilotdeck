@@ -7,7 +7,7 @@ import { snapshotsToRounds } from './domain/snapshotAdapter';
 import type { TurnFormInput } from './domain/types';
 import MemoDetailPanel from './MemoDetailPanel';
 import { useCaseStore } from './store/useCaseStore';
-import TraumaTurnForm from './TraumaTurnForm';
+import TraumaComposer from './TraumaComposer';
 import TreatmentTree, { type TreePosition } from './TreatmentTree';
 
 const INITIAL_POSITION: TreePosition = {
@@ -21,7 +21,7 @@ type TraumaWorkspaceProps = {
   resetKey: string;
   projectKey?: string;
   sessionId?: string;
-  onSubmitForm?: (form: TurnFormInput) => void | Promise<void>;
+  onSubmitForm?: (form: TurnFormInput, rawInput: string) => void | Promise<void>;
   submitting?: boolean;
   runtimePanel?: ReactNode;
 };
@@ -119,10 +119,11 @@ export default function TraumaWorkspace({
             )}
           </div>
           <div className="max-h-[58vh] overflow-y-auto border-t border-neutral-200 bg-neutral-50/50 p-4 dark:border-neutral-800 dark:bg-neutral-900/20">
-            <TraumaTurnForm
-              key={caseStore.current
-                ? `${caseStore.current.caseId}:${caseStore.current.version}:${caseStore.current.round}`
-                : 'unpersisted-case'}
+            <TraumaComposer
+              key={`${caseStore.current?.caseId ?? 'unpersisted'}:${resetKey}`}
+              projectKey={projectKey}
+              sessionId={sessionId}
+              previousSubStage={caseStore.current?.currentSubStage ?? null}
               onSubmit={onSubmitForm}
               submitting={submitting}
             />

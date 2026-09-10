@@ -3,7 +3,6 @@ import test from "node:test";
 
 import {
   PLACEMENT_OUTPUT_SCHEMA,
-  PLANNER_OUTPUT_SCHEMA,
   REASONER_OUTPUT_SCHEMA,
   validatePlacementAssessment,
   validateReasonerOutput,
@@ -49,7 +48,6 @@ function assertStrictCompatible(node: unknown, path: string): void {
 
 test("trauma structured-output schemas satisfy OpenAI strict mode", () => {
   assertStrictCompatible(PLACEMENT_OUTPUT_SCHEMA, "place");
-  assertStrictCompatible(PLANNER_OUTPUT_SCHEMA, "plan");
   assertStrictCompatible(REASONER_OUTPUT_SCHEMA, "reason");
 });
 

@@ -6,6 +6,8 @@ import type {
   Gateway,
   GatewayElicitationResponseInput,
   GatewayEvent,
+  GatewayExtractTraumaFormInput,
+  GatewayExtractTraumaFormOutput,
   GatewayPermissionDecisionInput,
   GatewayServerInfo,
   GatewaySubmitTurnInput,
@@ -161,6 +163,15 @@ export class RemoteGateway implements Gateway {
       "trauma_override_stage",
       input,
     )) as import("../../trauma/types.js").CaseSnapshot;
+  }
+
+  async traumaExtractForm(
+    input: GatewayExtractTraumaFormInput,
+  ): Promise<GatewayExtractTraumaFormOutput> {
+    return (await this.client.request(
+      "trauma_extract_form",
+      input,
+    )) as GatewayExtractTraumaFormOutput;
   }
 
   async permissionDecide(input: GatewayPermissionDecisionInput): Promise<{ delivered: boolean }> {

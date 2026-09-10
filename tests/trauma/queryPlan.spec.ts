@@ -4,7 +4,7 @@ import test from "node:test";
 import { initialCaseState } from "../../src/trauma/stageConfig.js";
 import { buildBaselineQueries } from "../../src/trauma/rag/queryPlan.js";
 
-test("baseline plan is exactly three critical wave-1 queries", () => {
+test("baseline plan is exactly three critical baseline queries", () => {
   const state = initialCaseState({
     projectId: "trauma_med-demo",
     sessionId: "web:s_demo",
@@ -53,7 +53,7 @@ test("baseline plan is exactly three critical wave-1 queries", () => {
 
   const plan = buildBaselineQueries(state);
   assert.equal(plan.length, 3);
-  assert.ok(plan.every((query) => query.wave === 1 && query.critical));
+  assert.ok(plan.every((query) => query.critical));
   assert.deepEqual(plan.map((query) => query.kind), [
     "stage",
     "classification_transport",

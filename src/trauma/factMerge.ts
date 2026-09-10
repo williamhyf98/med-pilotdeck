@@ -11,6 +11,7 @@ const VITAL_RANGES: Record<VitalItemKey, readonly [number, number]> = {
   gcs: [3, 15],
   heartRate: [0, 300],
   temperature: [20, 45],
+  spo2: [0, 100],
 };
 
 const TEXT_LIMITS = {

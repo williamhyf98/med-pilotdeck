@@ -3,7 +3,10 @@ import type { NormalizedMessage } from '../../stores/useSessionStore';
 import type { ChatMessage } from '../chat/types/types';
 import { normalizedToChatMessages } from '../chat/hooks/useChatMessages';
 import {
+  buildProcessToolSteps,
   buildRenderableMessageItems,
+  formatCompletedProcessTitle,
+  getLiveProcessGroupStep,
   getLiveProcessGroups,
   hasPendingWebFetchInRunningGroup,
   shouldShowWebFetchWaitingHint,
@@ -66,6 +69,38 @@ function tool(
   };
 }
 
+function traumaStep(
+  id: string,
+  stepNumber: number | undefined,
+  title: string,
+  runningTitle: string,
+  phase = 'trauma',
+  offsetMs = 500,
+  toolResult?: ChatMessage['toolResult'],
+  countInTotal = true,
+): ChatMessage {
+  const meta = {
+    traumaRunnerStep: true,
+    stepNumber,
+    phase,
+    title,
+    runningTitle,
+    expectedTotalSteps: 11,
+    countInTotal,
+  };
+  return {
+    id,
+    type: 'assistant',
+    content: '',
+    timestamp: timestamp(offsetMs),
+    isToolUse: true,
+    toolName: title,
+    toolId: id,
+    toolInput: JSON.stringify(meta),
+    toolResult,
+  };
+}
+
 function normalizedText(
   id: string,
   role: 'user' | 'assistant',
@@ -107,6 +142,8 @@ function processAttachments(item: RenderableMessageItem | undefined) {
     ...(item?.afterProcessAttachments || []),
   ];
 }
+
+const testT = (_key: string, options?: { defaultValue?: string }) => options?.defaultValue || '';
 
 describe('processGrouping', () => {
   it('hides ordinary live tools while keeping assistant prose visible', () => {
@@ -537,5 +574,164 @@ describe('processGrouping', () => {
       normalizedTool('read-1', 'Read', { file_path: '/repo/src/App.tsx' }, 100),
       empty,
     ]).map((message) => message.id)).toEqual(['u1', 'read-1', 'a-empty']);
+  });
+
+  it('places completed trauma runner steps between the user input and assistant answer', () => {
+    const messages = [
+      user('u1', '本轮信息：胸部爆震伤，明示紧急处置'),
+      traumaStep(
+        'trauma-step-1',
+        1,
+        '读取病例状态',
+        '正在读取病例状态',
+        'trauma',
+        100,
+        { content: '{"traumaRunnerStep":true,"stepNumber":1,"phase":"trauma","title":"读取病例状态","runningTitle":"正在读取病例状态","expectedTotalSteps":11}' },
+      ),
+      traumaStep(
+        'trauma-step-7',
+        7,
+        '生成结果',
+        '正在生成结果',
+        'reason',
+        200,
+        {
+          content: '{"traumaRunnerStep":true,"stepNumber":7,"phase":"reason","title":"生成结果","runningTitle":"正在生成结果","expectedTotalSteps":11,"durationMs":1200,"details":{"treatmentActionCount":3,"missingInformationCount":2}}',
+        },
+      ),
+      traumaStep(
+        'trauma-post-answer',
+        undefined,
+        '整理推演流程图/保存推演结果',
+        '正在整理推演流程图/保存推演结果',
+        'reason',
+        300,
+        {
+          content: '{"traumaRunnerStep":true,"phase":"reason","title":"整理推演流程图/保存推演结果","runningTitle":"正在整理推演流程图/保存推演结果","expectedTotalSteps":11,"countInTotal":false}',
+        },
+        false,
+      ),
+      traumaStep(
+        'trauma-step-11',
+        11,
+        '保存推演结果',
+        '正在整理推演流程图/保存推演结果',
+        'write',
+        400,
+        { content: '{"traumaRunnerStep":true,"stepNumber":11,"phase":"write","title":"保存推演结果","runningTitle":"正在整理推演流程图/保存推演结果","expectedTotalSteps":11}' },
+      ),
+      assistant('a1', '处置建议输出。', 500),
+    ];
+
+    const items = buildRenderableMessageItems(messages);
+    const userItem = items.find((item) => item.message.id === 'u1');
+    const assistantItem = items.find((item) => item.message.id === 'a1');
+    const traumaAttachment = userItem?.afterProcessAttachments[0];
+
+    expect(items.map((item) => item.message.id)).toEqual(['u1', 'a1']);
+    expect(traumaAttachment).toBeTruthy();
+    expect(assistantItem?.beforeProcessAttachments).toHaveLength(0);
+    expect(formatCompletedProcessTitle(traumaAttachment!.processDetailMessages, testT as any))
+      .toBe('本轮推演完成（11步）');
+
+    const steps = buildProcessToolSteps(traumaAttachment!.processDetailMessages);
+    expect(steps.map((step) => step.title)).toEqual([
+      '读取病例状态',
+      '生成结果',
+      '整理推演流程图/保存推演结果',
+      '保存推演结果',
+    ]);
+    expect(steps[1].resultDetail).toBe('生成 3 条处置建议，提示 2 项缺失信息');
+  });
+
+  it('replays persisted trauma runner steps with turn identity after refresh', () => {
+    const persistedMessages = normalizedToChatMessages([
+      {
+        ...normalizedText('server-user', 'user', '本轮信息：胸部爆震伤，明示紧急处置', 0),
+        turnId: 'run-trauma-1',
+        runId: 'run-trauma-1',
+      },
+      {
+        ...normalizedTool(
+          'server-step-1',
+          '读取病例状态',
+          {
+            traumaRunnerStep: true,
+            stepNumber: 1,
+            phase: 'trauma',
+            title: '读取病例状态',
+            runningTitle: '正在读取病例状态',
+            expectedTotalSteps: 11,
+          },
+          100,
+        ),
+        toolId: 'trauma-step-1:run-trauma-1',
+        turnId: 'run-trauma-1',
+        runId: 'run-trauma-1',
+      },
+      {
+        id: 'server-step-1-result',
+        sessionId: 'session-1',
+        provider: 'pilotdeck',
+        kind: 'tool_result',
+        toolId: 'trauma-step-1:run-trauma-1',
+        content: '{"traumaRunnerStep":true,"stepNumber":1,"phase":"trauma","title":"读取病例状态","runningTitle":"正在读取病例状态","expectedTotalSteps":11}',
+        isError: false,
+        timestamp: timestamp(150),
+        turnId: 'run-trauma-1',
+        runId: 'run-trauma-1',
+      },
+      {
+        ...normalizedText('server-assistant', 'assistant', '处置建议输出。', 300),
+        turnId: 'run-trauma-1',
+        runId: 'run-trauma-1',
+      },
+    ]);
+
+    expect(persistedMessages.find((message) => message.id === 'server-step-1')?.turnId)
+      .toBe('run-trauma-1');
+
+    const items = buildRenderableMessageItems(persistedMessages);
+    const userItem = items.find((item) => item.message.id === 'server-user');
+    const assistantItem = items.find((item) => item.message.id === 'server-assistant');
+
+    expect(items.map((item) => item.message.id)).toEqual(['server-user', 'server-assistant']);
+    expect(userItem?.afterProcessAttachments[0]?.processDetailMessages.map((message) => message.id))
+      .toEqual(['server-step-1']);
+    expect(assistantItem?.beforeProcessAttachments).toHaveLength(0);
+  });
+
+  it('uses the latest trauma runner step as the live process title without falling back to generic generation text', () => {
+    const messages = [
+      user('u1', '提交本轮信息'),
+      traumaStep('trauma-step-7', 7, '生成结果', '正在生成结果', 'reason', 100, undefined),
+      assistant('a-stream', '已开始流式输出。', 200),
+      traumaStep(
+        'trauma-post-answer',
+        undefined,
+        '整理推演流程图/保存推演结果',
+        '正在整理推演流程图/保存推演结果',
+        'reason',
+        300,
+        undefined,
+        false,
+      ),
+    ];
+
+    const groups = getLiveProcessGroups(messages, { isAssistantWorking: true });
+    const liveStep = getLiveProcessGroupStep(
+      groups[0],
+      testT as any,
+      {
+        id: 'generic-generating',
+        title: 'Generating response',
+        phase: 'generation',
+        state: 'running',
+      },
+    );
+
+    expect(groups).toHaveLength(1);
+    expect(liveStep.title).toBe('正在整理推演流程图/保存推演结果');
+    expect(liveStep.phase).toBe('reason');
   });
 });

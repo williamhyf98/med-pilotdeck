@@ -5,7 +5,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from 'react';
-import { Send } from 'lucide-react';
+import { RotateCcw, Send } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { SUBSTAGE_LABELS } from './domain/stageConfig';
 import type {
@@ -17,6 +17,16 @@ import type {
 type TraumaTurnFormProps = {
   onSubmit: (form: TurnFormInput) => void | Promise<void>;
   submitting?: boolean;
+  /** Pre-filled values for confirm mode (from extraction draft). */
+  initialValues?: TurnFormInput;
+  /** Original free-text shown read-only above the form in confirm mode. */
+  sourceText?: string;
+  /** confirm = extraction review; manual = normal direct entry (default). */
+  mode?: 'manual' | 'confirm';
+  /** Called when user clicks 重新整理 in confirm mode. */
+  onReExtract?: () => void;
+  /** 锁定救治级别（如只剩外科复苏），禁用级别选择并强制使用该值。 */
+  statedSubStageLocked?: boolean;
 };
 
 type NarrativeKey = 'injuryNarrative' | 'treatmentNarrative' | 'evacuationNarrative' | 'note';
@@ -117,14 +127,14 @@ function validate(values: FormValues): FormErrors {
   return errors;
 }
 
-function toInput(values: FormValues): TurnFormInput {
+function toInput(values: FormValues, statedSubStageLocked = false): TurnFormInput {
   const vitals: TurnFormInput['vitals'] = {};
   for (const field of vitalFields) {
     const raw = values[field.key].trim();
     if (raw) vitals[field.key] = Number(raw);
   }
   return {
-    statedSubStage: values.statedSubStage,
+    statedSubStage: statedSubStageLocked ? 'surgical_resuscitation' : values.statedSubStage,
     injuryNarrative: values.injuryNarrative.trim(),
     treatmentNarrative: values.treatmentNarrative.trim(),
     evacuationNarrative: values.evacuationNarrative.trim(),
@@ -193,8 +203,29 @@ function AutoGrowTextarea({
 export default function TraumaTurnForm({
   onSubmit,
   submitting = false,
+  initialValues,
+  sourceText,
+  mode = 'manual',
+  onReExtract,
+  statedSubStageLocked = false,
 }: TraumaTurnFormProps) {
-  const [values, setValues] = useState<FormValues>(EMPTY_FORM);
+  const [values, setValues] = useState<FormValues>(() => {
+    if (initialValues) {
+      return {
+        statedSubStage: initialValues.statedSubStage,
+        injuryNarrative: initialValues.injuryNarrative,
+        treatmentNarrative: initialValues.treatmentNarrative,
+        evacuationNarrative: initialValues.evacuationNarrative,
+        note: initialValues.note,
+        respiratoryRate: initialValues.vitals?.respiratoryRate !== undefined ? String(initialValues.vitals.respiratoryRate) : '',
+        systolicBloodPressure: initialValues.vitals?.systolicBloodPressure !== undefined ? String(initialValues.vitals.systolicBloodPressure) : '',
+        gcs: initialValues.vitals?.gcs !== undefined ? String(initialValues.vitals.gcs) : '',
+        heartRate: initialValues.vitals?.heartRate !== undefined ? String(initialValues.vitals.heartRate) : '',
+        temperature: initialValues.vitals?.temperature !== undefined ? String(initialValues.vitals.temperature) : '',
+      };
+    }
+    return EMPTY_FORM;
+  });
   const [errors, setErrors] = useState<FormErrors>({});
   const [pending, setPending] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
@@ -216,7 +247,7 @@ export default function TraumaTurnForm({
     setPending(true);
     setSubmissionError(null);
     try {
-      await onSubmit(toInput(values));
+      await onSubmit(toInput(values, statedSubStageLocked));
     } catch (error) {
       setSubmissionError(error instanceof Error ? error.message : '提交失败，请重试');
     } finally {
@@ -231,6 +262,12 @@ export default function TraumaTurnForm({
       className="rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm dark:border-neutral-800 dark:bg-neutral-900"
       noValidate
     >
+      {mode === 'confirm' && sourceText ? (
+        <div className="mb-3 rounded-lg border border-teal-200 bg-teal-50/60 px-3 py-2 dark:border-teal-900/60 dark:bg-teal-950/20">
+          <p className="mb-1 text-[10px] font-semibold text-teal-700 dark:text-teal-400">原始输入</p>
+          <p className="whitespace-pre-wrap text-[11px] leading-5 text-neutral-700 dark:text-neutral-300">{sourceText}</p>
+        </div>
+      ) : null}
       <div className="space-y-0.5">
         <BubbleRow label="救治级别" htmlFor="trauma-statedSubStage">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -242,7 +279,8 @@ export default function TraumaTurnForm({
                 'statedSubStage',
                 (event.target.value || null) as SubStage | null,
               )}
-              className="rounded-md border border-neutral-300 bg-white px-2 py-0.5 text-xs leading-5 text-neutral-800 outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/15 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
+              disabled={statedSubStageLocked}
+              className="rounded-md border border-neutral-300 bg-white px-2 py-0.5 text-xs leading-5 text-neutral-800 outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/15 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
             >
               {stageOptions.map((option) => (
                 <option key={option.value ?? 'system'} value={option.value ?? ''}>
@@ -250,7 +288,9 @@ export default function TraumaTurnForm({
                 </option>
               ))}
             </select>
-            <span className="text-[10px] text-neutral-400">选择本身不构成本轮有效输入</span>
+            <span className="text-[10px] text-neutral-400">
+              {statedSubStageLocked ? '仅剩外科复苏，级别已锁定' : '选择本身不构成本轮有效输入'}
+            </span>
           </div>
         </BubbleRow>
 
@@ -345,14 +385,36 @@ export default function TraumaTurnForm({
 
       <div className="mt-2 flex items-center justify-between gap-3 border-t border-neutral-200 pt-2 dark:border-neutral-800">
         <p className="text-[9px] leading-4 text-neutral-400">提交后将进入分级、规则检索与研判流程。</p>
-        <button
-          type="submit"
-          disabled={busy}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-teal-700 px-3.5 py-2 text-xs font-semibold text-white transition hover:bg-teal-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <Send className="h-3.5 w-3.5" />
-          {busy ? '提交中…' : '提交本轮信息'}
-        </button>
+        {mode === 'confirm' ? (
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={onReExtract}
+              disabled={busy}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              重新整理
+            </button>
+            <button
+              type="submit"
+              disabled={busy}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-teal-700 px-3.5 py-2 text-xs font-semibold text-white transition hover:bg-teal-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Send className="h-3.5 w-3.5" />
+              {busy ? '提交中…' : '确认推演'}
+            </button>
+          </div>
+        ) : (
+          <button
+            type="submit"
+            disabled={busy}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-teal-700 px-3.5 py-2 text-xs font-semibold text-white transition hover:bg-teal-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Send className="h-3.5 w-3.5" />
+            {busy ? '提交中…' : '提交本轮信息'}
+          </button>
+        )}
       </div>
     </form>
   );

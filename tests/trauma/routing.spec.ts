@@ -97,6 +97,10 @@ function createTestGateway(projectKey, options = { askPlacement: false }) {
     traumaRunnerFactory: async () => ({
       async runTurn(input) {
         counter.trauma += 1;
+        if (options.streamAnswer) {
+          await input.onAssistantTextDelta?.("当前仍在");
+          await input.onAssistantTextDelta?.("初级急救。");
+        }
         input.onProgress?.({ phase: "validate", status: "started" });
         input.onProgress?.({ phase: "validate", status: "finished", ok: true });
         if (options.askPlacement) {
@@ -221,4 +225,26 @@ test("placement confirmation pauses the trauma turn and resumes through elicitat
   const answerIndex = events.findIndex((event) => event.type === "assistant_text_delta");
   assert.ok(questionIndex >= 0);
   assert.ok(answerIndex > questionIndex);
+});
+
+test("forwards streamed trauma answer deltas without duplicating the final answer", async () => {
+  const { gateway } = createTestGateway("trauma_med-demo", { streamAnswer: true });
+  const events = [];
+  for await (const event of gateway.submitTurn({
+    sessionKey: "web:s_stream",
+    channelKey: "web",
+    projectKey: "trauma_med-demo",
+    message: "右小腿开放伤",
+    traumaForm: {
+      statedSubStage: "primary_first_aid", injuryNarrative: "右小腿开放伤", treatmentNarrative: "",
+      evacuationNarrative: "", note: "", vitals: {},
+    },
+  })) {
+    events.push(event);
+  }
+  const deltas = events
+    .filter((event) => event.type === "assistant_text_delta")
+    .map((event) => event.text);
+  assert.deepEqual(deltas, ["当前仍在", "初级急救。"]);
+  assert.equal(events.at(-1)?.type, "turn_completed");
 });

@@ -2,6 +2,7 @@ export {
   PLACEMENT_QUESTION,
   parsePlacementConfirmation,
   placementConfirmationOptions,
+  traumaPostAnswerProcessEvents,
   traumaProgressEvents,
   traumaTurnEvents,
 } from "./events.js";
@@ -23,10 +24,17 @@ export {
   mergeFormInput,
   validateTurnFormInput,
 } from "./factMerge.js";
+export { normalizeExtractedForm } from "./formDraft.js";
+export { createExtractionStation } from "./stations/extractor.js";
+export type { ExtractionStation, ExtractorInput } from "./stations/extractor.js";
+export { EXTRACTOR_OUTPUT_SCHEMA, validateExtractedTurnForm } from "./schemas.js";
 export type {
   AgentTurnResponse,
   CaseSnapshot,
   CaseState,
+  ExtractedNarrativeItem,
+  ExtractedTurnForm,
+  ExtractedVitalItem,
   NarrativeEntry,
   TurnFormInput,
   VitalItemKey,

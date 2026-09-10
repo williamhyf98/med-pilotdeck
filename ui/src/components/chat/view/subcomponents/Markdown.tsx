@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -213,15 +213,8 @@ export function Markdown({
     return base;
   }, [artifactFiles, resolvedCitations, isStreaming]);
 
-  // Only apply streaming-fade-in on the initial mount while streaming.
-  // Once streaming ends, never re-apply it — prevents old content from
-  // briefly re-animating when sibling messages cause a re-render.
-  const wasStreamingRef = useRef(!!isStreaming);
-  if (!isStreaming) wasStreamingRef.current = false;
-  const showFadeIn = isStreaming && wasStreamingRef.current;
-
   return (
-    <div className={`${className || ''} ${showFadeIn ? 'streaming-fade-in' : ''}`.trim()}>
+    <div className={className}>
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
         rehypePlugins={isStreaming ? undefined : fullRehypePlugins}

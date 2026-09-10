@@ -25,9 +25,14 @@ import ImageLightbox, { type LightboxImage } from '../chat/view/subcomponents/Im
 import { Markdown } from '../chat/view/subcomponents/Markdown';
 import { formatUsageLimitText } from '../chat/utils/chatFormatting';
 import { ProcessTrace } from './ProcessTrace';
-import { buildProcessToolSteps, processSummaryToTrace, type ProcessAttachment } from './processGrouping';
+import {
+  buildProcessToolSteps,
+  formatCompletedProcessTitle,
+  hasTraumaRunnerSteps,
+  processSummaryToTrace,
+  type ProcessAttachment,
+} from './processGrouping';
 import SubagentCard from './SubagentCard';
-import { useTypewriter } from './useTypewriter';
 import DocumentReferenceChip from './DocumentReferenceChip';
 import { AgentFileArtifactGroup, UserAttachmentCards } from './MessageFileCards';
 
@@ -133,8 +138,12 @@ function MessageRowV2({
     () => formatUsageLimitText(String(message.content ?? '')),
     [message.content],
   );
-  const thinkingDisplayText = useTypewriter(formattedContent, !!message.isStreaming && !!message.isThinking, 4);
-  const contentDisplayText = useTypewriter(formattedContent, !!message.isStreaming && !message.isThinking, 6);
+  // The transport already delivers real model deltas. Do not run them through
+  // a second requestAnimationFrame/typewriter queue: it makes the visible
+  // content lag behind the wire and causes Markdown/layout churn while the
+  // message is still growing.
+  const thinkingDisplayText = formattedContent;
+  const contentDisplayText = formattedContent;
   const assistantArtifacts = useMemo(
     () => (Array.isArray(message.artifacts) ? message.artifacts : []),
     [message.artifacts],
@@ -558,14 +567,20 @@ function ProcessSummaryRow({
     () => (detailMessages.length > 0 ? buildProcessToolSteps(detailMessages) : trace.steps),
     [detailMessages, trace.steps],
   );
+  const label = useMemo(
+    () => (detailMessages.length > 0 && hasTraumaRunnerSteps(detailMessages)
+      ? formatCompletedProcessTitle(detailMessages, t)
+      : trace.label),
+    [detailMessages, t, trace.label],
+  );
   const resolvedProcessKey = processKey || message.id || message.runId || message.activityId;
   const expanded = resolvedProcessKey
     ? isProcessExpanded?.(resolvedProcessKey, defaultExpanded)
     : undefined;
 
   return (
-    <ProcessTrace
-      label={trace.label}
+	    <ProcessTrace
+	      label={label}
       collapsedDetail={trace.collapsedDetail}
       statusLabel={trace.statusLabel}
       status={trace.status}

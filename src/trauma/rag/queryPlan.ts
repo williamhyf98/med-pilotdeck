@@ -3,7 +3,6 @@ import { SUBSTAGE_TO_MAIN } from "../stageConfig.js";
 import type { CaseState, MainStage, RagQueryKind, SubStage } from "../types.js";
 
 export type PlannedRagQuery = {
-  wave: 1 | 2;
   kind: RagQueryKind;
   query: string;
   reason: string;
@@ -555,21 +554,18 @@ export function buildBaselineQueries(state: CaseState): PlannedRagQuery[] {
   ]);
   return [
     {
-      wave: 1,
       kind: "stage",
       query: query1,
       reason: "覆盖已确认级别的机构职责与技术范围",
       critical: true,
     },
     {
-      wave: 1,
       kind: "classification_transport",
       query: query2,
       reason: "覆盖伤势判断、后送分类与救送结合规则",
       critical: true,
     },
     {
-      wave: 1,
       kind: "primary_injury",
       query: query3,
       reason: "覆盖具体伤类、伤部、并发症与环境相关处置",

@@ -11,9 +11,9 @@
 
 ## 1. 一句话
 
-**用户填写表单并提交 → 程序校验并确定性合并 → 表单明示子级则短路工位 P，否则工位 P 按固化定义判断落位 → 首次或变化时请求用户确认推演基线 → 按确认级别做固定 3 次第一波 RAG → 工位 B 出方案 → 程序 Gate → 落盘病例与对话 → 只读轮次时间线与流程图刷新。**
+**用户填写表单并提交 → 程序校验并确定性合并 → 表单明示子级则短路工位 P，否则工位 P 按固化定义判断落位 → 首次或变化时请求用户确认推演基线 → 按确认级别做固定 3 次 RAG → 工位 B 出方案 → 程序 Gate → 落盘病例与对话 → 只读轮次时间线与流程图刷新。**
 
-模型只负责医学内容（工位 **P / R / B**），**不能自行调工具**。完整有效病例轮最多 **3 次** strict JSON 调用；用户明示四个子级之一时跳过工位 P，最多 **2 次**。工位 P 之前不做 RAG。Gate 只作为医学建议，**不再产生第二张确认卡**。没有工位 A、没有 `turnKind`、没有时效时间线计算。
+模型只负责医学内容（工位 **P / B**），**不能自行调工具**。完整有效病例轮最多 **2 次** strict JSON 调用；用户明示四个子级之一时跳过工位 P，只需 **1 次**。工位 P 之前不做 RAG。Gate 只作为医学建议，**不再产生第二张确认卡**。没有工位 A、没有 `turnKind`、没有时效时间线计算。
 
 ---
 
@@ -21,10 +21,10 @@
 
 |        | 战创伤（`war_trauma` / `trauma_med`） | 通用医学（`general_medicine` / `general_med`） |
 | ------ | ------------------------------------ | ---------------------------------------------- |
-| 谁决定下一步 | `TraumaTurnRunner` 固定 14 步编排 | 模型在 `AgentSession` 里自主循环 |
+| 谁决定下一步 | `TraumaTurnRunner` 固定 11 步编排 | 模型在 `AgentSession` 里自主循环 |
 | 输入     | 结构化 `traumaForm`（级别选择 + 四段叙述 + 五项体征） | 对话文本 + 可选附件 |
-| 模型调用   | 每轮最多 3 次 strict JSON（P 可短路；R / B） | 多轮对话 + 任意工具 |
-| RAG    | 程序调用 MCP，3～6 次 | 模型自己决定何时调、调几次 |
+| 模型调用   | 每轮最多 2 次 strict JSON（P 可短路；B） | 多轮对话 + 任意工具 |
+| RAG    | 程序调用 MCP，固定 3 次 | 模型自己决定何时调、调几次 |
 | 阶段     | 仅支持战现场急救（Ⅰ级）和早期救治（Ⅱ级）；首次或变化时由用户确认推演基线 | 无战创伤救治状态机 |
 | 工作台    | 表单 + 只读轮次时间线 + 三层流程树 + 详情 | 普通对话 |
 
@@ -58,7 +58,7 @@ MainContent.submitTraumaForm
         │     ├─ 用户选择建议级或保持当前级后继续
         │     ├─ 无法落位则走 6 步短路径：生成并持久化部分 agent_turn
         │     │    （version/round +1；不检索、不调用工位 B）
-        │     ├─ 按已确认级别执行 RAG 两波
+        │     ├─ 按已确认级别执行单波 RAG
         │     ├─ 工位 B 研判
         │     ├─ resolveGate
         │     └─ saveTurn + 审计日志
@@ -144,7 +144,7 @@ $PILOT_HOME/memory/trauma_med/<projectId>/cases/<sessionId>/
 
 快照 `eventType`：
 
-- `agent_turn`：完整 14 步流水线，或未落位 6 步短路径写入的病例回合
+- `agent_turn`：完整 11 步流水线，或未落位 6 步短路径写入的病例回合
 - `transition_confirmation`：兼容旧 `pendingTransition` 确认；**当前 Gate 不再写入 pendingTransition**
 - `manual_stage_override`：流程图人工覆盖
 
@@ -182,7 +182,7 @@ $PILOT_HOME/logs/trauma-agent.jsonl
 
 ---
 
-## 6. Runner 十四步
+## 6. Runner 十一步
 
 编排器：`src/trauma/runner.ts` 的 `runTurn`。输入是 `TurnFormInput`，没有 `turnKind`。
 
@@ -193,15 +193,12 @@ $PILOT_HOME/logs/trauma-agent.jsonl
 | 3 | `assess_placement` | 程序或工位 P | `runner.ts`, `stations/placer.ts` | 见 §7.1 短路 |
 | 4 | `confirm_placement` | 程序 + 用户 | `runner.ts`, `events.ts`, `placement.ts` | 首次/变化时暂停确认；派生机构与能力；无法落位则转 6 步短路径 |
 | 5 | `baseline_retrieval` | 程序 + RAG | `rag/queryPlan.ts`, `rag/client.ts` | 固定 3 条并行，`top_k=8` |
-| 6 | `plan_supplemental_queries` | 程序 | `runner.ts` | 当前单波模式，记录 `skipped: true` |
-| 7 | `supplemental_retrieval` | 程序 | `runner.ts` | 当前单波模式，记录 `skipped: true`、`queryCount: 0` |
-| 8 | `merge_retrieval` | 程序 | `rag/merge.ts` | 全量证据落盘；prompt ≤15 块 |
-| 9 | `reason` | **工位 B** | `stations/reasoner.ts`, `reasonerPrompt.ts` | 确认级别下出方案；入参无时间线 |
-| 10 | `resolve_gate` | 程序 | `gate.ts` | 安全约束覆盖模型建议 |
-| 11 | `prepare_transition_advice` | 程序 | `runner.ts` | `pendingTransition` 固定为 `undefined` |
-| 12 | `mark_evidence` | 程序 | `runner.ts` | 标记引用知识块 |
-| 13 | `build_response_and_snapshot` | 程序 | `runner.ts`, `types.ts` | `version+1`，`round` 已是本轮，追加 memo |
-| 14 | `persist_snapshot` | 程序 | `store.ts` | `current.json` + `snapshots.jsonl` |
+| 6 | `merge_retrieval` | 程序 | `rag/merge.ts` | 全量证据落盘；prompt ≤15 块 |
+| 7 | `reason` | **工位 B** | `stations/reasoner.ts`, `reasonerPrompt.ts` | 确认级别下出方案；入参无时间线 |
+| 8 | `resolve_gate` | 程序 | `gate.ts` | 安全约束覆盖模型建议 |
+| 9 | `mark_evidence` | 程序 | `runner.ts` | 标记引用知识块 |
+| 10 | `build_response_and_snapshot` | 程序 | `runner.ts`, `types.ts` | `version+1`，`round` 已是本轮，追加 memo |
+| 11 | `persist_snapshot` | 程序 | `store.ts` | `current.json` + `snapshots.jsonl` |
 
 落位首次确定或变化时，经 `GatewayElicitationChannel` 暂停等待用户；选择完成后在 **同一回合** 继续。网关解析答案只区分「采用建议」与「保持当前」（见 `parsePlacementConfirmation`）。runner 类型上还允许 `choice: "selected"`，当前 elicitation 选项 **不会** 产生该分支。
 
@@ -215,7 +212,7 @@ $PILOT_HOME/logs/trauma-agent.jsonl
 | `vitals` | 追加一条 `VitalsRoundRecord`，只含已填键 | 全空则不追加 |
 | `statedSubStage` | 本步不写入级别 | 交给第 3 步 |
 
-本步 **不改** `version` / `currentStage` / `currentSubStage`。`updatedAt` 改为 `now`。`round` 由 runner 在合并后赋为 `nextRound`。磁盘上一版要到第 14 步才被替换。
+本步 **不改** `version` / `currentStage` / `currentSubStage`。`updatedAt` 改为 `now`。`round` 由 runner 在合并后赋为 `nextRound`。磁盘上一版要到第 11 步才被替换。
 
 ### 第 3 步 `assess_placement`：程序短路
 
@@ -239,7 +236,7 @@ $PILOT_HOME/logs/trauma-agent.jsonl
 
 然后 `resolveStagePlacement`：合法主级/子级映射、非空理由；`source=definition` 还必须有 `definitionReferences`。否则主级/子级/机构全空。机构一律 `typicalFacilityForSubStage`，**不采用模型填的机构名**（schema 里也没有该字段）。
 
-全空则进入短路径：第 5 步 `build_partial_response_and_snapshot` 构造 version/round 已递增的部分状态与 `placementOnlyResponse`，第 6 步 `persist_partial_snapshot` 写 `agent_turn`。响应沿用真实 runId；没有 RAG、工位 R 或工位 B。落位成功时仍继续走上表完整 **14 步**。
+全空则进入短路径：第 5 步 `build_partial_response_and_snapshot` 构造 version/round 已递增的部分状态与 `placementOnlyResponse`，第 6 步 `persist_partial_snapshot` 写 `agent_turn`。响应沿用真实 runId；没有 RAG 或工位 B。落位成功时仍继续走上表完整 **11 步**。
 
 ---
 
@@ -277,11 +274,7 @@ $PILOT_HOME/logs/trauma-agent.jsonl
 
 工位 P 之前不调用 RAG。固化内容只保留Ⅰ/Ⅱ级及四个子级；Ⅲ/Ⅳ 级只作超范围名称。
 
-### 7.2 工位 R · Planner
-
-输入：compact 病例、第一波 `RetrievalTrace`、剩余预算。输出 0～3 条补检 query。
-
-### 7.3 工位 B · Reasoner
+### 7.2 工位 B · Reasoner
 
 输入：已确认落位（含派生机构与 `placementRationale`）、compact 状态、最多 15 个知识块。工位 B 不再定级，也 **没有 timeline**。
 
@@ -324,11 +317,7 @@ $PILOT_HOME/logs/trauma-agent.jsonl
 
 每条 `top_k = 8`（`TRAUMA_RAG_TOP_K`）。
 
-### 9.2 第二波（当前停用）
-
-当前采用单波模式：工位 R 和第二波补检均跳过，但保留审计步骤 6、7。`RetrievalTrace` 只包含第一波 3 条查询，单轮总 RAG 调用数固定为 **3**。
-
-### 9.3 合并（`rag/merge.ts`）
+### 9.2 合并（`rag/merge.ts`）
 
 - 全部 chunk 进入 `evidence`
 - 远程结果优先于本地
@@ -357,7 +346,7 @@ $PILOT_HOME/logs/trauma-agent.jsonl
 | 就绪且有 `targetStage` / `targetSubStage` 与所需能力 | `READY` |
 | 其余 | `ASSESSING` |
 
-没有时效超时硬 Gate（时间线已删除）。**`READY` 只表示后送医学建议，不产生确认卡，也不自动改变 `currentStage`。** `prepare_transition_advice` 不创建 `pendingTransition`。
+没有时效超时硬 Gate（时间线已删除）。**`READY` 只表示后送医学建议，不产生确认卡，也不自动改变 `currentStage`。** 流程中不再有创建 `pendingTransition` 的步骤。
 
 `confirmTransition` 仍挂在 runner / RPC 上，仅处理磁盘里遗留的 `pendingTransition`；当前完整流水线不会新写入该项。
 
@@ -412,7 +401,7 @@ Gate `READY` 的详情文案是「医学建议，未自动执行」。它不是�
 
 ```text
 src/trauma/
-  runner.ts                 # 14 步编排
+  runner.ts                 # 11 步编排
   events.ts                 # 进度事件、落位确认选项、回合事件
   types.ts                  # TurnFormInput / CaseState / RoundMemo / Gate
   schemas.ts                # 工位 P/R/B strict schema
@@ -466,7 +455,7 @@ npm run build && node --test --test-force-exit --test-timeout 60000 \
 
 现存 `tests/trauma/*.spec.ts`：`auditLog`、`factMerge`、`gate`、`placement`、`placementEvents`、`placer`、`planner`、`queryPlan`、`ragMerge`、`reasoner`、`routing`、`runner`、`schemas`、`stageConfig`、`store`。另有说明文 `tests/trauma/acceptance-15.1.md`（不是自动测试）。`tests/gateway/traumaRpc.spec.ts` 覆盖远程 `trauma_get_case` / `trauma_confirm_transition` / `trauma_override_stage`。
 
-`runner.spec.ts` 覆盖：明示子级跳过工位 P 且外科复苏派生 **医务中心**、非法表单不调模型与 RAG、完整轮审计恰好 14 步、`undetermined` / `out_of_scope` 走 6 步短路径并持久化合并表单且不调用 RAG。`store.spec.ts` 覆盖旧体征按 `index + 1` 迁移；`factMerge.spec.ts` 覆盖 bounded `recentRecords` 与带来源轮次/陈旧标记的 `latestByField`。
+`runner.spec.ts` 覆盖：明示子级跳过工位 P 且外科复苏派生 **医务中心**、非法表单不调模型与 RAG、完整轮审计恰好 11 步、`undetermined` / `out_of_scope` 走 6 步短路径并持久化合并表单且不调用 RAG。`store.spec.ts` 覆盖旧体征按 `index + 1` 迁移；`factMerge.spec.ts` 覆盖 bounded `recentRecords` 与带来源轮次/陈旧标记的 `latestByField`。
 
 前端：
 

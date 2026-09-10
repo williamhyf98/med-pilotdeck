@@ -86,32 +86,6 @@ export function validatePlacementAssessment(
   return true;
 }
 
-export type PlannerStationOutput = {
-  queries: Array<{
-    query: string;
-    reason: string;
-    critical?: boolean;
-  }>;
-};
-
-export const PLANNER_OUTPUT_SCHEMA: Record<string, unknown> = object({
-  queries: arrayOf(object({
-    query: STRING,
-    reason: STRING,
-    critical: NULLABLE_BOOLEAN,
-  })),
-});
-
-export function validatePlannerOutput(value: unknown): value is PlannerStationOutput {
-  if (!isRecord(value) || !Array.isArray(value.queries)) return false;
-  return value.queries.every((item) =>
-    isRecord(item)
-    && typeof item.query === "string"
-    && typeof item.reason === "string"
-    && (item.critical === undefined || typeof item.critical === "boolean"),
-  );
-}
-
 const GATE_STATUSES = new Set(["ASSESSING", "STAY", "BLOCKED", "READY"]);
 
 
@@ -311,6 +285,71 @@ export type ReasonerStationOutput = {
     conclusion: string;
   };
 };
+
+const VITAL_ITEM_KEY = enumOf(
+  "respiratoryRate",
+  "systolicBloodPressure",
+  "gcs",
+  "heartRate",
+  "temperature",
+  "spo2",
+);
+
+const EXTRACTED_NARRATIVE_ITEM = object({
+  text: STRING,
+  sourceSpan: STRING,
+});
+
+const EXTRACTED_VITAL_ITEM = object({
+  field: VITAL_ITEM_KEY,
+  value: NUMBER,
+  unit: STRING,
+  sourceSpan: STRING,
+});
+
+export const EXTRACTOR_OUTPUT_SCHEMA: Record<string, unknown> = described(
+  object({
+    injuryNarratives: arrayOf(EXTRACTED_NARRATIVE_ITEM),
+    treatmentNarratives: arrayOf(EXTRACTED_NARRATIVE_ITEM),
+    evacuationNarratives: arrayOf(EXTRACTED_NARRATIVE_ITEM),
+    notes: arrayOf(EXTRACTED_NARRATIVE_ITEM),
+    vitals: arrayOf(EXTRACTED_VITAL_ITEM),
+  }),
+  "工位 F 从用户自由文本中抽取的结构化表单草稿。",
+);
+
+function isExtractedNarrativeItem(value: unknown): value is import("./types.js").ExtractedNarrativeItem {
+  if (!isRecord(value)) return false;
+  return typeof value.text === "string" && typeof value.sourceSpan === "string";
+}
+
+function isExtractedVitalItem(value: unknown): value is import("./types.js").ExtractedVitalItem {
+  if (!isRecord(value)) return false;
+  const validFields = new Set([
+    "respiratoryRate", "systolicBloodPressure", "gcs",
+    "heartRate", "temperature", "spo2",
+  ]);
+  return (
+    validFields.has(String(value.field))
+    && typeof value.value === "number"
+    && typeof value.unit === "string"
+    && typeof value.sourceSpan === "string"
+  );
+}
+
+export function validateExtractedTurnForm(
+  value: unknown,
+): value is import("./types.js").ExtractedTurnForm {
+  if (!isRecord(value)) return false;
+  const arrFields = ["injuryNarratives", "treatmentNarratives", "evacuationNarratives", "notes"] as const;
+  for (const field of arrFields) {
+    if (!Array.isArray(value[field])) return false;
+    if (!(value[field] as unknown[]).every(isExtractedNarrativeItem)) return false;
+  }
+  if (!Array.isArray(value.vitals)) return false;
+  if (!(value.vitals as unknown[]).every(isExtractedVitalItem)) return false;
+  return true;
+}
 
 export function validateReasonerOutput(value: unknown): value is ReasonerStationOutput {
   if (!isRecord(value)) return false;

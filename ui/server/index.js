@@ -82,6 +82,7 @@ import {
     traumaConfirmTransitionViaGateway,
     traumaGetCaseViaGateway,
     traumaOverrideStageViaGateway,
+    traumaExtractFormViaGateway,
     getRouterDashboardData,
     getRouterSessionStats,
     getRouterStatsSummary,
@@ -880,6 +881,26 @@ app.post('/api/trauma/cases/:sessionId/override', authenticateToken, async (req,
         return res.json({ snapshot });
     } catch (error) {
         return res.status(400).json({ error: error?.message || 'Failed to override trauma stage' });
+    }
+});
+
+app.post('/api/trauma/cases/:sessionId/extract', authenticateToken, async (req, res) => {
+    try {
+        const body = req.body ?? {};
+        const projectKey = typeof body.projectKey === 'string' ? body.projectKey : '';
+        const rawText = typeof body.rawText === 'string' ? body.rawText.trim() : '';
+        const caseHistory = typeof body.caseHistory === 'string' ? body.caseHistory : '';
+        if (!projectKey) return res.status(400).json({ error: 'projectKey is required' });
+        if (!rawText) return res.status(400).json({ error: 'rawText is required' });
+        const result = await traumaExtractFormViaGateway({
+            projectKey,
+            sessionKey: req.params.sessionId,
+            rawText,
+            caseHistory,
+        });
+        return res.json(result);
+    } catch (error) {
+        return res.status(500).json({ error: error?.message || 'Failed to extract trauma form' });
     }
 });
 
@@ -2540,6 +2561,9 @@ function handleChatConnection(ws, request) {
                     if (userVisibleInput) {
                         const nowIso = new Date().toISOString();
                         const provider = data.options?.providerHint || 'pilotdeck';
+                        const optimisticRunId = typeof data.options?.runId === 'string' && data.options.runId.trim()
+                            ? data.options.runId.trim()
+                            : undefined;
                         const optimisticUserFrame = createNormalizedMessage({
                             id: `local_ws_user_${crypto.randomUUID()}`,
                             sessionId: commandSessionId,
@@ -2547,6 +2571,7 @@ function handleChatConnection(ws, request) {
                             kind: 'text',
                             role: 'user',
                             content: userVisibleInput,
+                            ...(optimisticRunId ? { runId: optimisticRunId, turnId: optimisticRunId } : {}),
                             ...(Array.isArray(data.options?.attachments) && data.options.attachments.length > 0
                                 ? { attachments: data.options.attachments }
                                 : {}),

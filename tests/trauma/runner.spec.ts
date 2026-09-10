@@ -60,9 +60,7 @@ function model(calls: string[], placement: unknown = {
   return {
     async completeJson<T>(input: CompleteJsonInput<T>): Promise<T> {
       calls.push(input.name);
-      const payload = input.name === "trauma_place"
-        ? placement
-        : input.name === "trauma_plan" ? { queries: [] } : reasonPayload();
+      const payload = input.name === "trauma_place" ? placement : reasonPayload();
       if (!input.validate(payload)) throw new Error("schema validation failed");
       return payload as T;
     },
@@ -127,7 +125,7 @@ test("invalid form fails before model and RAG", async () => {
   }
 });
 
-test("successful full turn records exactly 14 steps", async () => {
+test("successful full turn records exactly 11 steps", async () => {
   const root = await mkdtemp(join(tmpdir(), "trauma-audit-"));
   try {
     const steps: number[] = [];
@@ -152,20 +150,15 @@ test("successful full turn records exactly 14 steps", async () => {
       projectId: "trauma_med-demo", sessionId: "web:s", messageId: "m1", now, form: submitted,
       requestPlacementConfirmation: async () => ({ choice: "proposed" }),
     });
-    assert.deepEqual(steps, Array.from({ length: 14 }, (_, index) => index + 1));
-    assert.deepEqual(skippedPhases, ["plan_supplemental_queries", "supplemental_retrieval"]);
+    assert.deepEqual(steps, Array.from({ length: 11 }, (_, index) => index + 1));
+    // 单波检索：流程里已不再保留任何被跳过的步骤壳子。
+    assert.deepEqual(skippedPhases, []);
     assert.equal(ragCalls.count, 3);
     assert.deepEqual(modelCalls, ["trauma_place", "trauma_reason"]);
-    assert.equal(modelCalls.includes("trauma_plan"), false);
     const snapshot = (await store.loadSnapshots())[0];
     assert.deepEqual(snapshot?.form, submitted);
     assert.equal(snapshot?.retrieval?.totalCalls, 3);
     assert.equal(snapshot?.retrieval?.queries.length, 3);
-    assert.ok(snapshot?.retrieval?.queries.every((query) => query.wave === 1));
-    assert.equal(
-      snapshot?.retrieval?.queries.some((query) => query.kind === "supplemental"),
-      false,
-    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -310,6 +310,33 @@ describe('turn-scoped server reconciliation', () => {
     ]);
   });
 
+  it('dedupes a long-running optimistic user row by turn identity after the timestamp window', () => {
+    const localUser = textMessage(
+      'local_1786708301909_ab12cd',
+      '本轮信息：胸部爆震伤',
+      '2026-05-28T00:00:01.000Z',
+      { role: 'user', turnId: 'run-current', runId: 'run-current' },
+    );
+    const serverUser = textMessage(
+      'persisted-user-current',
+      '本轮信息：胸部爆震伤',
+      '2026-05-28T00:02:01.000Z',
+      { role: 'user', turnId: 'run-current', runId: 'run-current' },
+    );
+    const otherTurnSameText = textMessage(
+      'persisted-user-other',
+      '本轮信息：胸部爆震伤',
+      '2026-05-28T00:02:01.000Z',
+      { role: 'user', turnId: 'run-other', runId: 'run-other' },
+    );
+
+    expect(isRealtimeMessageRepresentedOnServer(localUser, [serverUser])).toBe(true);
+    expect(isRealtimeMessageRepresentedOnServer(localUser, [otherTurnSameText])).toBe(false);
+    expect(computeMerged([serverUser], [localUser]).map((m) => m.id)).toEqual([
+      serverUser.id,
+    ]);
+  });
+
   it('still keeps an optimistic user row that history has not persisted yet', () => {
     const localUser = textMessage(
       'local_1786708301909_ab12cd',
