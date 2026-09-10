@@ -262,6 +262,114 @@ function parseToolInput(value: unknown): Record<string, unknown> {
   }
 }
 
+type TraumaRunnerStepMeta = {
+  traumaRunnerStep?: boolean;
+  stepNumber?: number;
+  phase?: string;
+  title?: string;
+  runningTitle?: string;
+  detail?: string;
+  durationMs?: number;
+  details?: Record<string, unknown>;
+  expectedTotalSteps?: number;
+  countInTotal?: boolean;
+};
+
+const TRAUMA_RUNNER_DISPLAY_STEP_COUNT = 11;
+
+function parseRecordJson(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== 'string' || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function normalizeTraumaStepMeta(value: Record<string, unknown>): TraumaRunnerStepMeta | null {
+  if (value.traumaRunnerStep !== true) return null;
+  const details = parseRecordJson(value.details);
+  return {
+    traumaRunnerStep: true,
+    stepNumber: typeof value.stepNumber === 'number' && Number.isFinite(value.stepNumber)
+      ? value.stepNumber
+      : undefined,
+    phase: typeof value.phase === 'string' ? value.phase : undefined,
+    title: typeof value.title === 'string' ? value.title : undefined,
+    runningTitle: typeof value.runningTitle === 'string' ? value.runningTitle : undefined,
+    detail: typeof value.detail === 'string' ? value.detail : undefined,
+    durationMs: typeof value.durationMs === 'number' && Number.isFinite(value.durationMs)
+      ? value.durationMs
+      : undefined,
+    details,
+    expectedTotalSteps: typeof value.expectedTotalSteps === 'number' && Number.isFinite(value.expectedTotalSteps)
+      ? value.expectedTotalSteps
+      : undefined,
+    countInTotal: value.countInTotal === false ? false : true,
+  };
+}
+
+function getTraumaRunnerStepMeta(message: ChatMessage): TraumaRunnerStepMeta | null {
+  const inputMeta = normalizeTraumaStepMeta(parseToolInput(message.toolInput));
+  const resultContent = typeof message.toolResult?.content === 'string'
+    ? message.toolResult.content
+    : undefined;
+  const resultMeta = normalizeTraumaStepMeta(parseRecordJson(resultContent));
+  if (!inputMeta && !resultMeta) return null;
+  return {
+    ...(inputMeta || {}),
+    ...(resultMeta || {}),
+    traumaRunnerStep: true,
+    details: {
+      ...(inputMeta?.details || {}),
+      ...(resultMeta?.details || {}),
+    },
+  };
+}
+
+function isTraumaRunnerStepMessage(message: ChatMessage): boolean {
+  return Boolean(message.isToolUse && getTraumaRunnerStepMeta(message));
+}
+
+export function hasTraumaRunnerSteps(messages: ChatMessage[]): boolean {
+  return messages.some(isTraumaRunnerStepMessage);
+}
+
+function formatTraumaRunnerResultDetail(meta: TraumaRunnerStepMeta): string {
+  const details = meta.details || {};
+  if (meta.detail) return meta.detail;
+  const totalCalls = typeof details.totalCalls === 'number' ? details.totalCalls : undefined;
+  const promptChunkCount = typeof details.promptChunkCount === 'number' ? details.promptChunkCount : undefined;
+  if (totalCalls !== undefined || promptChunkCount !== undefined) {
+    const parts: string[] = [];
+    if (totalCalls !== undefined) parts.push(`检索 ${totalCalls} 次`);
+    if (promptChunkCount !== undefined) parts.push(`选用 ${promptChunkCount} 个知识块`);
+    return parts.join('，');
+  }
+  const treatmentActionCount = typeof details.treatmentActionCount === 'number'
+    ? details.treatmentActionCount
+    : undefined;
+  const missingInformationCount = typeof details.missingInformationCount === 'number'
+    ? details.missingInformationCount
+    : undefined;
+  if (treatmentActionCount !== undefined || missingInformationCount !== undefined) {
+    const parts: string[] = [];
+    if (treatmentActionCount !== undefined) parts.push(`生成 ${treatmentActionCount} 条处置建议`);
+    if (missingInformationCount !== undefined) parts.push(`提示 ${missingInformationCount} 项缺失信息`);
+    return parts.join('，');
+  }
+  const gateStatus = typeof details.gateStatus === 'string' ? details.gateStatus : '';
+  if (gateStatus) return `门控状态：${gateStatus}`;
+  if (typeof meta.durationMs === 'number') return formatProcessDuration(meta.durationMs);
+  return '';
+}
+
 function getToolInputString(message: ChatMessage, key: string): string {
   const value = parseToolInput(message.toolInput)[key];
   return typeof value === 'string' ? value : '';
@@ -647,6 +755,27 @@ function collectProcessCounts(messages: ChatMessage[]): ProcessCounts {
   return counts;
 }
 
+function collectTraumaRunnerProcessMessages(messages: ChatMessage[], turn: MessageTurn): {
+  messages: ChatMessage[];
+  detailMessages: ChatMessage[];
+  indices: number[];
+} | null {
+  const collected: ChatMessage[] = [];
+  const indices: number[] = [];
+  for (let index = turn.start; index < turn.end; index += 1) {
+    const message = messages[index];
+    if (!message || !isTraumaRunnerStepMessage(message)) continue;
+    collected.push(message);
+    indices.push(index);
+  }
+  if (collected.length === 0) return null;
+  return {
+    messages: collected,
+    detailMessages: collected.filter(isExpandableProcessMessage),
+    indices,
+  };
+}
+
 function getDurationMs(start: unknown, end: unknown): number {
   const startTime = parseMessageTime(start);
   const endTime = parseMessageTime(end);
@@ -972,6 +1101,47 @@ export function buildRenderableMessageItems(
       }
     }
 
+    const traumaSegment = collectTraumaRunnerProcessMessages(messages, turn);
+    if (traumaSegment) {
+      for (const index of traumaSegment.indices) {
+        collapsedIndices.add(index);
+      }
+      const firstIndex = traumaSegment.indices[0] ?? turn.start;
+      const lastIndex = traumaSegment.indices[traumaSegment.indices.length - 1] ?? firstIndex;
+      const attachmentId = `trauma-process-${getStableMessagePart(messages[turn.start], `turn-${turn.start}`)}`;
+      const summary = createSyntheticProcessSummary(
+        messages,
+        turn,
+        turn.start,
+        traumaSegment.messages,
+        firstIndex,
+        lastIndex,
+        attachmentId,
+      );
+      const attachment: ProcessAttachment = {
+        id: attachmentId,
+        processSummary: summary,
+        processDetailMessages: traumaSegment.detailMessages,
+        startIndex: firstIndex,
+        endIndex: lastIndex,
+        inlineImages: collectToolResultImages(traumaSegment.messages),
+      };
+      const turnStartItem = itemsByIndex.get(turn.start);
+      if (turnStartItem) {
+        pushProcessAttachment(turnStartItem, 'after', attachment);
+      } else {
+        syntheticItems.push({
+          message: summary,
+          originalIndex: firstIndex - 0.1,
+          beforeRunAttachment: null,
+          afterRunAttachment: null,
+          beforeProcessAttachments: [],
+          afterProcessAttachments: [],
+        });
+      }
+      return;
+    }
+
     const segments = collectCompletedProcessSegments(messages, turn);
 
     if (segments.length === 0) {
@@ -1064,6 +1234,20 @@ export function getLiveProcessGroups(
   const liveTurn = turns[turns.length - 1];
   if (!liveTurn) {
     return [];
+  }
+
+  const traumaSegment = collectTraumaRunnerProcessMessages(messages, liveTurn);
+  if (traumaSegment) {
+    return [{
+      id: `live-trauma-process-${getStableMessagePart(messages[liveTurn.start], `turn-${liveTurn.start}`)}`,
+      afterOriginalIndex: liveTurn.start,
+      beforeOriginalIndex: null,
+      startIndex: traumaSegment.indices[0] ?? liveTurn.start,
+      endIndex: traumaSegment.indices[traumaSegment.indices.length - 1] ?? messages.length,
+      messages: traumaSegment.messages,
+      detailMessages: traumaSegment.detailMessages,
+      isRunning: Boolean(options.isAssistantWorking),
+    }];
   }
 
   const groups: Omit<LiveProcessGroup, 'isRunning'>[] = [];
@@ -1213,6 +1397,11 @@ export function formatCompletedProcessTitle(
   messageOrMessages: ChatMessage | ChatMessage[],
   t: TFunction<'chat'>,
 ): string {
+  const messages = Array.isArray(messageOrMessages) ? messageOrMessages : [messageOrMessages];
+  if (hasTraumaRunnerSteps(messages)) {
+    return `本轮推演完成（${TRAUMA_RUNNER_DISPLAY_STEP_COUNT}步）`;
+  }
+
   const counts = Array.isArray(messageOrMessages)
     ? collectProcessCounts(messageOrMessages)
     : {
@@ -1294,6 +1483,11 @@ export function getRunningProcessTitle(
     return t('working.processing', { defaultValue: 'Processing' });
   }
 
+  const traumaMeta = getTraumaRunnerStepMeta(latestMessage);
+  if (traumaMeta) {
+    return traumaMeta.runningTitle || traumaMeta.title || '正在执行推演步骤';
+  }
+
   const kind = getProcessToolKind(latestMessage);
   const target = getDisplayTarget(getToolTarget(latestMessage));
   if (kind === 'edit') {
@@ -1333,8 +1527,10 @@ export function getLiveProcessGroupStep(
   t: TFunction<'chat'>,
   fallbackRunningStep: ProcessTraceStep | null,
 ): ProcessTraceStep {
+  const isTraumaGroup = hasTraumaRunnerSteps(group.messages);
   const fallbackPhase = String(fallbackRunningStep?.phase || '');
   const canUseFallbackStep = fallbackRunningStep?.title &&
+    !isTraumaGroup &&
     !['generation', 'thinking', 'permission'].includes(fallbackPhase);
   if (group.isRunning && canUseFallbackStep) {
     return {
@@ -1349,12 +1545,13 @@ export function getLiveProcessGroupStep(
     : formatCompletedProcessTitle(group.messages, t);
   const latestMessage = group.messages[group.messages.length - 1];
   const kind = latestMessage ? getProcessToolKind(latestMessage) : 'tool';
+  const traumaMeta = latestMessage ? getTraumaRunnerStepMeta(latestMessage) : null;
 
   return {
     id: group.id,
     title,
     state: group.isRunning ? 'running' : 'completed',
-    phase: kind === 'search' ? 'rag' : kind === 'command' ? 'tool' : latestMessage?.phase,
+    phase: traumaMeta?.phase || (kind === 'search' ? 'rag' : kind === 'command' ? 'tool' : latestMessage?.phase),
     toolName: latestMessage?.toolName,
   };
 }
@@ -1383,34 +1580,37 @@ export function buildProcessToolSteps(messages: ChatMessage[]): ProcessTraceStep
         typeof result === 'object' &&
         (result as { isError?: boolean }).isError,
     );
+    const traumaMeta = getTraumaRunnerStepMeta(message);
     const kind = getProcessToolKind(message);
     const { target, context } = getToolStepTargetMeta(message);
-    const resultDetail = getToolStepResultDetail(message);
+    const resultDetail = traumaMeta ? formatTraumaRunnerResultDetail(traumaMeta) : getToolStepResultDetail(message);
     const command = getToolInputString(message, 'command');
     const description = getToolInputString(message, 'description');
-    const title = kind === 'command' && description ? description : toolName;
+    const title = traumaMeta
+      ? traumaMeta.title || toolName
+      : kind === 'command' && description ? description : toolName;
 
     steps.push({
       id: stepId,
       title,
       toolName,
-      target: target || undefined,
+      target: traumaMeta ? undefined : (target || undefined),
       context: kind === 'command' ? undefined : (context || undefined),
-      detail: command || target || undefined,
+      detail: traumaMeta ? undefined : (command || target || undefined),
       resultDetail: resultDetail || undefined,
       state: !hasResult ? 'running' : isError ? 'failed' : 'completed',
-      phase: kind === 'search'
+      phase: traumaMeta?.phase || (kind === 'search'
         ? 'rag'
         : kind === 'subagent'
           ? 'subtask'
-          : kind === 'command'
-            ? 'command'
-            : kind === 'edit'
-              ? 'write'
-              : kind === 'read'
-                ? 'read'
-                : 'tool',
-    });
+	          : kind === 'command'
+	            ? 'command'
+	            : kind === 'edit'
+	              ? 'write'
+	              : kind === 'read'
+	                ? 'read'
+	                : 'tool'),
+	    });
   }
 
   return steps;

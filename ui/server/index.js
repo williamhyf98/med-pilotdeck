@@ -79,6 +79,10 @@ import {
     getActiveTurnSnapshotFramesViaGateway,
     getActiveSessionIdsViaGateway,
     elicitationRespondViaGateway,
+    traumaConfirmTransitionViaGateway,
+    traumaGetCaseViaGateway,
+    traumaOverrideStageViaGateway,
+    traumaExtractFormViaGateway,
     getRouterDashboardData,
     getRouterSessionStats,
     getRouterStatsSummary,
@@ -842,6 +846,61 @@ app.get('/api/projects/:projectName/sessions', authenticateToken, async (req, re
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/trauma/cases/:sessionId', authenticateToken, async (req, res) => {
+    try {
+        const projectKey = typeof req.query.projectKey === 'string' ? req.query.projectKey : '';
+        if (!projectKey) {
+            return res.status(400).json({ error: 'projectKey is required' });
+        }
+        const result = await traumaGetCaseViaGateway({
+            projectKey,
+            sessionKey: req.params.sessionId,
+        });
+        return res.json(result);
+    } catch (error) {
+        return res.status(500).json({ error: error?.message || 'Failed to read trauma case' });
+    }
+});
+
+app.post('/api/trauma/cases/:sessionId/override', authenticateToken, async (req, res) => {
+    try {
+        const body = req.body ?? {};
+        const snapshot = await traumaOverrideStageViaGateway({
+            projectKey: body.projectKey,
+            sessionKey: req.params.sessionId,
+            actorId: body.actorId || 'web-user',
+            toStage: body.toStage,
+            toSubStage: body.toSubStage,
+            reason: body.reason,
+            riskAcknowledged: body.riskAcknowledged,
+            blockedOverrideConfirmed: body.blockedOverrideConfirmed,
+        });
+        return res.json({ snapshot });
+    } catch (error) {
+        return res.status(400).json({ error: error?.message || 'Failed to override trauma stage' });
+    }
+});
+
+app.post('/api/trauma/cases/:sessionId/extract', authenticateToken, async (req, res) => {
+    try {
+        const body = req.body ?? {};
+        const projectKey = typeof body.projectKey === 'string' ? body.projectKey : '';
+        const rawText = typeof body.rawText === 'string' ? body.rawText.trim() : '';
+        const caseHistory = typeof body.caseHistory === 'string' ? body.caseHistory : '';
+        if (!projectKey) return res.status(400).json({ error: 'projectKey is required' });
+        if (!rawText) return res.status(400).json({ error: 'rawText is required' });
+        const result = await traumaExtractFormViaGateway({
+            projectKey,
+            sessionKey: req.params.sessionId,
+            rawText,
+            caseHistory,
+        });
+        return res.json(result);
+    } catch (error) {
+        return res.status(500).json({ error: error?.message || 'Failed to extract trauma form' });
     }
 });
 
@@ -2502,6 +2561,9 @@ function handleChatConnection(ws, request) {
                     if (userVisibleInput) {
                         const nowIso = new Date().toISOString();
                         const provider = data.options?.providerHint || 'pilotdeck';
+                        const optimisticRunId = typeof data.options?.runId === 'string' && data.options.runId.trim()
+                            ? data.options.runId.trim()
+                            : undefined;
                         const optimisticUserFrame = createNormalizedMessage({
                             id: `local_ws_user_${crypto.randomUUID()}`,
                             sessionId: commandSessionId,
@@ -2509,6 +2571,7 @@ function handleChatConnection(ws, request) {
                             kind: 'text',
                             role: 'user',
                             content: userVisibleInput,
+                            ...(optimisticRunId ? { runId: optimisticRunId, turnId: optimisticRunId } : {}),
                             ...(Array.isArray(data.options?.attachments) && data.options.attachments.length > 0
                                 ? { attachments: data.options.attachments }
                                 : {}),
@@ -2570,6 +2633,19 @@ function handleChatConnection(ws, request) {
                     granted: result.granted === true,
                     ...(typeof result.entry === 'string' ? { grantedEntry: result.entry } : {}),
                 }));
+            } else if (data.type === 'trauma-transition-response') {
+                const snapshot = await traumaConfirmTransitionViaGateway({
+                    projectKey: data.projectKey,
+                    sessionKey: data.sessionId,
+                    answer: data.answer,
+                    expectedVersion: data.expectedVersion,
+                });
+                writer.send({
+                    type: 'trauma-transition-result',
+                    requestId: data.requestId ?? null,
+                    sessionId: data.sessionId,
+                    snapshot,
+                });
             } else if (data.type === 'elicitation-response') {
                 if (data.requestId) {
                     await elicitationRespondViaGateway(data.requestId, data.answer);

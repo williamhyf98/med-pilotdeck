@@ -15,21 +15,22 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import type { ProcessTraceStep } from './ProcessTrace';
+import { getToolDisplayName } from '../chat/tools/configs/toolConfigs';
 
 const PHASE_LABELS: Record<string, string> = {
-  rag: 'Searching',
-  search: 'Searching',
-  read: 'Reading',
-  edit: 'Editing',
-  write: 'Writing',
-  tool: 'Using tool',
-  command: 'Running command',
-  bash: 'Running command',
-  think: 'Thinking',
-  plan: 'Planning',
-  subtask: 'Sub-task',
-  code: 'Coding',
-  review: 'Reviewing',
+  rag: '检索中',
+  search: '检索中',
+  read: '读取中',
+  edit: '编辑中',
+  write: '写入中',
+  tool: '使用工具',
+  command: '执行命令',
+  bash: '执行命令',
+  think: '思考中',
+  plan: '规划中',
+  subtask: '子任务',
+  code: '编码中',
+  review: '复核中',
 };
 
 const PHASE_ICONS: Record<string, LucideIcon> = {
@@ -179,7 +180,7 @@ function TimelineGroupRow({
 function TimelineStepRow({ step }: { step: ProcessTraceStep }) {
   const isRunning = step.state === 'running';
   const isFailed = step.state === 'failed' || step.severity === 'error';
-  const toolLabel = step.title || step.toolName || 'Step';
+  const toolLabel = step.title || (step.toolName ? getToolDisplayName(step.toolName) : 'Step');
   const target = (step.target || '').trim();
   const context = (step.context || '').trim();
   const resultDetail = (step.resultDetail || '').trim();

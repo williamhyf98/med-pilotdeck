@@ -232,6 +232,12 @@ export function applyWebGatewayEvent(
       };
     }
 
+    case "assistant_text_end":
+      return {
+        ...state,
+        currentAssistantId: undefined,
+      };
+
     case "assistant_thinking_delta": {
       if (!event.text) {
         return state;

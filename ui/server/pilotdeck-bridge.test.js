@@ -5,7 +5,92 @@ import {
     gatewayEventToFrames,
     getGatewayTurnSafetyOverrides,
     isGatewayUnavailableError,
+    sanitizeTraumaFormInput,
 } from './pilotdeck-bridge.js';
+
+describe('sanitizeTraumaFormInput', () => {
+    it('forwards the supported structural fields', () => {
+        expect(sanitizeTraumaFormInput({
+            statedSubStage: 'primary_first_aid',
+            injuryNarrative: '右小腿伤',
+            treatmentNarrative: '',
+            evacuationNarrative: '',
+            note: '',
+            vitals: { respiratoryRate: 30 },
+        })).toEqual({
+            statedSubStage: 'primary_first_aid',
+            injuryNarrative: '右小腿伤',
+            treatmentNarrative: '',
+            evacuationNarrative: '',
+            note: '',
+            vitals: { respiratoryRate: 30 },
+        });
+    });
+
+    it('rejects unknown vital keys and invalid substages', () => {
+        const base = {
+            statedSubStage: null,
+            injuryNarrative: '伤情',
+            treatmentNarrative: '',
+            evacuationNarrative: '',
+            note: '',
+            vitals: {},
+        };
+        expect(() => sanitizeTraumaFormInput({
+            ...base,
+            vitals: { spo2: 95 },
+        })).toThrow(/vital/i);
+        expect(() => sanitizeTraumaFormInput({
+            ...base,
+            statedSubStage: 'field_specialist_treatment',
+        })).toThrow(/substage/i);
+        expect(() => sanitizeTraumaFormInput({
+            ...base,
+            extra: true,
+        })).toThrow(/field/i);
+    });
+
+    it('enforces backend narrative, non-empty, and vital constraints', () => {
+        const base = {
+            statedSubStage: null,
+            injuryNarrative: '伤情',
+            treatmentNarrative: '',
+            evacuationNarrative: '',
+            note: '',
+            vitals: {},
+        };
+        expect(() => sanitizeTraumaFormInput({
+            ...base,
+            injuryNarrative: '伤'.repeat(1001),
+        })).toThrow(/narrative/i);
+        expect(() => sanitizeTraumaFormInput({
+            ...base,
+            injuryNarrative: '   ',
+        })).toThrow(/empty/i);
+        expect(() => sanitizeTraumaFormInput({
+            ...base,
+            injuryNarrative: '',
+            statedSubStage: 'primary_first_aid',
+        })).toThrow(/empty/i);
+        expect(() => sanitizeTraumaFormInput({
+            ...base,
+            vitals: { gcs: 16 },
+        })).toThrow(/vital/i);
+        expect(() => sanitizeTraumaFormInput({
+            ...base,
+            vitals: { respiratoryRate: 20.5 },
+        })).toThrow(/integer/i);
+        expect(() => sanitizeTraumaFormInput({
+            ...base,
+            vitals: { temperature: 36.66 },
+        })).toThrow(/precision/i);
+        expect(sanitizeTraumaFormInput({
+            ...base,
+            injuryNarrative: '',
+            vitals: { temperature: 36.6 },
+        }).vitals.temperature).toBe(36.6);
+    });
+});
 
 describe('getGatewayTurnSafetyOverrides', () => {
     it('converts the one-way disable flag into a no-tools Gateway turn', () => {

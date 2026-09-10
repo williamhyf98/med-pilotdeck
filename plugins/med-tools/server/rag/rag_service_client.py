@@ -17,7 +17,7 @@ import httpx
 
 DEFAULT_API_BASE = "http://127.0.0.1:18080"
 DEFAULT_TOPIC = "战创伤"
-DEFAULT_TIMEOUT_SECONDS = 60.0
+DEFAULT_TIMEOUT_SECONDS = 90.0
 DEFAULT_MAX_CHARS_PER_CHUNK = 1800
 
 # Any of these (case-insensitive) means "search the whole library, no filter".

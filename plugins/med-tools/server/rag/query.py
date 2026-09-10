@@ -126,28 +126,27 @@ def query_rag(
             # A reranker makes the returned count independent of top_k; clamp to
             # what the caller asked for without inventing rows.
             items = items[:k]
-            if not items:
-                warnings.append(
-                    "remote retrieval returned 0 chunks for "
-                    f"topic={topic_sent or '(whole library)'}; "
-                    "widen the topic (topic=\"\") or rewrite the query"
+            if items:
+                return _finalize(
+                    mode="remote",
+                    retrieval_backend="remote",
+                    items=items,
+                    query=q,
+                    top_k=k,
+                    # Remote scores are RRF fusion values (~0.01-0.03), not cosine.
+                    # Applying the local min_score here would discard every hit.
+                    min_score=None,
+                    topic=topic_sent,
+                    corpus_id=_manifest_value(manifest, "corpus_id", "war-trauma-remote"),
+                    corpus_version=_manifest_value(manifest, "version", None),
+                    embedding_model="remote-service",
+                    warnings=warnings,
+                    started=started,
+                    remote_endpoint=service["endpoint"],
                 )
-            return _finalize(
-                mode="remote",
-                retrieval_backend="remote",
-                items=items,
-                query=q,
-                top_k=k,
-                # Remote scores are RRF fusion values (~0.01-0.03), not cosine.
-                # Applying the local min_score here would discard every hit.
-                min_score=None,
-                topic=topic_sent,
-                corpus_id=_manifest_value(manifest, "corpus_id", "war-trauma-remote"),
-                corpus_version=_manifest_value(manifest, "version", None),
-                embedding_model="remote-service",
-                warnings=warnings,
-                started=started,
-                remote_endpoint=service["endpoint"],
+            warnings.append(
+                "remote retrieval returned 0 chunks for "
+                f"topic={topic_sent or '(whole library)'}; used local retrieval"
             )
         except RagServiceError as exc:
             warnings.append(

@@ -1,59 +1,133 @@
-import { ChevronLeft, ChevronRight, RotateCcw, ShieldAlert } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { ShieldAlert } from 'lucide-react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { cn } from '../../lib/utils';
-import DemoTranscript from './DemoTranscript';
-import { DEMO_TRAUMA_ROUNDS, TRAUMA_STAGES } from './demoCase';
+import { TRAUMA_STAGES } from './demoCase';
+import StageOverrideDialog from './detail/StageOverrideDialog';
+import { snapshotsToRounds } from './domain/snapshotAdapter';
+import type { TurnFormInput } from './domain/types';
 import MemoDetailPanel from './MemoDetailPanel';
-import TreatmentTree from './TreatmentTree';
+import { useCaseStore } from './store/useCaseStore';
+import TraumaComposer from './TraumaComposer';
+import TreatmentTree, { type TreePosition } from './TreatmentTree';
+
+const INITIAL_POSITION: TreePosition = {
+  stageId: TRAUMA_STAGES[0]!.id,
+  substepIndex: 0,
+  round: null,
+  unplaced: true,
+};
 
 type TraumaWorkspaceProps = {
   resetKey: string;
+  projectKey?: string;
+  sessionId?: string;
+  onSubmitForm?: (form: TurnFormInput, rawInput: string) => void | Promise<void>;
+  submitting?: boolean;
+  runtimePanel?: ReactNode;
 };
 
-export default function TraumaWorkspace({ resetKey }: TraumaWorkspaceProps) {
-  const [currentRoundIndex, setCurrentRoundIndex] = useState(0);
+export default function TraumaWorkspace({
+  resetKey,
+  projectKey,
+  sessionId,
+  onSubmitForm = () => undefined,
+  submitting = false,
+  runtimePanel,
+}: TraumaWorkspaceProps) {
   const [selectedMemoId, setSelectedMemoId] = useState<string | null>(null);
-
-  useEffect(() => {
-    setCurrentRoundIndex(0);
-    setSelectedMemoId(null);
-  }, [resetKey]);
-
-  const currentRound = DEMO_TRAUMA_ROUNDS[currentRoundIndex];
-  const stage = TRAUMA_STAGES.find((item) => item.id === currentRound.stageId);
-  const substep = stage?.substeps[currentRound.substepIndex];
+  const [showStageOverride, setShowStageOverride] = useState(false);
+  const caseStore = useCaseStore(projectKey, sessionId);
+  const rounds = useMemo(
+    () => snapshotsToRounds(caseStore.snapshots, caseStore.current),
+    [caseStore.current, caseStore.snapshots],
+  );
+  const hasLiveCase = Boolean(caseStore.current && rounds.length > 0);
+  const currentRoundIndex = Math.max(0, rounds.length - 1);
+  const currentRound = rounds.at(-1);
+  const position: TreePosition = currentRound
+    ? {
+      stageId: currentRound.stageId,
+      substepIndex: currentRound.substepIndex,
+      round: currentRound.round,
+      blocked: currentRound.gate.status === 'BLOCKED',
+      transferPending: currentRound.transitionTone === 'warning',
+      unplaced: Boolean(currentRound.unplaced || !caseStore.current?.currentSubStage),
+    }
+    : INITIAL_POSITION;
+  const stage = TRAUMA_STAGES.find((item) => item.id === position.stageId);
+  const substep = stage?.substeps[position.substepIndex];
   const selectedMemo = useMemo(
-    () => DEMO_TRAUMA_ROUNDS.find((round) => round.id === selectedMemoId) ?? null,
-    [selectedMemoId],
+    () => rounds.find((round) => round.id === selectedMemoId) ?? null,
+    [rounds, selectedMemoId],
+  );
+  const viewingHistoricalSnapshot = Boolean(
+    selectedMemo?.snapshotVersion
+    && selectedMemo.snapshotVersion !== caseStore.current?.version,
   );
 
-  const goToRound = (nextIndex: number) => {
-    setCurrentRoundIndex(Math.max(0, Math.min(DEMO_TRAUMA_ROUNDS.length - 1, nextIndex)));
+  useEffect(() => {
     setSelectedMemoId(null);
-  };
+    setShowStageOverride(false);
+  }, [resetKey]);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-neutral-50/50 dark:bg-neutral-950">
-      <div className="grid shrink-0 grid-cols-2 gap-x-3 gap-y-1 border-b border-neutral-200 bg-white px-3 py-2 dark:border-neutral-800 dark:bg-neutral-950 sm:grid-cols-5">
-        <StatusCell className="col-span-2 sm:col-span-1" label="案例概况" value="爆炸冲击后胸部损伤 · 右小腿开放伤" />
-        <StatusCell label="当前位置" value={currentRound.facility} tone="info" />
-        <StatusCell label="当前阶段" value={`${stage?.index} · ${substep?.name}`} />
-        <StatusCell label="伤后时间" value={currentRound.elapsed} tone={currentRound.timing.warning ? 'warning' : undefined} />
-        <StatusCell label="阶段转换" value={currentRound.transitionLabel} tone={currentRound.transitionTone} />
+      <div className="grid shrink-0 grid-cols-2 gap-x-3 gap-y-1 border-b border-neutral-200 bg-white px-3 py-2 dark:border-neutral-800 dark:bg-neutral-950 sm:grid-cols-4">
+        <StatusCell label="病例进度" value={caseStore.current ? `第 ${caseStore.current.round} 轮` : '等待首轮提交'} />
+        <StatusCell
+          label="当前位置"
+          value={caseStore.current?.currentSubStage && caseStore.current.currentFacility
+            ? caseStore.current.currentFacility.name
+            : '未定级'}
+          tone="info"
+        />
+        <StatusCell
+          label="当前阶段"
+          value={caseStore.current?.currentSubStage ? `${stage?.index} · ${substep?.name}` : '由系统判定'}
+        />
+        <StatusCell
+          label="阶段转换"
+          value={currentRound?.transitionLabel ?? '待首轮推演'}
+          tone={currentRound?.transitionTone}
+        />
       </div>
 
       <div className={cn(
-        'grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(420px,1fr)_minmax(420px,1fr)] gap-2 overflow-y-auto p-2 lg:grid-rows-1 lg:overflow-hidden',
+        'grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_auto] gap-2 overflow-hidden p-2',
         selectedMemo
-          ? 'lg:grid-cols-[minmax(0,54fr)_minmax(0,46fr)]'
-          : 'lg:grid-cols-[minmax(0,1fr)_300px] 2xl:grid-cols-[minmax(0,80fr)_minmax(0,20fr)]',
+          ? 'lg:grid-cols-[minmax(0,54fr)_minmax(0,46fr)] lg:grid-rows-1'
+          : 'lg:grid-cols-[minmax(0,1fr)_300px] lg:grid-rows-1 2xl:grid-cols-[minmax(0,80fr)_minmax(0,20fr)]',
       )}
       >
         <section
-          aria-label="伤情推演对话"
-          className="min-h-0 min-w-0 overflow-hidden border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950 lg:rounded-xl lg:border lg:shadow-sm"
+          aria-label="伤情推演工作区"
+          className="grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-950"
         >
-          <DemoTranscript rounds={DEMO_TRAUMA_ROUNDS} currentRoundIndex={currentRoundIndex} />
+          <div className="min-h-0 overflow-hidden bg-white dark:bg-neutral-950">
+            {runtimePanel ? (
+              <div
+                role="region"
+                aria-label="推演对话"
+                className="h-full min-h-0 overflow-hidden"
+              >
+                {runtimePanel}
+              </div>
+            ) : (
+              <div className="flex h-full items-center justify-center px-6 text-center text-[12px] text-neutral-400 dark:text-neutral-500">
+                等待对话区初始化…
+              </div>
+            )}
+          </div>
+          <div className="max-h-[58vh] overflow-y-auto border-t border-neutral-200 bg-neutral-50/50 p-4 dark:border-neutral-800 dark:bg-neutral-900/20">
+            <TraumaComposer
+              key={`${caseStore.current?.caseId ?? 'unpersisted'}:${resetKey}`}
+              projectKey={projectKey}
+              sessionId={sessionId}
+              previousSubStage={caseStore.current?.currentSubStage ?? null}
+              onSubmit={onSubmitForm}
+              submitting={submitting}
+            />
+          </div>
         </section>
 
         <section
@@ -65,38 +139,9 @@ export default function TraumaWorkspace({ resetKey }: TraumaWorkspaceProps) {
               <h2 id="trauma-workflow-title" className="truncate text-[12px] font-semibold">分级救治全过程</h2>
               <p className="truncate text-[9px] text-neutral-400">主级 → 子级 → 轮次纪要</p>
             </div>
-            <div className="flex shrink-0 items-center gap-1">
-              <button
-                type="button"
-                onClick={() => goToRound(0)}
-                className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
-                aria-label="重新播放演示流程"
-                title="重新播放演示流程"
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => goToRound(currentRoundIndex - 1)}
-                disabled={currentRoundIndex === 0}
-                className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
-                aria-label="上一轮演示"
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-              </button>
-              <span className="min-w-9 text-center text-[9px] tabular-nums text-neutral-500">
-                {currentRoundIndex + 1}/{DEMO_TRAUMA_ROUNDS.length}
-              </span>
-              <button
-                type="button"
-                onClick={() => goToRound(currentRoundIndex + 1)}
-                disabled={currentRoundIndex === DEMO_TRAUMA_ROUNDS.length - 1}
-                className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
-                aria-label="下一轮演示"
-              >
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-            </div>
+            <span className="text-[9px] text-neutral-500">
+              {hasLiveCase ? `实时病例 · R${position.round}` : '等待首轮推演'}
+            </span>
           </header>
 
           <div className={cn(
@@ -112,23 +157,55 @@ export default function TraumaWorkspace({ resetKey }: TraumaWorkspaceProps) {
               <div className="mb-3 flex items-start gap-2 rounded-md border border-neutral-200 bg-neutral-50 px-2.5 py-2 dark:border-neutral-800 dark:bg-neutral-900">
                 <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neutral-400" />
                 <p className="text-[9px] leading-4 text-neutral-500 dark:text-neutral-400">
-                  第一期为演示样例：左侧对话与右侧状态均来自固定案例，真实会话将在第二期接入。
+                  {hasLiveCase
+                    ? '当前流程树由真实病例快照驱动；阶段转换建议不会自动执行，救治级别落位确认与带审计人工覆盖仍按独立流程处理。'
+                    : '新建病例尚无轮次纪要。请提交本轮伤情表单，系统将按分级定义判定应处级别。'}
                 </p>
               </div>
-              <TreatmentTree
-                stages={TRAUMA_STAGES}
-                rounds={DEMO_TRAUMA_ROUNDS}
-                currentRoundIndex={currentRoundIndex}
-                selectedMemoId={selectedMemoId}
-                onSelectMemo={(memoId) => setSelectedMemoId((current) => current === memoId ? null : memoId)}
-              />
+              {caseStore.error ? (
+                <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[10px] text-red-700 dark:border-red-900 dark:bg-red-950/25 dark:text-red-300">
+                  病例状态加载失败：{caseStore.error}
+                </div>
+              ) : (
+                <TreatmentTree
+                  stages={TRAUMA_STAGES}
+                  rounds={rounds}
+                  currentRoundIndex={currentRoundIndex}
+                  position={position}
+                  selectedMemoId={selectedMemoId}
+                  onSelectMemo={(memoId) => setSelectedMemoId((current) => current === memoId ? null : memoId)}
+                  onRequestStageOverride={hasLiveCase ? () => setShowStageOverride(true) : undefined}
+                  canOverrideStage={!viewingHistoricalSnapshot}
+                />
+              )}
+              {showStageOverride && caseStore.current && !viewingHistoricalSnapshot ? (
+                <div className="mt-3">
+                  <StageOverrideDialog
+                    state={caseStore.current}
+                    onClose={() => setShowStageOverride(false)}
+                    onSubmit={async (override) => {
+                      const response = await fetch(
+                        `/api/trauma/cases/${encodeURIComponent(sessionId ?? '')}/override`,
+                        {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ projectKey, actorId: 'web-user', ...override }),
+                        },
+                      );
+                      if (!response.ok) throw new Error('阶段调整失败');
+                      setShowStageOverride(false);
+                      await caseStore.refresh();
+                    }}
+                  />
+                </div>
+              ) : null}
             </div>
 
             {selectedMemo ? (
               <aside aria-label="轮次纪要详情" className="min-h-0 min-w-0 overflow-y-auto overflow-x-hidden bg-neutral-50/60 p-3 dark:bg-neutral-900/25">
                 <MemoDetailPanel
                   memo={selectedMemo}
-                  isLatest={selectedMemo.round === currentRound.round}
+                  isLatest={selectedMemo.round === position.round}
                   onClose={() => setSelectedMemoId(null)}
                 />
               </aside>
@@ -148,15 +225,13 @@ function StatusCell({
   label,
   value,
   tone,
-  className,
 }: {
   label: string;
   value: string;
   tone?: 'info' | 'warning' | 'danger' | 'success';
-  className?: string;
 }) {
   return (
-    <div className={cn('min-w-0', className)}>
+    <div className="min-w-0">
       <p className="text-[9px] text-neutral-400">{label}</p>
       <p className={cn(
         'truncate text-[10px] font-medium text-neutral-700 dark:text-neutral-200',

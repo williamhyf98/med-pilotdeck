@@ -200,7 +200,7 @@ export const AskUserQuestionPanel: React.FC<PermissionPanelProps> = ({
 
             <div className="flex min-w-0 flex-1 items-center gap-2">
               <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                Agent needs your input
+                需要你的输入
               </span>
               {q.header && (
                 <span className="inline-flex items-center rounded border border-border bg-muted px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -331,7 +331,7 @@ export const AskUserQuestionPanel: React.FC<PermissionPanelProps> = ({
                   isOtherOn ? 'font-medium text-foreground' : 'text-muted-foreground',
                 )}
               >
-                Other...
+                其他…
               </span>
               {isOtherOn && (
                 <Check className="ml-auto h-4 w-4 flex-shrink-0 text-foreground" strokeWidth={2.5} />
@@ -360,7 +360,7 @@ export const AskUserQuestionPanel: React.FC<PermissionPanelProps> = ({
                       // Prevent container keydown from firing
                       e.stopPropagation();
                     }}
-                    placeholder="Type your answer..."
+                    placeholder="请输入你的回答…"
                     className="h-8 pr-14 text-[13px]"
                   />
                   <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border border-border bg-muted px-1 py-0.5 font-mono text-[9px] text-muted-foreground">
@@ -406,7 +406,7 @@ export const AskUserQuestionPanel: React.FC<PermissionPanelProps> = ({
               disabled={isLast && !hasCurrentSelection && !Object.keys(buildAnswers()).length}
               className="h-7 gap-1 px-3 text-[11px] font-medium"
             >
-              {isLast ? 'Submit' : 'Next'}
+              {isLast ? '提交' : '下一步'}
               <span className="font-mono text-[9px] opacity-60">Enter</span>
             </Button>
           </div>

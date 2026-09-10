@@ -634,6 +634,7 @@ function flushBlock(
         payload: block.input,
         // Hosts display this raw input (e.g. read_skill's skillName).
         toolInput: typeof block.input === "string" ? block.input : JSON.stringify(block.input),
+        ...(context.entryId ? { entryId: context.entryId } : {}),
         source: "history",
       });
       return;
@@ -665,6 +666,7 @@ function flushBlock(
         ...(errorCode ? { errorCode } : {}),
         ...(planData || searchData ? { payload: planData ?? searchData } : {}),
         ...(resultImages.length > 0 ? { images: resultImages } : {}),
+        ...(context.entryId ? { entryId: context.entryId } : {}),
         source: "history",
       });
       return;

@@ -66,9 +66,11 @@ import {
   ensureWorkspaceLayout,
   isGeneralProjectKey,
   projectMetaTypeFromProjectPath,
+  projectTypeKeyFromProjectId,
   resolveAgentAdditionalWorkingDirectories,
   resolveAgentCwd,
   resolveGatewayProjectKey,
+  resolveTraumaCaseDir,
 } from "../pilot/paths.js";
 import { filterSkillsForProjectType } from "../pilot/projectTypePolicy.js";
 import { createPilotConfigStoreSync, type PilotConfigStore } from "../pilot/config/PilotConfigStore.js";
@@ -96,6 +98,16 @@ import { loadBuiltinPlugins } from "../extension/plugins/builtin/loadBuiltinPlug
 import { SkillManager, migrateLegacyBundledSkillCopies } from "../extension/skills/index.js";
 import { ExtensionWatchManager, type ExtensionWatchEvent } from "./ExtensionWatchManager.js";
 import { createTelemetryCollector, type TelemetryClient } from "../telemetry/index.js";
+import {
+  createTraumaAuditLogger,
+  createExtractionStation,
+  createMcpTraumaRagClient,
+  createStructuredModelClient,
+  createTraumaCaseStore,
+  createTraumaTurnRunner,
+  type TraumaAuditLogger,
+  type TraumaTurnRunner,
+} from "../trauma/index.js";
 
 export type CreateLocalGatewayOptions = {
   projectRoot?: string;
@@ -312,6 +324,44 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
     cron: options.cron,
     skillManager,
     setSessionCwd: (sessionKey, cwd) => registry.setSessionCwd(sessionKey, cwd),
+    traumaRunnerFactory: ({ projectKey, sessionKey }) =>
+      registry.createTraumaRunner(projectKey, sessionKey),
+    traumaExtractorFactory: ({ projectKey, sessionKey }) =>
+      registry.createExtractionStation(projectKey, sessionKey),
+    traumaCaseReader: ({ projectKey, sessionKey }) =>
+      registry.readTraumaCase(projectKey, sessionKey),
+    async recordTraumaTurn(input) {
+      const storage = createAgentProjectSessionStorage({
+        projectRoot: input.projectKey,
+        pilotHome,
+        sessionId: input.sessionKey,
+        now,
+      });
+      await storage.transcript.recordDurableMessage(
+        input.sessionKey,
+        input.runId,
+        {
+          role: "user",
+          content: [{ type: "text", text: input.userText }],
+        },
+      );
+      for (const processMessage of input.processMessages ?? []) {
+        await storage.transcript.recordDurableMessage(
+          input.sessionKey,
+          input.runId,
+          processMessage,
+        );
+      }
+      await storage.transcript.recordDurableMessage(
+        input.sessionKey,
+        input.runId,
+        {
+          role: "assistant",
+          content: [{ type: "text", text: input.assistantText }],
+          metadata: { purpose: "trauma_turn_runner" },
+        },
+      );
+    },
     readSessionMessages: (input) =>
       readWebSessionMessages(input, {
         projectRoot: input.projectKey ? input.projectKey : fallbackProjectRoot,
@@ -556,6 +606,7 @@ class ProjectRuntimeRegistry {
 
   private _extraTools: PilotDeckToolDefinition[];
   private _sessionOverrides: SessionConfigOverrides | undefined;
+  private readonly traumaAudit: TraumaAuditLogger;
   private readonly sharedSessionStore = new SessionRouterStore({
     now: () => this.options.now().getTime(),
   });
@@ -563,6 +614,7 @@ class ProjectRuntimeRegistry {
   constructor(private readonly options: ProjectRuntimeRegistryOptions) {
     this._extraTools = options.extraTools ? [...options.extraTools] : [];
     this._sessionOverrides = options.sessionOverrides;
+    this.traumaAudit = createTraumaAuditLogger({ pilotHome: options.pilotHome });
   }
 
   /**
@@ -579,6 +631,83 @@ class ProjectRuntimeRegistry {
 
   setGateway(gateway: InProcessGateway): void {
     this.gateway = gateway;
+  }
+
+  async createTraumaRunner(projectKey: string, sessionKey: string): Promise<TraumaTurnRunner> {
+    const runtime = this.resolve(projectKey);
+    await runtime.pluginRuntime.refresh();
+    await this.ensureMcpReady(runtime);
+    const projectId = projectKey.replace(/\\/gu, "/").split("/").filter(Boolean).at(-1)
+      ?? projectKey;
+    const caseDirectory = resolveTraumaCaseDir(
+      projectId,
+      sessionKey,
+      this.options.pilotHome,
+    );
+    const modelSelection = runtime.snapshot.config.agent.model;
+    const model = createStructuredModelClient({
+      complete: runtime.model.complete.bind(runtime.model),
+      stream: runtime.model.stream.bind(runtime.model),
+      provider: modelSelection.provider,
+      model: modelSelection.model,
+    });
+    const rag = createMcpTraumaRagClient(async (name, input) => {
+      const tool = runtime.tools.get(name);
+      if (!tool) {
+        throw new Error(`Trauma RAG tool is unavailable: ${name}`);
+      }
+      const output = await tool.execute(input, {
+        sessionId: sessionKey,
+        turnId: `trauma-rag:${this.options.now().getTime()}`,
+        cwd: runtime.projectRoot,
+        permissionMode: "bypassPermissions",
+        permissionContext: createDefaultPermissionContext({
+          cwd: runtime.projectRoot,
+          mode: "bypassPermissions",
+          bypassAvailable: true,
+        }),
+        now: this.options.now,
+      });
+      return output.data ?? output.content;
+    });
+    return createTraumaTurnRunner({
+      store: createTraumaCaseStore(caseDirectory),
+      model,
+      rag,
+      audit: this.traumaAudit,
+      now: () => this.options.now().toISOString(),
+    });
+  }
+
+  async createExtractionStation(projectKey: string, sessionKey: string) {
+    const runtime = this.resolve(projectKey);
+    await runtime.pluginRuntime.refresh();
+    const modelSelection = runtime.snapshot.config.agent.model;
+    const model = createStructuredModelClient({
+      complete: runtime.model.complete.bind(runtime.model),
+      stream: runtime.model.stream.bind(runtime.model),
+      provider: modelSelection.provider,
+      model: modelSelection.model,
+    });
+    return createExtractionStation(model);
+  }
+
+  async readTraumaCase(projectKey: string, sessionKey: string) {
+    const projectId = projectKey.replace(/\\/gu, "/").split("/").filter(Boolean).at(-1)
+      ?? projectKey;
+    if (projectTypeKeyFromProjectId(projectId) !== "trauma_med") {
+      return { current: null, snapshots: [] };
+    }
+    const store = createTraumaCaseStore(resolveTraumaCaseDir(
+      projectId,
+      sessionKey,
+      this.options.pilotHome,
+    ));
+    const [current, snapshots] = await Promise.all([
+      store.load(),
+      store.loadSnapshots(),
+    ]);
+    return { current, snapshots };
   }
 
   private emitBackgroundTaskCompletion(event: BackgroundTaskCompletionEvent): void {

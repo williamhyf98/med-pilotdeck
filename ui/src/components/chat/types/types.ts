@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { MutableRefObject, ReactNode } from 'react';
 import type {
   Project,
   ProjectSession,
@@ -309,6 +309,10 @@ export interface ChatInterfaceProps {
   // Files workbench: render a quieter, narrow-panel empty state and keep the
   // composer docked to the bottom instead of using the large welcome hero.
   compact?: boolean;
+  // Runtime-only host: keep realtime/session handlers and message cards mounted,
+  // but never expose the standard chat composer or welcome shortcut.
+  hideComposer?: boolean;
+  hiddenComposerNotice?: string;
   // Optional workspace-level overrides used by native feature surfaces while
   // retaining the same Gateway-backed chat implementation.
   modelOverride?: string;
@@ -325,4 +329,10 @@ export interface ChatInterfaceProps {
   composerFooterStart?: ReactNode;
   composerFooterEnd?: ReactNode;
   composerChrome?: 'default' | 'medical';
+  /**
+   * Trauma form submissions use the same optimistic message path as the
+   * standard composer. The parent owns only this narrow imperative bridge;
+   * message/session state remains inside ChatInterfaceV2.
+   */
+  traumaOptimisticMessageRef?: MutableRefObject<((text: string, targetSessionId?: string | null, runId?: string) => void) | null>;
 }

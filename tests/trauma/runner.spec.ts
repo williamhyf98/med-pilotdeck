@@ -1,0 +1,221 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+
+import type { CompleteJsonInput, StructuredModelClient } from "../../src/trauma/modelClient.js";
+import type { TraumaRagClient } from "../../src/trauma/rag/client.js";
+import { createTraumaTurnRunner } from "../../src/trauma/runner.js";
+import { createTraumaCaseStore } from "../../src/trauma/store.js";
+import type { TurnFormInput } from "../../src/trauma/types.js";
+
+const now = "2026-09-03T15:09:00+08:00";
+
+function form(overrides: Partial<TurnFormInput> = {}): TurnFormInput {
+  return {
+    statedSubStage: null,
+    injuryNarrative: "右小腿开放伤，活动性出血",
+    treatmentNarrative: "",
+    evacuationNarrative: "",
+    note: "",
+    vitals: { respiratoryRate: 32, systolicBloodPressure: 95 },
+    ...overrides,
+  };
+}
+
+function reasonPayload() {
+  return {
+    naturalLanguageAnswer: "当前按初级急救处理。",
+    classification: {
+      version: 1, type: "emergency_triage", createdAt: now, severity: "severe",
+      treatmentPriority: "urgent", transportPriority: "urgent", rationale: ["活动性出血"],
+    },
+    treatmentPlan: [{
+      id: "a1", title: "压迫止血", description: "继续止血", scope: "current_stage",
+      priority: 1, evidenceChunkIds: ["chunk-stage"], professionalConfirmationRequired: false,
+    }],
+    missingInformation: ["本轮未测GCS"],
+    transition: { status: "STAY", reason: "继续处置", requiresUserConfirmation: false },
+    gateAssessment: {
+      needHigherCapability: false, requiredCapabilities: [], transportReadiness: "unknown",
+      instabilityIndicators: [], blockingFactors: [], transportPrerequisites: [],
+      ruleConflicts: [], confidence: 0.8, evidenceChunkIds: ["chunk-stage"],
+    },
+    memo: {
+      round: 1, mainStage: "battlefield_first_aid", subStage: "primary_first_aid",
+      title: "首轮伤情", inputPoints: ["右小腿出血"], actionPoints: ["继续止血"], conclusion: "留观",
+    },
+  };
+}
+
+function model(calls: string[], placement: unknown = {
+  determined: true,
+  source: "definition",
+  stage: "battlefield_first_aid",
+  subStage: "primary_first_aid",
+  rationale: "符合初级急救定义",
+  definitionReferences: ["第七条【战现场急救】"],
+}): StructuredModelClient {
+  return {
+    async completeJson<T>(input: CompleteJsonInput<T>): Promise<T> {
+      calls.push(input.name);
+      const payload = input.name === "trauma_place" ? placement : reasonPayload();
+      if (!input.validate(payload)) throw new Error("schema validation failed");
+      return payload as T;
+    },
+  };
+}
+
+function rag(calls: { count: number }): TraumaRagClient {
+  return {
+    async query() {
+      calls.count += 1;
+      return {
+        retrieval_backend: "remote",
+        chunks: [{
+          chunk_id: "chunk-stage", text: "止血通气包扎固定", score: 0.99,
+          title: "战伤救治规则", retrieval_backend: "remote",
+        }],
+      };
+    },
+  };
+}
+
+test("explicit substage skips placer and derives facility", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-runner-"));
+  try {
+    const calls: string[] = [];
+    let confirmationRequests = 0;
+    const store = createTraumaCaseStore(root);
+    const runner = createTraumaTurnRunner({ store, model: model(calls), rag: rag({ count: 0 }) });
+    const response = await runner.runTurn({
+      projectId: "trauma_med-demo", sessionId: "web:s", messageId: "m1", now,
+      form: form({ statedSubStage: "surgical_resuscitation" }),
+      requestPlacementConfirmation: async () => {
+        confirmationRequests += 1;
+        return { choice: "proposed" };
+      },
+    });
+    assert.equal(calls.includes("trauma_place"), false);
+    assert.equal(confirmationRequests, 0);
+    assert.equal(response.placement.source, "user_stated");
+    assert.equal((await store.load())?.currentFacility?.name, "医务中心");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("invalid form fails before model and RAG", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-invalid-"));
+  try {
+    const modelCalls: string[] = [];
+    const ragCalls = { count: 0 };
+    const runner = createTraumaTurnRunner({
+      store: createTraumaCaseStore(root), model: model(modelCalls), rag: rag(ragCalls),
+    });
+    await assert.rejects(() => runner.runTurn({
+      projectId: "trauma_med-demo", sessionId: "web:s", messageId: "m1", now,
+      form: form({ injuryNarrative: "", vitals: {} }),
+    }), /invalid trauma form/i);
+    assert.deepEqual(modelCalls, []);
+    assert.equal(ragCalls.count, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("successful full turn records exactly 11 steps", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-audit-"));
+  try {
+    const steps: number[] = [];
+    const skippedPhases: string[] = [];
+    const store = createTraumaCaseStore(root);
+    const submitted = form({ treatmentNarrative: "已完成加压包扎" });
+    const modelCalls: string[] = [];
+    const ragCalls = { count: 0 };
+    const runner = createTraumaTurnRunner({
+      store, model: model(modelCalls), rag: rag(ragCalls),
+      audit: {
+        path: "/tmp/unused",
+        async record(entry) {
+          if (entry.event === "step_completed" && entry.step) steps.push(entry.step);
+          if (entry.event === "step_completed" && entry.details?.skipped === true && entry.phase) {
+            skippedPhases.push(entry.phase);
+          }
+        },
+      },
+    });
+    await runner.runTurn({
+      projectId: "trauma_med-demo", sessionId: "web:s", messageId: "m1", now, form: submitted,
+      requestPlacementConfirmation: async () => ({ choice: "proposed" }),
+    });
+    assert.deepEqual(steps, Array.from({ length: 11 }, (_, index) => index + 1));
+    // 单波检索：流程里已不再保留任何被跳过的步骤壳子。
+    assert.deepEqual(skippedPhases, []);
+    assert.equal(ragCalls.count, 3);
+    assert.deepEqual(modelCalls, ["trauma_place", "trauma_reason"]);
+    const snapshot = (await store.loadSnapshots())[0];
+    assert.deepEqual(snapshot?.form, submitted);
+    assert.equal(snapshot?.retrieval?.totalCalls, 3);
+    assert.equal(snapshot?.retrieval?.queries.length, 3);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("undetermined and out-of-scope placement persist the merged form without RAG", async () => {
+  for (const source of ["undetermined", "out_of_scope"] as const) {
+    const root = await mkdtemp(join(tmpdir(), `trauma-${source}-`));
+    try {
+      const ragCalls = { count: 0 };
+      const completed: Array<{ step?: number; phase?: string }> = [];
+      const store = createTraumaCaseStore(root);
+      const runner = createTraumaTurnRunner({
+        store,
+        model: model([], {
+          determined: false, source, stage: null, subStage: null,
+          rationale: source === "out_of_scope" ? "当前已进入专科治疗（Ⅲ级）" : "信息不足",
+          definitionReferences: [],
+        }),
+        rag: rag(ragCalls),
+        audit: {
+          path: "/tmp/unused",
+          async record(entry) {
+            if (entry.event === "step_completed") completed.push(entry);
+          },
+        },
+      });
+      const response = await runner.runTurn({
+        projectId: "trauma_med-demo", sessionId: "web:s", messageId: `m-${source}`, now,
+        form: form({ note: `${source} round` }),
+      });
+      const saved = await store.load();
+      const snapshots = await store.loadSnapshots();
+
+      assert.equal(response.stage.sub, null);
+      assert.equal(response.caseVersion, 1);
+      assert.equal(response.round, 1);
+      assert.equal(saved?.version, 1);
+      assert.equal(saved?.round, 1);
+      assert.equal(saved?.injuryNarratives[0]?.text, "右小腿开放伤，活动性出血");
+      assert.equal(saved?.notes[0]?.text, `${source} round`);
+      assert.deepEqual(saved?.vitalSignsHistory[0]?.values, {
+        respiratoryRate: 32,
+        systolicBloodPressure: 95,
+      });
+      assert.equal(snapshots.length, 1);
+      assert.equal(snapshots[0]?.eventType, "agent_turn");
+      assert.deepEqual(snapshots[0]?.form, form({ note: `${source} round` }));
+      assert.equal(snapshots[0]?.response?.placement.source, source);
+      assert.equal(ragCalls.count, 0);
+      assert.deepEqual(completed.map((entry) => entry.step), [1, 2, 3, 4, 5, 6]);
+      assert.deepEqual(completed.slice(4).map((entry) => entry.phase), [
+        "build_partial_response_and_snapshot",
+        "persist_partial_snapshot",
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});

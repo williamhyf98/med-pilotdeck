@@ -578,6 +578,13 @@ export function gatewayEventToFrames(event, sessionId, provider) {
                     content: event.text,
                 }),
             ];
+        case 'assistant_text_end':
+            return [
+                createNormalizedMessage({
+                    ...base,
+                    kind: 'stream_end',
+                }),
+            ];
         case 'assistant_thinking_delta':
             return [
                 createNormalizedMessage({
@@ -1149,6 +1156,69 @@ function sendBridgeStatusEvent(writer, statusEvent, sessionKey, provider) {
     }
 }
 
+export function sanitizeTraumaFormInput(value) {
+    if (value === undefined) return undefined;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('Invalid traumaForm');
+    }
+    const textLimits = {
+        injuryNarrative: 1000,
+        treatmentNarrative: 800,
+        evacuationNarrative: 500,
+        note: 500,
+    };
+    const allowedKeys = new Set(['statedSubStage', ...Object.keys(textLimits), 'vitals']);
+    if (Object.keys(value).some((key) => !allowedKeys.has(key))) {
+        throw new Error('Invalid traumaForm field');
+    }
+    if (Object.entries(textLimits).some(([key, limit]) =>
+        typeof value[key] !== 'string' || value[key].length > limit)) {
+        throw new Error('Invalid traumaForm narratives');
+    }
+    const substages = new Set([
+        'primary_first_aid', 'advanced_first_aid', 'emergency_treatment', 'surgical_resuscitation',
+    ]);
+    if (value.statedSubStage !== null && !substages.has(value.statedSubStage)) {
+        throw new Error('Invalid traumaForm statedSubStage');
+    }
+    if (!value.vitals || typeof value.vitals !== 'object' || Array.isArray(value.vitals)) {
+        throw new Error('Invalid traumaForm vitals');
+    }
+    const vitalRanges = {
+        respiratoryRate: [0, 80],
+        systolicBloodPressure: [20, 300],
+        gcs: [3, 15],
+        heartRate: [0, 300],
+        temperature: [20, 45],
+    };
+    for (const [key, item] of Object.entries(value.vitals)) {
+        const range = vitalRanges[key];
+        if (!range || typeof item !== 'number' || !Number.isFinite(item)
+            || item < range[0] || item > range[1]) {
+            throw new Error('Invalid traumaForm vital value');
+        }
+        if (key === 'temperature') {
+            if (!Number.isInteger(item * 10)) {
+                throw new Error('Invalid traumaForm temperature precision');
+            }
+        } else if (!Number.isInteger(item)) {
+            throw new Error('Invalid traumaForm vital integer');
+        }
+    }
+    const hasNarrative = Object.keys(textLimits).some((key) => value[key].trim().length > 0);
+    if (!hasNarrative && Object.keys(value.vitals).length === 0) {
+        throw new Error('Invalid traumaForm: empty submission');
+    }
+    return {
+        statedSubStage: value.statedSubStage,
+        injuryNarrative: value.injuryNarrative,
+        treatmentNarrative: value.treatmentNarrative,
+        evacuationNarrative: value.evacuationNarrative,
+        note: value.note,
+        vitals: { ...value.vitals },
+    };
+}
+
 /**
  * Run a chat command through the PilotDeck gateway.
  *
@@ -1205,7 +1275,10 @@ export async function runChatViaGateway(
         );
     }
 
-    const runId = randomUUID();
+    const requestedRunId = typeof options?.runId === 'string' && options.runId.trim()
+        ? options.runId.trim()
+        : undefined;
+    const runId = requestedRunId || randomUUID();
     state.runId = runId;
     state.active = true;
     state.hasVisibleFailureStatus = false;
@@ -1217,6 +1290,8 @@ export async function runChatViaGateway(
     const resolvedMode = resolvePermissionMode(options);
     const basePermissionMode = normalizePermissionMode(options?.basePermissionMode);
     const runMode = normalizeRunMode(options?.runMode) || (resolvedMode === 'plan' ? 'plan' : 'agent');
+    const traumaForm = sanitizeTraumaFormInput(options?.traumaForm);
+    const traumaRawInput = typeof options?.traumaRawInput === 'string' ? options.traumaRawInput : undefined;
     console.log(`[pilotdeck-bridge] submitTurn runMode=${runMode} mode=${resolvedMode} (options.permissionMode=${options?.permissionMode}, options.mode=${options?.mode})`);
 
     let gw = null;
@@ -1259,6 +1334,8 @@ export async function runChatViaGateway(
             channelKey,
             projectKey,
             message: command ?? '',
+            ...(traumaForm ? { traumaForm } : {}),
+            ...(traumaRawInput ? { traumaRawInput } : {}),
             runMode,
             mode: resolvedMode,
             // The web UI has an elicitation channel, so the agent may propose
@@ -2355,4 +2432,46 @@ export async function elicitationRespondViaGateway(requestId, answer) {
         }
     }
     return false;
+}
+
+export async function traumaConfirmTransitionViaGateway({
+    projectKey,
+    sessionKey,
+    answer,
+    expectedVersion,
+}) {
+    const gw = await ensureGateway();
+    if (typeof gw.traumaConfirmTransition !== 'function') {
+        throw new Error('The active gateway does not support trauma stage confirmation.');
+    }
+    return gw.traumaConfirmTransition({
+        projectKey,
+        sessionKey,
+        answer,
+        expectedVersion,
+    });
+}
+
+export async function traumaGetCaseViaGateway({ projectKey, sessionKey }) {
+    const gw = await ensureGateway();
+    if (typeof gw.traumaGetCase !== 'function') {
+        throw new Error('The active gateway does not support trauma case reads.');
+    }
+    return gw.traumaGetCase({ projectKey, sessionKey });
+}
+
+export async function traumaOverrideStageViaGateway(input) {
+    const gw = await ensureGateway();
+    if (typeof gw.traumaOverrideStage !== 'function') {
+        throw new Error('The active gateway does not support trauma stage overrides.');
+    }
+    return gw.traumaOverrideStage(input);
+}
+
+export async function traumaExtractFormViaGateway({ projectKey, sessionKey, rawText, caseHistory }) {
+    const gw = await ensureGateway();
+    if (typeof gw.traumaExtractForm !== 'function') {
+        throw new Error('The active gateway does not support trauma form extraction.');
+    }
+    return gw.traumaExtractForm({ projectKey, sessionKey, rawText, caseHistory });
 }

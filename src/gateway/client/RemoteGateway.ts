@@ -6,9 +6,14 @@ import type {
   Gateway,
   GatewayElicitationResponseInput,
   GatewayEvent,
+  GatewayExtractTraumaFormInput,
+  GatewayExtractTraumaFormOutput,
   GatewayPermissionDecisionInput,
   GatewayServerInfo,
   GatewaySubmitTurnInput,
+  GatewayTraumaCaseInput,
+  GatewayTraumaConfirmTransitionInput,
+  GatewayTraumaOverrideStageInput,
   ListSessionsInput,
   ListSessionsResult,
   NewSessionInput,
@@ -130,6 +135,43 @@ export class RemoteGateway implements Gateway {
 
   async respondElicitation(input: GatewayElicitationResponseInput): Promise<{ delivered: boolean }> {
     return (await this.client.request("elicitation_respond", input)) as { delivered: boolean };
+  }
+
+  async traumaConfirmTransition(
+    input: GatewayTraumaConfirmTransitionInput,
+  ): Promise<import("../../trauma/types.js").CaseSnapshot> {
+    return (await this.client.request(
+      "trauma_confirm_transition",
+      input,
+    )) as import("../../trauma/types.js").CaseSnapshot;
+  }
+
+  async traumaGetCase(input: GatewayTraumaCaseInput): Promise<{
+    current: import("../../trauma/types.js").CaseState | null;
+    snapshots: import("../../trauma/types.js").CaseSnapshot[];
+  }> {
+    return (await this.client.request("trauma_get_case", input)) as {
+      current: import("../../trauma/types.js").CaseState | null;
+      snapshots: import("../../trauma/types.js").CaseSnapshot[];
+    };
+  }
+
+  async traumaOverrideStage(
+    input: GatewayTraumaOverrideStageInput,
+  ): Promise<import("../../trauma/types.js").CaseSnapshot> {
+    return (await this.client.request(
+      "trauma_override_stage",
+      input,
+    )) as import("../../trauma/types.js").CaseSnapshot;
+  }
+
+  async traumaExtractForm(
+    input: GatewayExtractTraumaFormInput,
+  ): Promise<GatewayExtractTraumaFormOutput> {
+    return (await this.client.request(
+      "trauma_extract_form",
+      input,
+    )) as GatewayExtractTraumaFormOutput;
   }
 
   async permissionDecide(input: GatewayPermissionDecisionInput): Promise<{ delivered: boolean }> {

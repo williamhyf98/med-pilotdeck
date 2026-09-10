@@ -124,7 +124,11 @@ function chatMessageToNormalized(
     : typeof msg.timestamp === 'number'
       ? new Date(msg.timestamp).toISOString()
       : String(msg.timestamp);
-  const base = { id, sessionId, timestamp: ts, provider };
+  const turnIdentity = {
+    ...((typeof msg.runId === 'string' && msg.runId.trim()) ? { runId: msg.runId.trim() } : {}),
+    ...((typeof msg.turnId === 'string' && msg.turnId.trim()) ? { turnId: msg.turnId.trim() } : {}),
+  };
+  const base = { id, sessionId, timestamp: ts, provider, ...turnIdentity };
 
   if (msg.isToolUse) {
     return {

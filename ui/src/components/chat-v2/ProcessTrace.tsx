@@ -13,6 +13,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { AgentTimeline } from './AgentTimeline';
+import { getToolDisplayName } from '../chat/tools/configs/toolConfigs';
 
 export type ProcessTraceMetric = {
   key: string;
@@ -99,7 +100,7 @@ export function ProcessLiveStatus({
     onExpandedChange?.(resolvedExpanded);
   };
   const Icon = getStepIcon(step);
-  const title = step.title || step.toolName || 'Working';
+  const title = step.title || (step.toolName ? getToolDisplayName(step.toolName) : '处理中');
   const isRunning = step.state !== 'failed' && step.state !== 'completed' && step.state !== 'cancelled';
   const hasStepList = steps.length > 0;
   const hasDetails = Boolean(children) || hasStepList;
@@ -212,7 +213,7 @@ function getStepIconClass(step: ProcessTraceStep): string {
 function ProcessTraceLine({ step }: { step: ProcessTraceStep }) {
   const Icon = getStepIcon(step);
   const isRunning = step.state === 'running';
-  const title = step.title || step.toolName || 'Step';
+  const title = step.title || (step.toolName ? getToolDisplayName(step.toolName) : '步骤');
 
   return (
     <div

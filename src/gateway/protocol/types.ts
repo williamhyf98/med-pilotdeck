@@ -15,6 +15,7 @@ import type {
   CronStopResult,
 } from "../../cron/protocol/types.js";
 import type { CanonicalUsage } from "../../model/index.js";
+import type { TurnFormInput } from "../../trauma/types.js";
 import type { TelemetryExecutionKind, TelemetryModule } from "../../telemetry/index.js";
 import type { SessionInfo as ProjectSessionInfo } from "../../session/index.js";
 import type {
@@ -90,6 +91,9 @@ export type GatewaySubmitTurnInput = {
   sessionKey: string;
   channelKey: GatewayChannelKey;
   message: string;
+  traumaForm?: TurnFormInput;
+  /** 用户本轮原始自由文本，由工位 F 抽取后存入快照。 */
+  traumaRawInput?: string;
   projectKey?: string;
   /** Override the agent session's working directory for this session. */
   workspaceCwd?: string;
@@ -148,6 +152,7 @@ export type GatewayEvent = GatewayTurnScopedEventMetadata & (
   | { type: "turn_started"; runId: string }
   | { type: "model_request_started"; model?: string; provider?: string }
   | { type: "assistant_text_delta"; text: string }
+  | { type: "assistant_text_end" }
   | { type: "assistant_attachment"; attachment: GatewayOutboundAttachment }
   | { type: "file_artifacts"; artifacts: import("../../session/artifacts/FileArtifact.js").FileArtifact[] }
   | { type: "assistant_thinking_delta"; text: string }
@@ -264,6 +269,42 @@ export type GatewayElicitationResponseInput = {
   sessionKey: string;
   requestId: string;
   answer: PilotDeckElicitationAnswer;
+};
+
+export type GatewayTraumaConfirmTransitionInput = {
+  sessionKey: string;
+  projectKey: string;
+  answer: "confirmed" | "declined";
+  expectedVersion: number;
+};
+
+export type GatewayTraumaCaseInput = {
+  sessionKey: string;
+  projectKey: string;
+};
+
+export type GatewayTraumaOverrideStageInput = GatewayTraumaCaseInput & {
+  actorId: string;
+  toStage: import("../../trauma/types.js").MainStage;
+  toSubStage: import("../../trauma/types.js").SubStage;
+  reason: string;
+  riskAcknowledged: true;
+  blockedOverrideConfirmed?: boolean;
+};
+
+/** 工位 F 自由文本抽取 RPC 的输入。无副作用，不写入任何状态。 */
+export type GatewayExtractTraumaFormInput = {
+  projectKey: string;
+  sessionKey: string;
+  /** 用户本轮原始输入文本。 */
+  rawText: string;
+  /** 当前病例的压缩历史，用于解析相对表述。 */
+  caseHistory: string;
+};
+
+/** 工位 F 自由文本抽取 RPC 的输出。 */
+export type GatewayExtractTraumaFormOutput = {
+  extracted: import("../../trauma/types.js").ExtractedTurnForm;
 };
 
 /**
@@ -410,6 +451,23 @@ export interface Gateway {
    * or the session has ended).
    */
   respondElicitation(input: GatewayElicitationResponseInput): Promise<{ delivered: boolean }>;
+  traumaConfirmTransition?(
+    input: GatewayTraumaConfirmTransitionInput,
+  ): Promise<import("../../trauma/types.js").CaseSnapshot>;
+  traumaGetCase?(input: GatewayTraumaCaseInput): Promise<{
+    current: import("../../trauma/types.js").CaseState | null;
+    snapshots: import("../../trauma/types.js").CaseSnapshot[];
+  }>;
+  traumaOverrideStage?(
+    input: GatewayTraumaOverrideStageInput,
+  ): Promise<import("../../trauma/types.js").CaseSnapshot>;
+  /**
+   * 工位 F：从用户自由文本中抽取结构化表单草稿。
+   * 无副作用，不写入任何状态，供 UI 在用户确认前预览。
+   */
+  traumaExtractForm?(
+    input: GatewayExtractTraumaFormInput,
+  ): Promise<GatewayExtractTraumaFormOutput>;
   /**
    * Web Phase 2 — host responds to a `permission_request` event surfaced
    * through `submitTurn`. Resolves the agent-side permission promise so the

@@ -16,6 +16,13 @@ import {
 import { resolveProjectType } from '../../app-shell/appShellSelection';
 import ChatInterfaceV2 from '../../chat-v2/ChatInterfaceV2';
 import TraumaWorkspace from '../../trauma-workspace/TraumaWorkspace';
+import type { TurnFormInput, VitalItemKey } from '../../trauma-workspace/domain/types';
+import { subStageLabel } from '../../trauma-workspace/domain/displayLabels';
+import {
+  createTemporarySessionId,
+  isTemporarySessionId,
+  startSessionCommand,
+} from '../../chat/utils/sessionLauncher';
 import PluginTabContent from '../../plugins/view/PluginTabContent';
 import { cn } from '../../../lib/utils.js';
 import type { MainContentProps } from '../types/types';
@@ -95,6 +102,33 @@ const DASHBOARD_PANEL_META: Record<DashboardPanelTab, { labelKey: string; icon: 
   'always-on': { labelKey: 'tabs.alwaysOn', icon: Radio },
 };
 
+const TRAUMA_VITAL_LABELS: Record<VitalItemKey, { label: string; unit: string }> = {
+  respiratoryRate: { label: '呼吸', unit: '次/分' },
+  systolicBloodPressure: { label: '收缩压', unit: 'mmHg' },
+  gcs: { label: 'GCS', unit: '分' },
+  heartRate: { label: '心率', unit: '次/分' },
+  temperature: { label: '体温', unit: '℃' },
+};
+
+function summarizeTraumaForm(form: TurnFormInput): string {
+  const parts = [
+    `救治级别：${form.statedSubStage ? subStageLabel(form.statedSubStage) : '由系统判定'}`,
+    form.injuryNarrative ? `伤情：${form.injuryNarrative}` : null,
+    form.treatmentNarrative ? `已做处置：${form.treatmentNarrative}` : null,
+    form.evacuationNarrative ? `后送条件：${form.evacuationNarrative}` : null,
+    form.note ? `补充说明：${form.note}` : null,
+    Object.keys(form.vitals).length > 0
+      ? `生命体征：${Object.entries(form.vitals)
+        .map(([key, value]) => {
+          const vital = TRAUMA_VITAL_LABELS[key as VitalItemKey];
+          return `${vital.label} ${value} ${vital.unit}`;
+        })
+        .join('，')}`
+      : null,
+  ].filter((part): part is string => Boolean(part));
+  return parts.map((part) => `- ${part}`).join('\n');
+}
+
 function readStoredFilesAssistantWidth(): number {
   try {
     const stored = Number(localStorage.getItem(FILES_ASSISTANT_STORAGE_KEY));
@@ -121,6 +155,11 @@ async function readJsonPayload<T>(response: Response): Promise<T | null> {
   } catch {
     return null;
   }
+}
+
+function createClientRunId(): string {
+  return globalThis.crypto?.randomUUID?.()
+    ?? `client-run-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function MainContent({
@@ -163,6 +202,69 @@ function MainContent({
   const { currentProject, setCurrentProject } = useTaskMaster() as TaskMasterContextValue;
   const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings() as TasksSettingsContextValue;
   const [toast, setToast] = useState<MainContentToast>(null);
+  const [traumaSubmitting, setTraumaSubmitting] = useState(false);
+  const traumaOptimisticMessageRef = useRef<(
+    (text: string, targetSessionId?: string | null, runId?: string) => void
+  ) | null>(null);
+
+  const submitTraumaForm = useCallback((form: TurnFormInput, rawInput = '') => {
+    if (!selectedProject || traumaSubmitting) return;
+    const selectedSessionId = selectedSession?.id;
+    const concreteSessionId = selectedSessionId && !isTemporarySessionId(selectedSessionId)
+      ? selectedSessionId
+      : undefined;
+    const temporarySessionId = concreteSessionId
+      ? undefined
+      : selectedSessionId || createTemporarySessionId();
+    const summary = summarizeTraumaForm(form);
+    const runId = createClientRunId();
+    setTraumaSubmitting(true);
+    try {
+      traumaOptimisticMessageRef.current?.(summary, concreteSessionId, runId);
+      const activatedSessionId = startSessionCommand({
+        sendMessage,
+        selectedProject,
+        command: `战创伤推演：${summary}`,
+        userVisibleInput: summary,
+        sessionId: concreteSessionId,
+        temporarySessionId,
+        sessionSummary: summary,
+        runId,
+        traumaForm: form,
+        traumaRawInput: rawInput,
+      });
+      onSessionActive?.(activatedSessionId);
+      if (concreteSessionId) onSessionProcessing?.(concreteSessionId);
+    } catch (error) {
+      setTraumaSubmitting(false);
+      throw error;
+    }
+  }, [
+    onSessionActive,
+    onSessionProcessing,
+    selectedProject,
+    selectedSession?.id,
+    sendMessage,
+    traumaSubmitting,
+  ]);
+
+  useEffect(() => {
+    setTraumaSubmitting(false);
+  }, [selectedProject?.name]);
+
+  useEffect(() => {
+    if (!traumaSubmitting) return undefined;
+    const handleComplete = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectName?: string; projectPath?: string }>).detail;
+      const projectKeys = [selectedProject?.name, selectedProject?.fullPath, selectedProject?.path]
+        .filter(Boolean);
+      const eventProjectKeys = [detail?.projectName, detail?.projectPath].filter(Boolean);
+      if (eventProjectKeys.length > 0 && !eventProjectKeys.some((key) => projectKeys.includes(key))) return;
+      setTraumaSubmitting(false);
+    };
+    window.addEventListener('pilotdeck:agent-turn-complete', handleComplete);
+    return () => window.removeEventListener('pilotdeck:agent-turn-complete', handleComplete);
+  }, [selectedProject, traumaSubmitting]);
 
   const shouldShowTasksTab = Boolean(tasksEnabled && isTaskMasterInstalled);
 
@@ -425,6 +527,9 @@ function MainContent({
           onSessionNotProcessing={onSessionNotProcessing}
           onSessionActivityBump={onSessionActivityBump}
           processingSessions={processingSessions}
+          submitTraumaForm={submitTraumaForm}
+          traumaOptimisticMessageRef={traumaOptimisticMessageRef}
+          traumaSubmitting={traumaSubmitting}
           unreadSessionIds={unreadSessionIds}
           onReplaceTemporarySession={onReplaceTemporarySession}
           onNavigateToSession={onNavigateToSession}
@@ -509,6 +614,9 @@ type SplitBodyProps = {
     optimisticTitle?: string,
   ) => void;
   processingSessions: Set<string>;
+  submitTraumaForm: (form: TurnFormInput, rawInput?: string) => void;
+  traumaOptimisticMessageRef: React.MutableRefObject<((text: string, targetSessionId?: string | null, runId?: string) => void) | null>;
+  traumaSubmitting: boolean;
   unreadSessionIds: Set<string>;
   onReplaceTemporarySession: any;
   onNavigateToSession: (sessionId: string) => void;
@@ -557,6 +665,9 @@ function SplitBody(props: SplitBodyProps) {
     onSessionNotProcessing,
     onSessionActivityBump,
     processingSessions,
+    submitTraumaForm,
+    traumaOptimisticMessageRef,
+    traumaSubmitting,
     unreadSessionIds,
     onReplaceTemporarySession,
     onNavigateToSession,
@@ -850,6 +961,11 @@ function SplitBody(props: SplitBodyProps) {
       forceWelcome={false}
       onExitWelcome={isFiles ? undefined : () => setActiveTab('chat')}
       compact={isFiles}
+      hideComposer={isWarTraumaProject}
+      traumaOptimisticMessageRef={traumaOptimisticMessageRef}
+      hiddenComposerNotice={isWarTraumaProject && isFiles
+        ? '战创伤病例请切换到对话工作区，通过结构化表单提交本轮信息。'
+        : undefined}
     />
   );
   return (
@@ -987,7 +1103,16 @@ function SplitBody(props: SplitBodyProps) {
         ) : null}
         <ErrorBoundary showDetails>
           {isWarTraumaProject && !isFiles ? (
-            <TraumaWorkspace resetKey={`${selectedProject?.name ?? ''}:${selectedSession?.id ?? ''}`} />
+            <TraumaWorkspace
+              resetKey={`${selectedProject?.name ?? ''}:${selectedSession?.id ?? ''}`}
+              projectKey={selectedProject?.fullPath || selectedProject?.path || selectedProject?.name}
+              sessionId={selectedSession?.id}
+              onSubmitForm={submitTraumaForm}
+              runtimePanel={chatInterface}
+              submitting={traumaSubmitting || Boolean(
+                selectedSession?.id && processingSessions.has(selectedSession.id)
+              )}
+            />
           ) : chatInterface}
           </ErrorBoundary>
       </div>

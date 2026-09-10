@@ -14,6 +14,7 @@ import type { AgentError } from "../../agent/index.js";
 import { contentToText } from "../../tool/index.js";
 import type { SessionRouter } from "../SessionRouter.js";
 import { GatewayElicitationBus } from "../elicitation/GatewayElicitationBus.js";
+import { GatewayElicitationChannel } from "../elicitation/GatewayElicitationChannel.js";
 import { GatewayPermissionBus } from "../permission/GatewayPermissionBus.js";
 import { AsyncQueue } from "../util/AsyncQueue.js";
 import type {
@@ -23,6 +24,11 @@ import type {
   GatewayActiveTurnSnapshot,
   GatewayActiveTurnSnapshotInput,
   GatewayElicitationResponseInput,
+  GatewayExtractTraumaFormInput,
+  GatewayExtractTraumaFormOutput,
+  GatewayTraumaCaseInput,
+  GatewayTraumaConfirmTransitionInput,
+  GatewayTraumaOverrideStageInput,
   GatewayEvent,
   GatewayPermissionDecisionInput,
   GatewayRecordAgentStatusMessageInput,
@@ -48,6 +54,13 @@ import type {
   WebForkSessionInput,
   WebForkSessionResult,
 } from "../protocol/types.js";
+import {
+  createChineseDisplayStreamNormalizer,
+  normalizeChineseDisplayText,
+  subStageLabel,
+} from "../../trauma/displayLabels.js";
+import { validateTurnFormInput } from "../../trauma/factMerge.js";
+import type { TurnFormInput } from "../../trauma/types.js";
 import type {
   CronCreateInput,
   CronCreateResult,
@@ -87,10 +100,68 @@ import type {
 import { createVisibleErrorStatusDetail } from "../../status/agentStatus.js";
 import type { TelemetryClient } from "../../telemetry/index.js";
 import type { TelemetryExecutionKind, TelemetryModule } from "../../telemetry/index.js";
+import {
+  projectMetaTypeFromProjectPath,
+  projectTypeKeyFromProjectId,
+} from "../../pilot/paths.js";
+import {
+  PLACEMENT_QUESTION,
+  parsePlacementConfirmation,
+  placementConfirmationOptions,
+  traumaPostAnswerProcessEvents,
+  traumaProgressEvents,
+  traumaTurnEvents,
+  type TraumaTurnRunner,
+} from "../../trauma/index.js";
 
 const PLAN_COMMAND_USAGE = "用法：/plan <任务>\n例如：/plan 设计一个新功能";
 const MAX_GATEWAY_TOOL_RESULT_PREVIEW_CHARS = 20_000;
 const MAX_GATEWAY_TOOL_DATA_STRING_CHARS = 4_000;
+
+function isTraumaProject(projectKey: string | undefined): projectKey is string {
+  return projectTypeKeyFromProjectId(projectKey) === "trauma_med"
+    || projectMetaTypeFromProjectPath(projectKey) === "war_trauma";
+}
+
+function summarizeTraumaForm(form: TurnFormInput): string {
+  const vitalLabels: Array<[keyof TurnFormInput["vitals"], string]> = [
+    ["respiratoryRate", "呼吸"],
+    ["systolicBloodPressure", "收缩压"],
+    ["gcs", "GCS"],
+    ["heartRate", "心率"],
+    ["temperature", "体温"],
+  ];
+  const vitalSummary = vitalLabels
+    .filter(([key]) => form.vitals[key] !== undefined)
+    .map(([key, label]) => `${label} ${form.vitals[key]}`)
+    .join("，");
+  const parts = [
+    `救治级别：${form.statedSubStage ? subStageLabel(form.statedSubStage) : "由系统判定"}`,
+    form.injuryNarrative.trim() ? `伤情：${form.injuryNarrative.trim()}` : null,
+    form.treatmentNarrative.trim() ? `已做处置：${form.treatmentNarrative.trim()}` : null,
+    form.evacuationNarrative.trim() ? `后送条件：${form.evacuationNarrative.trim()}` : null,
+    form.note.trim() ? `补充说明：${form.note.trim()}` : null,
+    vitalSummary ? `生命体征：${vitalSummary}` : null,
+  ].filter((part): part is string => Boolean(part));
+  return parts.map((part) => `- ${part}`).join("\n");
+}
+
+function tryParseJsonRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
 
 export type InProcessGatewayOptions = {
   now?: () => Date;
@@ -164,6 +235,29 @@ export type InProcessGatewayOptions = {
     runId: string;
   }) => void;
   telemetry?: TelemetryClient;
+  /** Builds the deterministic runner used by war_trauma turns. */
+  traumaRunnerFactory?: (input: {
+    projectKey: string;
+    sessionKey: string;
+  }) => TraumaTurnRunner | Promise<TraumaTurnRunner>;
+  /** Persists the bypassed user/assistant pair to the normal transcript. */
+  recordTraumaTurn?: (input: {
+    projectKey: string;
+    sessionKey: string;
+    runId: string;
+    userText: string;
+    assistantText: string;
+    processMessages?: CanonicalMessage[];
+  }) => void | Promise<void>;
+  traumaCaseReader?: (input: GatewayTraumaCaseInput) => Promise<{
+    current: import("../../trauma/types.js").CaseState | null;
+    snapshots: import("../../trauma/types.js").CaseSnapshot[];
+  }>;
+  /** Builds the stateless extractor used by the traumaExtractForm RPC. */
+  traumaExtractorFactory?: (input: {
+    projectKey: string;
+    sessionKey: string;
+  }) => import("../../trauma/stations/extractor.js").ExtractionStation | Promise<import("../../trauma/stations/extractor.js").ExtractionStation>;
 };
 
 const ACTIVE_TURN_EVENT_LIMIT = 500;
@@ -407,6 +501,191 @@ export class InProcessGateway implements Gateway {
               // cannot defeat the hard turn timeout.
             }
           }, input.timeoutMs);
+        }
+        if (isTraumaProject(input.projectKey)) {
+          if (!validateTurnFormInput(input.traumaForm)) {
+            throw new Error("war_trauma turns require a valid traumaForm");
+          }
+          if (!this.options.traumaRunnerFactory) {
+            throw new Error("war_trauma runner is not configured");
+          }
+          const runner = await this.options.traumaRunnerFactory({
+            projectKey: input.projectKey,
+            sessionKey: input.sessionKey,
+          });
+          // 一轮推演要跑三次模型和多次检索，先把 turn_started 和逐阶段进度推给宿主，
+          // 否则界面在整轮结束前只能一直显示「连接中」。
+          const emit = (gatewayEvent: GatewayEvent) => {
+            this.recordActiveTurnEvent(input.sessionKey, gatewayEvent);
+            queue.enqueue(gatewayEvent);
+          };
+          const traumaProcessMessages: CanonicalMessage[] = [];
+          const persistProcessEvent = (gatewayEvent: GatewayEvent) => {
+            if (
+              gatewayEvent.type !== "tool_call_started"
+              && gatewayEvent.type !== "tool_call_finished"
+            ) {
+              return;
+            }
+            const inputPayload = gatewayEvent.type === "tool_call_started"
+              ? tryParseJsonRecord(gatewayEvent.argsPreview)
+              : {};
+            const resultPayload = gatewayEvent.type === "tool_call_finished"
+              ? tryParseJsonRecord(gatewayEvent.resultPreview)
+              : {};
+            if (
+              inputPayload.traumaRunnerStep !== true
+              && resultPayload.traumaRunnerStep !== true
+            ) {
+              return;
+            }
+            if (gatewayEvent.type === "tool_call_started") {
+              traumaProcessMessages.push({
+                role: "assistant",
+                content: [{
+                  type: "tool_call",
+                  id: gatewayEvent.toolCallId,
+                  name: gatewayEvent.name,
+                  input: inputPayload,
+                }],
+                metadata: { purpose: "trauma_runner_step" },
+              });
+              return;
+            }
+            traumaProcessMessages.push({
+              role: "user",
+              content: [{
+                type: "tool_result",
+                toolCallId: gatewayEvent.toolCallId,
+                content: [{
+                  type: "text",
+                  text: typeof gatewayEvent.resultPreview === "string"
+                    ? gatewayEvent.resultPreview
+                    : JSON.stringify(resultPayload),
+                }],
+                isError: !gatewayEvent.ok,
+                raw: {
+                  toolName: gatewayEvent.toolName,
+                  traumaRunnerStep: true,
+                },
+              }],
+              metadata: { purpose: "trauma_runner_step" },
+            });
+          };
+          const emitTraumaProcessEvents = (events: GatewayEvent[]) => {
+            for (const gatewayEvent of events) {
+              persistProcessEvent(gatewayEvent);
+              emit(gatewayEvent);
+            }
+          };
+          let assistantTextStreamed = false;
+          let assistantTextEnded = false;
+          let postAnswerProcessStarted = false;
+          const displayStream = createChineseDisplayStreamNormalizer();
+          const elicitation = new GatewayElicitationChannel({
+            sessionKey: input.sessionKey,
+            bus: this.elicitationBus,
+            emit,
+            uuid: this.uuid,
+          });
+          emit({ type: "turn_started", runId });
+          const response = await runner.runTurn({
+            projectId: input.projectKey,
+            sessionId: input.sessionKey,
+            messageId: runId,
+            form: input.traumaForm,
+            rawInput: input.traumaRawInput,
+            now: this.now().toISOString(),
+            onProgress: (progress) => {
+              emitTraumaProcessEvents(traumaProgressEvents({ progress, runId }));
+            },
+            onAssistantTextDelta: (text) => {
+              if (!text) return;
+              const displayText = displayStream.push(text);
+              if (!displayText) return;
+              assistantTextStreamed = true;
+              emit({
+                type: "assistant_text_delta",
+                text: displayText,
+                runId,
+              });
+            },
+            onAssistantTextEnd: () => {
+              if (assistantTextEnded) return;
+              assistantTextEnded = true;
+              const finalStreamDelta = displayStream.flush();
+              if (finalStreamDelta) {
+                assistantTextStreamed = true;
+                emit({
+                  type: "assistant_text_delta",
+                  text: finalStreamDelta,
+                  runId,
+                });
+              }
+              if (assistantTextStreamed) {
+                emit({ type: "assistant_text_end", runId });
+                postAnswerProcessStarted = true;
+                emitTraumaProcessEvents(traumaPostAnswerProcessEvents({ runId, status: "started" }));
+              }
+            },
+            requestPlacementConfirmation: async (request) => {
+              const answer = await elicitation.askUser({
+                toolCallId: `trauma-placement:${runId}`,
+                toolName: "ask_user_question",
+                questions: [{
+                  header: "确认推演级别",
+                  question: PLACEMENT_QUESTION,
+                  options: placementConfirmationOptions(request),
+                }],
+                metadata: {
+                  source: "trauma_pending_placement",
+                  proposedStage: request.proposed.stage,
+                  proposedSubStage: request.proposed.subStage,
+                },
+              });
+              if (answer.type !== "answered") return { choice: "current" };
+              const selected = Object.values(answer.answers).flat()[0];
+              return parsePlacementConfirmation(request, selected);
+            },
+          });
+          const finalStreamDelta = displayStream.flush();
+          if (finalStreamDelta) {
+            assistantTextStreamed = true;
+            emit({
+              type: "assistant_text_delta",
+              text: finalStreamDelta,
+              runId,
+            });
+          }
+          if (assistantTextStreamed && !assistantTextEnded) {
+            assistantTextEnded = true;
+            emit({ type: "assistant_text_end", runId });
+          }
+          if (postAnswerProcessStarted) {
+            emitTraumaProcessEvents(traumaPostAnswerProcessEvents({ runId, status: "finished" }));
+          }
+          await this.options.recordTraumaTurn?.({
+            projectKey: input.projectKey,
+            sessionKey: input.sessionKey,
+            runId,
+            userText: summarizeTraumaForm(input.traumaForm),
+            assistantText: normalizeChineseDisplayText(response.naturalLanguageAnswer),
+            processMessages: traumaProcessMessages,
+          });
+          const displayResponse = {
+            ...response,
+            naturalLanguageAnswer: normalizeChineseDisplayText(response.naturalLanguageAnswer),
+          };
+          for (const gatewayEvent of traumaTurnEvents({
+            response: displayResponse,
+            runId,
+            version: response.caseVersion,
+            turnStartedAlreadyEmitted: true,
+            includeAssistantText: !assistantTextStreamed,
+          })) {
+            emit(gatewayEvent);
+          }
+          return;
         }
         const permissionSettings = readPermissionSettings();
         const inputMode = normalizeGatewayModeForLegacyInput((input as { mode?: unknown }).mode);
@@ -680,6 +959,66 @@ export class InProcessGateway implements Gateway {
     entry.resolve(input.answer);
     this.options.dispatchHookForSession?.(input.sessionKey, "ElicitationResult", { requestId: input.requestId, delivered: true });
     return { delivered: true };
+  }
+
+  async traumaConfirmTransition(input: GatewayTraumaConfirmTransitionInput) {
+    if (!this.options.traumaRunnerFactory || !isTraumaProject(input.projectKey)) {
+      throw new Error("war_trauma runner is not configured");
+    }
+    const runner = await this.options.traumaRunnerFactory({
+      projectKey: input.projectKey,
+      sessionKey: input.sessionKey,
+    });
+    return runner.confirmTransition({
+      projectId: input.projectKey,
+      sessionId: input.sessionKey,
+      answer: input.answer,
+      expectedVersion: input.expectedVersion,
+    });
+  }
+
+  async traumaGetCase(input: GatewayTraumaCaseInput) {
+    if (!this.options.traumaCaseReader || !isTraumaProject(input.projectKey)) {
+      throw new Error("war_trauma case reader is not configured");
+    }
+    return this.options.traumaCaseReader(input);
+  }
+
+  async traumaOverrideStage(input: GatewayTraumaOverrideStageInput) {
+    if (!this.options.traumaRunnerFactory || !isTraumaProject(input.projectKey)) {
+      throw new Error("war_trauma runner is not configured");
+    }
+    const runner = await this.options.traumaRunnerFactory({
+      projectKey: input.projectKey,
+      sessionKey: input.sessionKey,
+    });
+    return runner.overrideStage({
+      projectId: input.projectKey,
+      sessionId: input.sessionKey,
+      actorId: input.actorId,
+      toStage: input.toStage,
+      toSubStage: input.toSubStage,
+      reason: input.reason,
+      riskAcknowledged: input.riskAcknowledged,
+      blockedOverrideConfirmed: input.blockedOverrideConfirmed,
+    });
+  }
+
+  async traumaExtractForm(
+    input: GatewayExtractTraumaFormInput,
+  ): Promise<GatewayExtractTraumaFormOutput> {
+    if (!this.options.traumaExtractorFactory || !isTraumaProject(input.projectKey)) {
+      throw new Error("war_trauma extractor is not configured");
+    }
+    const station = await this.options.traumaExtractorFactory({
+      projectKey: input.projectKey,
+      sessionKey: input.sessionKey,
+    });
+    const extracted = await station.extract({
+      rawText: input.rawText,
+      caseHistory: input.caseHistory,
+    });
+    return { extracted };
   }
 
   async permissionDecide(input: GatewayPermissionDecisionInput): Promise<{ delivered: boolean }> {

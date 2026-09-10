@@ -2,7 +2,7 @@ import type { RoundMemo, StageDefinition } from './types';
 
 export const TRAUMA_STAGES: StageDefinition[] = [
   {
-    id: 'initial',
+    id: 'battlefield_first_aid',
     index: 'Ⅰ级',
     name: '战现场急救',
     note: '首次、简易、快速处置',
@@ -12,33 +12,13 @@ export const TRAUMA_STAGES: StageDefinition[] = [
     ],
   },
   {
-    id: 'early',
+    id: 'early_treatment',
     index: 'Ⅱ级',
     name: '早期救治',
     note: '控制伤情发展',
     substeps: [
       { name: '紧急处置', note: '旅（团）救护所' },
-      { name: '外科复苏', note: '增强手术力量' },
-    ],
-  },
-  {
-    id: 'specialist',
-    index: 'Ⅲ级',
-    name: '专科治疗',
-    note: '消除损伤危害',
-    substeps: [
-      { name: '野战专科救治', note: '野战医疗所' },
-      { name: '确定性专科治疗', note: '后方医院' },
-    ],
-  },
-  {
-    id: 'rehab',
-    index: 'Ⅳ级',
-    name: '康复治疗',
-    note: '促进身心功能恢复',
-    substeps: [
-      { name: '功能恢复', note: '功能评估与训练' },
-      { name: '身心康复', note: '心理与适应支持' },
+      { name: '外科复苏', note: '医务中心' },
     ],
   },
 ];
@@ -54,8 +34,7 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
     round: 1,
     title: '首次报告',
     time: '15:01',
-    elapsed: '06 min',
-    stageId: 'initial',
+    stageId: 'battlefield_first_aid',
     substepIndex: 0,
     facility: '连抢救组',
     capability: '初级急救',
@@ -65,7 +44,7 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
     actionPoints: ['按气道—呼吸—循环顺序检伤', '直接压迫小腿伤口并包扎固定', '补充关键生命体征'],
     conclusion: '先排查危及生命问题，补齐生命体征后重新分类。',
     patient: {
-      updatedAt: '15:01 · 伤后 06 min',
+      updatedAt: '15:01',
       consciousness: '清醒，能正常对答（GCS 15）',
       vitals: [
         { label: '呼吸', value: '未测', trend: 'unknown' },
@@ -86,12 +65,11 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
       treatmentPriority: '待分类',
       transportPriority: '尚未判断',
     },
-    timing: { window: '初级急救宜在伤后 10 分钟内实施', status: '处于建议时限内' },
     gate: {
       status: 'ASSESSING',
       title: '暂不触发阶段转换',
       description: '当前信息不足，先完成伤情评估与本级处置。',
-      confirmation: 'Gate 未达 READY，本轮不发起阶段转换确认。',
+      confirmation: '阶段门未达建议后送，本轮不发起阶段转换确认。',
     },
     actions: ['确认呼吸、循环和活动性出血', '完成止血、包扎固定和安全搬运准备', '补充关键生命体征后重新分类'],
     nextStageCapability: '胸部伤进一步评估需高级急救及以上能力。',
@@ -127,8 +105,7 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
     round: 2,
     title: '生命体征补充',
     time: '15:09',
-    elapsed: '14 min',
-    stageId: 'initial',
+    stageId: 'battlefield_first_aid',
     substepIndex: 0,
     facility: '连抢救组',
     capability: '初级急救 → 能力不足',
@@ -139,7 +116,7 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
     actionPoints: ['维持止血效果并完成后送固定', '持续监测呼吸、血压、心率与意识', '携伤情与处置信息准备转运'],
     conclusion: '主要风险转向胸部与循环，经用户确认后转入高级急救。',
     patient: {
-      updatedAt: '15:09 · 伤后 14 min',
+      updatedAt: '15:09',
       consciousness: '清醒，能对答，主诉右胸剧痛',
       vitals: [
         { label: '呼吸', value: '32 次/分', trend: 'up', abnormal: true },
@@ -161,7 +138,6 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
       treatmentPriority: '高优先级',
       transportPriority: '优先后送',
     },
-    timing: { window: '初级急救宜在伤后 10 分钟内实施', status: '超过建议时限 4 分钟', warning: true },
     gate: {
       status: 'READY',
       title: '满足后送条件，已由用户确认',
@@ -177,7 +153,7 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
       },
       {
         role: 'assistant',
-        text: '已结合急救分类、胸部伤战现场急救和救送结合知识块重新研判。\n\n**伤情变化**：呼吸32次/分、收缩压95mmHg、心率120次/分提示呼吸与循环状态异常；右小腿压迫后基本止血，主要风险已转向胸部损伤及循环不稳定。救治优先级上调为高优先级，仍需排查张力性气胸、血胸、肺挫伤或持续失血。\n\n**当前救治方案**：继续保持气道通畅并持续监测生命体征；有条件时由专业人员给予吸氧。复查小腿包扎是否继续有效并完成肢体固定，避免搬运再次出血。胸部无明显开放伤，不直接执行开放性胸伤处置，但应持续观察呼吸困难是否加重、胸廓是否对称、意识是否改变。\n\n**阶段建议**：连抢救组的初级急救能力不足以完成进一步胸部伤评估，建议优先后送至具备高级急救能力的营救护站。Gate = READY，是否执行转换需要您确认。\n\n仅供辅助，须具备资质的医务人员复核。',
+        text: '已结合急救分类、胸部伤战现场急救和救送结合知识块重新研判。\n\n**伤情变化**：呼吸32次/分、收缩压95mmHg、心率120次/分提示呼吸与循环状态异常；右小腿压迫后基本止血，主要风险已转向胸部损伤及循环不稳定。救治优先级上调为高优先级，仍需排查张力性气胸、血胸、肺挫伤或持续失血。\n\n**当前救治方案**：继续保持气道通畅并持续监测生命体征；有条件时由专业人员给予吸氧。复查小腿包扎是否继续有效并完成肢体固定，避免搬运再次出血。胸部无明显开放伤，不直接执行开放性胸伤处置，但应持续观察呼吸困难是否加重、胸廓是否对称、意识是否改变。\n\n**阶段建议**：连抢救组的初级急救能力不足以完成进一步胸部伤评估，建议优先后送至具备高级急救能力的营救护站。阶段门 = 建议后送，是否执行转换需要您确认。\n\n仅供辅助，须具备资质的医务人员复核。',
         ask: {
           header: '阶段转换',
           question: '是否确认将救治阶段转入「Ⅰ级 · 高级急救（营救护站）」？',
@@ -211,8 +187,7 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
     round: 3,
     title: '到达营救护站',
     time: '15:25',
-    elapsed: '30 min',
-    stageId: 'initial',
+    stageId: 'battlefield_first_aid',
     substepIndex: 1,
     facility: '营救护站',
     capability: '高级急救',
@@ -222,7 +197,7 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
     actionPoints: ['重新检伤、评估与分类', '吸氧与持续生命体征监护', '排查危及生命的胸部伤'],
     conclusion: '到站后异常未明显改善，生成急救分类 v3 并继续本级处置。',
     patient: {
-      updatedAt: '15:25 · 伤后 30 min',
+      updatedAt: '15:25',
       consciousness: '清醒，反应稍迟，持续诉右胸痛',
       vitals: [
         { label: '呼吸', value: '30 次/分', trend: 'flat', abnormal: true },
@@ -243,12 +218,11 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
       treatmentPriority: '高优先级',
       transportPriority: '待重新评估',
     },
-    timing: { window: '高级急救宜在伤后 1 小时内实施', status: '处于建议时限内' },
     gate: {
       status: 'ASSESSING',
       title: '当前阶段继续处置',
       description: '到达新救治单元后重新评估，不沿用上一阶段分类。',
-      confirmation: '本轮 Gate 为 ASSESSING，未发起阶段转换确认。',
+      confirmation: '本轮阶段门为评估中，未发起阶段转换确认。',
     },
     actions: ['重新检伤、评估与分类', '实施本级范围内的呼吸循环支持', '判断当前能力能否满足后续救治'],
     nextStageCapability: 'X线、B超、血气和胸腔闭式引流属Ⅱ级早期救治能力。',
@@ -259,7 +233,7 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
       },
       {
         role: 'assistant',
-        text: '已结合高级急救技术范围、分级救治任务和胸部伤救治知识块完成到站复评。\n\n**阶段确认**：伤员已到达营救护站，当前处于Ⅰ级战现场急救—高级急救。系统不沿用上一地点的分类结论，已生成急救分类 v3。血压仍约95mmHg、呼吸持续增快、血氧92%，说明异常没有明显改善。\n\n**当前救治方案**：重新完成检伤、评估与分类，连续监测呼吸、血压、心率、意识与血氧；复核胸部体征并重点排查张力性气胸、血气胸等危及生命的胸部伤。按高级急救能力建立必要生命支持与复苏条件；任何穿刺、切开等侵入性处置必须在明确指征后由具备资质的专业人员实施。\n\n**阶段建议**：Gate = ASSESSING，暂不发起转换。若高级急救后呼吸循环仍不改善，或需要X线/B超、血气检查与抗休克治疗，则启动进入Ⅱ级早期救治的评估。\n\n仅供辅助，须具备资质的医务人员复核。',
+        text: '已结合高级急救技术范围、分级救治任务和胸部伤救治知识块完成到站复评。\n\n**阶段确认**：伤员已到达营救护站，当前处于Ⅰ级战现场急救—高级急救。系统不沿用上一地点的分类结论，已生成急救分类 v3。血压仍约95mmHg、呼吸持续增快、血氧92%，说明异常没有明显改善。\n\n**当前救治方案**：重新完成检伤、评估与分类，连续监测呼吸、血压、心率、意识与血氧；复核胸部体征并重点排查张力性气胸、血气胸等危及生命的胸部伤。按高级急救能力建立必要生命支持与复苏条件；任何穿刺、切开等侵入性处置必须在明确指征后由具备资质的专业人员实施。\n\n**阶段建议**：阶段门 = 评估中，暂不发起转换。若高级急救后呼吸循环仍不改善，或需要X线/B超、血气检查与抗休克治疗，则启动进入Ⅱ级早期救治的评估。\n\n仅供辅助，须具备资质的医务人员复核。',
       },
     ],
     evidence: [
@@ -284,8 +258,7 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
     round: 4,
     title: '后送受阻',
     time: '15:39',
-    elapsed: '44 min',
-    stageId: 'initial',
+    stageId: 'battlefield_first_aid',
     substepIndex: 1,
     facility: '营救护站',
     capability: '高级急救 → 需早期救治',
@@ -296,7 +269,7 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
     actionPoints: ['维持气道与呼吸支持', '按指征实施容量复苏', '联络接收机构并准备后送资料'],
     conclusion: '已需Ⅱ级能力，但伤情未稳定，Gate 阻塞且不发起确认。',
     patient: {
-      updatedAt: '15:39 · 伤后 44 min',
+      updatedAt: '15:39',
       consciousness: '清醒但烦躁，回答简短',
       vitals: [
         { label: '呼吸', value: '34 次/分', trend: 'up', abnormal: true },
@@ -318,7 +291,6 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
       treatmentPriority: '紧急关注',
       transportPriority: '紧急后送',
     },
-    timing: { window: '高级急救宜在伤后 1 小时内实施', status: '接近建议时限', warning: true },
     gate: {
       status: 'BLOCKED',
       title: '需要后送，但暂不满足转运条件',
@@ -334,7 +306,7 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
       },
       {
         role: 'assistant',
-        text: '已结合救送结合原则、后送医学评估和早期救治任务知识块完成再评估。\n\n**伤情变化**：呼吸仍快、血压偏低、烦躁加重，提示循环状态未纠正、组织灌注不足，胸部损伤合并失血风险上升，救治优先级维持在紧急救治。\n\n**当前救治方案**：继续在本级能力范围内实施必要的稳定处置与连续监护，重点观察呼吸困难、胸廓对称性、意识和血压趋势；维持四肢止血与固定，避免搬运造成二次损伤。\n\n**阶段建议**：Gate = BLOCKED。伤情尚未稳定，直接后送风险较高，本轮不发起阶段转换确认。建议先稳定生命体征，同时同步联络旅（团）救护所，做好Ⅱ级早期救治（胸腔闭式引流、输血抗休克、辅助检查）的准备。\n\n仅供辅助，须具备资质的医务人员复核。',
+        text: '已结合救送结合原则、后送医学评估和早期救治任务知识块完成再评估。\n\n**伤情变化**：呼吸仍快、血压偏低、烦躁加重，提示循环状态未纠正、组织灌注不足，胸部损伤合并失血风险上升，救治优先级维持在紧急救治。\n\n**当前救治方案**：继续在本级能力范围内实施必要的稳定处置与连续监护，重点观察呼吸困难、胸廓对称性、意识和血压趋势；维持四肢止血与固定，避免搬运造成二次损伤。\n\n**阶段建议**：阶段门 = 暂缓后送。伤情尚未稳定，直接后送风险较高，本轮不发起阶段转换确认。建议先稳定生命体征，同时同步联络旅（团）救护所，做好Ⅱ级早期救治（胸腔闭式引流、输血抗休克、辅助检查）的准备。\n\n仅供辅助，须具备资质的医务人员复核。',
       },
     ],
     evidence: [
@@ -359,8 +331,7 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
     round: 5,
     title: '进入Ⅱ级',
     time: '15:52',
-    elapsed: '57 min',
-    stageId: 'early',
+    stageId: 'early_treatment',
     substepIndex: 0,
     facility: '旅（团）救护所',
     capability: '早期救治',
@@ -371,7 +342,7 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
     actionPoints: ['复查伤情并执行收容分类', '安排胸部影像、血气等辅助检查', '继续抗休克与胸部处置准备'],
     conclusion: '经用户确认后完成阶段转换，进入Ⅱ级紧急处置。',
     patient: {
-      updatedAt: '15:52 · 伤后 57 min',
+      updatedAt: '15:52',
       consciousness: '清醒，对答顺畅，烦躁缓解',
       vitals: [
         { label: '呼吸', value: '26 次/分', trend: 'down', abnormal: true },
@@ -393,7 +364,6 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
       treatmentPriority: '紧急救治',
       transportPriority: '后送已完成',
     },
-    timing: { window: '早期救治宜在伤后 3 小时内实施', status: '处于建议时限内' },
     gate: {
       status: 'COMPLETED',
       title: '用户确认后完成阶段转换',
@@ -401,7 +371,7 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
       confirmation: '15:50 已确认后送并转入Ⅱ级；15:52 到达后完成转换。',
     },
     actions: ['复查伤情并执行收容分类', '进入相应医疗组重新确定处置顺序', '结合辅助检查评估是否需要外科复苏'],
-    nextStageCapability: '确定性专科手术属Ⅲ级能力，本轮不预设跳级。',
+    nextStageCapability: '如需更高级能力，建议转入专科治疗（Ⅲ级）；本系统仅提供前两级操作意见。',
     messages: [
       {
         role: 'user',
@@ -409,7 +379,7 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
       },
       {
         role: 'assistant',
-        text: '已结合早期救治任务、紧急处置内容和分级救治机构职责知识块完成到站复评。\n\n**阶段确认**：呼吸26次/分、收缩压104mmHg、心率106次/分，生命状态较前好转并已完成后送，阶段在您上一轮确认的基础上写入Ⅱ级早期救治—紧急处置，当前地点为旅（团）救护所，生成收容分类 v5。\n\n**当前救治方案**：按紧急处置要求复查伤情并完成检伤分类，安排胸部影像、血气与血常规等辅助检查以明确胸部损伤性质；继续抗休克治疗与连续生命体征监测；对右小腿开放伤评估污染程度并准备清创。所有侵入性操作须由具备资质的专业人员按指征实施。\n\n**下一步**：待辅助检查结果回报后，再判断是否需要外科复苏或进一步向Ⅲ级专科治疗转换，本轮不预设跳级。\n\n仅供辅助，须具备资质的医务人员复核。',
+        text: '已结合早期救治任务、紧急处置内容和分级救治机构职责知识块完成到站复评。\n\n**阶段确认**：呼吸26次/分、收缩压104mmHg、心率106次/分，生命状态较前好转并已完成后送，阶段在您上一轮确认的基础上写入Ⅱ级早期救治—紧急处置，当前地点为旅（团）救护所，生成收容分类 v5。\n\n**当前救治方案**：按紧急处置要求复查伤情并完成检伤分类，安排胸部影像、血气与血常规等辅助检查以明确胸部损伤性质；继续抗休克治疗与连续生命体征监测；对右小腿开放伤评估污染程度并准备清创。所有侵入性操作须由具备资质的专业人员按指征实施。\n\n**下一步**：待辅助检查结果回报后，再判断是否需要外科复苏或转入专科治疗（Ⅲ级）。本系统仅提供战现场急救（Ⅰ级）和早期救治（Ⅱ级）的操作意见，不提供后两级的具体处置措施。\n\n仅供辅助，须具备资质的医务人员复核。',
       },
     ],
     evidence: [
