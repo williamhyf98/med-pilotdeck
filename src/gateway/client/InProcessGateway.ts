@@ -108,11 +108,13 @@ import {
   PLACEMENT_QUESTION,
   parsePlacementConfirmation,
   placementConfirmationOptions,
+  traumaExtractionEvents,
   traumaPostAnswerProcessEvents,
   traumaProgressEvents,
   traumaTurnEvents,
   type TraumaTurnRunner,
 } from "../../trauma/index.js";
+import { normalizeExtractedForm } from "../../trauma/formDraft.js";
 
 const PLAN_COMMAND_USAGE = "用法：/plan <任务>\n例如：/plan 设计一个新功能";
 const MAX_GATEWAY_TOOL_RESULT_PREVIEW_CHARS = 20_000;
@@ -503,9 +505,6 @@ export class InProcessGateway implements Gateway {
           }, input.timeoutMs);
         }
         if (isTraumaProject(input.projectKey)) {
-          if (!validateTurnFormInput(input.traumaForm)) {
-            throw new Error("war_trauma turns require a valid traumaForm");
-          }
           if (!this.options.traumaRunnerFactory) {
             throw new Error("war_trauma runner is not configured");
           }
@@ -513,8 +512,7 @@ export class InProcessGateway implements Gateway {
             projectKey: input.projectKey,
             sessionKey: input.sessionKey,
           });
-          // 一轮推演要跑三次模型和多次检索，先把 turn_started 和逐阶段进度推给宿主，
-          // 否则界面在整轮结束前只能一直显示「连接中」。
+          // 先把 turn_started 和逐阶段进度推给宿主，否则界面在整轮结束前只能一直显示「连接中」。
           const emit = (gatewayEvent: GatewayEvent) => {
             this.recordActiveTurnEvent(input.sessionKey, gatewayEvent);
             queue.enqueue(gatewayEvent);
@@ -578,6 +576,53 @@ export class InProcessGateway implements Gateway {
               emit(gatewayEvent);
             }
           };
+          emit({ type: "turn_started", runId });
+          let traumaForm = input.traumaForm;
+          if (input.traumaExtract && input.traumaRawInput?.trim()) {
+            emitTraumaProcessEvents(traumaExtractionEvents({ runId, status: "started" }));
+            try {
+              if (!this.options.traumaExtractorFactory) {
+                throw new Error("war_trauma extractor is not configured");
+              }
+              const station = await this.options.traumaExtractorFactory({
+                projectKey: input.projectKey,
+                sessionKey: input.sessionKey,
+              });
+              traumaForm = normalizeExtractedForm(await station.extract({
+                rawText: input.traumaRawInput.trim(),
+                caseHistory: "",
+              }));
+              if (!validateTurnFormInput(traumaForm)) {
+                throw new Error("抽取结果未包含可用于推演的病例信息");
+              }
+              if (input.traumaForm?.statedSubStage) {
+                traumaForm.statedSubStage = input.traumaForm.statedSubStage;
+              }
+              emitTraumaProcessEvents(traumaExtractionEvents({
+                runId,
+                status: "finished",
+                ok: true,
+              }));
+            } catch (error) {
+              traumaForm = {
+                statedSubStage: input.traumaForm?.statedSubStage ?? null,
+                injuryNarrative: input.traumaRawInput.trim().slice(0, 1000),
+                treatmentNarrative: "",
+                evacuationNarrative: "",
+                note: "",
+                vitals: {},
+              };
+              emitTraumaProcessEvents(traumaExtractionEvents({
+                runId,
+                status: "finished",
+                ok: false,
+                detail: `抽取失败，已使用自由文本继续推演：${error instanceof Error ? error.message : String(error)}`,
+              }));
+            }
+          }
+          if (!validateTurnFormInput(traumaForm)) {
+            throw new Error("war_trauma turns require a valid traumaForm");
+          }
           let assistantTextStreamed = false;
           let assistantTextEnded = false;
           let postAnswerProcessStarted = false;
@@ -588,12 +633,11 @@ export class InProcessGateway implements Gateway {
             emit,
             uuid: this.uuid,
           });
-          emit({ type: "turn_started", runId });
           const response = await runner.runTurn({
             projectId: input.projectKey,
             sessionId: input.sessionKey,
             messageId: runId,
-            form: input.traumaForm,
+            form: traumaForm,
             rawInput: input.traumaRawInput,
             now: this.now().toISOString(),
             onProgress: (progress) => {
@@ -668,7 +712,7 @@ export class InProcessGateway implements Gateway {
             projectKey: input.projectKey,
             sessionKey: input.sessionKey,
             runId,
-            userText: summarizeTraumaForm(input.traumaForm),
+            userText: input.traumaRawInput?.trim() || summarizeTraumaForm(traumaForm),
             assistantText: normalizeChineseDisplayText(response.naturalLanguageAnswer),
             processMessages: traumaProcessMessages,
           });

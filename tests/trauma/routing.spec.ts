@@ -85,7 +85,14 @@ function fakeSession(counter) {
 }
 
 function createTestGateway(projectKey, options = { askPlacement: false }) {
-  const counter = { submit: 0, trauma: 0, recordedUserText: "" };
+  const counter = {
+    submit: 0,
+    trauma: 0,
+    recordedUserText: "",
+    runnerForm: null,
+    processMessages: [],
+    extractorInput: null,
+  };
   const router = new SessionRouter({
     idleSweepIntervalMs: 0,
     createSession: () => fakeSession(counter),
@@ -93,10 +100,23 @@ function createTestGateway(projectKey, options = { askPlacement: false }) {
   const gateway = new InProcessGateway(router, {
     async recordTraumaTurn(input) {
       counter.recordedUserText = input.userText;
+      counter.processMessages = input.processMessages ?? [];
     },
+    ...(options.extractorResult || options.extractorError
+      ? {
+          traumaExtractorFactory: async () => ({
+            async extract(input) {
+              counter.extractorInput = input;
+              if (options.extractorError) throw options.extractorError;
+              return options.extractorResult;
+            },
+          }),
+        }
+      : {}),
     traumaRunnerFactory: async () => ({
       async runTurn(input) {
         counter.trauma += 1;
+        counter.runnerForm = input.form;
         if (options.streamAnswer) {
           await input.onAssistantTextDelta?.("当前仍在");
           await input.onAssistantTextDelta?.("初级急救。");
@@ -247,4 +267,131 @@ test("forwards streamed trauma answer deltas without duplicating the final answe
     .map((event) => event.text);
   assert.deepEqual(deltas, ["当前仍在", "初级急救。"]);
   assert.equal(events.at(-1)?.type, "turn_completed");
+});
+
+test("traumaExtract runs extraction before the runner and records it as a non-counted process step", async () => {
+  const extracted = {
+    injuryNarratives: [{ text: "右小腿开放性骨折", sourceSpan: "右小腿开放性骨折" }],
+    treatmentNarratives: [{ text: "已加压包扎", sourceSpan: "已加压包扎" }],
+    evacuationNarratives: [],
+    notes: [],
+    vitals: [{ field: "heartRate", value: 118, unit: "次/分", sourceSpan: "心率118" }],
+  };
+  const { gateway, counter } = createTestGateway("trauma_med-demo", { extractorResult: extracted });
+  const events = [];
+  for await (const event of gateway.submitTurn({
+    sessionKey: "web:s_extract",
+    channelKey: "web",
+    projectKey: "trauma_med-demo",
+    message: "右小腿开放性骨折，已加压包扎，心率118",
+    traumaForm: {
+      statedSubStage: "advanced_first_aid",
+      injuryNarrative: "右小腿开放性骨折，已加压包扎，心率118",
+      treatmentNarrative: "",
+      evacuationNarrative: "",
+      note: "",
+      vitals: {},
+    },
+    traumaRawInput: "右小腿开放性骨折，已加压包扎，心率118",
+    traumaExtract: true,
+  })) {
+    events.push(event);
+  }
+
+  assert.deepEqual(counter.extractorInput, {
+    rawText: "右小腿开放性骨折，已加压包扎，心率118",
+    caseHistory: "",
+  });
+  assert.deepEqual(counter.runnerForm, {
+    statedSubStage: "advanced_first_aid",
+    injuryNarrative: "右小腿开放性骨折",
+    treatmentNarrative: "已加压包扎",
+    evacuationNarrative: "",
+    note: "",
+    vitals: { heartRate: 118 },
+  });
+  const extractionStarted = events.findIndex((event) =>
+    event.type === "tool_call_started" && event.name === "大模型信息抽取");
+  const extractionFinished = events.findIndex((event) =>
+    event.type === "tool_call_finished" && event.toolName === "大模型信息抽取");
+  const runnerStarted = events.findIndex((event) =>
+    event.type === "tool_call_started" && event.name === "校验并合并表单");
+  assert.ok(extractionStarted >= 0);
+  assert.ok(extractionFinished > extractionStarted);
+  assert.ok(runnerStarted > extractionFinished);
+  assert.equal(JSON.parse(events[extractionStarted].argsPreview).countInTotal, false);
+  assert.equal(JSON.parse(events[extractionStarted].argsPreview).title, "大模型信息抽取");
+  assert.equal(counter.processMessages.filter((message) =>
+    message.metadata?.purpose === "trauma_runner_step").length >= 2, true);
+  assert.equal(counter.processMessages.some((message) =>
+    JSON.stringify(message).includes("大模型信息抽取")), true);
+});
+
+test("traumaExtract falls back to the raw narrative when extraction fails", async () => {
+  const rawInput = "胸部爆炸伤，血压测不到，现场没有吸引器";
+  const { gateway, counter } = createTestGateway("trauma_med-demo", {
+    extractorError: new Error("模型服务不可用"),
+  });
+  const events = [];
+  for await (const event of gateway.submitTurn({
+    sessionKey: "web:s_extract_fallback",
+    channelKey: "web",
+    projectKey: "trauma_med-demo",
+    message: rawInput,
+    traumaForm: {
+      statedSubStage: "emergency_treatment",
+      injuryNarrative: rawInput,
+      treatmentNarrative: "",
+      evacuationNarrative: "",
+      note: "",
+      vitals: {},
+    },
+    traumaRawInput: rawInput,
+    traumaExtract: true,
+  })) {
+    events.push(event);
+  }
+
+  assert.deepEqual(counter.runnerForm, {
+    statedSubStage: "emergency_treatment",
+    injuryNarrative: rawInput,
+    treatmentNarrative: "",
+    evacuationNarrative: "",
+    note: "",
+    vitals: {},
+  });
+  const extractionFinished = events.find((event) =>
+    event.type === "tool_call_finished" && event.toolName === "大模型信息抽取");
+  assert.equal(extractionFinished?.ok, false);
+  assert.match(extractionFinished?.resultPreview ?? "", /抽取失败，已使用自由文本继续推演/);
+  assert.match(counter.recordedUserText, new RegExp(rawInput));
+});
+
+test("traumaExtract uses fallback and emits extraction status when no extractor is configured", async () => {
+  const rawInput = "左前臂裂伤";
+  const { gateway, counter } = createTestGateway("trauma_med-demo");
+  const events = [];
+  for await (const event of gateway.submitTurn({
+    sessionKey: "web:s_no_extractor",
+    channelKey: "web",
+    projectKey: "trauma_med-demo",
+    message: rawInput,
+    traumaForm: {
+      statedSubStage: null,
+      injuryNarrative: rawInput,
+      treatmentNarrative: "",
+      evacuationNarrative: "",
+      note: "",
+      vitals: {},
+    },
+    traumaRawInput: rawInput,
+    traumaExtract: true,
+  })) {
+    events.push(event);
+  }
+
+  assert.equal(counter.trauma, 1);
+  assert.equal(events.some((event) =>
+    event.type === "tool_call_finished" && event.toolName === "大模型信息抽取" && event.ok === false), true);
+  assert.equal(counter.runnerForm?.injuryNarrative, rawInput);
 });

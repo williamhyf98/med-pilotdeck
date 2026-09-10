@@ -207,7 +207,7 @@ function MainContent({
     (text: string, targetSessionId?: string | null, runId?: string) => void
   ) | null>(null);
 
-  const submitTraumaForm = useCallback((form: TurnFormInput, rawInput = '') => {
+  const submitTraumaForm = useCallback((form: TurnFormInput, rawInput = '', traumaExtract = false) => {
     if (!selectedProject || traumaSubmitting) return;
     const selectedSessionId = selectedSession?.id;
     const concreteSessionId = selectedSessionId && !isTemporarySessionId(selectedSessionId)
@@ -218,20 +218,22 @@ function MainContent({
       : selectedSessionId || createTemporarySessionId();
     const summary = summarizeTraumaForm(form);
     const runId = createClientRunId();
+    const visibleInput = traumaExtract && rawInput.trim() ? rawInput.trim() : summary;
     setTraumaSubmitting(true);
     try {
-      traumaOptimisticMessageRef.current?.(summary, concreteSessionId, runId);
+      traumaOptimisticMessageRef.current?.(visibleInput, concreteSessionId, runId);
       const activatedSessionId = startSessionCommand({
         sendMessage,
         selectedProject,
-        command: `战创伤推演：${summary}`,
-        userVisibleInput: summary,
+        command: `战创伤推演：${visibleInput}`,
+        userVisibleInput: visibleInput,
         sessionId: concreteSessionId,
         temporarySessionId,
         sessionSummary: summary,
         runId,
         traumaForm: form,
         traumaRawInput: rawInput,
+        traumaExtract,
       });
       onSessionActive?.(activatedSessionId);
       if (concreteSessionId) onSessionProcessing?.(concreteSessionId);
@@ -614,7 +616,7 @@ type SplitBodyProps = {
     optimisticTitle?: string,
   ) => void;
   processingSessions: Set<string>;
-  submitTraumaForm: (form: TurnFormInput, rawInput?: string) => void;
+  submitTraumaForm: (form: TurnFormInput, rawInput?: string, traumaExtract?: boolean) => void;
   traumaOptimisticMessageRef: React.MutableRefObject<((text: string, targetSessionId?: string | null, runId?: string) => void) | null>;
   traumaSubmitting: boolean;
   unreadSessionIds: Set<string>;

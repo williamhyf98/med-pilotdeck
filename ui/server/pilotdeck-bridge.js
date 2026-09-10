@@ -1292,6 +1292,7 @@ export async function runChatViaGateway(
     const runMode = normalizeRunMode(options?.runMode) || (resolvedMode === 'plan' ? 'plan' : 'agent');
     const traumaForm = sanitizeTraumaFormInput(options?.traumaForm);
     const traumaRawInput = typeof options?.traumaRawInput === 'string' ? options.traumaRawInput : undefined;
+    const traumaExtract = options?.traumaExtract === true;
     console.log(`[pilotdeck-bridge] submitTurn runMode=${runMode} mode=${resolvedMode} (options.permissionMode=${options?.permissionMode}, options.mode=${options?.mode})`);
 
     let gw = null;
@@ -1336,6 +1337,7 @@ export async function runChatViaGateway(
             message: command ?? '',
             ...(traumaForm ? { traumaForm } : {}),
             ...(traumaRawInput ? { traumaRawInput } : {}),
+            ...(traumaExtract ? { traumaExtract: true } : {}),
             runMode,
             mode: resolvedMode,
             // The web UI has an elicitation channel, so the agent may propose

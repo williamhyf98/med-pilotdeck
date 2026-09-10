@@ -94,6 +94,8 @@ export type GatewaySubmitTurnInput = {
   traumaForm?: TurnFormInput;
   /** 用户本轮原始自由文本，由工位 F 抽取后存入快照。 */
   traumaRawInput?: string;
+  /** Whether the raw trauma input should be parsed by station F before the runner starts. */
+  traumaExtract?: boolean;
   projectKey?: string;
   /** Override the agent session's working directory for this session. */
   workspaceCwd?: string;

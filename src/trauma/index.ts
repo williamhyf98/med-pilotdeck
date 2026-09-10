@@ -2,6 +2,7 @@ export {
   PLACEMENT_QUESTION,
   parsePlacementConfirmation,
   placementConfirmationOptions,
+  traumaExtractionEvents,
   traumaPostAnswerProcessEvents,
   traumaProgressEvents,
   traumaTurnEvents,

@@ -21,7 +21,7 @@ type TraumaWorkspaceProps = {
   resetKey: string;
   projectKey?: string;
   sessionId?: string;
-  onSubmitForm?: (form: TurnFormInput, rawInput: string) => void | Promise<void>;
+  onSubmitForm?: (form: TurnFormInput, rawInput: string, traumaExtract?: boolean) => void | Promise<void>;
   submitting?: boolean;
   runtimePanel?: ReactNode;
 };

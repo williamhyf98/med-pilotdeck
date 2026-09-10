@@ -157,6 +157,39 @@ export function traumaProgressEvents(input: {
   }];
 }
 
+export function traumaExtractionEvents(input: {
+  runId: string;
+  status: "started" | "finished";
+  ok?: boolean;
+  detail?: string;
+}): GatewayEvent[] {
+  const payload = runnerStepPayload({
+    phase: "extract",
+    title: "大模型信息抽取",
+    runningTitle: "正在进行大模型信息抽取",
+    detail: input.detail,
+    countInTotal: false,
+  });
+  const toolCallId = `trauma-extraction:${input.runId}`;
+  if (input.status === "started") {
+    return [{
+      type: "tool_call_started",
+      toolCallId,
+      name: payload.title,
+      argsPreview: previewPayload(payload),
+      runId: input.runId,
+    }];
+  }
+  return [{
+    type: "tool_call_finished",
+    toolCallId,
+    toolName: payload.title,
+    ok: input.ok !== false,
+    resultPreview: previewPayload(payload),
+    runId: input.runId,
+  }];
+}
+
 export function traumaPostAnswerProcessEvents(input: {
   runId: string;
   status: "started" | "finished";

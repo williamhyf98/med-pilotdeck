@@ -275,8 +275,6 @@ type TraumaRunnerStepMeta = {
   countInTotal?: boolean;
 };
 
-const TRAUMA_RUNNER_DISPLAY_STEP_COUNT = 11;
-
 function parseRecordJson(value: unknown): Record<string, unknown> {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     return value as Record<string, unknown>;
@@ -1399,7 +1397,7 @@ export function formatCompletedProcessTitle(
 ): string {
   const messages = Array.isArray(messageOrMessages) ? messageOrMessages : [messageOrMessages];
   if (hasTraumaRunnerSteps(messages)) {
-    return `本轮推演完成（${TRAUMA_RUNNER_DISPLAY_STEP_COUNT}步）`;
+    return '本轮推演完成';
   }
 
   const counts = Array.isArray(messageOrMessages)

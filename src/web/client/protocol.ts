@@ -163,6 +163,7 @@ export type WebSubmitTurnInput = {
   attachments?: WebChannelAttachment[];
   traumaForm?: unknown;
   traumaRawInput?: string;
+  traumaExtract?: boolean;
   runMode?: WebAgentRunMode;
   mode?: WebGatewayMode;
   basePermissionMode?: WebGatewayMode;
