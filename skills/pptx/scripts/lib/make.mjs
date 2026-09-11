@@ -87,7 +87,7 @@ function bodySlides(body, title) {
   return items.length ? [{ type: 'content', title: title ? '核心内容' : '内容', items }] : [];
 }
 
-function normalizeSpec(value, titleOverride) {
+function normalizeSpec(value, titleOverride, themeOverride) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('PPTX make spec must be a JSON object');
   }
@@ -99,6 +99,8 @@ function normalizeSpec(value, titleOverride) {
     footer: nonEmpty(value.footer),
     locale: nonEmpty(value.locale) || 'zh-CN',
     author: nonEmpty(value.author) || 'PilotDeck',
+    // null → resolveDesignTokens falls back to the default theme in design-tokens.json.
+    theme: nonEmpty(themeOverride) || nonEmpty(value.theme) || undefined,
     slides,
   };
 }
@@ -218,6 +220,7 @@ export async function makePptx(options = {}) {
     spec = normalizeSpec(
       resolveLocalResources(JSON.parse(await readText(specPath)), path.dirname(specPath)),
       options.title,
+      options.theme,
     );
   } else if (options.markdownFile) {
     const parsed = parseMarkdown(await readText(options.markdownFile), options.title);
@@ -226,6 +229,7 @@ export async function makePptx(options = {}) {
       slides: parsed.slides,
       locale: options.locale,
       footer: options.footer,
+      theme: options.theme,
     });
   } else {
     let body = options.body;
@@ -235,6 +239,7 @@ export async function makePptx(options = {}) {
       slides: bodySlides(body, options.title),
       locale: options.locale,
       footer: options.footer,
+      theme: options.theme,
     });
   }
   assertLocalResources(spec);
@@ -251,6 +256,7 @@ export async function makePptx(options = {}) {
     lang: spec.locale,
     profile: /^zh(?:-|$)/iu.test(spec.locale) ? 'cross-platform-zh' : 'cross-platform-en',
     density: 'presentation',
+    theme: spec.theme,
   });
   const tokens = {
     ...baseTokens,
@@ -314,6 +320,7 @@ export async function makePptx(options = {}) {
     status: 'ok',
     output,
     slides: manifest.slideCount,
+    theme: tokens.theme,
     preview,
     audit: {
       status: audit.status,

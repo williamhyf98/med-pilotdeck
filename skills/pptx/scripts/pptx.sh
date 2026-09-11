@@ -142,7 +142,7 @@ case "${1:-}" in
     exit 2
     ;;
   ""|-h|--help|help)
-    printf 'Usage: pptx.sh <check|make|convert|inspect|audit|render|validate-map|prepare-starter|apply-template|fidelity|deliver|self-test> [options]\n'
+    printf 'Usage: pptx.sh <check|make|themes|convert|inspect|audit|render|validate-map|prepare-starter|apply-template|fidelity|deliver|self-test> [options]\n'
     ;;
   *)
     if ! runtime_ready; then
