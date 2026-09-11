@@ -104,7 +104,31 @@
     "scopeUser": "用户",
     "scopeProject": "项目",
     "scopeBuiltin": "内置",
-    "scopeMedical": "医学"
+    "scopeMedical": "医学",
+    "newSkill": "新建技能",
+    "newTitle": "新建技能",
+    "close": "关闭",
+    "create": "创建",
+    "creating": "创建中…",
+    "createdSuccess": "已创建「{{name}}」",
+    "fieldSlug": "目录名（slug）",
+    "slugHint": "字母或数字开头，可含 . _ -；创建后不可改",
+    "slugInvalid": "slug 只能使用字母、数字、点、下划线和连字符，且须以字母或数字开头",
+    "fieldName": "名称",
+    "fieldNamePlaceholder": "留空则用 slug",
+    "fieldDescription": "描述",
+    "descHint": "写清「什么时候该用这个技能」；模型靠这句话决定是否加载，也是推荐的依据",
+    "fieldBody": "正文",
+    "bodyHint": "可留空，创建后在右侧编辑器继续写",
+    "allDepartments": "全部科室",
+    "departments": {
+      "emergency": "急诊科",
+      "critical-care": "重症医学科",
+      "orthopedics": "骨科",
+      "radiology": "影像科",
+      "laboratory": "检验科",
+      "burn": "烧伤科"
+    }
   },
   "status": {
     "loading": "加载中...",

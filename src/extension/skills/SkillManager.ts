@@ -701,7 +701,21 @@ async function readSkillMeta(
     mtime,
     availability,
     availabilityMutable: scope === "user",
+    department: optionalFrontmatterString(fm.department),
+    category: optionalFrontmatterString(fm.category),
   };
+}
+
+/**
+ * `department` / `category` are optional display axes, so anything that
+ * isn't a non-empty string (missing key, list, number, bare `~`) collapses
+ * to null rather than throwing — a malformed hint must never make a skill
+ * unloadable.
+ */
+function optionalFrontmatterString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }
 
 function resolveSummaryAvailability(

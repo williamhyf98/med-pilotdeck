@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import CodeMirror from '@uiw/react-codemirror';
 import { markdown } from '@codemirror/lang-markdown';
@@ -7,10 +7,12 @@ import {
   ArrowLeft,
   Loader2,
   PencilLine,
+  Plus,
   RefreshCw,
   Save,
   Sparkles,
   Trash2,
+  X,
 } from 'lucide-react';
 import type { Project } from '../../types/app';
 import { authenticatedFetch } from '../../utils/api';
@@ -44,6 +46,10 @@ type Skill = {
   mtime: number | null;
   availability: SkillAvailability[];
   availabilityMutable: boolean;
+  /** Optional `department:` frontmatter — free-form clinical specialty. */
+  department?: string | null;
+  /** Optional `category:` frontmatter — coarse kind ("role", "document", …). */
+  category?: string | null;
 };
 
 type SkillsListResponse = {
@@ -56,6 +62,29 @@ type SkillsListResponse = {
 };
 
 type ToastState = { kind: 'success' | 'error' | 'info'; text: string } | null;
+
+/**
+ * Pretty names for the `department:` frontmatter axis. The field is free-form
+ * on purpose — departments differ per hospital — so an unknown value renders
+ * as-is rather than being dropped; this map only labels the ones we ship.
+ */
+const DEPARTMENT_LABELS: Record<string, string> = {
+  emergency: '急诊科',
+  'critical-care': '重症医学科',
+  orthopedics: '骨科',
+  radiology: '影像科',
+  laboratory: '检验科',
+  burn: '烧伤科',
+};
+
+function departmentLabel(
+  department: string,
+  t: ReturnType<typeof useTranslation>['t'],
+): string {
+  const known = DEPARTMENT_LABELS[department];
+  if (!known) return department;
+  return t(`skillsTab.departments.${department}`, { defaultValue: known }) as string;
+}
 
 // ---------------------------------------------------------------------------
 
@@ -101,6 +130,7 @@ export default function SkillsV2({ selectedProject, compact = false }: SkillsV2P
   const [originalContent, setOriginalContent] = useState<string>('');
   const [editorLoading, setEditorLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showNewSkill, setShowNewSkill] = useState(false);
   const [toast, setToast] = useState<ToastState>(null);
 
   const serverGeneralCwd = Boolean(cwd && serverGeneralCwdPath === cwd);
@@ -264,6 +294,17 @@ export default function SkillsV2({ selectedProject, compact = false }: SkillsV2P
     }
   }, [activeSkill, flashToast, refresh, t]);
 
+  const handleSkillCreated = useCallback(async (created: Skill) => {
+    setShowNewSkill(false);
+    await refresh();
+    setActiveSlug(created.slug);
+    setActiveScope(created.scope);
+    flashToast({
+      kind: 'success',
+      text: t('skillsTab.createdSuccess', { defaultValue: '已创建「{{name}}」', name: created.name }) as string,
+    });
+  }, [flashToast, refresh, t]);
+
   const handleSelect = useCallback((skill: Skill) => {
     if (isDirty) {
       if (!window.confirm(t('skillsTab.discardUnsaved', { defaultValue: 'Discard unsaved changes?' }) as string)) {
@@ -328,6 +369,7 @@ export default function SkillsV2({ selectedProject, compact = false }: SkillsV2P
         generalCwd={generalCwd}
         loading={loading}
         onRefresh={refresh}
+        onNewSkill={() => setShowNewSkill(true)}
         compact={compact}
         t={t}
       />
@@ -394,6 +436,15 @@ export default function SkillsV2({ selectedProject, compact = false }: SkillsV2P
         ) : null}
       </div>
 
+      {showNewSkill ? (
+        <NewSkillModal
+          effectiveProjectPath={effectiveProjectPath}
+          onClose={() => setShowNewSkill(false)}
+          onCreated={handleSkillCreated}
+          t={t}
+        />
+      ) : null}
+
       {toast ? (
         <div
           className={cn(
@@ -417,6 +468,7 @@ function Header({
   generalCwd,
   loading,
   onRefresh,
+  onNewSkill,
   compact,
   t,
 }: {
@@ -424,6 +476,7 @@ function Header({
   generalCwd: boolean;
   loading: boolean;
   onRefresh: () => void;
+  onNewSkill: () => void;
   compact: boolean;
   t: ReturnType<typeof useTranslation>['t'];
 }) {
@@ -441,6 +494,15 @@ function Header({
         )}
       </div>
       <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={onNewSkill}
+          className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-neutral-700 transition hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-900"
+          title={t('skillsTab.newSkill', { defaultValue: '新建技能' }) as string}
+        >
+          <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
+          <span>{t('skillsTab.newSkill', { defaultValue: '新建技能' })}</span>
+        </button>
         <button
           type="button"
           onClick={onRefresh}
@@ -508,6 +570,26 @@ function SkillsList({
     }
   }, [effectiveProjectPath, selectedSkill, refresh, flashToast, setActiveSlug, setActiveScope, t]);
 
+  const [departmentFilter, setDepartmentFilter] = useState<string | null>(null);
+
+  const departments = useMemo(() => {
+    if (!skills) return [] as string[];
+    const seen = new Set<string>();
+    for (const skill of [...skills.builtin, ...skills.user, ...(skills.medical ?? [])]) {
+      const dep = skill.department?.trim();
+      if (dep) seen.add(dep);
+    }
+    return [...seen].sort();
+  }, [skills]);
+
+  // A refresh can retire the department the filter points at (skill edited or
+  // deleted); drop the filter instead of showing three empty sections.
+  useEffect(() => {
+    if (departmentFilter && !departments.includes(departmentFilter)) {
+      setDepartmentFilter(null);
+    }
+  }, [departmentFilter, departments]);
+
   const groupedSkills = useMemo(() => {
     const groups: Record<SkillAvailability, Skill[]> = {
       global: [],
@@ -515,17 +597,35 @@ function SkillsList({
       war_trauma: [],
     };
     if (!skills) return groups;
-    for (const skill of [...skills.builtin, ...skills.user, ...skills.medical]) {
+    for (const skill of [...skills.builtin, ...skills.user, ...(skills.medical ?? [])]) {
+      if (departmentFilter && skill.department?.trim() !== departmentFilter) continue;
       groups[availabilityBucket(skill.availability)].push(skill);
     }
     return groups;
-  }, [skills]);
+  }, [departmentFilter, skills]);
 
   return (
     <div className={cn(
       'flex shrink-0 flex-col',
       compact ? 'w-full' : 'w-72 border-r border-neutral-200 dark:border-neutral-800',
     )}>
+      {departments.length > 0 ? (
+        <div className="flex shrink-0 flex-wrap gap-1 border-b border-neutral-200 px-2 py-1.5 dark:border-neutral-800">
+          <DepartmentChip
+            label={t('skillsTab.allDepartments', { defaultValue: '全部科室' }) as string}
+            active={departmentFilter === null}
+            onClick={() => setDepartmentFilter(null)}
+          />
+          {departments.map((dep) => (
+            <DepartmentChip
+              key={dep}
+              label={departmentLabel(dep, t)}
+              active={departmentFilter === dep}
+              onClick={() => setDepartmentFilter(departmentFilter === dep ? null : dep)}
+            />
+          ))}
+        </div>
+      ) : null}
       <div className="min-h-0 flex-1 overflow-y-auto py-2 text-[13px]">
         {loading && !skills ? (
           <div className="flex items-center justify-center gap-2 py-6 text-xxs text-neutral-500 dark:text-neutral-400">
@@ -687,6 +787,11 @@ function ListSection({
                       {t('skillsTab.override', { defaultValue: 'override' })}
                     </span>
                   ) : null}
+                  {s.department ? (
+                    <span className="shrink-0 rounded bg-sky-100 px-1 py-px text-[10px] text-sky-700 dark:bg-sky-950/50 dark:text-sky-300">
+                      {departmentLabel(s.department, t)}
+                    </span>
+                  ) : null}
                 </div>
                 {s.description ? (
                   <div className="mt-0.5 line-clamp-1 text-xxs text-neutral-500 dark:text-neutral-400">
@@ -716,12 +821,253 @@ function ListSection({
   );
 }
 
+function DepartmentChip({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        'h-6 shrink-0 rounded-full border px-2 text-[11px] transition-colors',
+        active
+          ? 'border-sky-500 bg-sky-500 text-white dark:border-sky-500 dark:bg-sky-600'
+          : 'border-neutral-200 text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900',
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
 function EmptyState({ t }: { t: ReturnType<typeof useTranslation>['t'] }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-[13px] text-neutral-500 dark:text-neutral-400">
       <Sparkles className="h-8 w-8 text-neutral-300 dark:text-neutral-700" strokeWidth={1.5} />
       <div>{t('skillsTab.selectHint', { defaultValue: 'Pick a skill on the left to view or edit its SKILL.md.' })}</div>
     </div>
+  );
+}
+
+const SLUG_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/;
+
+/**
+ * Create-from-scratch entry point. The offline pass hid this modal together
+ * with the ClawHub online installer; only the local branch comes back —
+ * nothing here reaches the network beyond our own `/api/skills/create`.
+ */
+function NewSkillModal({
+  effectiveProjectPath,
+  onClose,
+  onCreated,
+  t,
+}: {
+  effectiveProjectPath: string | null;
+  onClose: () => void;
+  onCreated: (skill: Skill) => Promise<void>;
+  t: ReturnType<typeof useTranslation>['t'];
+}) {
+  const canUseProjectScope = Boolean(effectiveProjectPath);
+  const [slug, setSlug] = useState('');
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [body, setBody] = useState('');
+  const [scope, setScope] = useState<'user' | 'project'>('user');
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const trimmedSlug = slug.trim();
+  const slugValid = SLUG_RE.test(trimmedSlug);
+  const canSubmit = slugValid && description.trim().length > 0 && !creating;
+
+  const submit = async () => {
+    if (!canSubmit) return;
+    setCreating(true);
+    setError(null);
+    try {
+      const result = await api<{ skill?: Skill }>('/api/skills/create', {
+        slug: trimmedSlug,
+        name: name.trim() || trimmedSlug,
+        description: description.trim(),
+        body: body.trim(),
+        scope: canUseProjectScope ? scope : 'user',
+        projectPath: effectiveProjectPath,
+      });
+      await onCreated(result.skill ?? {
+        slug: trimmedSlug,
+        name: name.trim() || trimmedSlug,
+        scope: canUseProjectScope ? scope : 'user',
+      } as Skill);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/40 p-4 dark:bg-black/60"
+      onClick={(event) => {
+        if (event.target === event.currentTarget && !creating) onClose();
+      }}
+    >
+      <div
+        className="flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-xl dark:border-neutral-800 dark:bg-neutral-950"
+        onKeyDown={(event) => {
+          if (event.key === 'Escape' && !creating) onClose();
+        }}
+      >
+        <div className="flex shrink-0 items-center justify-between border-b border-neutral-200 px-4 py-2.5 dark:border-neutral-800">
+          <h2 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+            {t('skillsTab.newTitle', { defaultValue: '新建技能' })}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={creating}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 disabled:opacity-50 dark:text-neutral-400 dark:hover:bg-neutral-900"
+            aria-label={t('skillsTab.close', { defaultValue: '关闭' }) as string}
+          >
+            <X className="h-4 w-4" strokeWidth={1.75} />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
+          <Field
+            label={t('skillsTab.fieldSlug', { defaultValue: '目录名（slug）' }) as string}
+            hint={t('skillsTab.slugHint', { defaultValue: '字母或数字开头，可含 . _ -；创建后不可改' }) as string}
+          >
+            <input
+              autoFocus
+              value={slug}
+              onChange={(e) => setSlug(e.target.value)}
+              placeholder="cardiology-consult"
+              className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 font-mono text-[13px] text-neutral-900 outline-none focus:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+            />
+            {trimmedSlug && !slugValid ? (
+              <span className="mt-1 block text-[11px] text-red-600 dark:text-red-400">
+                {t('skillsTab.slugInvalid', { defaultValue: 'slug 只能使用字母、数字、点、下划线和连字符，且须以字母或数字开头' })}
+              </span>
+            ) : null}
+          </Field>
+
+          <Field label={t('skillsTab.fieldName', { defaultValue: '名称' }) as string}>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={t('skillsTab.fieldNamePlaceholder', { defaultValue: '留空则用 slug' }) as string}
+              className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-[13px] text-neutral-900 outline-none focus:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+            />
+          </Field>
+
+          <Field
+            label={t('skillsTab.fieldDescription', { defaultValue: '描述' }) as string}
+            hint={t('skillsTab.descHint', { defaultValue: '写清「什么时候该用这个技能」；模型靠这句话决定是否加载，也是推荐的依据' }) as string}
+          >
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+              className="w-full resize-y rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-[13px] text-neutral-900 outline-none focus:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+            />
+          </Field>
+
+          <Field
+            label={t('skillsTab.fieldBody', { defaultValue: '正文' }) as string}
+            hint={t('skillsTab.bodyHint', { defaultValue: '可留空，创建后在右侧编辑器继续写' }) as string}
+          >
+            <textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={6}
+              className="w-full resize-y rounded-md border border-neutral-300 bg-white px-2 py-1.5 font-mono text-[12px] text-neutral-900 outline-none focus:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+            />
+          </Field>
+
+          {canUseProjectScope ? (
+            <div>
+              <span className="mb-1 block text-[11px] font-medium text-neutral-600 dark:text-neutral-300">
+                {t('skillsTab.scope', { defaultValue: '归属' })}
+              </span>
+              <div className="flex gap-2">
+                {([
+                  { value: 'user' as const, label: t('skillsTab.scopeUser', { defaultValue: 'User' }) as string },
+                  { value: 'project' as const, label: t('skillsTab.scopeProject', { defaultValue: 'Project' }) as string },
+                ]).map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setScope(option.value)}
+                    className={cn(
+                      'h-7 rounded-md border px-2.5 text-[12px] transition',
+                      scope === option.value
+                        ? 'border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900'
+                        : 'border-neutral-300 text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900',
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {error ? (
+            <p className="text-[12px] text-red-600 dark:text-red-400">{error}</p>
+          ) : null}
+        </div>
+
+        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-neutral-200 px-4 py-2.5 dark:border-neutral-800">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={creating}
+            className="inline-flex h-7 items-center rounded-md px-2.5 text-[12px] text-neutral-600 transition hover:bg-neutral-100 disabled:opacity-50 dark:text-neutral-300 dark:hover:bg-neutral-900"
+          >
+            {t('skillsTab.close', { defaultValue: '关闭' })}
+          </button>
+          <button
+            type="button"
+            onClick={() => void submit()}
+            disabled={!canSubmit}
+            className="inline-flex h-7 items-center gap-1.5 rounded-md bg-neutral-900 px-2.5 text-[12px] font-medium text-white transition hover:bg-neutral-700 disabled:opacity-40 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
+          >
+            {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.75} /> : null}
+            <span>{creating ? t('skillsTab.creating', { defaultValue: '创建中…' }) : t('skillsTab.create', { defaultValue: '创建' })}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[11px] font-medium text-neutral-600 dark:text-neutral-300">
+        {label}
+      </span>
+      {children}
+      {hint ? (
+        <span className="mt-1 block text-[11px] text-neutral-500 dark:text-neutral-400">{hint}</span>
+      ) : null}
+    </label>
   );
 }
 
@@ -854,6 +1200,11 @@ function SkillDetail({
           </span>
           {skill.version ? (
             <span className="text-xxs text-neutral-500 dark:text-neutral-400">v{skill.version}</span>
+          ) : null}
+          {skill.department ? (
+            <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] text-sky-700 dark:bg-sky-950/50 dark:text-sky-300">
+              {departmentLabel(skill.department, t)}
+            </span>
           ) : null}
         </div>
         {skill.description ? (
