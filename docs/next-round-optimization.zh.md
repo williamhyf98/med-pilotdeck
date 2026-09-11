@@ -213,3 +213,48 @@ npm test                                         # node --test dist/tests/**
 | §2.6 | ARM64 信创机器上解压 → 改 `deploy.env` 模型 URL → 启动 → 跑通一轮带附件对话；断外网抓包确认除模型 IP 外无出站 |
 | §2.7 | 对话中触发科室 skill，`read_skill` 能读到完整内容；Skills 页按科室分组正确 |
 | §2.8 | 输入典型 query 看到推荐 chip，点击后确实注入对应 skill |
+
+---
+
+## 7. B 岗实施记录（2026-09-11，分支 `feat/capability-layer`）
+
+分支基于 `develop`，B 岗 5 项共用。**构建与测试需在服务器执行**——开发机无 `node_modules`，`npm run build` / `npm test` / `vitest` 均无法本地运行，本轮所有 TS/TSX 改动只经过人工审查，纯 JS 文件已 `node --check` 并直接跑通断言。
+
+### §2.2 PPT 多主题（已完成）
+
+`skills/pptx/assets/layout-library/design-tokens.json` 新增 `themes` 段，5 套主题：`clinical` / `academic` / `trauma` / `vital` / `mono`；`scripts/pptx_cli.mjs` 接 `--theme`。
+
+按 `skills/pptx/SKILL.md` 的约束，**只做纯数据扩展**——未改 `layout-library` 里的 builder，未新增自定义 `.mjs`。新增主题 = 往 `themes` 加一段 token，版式复用既有布局。
+
+### §2.5 自创 skill 入口恢复（已完成）
+
+`SkillsV2.tsx` 的 New 按钮恢复，按 `availabilityMutable` 分权：`builtin` / `medical` 只读，`user` / `project` 可增删改。ClawHub 保持移除，没有引入公网通道。
+
+顺带修掉一个潜在崩溃：原 `groupedSkills` 直接展开 `...skills.medical` 而没做 `?? []`，服务端字段缺失时白屏。
+
+### §2.6 国产化适配（已完成代码侧去硬编码）
+
+`plugins/med-tools/plugin.json` 的 `MED_VLM_API_BASE` / `MED_EMBEDDING_*` 改读环境变量，新增 `config/deploy.env.example`；`dev-launcher.mjs` 与 `start-local.sh` 在文件缺失时打印醒目警告。
+
+> **部署侧待办：** 默认 host 已改为 `127.0.0.1`，现场必须 `cp config/deploy.env.example config/deploy.env` 并填真实模型地址（济南那台的历史取值见 [`jinan-model-config.zh.md`](./jinan-model-config.zh.md)），否则 med-tools 指向回环。按 `offline-deployment-plan.md` §3 的验收约定，真实 IP 不再写进本文。
+
+ARM64 原生依赖重编译仍需在信创真机或容器上做（§5 待决第 5 条），本轮未覆盖。
+
+### §2.7 丰富 skills 池（已完成）
+
+`plugins/med-tools/skills/` 新增 6 个科室角色技能：`med-role-emergency` / `med-role-critical-care` / `med-role-orthopedics` / `med-role-radiology` / `med-role-laboratory` / `med-role-burn`。`plugin.json` 的 `"skills": "skills"` 是目录扫描，新增文件夹无需改清单。
+
+新增可选 frontmatter 字段 `department` / `category`；`SkillManager.readSkillMeta()` 已透传，`/list` 整包转发，因此**不需要额外管道**。Skills 页据此出科室筛选条与徽标。
+
+6 个 description 全部重写为**纯正向**表述——原先每条都带「不出固定模版病例报告（用 med-case-report）」这类反向交叉引用，会让「写一份病例报告」误召回 `med-role-burn`。反面说明已存在于各技能 body 的「不适用」段，不丢信息。4 个既有 `med-*` 技能未动，避免影响已验收的 agent 路由。
+
+### §2.8 按 query 推荐 skill（已完成）
+
+- `ui/server/utils/skillRecommend.js` — 纯 JS 打分器，零模型调用、零依赖。中文按相邻二字 bigram 索引，拉丁文按整段小写 token；权重走 IDF（在候选池内计算），字段权重 name 3 / department 2.5 / slug 2 / description 1；拉丁前缀匹配（`PPT` → `pptx`）；几何衰减 `0.65^i` 防止散词累积压过命中技能名；最终分 `1 - exp(-raw/5)` 有界饱和。
+- `ui/server/utils/skillRecommend.test.js` — vitest，按仓库同目录 `*.test.js` 惯例。
+- `POST /api/skills/recommend`（`ui/server/routes/skills.js`）— 沿用 `/list` 的 `isGeneralCwd` / `gatewayProjectKey` 处理，5 秒 TTL 缓存吸收连续击键；任何异常都返回空数组，绝不让推荐功能把错误抛到输入框上。
+- `ui/src/components/chat-v2/SkillRecommendBar.tsx` — 350ms 防抖、输入 ≥4 字符才发请求、`AbortController` 取消在途请求；`ComposerV2` 新增三个**可选** props（`ChatInterfaceV2.layout.test.tsx` 会渲染 `ComposerV2`，必须可选）；`ChatInterfaceV2` 复用 `insertAtCursor` 注入，不抢焦点。
+
+实测（对真实 16 技能语料）：胸痛→急诊、骨折→骨科、PEEP/ICU→重症、血气/乳酸→检验、CT/结节→影像、烧伤/补液→烧伤、野战分类场→分级救治；「导出成PPT」→ `pptx` 排第一；「今天天气怎么样」「你好」→ 零推荐。
+
+> 调参过程中发现两处真实缺陷（非代码错误）：① 停用词表缺失时「怎么」在 16 条描述里出现 2 次被 IDF 误判为稀有，「今天天气怎么样」召回烧伤技能；② 散词累积让 `pdf` 压过 `pptx`。分别用停用词表和几何衰减修掉。默认阈值从 0.35 降到 0.25——噪声查询的得分是 **0** 而不是 0.2，高阈值只挡住了合法的单术语临床查询（如「胸痛」0.34）。
