@@ -504,5 +504,9 @@
       "message": "{{message}}",
       "hint": "请用更短 prompt 重试，让 agent 把大型工具输入拆成更小步骤，或在“设置 → 模型 Provider”中切换到工具调用能力更强的模型。"
     }
+  },
+  "skillRecommend": {
+    "label": "推荐技能",
+    "insertTemplate": "（使用「{{name}}」技能）"
   }
 }

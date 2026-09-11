@@ -516,5 +516,9 @@
       "message": "{{message}}",
       "hint": "Retry with a shorter prompt, ask the agent to split large tool inputs into smaller steps, or switch to a model with stronger tool-calling support in Settings → Model Provider."
     }
+  },
+  "skillRecommend": {
+    "label": "Suggested skills",
+    "insertTemplate": " (use the \"{{name}}\" skill)"
   }
 }

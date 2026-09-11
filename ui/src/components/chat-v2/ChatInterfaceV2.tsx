@@ -387,6 +387,18 @@ function ChatInterfaceV2({
     setRunMode('agent');
   }, []);
 
+  /**
+   * Chip click. `insertAtCursor` drops the hint at the caret without stealing
+   * focus, so a doctor can keep typing around it — the skill name in the text
+   * is what the agent routes on, not a mode toggle.
+   */
+  const handleInsertSkillHint = useCallback(
+    (text: string) => {
+      insertAtCursor(text);
+    },
+    [insertAtCursor],
+  );
+
   const handleWebSocketReconnect = useCallback(async () => {
     if (!selectedProject || !selectedSession) return;
 
@@ -655,6 +667,9 @@ function ChatInterfaceV2({
       onToggleCommandMenu={handleToggleCommandMenu}
       onInsertMention={() => insertAtCursor('@')}
       onInsertSlash={() => insertAtCursor('/')}
+      skillRecommendProjectPath={selectedProject?.fullPath ?? selectedProject?.path ?? null}
+      skillRecommendProjectType={selectedProject?.projectType ?? selectedProject?.type ?? null}
+      onInsertSkillHint={handleInsertSkillHint}
       getRootProps={getRootProps as (...args: unknown[]) => Record<string, unknown>}
       getInputProps={getInputProps as (...args: unknown[]) => Record<string, unknown>}
       isDragActive={isDragActive}

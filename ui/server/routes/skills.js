@@ -31,6 +31,7 @@ import multer from 'multer';
 import { getPilotDeckGateway } from '../pilotdeck-bridge.js';
 import { resolvePilotHome, isGeneralProjectKey, resolveLinkedRepoPath } from '../utils/pilotPaths.js';
 import { moveDirectoryAcrossDevicesSafe } from '../utils/fileMoves.js';
+import { recommendSkills } from '../utils/skillRecommend.js';
 
 const router = express.Router();
 
@@ -242,6 +243,58 @@ router.post('/list', async (req, res) => {
   }
 });
 
+/**
+ * Query → skill chips for the composer.
+ *
+ * Sits next to the chat box and fires on every debounced keystroke, so it has
+ * to be cheap: `skillsList` is served from the gateway's in-memory registry,
+ * and scoring is pure string work. A short TTL cache absorbs the burst of
+ * calls a typing session produces without ever serving a stale-enough list to
+ * matter (skill edits go through `/create` etc. and are rare mid-sentence).
+ */
+const RECOMMEND_CACHE_TTL_MS = 5000;
+const recommendCache = new Map();
+
+async function listSkillsForRecommend(projectPath) {
+  const key = gatewayProjectKey(projectPath) || '';
+  const hit = recommendCache.get(key);
+  const now = Date.now();
+  if (hit && now - hit.at < RECOMMEND_CACHE_TTL_MS) return hit.skills;
+
+  const data = await callGateway('skillsList', { projectKey: gatewayProjectKey(projectPath) });
+  // Flattened in scope order; `recommendSkills` re-ranks by relevance, and
+  // `overriddenBy` entries are dropped there so a user copy replaces the
+  // builtin it shadows rather than showing both.
+  const skills = [
+    ...(data.builtin ?? []),
+    ...(data.user ?? []),
+    ...(data.project ?? []),
+    ...(data.medical ?? []),
+  ];
+  recommendCache.set(key, { at: now, skills });
+  return skills;
+}
+
+router.post('/recommend', async (req, res) => {
+  try {
+    const { query, projectType, limit } = req.body || {};
+    if (typeof query !== 'string' || !query.trim()) {
+      return res.json({ recommendations: [] });
+    }
+    const skills = await listSkillsForRecommend(req.body?.projectPath);
+    const recommendations = recommendSkills(query, skills, {
+      projectType: typeof projectType === 'string' ? projectType : null,
+      limit: Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 5) : 3,
+    });
+    res.json({ recommendations });
+  } catch (e) {
+    // A recommendation is an affordance, never a blocker — a broken scorer
+    // must not paint an error across the composer. Log and return empty.
+    console.error('[skills-recommend]', e);
+    res.json({ recommendations: [] });
+  }
+});
+
 router.post('/read', async (req, res) => {
   try {
     const { skillPath, projectPath } = req.body || {};
@@ -315,6 +368,15 @@ router.post('/create', async (req, res) => {
       body,
       content,
     });
+    // `skillCreate` only writes to disk. The extension watcher on
+    // `$PILOT_HOME/skills` normally notices and invalidates the plugin
+    // registry on its own, but it watches recursively and swallows watch
+    // failures silently — unreliable on network/overlay mounts. Reload
+    // explicitly (same as `/availability`) so a freshly created skill is
+    // guaranteed visible to the agent on the next turn.
+    if (resolved.scope === 'user') {
+      await callGateway('reloadExtensions', {});
+    }
     res.json(result);
   } catch (e) {
     sendGatewayError(res, e);
