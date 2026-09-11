@@ -279,7 +279,7 @@ describe('MainContent project-type workspace routing', () => {
     expect(mocks.chatProps.some((props) => props.hideComposer === true)).toBe(true);
   });
 
-  it('extracts a free-text trauma narrative then launches the structured turn', async () => {
+  it('submits free-text trauma input and launches an extraction turn', async () => {
     const traumaProject: Project = {
       ...project,
       name: 'trauma_med-demo',
@@ -299,20 +299,17 @@ describe('MainContent project-type workspace routing', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: '整理' }));
 
-    await waitFor(() => expect(screen.getByRole('button', { name: '确认推演' })).not.toBeNull());
-
-    fireEvent.click(screen.getByRole('button', { name: '确认推演' }));
-
     await waitFor(() => expect(props.sendMessage).toHaveBeenCalled());
     expect(props.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
       type: 'pilotdeck-command',
       options: expect.objectContaining({
         traumaForm: expect.objectContaining({
-          injuryNarrative: '右小腿开放伤',
-          vitals: { heartRate: 118 },
+          injuryNarrative: '右小腿开放伤，心率 118',
+          vitals: {},
         }),
         traumaRawInput: '右小腿开放伤，心率 118',
-        userVisibleInput: expect.stringContaining('\n- 伤情：右小腿开放伤'),
+        traumaExtract: true,
+        userVisibleInput: '右小腿开放伤，心率 118',
       }),
     }));
     expect(screen.getByTestId('runtime-chat')).not.toBeNull();

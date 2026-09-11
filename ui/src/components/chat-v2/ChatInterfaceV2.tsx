@@ -125,6 +125,8 @@ function ChatInterfaceV2({
   composerFooterEnd,
   composerChrome = 'default',
   traumaOptimisticMessageRef,
+  navigateToChatMessageRef,
+  onTraumaProcessStateChange,
 }: ChatInterfaceProps) {
   const { t } = useTranslation('chat');
   const { tasksEnabled: _tasksEnabled, isTaskMasterInstalled: _isTaskMasterInstalled } =
@@ -448,6 +450,7 @@ function ChatInterfaceV2({
     onReplaceTemporarySession,
     onNavigateToSession,
     onWebSocketReconnect: handleWebSocketReconnect,
+    onTraumaProcessStateChange,
     sessionStore,
   });
 
@@ -708,6 +711,7 @@ function ChatInterfaceV2({
       totalMessages={totalMessages}
       loadEarlierMessages={loadEarlierMessages}
       loadAllMessages={loadAllMessages}
+      navigateToChatMessageRef={navigateToChatMessageRef}
       allMessagesLoaded={allMessagesLoaded}
       isLoadingAllMessages={isLoadingAllMessages}
       provider={'pilotdeck' as Provider}

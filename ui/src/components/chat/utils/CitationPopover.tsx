@@ -26,9 +26,11 @@ export function CitationPopover({
   const cite = citations?.find((c) => c.index === citeIndex);
 
   if (!cite) {
+    // 元数据还没到（流式刚开始）或该编号没有对应知识块：仍然渲染成蓝色角标，
+    // 只是不挂悬浮卡片，避免流式过程中角标样式先灰后蓝地跳变。
     return (
       <sup className="inline-flex items-center">
-        <span className="cursor-default rounded bg-gray-200 px-1 text-xs font-medium text-gray-500 dark:bg-gray-700 dark:text-gray-400">
+        <span className="cursor-default rounded bg-blue-100 px-1 text-xs font-medium text-blue-700 dark:bg-blue-900 dark:text-blue-300">
           [{index ?? '?'}]
         </span>
       </sup>

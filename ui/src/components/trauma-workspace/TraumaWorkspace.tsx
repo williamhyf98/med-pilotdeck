@@ -1,10 +1,11 @@
 import { ShieldAlert } from 'lucide-react';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { cn } from '../../lib/utils';
 import { TRAUMA_STAGES } from './demoCase';
 import StageOverrideDialog from './detail/StageOverrideDialog';
 import { snapshotsToRounds } from './domain/snapshotAdapter';
 import type { TurnFormInput } from './domain/types';
+import { SUBSTAGE_ORDER, SUBSTAGE_TO_MAIN } from './domain/stageConfig';
 import MemoDetailPanel from './MemoDetailPanel';
 import { useCaseStore } from './store/useCaseStore';
 import TraumaComposer from './TraumaComposer';
@@ -21,8 +22,16 @@ type TraumaWorkspaceProps = {
   resetKey: string;
   projectKey?: string;
   sessionId?: string;
-  onSubmitForm?: (form: TurnFormInput, rawInput: string) => void | Promise<void>;
+  onSubmitForm?: (form: TurnFormInput, rawInput: string, traumaExtract?: boolean) => void | Promise<void>;
+  onAbortTurn?: () => void;
   submitting?: boolean;
+  pendingRun?: {
+    runId: string;
+    mainStage?: string;
+    subStage?: string;
+    round?: number;
+  } | null;
+  onNavigateToChatMessage?: (runId: string) => void | Promise<void>;
   runtimePanel?: ReactNode;
 };
 
@@ -31,11 +40,15 @@ export default function TraumaWorkspace({
   projectKey,
   sessionId,
   onSubmitForm = () => undefined,
+  onAbortTurn,
   submitting = false,
+  pendingRun = null,
+  onNavigateToChatMessage,
   runtimePanel,
 }: TraumaWorkspaceProps) {
   const [selectedMemoId, setSelectedMemoId] = useState<string | null>(null);
   const [showStageOverride, setShowStageOverride] = useState(false);
+  const autoOpenedPendingRunRef = useRef<string | null>(null);
   const caseStore = useCaseStore(projectKey, sessionId);
   const rounds = useMemo(
     () => snapshotsToRounds(caseStore.snapshots, caseStore.current),
@@ -55,11 +68,48 @@ export default function TraumaWorkspace({
     }
     : INITIAL_POSITION;
   const stage = TRAUMA_STAGES.find((item) => item.id === position.stageId);
-  const substep = stage?.substeps[position.substepIndex];
+  const substep = position.substepIndex === null ? undefined : stage?.substeps[position.substepIndex];
   const selectedMemo = useMemo(
     () => rounds.find((round) => round.id === selectedMemoId) ?? null,
     [rounds, selectedMemoId],
   );
+  const pendingMemo = useMemo(() => {
+    if (!pendingRun) return null;
+    return rounds.find((round) => round.triggerMessageId === pendingRun.runId)
+      ?? (pendingRun.round
+        ? rounds.find((round) => round.round === pendingRun.round)
+        : null);
+  }, [pendingRun, rounds]);
+  const pendingPosition = useMemo(() => {
+    if (!pendingRun || pendingMemo) return null;
+    const mainStage = TRAUMA_STAGES.some((item) => item.id === pendingRun.mainStage)
+      ? pendingRun.mainStage as TreePosition['stageId']
+      : null;
+    const subStage = SUBSTAGE_ORDER.some((item) => item === pendingRun.subStage)
+      ? pendingRun.subStage as typeof SUBSTAGE_ORDER[number]
+      : null;
+    if (mainStage && subStage && SUBSTAGE_TO_MAIN[subStage] === mainStage) {
+      return {
+        runId: pendingRun.runId,
+        stageId: mainStage,
+        substepIndex: SUBSTAGE_ORDER
+          .filter((item) => SUBSTAGE_TO_MAIN[item] === mainStage)
+          .indexOf(subStage),
+        round: pendingRun.round,
+      };
+    }
+    if (currentRound && currentRound.stageId && currentRound.substepIndex !== null) {
+      return {
+        runId: pendingRun.runId,
+        stageId: currentRound.stageId,
+        substepIndex: currentRound.substepIndex,
+        round: pendingRun.round,
+      };
+    }
+    // 级别还没确认时不猜位置。后端在判不出级别时也拒绝回退到Ⅰ级初级急救
+    // （见 src/trauma/placement.ts 的注释），前端不该替它做这个假设。
+    return null;
+  }, [currentRound, pendingRun, pendingMemo]);
   const viewingHistoricalSnapshot = Boolean(
     selectedMemo?.snapshotVersion
     && selectedMemo.snapshotVersion !== caseStore.current?.version,
@@ -68,7 +118,16 @@ export default function TraumaWorkspace({
   useEffect(() => {
     setSelectedMemoId(null);
     setShowStageOverride(false);
+    autoOpenedPendingRunRef.current = null;
   }, [resetKey]);
+
+  useEffect(() => {
+    const pendingRunKey = pendingMemo?.triggerMessageId ?? pendingRun?.runId ?? null;
+    if (pendingMemo && autoOpenedPendingRunRef.current !== pendingRunKey) {
+      setSelectedMemoId(pendingMemo.id);
+      autoOpenedPendingRunRef.current = pendingRunKey;
+    }
+  }, [pendingMemo, pendingRun?.runId]);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-neutral-50/50 dark:bg-neutral-950">
@@ -125,6 +184,7 @@ export default function TraumaWorkspace({
               sessionId={sessionId}
               previousSubStage={caseStore.current?.currentSubStage ?? null}
               onSubmit={onSubmitForm}
+              onAbort={onAbortTurn}
               submitting={submitting}
             />
           </div>
@@ -172,8 +232,15 @@ export default function TraumaWorkspace({
                   rounds={rounds}
                   currentRoundIndex={currentRoundIndex}
                   position={position}
+                  pendingRound={pendingPosition}
                   selectedMemoId={selectedMemoId}
-                  onSelectMemo={(memoId) => setSelectedMemoId((current) => current === memoId ? null : memoId)}
+                  onSelectMemo={(memoId) => {
+                    setSelectedMemoId((current) => current === memoId ? null : memoId);
+                    const memo = rounds.find((item) => item.id === memoId);
+                    if (memo?.triggerMessageId) {
+                      void onNavigateToChatMessage?.(memo.triggerMessageId);
+                    }
+                  }}
                   onRequestStageOverride={hasLiveCase ? () => setShowStageOverride(true) : undefined}
                   canOverrideStage={!viewingHistoricalSnapshot}
                 />

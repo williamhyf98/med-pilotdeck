@@ -105,7 +105,6 @@ const DASHBOARD_PANEL_META: Record<DashboardPanelTab, { labelKey: string; icon: 
 const TRAUMA_VITAL_LABELS: Record<VitalItemKey, { label: string; unit: string }> = {
   respiratoryRate: { label: '呼吸', unit: '次/分' },
   systolicBloodPressure: { label: '收缩压', unit: 'mmHg' },
-  gcs: { label: 'GCS', unit: '分' },
   heartRate: { label: '心率', unit: '次/分' },
   temperature: { label: '体温', unit: '℃' },
 };
@@ -203,11 +202,18 @@ function MainContent({
   const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings() as TasksSettingsContextValue;
   const [toast, setToast] = useState<MainContentToast>(null);
   const [traumaSubmitting, setTraumaSubmitting] = useState(false);
+  const [pendingTraumaRun, setPendingTraumaRun] = useState<{
+    runId: string;
+    mainStage?: string;
+    subStage?: string;
+    round?: number;
+  } | null>(null);
+  const navigateToChatMessageRef = useRef<((runId: string) => void | Promise<void>) | null>(null);
   const traumaOptimisticMessageRef = useRef<(
     (text: string, targetSessionId?: string | null, runId?: string) => void
   ) | null>(null);
 
-  const submitTraumaForm = useCallback((form: TurnFormInput, rawInput = '') => {
+  const submitTraumaForm = useCallback((form: TurnFormInput, rawInput = '', traumaExtract = false) => {
     if (!selectedProject || traumaSubmitting) return;
     const selectedSessionId = selectedSession?.id;
     const concreteSessionId = selectedSessionId && !isTemporarySessionId(selectedSessionId)
@@ -218,20 +224,36 @@ function MainContent({
       : selectedSessionId || createTemporarySessionId();
     const summary = summarizeTraumaForm(form);
     const runId = createClientRunId();
+    const visibleInput = traumaExtract && rawInput.trim() ? rawInput.trim() : summary;
     setTraumaSubmitting(true);
     try {
-      traumaOptimisticMessageRef.current?.(summary, concreteSessionId, runId);
+      // Keep the sidebar in sync with the generic chat flow: create/bump the
+      // session row before the runner starts so a new trauma conversation is
+      // visible while its answer is still streaming. A temporary id is
+      // replaced in-place when the server emits session_created.
+      if (selectedProject.name) {
+        const optimisticSessionId = concreteSessionId
+          ?? temporarySessionId
+          ?? createTemporarySessionId();
+        onSessionActivityBump?.(
+          selectedProject.name,
+          optimisticSessionId,
+          visibleInput,
+        );
+      }
+      traumaOptimisticMessageRef.current?.(visibleInput, concreteSessionId, runId);
       const activatedSessionId = startSessionCommand({
         sendMessage,
         selectedProject,
-        command: `战创伤推演：${summary}`,
-        userVisibleInput: summary,
+        command: `战创伤推演：${visibleInput}`,
+        userVisibleInput: visibleInput,
         sessionId: concreteSessionId,
         temporarySessionId,
         sessionSummary: summary,
         runId,
         traumaForm: form,
         traumaRawInput: rawInput,
+        traumaExtract,
       });
       onSessionActive?.(activatedSessionId);
       if (concreteSessionId) onSessionProcessing?.(concreteSessionId);
@@ -244,13 +266,55 @@ function MainContent({
     onSessionProcessing,
     selectedProject,
     selectedSession?.id,
+    onSessionActivityBump,
     sendMessage,
     traumaSubmitting,
   ]);
 
+  const abortTraumaTurn = useCallback(() => {
+    const pendingSessionId = typeof window !== 'undefined'
+      ? window.sessionStorage.getItem('pendingSessionId')
+      : null;
+    const sessionId = [selectedSession?.id, pendingSessionId]
+      .find((value) => Boolean(value) && !isTemporarySessionId(value));
+    if (!sessionId) return;
+    sendMessage({
+      type: 'abort-session',
+      sessionId,
+      provider: 'pilotdeck',
+    });
+    setPendingTraumaRun(null);
+  }, [selectedSession?.id, sendMessage]);
+
+  const handleTraumaProcessStateChange = useCallback((state: {
+    runId: string;
+    state: 'snapshot_started' | 'turn_failed';
+    mainStage?: string;
+    subStage?: string;
+    round?: number;
+  }) => {
+    setPendingTraumaRun((current) => {
+      if (state.state !== 'snapshot_started') {
+        return current?.runId === state.runId ? null : current;
+      }
+      // 同一轮里会收到多个 snapshot_started：第 5 步和第 10 步带确认后的级别，
+      // 而正文写完时的「整理推演流程图/保存推演结果」标记不带。后者不能把已经
+      // 定好的位置擦成空，否则「生成中」节点又会掉回默认子级。
+      const sameRun = current?.runId === state.runId;
+      const keepPlacement = sameRun && !state.subStage && Boolean(current?.subStage);
+      return {
+        runId: state.runId,
+        mainStage: keepPlacement ? current?.mainStage : state.mainStage,
+        subStage: keepPlacement ? current?.subStage : state.subStage,
+        round: state.round ?? (sameRun ? current?.round : undefined),
+      };
+    });
+  }, []);
+
   useEffect(() => {
     setTraumaSubmitting(false);
-  }, [selectedProject?.name]);
+    setPendingTraumaRun(null);
+  }, [selectedProject?.name, selectedSession?.id]);
 
   useEffect(() => {
     if (!traumaSubmitting) return undefined;
@@ -528,8 +592,12 @@ function MainContent({
           onSessionActivityBump={onSessionActivityBump}
           processingSessions={processingSessions}
           submitTraumaForm={submitTraumaForm}
+          abortTraumaTurn={abortTraumaTurn}
           traumaOptimisticMessageRef={traumaOptimisticMessageRef}
+          navigateToChatMessageRef={navigateToChatMessageRef}
           traumaSubmitting={traumaSubmitting}
+          pendingTraumaRun={pendingTraumaRun}
+          onTraumaProcessStateChange={handleTraumaProcessStateChange}
           unreadSessionIds={unreadSessionIds}
           onReplaceTemporarySession={onReplaceTemporarySession}
           onNavigateToSession={onNavigateToSession}
@@ -614,9 +682,24 @@ type SplitBodyProps = {
     optimisticTitle?: string,
   ) => void;
   processingSessions: Set<string>;
-  submitTraumaForm: (form: TurnFormInput, rawInput?: string) => void;
+  submitTraumaForm: (form: TurnFormInput, rawInput?: string, traumaExtract?: boolean) => void;
+  abortTraumaTurn: () => void;
   traumaOptimisticMessageRef: React.MutableRefObject<((text: string, targetSessionId?: string | null, runId?: string) => void) | null>;
+  navigateToChatMessageRef: React.MutableRefObject<((runId: string) => void | Promise<void>) | null>;
   traumaSubmitting: boolean;
+  pendingTraumaRun: {
+    runId: string;
+    mainStage?: string;
+    subStage?: string;
+    round?: number;
+  } | null;
+  onTraumaProcessStateChange: (state: {
+    runId: string;
+    state: 'snapshot_started' | 'turn_failed';
+    mainStage?: string;
+    subStage?: string;
+    round?: number;
+  }) => void;
   unreadSessionIds: Set<string>;
   onReplaceTemporarySession: any;
   onNavigateToSession: (sessionId: string) => void;
@@ -666,8 +749,12 @@ function SplitBody(props: SplitBodyProps) {
     onSessionActivityBump,
     processingSessions,
     submitTraumaForm,
+    abortTraumaTurn,
     traumaOptimisticMessageRef,
+    navigateToChatMessageRef,
     traumaSubmitting,
+    pendingTraumaRun,
+    onTraumaProcessStateChange,
     unreadSessionIds,
     onReplaceTemporarySession,
     onNavigateToSession,
@@ -963,6 +1050,8 @@ function SplitBody(props: SplitBodyProps) {
       compact={isFiles}
       hideComposer={isWarTraumaProject}
       traumaOptimisticMessageRef={traumaOptimisticMessageRef}
+      navigateToChatMessageRef={navigateToChatMessageRef}
+      onTraumaProcessStateChange={onTraumaProcessStateChange}
       hiddenComposerNotice={isWarTraumaProject && isFiles
         ? '战创伤病例请切换到对话工作区，通过结构化表单提交本轮信息。'
         : undefined}
@@ -1108,6 +1197,9 @@ function SplitBody(props: SplitBodyProps) {
               projectKey={selectedProject?.fullPath || selectedProject?.path || selectedProject?.name}
               sessionId={selectedSession?.id}
               onSubmitForm={submitTraumaForm}
+              onAbortTurn={abortTraumaTurn}
+              pendingRun={pendingTraumaRun}
+              onNavigateToChatMessage={(runId) => navigateToChatMessageRef.current?.(runId)}
               runtimePanel={chatInterface}
               submitting={traumaSubmitting || Boolean(
                 selectedSession?.id && processingSessions.has(selectedSession.id)

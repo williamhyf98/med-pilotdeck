@@ -8,7 +8,7 @@ import type { CaseState, PlacementAssessment } from "../types.js";
 import { PLACEMENT_SYSTEM_PROMPT } from "./placementPrompt.js";
 
 export function createPlacementStation(model: StructuredModelClient): {
-  place(input: { state: CaseState }): Promise<PlacementAssessment>;
+  place(input: { state: CaseState; signal?: AbortSignal }): Promise<PlacementAssessment>;
 } {
   return {
     async place(input) {
@@ -24,6 +24,7 @@ export function createPlacementStation(model: StructuredModelClient): {
         }),
         schema: PLACEMENT_OUTPUT_SCHEMA,
         validate: validatePlacementAssessment,
+        signal: input.signal,
       });
       return {
         ...raw,

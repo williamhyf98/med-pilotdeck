@@ -145,6 +145,120 @@ describe('TraumaWorkspace', () => {
     expect(screen.queryByText('用户确认：')).toBeNull();
   });
 
+  it('navigates the chat to the matching input bubble when selecting a round memo', () => {
+    const state = initialUiCaseState();
+    state.round = 2;
+    state.version = 2;
+    state.memos = [{
+      id: 'memo-nav',
+      round: 2,
+      createdAt: state.updatedAt,
+      mainStage: 'battlefield_first_aid',
+      subStage: 'primary_first_aid',
+      title: '点击定位',
+      inputPoints: [],
+      actionPoints: [],
+      conclusion: '定位到输入',
+      snapshotVersion: 2,
+    }];
+    caseStoreMock.current = state;
+    caseStoreMock.snapshots = [{
+      eventType: 'agent_turn',
+      round: 2,
+      createdAt: state.updatedAt,
+      triggerMessageId: 'run-nav',
+      state,
+      response: {
+        naturalLanguageAnswer: '继续观察。',
+        transition: { status: 'STAY', reason: '留在本级' },
+        treatmentPlan: [],
+      },
+    }];
+    const navigate = vi.fn();
+
+    render(
+      <TraumaWorkspace
+        resetKey="trauma:navigate"
+        onSubmitForm={vi.fn()}
+        onNavigateToChatMessage={navigate}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /R2点击定位/ }));
+    expect(navigate).toHaveBeenCalledWith('run-nav');
+  });
+
+  it('shows only used evidence and the reduced current status in memo detail', () => {
+    const state = initialUiCaseState();
+    state.round = 1;
+    state.version = 1;
+    state.vitalSignsHistory = [{
+      round: 1,
+      recordedAt: state.updatedAt,
+      values: { respiratoryRate: 30 },
+    }];
+    state.injuryNarratives = [{ round: 1, createdAt: state.updatedAt, text: '右小腿开放伤' }];
+    state.treatmentNarratives = [{ round: 1, createdAt: state.updatedAt, text: '已加压包扎' }];
+    state.memos = [{
+      id: 'memo-detail',
+      round: 1,
+      createdAt: state.updatedAt,
+      mainStage: 'battlefield_first_aid',
+      subStage: 'primary_first_aid',
+      title: '详情精简',
+      inputPoints: [],
+      actionPoints: [],
+      conclusion: '继续观察',
+      snapshotVersion: 1,
+    }];
+    state.evidence = [
+      {
+        id: 'used-chunk',
+        documentTitle: '已使用条款',
+        section: '第二章',
+        text: '已使用知识块内容',
+        retrievalScore: 0.91,
+        retrievalBackend: 'remote',
+        usedInAnswer: true,
+      },
+      {
+        id: 'unused-chunk',
+        documentTitle: '未使用条款',
+        section: '第三章',
+        text: '未使用知识块内容',
+        retrievalScore: 0.82,
+        retrievalBackend: 'local',
+        usedInAnswer: false,
+      },
+    ];
+    caseStoreMock.current = state;
+    caseStoreMock.snapshots = [{
+      eventType: 'agent_turn',
+      round: 1,
+      createdAt: state.updatedAt,
+      triggerMessageId: 'message-detail',
+      state,
+      response: {
+        naturalLanguageAnswer: '继续观察。',
+        treatmentPlan: [],
+        transition: { status: 'STAY', reason: '留在本级' },
+      },
+    }];
+
+    render(<TraumaWorkspace resetKey="trauma:detail" onSubmitForm={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /R1详情精简/ }));
+
+    expect(screen.getByText('当前状态')).not.toBeNull();
+    expect(screen.queryByText('当前伤员状态')).toBeNull();
+    expect(screen.queryByText('意识')).toBeNull();
+    expect(screen.queryByText('伤情')).toBeNull();
+    expect(screen.queryByText('已实施处置')).toBeNull();
+    expect(screen.getByText('知识块依据 · 已使用 1 条')).not.toBeNull();
+    expect(screen.getByText('已使用条款')).not.toBeNull();
+    expect(screen.queryByText('未使用条款')).toBeNull();
+  });
+
   it('removes injury-count and elapsed-time status assumptions', () => {
     render(<TraumaWorkspace resetKey="trauma:empty" onSubmitForm={vi.fn()} />);
 
@@ -175,6 +289,135 @@ describe('TraumaWorkspace', () => {
       />,
     );
     expect(screen.getByText('实时处理与确认')).not.toBeNull();
+  });
+
+  it('shows a non-clickable loading leaf while the snapshot is being assembled', () => {
+    render(
+      <TraumaWorkspace
+        resetKey="trauma:pending"
+        pendingRun={{
+          runId: 'run-pending',
+          mainStage: 'battlefield_first_aid',
+          subStage: 'primary_first_aid',
+          round: 1,
+        }}
+        onSubmitForm={vi.fn()}
+      />,
+    );
+
+    const pending = screen.getByTestId('trauma-pending-round');
+    expect(within(pending).getByText('R1 生成中')).not.toBeNull();
+    expect(within(pending).getByLabelText('生成中')).not.toBeNull();
+    expect(within(pending).queryByRole('button')).toBeNull();
+  });
+
+  it('highlights the pending target path and marks earlier ancestors complete', () => {
+    render(
+      <TraumaWorkspace
+        resetKey="trauma:pending-target"
+        pendingRun={{
+          runId: 'run-pending-target',
+          mainStage: 'early_treatment',
+          subStage: 'emergency_treatment',
+          round: 1,
+        }}
+        onSubmitForm={vi.fn()}
+      />,
+    );
+
+    const battlefield = screen.getByText('战现场急救').closest('div.rounded-lg') as HTMLElement;
+    const earlyTreatment = screen.getByText('早期救治').closest('div.rounded-lg') as HTMLElement;
+    expect(within(battlefield).getByText('已完成')).not.toBeNull();
+    expect(within(earlyTreatment).getByText('当前')).not.toBeNull();
+
+    const primaryLabel = screen.getAllByText('初级急救').find((element) => element.tagName.toLowerCase() === 'p') as HTMLElement;
+    const advancedLabel = screen.getAllByText('高级急救').find((element) => element.tagName.toLowerCase() === 'p') as HTMLElement;
+    const emergencyLabel = screen.getAllByText('紧急处置').find((element) => element.tagName.toLowerCase() === 'p') as HTMLElement;
+    const primary = primaryLabel.closest('div.rounded-md') as HTMLElement;
+    const advanced = advancedLabel.closest('div.rounded-md') as HTMLElement;
+    const emergency = emergencyLabel.closest('div.rounded-md') as HTMLElement;
+    expect(within(primary).getByText('已完成')).not.toBeNull();
+    expect(within(advanced).getByText('已完成')).not.toBeNull();
+    expect(within(emergency).getByText('当前')).not.toBeNull();
+    expect(screen.getByTestId('trauma-pending-round')).not.toBeNull();
+  });
+
+  it('shows no loading leaf until the level is confirmed', () => {
+    // 级别未定时不猜位置——以前会兜底挂到「初级急救」下，等级别确认后再跳走。
+    render(
+      <TraumaWorkspace
+        resetKey="trauma:pending-unplaced"
+        pendingRun={{ runId: 'run-unplaced', round: 1 }}
+        onSubmitForm={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId('trauma-pending-round')).toBeNull();
+    const primaryLabel = screen.getAllByText('初级急救').find((element) => element.tagName.toLowerCase() === 'p') as HTMLElement;
+    const primary = primaryLabel.closest('div.rounded-md') as HTMLElement;
+    expect(within(primary).getByText('未开始')).not.toBeNull();
+  });
+
+  it('opens the newly persisted memo and replaces the loading leaf', async () => {
+    const pendingRun = {
+      runId: 'run-complete',
+      mainStage: 'battlefield_first_aid',
+      subStage: 'advanced_first_aid',
+      round: 2,
+    };
+    const { rerender } = render(
+      <TraumaWorkspace
+        resetKey="trauma:pending-complete"
+        pendingRun={pendingRun}
+        onSubmitForm={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('trauma-pending-round')).not.toBeNull();
+
+    const state = {
+      ...initialUiCaseState(),
+      version: 2,
+      round: 2,
+      currentSubStage: 'advanced_first_aid' as const,
+      memos: [{
+        id: 'memo-complete',
+        round: 2,
+        createdAt: '2026-09-03T15:10:00+08:00',
+        mainStage: 'battlefield_first_aid' as const,
+        subStage: 'advanced_first_aid' as const,
+        title: '真实快照',
+        inputPoints: ['胸痛加重'],
+        actionPoints: ['持续监测'],
+        conclusion: '继续观察',
+        snapshotVersion: 2,
+      }],
+    };
+    caseStoreMock.current = state;
+    caseStoreMock.snapshots = [{
+      eventType: 'agent_turn',
+      round: 2,
+      createdAt: state.updatedAt,
+      triggerMessageId: pendingRun.runId,
+      state,
+      response: {
+        naturalLanguageAnswer: '继续观察。',
+        treatmentPlan: [],
+        transition: { status: 'STAY', reason: '留在本级' },
+      },
+    }];
+    rerender(
+      <TraumaWorkspace
+        resetKey="trauma:pending-complete"
+        pendingRun={pendingRun}
+        onSubmitForm={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('trauma-pending-round')).toBeNull();
+      expect(screen.getByLabelText('轮次纪要详情')).not.toBeNull();
+      expect(screen.getAllByText('真实快照').length).toBeGreaterThanOrEqual(2);
+    });
   });
 
   it('preserves form input across a case persistence and a version bump', async () => {

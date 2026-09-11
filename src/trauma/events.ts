@@ -4,9 +4,13 @@ import type {
   PlacementConfirmationRequest,
   TraumaTurnProgress,
 } from "./runner.js";
-import type { AgentTurnResponse } from "./types.js";
+import type { AgentTurnResponse, SubStage } from "./types.js";
 import { normalizeChineseDisplayText } from "./displayLabels.js";
-import { typicalFacilityForSubStage } from "./stageConfig.js";
+import {
+  SUBSTAGE_ORDER,
+  SUBSTAGE_TO_MAIN,
+  typicalFacilityForSubStage,
+} from "./stageConfig.js";
 
 const PHASE_LABELS: Record<TraumaTurnProgress["phase"], string> = {
   validate: "校验并合并表单",
@@ -56,6 +60,15 @@ const RUNNER_PHASE_LABELS: Record<string, { title: string; runningTitle: string;
     phaseGroup: "write",
   },
 };
+
+function citationsFromResponse(response: AgentTurnResponse) {
+  const promptEvidence = response.evidence.filter((chunk) => chunk.selectedForPrompt);
+  return promptEvidence.map((chunk, index) => ({
+    index: index + 1,
+    title: normalizeChineseDisplayText(chunk.documentTitle),
+    section: normalizeChineseDisplayText(chunk.section || chunk.article || "未标注章节"),
+  }));
+}
 
 function runnerStepLabel(step: number, phase: string) {
   if (RUNNER_PHASE_LABELS[phase]) return RUNNER_PHASE_LABELS[phase];
@@ -115,7 +128,7 @@ export function traumaProgressEvents(input: {
       runningTitle: progress.status === "started" ? progress.title : undefined,
       detail: progress.detail,
       durationMs: progress.status === "finished" ? progress.durationMs : undefined,
-      details: progress.status === "finished" ? progress.details : undefined,
+      details: progress.details,
     });
     const toolCallId = `trauma-step-${progress.step}:${runId}`;
     if (progress.status === "started") {
@@ -154,6 +167,39 @@ export function traumaProgressEvents(input: {
     ok: progress.ok,
     resultPreview: progress.detail,
     runId,
+  }];
+}
+
+export function traumaExtractionEvents(input: {
+  runId: string;
+  status: "started" | "finished";
+  ok?: boolean;
+  detail?: string;
+}): GatewayEvent[] {
+  const payload = runnerStepPayload({
+    phase: "extract",
+    title: "大模型信息抽取",
+    runningTitle: "正在进行大模型信息抽取",
+    detail: input.detail,
+    countInTotal: false,
+  });
+  const toolCallId = `trauma-extraction:${input.runId}`;
+  if (input.status === "started") {
+    return [{
+      type: "tool_call_started",
+      toolCallId,
+      name: payload.title,
+      argsPreview: previewPayload(payload),
+      runId: input.runId,
+    }];
+  }
+  return [{
+    type: "tool_call_finished",
+    toolCallId,
+    toolName: payload.title,
+    ok: input.ok !== false,
+    resultPreview: previewPayload(payload),
+    runId: input.runId,
   }];
 }
 
@@ -207,23 +253,44 @@ function placementLabel(stage: string, subStage: string, facility?: string | nul
   return `${main} · ${sub}${facility ? `（${facility}）` : ""}`;
 }
 
+const PROPOSED_PREFIX = "采用建议：";
+const ALTERNATIVE_PREFIX = "改用：";
+
+/**
+ * 确认卡里可选的备选子级：与录入表单的级别单选保持同一套过滤规则——
+ * 从「当前已采用子级」起往后的所有子级（更早的子级不允许回退）。
+ * 没有当前子级时（首轮）则开放全部子级。
+ */
+function alternativeSubStages(request: PlacementConfirmationRequest): SubStage[] {
+  const currentIndex = request.current.subStage
+    ? SUBSTAGE_ORDER.indexOf(request.current.subStage)
+    : 0;
+  return SUBSTAGE_ORDER
+    .slice(Math.max(0, currentIndex))
+    .filter((subStage) => subStage !== request.proposed.subStage);
+}
+
 export function placementConfirmationOptions(request: PlacementConfirmationRequest) {
+  // 第一项永远是大模型的建议，并带上它给出的判定理由。
   const options = [{
-    label: `采用建议：${placementLabel(
+    label: `${PROPOSED_PREFIX}${placementLabel(
       request.proposed.stage!,
       request.proposed.subStage!,
       typicalFacilityForSubStage(request.proposed.subStage!).name,
     )}`,
     description: request.proposed.rationale,
   }];
-  if (request.current.stage && request.current.subStage) {
+  for (const subStage of alternativeSubStages(request)) {
+    const isCurrent = subStage === request.current.subStage;
     options.push({
-      label: `保持当前：${placementLabel(
-        request.current.stage,
-        request.current.subStage,
-        request.current.facilityName,
+      label: `${ALTERNATIVE_PREFIX}${placementLabel(
+        SUBSTAGE_TO_MAIN[subStage],
+        subStage,
+        isCurrent ? request.current.facilityName : typicalFacilityForSubStage(subStage).name,
       )}`,
-      description: "按当前已采用级别继续检索并生成方案",
+      description: isCurrent
+        ? "按当前已采用级别继续检索并生成方案"
+        : "以该级别作为本轮推演基线继续检索并生成方案",
     });
   }
   return options;
@@ -233,8 +300,12 @@ export function parsePlacementConfirmation(
   request: PlacementConfirmationRequest,
   selected: string | undefined,
 ): PlacementConfirmationDecision {
-  if (selected?.startsWith("采用建议：")) return { choice: "proposed" };
-  return { choice: "current" };
+  // 未作答、被忽略或落在选项之外，一律按建议继续，保证流程不会卡死。
+  if (!selected || selected.startsWith(PROPOSED_PREFIX)) return { choice: "proposed" };
+  const matched = alternativeSubStages(request).find((subStage) =>
+    selected.startsWith(`${ALTERNATIVE_PREFIX}${MAIN_STAGE_LABELS[SUBSTAGE_TO_MAIN[subStage]]} · ${SUBSTAGE_LABELS[subStage]}`));
+  if (!matched) return { choice: "proposed" };
+  return { choice: "selected", stage: SUBSTAGE_TO_MAIN[matched], subStage: matched };
 }
 
 /**
@@ -258,6 +329,7 @@ export function traumaTurnEvents(input: {
       : [{
         type: "assistant_text_delta",
         text: normalizeChineseDisplayText(input.response.naturalLanguageAnswer),
+        citations: citationsFromResponse(input.response),
         runId: input.runId,
       } satisfies GatewayEvent]),
   ];

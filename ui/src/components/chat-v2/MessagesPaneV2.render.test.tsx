@@ -23,6 +23,7 @@ beforeAll(() => {
 
 afterEach(() => {
   cleanup();
+  vi.clearAllMocks();
 });
 
 describe('getContextStatus', () => {
@@ -58,12 +59,14 @@ function createPaneElement({
   isAssistantWorking = false,
   runMode = 'agent',
   planModeActive = false,
+  navigateToChatMessageRef,
 }: {
   messages: ChatMessage[];
   activityMessages?: ChatMessage[];
   isAssistantWorking?: boolean;
   runMode?: ChatRunMode;
   planModeActive?: boolean;
+  navigateToChatMessageRef?: React.MutableRefObject<((runId: string) => void | Promise<void>) | null>;
 }) {
   const scrollContainerRef = React.createRef<HTMLDivElement>();
 
@@ -83,6 +86,7 @@ function createPaneElement({
         totalMessages={messages.length}
         loadEarlierMessages={() => {}}
         loadAllMessages={() => {}}
+        navigateToChatMessageRef={navigateToChatMessageRef}
         allMessagesLoaded
         isLoadingAllMessages={false}
         provider="pilotdeck"
@@ -104,6 +108,7 @@ function renderPane(options: {
   isAssistantWorking?: boolean;
   runMode?: ChatRunMode;
   planModeActive?: boolean;
+  navigateToChatMessageRef?: React.MutableRefObject<((runId: string) => void | Promise<void>) | null>;
 }) {
   return render(createPaneElement(options));
 }
@@ -244,6 +249,33 @@ describe('MessagesPaneV2 render behavior', () => {
     expect(liveStatus.textContent).toContain('Searching files');
     expect(liveStatus.querySelector('button')).toBeNull();
     expect(Boolean(headerStatus.compareDocumentPosition(assistantText) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+  });
+
+  it('scrolls to a message by trauma run id', async () => {
+    const navigateRef = React.createRef<((runId: string) => void | Promise<void>) | null>();
+    renderPane({
+      navigateToChatMessageRef: navigateRef,
+      messages: [
+        {
+          ...makeMessage(0),
+          type: 'user',
+          runId: 'run-target',
+          turnId: 'run-target',
+          content: '目标输入',
+        },
+        makeMessage(1),
+      ],
+    });
+
+    await waitFor(() => expect(navigateRef.current).toBeTypeOf('function'));
+    await navigateRef.current?.('run-target');
+
+    await waitFor(() => {
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    });
   });
 
   it('keeps the processed duration visible after the active turn completes', () => {

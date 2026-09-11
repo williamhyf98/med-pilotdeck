@@ -15,7 +15,7 @@ import type {
   CronStopResult,
 } from "../../cron/protocol/types.js";
 import type { CanonicalUsage } from "../../model/index.js";
-import type { TurnFormInput } from "../../trauma/types.js";
+import type { CitationMetadata, TurnFormInput } from "../../trauma/types.js";
 import type { TelemetryExecutionKind, TelemetryModule } from "../../telemetry/index.js";
 import type { SessionInfo as ProjectSessionInfo } from "../../session/index.js";
 import type {
@@ -94,6 +94,8 @@ export type GatewaySubmitTurnInput = {
   traumaForm?: TurnFormInput;
   /** 用户本轮原始自由文本，由工位 F 抽取后存入快照。 */
   traumaRawInput?: string;
+  /** Whether the raw trauma input should be parsed by station F before the runner starts. */
+  traumaExtract?: boolean;
   projectKey?: string;
   /** Override the agent session's working directory for this session. */
   workspaceCwd?: string;
@@ -151,8 +153,8 @@ type GatewayTurnScopedEventMetadata = {
 export type GatewayEvent = GatewayTurnScopedEventMetadata & (
   | { type: "turn_started"; runId: string }
   | { type: "model_request_started"; model?: string; provider?: string }
-  | { type: "assistant_text_delta"; text: string }
-  | { type: "assistant_text_end" }
+  | { type: "assistant_text_delta"; text: string; citations?: CitationMetadata[] }
+  | { type: "assistant_text_end"; citations?: CitationMetadata[] }
   | { type: "assistant_attachment"; attachment: GatewayOutboundAttachment }
   | { type: "file_artifacts"; artifacts: import("../../session/artifacts/FileArtifact.js").FileArtifact[] }
   | { type: "assistant_thinking_delta"; text: string }

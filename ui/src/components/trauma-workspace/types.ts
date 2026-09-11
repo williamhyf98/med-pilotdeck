@@ -52,12 +52,15 @@ export type DemoMessage = {
 
 export type RoundMemo = {
   id: string;
+  /** 触发该轮推演的聊天消息/run id，用于实时快照与聊天事件关联。 */
+  triggerMessageId?: string;
   snapshotVersion?: number;
   round: number;
   title: string;
   time: string;
-  stageId: MainStageId;
-  substepIndex: number;
+  /** 级别待确认的轮次为 null，不得回退到首个主级/子级。 */
+  stageId: MainStageId | null;
+  substepIndex: number | null;
   unplaced?: boolean;
   facility: string;
   capability: string;
@@ -89,6 +92,8 @@ export type RoundMemo = {
     score: string;
     source: '远程知识库' | '本地语料';
     used: boolean;
+    /** 与正文角标、参考来源列表共用的引用编号；未进入 promptChunks 时为空。 */
+    citationIndex?: number;
     text: string;
   }>;
 };

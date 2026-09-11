@@ -26,7 +26,6 @@ export type ClassificationType =
 export type VitalItemKey =
   | "respiratoryRate"
   | "systolicBloodPressure"
-  | "gcs"
   | "heartRate"
   | "temperature"
   | "spo2";
@@ -108,6 +107,9 @@ export type EvidenceChunk = {
   knowledgeBase: string;
   documentTitle: string;
   section: string;
+  chapter?: string;
+  heading?: string;
+  path?: string;
   article?: string;
   text: string;
   retrievalScore: number;
@@ -115,7 +117,23 @@ export type EvidenceChunk = {
   coverageTags: RagQueryKind[];
   selectedForPrompt: boolean;
   usedInAnswer: boolean;
+  /**
+   * 该知识块在本轮 promptChunks 中的序号 + 1，与正文角标 [N] 和参考来源列表
+   * 使用同一个编号。未进入 promptChunks 的知识块没有编号。
+   */
+  citationIndex?: number;
   retrievalBackend: "remote" | "local";
+};
+
+export type CitationMetadata = {
+  /** 引用编号，对应正文中的 [N] */
+  index: number;
+  /** 文献名或知识块标题 */
+  title: string;
+  /** 章节路径 */
+  section: string;
+  /** @deprecated 短引文已下线；字段保留仅为兼容历史消息的反序列化。 */
+  quote?: string;
 };
 
 export type RagQueryKind =

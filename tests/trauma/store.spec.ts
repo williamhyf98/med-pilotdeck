@@ -126,7 +126,7 @@ test("load migrates legacy structured facts and drops extractor-era fields", asy
     assert.match(migrated?.treatmentNarratives[0]?.text ?? "", /加压包扎.*持续监测/);
     assert.deepEqual(migrated?.vitalSignsHistory.map((record) => record.round), [1, 2]);
     assert.deepEqual(migrated?.vitalSignsHistory.map((record) => record.values), [
-      { systolicBloodPressure: 92, gcs: 15 },
+      { systolicBloodPressure: 92, spo2: 95 },
       { respiratoryRate: 28, heartRate: 118 },
     ]);
     assert.equal("timeline" in (migrated ?? {}), false);

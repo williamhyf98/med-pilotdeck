@@ -35,7 +35,7 @@ function reasonPayload() {
       id: "a1", title: "压迫止血", description: "继续止血", scope: "current_stage",
       priority: 1, evidenceChunkIds: ["chunk-stage"], professionalConfirmationRequired: false,
     }],
-    missingInformation: ["本轮未测GCS"],
+    missingInformation: ["本轮未测血氧饱和度"],
     transition: { status: "STAY", reason: "继续处置", requiresUserConfirmation: false },
     gateAssessment: {
       needHigherCapability: false, requiredCapabilities: [], transportReadiness: "unknown",
@@ -129,6 +129,7 @@ test("successful full turn records exactly 11 steps", async () => {
   const root = await mkdtemp(join(tmpdir(), "trauma-audit-"));
   try {
     const steps: number[] = [];
+    const startedDetails: Record<string, unknown>[] = [];
     const skippedPhases: string[] = [];
     const store = createTraumaCaseStore(root);
     const submitted = form({ treatmentNarrative: "已完成加压包扎" });
@@ -140,6 +141,9 @@ test("successful full turn records exactly 11 steps", async () => {
         path: "/tmp/unused",
         async record(entry) {
           if (entry.event === "step_completed" && entry.step) steps.push(entry.step);
+          if (entry.event === "step_started" && entry.step === 10 && entry.details) {
+            startedDetails.push(entry.details);
+          }
           if (entry.event === "step_completed" && entry.details?.skipped === true && entry.phase) {
             skippedPhases.push(entry.phase);
           }
@@ -151,6 +155,11 @@ test("successful full turn records exactly 11 steps", async () => {
       requestPlacementConfirmation: async () => ({ choice: "proposed" }),
     });
     assert.deepEqual(steps, Array.from({ length: 11 }, (_, index) => index + 1));
+    assert.deepEqual(startedDetails, [{
+      round: 1,
+      mainStage: "battlefield_first_aid",
+      subStage: "primary_first_aid",
+    }]);
     // 单波检索：流程里已不再保留任何被跳过的步骤壳子。
     assert.deepEqual(skippedPhases, []);
     assert.equal(ragCalls.count, 3);

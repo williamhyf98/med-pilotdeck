@@ -125,6 +125,38 @@ describe('patchMergedStreamingMessage', () => {
 });
 
 describe('computeMerged', () => {
+  it('keeps an explicitly stopped realtime turn before a newer server turn', () => {
+    const server = [
+      textMessage('new-user', '新一轮输入', '2026-05-28T00:00:03.000Z', {
+        role: 'user',
+        runId: 'run-new',
+      }),
+    ];
+    const realtime = [
+      textMessage('stopped-user', '上一轮输入', '2026-05-28T00:00:01.000Z', {
+        role: 'user',
+        runId: 'run-stopped',
+        isInterruptedNotice: true,
+      }),
+      {
+        id: 'stopped-error',
+        sessionId: 'web:s_test',
+        timestamp: '2026-05-28T00:00:02.000Z',
+        provider: PROVIDER,
+        kind: 'error' as const,
+        runId: 'run-stopped',
+        content: '本轮推演已停止。',
+        isInterruptedNotice: true,
+      },
+    ];
+
+    expect(computeMerged(server, realtime).map((message) => message.id)).toEqual([
+      'stopped-user',
+      'stopped-error',
+      'new-user',
+    ]);
+  });
+
   it('keeps finalized realtime assistant text until an equivalent same-turn server text is persisted', () => {
     const server = [
       textMessage('tail-before-turn', 'Previous answer', '2026-05-28T00:00:00.000Z'),

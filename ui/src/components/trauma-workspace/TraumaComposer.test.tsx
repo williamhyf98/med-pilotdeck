@@ -27,7 +27,7 @@ afterEach(() => {
 });
 
 describe('TraumaComposer', () => {
-  it('extracts free text into a confirm card and submits the normalized form with the raw input', async () => {
+  it('submits free text immediately and asks the runner to extract it', async () => {
     const onSubmit = vi.fn(async () => undefined);
     render(
       <TraumaComposer
@@ -42,20 +42,15 @@ describe('TraumaComposer', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: '整理' }));
 
-    // Confirm card appears with the extracted draft and the source text.
-    await waitFor(() => expect(screen.getByRole('button', { name: '确认推演' })).not.toBeNull());
-    expect(screen.getByText(/右小腿开放伤，心率 118/)).not.toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: '确认推演' }));
-
     await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({
-        injuryNarrative: '右小腿开放伤',
-        vitals: { heartRate: 118 },
+        injuryNarrative: '右小腿开放伤，心率 118',
+        vitals: {},
         statedSubStage: null,
       }),
       '右小腿开放伤，心率 118',
+      true,
     );
   });
 
@@ -85,13 +80,7 @@ describe('TraumaComposer', () => {
     expect((screen.getByLabelText('本轮伤情自由输入') as HTMLTextAreaElement).value).toBe('');
   });
 
-  it('opens the manual disclosure with the source pre-filled when extraction fails', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
-      error: 'extractor not configured',
-    }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    })));
+  it('does not open a confirmation card because extraction runs inside the turn', async () => {
     const onSubmit = vi.fn(async () => undefined);
     render(
       <TraumaComposer
@@ -106,9 +95,35 @@ describe('TraumaComposer', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: '整理' }));
 
-    await waitFor(() => expect(screen.getByRole('alert')).not.toBeNull());
-    // Manual form is auto-opened and pre-filled with the failing source text.
-    expect((screen.getByLabelText('伤情描述') as HTMLTextAreaElement).value).toBe('左前臂裂伤');
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    expect(screen.queryByRole('button', { name: '确认推演' })).toBeNull();
+  });
+
+  it('keeps the transport draft within the form limit while preserving full raw input', async () => {
+    const onSubmit = vi.fn(async () => undefined);
+    const rawInput = `右小腿开放伤，${'补充描述'.repeat(300)}`;
+    render(
+      <TraumaComposer
+        projectKey="trauma_med-demo"
+        sessionId="web:s_1"
+        onSubmit={onSubmit}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText('本轮伤情自由输入'), {
+      target: { value: rawInput },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '整理' }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    const call = onSubmit.mock.calls[0] as unknown as [
+      { injuryNarrative: string },
+      string,
+      boolean,
+    ];
+    expect(call[0].injuryNarrative).toHaveLength(1000);
+    expect(call[1]).toBe(rawInput);
+    expect(call[2]).toBe(true);
   });
 
   it('shows all four levels plus 由系统判定 when there is no previous stage', () => {
@@ -168,18 +183,11 @@ describe('TraumaComposer', () => {
       target: { value: '已到外科，需复苏处理' },
     });
     fireEvent.click(screen.getByRole('button', { name: '整理' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: '确认推演' })).not.toBeNull());
-
-    // 确认卡片里的级别 select 也被同步禁用。
-    const select = screen.getByLabelText('救治级别') as HTMLSelectElement;
-    expect(select.disabled).toBe(true);
-    expect(select.value).toBe('surgical_resuscitation');
-    expect(screen.getByText('仅剩外科复苏，级别已锁定')).not.toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: '确认推演' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({ statedSubStage: 'surgical_resuscitation' }),
       expect.any(String),
+      true,
     );
   });
 });

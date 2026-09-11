@@ -580,6 +580,17 @@ describe('processGrouping', () => {
     const messages = [
       user('u1', '本轮信息：胸部爆震伤，明示紧急处置'),
       traumaStep(
+        'trauma-extraction',
+        undefined,
+        '大模型信息抽取',
+        '正在进行大模型信息抽取',
+        'extract',
+        50,
+        {
+          content: '{"traumaRunnerStep":true,"phase":"extract","title":"大模型信息抽取","runningTitle":"正在进行大模型信息抽取","expectedTotalSteps":11,"countInTotal":false}',
+        },
+      ),
+      traumaStep(
         'trauma-step-1',
         1,
         '读取病例状态',
@@ -632,16 +643,17 @@ describe('processGrouping', () => {
     expect(traumaAttachment).toBeTruthy();
     expect(assistantItem?.beforeProcessAttachments).toHaveLength(0);
     expect(formatCompletedProcessTitle(traumaAttachment!.processDetailMessages, testT as any))
-      .toBe('本轮推演完成（11步）');
+      .toBe('本轮推演完成');
 
     const steps = buildProcessToolSteps(traumaAttachment!.processDetailMessages);
     expect(steps.map((step) => step.title)).toEqual([
+      '大模型信息抽取',
       '读取病例状态',
       '生成结果',
       '整理推演流程图/保存推演结果',
       '保存推演结果',
     ]);
-    expect(steps[1].resultDetail).toBe('生成 3 条处置建议，提示 2 项缺失信息');
+    expect(steps[2].resultDetail).toBe('生成 3 条处置建议，提示 2 项缺失信息');
   });
 
   it('replays persisted trauma runner steps with turn identity after refresh', () => {

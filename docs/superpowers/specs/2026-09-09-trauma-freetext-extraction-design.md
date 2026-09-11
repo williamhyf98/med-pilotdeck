@@ -183,11 +183,10 @@ Strict 模式约束不变：数组元素是对象，`required` 覆盖全部属�
 
 模型输出 → `TurnFormInput` 草稿的确定性转换：
 
-1. 四段叙述：把各数组的 `text` 按原文顺序 join（用换行或空格）成单个字符串，填进对应的 `TurnFormInput` 字段。
-2. `vitals` 数组去重（同 `field` 取第一条），逐项按 `VITAL_RANGES`（`factMerge.ts:8-14`）校验范围与精度；可选做 `unit` 一致性检查（如 `field=respiratoryRate` 而 `unit` 含 `mmHg` 则发出警告）。
-3. **越界或精度不合的项直接丢弃，并记入 `warnings`**，不抛错——工位 F 是建议性的，用户随后要确认，硬失败没有价值。
-4. 叙述字段**不截断**。超长时交由 `TraumaTurnForm` 现有的 `validate()`（`TraumaTurnForm.tsx:92-118`）报错，用户自行删减。复用既有机制，不引入新规则。
-5. 输出 `{ draft: Omit<TurnFormInput, "statedSubStage">, spans: Partial<Record<VitalItemKey, string>>, warnings: string[] }`。`spans` 从 `vitals` 数组按 `field` 聚合，每个键取第一条的 `sourceSpan`。
+1. `vitals` 数组去重（同 key 取第一条），逐项按 `VITAL_RANGES`（`factMerge.ts:8-14`）校验范围与精度。
+2. **越界或精度不合的项直接丢弃，并记入 `warnings`**，不抛错——工位 F 是建议性的，用户随后要确认，硬失败没有价值。
+3. 叙述字段**不截断**。超长时交由 `TraumaTurnForm` 现有的 `validate()`（`TraumaTurnForm.tsx:92-118`）报错，用户自行删减。复用既有机制，不引入新规则。
+4. 输出 `{ draft: Omit<TurnFormInput, "statedSubStage">, spans: Partial<Record<VitalItemKey, string>>, warnings: string[] }`。
 
 ### 5.4 封闭体征集扩充：新增 SpO₂
 
@@ -396,7 +395,7 @@ vitals 只允许以下六项：
 7. 同一体征出现多个明确数值时，按照原文顺序分别输出，不得自行选择或覆盖。
 8. 数值超出合法范围时不得修正或写入 vitals，原文放入 notes。
 9. 体温统一保留一位小数，例如38输出38.0，38.56输出38.6。
-10. “血压92/60”只提取 systolicBloodPressure=92；由于舒张压60没有对应字段，完整原文”血压92/60”还需保留在 injuryNarratives 中（舒张压是伤情信息，不放 notes）。
+10. “血压92/60”只提取 systolicBloodPressure=92；由于舒张压60没有对应字段，完整原文“血压92/60”还需保留在 notes 中。
 11. 纯数值信息被 vitals 完整保存后，可以不再放入叙述字段；如果仍包含未被结构化的信息，则必须保留原文。
 
 ## 输出前检查
@@ -435,20 +434,14 @@ vitals 只允许以下六项：
 预期输出：
 ```json
 {
-  "injuryNarratives": [
-    { "text": "伤员右小腿开放性骨折，有活动性出血，意识清楚，面色苍白。", "sourceSpan": "伤员右小腿开放性骨折，有活动性出血，意识清楚，面色苍白。" }
-  ],
-  "treatmentNarratives": [
-    { "text": "已完成夹板固定和加压包扎，止血效果良好。", "sourceSpan": "已完成夹板固定和加压包扎，止血效果良好。" }
-  ],
-  "evacuationNarratives": [
-    { "text": "准备后送营救护站，车辆已就位，道路通畅。", "sourceSpan": "准备后送营救护站，车辆已就位，道路通畅。" }
-  ],
-  "notes": [],
+  "injuryNarrative": "伤员右小腿开放性骨折，有活动性出血，意识清楚，面色苍白。",
+  "treatmentNarrative": "已完成夹板固定和加压包扎，止血效果良好。",
+  "evacuationNarrative": "准备后送营救护站，车辆已就位，道路通畅。",
+  "note": "",
   "vitals": [
-    { "field": "heartRate",       "value": 102,  "unit": "次/分", "sourceSpan": "心率 102" },
-    { "field": "respiratoryRate", "value": 24,   "unit": "次/分", "sourceSpan": "呼吸 24" },
-    { "field": "temperature",     "value": 36.5, "unit": "℃",    "sourceSpan": "体温 36.5" }
+    { "key": "heartRate",       "value": 102,  "sourceSpan": "心率 102" },
+    { "key": "respiratoryRate", "value": 24,   "sourceSpan": "呼吸 24" },
+    { "key": "temperature",     "value": 36.5, "sourceSpan": "体温 36.5" }
   ]
 }
 ```
@@ -465,12 +458,10 @@ vitals 只允许以下六项：
 预期输出：
 ```json
 {
-  "injuryNarratives": [
-    { "text": "腹部锐器伤，伤口约 5 厘米，有少量肠内容物外露，伤员喊痛但意识清楚。", "sourceSpan": "腹部锐器伤，伤口约 5 厘米，有少量肠内容物外露，伤员喊痛但意识清楚。" }
-  ],
-  "treatmentNarratives": [],
-  "evacuationNarratives": [],
-  "notes": [],
+  "injuryNarrative": "腹部锐器伤，伤口约 5 厘米，有少量肠内容物外露，伤员喊痛但意识清楚。",
+  "treatmentNarrative": "",
+  "evacuationNarrative": "",
+  "note": "",
   "vitals": []
 }
 ```
@@ -489,23 +480,19 @@ vitals 只允许以下六项：
 预期输出：
 ```json
 {
-  "injuryNarratives": [
-    { "text": "血压 92/60，瞳孔等大等圆，对光反射存在。", "sourceSpan": "血压 92/60，瞳孔等大等圆，对光反射存在。" }
-  ],
-  "treatmentNarratives": [
-    { "text": "已建立静脉通路，输液中。", "sourceSpan": "已建立静脉通路，输液中。" }
-  ],
-  "evacuationNarratives": [],
-  "notes": [],
+  "injuryNarrative": "血压 92/60，瞳孔等大等圆，对光反射存在。",
+  "treatmentNarrative": "已建立静脉通路，输液中。",
+  "evacuationNarrative": "",
+  "note": "",
   "vitals": [
-    { "field": "systolicBloodPressure", "value": 92,  "unit": "mmHg", "sourceSpan": "血压 92/60" },
-    { "field": "heartRate",             "value": 120, "unit": "次/分", "sourceSpan": "心率 120" },
-    { "field": "spo2",                  "value": 88,  "unit": "%",     "sourceSpan": "血氧 88%" }
+    { "key": "systolicBloodPressure", "value": 92,  "sourceSpan": "血压 92/60" },
+    { "key": "heartRate",             "value": 120, "sourceSpan": "心率 120" },
+    { "key": "spo2",                  "value": 88,  "sourceSpan": "血氧 88%" }
   ]
 }
 ```
 
-> 说明：「血压 92/60」中收缩压 92 提取为 `systolicBloodPressure`；舒张压 60 无对应槽位，完整原句保留在 `injuryNarratives` 以免信息丢失。「心率 120」和「血氧 88%」被完整收录进 vitals，对应数值语句不再重复进叙述。「瞳孔等大等圆，对光反射存在」无任何槽位，照原文留在 `injuryNarratives`。
+> 说明：「血压 92/60」中收缩压 92 提取为 `systolicBloodPressure`；舒张压 60 无对应槽位，原句保留在 `injuryNarrative` 以免信息丢失。「心率 120」和「血氧 88%」被完整收录进 vitals，对应语句不再重复进叙述。「瞳孔等大等圆，对光反射存在」无任何槽位，照原文留在 `injuryNarrative`。
 
 ---
 
@@ -519,19 +506,17 @@ vitals 只允许以下六项：
 预期输出：
 ```json
 {
-  "injuryNarratives": [
-    { "text": "上一轮说的开放伤不成立，实际只是擦伤，皮肤没有破损。前面报的心率 128 也要更正，刚复测是 104。", "sourceSpan": "上一轮说的开放伤不成立，实际只是擦伤，皮肤没有破损。前面报的心率 128 也要更正，刚复测是 104。" }
-  ],
-  "treatmentNarratives": [],
-  "evacuationNarratives": [],
-  "notes": [],
+  "injuryNarrative": "上一轮说的开放伤不成立，实际只是擦伤，皮肤没有破损。前面报的心率 128 也要更正，刚复测是 104。",
+  "treatmentNarrative": "",
+  "evacuationNarrative": "",
+  "note": "",
   "vitals": [
-    { "field": "heartRate", "value": 104, "unit": "次/分", "sourceSpan": "刚复测是 104" }
+    { "key": "heartRate", "value": 104, "sourceSpan": "刚复测是 104" }
   ]
 }
 ```
 
-> 说明：更正语句原样进 `injuryNarratives`，工位 F 不做任何冲突消解——覆盖语义由下游按轮次顺序处理。「刚复测是 104」是本轮实测值，提取为 `heartRate: 104`；「前面报的心率 128」是对历史值的引用，不提取进本轮 vitals。
+> 说明：更正语句原样进 `injuryNarrative`，工位 F 不做任何冲突消解——覆盖语义由下游按轮次顺序处理。「刚复测是 104」是本轮实测值，提取为 `heartRate: 104`；「前面报的心率 128」是对历史值的引用，不提取进本轮 vitals。
 
 ---
 

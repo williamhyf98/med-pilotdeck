@@ -22,9 +22,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const VITAL_KEYS = [
   "respiratoryRate",
   "systolicBloodPressure",
-  "gcs",
   "heartRate",
   "temperature",
+  "spo2",
 ] as const satisfies readonly VitalItemKey[];
 
 export function migrateCaseState(value: unknown): CaseState {

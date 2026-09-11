@@ -41,7 +41,6 @@ const EMPTY_FORM: FormValues = {
   note: '',
   respiratoryRate: '',
   systolicBloodPressure: '',
-  gcs: '',
   heartRate: '',
   temperature: '',
 };
@@ -57,7 +56,6 @@ const vitalFields: Array<{
   { key: 'heartRate', label: '心率', unit: '次/分', min: 0, max: 300, step: '1' },
   { key: 'respiratoryRate', label: '呼吸频率', unit: '次/分', min: 0, max: 80, step: '1' },
   { key: 'systolicBloodPressure', label: '收缩压', unit: 'mmHg', min: 20, max: 300, step: '1' },
-  { key: 'gcs', label: 'GCS', unit: '分', min: 3, max: 15, step: '1' },
   { key: 'temperature', label: '体温', unit: '℃', min: 20, max: 45, step: '0.1' },
 ];
 
@@ -219,7 +217,6 @@ export default function TraumaTurnForm({
         note: initialValues.note,
         respiratoryRate: initialValues.vitals?.respiratoryRate !== undefined ? String(initialValues.vitals.respiratoryRate) : '',
         systolicBloodPressure: initialValues.vitals?.systolicBloodPressure !== undefined ? String(initialValues.vitals.systolicBloodPressure) : '',
-        gcs: initialValues.vitals?.gcs !== undefined ? String(initialValues.vitals.gcs) : '',
         heartRate: initialValues.vitals?.heartRate !== undefined ? String(initialValues.vitals.heartRate) : '',
         temperature: initialValues.vitals?.temperature !== undefined ? String(initialValues.vitals.temperature) : '',
       };

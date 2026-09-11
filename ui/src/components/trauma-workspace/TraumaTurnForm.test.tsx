@@ -51,6 +51,7 @@ describe('TraumaTurnForm', () => {
     expect(screen.getByLabelText('补充说明').getAttribute('placeholder'))
       .toBe('其他有价值的信息。如：现场共 3 名伤员，可用血制品有限');
     expect(screen.getByText('可选填，本轮未测的项留空即可')).not.toBeNull();
+    expect(screen.queryByLabelText('GCS')).toBeNull();
   });
 
   it('drops the character counters and the carried-over vital hints', () => {

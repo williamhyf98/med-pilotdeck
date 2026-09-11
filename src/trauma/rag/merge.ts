@@ -23,16 +23,39 @@ function backendRank(backend: "remote" | "local"): number {
   return backend === "remote" ? 0 : 1;
 }
 
+function firstNonBlank(...values: Array<string | undefined>): string {
+  return values.map((value) => value?.trim()).find(Boolean) ?? "";
+}
+
+function inferSectionFromText(text: string): string {
+  const head = text.slice(0, 300);
+  const article = head.match(/第[一二三四五六七八九十百〇零\d]+条[^\n。；;]*/u)?.[0];
+  const chapter = head.match(/第[一二三四五六七八九十百〇零\d]+章[^\n。；;]*/u)?.[0];
+  const section = head.match(/第[一二三四五六七八九十百〇零\d]+节[^\n。；;]*/u)?.[0];
+  return firstNonBlank(article, section, chapter);
+}
+
 function toEvidence(
   hit: TraumaRagHit,
   tags: RagQueryKind[],
   selectedForPrompt: boolean,
 ): EvidenceChunk {
+  const section = firstNonBlank(
+    hit.section,
+    hit.article,
+    hit.heading,
+    hit.chapter,
+    hit.path,
+    inferSectionFromText(`${hit.title ?? ""}\n${hit.text}`),
+  );
   return {
     id: hit.chunk_id,
     knowledgeBase: "trauma",
     documentTitle: hit.title ?? hit.doc_id ?? hit.chunk_id,
-    section: hit.article ?? "",
+    section,
+    chapter: hit.chapter,
+    heading: hit.heading,
+    path: hit.path,
     article: hit.article,
     text: hit.text,
     retrievalScore: hit.score,

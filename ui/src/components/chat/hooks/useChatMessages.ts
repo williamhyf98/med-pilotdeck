@@ -128,6 +128,7 @@ function convertSingleMessage(
           content: text,
           timestamp: msg.timestamp,
           ...turnIdentity,
+          ...(Array.isArray(msg.citations) && msg.citations.length > 0 ? { citations: msg.citations } : {}),
         };
       }
     }
@@ -350,6 +351,7 @@ function convertSingleMessage(
           timestamp: msg.timestamp,
           ...turnIdentity,
           isStreaming: true,
+          ...(Array.isArray(msg.citations) && msg.citations.length > 0 ? { citations: msg.citations } : {}),
         };
       }
       return null;

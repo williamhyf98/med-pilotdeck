@@ -576,6 +576,9 @@ export function gatewayEventToFrames(event, sessionId, provider) {
                     ...base,
                     kind: 'stream_delta',
                     content: event.text,
+                    ...(Array.isArray(event.citations) && event.citations.length > 0
+                        ? { citations: event.citations }
+                        : {}),
                 }),
             ];
         case 'assistant_text_end':
@@ -583,6 +586,10 @@ export function gatewayEventToFrames(event, sessionId, provider) {
                 createNormalizedMessage({
                     ...base,
                     kind: 'stream_end',
+                    // 参考来源列表随正文结束一起下发，前端据此渲染折叠面板。
+                    ...(Array.isArray(event.citations) && event.citations.length > 0
+                        ? { citations: event.citations }
+                        : {}),
                 }),
             ];
         case 'assistant_thinking_delta':
@@ -1292,6 +1299,7 @@ export async function runChatViaGateway(
     const runMode = normalizeRunMode(options?.runMode) || (resolvedMode === 'plan' ? 'plan' : 'agent');
     const traumaForm = sanitizeTraumaFormInput(options?.traumaForm);
     const traumaRawInput = typeof options?.traumaRawInput === 'string' ? options.traumaRawInput : undefined;
+    const traumaExtract = options?.traumaExtract === true;
     console.log(`[pilotdeck-bridge] submitTurn runMode=${runMode} mode=${resolvedMode} (options.permissionMode=${options?.permissionMode}, options.mode=${options?.mode})`);
 
     let gw = null;
@@ -1336,6 +1344,7 @@ export async function runChatViaGateway(
             message: command ?? '',
             ...(traumaForm ? { traumaForm } : {}),
             ...(traumaRawInput ? { traumaRawInput } : {}),
+            ...(traumaExtract ? { traumaExtract: true } : {}),
             runMode,
             mode: resolvedMode,
             // The web UI has an elicitation channel, so the agent may propose

@@ -93,7 +93,7 @@ export const REASONER_OUTPUT_SCHEMA: Record<string, unknown> = described(
   object({
     naturalLanguageAnswer: described(
       STRING,
-      "给用户看的主文。按系统提示词的板块组织；条款依据和措施展开写在这里，不要只写一两句结论。",
+      "给用户看的主文。按系统提示词的板块组织；依据通过句末 [N] 角标引用，不要另写参考依据板块。",
     ),
     classification: described(
       object({
@@ -146,7 +146,7 @@ export const REASONER_OUTPUT_SCHEMA: Record<string, unknown> = described(
           "侵入性或高风险操作为 true。",
         ),
       })),
-      "程序读取的行动列表。只保留短标题、短描述和证据 id；依据展开写在 naturalLanguageAnswer。",
+      "程序读取的行动列表。只保留短标题、短描述和证据 id；依据通过 naturalLanguageAnswer 中的 [N] 角标展示。",
     ),
     missingInformation: described(
       STRING_ARRAY,
@@ -289,7 +289,6 @@ export type ReasonerStationOutput = {
 const VITAL_ITEM_KEY = enumOf(
   "respiratoryRate",
   "systolicBloodPressure",
-  "gcs",
   "heartRate",
   "temperature",
   "spo2",
@@ -326,7 +325,7 @@ function isExtractedNarrativeItem(value: unknown): value is import("./types.js")
 function isExtractedVitalItem(value: unknown): value is import("./types.js").ExtractedVitalItem {
   if (!isRecord(value)) return false;
   const validFields = new Set([
-    "respiratoryRate", "systolicBloodPressure", "gcs",
+    "respiratoryRate", "systolicBloodPressure",
     "heartRate", "temperature", "spo2",
   ]);
   return (

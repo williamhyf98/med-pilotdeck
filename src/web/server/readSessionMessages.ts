@@ -538,6 +538,10 @@ export function flattenCanonicalMessage(
   let textBuffer = "";
   let pendingImages: NonNullable<WebMessage["images"]> = [];
   let lastToolResultMessage: WebMessage | undefined;
+  const messageMetadata = message.metadata as Record<string, unknown> | undefined;
+  const messageCitations = Array.isArray(messageMetadata?.citations)
+    ? messageMetadata.citations as WebMessage["citations"]
+    : undefined;
 
   const flushText = (): void => {
     if (!textBuffer && pendingImages.length === 0) return;
@@ -550,6 +554,9 @@ export function flattenCanonicalMessage(
       role,
       kind: "text",
       text: textBuffer,
+      ...(messageCitations && messageCitations.length > 0
+        ? { citations: messageCitations }
+        : {}),
       ...(pendingImages.length > 0 ? { images: pendingImages } : {}),
       ...(context.forkUnsupportedContent
         ? {

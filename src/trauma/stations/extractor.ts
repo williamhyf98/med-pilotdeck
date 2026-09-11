@@ -6,6 +6,7 @@ import { EXTRACTOR_SYSTEM_PROMPT } from "./extractorPrompt.js";
 export type ExtractorInput = {
   rawText: string;
   caseHistory: string;
+  signal?: AbortSignal;
 };
 
 export type ExtractionStation = {
@@ -91,6 +92,7 @@ ${buildUserMessage(input)}`;
         user: userMessage,
         schema: EXTRACTOR_OUTPUT_SCHEMA,
         validate: validateExtractedTurnForm,
+        signal: input.signal,
       });
     },
   };

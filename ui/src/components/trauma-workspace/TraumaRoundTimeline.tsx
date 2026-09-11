@@ -11,7 +11,6 @@ type TraumaRoundTimelineProps = {
 const vitalLabels: Record<VitalItemKey, { label: string; unit: string }> = {
   respiratoryRate: { label: '呼吸', unit: '次/分' },
   systolicBloodPressure: { label: '收缩压', unit: 'mmHg' },
-  gcs: { label: 'GCS', unit: '分' },
   heartRate: { label: '心率', unit: '次/分' },
   temperature: { label: '体温', unit: '℃' },
 };

@@ -45,7 +45,7 @@ export const DEMO_TRAUMA_ROUNDS: RoundMemo[] = [
     conclusion: '先排查危及生命问题，补齐生命体征后重新分类。',
     patient: {
       updatedAt: '15:01',
-      consciousness: '清醒，能正常对答（GCS 15）',
+      consciousness: '清醒，能正常对答',
       vitals: [
         { label: '呼吸', value: '未测', trend: 'unknown' },
         { label: '收缩压', value: '未测', trend: 'unknown' },

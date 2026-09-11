@@ -42,7 +42,7 @@ test("baseline plan is exactly three critical baseline queries", () => {
     {
       round: 1,
       recordedAt: state.updatedAt,
-      values: { systolicBloodPressure: 92, gcs: 15 },
+      values: { systolicBloodPressure: 92 },
     },
     {
       round: 2,
@@ -72,7 +72,7 @@ test("baseline plan is exactly three critical baseline queries", () => {
   assert.match(plan[1]?.query ?? "", /车辆/);
   assert.match(plan[1]?.query ?? "", /道路/);
   assert.match(plan[1]?.query ?? "", /SBP 92/);
-  assert.match(plan[1]?.query ?? "", /GCS 15/);
+  assert.doesNotMatch(plan[1]?.query ?? "", /GCS/);
 
   assert.match(plan[2]?.query ?? "", /具体伤情处置/);
   assert.match(plan[2]?.query ?? "", /第六章/);

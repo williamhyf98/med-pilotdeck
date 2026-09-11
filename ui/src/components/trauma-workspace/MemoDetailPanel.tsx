@@ -77,7 +77,12 @@ function GateBadge({ status }: { status: GateStatus }) {
 
 export default function MemoDetailPanel({ memo, isLatest, onClose }: MemoDetailPanelProps) {
   const stage = TRAUMA_STAGES.find((item) => item.id === memo.stageId);
-  const substep = stage?.substeps[memo.substepIndex];
+  const substep = memo.substepIndex === null ? undefined : stage?.substeps[memo.substepIndex];
+  const usedEvidence = memo.evidence
+    .filter((item) => item.used)
+    // 与正文角标、参考来源列表保持同一顺序，方便用户按编号对照全文。
+    .slice()
+    .sort((left, right) => (left.citationIndex ?? Number.MAX_SAFE_INTEGER) - (right.citationIndex ?? Number.MAX_SAFE_INTEGER));
 
   return (
     <div className="space-y-2.5 pb-4">
@@ -98,17 +103,11 @@ export default function MemoDetailPanel({ memo, isLatest, onClose }: MemoDetailP
             <X className="h-3.5 w-3.5" />
           </button>
         </header>
-        <Metric label="快照时间" value={memo.time} />
         <Metric label="快照类型" value={isLatest ? '本轮最新状态' : '历史轮次快照'} tone={isLatest ? 'info' : undefined} />
         <Metric label="下一医学目标" value={memo.nextTarget} />
       </section>
 
-      <Card title="当前伤员状态" meta={memo.patient.updatedAt}>
-        <div className="mb-2.5 border-b border-neutral-200 pb-2.5 dark:border-neutral-800">
-          <p className="text-[9px] text-neutral-400">意识</p>
-          <p className="mt-0.5 text-[11px] font-medium">{memo.patient.consciousness}</p>
-        </div>
-
+      <Card title="当前状态" meta={memo.patient.updatedAt}>
         <p className="mb-1.5 text-[9px] font-semibold uppercase tracking-wider text-neutral-400">生命体征</p>
         <div className="grid grid-cols-2 gap-1.5">
           {memo.patient.vitals.map((vital) => (
@@ -127,32 +126,6 @@ export default function MemoDetailPanel({ memo, isLatest, onClose }: MemoDetailP
           ))}
         </div>
 
-        <p className="mb-1.5 mt-3 text-[9px] font-semibold uppercase tracking-wider text-neutral-400">伤情</p>
-        <ul className="space-y-1.5">
-          {memo.patient.injuries.map((injury) => (
-            <li key={`${injury.label}-${injury.certainty}`} className="rounded-md border border-neutral-200 bg-neutral-50 px-2 py-1.5 text-[10px] dark:border-neutral-800 dark:bg-neutral-900">
-              <p>{injury.label}</p>
-              <div className="mt-1 flex gap-1">
-                <span className={cn(
-                  'rounded border px-1.5 py-0.5 text-[8px]',
-                  injury.certainty === '已确认' && 'border-teal-200 text-teal-700 dark:border-teal-900 dark:text-teal-300',
-                  injury.certainty === '疑似' && 'border-amber-200 text-amber-700 dark:border-amber-900 dark:text-amber-300',
-                  injury.certainty === '已排除' && 'border-neutral-200 text-neutral-500 dark:border-neutral-700',
-                )}
-                >
-                  {injury.certainty}
-                </span>
-                <span className="rounded border border-neutral-200 px-1.5 py-0.5 text-[8px] text-neutral-500 dark:border-neutral-700">{injury.status}</span>
-              </div>
-            </li>
-          ))}
-        </ul>
-
-        <p className="mb-1.5 mt-3 text-[9px] font-semibold uppercase tracking-wider text-neutral-400">已实施处置</p>
-        <ul className="space-y-1 text-[10px] text-neutral-600 dark:text-neutral-300">
-          {memo.patient.treatments.map((item) => <li key={item}>· {item}</li>)}
-        </ul>
-
         <div className="mt-3">
           <Metric label="当前机构" value={memo.facility} />
           <Metric label="机构能力" value={memo.capability} tone="info" />
@@ -166,6 +139,22 @@ export default function MemoDetailPanel({ memo, isLatest, onClose }: MemoDetailP
             </span>
           ))}
         </div>
+      </Card>
+
+      <Card title="当前行动计划" meta="限定于当前级别">
+        <ol className="space-y-2">
+          {memo.actions.map((action, index) => (
+            <li key={action} className="flex gap-2 text-[10px] leading-4 text-neutral-600 dark:text-neutral-300">
+              <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-teal-50 text-[9px] font-semibold text-teal-700 dark:bg-teal-950 dark:text-teal-300">
+                {index + 1}
+              </span>
+              {action}
+            </li>
+          ))}
+        </ol>
+        <p className="mt-2.5 rounded-md bg-neutral-50 px-2 py-1.5 text-[9px] leading-4 text-neutral-500 dark:bg-neutral-900 dark:text-neutral-400">
+          下一阶段所需能力：{memo.nextStageCapability}
+        </p>
       </Card>
 
       <Card title="本轮纪要" meta="输入与输出要点">
@@ -201,38 +190,35 @@ export default function MemoDetailPanel({ memo, isLatest, onClose }: MemoDetailP
         </div>
       </Card>
 
-      <Card title="当前行动计划" meta="限定于当前级别">
-        <ol className="space-y-2">
-          {memo.actions.map((action, index) => (
-            <li key={action} className="flex gap-2 text-[10px] leading-4 text-neutral-600 dark:text-neutral-300">
-              <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-teal-50 text-[9px] font-semibold text-teal-700 dark:bg-teal-950 dark:text-teal-300">
-                {index + 1}
-              </span>
-              {action}
-            </li>
-          ))}
-        </ol>
-        <p className="mt-2.5 rounded-md bg-neutral-50 px-2 py-1.5 text-[9px] leading-4 text-neutral-500 dark:bg-neutral-900 dark:text-neutral-400">
-          下一阶段所需能力：{memo.nextStageCapability}
-        </p>
-      </Card>
-
       <details className="group overflow-hidden rounded-lg border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950">
         <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2.5 text-[11px] font-semibold">
-          知识库依据 · {memo.evidence.length} 条知识块
+          知识块依据 · 已使用 {usedEvidence.length} 条
           <ChevronDown className="h-3.5 w-3.5 text-neutral-400 transition group-open:rotate-180" />
         </summary>
         <div className="space-y-2 border-t border-neutral-200 p-2.5 dark:border-neutral-800">
-          {memo.evidence.map((evidence) => (
-            <article key={evidence.id} className="rounded-md border border-neutral-200 bg-neutral-50 p-2 dark:border-neutral-800 dark:bg-neutral-900">
-              <div className="flex flex-wrap items-center justify-between gap-1.5">
-                <p className="text-[9px] font-semibold">{evidence.title}</p>
-                <span className="text-[8px] text-teal-700 dark:text-teal-300">{evidence.score}</span>
-              </div>
-              <p className="mt-1 text-[8px] text-neutral-400">{evidence.source} · {evidence.used ? '本轮已使用' : '未使用'}</p>
-              <p className="mt-1.5 text-[9px] leading-4 text-neutral-600 dark:text-neutral-300">{evidence.text}</p>
-            </article>
-          ))}
+          {usedEvidence.length > 0 ? (
+            usedEvidence.map((evidence) => (
+              <article key={evidence.id} className="rounded-md border border-neutral-200 bg-neutral-50 p-2 dark:border-neutral-800 dark:bg-neutral-900">
+                <div className="flex flex-wrap items-center justify-between gap-1.5">
+                  <p className="flex min-w-0 items-center gap-1 text-[9px] font-semibold">
+                    {evidence.citationIndex !== undefined ? (
+                      <span className="shrink-0 rounded bg-blue-100 px-1 text-[8px] font-medium text-blue-700 dark:bg-blue-900 dark:text-blue-300">
+                        [{evidence.citationIndex}]
+                      </span>
+                    ) : null}
+                    <span className="min-w-0">{evidence.title}</span>
+                  </p>
+                  <span className="text-[8px] text-teal-700 dark:text-teal-300">{evidence.score}</span>
+                </div>
+                <p className="mt-1 text-[8px] text-neutral-400">{evidence.source} · 本轮已使用</p>
+                <p className="mt-1.5 text-[9px] leading-4 text-neutral-600 dark:text-neutral-300">{evidence.text}</p>
+              </article>
+            ))
+          ) : (
+            <p className="rounded-md border border-dashed border-neutral-200 bg-neutral-50 px-2 py-2 text-[9px] text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
+              暂无本轮已使用的知识块。
+            </p>
+          )}
         </div>
       </details>
     </div>

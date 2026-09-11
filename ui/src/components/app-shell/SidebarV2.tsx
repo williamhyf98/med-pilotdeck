@@ -34,8 +34,7 @@ import {
   useCustomNamesVersion,
 } from '../../lib/customNames';
 import { filterProjectsByType, resolveProjectType } from './appShellSelection';
-import pilotdeckLogoDark from '../../assets/pilotdeck-wordmark-dark.png';
-import pilotdeckLogoLight from '../../assets/pilotdeck-wordmark-light.png';
+import medAssistantLogo from '../../assets/med-assistant-logo.png';
 
 const asTimestamp = (value: unknown): number => {
   if (typeof value === 'number') return value;
@@ -996,7 +995,7 @@ export default function SidebarV2({
       )}
     >
       <div className="flex h-16 items-center justify-between pl-2 pr-4">
-        <div className="flex min-w-0 shrink items-center gap-2">
+        <div className="flex min-w-0 flex-1 shrink items-center justify-center gap-2">
           <button
             type="button"
             onClick={() => {
@@ -1006,20 +1005,14 @@ export default function SidebarV2({
                 navigate('/');
               }
             }}
-            aria-label="PilotDeck"
-            title="PilotDeck"
+            aria-label="医学助手"
+            title="医学助手"
             className="flex min-w-0 shrink items-center gap-2 rounded-md p-1 transition hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-300 dark:focus-visible:ring-neutral-700"
           >
             <img
-              src={pilotdeckLogoLight}
-              alt="PilotDeck"
-              className="h-7 w-auto max-w-[150px] select-none object-contain dark:hidden"
-              draggable={false}
-            />
-            <img
-              src={pilotdeckLogoDark}
-              alt="PilotDeck"
-              className="hidden h-7 w-auto max-w-[150px] select-none object-contain dark:block"
+              src={medAssistantLogo}
+              alt="医学助手"
+              className="h-11 w-auto max-w-[180px] select-none object-contain"
               draggable={false}
             />
           </button>

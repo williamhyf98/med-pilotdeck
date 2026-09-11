@@ -60,7 +60,7 @@ import {
   subStageLabel,
 } from "../../trauma/displayLabels.js";
 import { validateTurnFormInput } from "../../trauma/factMerge.js";
-import type { TurnFormInput } from "../../trauma/types.js";
+import type { CitationMetadata, TurnFormInput } from "../../trauma/types.js";
 import type {
   CronCreateInput,
   CronCreateResult,
@@ -108,15 +108,38 @@ import {
   PLACEMENT_QUESTION,
   parsePlacementConfirmation,
   placementConfirmationOptions,
+  traumaExtractionEvents,
   traumaPostAnswerProcessEvents,
   traumaProgressEvents,
   traumaTurnEvents,
   type TraumaTurnRunner,
 } from "../../trauma/index.js";
+import { normalizeExtractedForm } from "../../trauma/formDraft.js";
 
 const PLAN_COMMAND_USAGE = "用法：/plan <任务>\n例如：/plan 设计一个新功能";
 const MAX_GATEWAY_TOOL_RESULT_PREVIEW_CHARS = 20_000;
 const MAX_GATEWAY_TOOL_DATA_STRING_CHARS = 4_000;
+
+/**
+ * 参考来源列表由前端组件渲染，不再拼进正文。这里只负责把「正文里实际出现过
+ * 的合法角标」对应的引用元数据挑出来，在正文流完的瞬间随 assistant_text_end
+ * 一起推给前端——不用等 runner 跑完后续工位。
+ */
+function resolveStreamedCitations(
+  answer: string,
+  citations: CitationMetadata[] | undefined,
+): CitationMetadata[] | undefined {
+  if (!citations || citations.length === 0) return undefined;
+  const indexes = new Set<number>();
+  for (const match of answer.matchAll(/\[(\d{1,2})\]/g)) {
+    const index = Number.parseInt(match[1] ?? "", 10);
+    if (Number.isFinite(index)) indexes.add(index);
+  }
+  const used = citations
+    .filter((citation) => indexes.has(citation.index))
+    .sort((left, right) => left.index - right.index);
+  return used.length > 0 ? used : undefined;
+}
 
 function isTraumaProject(projectKey: string | undefined): projectKey is string {
   return projectTypeKeyFromProjectId(projectKey) === "trauma_med"
@@ -127,9 +150,9 @@ function summarizeTraumaForm(form: TurnFormInput): string {
   const vitalLabels: Array<[keyof TurnFormInput["vitals"], string]> = [
     ["respiratoryRate", "呼吸"],
     ["systolicBloodPressure", "收缩压"],
-    ["gcs", "GCS"],
     ["heartRate", "心率"],
     ["temperature", "体温"],
+    ["spo2", "血氧"],
   ];
   const vitalSummary = vitalLabels
     .filter(([key]) => form.vitals[key] !== undefined)
@@ -247,6 +270,8 @@ export type InProcessGatewayOptions = {
     runId: string;
     userText: string;
     assistantText: string;
+    aiTitle?: string;
+    citations?: CitationMetadata[];
     processMessages?: CanonicalMessage[];
   }) => void | Promise<void>;
   traumaCaseReader?: (input: GatewayTraumaCaseInput) => Promise<{
@@ -300,6 +325,8 @@ export class InProcessGateway implements Gateway {
    * while `inFlightTurns` was still populated, racing the next submit.
    */
   private readonly turnCompletions = new Map<string, Promise<void>>();
+  /** Independent cancellation controllers for the Trauma Runner path. */
+  private readonly traumaTurnControllers = new Map<string, { runId: string; controller: AbortController }>();
   constructor(
     private readonly router: SessionRouter,
     private readonly options: InProcessGatewayOptions = {},
@@ -503,18 +530,17 @@ export class InProcessGateway implements Gateway {
           }, input.timeoutMs);
         }
         if (isTraumaProject(input.projectKey)) {
-          if (!validateTurnFormInput(input.traumaForm)) {
-            throw new Error("war_trauma turns require a valid traumaForm");
-          }
           if (!this.options.traumaRunnerFactory) {
             throw new Error("war_trauma runner is not configured");
           }
+          const traumaController = new AbortController();
+          this.traumaTurnControllers.set(input.sessionKey, { runId, controller: traumaController });
+          const traumaAbortSignal = traumaController.signal;
           const runner = await this.options.traumaRunnerFactory({
             projectKey: input.projectKey,
             sessionKey: input.sessionKey,
           });
-          // 一轮推演要跑三次模型和多次检索，先把 turn_started 和逐阶段进度推给宿主，
-          // 否则界面在整轮结束前只能一直显示「连接中」。
+          // 先把 turn_started 和逐阶段进度推给宿主，否则界面在整轮结束前只能一直显示「连接中」。
           const emit = (gatewayEvent: GatewayEvent) => {
             this.recordActiveTurnEvent(input.sessionKey, gatewayEvent);
             queue.enqueue(gatewayEvent);
@@ -578,9 +604,63 @@ export class InProcessGateway implements Gateway {
               emit(gatewayEvent);
             }
           };
+          emit({ type: "turn_started", runId });
+          let traumaForm = input.traumaForm;
+          if (input.traumaExtract && input.traumaRawInput?.trim()) {
+            emitTraumaProcessEvents(traumaExtractionEvents({ runId, status: "started" }));
+            try {
+              if (!this.options.traumaExtractorFactory) {
+                throw new Error("war_trauma extractor is not configured");
+              }
+              const station = await this.options.traumaExtractorFactory({
+                projectKey: input.projectKey,
+                sessionKey: input.sessionKey,
+              });
+              traumaForm = normalizeExtractedForm(await station.extract({
+                rawText: input.traumaRawInput.trim(),
+                caseHistory: "",
+              }));
+              if (traumaAbortSignal.aborted) {
+                throw new Error("turn aborted");
+              }
+              if (!validateTurnFormInput(traumaForm)) {
+                throw new Error("抽取结果未包含可用于推演的病例信息");
+              }
+              if (input.traumaForm?.statedSubStage) {
+                traumaForm.statedSubStage = input.traumaForm.statedSubStage;
+              }
+              emitTraumaProcessEvents(traumaExtractionEvents({
+                runId,
+                status: "finished",
+                ok: true,
+              }));
+            } catch (error) {
+              if (traumaAbortSignal.aborted) throw error;
+              traumaForm = {
+                statedSubStage: input.traumaForm?.statedSubStage ?? null,
+                injuryNarrative: input.traumaRawInput.trim().slice(0, 1000),
+                treatmentNarrative: "",
+                evacuationNarrative: "",
+                note: "",
+                vitals: {},
+              };
+              emitTraumaProcessEvents(traumaExtractionEvents({
+                runId,
+                status: "finished",
+                ok: false,
+                detail: `抽取失败，已使用自由文本继续推演：${error instanceof Error ? error.message : String(error)}`,
+              }));
+            }
+          }
+          if (!validateTurnFormInput(traumaForm)) {
+            throw new Error("war_trauma turns require a valid traumaForm");
+          }
           let assistantTextStreamed = false;
           let assistantTextEnded = false;
           let postAnswerProcessStarted = false;
+          let assistantCitations: CitationMetadata[] | undefined;
+          let assistantStreamText = "";
+          let assistantCandidateCitationsSent = false;
           const displayStream = createChineseDisplayStreamNormalizer();
           const elicitation = new GatewayElicitationChannel({
             sessionKey: input.sessionKey,
@@ -588,14 +668,14 @@ export class InProcessGateway implements Gateway {
             emit,
             uuid: this.uuid,
           });
-          emit({ type: "turn_started", runId });
           const response = await runner.runTurn({
             projectId: input.projectKey,
             sessionId: input.sessionKey,
             messageId: runId,
-            form: input.traumaForm,
+            form: traumaForm,
             rawInput: input.traumaRawInput,
             now: this.now().toISOString(),
+            abortSignal: traumaAbortSignal,
             onProgress: (progress) => {
               emitTraumaProcessEvents(traumaProgressEvents({ progress, runId }));
             },
@@ -604,18 +684,31 @@ export class InProcessGateway implements Gateway {
               const displayText = displayStream.push(text);
               if (!displayText) return;
               assistantTextStreamed = true;
+              assistantStreamText += displayText;
+              // 候选引用元数据（本轮 promptChunks 全量）在推理开始前就已就绪，
+              // 随第一个 delta 一起发出去，前端的 [N] 角标才能在流式期间就渲染
+              // 成可悬浮的蓝色上标，而不是等正文结束。编号沿用 promptChunks
+              // 顺序，所以候选和最终列表的编号是一致的。
+              const attachCitations = !assistantCandidateCitationsSent
+                && assistantCitations
+                && assistantCitations.length > 0;
+              if (attachCitations) assistantCandidateCitationsSent = true;
               emit({
                 type: "assistant_text_delta",
                 text: displayText,
                 runId,
+                ...(attachCitations ? { citations: assistantCitations } : {}),
               });
+            },
+            onAssistantCitations: (citations) => {
+              assistantCitations = citations;
             },
             onAssistantTextEnd: () => {
               if (assistantTextEnded) return;
-              assistantTextEnded = true;
               const finalStreamDelta = displayStream.flush();
               if (finalStreamDelta) {
                 assistantTextStreamed = true;
+                assistantStreamText += finalStreamDelta;
                 emit({
                   type: "assistant_text_delta",
                   text: finalStreamDelta,
@@ -623,7 +716,18 @@ export class InProcessGateway implements Gateway {
                 });
               }
               if (assistantTextStreamed) {
-                emit({ type: "assistant_text_end", runId });
+                assistantTextEnded = true;
+                emit({
+                  type: "assistant_text_end",
+                  runId,
+                  ...(() => {
+                    const streamedCitations = resolveStreamedCitations(
+                      assistantStreamText,
+                      assistantCitations,
+                    );
+                    return streamedCitations ? { citations: streamedCitations } : {};
+                  })(),
+                });
                 postAnswerProcessStarted = true;
                 emitTraumaProcessEvents(traumaPostAnswerProcessEvents({ runId, status: "started" }));
               }
@@ -636,6 +740,8 @@ export class InProcessGateway implements Gateway {
                   header: "确认推演级别",
                   question: PLACEMENT_QUESTION,
                   options: placementConfirmationOptions(request),
+                  // 级别必须落在允许的子级里，自由填空只会让后续推演无从判断。
+                  allowOther: false,
                 }],
                 metadata: {
                   source: "trauma_pending_placement",
@@ -643,7 +749,8 @@ export class InProcessGateway implements Gateway {
                   proposedSubStage: request.proposed.subStage,
                 },
               });
-              if (answer.type !== "answered") return { choice: "current" };
+              // 用户关掉/跳过确认卡时按建议继续，保证推演不会停在这一步。
+              if (answer.type !== "answered") return { choice: "proposed" };
               const selected = Object.values(answer.answers).flat()[0];
               return parsePlacementConfirmation(request, selected);
             },
@@ -651,6 +758,7 @@ export class InProcessGateway implements Gateway {
           const finalStreamDelta = displayStream.flush();
           if (finalStreamDelta) {
             assistantTextStreamed = true;
+            assistantStreamText += finalStreamDelta;
             emit({
               type: "assistant_text_delta",
               text: finalStreamDelta,
@@ -659,7 +767,17 @@ export class InProcessGateway implements Gateway {
           }
           if (assistantTextStreamed && !assistantTextEnded) {
             assistantTextEnded = true;
-            emit({ type: "assistant_text_end", runId });
+            const streamedCitations = resolveStreamedCitations(
+              assistantStreamText,
+              assistantCitations,
+            );
+            emit({
+              type: "assistant_text_end",
+              runId,
+              ...(streamedCitations ? { citations: streamedCitations } : {}),
+            });
+            postAnswerProcessStarted = true;
+            emitTraumaProcessEvents(traumaPostAnswerProcessEvents({ runId, status: "started" }));
           }
           if (postAnswerProcessStarted) {
             emitTraumaProcessEvents(traumaPostAnswerProcessEvents({ runId, status: "finished" }));
@@ -668,8 +786,10 @@ export class InProcessGateway implements Gateway {
             projectKey: input.projectKey,
             sessionKey: input.sessionKey,
             runId,
-            userText: summarizeTraumaForm(input.traumaForm),
+            userText: input.traumaRawInput?.trim() || summarizeTraumaForm(traumaForm),
             assistantText: normalizeChineseDisplayText(response.naturalLanguageAnswer),
+            aiTitle: normalizeChineseDisplayText(response.memo.title),
+            ...(assistantCitations && assistantCitations.length > 0 ? { citations: assistantCitations } : {}),
             processMessages: traumaProcessMessages,
           });
           const displayResponse = {
@@ -791,6 +911,21 @@ export class InProcessGateway implements Gateway {
         });
         if (this.turnCompletions.get(input.sessionKey) === turnDone) {
           const message = error instanceof Error ? error.message : String(error);
+          const traumaController = this.traumaTurnControllers.get(input.sessionKey);
+          const traumaAborted = traumaController?.runId === runId && traumaController.controller.signal.aborted;
+          if (traumaAborted) {
+            const gatewayEvent: GatewayEvent = {
+              type: "error",
+              runId,
+              code: "turn_aborted",
+              message: "本轮推演已停止。",
+              recoverable: true,
+              userHint: "本轮推演已停止，未保存新的推演结果。",
+            };
+            this.recordActiveTurnEvent(input.sessionKey, gatewayEvent);
+            queue.enqueue(gatewayEvent);
+            return;
+          }
           await emitGatewayFailureStatus(createGatewayFailureStatus({
             event: "gateway_submit_failed",
             code: "gateway_submit_failed",
@@ -809,6 +944,10 @@ export class InProcessGateway implements Gateway {
           queue.enqueue(gatewayEvent);
         }
       } finally {
+        const traumaController = this.traumaTurnControllers.get(input.sessionKey);
+        if (traumaController?.runId === runId) {
+          this.traumaTurnControllers.delete(input.sessionKey);
+        }
         if (timeoutHandle) {
           clearTimeout(timeoutHandle);
           timeoutHandle = undefined;
@@ -857,6 +996,10 @@ export class InProcessGateway implements Gateway {
 
   async abortTurn(input: { sessionKey: string; runId?: string; reason?: string }): Promise<void> {
     const reason = input.reason ?? (input.runId ? `aborted:${input.runId}` : "aborted");
+    const traumaController = this.traumaTurnControllers.get(input.sessionKey);
+    if (traumaController && (!input.runId || traumaController.runId === input.runId)) {
+      traumaController.controller.abort(reason);
+    }
     await this.router.abort(input.sessionKey, reason);
     // Wait for the in-flight `submitTurn` (if any) to fully unwind so
     // `inFlightTurns` has been cleared by the time the RPC response is

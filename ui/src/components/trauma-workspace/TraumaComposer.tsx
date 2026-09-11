@@ -1,58 +1,24 @@
-import { ChevronDown, Loader2, Sparkles } from 'lucide-react';
+import { ChevronDown, Loader2, Sparkles, Square } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '../../lib/utils';
 import { SUBSTAGE_LABELS, SUBSTAGE_ORDER } from './domain/stageConfig';
-import type { ExtractedTurnForm, SubStage, TurnFormInput, VitalItemKey } from './domain/types';
+import type { SubStage, TurnFormInput } from './domain/types';
 import TraumaTurnForm from './TraumaTurnForm';
-
-// ─── Normalization (mirrors formDraft.ts on the backend) ───────────────────────
-
-const TEXT_LIMITS = {
-  injuryNarrative: 1_000,
-  treatmentNarrative: 800,
-  evacuationNarrative: 500,
-  note: 500,
-} as const;
-
-function joinAndTruncate(items: Array<{ text: string }>, limit: number): string {
-  const joined = items
-    .map((item) => item.text.trim())
-    .filter(Boolean)
-    .join('\n');
-  return joined.slice(0, limit);
-}
-
-function normalizeExtracted(extracted: ExtractedTurnForm): TurnFormInput {
-  const vitals: Partial<Record<VitalItemKey, number>> = {};
-  for (const item of extracted.vitals) {
-    vitals[item.field] = item.value;
-  }
-  return {
-    statedSubStage: null,
-    injuryNarrative: joinAndTruncate(extracted.injuryNarratives, TEXT_LIMITS.injuryNarrative),
-    treatmentNarrative: joinAndTruncate(extracted.treatmentNarratives, TEXT_LIMITS.treatmentNarrative),
-    evacuationNarrative: joinAndTruncate(extracted.evacuationNarratives, TEXT_LIMITS.evacuationNarrative),
-    note: joinAndTruncate(extracted.notes, TEXT_LIMITS.note),
-    vitals,
-  };
-}
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 type ComposerState =
   | { phase: 'idle' }
-  | { phase: 'extracting' }
-  | { phase: 'confirming'; draft: TurnFormInput; sourceText: string }
-  | { phase: 'error'; message: string; sourceText: string };
+  | { phase: 'extracting' };
 
 type TraumaComposerProps = {
   projectKey?: string;
   sessionId?: string;
-  /** Compact case history fed to the extractor as context. */
   caseHistory?: string;
   /** 上一轮推理后由工位 P 落定的救治级别；用于限定本轮可选级别。 */
   previousSubStage?: SubStage | null;
-  onSubmit: (form: TurnFormInput, rawInput: string) => void | Promise<void>;
+  onSubmit: (form: TurnFormInput, rawInput: string, extract?: boolean) => void | Promise<void>;
+  onAbort?: () => void;
   submitting?: boolean;
 };
 
@@ -136,25 +102,21 @@ function LevelRadios({
 // ─── Component ─────────────────────────────────────────────────────────────────
 
 export default function TraumaComposer({
-  projectKey,
-  sessionId,
-  caseHistory = '',
+  projectKey: _projectKey,
+  sessionId: _sessionId,
+  caseHistory: _caseHistory = '',
   previousSubStage,
   onSubmit,
+  onAbort,
   submitting = false,
 }: TraumaComposerProps) {
   const [state, setState] = useState<ComposerState>({ phase: 'idle' });
   const [rawText, setRawText] = useState('');
   const [manualOpen, setManualOpen] = useState(false);
   const [freeSubStage, setFreeSubStage] = useState<SubStage | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const isExtracting = state.phase === 'extracting';
-  const isConfirming = state.phase === 'confirming';
-  const isError = state.phase === 'error';
   const busy = submitting || isExtracting;
-  // 上一轮已是外科复苏时，本轮唯一定级与选择都被该系统级锁定。
-  const surgeryOnly = previousSubStage === 'surgical_resuscitation';
 
   // Once a submission starts, clear the draft and collapse back to the free-text
   // surface. The parent drives the next round; we don't keep stale text around.
@@ -172,101 +134,57 @@ export default function TraumaComposer({
   async function handleExtract() {
     const trimmed = rawText.trim();
     if (!trimmed || busy) return;
+    // 抽取在同一个 runner turn 内异步执行；先把原始自由语句交给聊天区，
+    // 网关随后负责模型抽取，失败时自动使用原文 injuryNarrative fallback。
     setState({ phase: 'extracting' });
-    try {
-      // 抽取是无状态 RPC（只依赖 projectKey），新病例首轮尚未落定 session。
-      // 这里给 URL 一个占位 token 使路由可匹配；占位会被服务端原样透传但被抽取器忽略。
-      const sid = sessionId ?? '__new_case__';
-      const response = await fetch(
-        `/api/trauma/cases/${encodeURIComponent(sid)}/extract`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectKey, rawText: trimmed, caseHistory }),
-        },
-      );
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({})) as { error?: string };
-        throw new Error(body.error ?? `HTTP ${response.status}`);
-      }
-      const result = await response.json() as { extracted: ExtractedTurnForm };
-      const draft = normalizeExtracted(result.extracted);
-      // 自由输入区选定的级别作为确认卡片的初值（仍可在确认栏修改）。
-      draft.statedSubStage = freeSubStage;
-      setState({ phase: 'confirming', draft, sourceText: trimmed });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : '整理失败，请重试';
-      setState({ phase: 'error', message, sourceText: trimmed });
-      setManualOpen(true);
-    }
-  }
-
-  function handleReExtract() {
-    // Return to idle with the text preserved; user can edit and re-extract.
-    setState({ phase: 'idle' });
-    setTimeout(() => textareaRef.current?.focus(), 0);
-  }
-
-  async function handleConfirm(form: TurnFormInput) {
-    const src = state.phase === 'confirming' ? state.sourceText : rawText;
-    await onSubmit(form, src);
-    // Reset after submit — parent will re-key us via resetKey on success.
+    await onSubmit({
+      statedSubStage: freeSubStage,
+      // Keep the transport-safe draft within the form limit; the complete
+      // free text is carried separately in rawInput for extraction/audit.
+      injuryNarrative: trimmed.slice(0, 1000),
+      treatmentNarrative: '',
+      evacuationNarrative: '',
+      note: '',
+      vitals: {},
+    }, trimmed, true);
   }
 
   async function handleManualSubmit(form: TurnFormInput) {
     await onSubmit(form, rawText.trim());
   }
 
-  // Fallback pre-filled values for manual entry after an extract error.
-  const fallbackValues: TurnFormInput | undefined =
-    state.phase === 'error'
-      ? {
-          statedSubStage: freeSubStage,
-          injuryNarrative: state.sourceText,
-          treatmentNarrative: '',
-          evacuationNarrative: '',
-          note: '',
-          vitals: {},
-        }
-      : undefined;
-
   return (
     <div className="space-y-3">
       {/* ── Free-text input ─────────────────────────────────────────── */}
-      {!isConfirming ? (
-        <div
-          className={cn(
-            'rounded-2xl border bg-white p-3 shadow-sm dark:bg-neutral-900',
-            isError
-              ? 'border-red-300 dark:border-red-800'
-              : 'border-neutral-200 dark:border-neutral-800',
-          )}
-        >
-          <textarea
-            ref={textareaRef}
-            value={rawText}
-            onChange={(e) => {
-              setRawText(e.target.value);
-              if (state.phase === 'error') setState({ phase: 'idle' });
-            }}
-            disabled={isExtracting}
-            placeholder="用自然语言描述本轮伤情、处置与后送情况，点「整理」由模型拆分为各字段供你核对后提交。"
-            rows={4}
-            className="block w-full resize-none bg-transparent text-xs leading-5 text-neutral-800 outline-none placeholder:text-neutral-400 disabled:opacity-60 dark:text-neutral-100 dark:placeholder:text-neutral-500"
-            aria-label="本轮伤情自由输入"
+      <div className="rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+        <textarea
+          value={rawText}
+          onChange={(e) => {
+            setRawText(e.target.value);
+          }}
+          disabled={isExtracting}
+          placeholder="用自然语言描述本轮伤情、处置与后送情况，点「整理」后自动抽取并开始本轮推演。"
+          rows={4}
+          className="block w-full resize-none bg-transparent text-xs leading-5 text-neutral-800 outline-none placeholder:text-neutral-400 disabled:opacity-60 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+          aria-label="本轮伤情自由输入"
+        />
+        <div className="mt-2 flex items-center justify-between gap-2 border-t border-neutral-200 pt-2 dark:border-neutral-800">
+          <LevelRadios
+            previousSubStage={previousSubStage}
+            value={freeSubStage}
+            onChange={setFreeSubStage}
+            disabled={busy}
           />
-          {isError ? (
-            <p role="alert" className="mt-1.5 text-[10px] text-red-600 dark:text-red-400">
-              整理失败：{(state as { phase: 'error'; message: string }).message}。可重试或直接使用精确录入。
-            </p>
-          ) : null}
-          <div className="mt-2 flex items-center justify-between gap-2 border-t border-neutral-200 pt-2 dark:border-neutral-800">
-            <LevelRadios
-              previousSubStage={previousSubStage}
-              value={freeSubStage}
-              onChange={setFreeSubStage}
-              disabled={busy}
-            />
+          {submitting && onAbort ? (
+            <button
+              type="button"
+              onClick={onAbort}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-red-300 bg-red-50 px-3.5 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300"
+            >
+              <Square className="h-3 w-3 fill-current" />
+              停止本轮推演
+            </button>
+          ) : (
             <button
               type="button"
               onClick={() => void handleExtract()}
@@ -278,52 +196,36 @@ export default function TraumaComposer({
                 : <Sparkles className="h-3.5 w-3.5" />}
               {isExtracting ? '整理中…' : '整理'}
             </button>
-          </div>
+          )}
         </div>
-      ) : null}
-
-      {/* ── Confirm card ─────────────────────────────────────────────── */}
-      {isConfirming ? (
-        <TraumaTurnForm
-          mode="confirm"
-          initialValues={(state as { phase: 'confirming'; draft: TurnFormInput; sourceText: string }).draft}
-          sourceText={(state as { phase: 'confirming'; draft: TurnFormInput; sourceText: string }).sourceText}
-          onSubmit={(form) => void handleConfirm(form)}
-          onReExtract={handleReExtract}
-          submitting={submitting}
-          statedSubStageLocked={surgeryOnly}
-        />
-      ) : null}
+      </div>
 
       {/* ── 精确录入 disclosure ───────────────────────────────────────── */}
-      {!isConfirming ? (
-        <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
-          <button
-            type="button"
-            onClick={() => setManualOpen((open) => !open)}
-            className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left text-[11px] font-semibold text-neutral-600 transition hover:bg-neutral-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-teal-500 dark:text-neutral-400 dark:hover:bg-neutral-800/50"
-            aria-expanded={manualOpen}
-          >
-            <span>精确录入</span>
-            <ChevronDown
-              className={cn(
-                'h-3.5 w-3.5 text-neutral-400 transition-transform duration-200',
-                manualOpen && 'rotate-180',
-              )}
+      <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+        <button
+          type="button"
+          onClick={() => setManualOpen((open) => !open)}
+          className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left text-[11px] font-semibold text-neutral-600 transition hover:bg-neutral-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-teal-500 dark:text-neutral-400 dark:hover:bg-neutral-800/50"
+          aria-expanded={manualOpen}
+        >
+          <span>精确录入</span>
+          <ChevronDown
+            className={cn(
+              'h-3.5 w-3.5 text-neutral-400 transition-transform duration-200',
+              manualOpen && 'rotate-180',
+            )}
+          />
+        </button>
+        {manualOpen ? (
+          <div className="border-t border-neutral-200 p-3 pt-0 dark:border-neutral-800">
+            <TraumaTurnForm
+              mode="manual"
+              onSubmit={(form) => void handleManualSubmit(form)}
+              submitting={submitting}
             />
-          </button>
-          {manualOpen ? (
-            <div className="border-t border-neutral-200 p-3 pt-0 dark:border-neutral-800">
-              <TraumaTurnForm
-                mode="manual"
-                initialValues={fallbackValues}
-                onSubmit={(form) => void handleManualSubmit(form)}
-                submitting={submitting}
-              />
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

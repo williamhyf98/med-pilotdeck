@@ -1,5 +1,5 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { Dispatch, ReactNode, RefObject, SetStateAction } from 'react';
+import type { Dispatch, MutableRefObject, ReactNode, RefObject, SetStateAction } from 'react';
 import { useTranslation } from 'react-i18next';
 import { XCircle, GitBranch } from 'lucide-react';
 import type {
@@ -54,6 +54,7 @@ type MessagesPaneV2Props = {
   totalMessages: number;
   loadEarlierMessages: () => void;
   loadAllMessages: () => void;
+  navigateToChatMessageRef?: MutableRefObject<((runId: string) => void | Promise<void>) | null>;
   allMessagesLoaded: boolean;
   isLoadingAllMessages: boolean;
   provider: SessionProvider;
@@ -260,6 +261,8 @@ function MeasuredMessageItem({
       ref={itemRef}
       className={`chat-message ${isLast ? '' : compactBottomSpacing ? 'pb-2' : 'pb-4'}`}
       data-message-key={itemKey}
+      data-message-run-id={typeof message.runId === 'string' ? message.runId : undefined}
+      data-message-turn-id={typeof message.turnId === 'string' ? message.turnId : undefined}
       data-message-timestamp={message.timestamp ? String(message.timestamp) : undefined}
     >
       {children}
@@ -319,6 +322,7 @@ function MessagesPaneV2({
   totalMessages,
   loadEarlierMessages,
   loadAllMessages,
+  navigateToChatMessageRef,
   allMessagesLoaded,
   isLoadingAllMessages,
   provider,
@@ -565,6 +569,7 @@ function MessagesPaneV2({
   const windowedMessageItems = shouldVirtualizeMessages
     ? keyedMessageItems.slice(virtualWindow.startIndex, virtualWindow.endIndex)
     : keyedMessageItems;
+  const [pendingNavigationRunId, setPendingNavigationRunId] = useState<string | null>(null);
   const liveProcessHeaderIndex = useMemo(() => {
     if (!isAssistantWorking) return -1;
     for (let index = keyedMessageItems.length - 1; index >= 0; index -= 1) {
@@ -775,6 +780,85 @@ function MessagesPaneV2({
         : { scrollTop: nextScrollTop, height: nextHeight }
     ));
   }, [keyedMessageItems, messageWindowScope, scrollContainerRef]);
+
+  const findMessageNodeByRunId = useCallback((runId: string) => {
+    const nodes = scrollContainerRef.current?.querySelectorAll<HTMLElement>('.chat-message') ?? [];
+    return Array.from(nodes).find((node) => (
+      node.dataset.messageRunId === runId || node.dataset.messageTurnId === runId
+    )) ?? null;
+  }, [scrollContainerRef]);
+
+  const scrollToNode = useCallback((node: HTMLElement) => {
+    node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, []);
+
+  useEffect(() => {
+    if (!navigateToChatMessageRef) return undefined;
+    navigateToChatMessageRef.current = async (runId: string) => {
+      const target = runId.trim();
+      if (!target) return;
+      setPendingNavigationRunId(target);
+      const hasVisibleTarget = keyedMessageItems.some((item) => (
+        item.message.type === 'user'
+        && (item.message.runId === target || item.message.turnId === target)
+      ));
+      if (!hasVisibleTarget && !allMessagesLoaded && !isLoadingAllMessages) {
+        await loadAllMessages();
+      }
+    };
+    return () => {
+      if (navigateToChatMessageRef.current) {
+        navigateToChatMessageRef.current = null;
+      }
+    };
+  }, [
+    allMessagesLoaded,
+    isLoadingAllMessages,
+    keyedMessageItems,
+    loadAllMessages,
+    navigateToChatMessageRef,
+  ]);
+
+  useEffect(() => {
+    if (!pendingNavigationRunId || isLoadingAllMessages) return;
+    const targetIndex = keyedMessageItems.findIndex((item) => (
+      item.message.type === 'user'
+      && (item.message.runId === pendingNavigationRunId || item.message.turnId === pendingNavigationRunId)
+    ));
+    if (targetIndex < 0) return;
+
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const targetMounted = findMessageNodeByRunId(pendingNavigationRunId);
+    if (targetMounted) {
+      scrollToNode(targetMounted);
+      setPendingNavigationRunId(null);
+      return;
+    }
+
+    const approximateTop = measuredItemHeights
+      .slice(0, targetIndex)
+      .reduce((sum, height) => sum + height, 0);
+    const nextScrollTop = Math.max(0, approximateTop - 120);
+    container.scrollTop = nextScrollTop;
+    setScrollViewport({ scrollTop: nextScrollTop, height: container.clientHeight || 900 });
+
+    window.requestAnimationFrame(() => {
+      const node = findMessageNodeByRunId(pendingNavigationRunId);
+      if (node) {
+        scrollToNode(node);
+        setPendingNavigationRunId(null);
+      }
+    });
+  }, [
+    findMessageNodeByRunId,
+    isLoadingAllMessages,
+    keyedMessageItems,
+    measuredItemHeights,
+    pendingNavigationRunId,
+    scrollToNode,
+    scrollContainerRef,
+  ]);
 
   const renderLiveProcessDetailMessages = useCallback((detailMessages: ChatMessage[], groupId: string) => (
     detailMessages.map((message: ChatMessage, index: number) => (

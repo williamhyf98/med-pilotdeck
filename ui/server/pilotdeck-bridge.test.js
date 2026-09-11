@@ -168,6 +168,50 @@ describe('getGatewayTurnSafetyOverrides', () => {
 });
 
 describe('gatewayEventToFrames agent status errors', () => {
+    it('preserves assistant text citation metadata on stream deltas', () => {
+        const citations = [{
+            index: 1,
+            title: '战伤救治规则',
+            section: '第二章 分类救治',
+        }];
+        const frames = gatewayEventToFrames({
+            type: 'assistant_text_delta',
+            text: '应先控制活动性出血[1]。',
+            citations,
+        }, 'web:s_test', 'pilotdeck');
+
+        expect(frames).toHaveLength(1);
+        expect(frames[0]).toMatchObject({
+            kind: 'stream_delta',
+            content: '应先控制活动性出血[1]。',
+            citations,
+        });
+    });
+
+    it('carries the used citation subset on stream end so 参考来源 can render immediately', () => {
+        const citations = [{
+            index: 1,
+            title: '战伤救治规则',
+            section: '第二章 分类救治',
+        }];
+        const frames = gatewayEventToFrames({
+            type: 'assistant_text_end',
+            citations,
+        }, 'web:s_test', 'pilotdeck');
+
+        expect(frames).toHaveLength(1);
+        expect(frames[0]).toMatchObject({ kind: 'stream_end', citations });
+    });
+
+    it('omits citations on stream end when nothing was cited', () => {
+        const frames = gatewayEventToFrames({
+            type: 'assistant_text_end',
+        }, 'web:s_test', 'pilotdeck');
+
+        expect(frames).toHaveLength(1);
+        expect(frames[0].citations).toBeUndefined();
+    });
+
     it('maps tool result detail availability to a mergeable tool_result frame', () => {
         const frames = gatewayEventToFrames({
             type: 'tool_result_detail_available',

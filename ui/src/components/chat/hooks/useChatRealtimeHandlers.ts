@@ -284,6 +284,13 @@ interface UseChatRealtimeHandlersArgs {
   onReplaceTemporarySession?: (sessionId?: string | null) => void;
   onNavigateToSession?: (sessionId: string) => void;
   onWebSocketReconnect?: () => void;
+  onTraumaProcessStateChange?: (state: {
+    runId: string;
+    state: 'snapshot_started' | 'turn_failed';
+    mainStage?: string;
+    subStage?: string;
+    round?: number;
+  }) => void;
   sessionStore: SessionStore;
 }
 
@@ -311,6 +318,7 @@ export function useChatRealtimeHandlers({
   onReplaceTemporarySession,
   onNavigateToSession,
   onWebSocketReconnect,
+  onTraumaProcessStateChange,
   sessionStore,
 }: UseChatRealtimeHandlersArgs) {
   const { subscribe } = useWebSocket();
@@ -483,6 +491,61 @@ export function useChatRealtimeHandlers({
 
     const isForActiveView = isSessionForActiveView(sid, activeViewSessionId);
 
+    // Step 5 is the first frame carrying the level confirmed in step 4, so it
+    // places the temporary, non-clickable "生成中" leaf under the right
+    // sub-stage before retrieval and generation even start. Step 10 repeats the
+    // same metadata, and the post-answer "整理推演流程图/保存推演结果" marker
+    // carries none at all — both are kept so the leaf still appears if step 5
+    // was skipped (the partial branch leaves the level undetermined).
+    if (msgRunId && msg.kind === 'tool_use') {
+      const toolInput = (() => {
+        if (msg.toolInput && typeof msg.toolInput === 'object') {
+          return msg.toolInput as Record<string, unknown>;
+        }
+        if (typeof msg.toolInput === 'string') {
+          try {
+            const parsed = JSON.parse(msg.toolInput);
+            return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+              ? parsed as Record<string, unknown>
+              : {};
+          } catch {
+            return {};
+          }
+        }
+        return {};
+      })();
+      const details = toolInput.details && typeof toolInput.details === 'object'
+        ? toolInput.details as Record<string, unknown>
+        : {};
+      // 部分分支（级别判不出来时）同样有第 5 步，但它不带级别。要求 subStage
+      // 有值，那条分支就不会凭空冒出一个落在默认位置的「生成中」节点。
+      const carriesConfirmedPlacement = toolInput.stepNumber === 5
+        && typeof details.subStage === 'string'
+        && details.subStage.length > 0;
+      if (
+        toolInput.traumaRunnerStep === true
+        && (
+          carriesConfirmedPlacement
+          || toolInput.stepNumber === 10
+          || (
+            toolInput.countInTotal === false
+            && toolInput.title === '整理推演流程图/保存推演结果'
+          )
+        )
+        && isForActiveView
+      ) {
+        onTraumaProcessStateChange?.({
+          runId: msgRunId,
+          state: 'snapshot_started',
+          mainStage: typeof details.mainStage === 'string' ? details.mainStage : undefined,
+          subStage: typeof details.subStage === 'string' ? details.subStage : undefined,
+          round: typeof details.round === 'number' && Number.isFinite(details.round)
+            ? details.round
+            : undefined,
+        });
+      }
+    }
+
     // Ensure the store's activeSession matches so notify() triggers re-renders.
     // Without this, the RAF scheduler silently drops notifications for
     // sessions it doesn't consider "active", causing content to not render
@@ -565,7 +628,13 @@ export function useChatRealtimeHandlers({
       const streamId = `__streaming_${streamKey}`;
       const existing = slot?.realtimeMessages.find((m: any) => m.id === streamId);
       const currentText = existing?.content || '';
-      sessionStore.updateStreaming(sid, currentText + text, provider, msgRunId);
+      sessionStore.updateStreaming(
+        sid,
+        currentText + text,
+        provider,
+        msgRunId,
+        Array.isArray(msg.citations) ? msg.citations : existing?.citations,
+      );
       return;
     }
 
@@ -591,7 +660,11 @@ export function useChatRealtimeHandlers({
         thinkingBySessionRef.current.delete(sid);
         sessionStore.finalizeStreamingThinking(sid, msgRunId);
       }
-      sessionStore.finalizeStreaming(sid, msgRunId);
+      sessionStore.finalizeStreaming(
+        sid,
+        msgRunId,
+        Array.isArray(msg.citations) ? msg.citations : undefined,
+      );
       return;
     }
 
@@ -679,6 +752,12 @@ export function useChatRealtimeHandlers({
       case 'complete': {
         if (sid) {
           activeTurnReplaySignatureRef.current.delete(sid);
+          if (msg.aborted) {
+            // A stopped turn is intentionally non-durable: remove any
+            // assistant/thinking realtime rows that were emitted before the
+            // abort acknowledgement, while preserving the user's bubble.
+            sessionStore.clearAssistantRealtime(sid);
+          }
           // Finalize both thinking and content streams
           if (thinkingBySessionRef.current.has(sid)) {
             thinkingBySessionRef.current.delete(sid);
@@ -737,6 +816,9 @@ export function useChatRealtimeHandlers({
 
         // Handle aborted case
         if (msg.aborted) {
+          if (msgRunId) {
+            onTraumaProcessStateChange?.({ runId: msgRunId, state: 'turn_failed' });
+          }
           // Abort was requested — the complete event confirms it
           // No special UI action needed beyond clearing loading state above
           // The backend already sent any abort-related messages
@@ -762,6 +844,12 @@ export function useChatRealtimeHandlers({
       }
 
       case 'error': {
+        if (msgRunId) {
+          onTraumaProcessStateChange?.({ runId: msgRunId, state: 'turn_failed' });
+          if (msg.code === 'turn_aborted' || msg.isInterruptedNotice) {
+            sessionStore.markTurnInterrupted?.(sid, msgRunId);
+          }
+        }
         if (isForActiveView) {
           setIsLoading(false);
           setCanAbortSession(false);
@@ -877,6 +965,7 @@ export function useChatRealtimeHandlers({
     onReplaceTemporarySession,
     onNavigateToSession,
     onWebSocketReconnect,
+    onTraumaProcessStateChange,
     selectedProject,
     sessionStore,
   ]);

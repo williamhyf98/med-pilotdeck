@@ -47,4 +47,56 @@ describe('streaming assistant presentation', () => {
     expect(container.querySelector('.streaming-fade-in')).toBeNull();
     expect(container.textContent).toContain('流式正文');
   });
+
+  it('renders inline citation badges while streaming when citations are provided', () => {
+    render(
+      <Markdown
+        isStreaming
+        className="prose"
+        citations={[{ index: 1, title: '战伤救治规则', section: '第二章 分类救治' }]}
+      >
+        {'应先控制活动性出血[1]。'}
+      </Markdown>,
+    );
+
+    expect(screen.getByText('[1]')).toBeTruthy();
+    expect(screen.getByText('[1]').tagName.toLowerCase()).toBe('span');
+  });
+
+  it('renders inline citation badges while streaming even before metadata arrives', () => {
+    // 候选引用还没送到时角标也必须立刻是蓝色上标，不能先当普通正文再跳变。
+    render(
+      <Markdown isStreaming className="prose">
+        {'应先控制活动性出血[1]。'}
+      </Markdown>,
+    );
+
+    expect(screen.getByText('[1]').tagName.toLowerCase()).toBe('span');
+    expect(screen.getByText('[1]').closest('sup')).not.toBeNull();
+  });
+
+  it('withholds 参考来源 while streaming and shows it once the body ends', () => {
+    const streaming: ChatMessage = {
+      id: '__streaming_session_run',
+      type: 'assistant',
+      content: '应先控制活动性出血[1]。',
+      timestamp: '2026-09-09T00:00:00.000Z',
+      isStreaming: true,
+      citations: [{ index: 1, title: '战伤救治规则', section: '第二章 分类救治' }],
+    };
+    const rowProps = {
+      prevMessage: null,
+      provider: 'pilotdeck' as const,
+      selectedProject: null,
+      createDiff: () => [],
+      showAssistantActions: false,
+    };
+
+    const { rerender } = render(<MessageRowV2 message={streaming} {...rowProps} />);
+    expect(screen.queryByText(/参考来源/)).toBeNull();
+
+    rerender(<MessageRowV2 message={{ ...streaming, isStreaming: false }} {...rowProps} />);
+    expect(screen.getByText('参考来源 · 1 条')).toBeTruthy();
+  });
+
 });
