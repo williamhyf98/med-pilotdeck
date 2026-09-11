@@ -54,6 +54,14 @@ export interface NormalizedMessage {
   // kind-specific fields (flat for simplicity)
   role?: 'user' | 'assistant';
   content?: string;
+  citations?: Array<{
+    index: number;
+    title: string;
+    section: string;
+    quote?: string;
+    evidenceGrade?: string;
+    evidenceQuality?: string;
+  }>;
   /** 思考帧的推理正文，OpenAI 兼容 provider 走这个字段而非 `content`。 */
   reasoningContent?: string;
   contentI18n?: { key: string; params?: Record<string, unknown> };
@@ -102,6 +110,8 @@ export interface NormalizedMessage {
    */
   toolResultImages?: Array<{ data: string; mimeType?: string; name?: string }>;
   isError?: boolean;
+  /** Marks a realtime row from a turn explicitly stopped by the user. */
+  isInterruptedNotice?: boolean;
   /**
    * `PilotDeckToolErrorCode` from the gateway when `kind === 'tool_result'`
    * and `isError === true` — flat on the frame because the bridge merges
@@ -578,6 +588,20 @@ export function computeMerged(server: NormalizedMessage[], realtime: NormalizedM
   }
 
   const result = [...server, ...extra];
+  // Stopped turns are intentionally not persisted. When a subsequent turn
+  // has already reached the server, those old realtime rows must remain in
+  // their original chronological position instead of being appended below
+  // the newer server rows.
+  if (extra.some((message) => message.isInterruptedNotice)) {
+    return result
+      .map((message, index) => ({ message, index }))
+      .sort((left, right) => {
+        const leftTs = Date.parse(left.message.timestamp) || 0;
+        const rightTs = Date.parse(right.message.timestamp) || 0;
+        return leftTs - rightTs || left.index - right.index;
+      })
+      .map(({ message }) => message);
+  }
   return result;
 }
 
@@ -712,6 +736,7 @@ export function patchMergedStreamingMessage(
   streamId: string,
   content: string,
   msgProvider?: SessionProvider,
+  citations?: NormalizedMessage['citations'],
 ): boolean {
   const mergedIdx = slot.merged.findIndex((message) => message.id === streamId);
   if (mergedIdx < 0) {
@@ -719,7 +744,11 @@ export function patchMergedStreamingMessage(
   }
 
   const existing = slot.merged[mergedIdx];
-  if (existing.content === content && (msgProvider == null || existing.provider === msgProvider)) {
+  if (
+    existing.content === content
+    && (msgProvider == null || existing.provider === msgProvider)
+    && (!citations || citations.length === 0 || existing.citations === citations)
+  ) {
     return true;
   }
 
@@ -727,6 +756,7 @@ export function patchMergedStreamingMessage(
     ...existing,
     content,
     ...(msgProvider != null ? { provider: msgProvider } : {}),
+    ...(citations && citations.length > 0 ? { citations } : {}),
   };
   slot.merged = slot.merged.slice();
   return true;
@@ -1349,7 +1379,13 @@ export function useSessionStore() {
    * Update or create a streaming message (accumulated text so far).
    * Uses a well-known ID so subsequent calls replace the same message.
    */
-  const updateStreaming = useCallback((sessionId: string, accumulatedText: string, msgProvider: SessionProvider, runId?: string) => {
+  const updateStreaming = useCallback((
+    sessionId: string,
+    accumulatedText: string,
+    msgProvider: SessionProvider,
+    runId?: string,
+    citations?: NormalizedMessage['citations'],
+  ) => {
     const slot = getSlot(sessionId);
     const streamId = `__streaming_${streamingKey(sessionId, runId)}`;
     const idx = slot.realtimeMessages.findIndex(m => m.id === streamId);
@@ -1357,16 +1393,23 @@ export function useSessionStore() {
       // Subsequent delta — preserve the original turn-start timestamp so
       // computeMerged can tell which server snapshots belong to this turn.
       const existing = slot.realtimeMessages[idx];
-      if (existing.content === accumulatedText && existing.provider === msgProvider) {
+      const nextCitations = citations && citations.length > 0 ? citations : existing.citations;
+      if (
+        existing.content === accumulatedText
+        && existing.provider === msgProvider
+        && existing.citations === nextCitations
+      ) {
         return;
       }
-      if (!patchMergedStreamingMessage(slot, streamId, accumulatedText, msgProvider)) {
+      if (!patchMergedStreamingMessage(slot, streamId, accumulatedText, msgProvider, nextCitations)) {
         existing.content = accumulatedText;
         existing.provider = msgProvider;
+        existing.citations = nextCitations;
         forceRecomputeMerged(slot);
       } else {
         existing.content = accumulatedText;
         existing.provider = msgProvider;
+        existing.citations = nextCitations;
       }
       notify(sessionId);
       return;
@@ -1387,6 +1430,7 @@ export function useSessionStore() {
         provider: msgProvider,
         kind: 'stream_delta',
         content: accumulatedText,
+        ...(citations && citations.length > 0 ? { citations } : {}),
         runId,
         serverTailIdAtStart: serverTailId ?? undefined,
       };
@@ -1400,7 +1444,11 @@ export function useSessionStore() {
    * Finalize streaming: convert the streaming message to a regular text message.
    * The well-known streaming ID is replaced with a unique text message ID.
    */
-  const finalizeStreaming = useCallback((sessionId: string, runId?: string) => {
+  const finalizeStreaming = useCallback((
+    sessionId: string,
+    runId?: string,
+    citations?: NormalizedMessage['citations'],
+  ) => {
     const slot = storeRef.current.get(sessionId);
     if (!slot) return;
     const streamId = `__streaming_${streamingKey(sessionId, runId)}`;
@@ -1415,6 +1463,8 @@ export function useSessionStore() {
         kind: 'text',
         role: 'assistant',
         isFinal: true,
+        // 参考来源随 stream_end 下发，正文流完即可渲染，无需等整轮推演结束。
+        ...(citations && citations.length > 0 ? { citations } : {}),
       };
       recomputeMergedIfNeeded(slot);
       notify(sessionId);
@@ -1504,7 +1554,13 @@ export function useSessionStore() {
     const slot = storeRef.current.get(sessionId);
     if (!slot) return;
     const nextRealtime = slot.realtimeMessages.filter((message) => {
-      if (message.kind === 'thinking' || message.kind === 'stream_delta' || message.kind === 'stream_end') {
+      if (
+        message.kind === 'thinking'
+        || message.kind === 'stream_delta'
+        || message.kind === 'stream_end'
+        || message.kind === 'tool_use'
+        || message.kind === 'tool_result'
+      ) {
         return false;
       }
       return !(message.kind === 'text' && message.role === 'assistant');
@@ -1513,6 +1569,21 @@ export function useSessionStore() {
     slot.realtimeMessages = nextRealtime;
     recomputeMergedIfNeeded(slot);
     notify(sessionId);
+  }, [notify]);
+
+  const markTurnInterrupted = useCallback((sessionId: string, runId: string) => {
+    const slot = storeRef.current.get(sessionId);
+    if (!slot) return;
+    let changed = false;
+    slot.realtimeMessages = slot.realtimeMessages.map((message) => {
+      if (message.runId !== runId || message.isInterruptedNotice) return message;
+      changed = true;
+      return { ...message, isInterruptedNotice: true };
+    });
+    if (changed) {
+      recomputeMergedIfNeeded(slot);
+      notify(sessionId);
+    }
   }, [notify]);
 
   /**
@@ -1552,6 +1623,7 @@ export function useSessionStore() {
     finalizeStreamingThinking,
     clearRealtime,
     clearAssistantRealtime,
+    markTurnInterrupted,
     getMessages,
     getActivityMessages,
     getSubagentDetailMessages,
@@ -1567,7 +1639,7 @@ export function useSessionStore() {
     appendRealtime, upsertActivity, setActivities, appendRealtimeBatch, refreshFromServer,
     setActiveSession, setStatus, isStale, updateStreaming, finalizeStreaming,
     updateStreamingThinking, finalizeStreamingThinking,
-    clearRealtime, clearAssistantRealtime, getMessages, getActivityMessages, getSubagentDetailMessages, getSessionSlot,
+    clearRealtime, clearAssistantRealtime, markTurnInterrupted, getMessages, getActivityMessages, getSubagentDetailMessages, getSessionSlot,
     recordSubagentLink, appendSubagentDetailMessage, updateSubagentDetailStreaming,
     finalizeSubagentDetailStreaming, updateSubagentDetailThinking, finalizeSubagentDetailThinking,
   ]);

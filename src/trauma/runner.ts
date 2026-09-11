@@ -20,6 +20,7 @@ import type {
   MainStage,
   PlacementAssessment,
   SubStage,
+  CitationMetadata,
   TurnFormInput,
 } from "./types.js";
 
@@ -36,6 +37,7 @@ export type TraumaTurnProgress =
       status: "started";
       title?: string;
       detail?: string;
+      details?: Record<string, unknown>;
     }
   | {
       kind: "runner_step";
@@ -60,9 +62,11 @@ export type TraumaTurnInput = {
   onProgress?: (progress: TraumaTurnProgress) => void;
   onAssistantTextDelta?: (text: string) => void | Promise<void>;
   onAssistantTextEnd?: () => void | Promise<void>;
+  onAssistantCitations?: (citations: CitationMetadata[]) => void | Promise<void>;
   requestPlacementConfirmation?: (
     request: PlacementConfirmationRequest,
   ) => Promise<PlacementConfirmationDecision>;
+  abortSignal?: AbortSignal;
 };
 
 export type PlacementConfirmationRequest = {
@@ -165,6 +169,90 @@ function summarizeRagHit(hit: { chunk_id: string; score: number; retrieval_backe
   };
 }
 
+function citationSection(chunk: { section?: string; article?: string }): string {
+  return chunk.section?.trim() || chunk.article?.trim() || "未标注章节";
+}
+
+/**
+ * 引用编号的唯一真相源：chunk 在 promptChunks 中的序号 + 1。工位 B 的提示词
+ * 已经把同一个 citationIndex 发给模型，正文角标、参考来源列表和「知识块依据」
+ * 三处都复用它，运行期不再重排编号。
+ */
+function buildCitationMetadata(chunks: Array<{
+  id?: string;
+  documentTitle: string;
+  section?: string;
+  article?: string;
+  text: string;
+}>): CitationMetadata[] {
+  return chunks.map((chunk, index) => ({
+    index: index + 1,
+    title: normalizeChineseDisplayText(chunk.documentTitle),
+    section: normalizeChineseDisplayText(citationSection(chunk)),
+  }));
+}
+
+type NormalizedAnswerCitations = {
+  answer: string;
+  citations: CitationMetadata[];
+  usedChunkIds: Set<string>;
+};
+
+const DETAILS_RE = /<details>[\s\S]*?<\/details>/gi;
+const INLINE_CITATION_RE = /\[(\d{1,2})\]/g;
+
+function stripDetailsBlocks(text: string): string {
+  return text.replace(DETAILS_RE, "").trim();
+}
+
+/** 正文中按首次出现顺序排列的合法角标编号（合法 = 能落在本轮 promptChunks 内）。 */
+function inlineCitationOrder(answerBody: string, chunkCount: number): number[] {
+  const order: number[] = [];
+  const seen = new Set<number>();
+  for (const match of answerBody.matchAll(INLINE_CITATION_RE)) {
+    const index = Number.parseInt(match[1] ?? "", 10);
+    if (!Number.isFinite(index) || index < 1 || index > chunkCount) continue;
+    if (seen.has(index)) continue;
+    seen.add(index);
+    order.push(index);
+  }
+  return order;
+}
+
+/**
+ * 归一化正文引用：
+ * 1. 删掉模型可能仍然写出的 <details> 溯源块（参考来源改由前端组件渲染）；
+ * 2. 摘掉无法对应到 promptChunks 的非法角标，保证正文、参考来源列表和
+ *    知识块依据三者严格同集合；
+ * 3. 不重排编号，直接沿用 promptChunks 顺序。
+ */
+function normalizeAnswerCitations(
+  answer: string,
+  promptCitations: CitationMetadata[],
+  promptChunks: Array<{ id: string }>,
+): NormalizedAnswerCitations {
+  const answerBody = stripDetailsBlocks(answer);
+  const usedIndexes = inlineCitationOrder(answerBody, promptChunks.length);
+  const usedIndexSet = new Set(usedIndexes);
+
+  const cleanedBody = answerBody.replace(INLINE_CITATION_RE, (full, rawIndex: string) => {
+    const index = Number.parseInt(rawIndex, 10);
+    return usedIndexSet.has(index) ? full : "";
+  });
+
+  const citationByIndex = new Map(promptCitations.map((citation) => [citation.index, citation]));
+  const citations: CitationMetadata[] = [];
+  const usedChunkIds = new Set<string>();
+  for (const index of usedIndexes.slice().sort((left, right) => left - right)) {
+    const citation = citationByIndex.get(index);
+    if (citation) citations.push(citation);
+    const chunk = promptChunks[index - 1];
+    if (chunk) usedChunkIds.add(chunk.id);
+  }
+
+  return { answer: cleanedBody.trim(), citations, usedChunkIds };
+}
+
 export function createTraumaTurnRunner(deps: {
   store: TraumaCaseStore;
   model: StructuredModelClient;
@@ -177,6 +265,13 @@ export function createTraumaTurnRunner(deps: {
 
   return {
     async runTurn(input) {
+      const throwIfAborted = () => {
+        if (input.abortSignal?.aborted) {
+          const error = new Error(String(input.abortSignal.reason ?? "turn aborted"));
+          error.name = "AbortError";
+          throw error;
+        }
+      };
       const now = input.now ?? deps.now?.() ?? new Date().toISOString();
       const auditBase = {
         runId: input.messageId,
@@ -194,15 +289,20 @@ export function createTraumaTurnRunner(deps: {
         });
       };
       const report = input.onProgress ?? (() => {});
-      const beginStep = async (number: number, phase: string) => {
+      const beginStep = async (
+        number: number,
+        phase: string,
+        details?: Record<string, unknown>,
+      ) => {
         activeStep = { number, phase, startedAt: Date.now() };
-        report({ kind: "runner_step", step: number, phase, status: "started" });
+        report({ kind: "runner_step", step: number, phase, status: "started", details });
         await recordAudit({
           level: "INFO",
           event: "step_started",
           step: number,
           phase,
           status: "started",
+          details,
         });
       };
       const completeStep = async (details?: Record<string, unknown>) => {
@@ -243,6 +343,7 @@ export function createTraumaTurnRunner(deps: {
       });
 
       try {
+        throwIfAborted();
         await beginStep(1, "load_case_state");
         const previous = await deps.store.load() ?? initialCaseState({
           projectId: input.projectId,
@@ -252,6 +353,7 @@ export function createTraumaTurnRunner(deps: {
         await completeStep({ version: previous.version, round: previous.round });
 
         await beginStep(2, "validate_and_merge_form");
+        throwIfAborted();
         if (!validateTurnFormInput(input.form)) {
           throw new Error("invalid trauma form input");
         }
@@ -277,7 +379,8 @@ export function createTraumaTurnRunner(deps: {
             rationale: "用户通过表单明示本轮救治级别。",
             definitionReferences: [],
           }
-          : await placer.place({ state: candidate });
+          : await placer.place({ state: candidate, signal: input.abortSignal });
+        throwIfAborted();
         await completeStep({
           determined: proposedPlacement.determined,
           source: proposedPlacement.source,
@@ -286,15 +389,17 @@ export function createTraumaTurnRunner(deps: {
         });
 
         await beginStep(4, "confirm_placement");
+        throwIfAborted();
         const placementChanged = proposedPlacement.determined && (
           proposedPlacement.stage !== previous.currentStage
           || proposedPlacement.subStage !== previous.currentSubStage
         );
         let selectedPlacement = proposedPlacement;
         // A level explicitly selected in the form is already the user's
-        // confirmation for this round. Only model-determined changes need
-        // an elicitation step before continuing the pipeline.
-        if (placementChanged && !input.form.statedSubStage) {
+        // confirmation for this round. Whenever the level is left to the system
+        // ("由系统判定"), the user confirms it here — including when the
+        // proposal matches the level already in use.
+        if (proposedPlacement.determined && !input.form.statedSubStage) {
           if (!input.requestPlacementConfirmation) {
             throw new Error("placement confirmation is required");
           }
@@ -407,10 +512,18 @@ export function createTraumaTurnRunner(deps: {
           return response;
         }
 
-        await beginStep(5, "baseline_retrieval");
+        // 级别在第 4 步就已确认，这里带上它，让流程图的「生成中」叶子节点
+        // 在检索与生成开始前就挂到正确的子级下，而不是先落在默认位置再跳。
+        await beginStep(5, "baseline_retrieval", {
+          round: nextRound,
+          mainStage: candidate.currentStage,
+          subStage: candidate.currentSubStage,
+        });
+        throwIfAborted();
         const baseline = buildBaselineQueries(candidate);
         const firstWaveResults = await Promise.all(baseline.map(async (query) => {
-          const result = await deps.rag.query({ query: query.query, top_k: TRAUMA_RAG_TOP_K, topic: TRAUMA_RAG_TOPIC });
+          const result = await deps.rag.query({ query: query.query, top_k: TRAUMA_RAG_TOP_K, topic: TRAUMA_RAG_TOPIC, signal: input.abortSignal });
+          throwIfAborted();
           return { query, chunks: result.chunks, backend: result.retrieval_backend };
         }));
         const merged = mergeRetrieval({
@@ -445,9 +558,13 @@ export function createTraumaTurnRunner(deps: {
         });
 
         await beginStep(7, "reason");
+        throwIfAborted();
+        const citations = buildCitationMetadata(merged.promptChunks);
+        await input.onAssistantCitations?.(citations);
         const reasoned = await reasoner.reason({
           state: candidate,
           promptChunks: merged.promptChunks,
+          signal: input.abortSignal,
           onNaturalLanguageDelta: input.onAssistantTextDelta,
           onNaturalLanguageEnd: input.onAssistantTextEnd,
         });
@@ -459,6 +576,7 @@ export function createTraumaTurnRunner(deps: {
         });
 
         await beginStep(8, "resolve_gate");
+        throwIfAborted();
         const gateStatus = resolveGate(reasoned.gateAssessment, merged.retrieval);
         const requiresUserConfirmation = false;
         await completeStep({
@@ -468,20 +586,39 @@ export function createTraumaTurnRunner(deps: {
         });
 
         await beginStep(9, "mark_evidence");
-        const cited = new Set([
-          ...reasoned.treatmentPlan.flatMap((action) => action.evidenceChunkIds),
-          ...reasoned.gateAssessment.evidenceChunkIds,
-        ]);
-        const evidence = merged.evidence.map((chunk) => ({
-          ...chunk,
-          usedInAnswer: cited.has(chunk.id),
-        }));
+        throwIfAborted();
+        const normalizedAnswerCitations = normalizeAnswerCitations(
+          reasoned.naturalLanguageAnswer,
+          citations,
+          merged.promptChunks,
+        );
+        await input.onAssistantCitations?.(normalizedAnswerCitations.citations);
+        const naturalLanguageAnswer = normalizeChineseDisplayText(normalizedAnswerCitations.answer);
+        // 「已使用」严格等于正文里打了角标的知识块，这样知识块依据里的每一条
+        // 都能显示出与参考来源列表一致的编号。
+        const displayedCitationChunkIds = normalizedAnswerCitations.usedChunkIds;
+        const citationIndexByChunkId = new Map(
+          merged.promptChunks.map((chunk, index) => [chunk.id, index + 1]),
+        );
+        const evidence = merged.evidence.map((chunk) => {
+          const citationIndex = citationIndexByChunkId.get(chunk.id);
+          return {
+            ...chunk,
+            usedInAnswer: displayedCitationChunkIds.has(chunk.id),
+            ...(citationIndex !== undefined ? { citationIndex } : {}),
+          };
+        });
         await completeStep({
           evidenceCount: evidence.length,
-          citedEvidenceCount: cited.size,
+          citedEvidenceCount: displayedCitationChunkIds.size,
         });
 
-        await beginStep(10, "build_response_and_snapshot");
+        await beginStep(10, "build_response_and_snapshot", {
+          round: nextRound,
+          mainStage: candidate.currentStage,
+          subStage: candidate.currentSubStage,
+        });
+        throwIfAborted();
         const round = nextRound;
         const version = previous.version + 1;
         const memo = {
@@ -532,7 +669,7 @@ export function createTraumaTurnRunner(deps: {
           messageId: input.messageId,
           caseVersion: version,
           round,
-          naturalLanguageAnswer: normalizeChineseDisplayText(reasoned.naturalLanguageAnswer),
+          naturalLanguageAnswer,
           stage: { main: next.currentStage, sub: next.currentSubStage },
           classification: reasoned.classification,
           treatmentPlan: reasoned.treatmentPlan.map((item) => ({
@@ -556,6 +693,7 @@ export function createTraumaTurnRunner(deps: {
         await completeStep({ version, round, memoId: memo.id });
 
         await beginStep(11, "persist_snapshot");
+        throwIfAborted();
         await deps.store.saveTurn(next, {
           eventType: "agent_turn",
           round,

@@ -31,6 +31,7 @@ function normalizeQuestion(question: unknown): Question | null {
       ? raw.options.map(normalizeOption).filter((option): option is NonNullable<ReturnType<typeof normalizeOption>> => Boolean(option))
       : [],
     multiSelect: Boolean(raw.multiSelect),
+    allowOther: raw.allowOther !== false,
   };
 }
 
@@ -144,7 +145,7 @@ export const AskUserQuestionPanel: React.FC<PermissionPanelProps> = ({
     }
 
     // 0 for "Other"
-    if (e.key === '0') {
+    if (e.key === '0' && q.allowOther !== false) {
       e.preventDefault();
       toggleOther(currentStep, multi);
       return;
@@ -177,7 +178,8 @@ export const AskUserQuestionPanel: React.FC<PermissionPanelProps> = ({
   const q = questions[currentStep];
   const multi = q.multiSelect || false;
   const selected = selections.get(currentStep) || new Set<string>();
-  const isOtherOn = otherActive.get(currentStep) || false;
+  const allowOther = q.allowOther !== false;
+  const isOtherOn = allowOther && (otherActive.get(currentStep) || false);
   const isLast = currentStep === total - 1;
   const isFirst = currentStep === 0;
   const hasCurrentSelection = selected.size > 0 || (isOtherOn && (otherTexts.get(currentStep) || '').trim().length > 0);
@@ -303,40 +305,42 @@ export const AskUserQuestionPanel: React.FC<PermissionPanelProps> = ({
               );
             })}
 
-            {/* "Other" option */}
-            <button
-              type="button"
-              onClick={() => toggleOther(currentStep, multi)}
-              aria-pressed={isOtherOn}
-              className={cn(
-                'group flex w-full items-center gap-2.5 rounded-md border px-3 py-2 text-left transition-colors duration-150',
-                isOtherOn
-                  ? 'border-foreground/40 bg-accent text-accent-foreground'
-                  : 'border-dashed border-border hover:border-foreground/30 hover:bg-accent/50',
-              )}
-            >
-              <kbd
+            {/* "Other" option — 提问方可用 allowOther:false 关掉自由填空 */}
+            {allowOther && (
+              <button
+                type="button"
+                onClick={() => toggleOther(currentStep, multi)}
+                aria-pressed={isOtherOn}
                 className={cn(
-                  'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded font-mono text-[10px] transition-colors duration-150',
+                  'group flex w-full items-center gap-2.5 rounded-md border px-3 py-2 text-left transition-colors duration-150',
                   isOtherOn
-                    ? 'bg-primary font-semibold text-primary-foreground'
-                    : 'border border-border bg-muted text-muted-foreground',
+                    ? 'border-foreground/40 bg-accent text-accent-foreground'
+                    : 'border-dashed border-border hover:border-foreground/30 hover:bg-accent/50',
                 )}
               >
-                0
-              </kbd>
-              <span
-                className={cn(
-                  'text-[13px] leading-tight',
-                  isOtherOn ? 'font-medium text-foreground' : 'text-muted-foreground',
+                <kbd
+                  className={cn(
+                    'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded font-mono text-[10px] transition-colors duration-150',
+                    isOtherOn
+                      ? 'bg-primary font-semibold text-primary-foreground'
+                      : 'border border-border bg-muted text-muted-foreground',
+                  )}
+                >
+                  0
+                </kbd>
+                <span
+                  className={cn(
+                    'text-[13px] leading-tight',
+                    isOtherOn ? 'font-medium text-foreground' : 'text-muted-foreground',
+                  )}
+                >
+                  其他…
+                </span>
+                {isOtherOn && (
+                  <Check className="ml-auto h-4 w-4 flex-shrink-0 text-foreground" strokeWidth={2.5} />
                 )}
-              >
-                其他…
-              </span>
-              {isOtherOn && (
-                <Check className="ml-auto h-4 w-4 flex-shrink-0 text-foreground" strokeWidth={2.5} />
-              )}
-            </button>
+              </button>
+            )}
 
             {/* Other text input */}
             {isOtherOn && (

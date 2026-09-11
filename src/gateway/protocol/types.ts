@@ -15,7 +15,7 @@ import type {
   CronStopResult,
 } from "../../cron/protocol/types.js";
 import type { CanonicalUsage } from "../../model/index.js";
-import type { TurnFormInput } from "../../trauma/types.js";
+import type { CitationMetadata, TurnFormInput } from "../../trauma/types.js";
 import type { TelemetryExecutionKind, TelemetryModule } from "../../telemetry/index.js";
 import type { SessionInfo as ProjectSessionInfo } from "../../session/index.js";
 import type {
@@ -153,8 +153,8 @@ type GatewayTurnScopedEventMetadata = {
 export type GatewayEvent = GatewayTurnScopedEventMetadata & (
   | { type: "turn_started"; runId: string }
   | { type: "model_request_started"; model?: string; provider?: string }
-  | { type: "assistant_text_delta"; text: string }
-  | { type: "assistant_text_end" }
+  | { type: "assistant_text_delta"; text: string; citations?: CitationMetadata[] }
+  | { type: "assistant_text_end"; citations?: CitationMetadata[] }
   | { type: "assistant_attachment"; attachment: GatewayOutboundAttachment }
   | { type: "file_artifacts"; artifacts: import("../../session/artifacts/FileArtifact.js").FileArtifact[] }
   | { type: "assistant_thinking_delta"; text: string }

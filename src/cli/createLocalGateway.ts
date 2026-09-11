@@ -30,6 +30,7 @@ import {
   createEdgeClawMemoryProviderFromConfig,
 } from "../context/index.js";
 import { FileHistoryStore } from "../session/filesystem/FileHistoryStore.js";
+import { SessionMetadataStore } from "../session/index.js";
 import type { AgentSubagentTranscriptHooks } from "../agent/runtime/AgentRuntimeDependencies.js";
 import { createPlanTodoStateManager } from "../agent/runtime/PlanTodoState.js";
 import { HookRuntime, PluginRuntime } from "../extension/index.js";
@@ -337,6 +338,14 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
         sessionId: input.sessionKey,
         now,
       });
+      if (input.aiTitle?.trim()) {
+        const metadataStore = new SessionMetadataStore({
+          transcript: storage.transcript,
+          sessionId: input.sessionKey,
+          now,
+        });
+        await metadataStore.saveAiTitle(input.aiTitle.trim(), input.runId);
+      }
       await storage.transcript.recordDurableMessage(
         input.sessionKey,
         input.runId,
@@ -358,7 +367,10 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
         {
           role: "assistant",
           content: [{ type: "text", text: input.assistantText }],
-          metadata: { purpose: "trauma_turn_runner" },
+          metadata: {
+            purpose: "trauma_turn_runner",
+            ...(input.citations && input.citations.length > 0 ? { citations: input.citations } : {}),
+          },
         },
       );
     },
@@ -651,7 +663,7 @@ class ProjectRuntimeRegistry {
       provider: modelSelection.provider,
       model: modelSelection.model,
     });
-    const rag = createMcpTraumaRagClient(async (name, input) => {
+    const rag = createMcpTraumaRagClient(async (name, input, signal) => {
       const tool = runtime.tools.get(name);
       if (!tool) {
         throw new Error(`Trauma RAG tool is unavailable: ${name}`);
@@ -659,6 +671,7 @@ class ProjectRuntimeRegistry {
       const output = await tool.execute(input, {
         sessionId: sessionKey,
         turnId: `trauma-rag:${this.options.now().getTime()}`,
+        abortSignal: signal,
         cwd: runtime.projectRoot,
         permissionMode: "bypassPermissions",
         permissionContext: createDefaultPermissionContext({

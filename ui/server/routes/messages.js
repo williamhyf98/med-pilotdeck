@@ -184,6 +184,11 @@ function mapWebMessageToNormalized(message, sessionId) {
         ...(Array.isArray(payload.attachments) && payload.attachments.length > 0
           ? { attachments: payload.attachments }
           : {}),
+        ...(Array.isArray(message.citations) && message.citations.length > 0
+          ? { citations: message.citations }
+          : Array.isArray(payload.citations) && payload.citations.length > 0
+            ? { citations: payload.citations }
+            : {}),
         ...(payload.forkUnsupportedContent === true
           ? {
               forkUnsupportedContent: true,

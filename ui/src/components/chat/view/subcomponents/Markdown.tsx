@@ -64,8 +64,10 @@ const isImageOnlyParagraph = (node: unknown): boolean => {
   return meaningful.length > 0 && meaningful.every(isHastImage);
 };
 
-/** 从回答文本中提取 <details> 内的引用信息：- [N] title > section */
+/** 从回答文本中提取 <details> 内的引用信息：- [N] title > section｜短引文：quote */
 const CITATION_LINE_RE = /^\s*-\s*\[(\d+)\]\s+(.+?)\s*>\s*(.+?)\s*$/;
+const QUOTE_SPLIT_RE = /\s*[|｜]\s*短引文[:：]\s*/u;
+const CHUNK_COMMENT_RE = /<!--[\s\S]*?-->/g;
 
 function extractCitationsFromContent(text: string): CitationMetadata[] {
   // 找到 <details> ... </details> 块
@@ -78,10 +80,12 @@ function extractCitationsFromContent(text: string): CitationMetadata[] {
   for (const line of lines) {
     const m = line.match(CITATION_LINE_RE);
     if (m) {
+      const [section, quote] = m[3].replace(CHUNK_COMMENT_RE, '').trim().split(QUOTE_SPLIT_RE);
       citations.push({
         index: parseInt(m[1], 10),
         title: m[2].trim(),
-        section: m[3].trim(),
+        section: section.trim(),
+        ...(quote?.trim() ? { quote: quote.trim() } : {}),
       });
     }
   }
@@ -173,7 +177,6 @@ export function Markdown({
     () => normalizeInlineCodeFences(String(children ?? '')),
     [children],
   );
-
   // 优先用外部传入的 citations，否则从 content 自动提取
   const resolvedCitations = useMemo(
     () => citations && citations.length > 0 ? citations : extractCitationsFromContent(content),
@@ -201,17 +204,23 @@ export function Markdown({
     () => createMarkdownComponents(handleImageZoom, onFileOpen, resolvedCitations),
     [handleImageZoom, onFileOpen, resolvedCitations],
   );
+  // 流式期间 resolvedCitations 往往还是空的（元数据要等正文流完才下发），
+  // 但角标本身必须立刻渲染成上标，所以这里单独盯住正文里有没有 [N]。
+  // 用布尔值而不是 content 本身作依赖，避免每个 delta 都重建插件数组。
+  const hasInlineCitationMarker = useMemo(() => /\[\d{1,2}\]/.test(content), [content]);
   const remarkPlugins = useMemo(() => {
-    if (isStreaming) return [remarkGfm, remarkGroupImageParagraphs];
-    const base = [remarkGfm, remarkMath, remarkGroupImageParagraphs];
-    if (resolvedCitations && resolvedCitations.length > 0) {
+    const base = isStreaming
+      ? [remarkGfm, remarkGroupImageParagraphs]
+      : [remarkGfm, remarkMath, remarkGroupImageParagraphs];
+    if ((resolvedCitations && resolvedCitations.length > 0) || hasInlineCitationMarker) {
       base.push(createRemarkCitationPlugin(resolvedCitations));
     }
+    if (isStreaming) return base;
     if (artifactFiles !== undefined) {
       base.push(createRemarkArtifactFileTextPlugin(artifactFiles));
     }
     return base;
-  }, [artifactFiles, resolvedCitations, isStreaming]);
+  }, [artifactFiles, resolvedCitations, isStreaming, hasInlineCitationMarker]);
 
   return (
     <div className={className}>

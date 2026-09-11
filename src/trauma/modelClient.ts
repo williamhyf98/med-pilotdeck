@@ -16,6 +16,7 @@ export type CompleteJsonInput<T> = {
   validate: (value: unknown) => value is T;
   /** Applied after null-stripping and before validate. Use to drop leaked extra keys. */
   normalize?: (value: unknown) => unknown;
+  signal?: AbortSignal;
 };
 
 export type StructuredModelClient = {
@@ -108,7 +109,7 @@ export function createStructuredModelClient(
   return {
     async completeJson<T>(input: CompleteJsonInput<T>): Promise<T> {
       const request = buildRequest(input, false);
-      const response = await options.complete(request);
+      const response = await options.complete(request, input.signal ? { signal: input.signal } : undefined);
       return validate(input, response);
     },
 
@@ -129,7 +130,7 @@ export function createStructuredModelClient(
         await callbacks.onNaturalLanguageEnd?.();
       };
 
-      for await (const event of options.stream(request)) {
+      for await (const event of options.stream(request, input.signal ? { signal: input.signal } : undefined)) {
         if (event.type === "error") {
           throw new StructuredOutputSchemaError(`model stream failed: ${event.error.message}`);
         }

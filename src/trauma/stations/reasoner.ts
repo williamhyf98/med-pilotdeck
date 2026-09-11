@@ -84,6 +84,7 @@ export function createReasonerStation(model: StructuredModelClient): {
 	  reason(input: {
 	    state: CaseState;
 	    promptChunks: EvidenceChunk[];
+	    signal?: AbortSignal;
 	    onNaturalLanguageDelta?: (text: string) => void | Promise<void>;
 	    onNaturalLanguageEnd?: () => void | Promise<void>;
 	  }): Promise<ReasonerResult>;
@@ -102,15 +103,21 @@ export function createReasonerStation(model: StructuredModelClient): {
             rationale: input.state.placementRationale ?? null,
           },
           state: compactCaseStateForDownstream(input.state),
-          promptChunks: input.promptChunks.map((chunk) => ({
+          promptChunks: input.promptChunks.map((chunk, index) => ({
+            citationIndex: index + 1,
             id: chunk.id,
             title: chunk.documentTitle,
             section: chunk.section,
+            chapter: chunk.chapter ?? null,
+            heading: chunk.heading ?? null,
+            article: chunk.article ?? null,
+            path: chunk.path ?? null,
             text: chunk.text,
           })),
         }),
         schema: REASONER_OUTPUT_SCHEMA,
         validate: validateReasonerOutput,
+        signal: input.signal,
       };
       const raw = model.streamJson
 	        ? await model.streamJson(request, {

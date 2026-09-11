@@ -33,7 +33,6 @@ const vitalDefinitions: Array<{
 }> = [
   { key: 'respiratoryRate', label: '呼吸', unit: '次/分', abnormal: (value) => value > 20 },
   { key: 'systolicBloodPressure', label: '收缩压', unit: 'mmHg', abnormal: (value) => value < 90 },
-  { key: 'gcs', label: 'GCS', unit: '', abnormal: (value) => value < 15 },
   { key: 'heartRate', label: '心率', unit: '次/分', abnormal: (value) => value > 100 },
   { key: 'temperature', label: '体温', unit: '℃', abnormal: (value) => value < 36 || value > 37.5 },
 ];
@@ -58,11 +57,9 @@ export function derivePatientStateView(state: CaseState): PatientStateView {
       abnormal: current ? definition.abnormal(current.value) : false,
     };
   });
-  const latestGcs = measuredValues(state, 'gcs').at(-1);
-
   return {
     updatedAt: new Date(state.updatedAt).toLocaleString(),
-    consciousness: latestGcs ? `GCS ${latestGcs.value} · R${latestGcs.round}` : '尚未记录',
+    consciousness: '未单独结构化',
     vitals,
     injuries: state.injuryNarratives.map((entry) => ({
       label: `R${entry.round} · ${entry.text}`,

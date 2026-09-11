@@ -61,6 +61,8 @@ export interface CitationMetadata {
   title: string;
   /** 章节路径 */
   section: string;
+  /** 来自对应知识块原文的一句短引文 */
+  quote?: string;
   /** 证据等级 */
   evidenceGrade?: string;
   /** 证据质量 */
@@ -264,6 +266,8 @@ export interface Question {
   header?: string;
   options: QuestionOption[];
   multiSelect?: boolean;
+  /** false 时隐藏「其他…」自由填空，回答只能来自 options。默认 true。 */
+  allowOther?: boolean;
 }
 
 export interface ChatInterfaceProps {
@@ -335,4 +339,17 @@ export interface ChatInterfaceProps {
    * message/session state remains inside ChatInterfaceV2.
    */
   traumaOptimisticMessageRef?: MutableRefObject<((text: string, targetSessionId?: string | null, runId?: string) => void) | null>;
+  navigateToChatMessageRef?: MutableRefObject<((runId: string) => void | Promise<void>) | null>;
+  /**
+   * Runtime signal for workspace surfaces that need to mirror trauma runner
+   * milestones outside the chat transcript (for example, a temporary
+   * "生成中" node in the treatment tree).
+   */
+  onTraumaProcessStateChange?: (state: {
+    runId: string;
+    state: 'snapshot_started' | 'turn_failed';
+    mainStage?: string;
+    subStage?: string;
+    round?: number;
+  }) => void;
 }

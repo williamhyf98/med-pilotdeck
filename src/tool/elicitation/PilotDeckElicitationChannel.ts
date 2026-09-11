@@ -25,6 +25,11 @@ export type PilotDeckElicitationQuestion = {
   header: string;
   options: PilotDeckElicitationOption[];
   multiSelect?: boolean;
+  /**
+   * When false the UI hides the free-text「其他…」escape hatch, so the answer is
+   * guaranteed to be one of `options`. Defaults to true.
+   */
+  allowOther?: boolean;
 };
 
 export type PilotDeckElicitationRequest = {

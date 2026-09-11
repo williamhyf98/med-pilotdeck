@@ -1,4 +1,4 @@
-import { ChevronDown, Loader2, Sparkles } from 'lucide-react';
+import { ChevronDown, Loader2, Sparkles, Square } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '../../lib/utils';
 import { SUBSTAGE_LABELS, SUBSTAGE_ORDER } from './domain/stageConfig';
@@ -18,6 +18,7 @@ type TraumaComposerProps = {
   /** 上一轮推理后由工位 P 落定的救治级别；用于限定本轮可选级别。 */
   previousSubStage?: SubStage | null;
   onSubmit: (form: TurnFormInput, rawInput: string, extract?: boolean) => void | Promise<void>;
+  onAbort?: () => void;
   submitting?: boolean;
 };
 
@@ -106,6 +107,7 @@ export default function TraumaComposer({
   caseHistory: _caseHistory = '',
   previousSubStage,
   onSubmit,
+  onAbort,
   submitting = false,
 }: TraumaComposerProps) {
   const [state, setState] = useState<ComposerState>({ phase: 'idle' });
@@ -173,17 +175,28 @@ export default function TraumaComposer({
             onChange={setFreeSubStage}
             disabled={busy}
           />
-          <button
-            type="button"
-            onClick={() => void handleExtract()}
-            disabled={busy || !rawText.trim()}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-teal-700 px-3.5 py-2 text-xs font-semibold text-white transition hover:bg-teal-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isExtracting
-              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              : <Sparkles className="h-3.5 w-3.5" />}
-            {isExtracting ? '整理中…' : '整理'}
-          </button>
+          {submitting && onAbort ? (
+            <button
+              type="button"
+              onClick={onAbort}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-red-300 bg-red-50 px-3.5 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300"
+            >
+              <Square className="h-3 w-3 fill-current" />
+              停止本轮推演
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void handleExtract()}
+              disabled={busy || !rawText.trim()}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-teal-700 px-3.5 py-2 text-xs font-semibold text-white transition hover:bg-teal-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isExtracting
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <Sparkles className="h-3.5 w-3.5" />}
+              {isExtracting ? '整理中…' : '整理'}
+            </button>
+          )}
         </div>
       </div>
 

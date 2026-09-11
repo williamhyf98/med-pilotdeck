@@ -7,12 +7,16 @@ export type TraumaRagHit = {
   score: number;
   doc_id?: string;
   title?: string;
+  section?: string;
+  chapter?: string;
+  heading?: string;
+  path?: string;
   article?: string;
   retrieval_backend: "remote" | "local";
 };
 
 export type TraumaRagClient = {
-  query(input: { query: string; top_k: number; topic?: string }): Promise<{
+  query(input: { query: string; top_k: number; topic?: string; signal?: AbortSignal }): Promise<{
     retrieval_backend: "remote" | "local";
     chunks: TraumaRagHit[];
   }>;
@@ -44,12 +48,33 @@ export function normalizeRagPayload(payload: unknown): {
     if (!isRecord(item)) return [];
     const text = typeof item.text === "string" ? item.text : "";
     const score = typeof item.score === "number" ? item.score : 0;
+    const metadata = isRecord(item.metadata) ? item.metadata : {};
     return [{
       chunk_id: String(item.chunk_id ?? `chunk-${index}`),
       text,
       score,
       doc_id: typeof item.doc_id === "string" ? item.doc_id : undefined,
       title: typeof item.title === "string" ? item.title : undefined,
+      section: typeof item.section === "string"
+        ? item.section
+        : typeof metadata.section === "string"
+          ? metadata.section
+          : undefined,
+      chapter: typeof item.chapter === "string"
+        ? item.chapter
+        : typeof metadata.chapter === "string"
+          ? metadata.chapter
+          : undefined,
+      heading: typeof item.heading === "string"
+        ? item.heading
+        : typeof metadata.heading === "string"
+          ? metadata.heading
+          : undefined,
+      path: typeof item.path === "string"
+        ? item.path
+        : typeof metadata.path === "string"
+          ? metadata.path
+          : undefined,
       article: typeof item.article === "string" ? item.article : undefined,
       retrieval_backend: asBackend(item.retrieval_backend ?? backend),
     }];
@@ -60,11 +85,11 @@ export function normalizeRagPayload(payload: unknown): {
 export const TRAUMA_RAG_TOPIC = "战创伤";
 
 export function createMcpTraumaRagClient(
-  callTool: (name: string, input: unknown) => Promise<unknown>,
+  callTool: (name: string, input: unknown, signal?: AbortSignal) => Promise<unknown>,
 ): TraumaRagClient {
   return {
-    async query({ query, top_k, topic = TRAUMA_RAG_TOPIC }) {
-      const raw = await callTool(TRAUMA_RAG_TOOL_NAME, { query, top_k, topic });
+    async query({ query, top_k, topic = TRAUMA_RAG_TOPIC, signal }) {
+      const raw = await callTool(TRAUMA_RAG_TOOL_NAME, { query, top_k, topic }, signal);
       return normalizeRagPayload(payloadFromTool(raw));
     },
   };

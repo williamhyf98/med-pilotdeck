@@ -36,6 +36,7 @@ export function snapshotsToRounds(
       const gateStatus = displayState.transport.gateStatus;
       return [{
         id: memo.id,
+        triggerMessageId: snapshot.triggerMessageId,
         snapshotVersion: memo.snapshotVersion,
         round: memo.round,
         title: memo.title,
@@ -43,8 +44,10 @@ export function snapshotsToRounds(
           hour: '2-digit',
           minute: '2-digit',
         }),
-        stageId: memo.mainStage ?? 'battlefield_first_aid',
-        substepIndex: memo.subStage ? substepIndex(memo.subStage) : 0,
+        // 级别待确认的轮次没有坐标，就让它空着——填一个默认子级只会让它
+        // 悄悄挂到「初级急救」下面。
+        stageId: memo.mainStage ?? null,
+        substepIndex: memo.subStage ? substepIndex(memo.subStage) : null,
         unplaced: !memo.mainStage || !memo.subStage,
         facility: displayState.currentFacility?.name ?? '未定级',
         capability: displayState.currentCapabilities.join('、') || '未记录',
@@ -84,6 +87,7 @@ export function snapshotsToRounds(
           score: item.retrievalScore.toFixed(3),
           source: item.retrievalBackend === 'remote' ? '远程知识库' as const : '本地语料' as const,
           used: item.usedInAnswer,
+          ...(item.citationIndex !== undefined ? { citationIndex: item.citationIndex } : {}),
           text: item.text,
         })),
       }];

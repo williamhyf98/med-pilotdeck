@@ -5,7 +5,7 @@ import test from "node:test";
 import { InProcessGateway } from "../../src/gateway/client/InProcessGateway.js";
 import { SessionRouter } from "../../src/gateway/SessionRouter.js";
 
-function fakeResponse() {
+function fakeResponse(overrides = {}) {
   return {
     messageId: "message-1",
     caseVersion: 2,
@@ -58,6 +58,7 @@ function fakeResponse() {
       evidenceChunkIds: ["chunk-1"],
     },
     evidence: [],
+    ...overrides,
   };
 }
 
@@ -120,6 +121,16 @@ function createTestGateway(projectKey, options = { askPlacement: false }) {
         if (options.streamAnswer) {
           await input.onAssistantTextDelta?.("当前仍在");
           await input.onAssistantTextDelta?.("初级急救。");
+        }
+        if (options.streamAnswerWithCitation) {
+          // 工位 B 开跑前先下发本轮候选引用（promptChunks 全量），编号沿用
+          // promptChunks 顺序；正文里只会用到其中一部分。
+          await input.onAssistantCitations?.([
+            { index: 1, title: "战伤救治规则", section: "第二章 分类救治" },
+            { index: 2, title: "战伤救治规则", section: "第五章 后送" },
+          ]);
+          await input.onAssistantTextDelta?.("应先控制活动性出血[1]。");
+          await input.onAssistantTextEnd?.();
         }
         input.onProgress?.({ phase: "validate", status: "started" });
         input.onProgress?.({ phase: "validate", status: "finished", ok: true });
@@ -267,6 +278,49 @@ test("forwards streamed trauma answer deltas without duplicating the final answe
     .map((event) => event.text);
   assert.deepEqual(deltas, ["当前仍在", "初级急救。"]);
   assert.equal(events.at(-1)?.type, "turn_completed");
+});
+
+test("streams citation metadata with the body and closes with the used subset", async () => {
+  const { gateway } = createTestGateway("trauma_med-demo", { streamAnswerWithCitation: true });
+  const events = [];
+  for await (const event of gateway.submitTurn({
+    sessionKey: "web:s_stream_citation",
+    channelKey: "web",
+    projectKey: "trauma_med-demo",
+    message: "右小腿开放伤",
+    traumaForm: {
+      statedSubStage: "primary_first_aid", injuryNarrative: "右小腿开放伤", treatmentNarrative: "",
+      evacuationNarrative: "", note: "", vitals: {},
+    },
+  })) {
+    events.push(event);
+  }
+
+  const deltaEvents = events.filter((event) => event.type === "assistant_text_delta");
+  const streamedText = deltaEvents.map((event) => event.text).join("");
+  // 参考来源列表改由前端组件渲染，正文里不再拼接 <details> 溯源块，也没有短引文。
+  assert.doesNotMatch(streamedText, /<details>/);
+  assert.doesNotMatch(streamedText, /参考来源/);
+  assert.doesNotMatch(streamedText, /短引文/);
+  assert.match(streamedText, /\[1\]/);
+
+  // 候选引用随第一个 delta 一起下发，前端才能在流式期间就把 [N] 渲染成蓝色上标。
+  assert.deepEqual(deltaEvents[0].citations, [
+    { index: 1, title: "战伤救治规则", section: "第二章 分类救治" },
+    { index: 2, title: "战伤救治规则", section: "第五章 后送" },
+  ]);
+  assert.ok(deltaEvents.slice(1).every((event) => event.citations === undefined));
+
+  // 正文结束的瞬间下发「实际被引用」的子集，参考来源列表据此整块出现。
+  const streamEndIndex = events.findIndex((event) => event.type === "assistant_text_end");
+  assert.ok(streamEndIndex >= 0);
+  assert.deepEqual(events[streamEndIndex].citations, [
+    { index: 1, title: "战伤救治规则", section: "第二章 分类救治" },
+  ]);
+
+  const postAnswerIndex = events.findIndex((event) =>
+    event.type === "tool_call_started" && event.toolCallId.startsWith("trauma-post-answer:"));
+  assert.ok(postAnswerIndex > streamEndIndex);
 });
 
 test("traumaExtract runs extraction before the runner and records it as a non-counted process step", async () => {

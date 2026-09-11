@@ -1,4 +1,4 @@
-import { Check, Circle, LockKeyhole, MoveRight, Settings2 } from 'lucide-react';
+import { Check, Circle, Loader2, LockKeyhole, MoveRight, Settings2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { MainStageId, RoundMemo, StageDefinition, WorkflowStatus } from './types';
 
@@ -7,8 +7,9 @@ import type { MainStageId, RoundMemo, StageDefinition, WorkflowStatus } from './
  * 这样全新病例（尚无任何轮次）也能渲染出完整的主级/子级骨架。
  */
 export type TreePosition = {
-  stageId: MainStageId;
-  substepIndex: number;
+  /** 级别尚未确认时为 null，此时主级/子级一律显示未开始。 */
+  stageId: MainStageId | null;
+  substepIndex: number | null;
   /** null 表示尚未产生任何轮次纪要。 */
   round: number | null;
   blocked?: boolean;
@@ -22,6 +23,12 @@ type TreatmentTreeProps = {
   rounds: RoundMemo[];
   currentRoundIndex: number;
   position: TreePosition;
+  pendingRound?: {
+    runId: string;
+    stageId: MainStageId;
+    substepIndex: number;
+    round?: number;
+  } | null;
   selectedMemoId: string | null;
   onSelectMemo: (memoId: string) => void;
   onRequestStageOverride?: () => void;
@@ -99,7 +106,7 @@ function getSubStatus(
   position: TreePosition,
 ): WorkflowStatus {
   if (mainStatus === 'done') return 'done';
-  if (mainStatus === 'future') return 'future';
+  if (mainStatus === 'future' || position.substepIndex === null) return 'future';
   if (substepIndex < position.substepIndex) return 'done';
   if (substepIndex > position.substepIndex) return 'future';
   if (position.blocked) return 'blocked';
@@ -119,16 +126,30 @@ export default function TreatmentTree({
   rounds,
   currentRoundIndex,
   position,
+  pendingRound = null,
   selectedMemoId,
   onSelectMemo,
   onRequestStageOverride,
   canOverrideStage = true,
 }: TreatmentTreeProps) {
   const visibleRounds = rounds.slice(0, currentRoundIndex + 1);
+  // Before the first snapshot is persisted, the real case position is still
+  // `unplaced`. Use the pending target as a transient workflow position so
+  // ancestor nodes immediately reflect the path being generated.
+  const displayPosition: TreePosition = pendingRound
+    ? {
+      stageId: pendingRound.stageId,
+      substepIndex: pendingRound.substepIndex,
+      round: pendingRound.round ?? position.round,
+      blocked: false,
+      transferPending: false,
+      unplaced: false,
+    }
+    : position;
 
   return (
     <div className="space-y-2 pb-4">
-      {position.unplaced && position.round === null ? (
+      {position.unplaced && position.round === null && !pendingRound ? (
         <p className="rounded-md border border-dashed border-neutral-300 px-2.5 py-2 text-[9px] text-neutral-400 dark:border-neutral-700 dark:text-neutral-500">
           等待首轮推演生成轮次纪要
         </p>
@@ -146,7 +167,7 @@ export default function TreatmentTree({
         </div>
       ) : null}
       {stages.map((stage) => {
-        const mainStatus = getMainStatus(stages, stage.id, position);
+        const mainStatus = getMainStatus(stages, stage.id, displayPosition);
         return (
           <section key={stage.id}>
             <div
@@ -167,12 +188,19 @@ export default function TreatmentTree({
 
             <div className="ml-3 border-l border-neutral-200 pl-3 pt-1.5 dark:border-neutral-800">
               {stage.substeps.map((substep, substepIndex) => {
-                const subStatus = getSubStatus(mainStatus, substepIndex, position);
+                const subStatus = getSubStatus(mainStatus, substepIndex, displayPosition);
                 const memos = subStatus === 'future'
                   ? []
                   : visibleRounds.filter(
                     (round) => round.stageId === stage.id && round.substepIndex === substepIndex,
                   );
+                const pendingForSubstep = (
+                  pendingRound
+                  && pendingRound.stageId === stage.id
+                  && pendingRound.substepIndex === substepIndex
+                  && !memos.some((memo) => memo.triggerMessageId === pendingRound.runId)
+                ) ? pendingRound : null;
+                const showPending = Boolean(pendingForSubstep);
                 return (
                   <div className="relative mb-1.5" key={`${stage.id}-${substep.name}`}>
                     <span className="absolute -left-3 top-4 w-3 border-t border-neutral-200 dark:border-neutral-800" />
@@ -189,12 +217,12 @@ export default function TreatmentTree({
                       </div>
                     </div>
 
-                    {memos.length > 0 ? (
+                    {memos.length > 0 || showPending ? (
                       <div className="ml-3 border-l border-dashed border-neutral-300 pl-3 pt-1.5 dark:border-neutral-700">
                         {memos.map((memo) => {
                           const selected = selectedMemoId === memo.id;
-                          const memoStatus = getMemoStatus(memo, position);
-                          const isCurrentMemo = memo.round === position.round;
+                          const memoStatus = getMemoStatus(memo, displayPosition);
+                          const isCurrentMemo = memo.round === displayPosition.round;
                           return (
                             <div className="relative mb-1.5" key={memo.id}>
                               <span className="absolute -left-3 top-4 w-3 border-t border-dashed border-neutral-300 dark:border-neutral-700" />
@@ -228,8 +256,22 @@ export default function TreatmentTree({
                             </div>
                           );
                         })}
+                        {showPending ? (
+                          <div className="relative mb-1.5" data-testid="trauma-pending-round">
+                            <span className="absolute -left-3 top-4 w-3 border-t border-dashed border-neutral-300 dark:border-neutral-700" />
+                            <div
+                              aria-disabled="true"
+                              className="flex w-full cursor-wait select-none items-center justify-between gap-2 rounded-md border border-blue-300 bg-blue-50/70 px-2.5 py-2 text-left text-blue-700 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300"
+                            >
+                              <p className="min-w-0 truncate text-[10px] font-semibold">
+                                {pendingForSubstep?.round ? `R${pendingForSubstep.round} ` : ''}生成中
+                              </p>
+                              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-label="生成中" />
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
-                    ) : position.round === null && subStatus === 'current' && !position.unplaced ? (
+                    ) : displayPosition.round === null && subStatus === 'current' && !displayPosition.unplaced ? (
                       <div className="ml-3 border-l border-dashed border-neutral-300 pl-3 pt-1.5 dark:border-neutral-700">
                         <div className="relative">
                           <span className="absolute -left-3 top-4 w-3 border-t border-dashed border-neutral-300 dark:border-neutral-700" />

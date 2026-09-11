@@ -576,6 +576,9 @@ export function gatewayEventToFrames(event, sessionId, provider) {
                     ...base,
                     kind: 'stream_delta',
                     content: event.text,
+                    ...(Array.isArray(event.citations) && event.citations.length > 0
+                        ? { citations: event.citations }
+                        : {}),
                 }),
             ];
         case 'assistant_text_end':
@@ -583,6 +586,10 @@ export function gatewayEventToFrames(event, sessionId, provider) {
                 createNormalizedMessage({
                     ...base,
                     kind: 'stream_end',
+                    // 参考来源列表随正文结束一起下发，前端据此渲染折叠面板。
+                    ...(Array.isArray(event.citations) && event.citations.length > 0
+                        ? { citations: event.citations }
+                        : {}),
                 }),
             ];
         case 'assistant_thinking_delta':

@@ -194,7 +194,6 @@ function latestVitals(view: CompactCaseView): string {
   const labels = {
     respiratoryRate: "RR",
     systolicBloodPressure: "SBP",
-    gcs: "GCS",
     heartRate: "HR",
     temperature: "T",
   } as const;
@@ -321,7 +320,6 @@ function formatVitals(state: CaseState): string[] {
   const labels = [
     ["respiratoryRate", "RR"],
     ["systolicBloodPressure", "SBP"],
-    ["gcs", "GCS"],
     ["heartRate", "HR"],
     ["temperature", "T"],
   ] as const;

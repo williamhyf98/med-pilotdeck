@@ -44,9 +44,18 @@ type WebGatewayEventMetadata = {
   runId?: string;
 };
 
+export type WebCitationMetadata = {
+  index: number;
+  title: string;
+  section: string;
+  quote?: string;
+  evidenceGrade?: string;
+  evidenceQuality?: string;
+};
+
 export type WebGatewayEvent = WebGatewayEventMetadata & (
   | { type: "turn_started"; runId: string }
-  | { type: "assistant_text_delta"; text: string }
+  | { type: "assistant_text_delta"; text: string; citations?: WebCitationMetadata[] }
   | { type: "assistant_text_end" }
   | { type: "assistant_thinking_delta"; text: string }
   | { type: "file_artifacts"; artifacts: import("../../session/artifacts/FileArtifact.js").FileArtifact[] }

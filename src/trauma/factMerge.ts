@@ -8,7 +8,6 @@ import type {
 const VITAL_RANGES: Record<VitalItemKey, readonly [number, number]> = {
   respiratoryRate: [0, 80],
   systolicBloodPressure: [20, 300],
-  gcs: [3, 15],
   heartRate: [0, 300],
   temperature: [20, 45],
   spo2: [0, 100],
@@ -107,19 +106,23 @@ function recentNarratives(entries: NarrativeEntry[]): NarrativeEntry[] {
 
 export function compactCaseStateForDownstream(state: CaseState) {
   const latestVitals = state.vitalSignsHistory.at(-1);
+  const vitalKeys = Object.keys(VITAL_RANGES) as VitalItemKey[];
   const recentVitalRecords = state.vitalSignsHistory
     .slice(-6)
     .reverse()
     .map((record) => ({
       ...record,
-      values: { ...record.values },
+      values: Object.fromEntries(
+        vitalKeys.flatMap((key) => (
+          record.values[key] === undefined ? [] : [[key, record.values[key]]]
+        )),
+      ) as Partial<Record<VitalItemKey, number>>,
     }));
   const latestByField: Partial<Record<
     VitalItemKey,
     { value: number; round: number; stale: boolean }
   >> = {};
   const latestValues: Partial<Record<VitalItemKey, number>> = {};
-  const vitalKeys = Object.keys(VITAL_RANGES) as VitalItemKey[];
   for (let index = state.vitalSignsHistory.length - 1; index >= 0; index -= 1) {
     const record = state.vitalSignsHistory[index];
     if (!record) continue;

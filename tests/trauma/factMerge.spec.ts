@@ -37,7 +37,7 @@ test("validateTurnFormInput accepts partial measured vitals and narrative", () =
 
 test("validateTurnFormInput rejects empty and out-of-range forms", () => {
   assert.equal(validateTurnFormInput(form()), false);
-  assert.equal(validateTurnFormInput(form({ vitals: { gcs: 16 } })), false);
+  assert.equal(validateTurnFormInput({ ...form(), vitals: { gcs: 15 } }), false);
   assert.equal(validateTurnFormInput(form({ vitals: { temperature: 36.66 } })), false);
 });
 
@@ -60,7 +60,7 @@ test("merge appends narratives and only this round's measured vitals", () => {
   previous.vitalSignsHistory.push({
     round: 1,
     recordedAt: "2026-09-03T15:00:00+08:00",
-    values: { heartRate: 110, gcs: 15 },
+    values: { heartRate: 110 },
   });
 
   const next = mergeFormInput(previous, form({
@@ -115,7 +115,7 @@ test("downstream view preserves history and marks stale vitals", () => {
     {
       round: 1,
       recordedAt: now,
-      values: { systolicBloodPressure: 92, gcs: 15 },
+      values: { systolicBloodPressure: 92 },
     },
     {
       round: 2,

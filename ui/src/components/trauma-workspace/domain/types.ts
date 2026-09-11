@@ -11,7 +11,6 @@ export type GateStatus = 'ASSESSING' | 'STAY' | 'BLOCKED' | 'READY' | 'COMPLETED
 export type VitalItemKey =
   | 'respiratoryRate'
   | 'systolicBloodPressure'
-  | 'gcs'
   | 'heartRate'
   | 'temperature';
 
@@ -115,6 +114,7 @@ export type CaseState = {
     retrievalScore: number;
     retrievalBackend: 'remote' | 'local';
     usedInAnswer: boolean;
+    citationIndex?: number;
   }>;
 };
 
