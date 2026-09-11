@@ -118,6 +118,12 @@ echo "    home:  ${PILOT_HOME}"
 echo "    node:  $(command -v node) ($(node -v))"
 echo "    log:   ${LOG_FILE}"
 echo "    ports: server=${SERVER_PORT} gateway=${PILOTDECK_GATEWAY_PORT} vite=${VITE_PORT}  (from ${LOCAL_PORT_CONFIG})"
+if [[ -f "${PILOTDECK_ROOT}/config/deploy.env" ]]; then
+  echo "    site:  ${PILOTDECK_ROOT}/config/deploy.env"
+else
+  echo "    site:  none — med-tools will fall back to 127.0.0.1 placeholders" >&2
+  echo "           cp config/deploy.env.example config/deploy.env and fill in the model URLs" >&2
+fi
 echo "    mcp timeout: ${PILOTDECK_MCP_TOOL_TIMEOUT_MS}ms"
 
 # Foreground mode when user passes --fg

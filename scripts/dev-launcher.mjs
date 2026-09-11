@@ -27,6 +27,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 import { ensureWritableTmpDir } from './ensure-writable-tmpdir.mjs';
+import { collectModelHosts, loadDeployEnv, DEPLOY_ENV_EXAMPLE_PATH } from './load-deploy-env.mjs';
 
 ensureWritableTmpDir();
 
@@ -39,7 +40,17 @@ const pilotHome = process.env.PILOT_HOME || join(repoRoot, '.pilotdeck-home');
 process.env.PILOT_HOME = pilotHome;
 process.env.PILOTDECK_CONFIG_DIR = process.env.PILOTDECK_CONFIG_DIR || pilotHome;
 
-const localNoProxyHosts = ['127.0.0.1', 'localhost', '10.31.112.13'];
+// Site configuration (model URLs etc.) comes from config/deploy.env; the repo
+// itself ships no model IP. Load it before deriving NO_PROXY below.
+const deployEnv = loadDeployEnv();
+if (!deployEnv.exists) {
+  console.warn(`[dev] no ${deployEnv.path}; med-tools falls back to 127.0.0.1 placeholders`);
+  console.warn(`[dev] copy ${DEPLOY_ENV_EXAMPLE_PATH} and fill in the model URLs`);
+}
+
+// Model hosts must bypass the proxy, but which hosts they are is site-specific —
+// derive them from the configured URLs instead of pinning one deployment's IP.
+const localNoProxyHosts = ['127.0.0.1', 'localhost', '::1', ...collectModelHosts(deployEnv.entries)];
 const inheritedNoProxy = process.env.NO_PROXY || process.env.no_proxy || '';
 const noProxy = [...new Set([
   ...inheritedNoProxy.split(',').map((entry) => entry.trim()).filter(Boolean),
