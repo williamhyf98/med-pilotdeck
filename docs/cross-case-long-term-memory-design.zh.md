@@ -3,6 +3,7 @@
 > 文档状态：**现状说明 + 目标设计，跨病例部分尚未实现**  
 > 适用项目：`med-pilotdeck`  
 > 相关现状文档：[`memory-attachment-flow-guide.zh.md`](memory-attachment-flow-guide.zh.md)  
+> 排期归属：本文 Phase 0–1 已纳入[下一轮优化计划](next-round-optimization.zh.md) §2.3；Phase 2–4 暂不排期  
 > 核心代码：`src/context/memory/`、`src/context/memory/edgeclaw-memory-core/`
 
 本文用前后对比的方式说明：
