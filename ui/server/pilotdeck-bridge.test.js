@@ -505,6 +505,81 @@ describe('sanitizeTraumaAttachments', () => {
     it('returns undefined for an empty array', () => {
         expect(sanitizeTraumaAttachments([], projectRoot)).toBeUndefined();
     });
+
+    it('caps the number of accepted attachments at the shared upload limit (64)', () => {
+        const entries = [];
+        for (let i = 0; i < 70; i += 1) {
+            const filePath = path.join(inboxDir, `file-${i}.dcm`);
+            fs.writeFileSync(filePath, 'stub');
+            entries.push({ path: filePath, name: `file-${i}.dcm` });
+        }
+
+        const result = sanitizeTraumaAttachments(entries, projectRoot);
+        expect(result).toHaveLength(64);
+    });
+
+    it('dedupes repeated entries by resolved path instead of counting each toward the cap', () => {
+        const filePath = path.join(inboxDir, 'dupe.dcm');
+        fs.writeFileSync(filePath, 'stub');
+        const entries = Array.from({ length: 1000 }, () => ({ path: filePath, name: 'dupe.dcm' }));
+
+        const result = sanitizeTraumaAttachments(entries, projectRoot);
+        expect(result).toEqual([{ path: fs.realpathSync(filePath), name: 'dupe.dcm' }]);
+    });
+
+    it('strips path separators and control characters from name and caps it at 200 chars', () => {
+        const filePath = path.join(inboxDir, 'weird-name.dcm');
+        fs.writeFileSync(filePath, 'stub');
+        const longName = `../../etc/passwd ${'x'.repeat(400)}`;
+
+        const result = sanitizeTraumaAttachments(
+            [{ path: filePath, name: longName }],
+            projectRoot,
+        );
+
+        expect(result).toHaveLength(1);
+        const sanitizedName = result[0].name;
+        expect(sanitizedName.length).toBeLessThanOrEqual(200);
+        expect(sanitizedName).not.toMatch(/[/\\]/);
+        // eslint-disable-next-line no-control-regex
+        expect(sanitizedName).not.toMatch(/[\x00-\x1f]/);
+    });
+
+    it('drops an entry whose name is nothing but path separators/control characters', () => {
+        const filePath = path.join(inboxDir, 'empty-after-strip.dcm');
+        fs.writeFileSync(filePath, 'stub');
+
+        expect(sanitizeTraumaAttachments(
+            [{ path: filePath, name: '//// ' }],
+            projectRoot,
+        )).toBeUndefined();
+    });
+
+    it('rejects a non-existent inbox path instead of falling back to a lexical resolve', () => {
+        const missing = path.join(inboxDir, 'does-not-exist.dcm');
+
+        expect(sanitizeTraumaAttachments(
+            [{ path: missing, name: 'does-not-exist.dcm' }],
+            projectRoot,
+        )).toBeUndefined();
+    });
+
+    it('rejects a directory path (the inbox root itself)', () => {
+        expect(sanitizeTraumaAttachments(
+            [{ path: inboxDir, name: 'inbox' }],
+            projectRoot,
+        )).toBeUndefined();
+    });
+
+    it('rejects a subdirectory under the inbox', () => {
+        const subDir = path.join(inboxDir, 'subdir');
+        fs.mkdirSync(subDir, { recursive: true });
+
+        expect(sanitizeTraumaAttachments(
+            [{ path: subDir, name: 'subdir' }],
+            projectRoot,
+        )).toBeUndefined();
+    });
 });
 
 describe('isGatewayUnavailableError', () => {

@@ -1227,20 +1227,60 @@ export function sanitizeTraumaFormInput(value) {
 }
 
 /**
- * Resolve a path to its canonical, symlink-free form when it exists on
- * disk; otherwise fall back to a plain lexical resolve (still collapses
- * `..` segments). Used so the inbox-containment check below can't be
- * fooled by a symlink that lexically looks like it's under the inbox.
+ * Same per-request file cap the upload endpoint already enforces
+ * (`ATTACHMENT_UPLOAD_MAX_FILES` in ui/server/index.js:3107). There is no
+ * existing import path between these two modules, so this is kept as its
+ * own named constant rather than imported across them — keep the two in
+ * sync by hand if either changes.
+ */
+const TRAUMA_ATTACHMENT_MAX_FILES = 64;
+
+/** Longest `name` we'll carry through into the model prompt / case snapshot. */
+const TRAUMA_ATTACHMENT_MAX_NAME_LENGTH = 200;
+
+/**
+ * `name` flows untruncated into the interpreter station's prompt and is
+ * persisted/re-rendered in later rounds, so it must not be able to carry
+ * path separators (it's never used to build a filesystem path, but a
+ * separator-laden name reads as a path in the UI/prompt) or control
+ * characters, and must be bounded in length. Returns '' when nothing
+ * usable survives.
  *
- * @param {string} p
+ * @param {string} rawName
  * @returns {string}
  */
-function resolveCanonicalPath(p) {
+function sanitizeTraumaAttachmentName(rawName) {
+    const stripped = rawName
+        .replace(/[\\/]/gu, '')
+        // eslint-disable-next-line no-control-regex
+        .replace(/[\x00-\x1f\x7f]/gu, '')
+        .trim();
+    return stripped.slice(0, TRAUMA_ATTACHMENT_MAX_NAME_LENGTH);
+}
+
+/**
+ * Resolve `p` to its canonical, symlink-free form and confirm it names an
+ * existing regular file — not a directory (the inbox root itself or any
+ * subdirectory under it), and not a path that doesn't exist yet. Returns
+ * null when either check fails. Requiring existence keeps this aligned
+ * with `inboxRoot` below (also `realpathSync`'d): a lexical fallback for
+ * one side and a canonical resolve for the other would let a real inbox
+ * path that hasn't been created yet compare unequal to itself whenever a
+ * symlinked path component sits between the two (e.g. macOS `/var` →
+ * `/private/var`).
+ *
+ * @param {string} p
+ * @returns {string | null}
+ */
+function resolveExistingInboxFile(p) {
+    let resolved;
     try {
-        return fs.realpathSync(p);
+        resolved = fs.realpathSync(p);
     } catch {
-        return path.resolve(p);
+        return null;
     }
+    const stat = fs.statSync(resolved, { throwIfNoEntry: false });
+    return stat && stat.isFile() ? resolved : null;
 }
 
 /**
@@ -1256,16 +1296,29 @@ function resolveCanonicalPath(p) {
  */
 export function sanitizeTraumaAttachments(value, projectRoot) {
     if (!Array.isArray(value) || !projectRoot) return undefined;
-    const inboxRoot = resolveCanonicalPath(path.resolve(projectRoot, 'inbox'));
+    let inboxRoot;
+    try {
+        inboxRoot = fs.realpathSync(path.resolve(projectRoot, 'inbox'));
+    } catch {
+        // Inbox directory doesn't exist yet -> nothing can genuinely be inside it.
+        return undefined;
+    }
     const sanitized = [];
+    const seenPaths = new Set();
     for (const item of value) {
+        if (sanitized.length >= TRAUMA_ATTACHMENT_MAX_FILES) break;
         if (!item || typeof item !== 'object') continue;
         const rawPath = typeof item.path === 'string' ? item.path : '';
-        const name = typeof item.name === 'string' ? item.name.trim() : '';
-        if (!rawPath || !name) continue;
+        const rawName = typeof item.name === 'string' ? item.name : '';
+        if (!rawPath || !rawName) continue;
         if (!path.isAbsolute(rawPath)) continue;
-        const resolved = resolveCanonicalPath(rawPath);
+        const name = sanitizeTraumaAttachmentName(rawName);
+        if (!name) continue;
+        const resolved = resolveExistingInboxFile(rawPath);
+        if (!resolved) continue;
         if (resolved !== inboxRoot && !resolved.startsWith(`${inboxRoot}${path.sep}`)) continue;
+        if (seenPaths.has(resolved)) continue;
+        seenPaths.add(resolved);
         sanitized.push({ path: resolved, name });
     }
     return sanitized.length > 0 ? sanitized : undefined;

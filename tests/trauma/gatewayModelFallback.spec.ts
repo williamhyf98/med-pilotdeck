@@ -1,8 +1,12 @@
 // @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createModelRuntime } from "../../src/model/index.js";
 import { DEFAULT_MODEL_CAPABILITIES } from "../../src/model/protocol/capabilities.js";
+import { createLocalGateway } from "../../src/cli/createLocalGateway.js";
 
 /**
  * Task 9 pins 工位 I 的判读模型为 provider "local" / model "G9-V-Med", with a
@@ -97,64 +101,136 @@ test("getMultimodal resolves and reports image support when local/G9-V-Med is co
   assert.equal(multimodal.input.includes("image"), true);
 });
 
-test("fallback selection picks the main agent model's multimodal support when G9-V-Med is absent", () => {
-  // Mirrors the exact try/catch shape in createTraumaRunner: attempt the
-  // pinned provider/model first, and on failure fall back to the agent's
-  // configured model selection.
-  const runtime = createModelRuntime({
-    providers: {
-      openai: {
-        id: "openai",
-        protocol: "openai",
-        url: "https://example.invalid",
-        apiKey: "test",
-        headers: {},
-        models: {
-          "gpt-agent": multimodalModel(["text", "image"]),
+/**
+ * The two tests below used to hand-copy the try/catch fallback block out of
+ * `createTraumaRunner` into the test body and assert against that copy —
+ * they would keep passing even if the real fallback were deleted from
+ * production. These replacements instead drive the actual assembly seam:
+ * `createLocalGateway({ __testModelFactory })` → `registry.createTraumaRunner()`,
+ * with a spy wrapped around the *real* `createModelRuntime(...).getMultimodal`
+ * (same production function exercised in the tests above). The spy's call
+ * log proves which provider/model pair `createTraumaRunner` actually probed
+ * and, by construction (the very next lines in production code consume
+ * `interpretationSelection` with no further branching), which one the
+ * interpreter's model client was built with.
+ *
+ * `createTraumaRunner` requires a `war_trauma`-typed project id (checked by
+ * `resolveTraumaCaseDir`), so the fixture project directory is named
+ * `trauma_med-<label>`.
+ */
+
+type GetMultimodalCall = [provider: string, model: string];
+
+async function withTraumaRunnerGateway(
+  label: string,
+  configYaml: string,
+  run: (ctx: { calls: GetMultimodalCall[]; projectRoot: string; registry: any }) => Promise<void>,
+): Promise<void> {
+  const pilotHome = await mkdtemp(join(tmpdir(), "trauma-fallback-home-"));
+  const projectBase = await mkdtemp(join(tmpdir(), "trauma-fallback-proj-"));
+  const projectRoot = join(projectBase, `trauma_med-${label}`);
+  await mkdir(projectRoot, { recursive: true });
+  await writeFile(join(pilotHome, "pilotdeck.yaml"), configYaml, "utf8");
+
+  const calls: GetMultimodalCall[] = [];
+  const result = createLocalGateway({
+    projectRoot,
+    pilotHome,
+    env: { PILOT_HOME: pilotHome },
+    __testModelFactory: (snapshot) => {
+      const real = createModelRuntime(snapshot.config.model);
+      return {
+        ...real,
+        getMultimodal: (providerId: string, modelId: string) => {
+          calls.push([providerId, modelId]);
+          return real.getMultimodal(providerId, modelId);
         },
-      },
+      };
     },
   });
 
-  const INTERPRETATION_PROVIDER = "local";
-  const INTERPRETATION_MODEL = "G9-V-Med";
-  const modelSelection = { provider: "openai", model: "gpt-agent" };
-  let interpretationSelection = { provider: INTERPRETATION_PROVIDER, model: INTERPRETATION_MODEL };
-  let supportsImages = false;
   try {
-    supportsImages = runtime.getMultimodal(INTERPRETATION_PROVIDER, INTERPRETATION_MODEL).input.includes("image");
-  } catch {
-    interpretationSelection = modelSelection;
-    try {
-      supportsImages = runtime.getMultimodal(modelSelection.provider, modelSelection.model).input.includes("image");
-    } catch {
-      supportsImages = false;
-    }
+    await run({ calls, projectRoot, registry: result.registry });
+  } finally {
+    result.dispose();
+    await rm(pilotHome, { recursive: true, force: true });
+    await rm(projectBase, { recursive: true, force: true });
   }
+}
 
-  assert.deepEqual(interpretationSelection, { provider: "openai", model: "gpt-agent" });
-  assert.equal(supportsImages, true);
+const CONFIG_WITH_G9_V_MED = `schemaVersion: 1
+agent:
+  model: local/G9-V-Med
+model:
+  providers:
+    local:
+      protocol: openai
+      url: http://127.0.0.1:1/v1
+      apiKey: EMPTY
+      models:
+        G9-V-Med:
+          capabilities:
+            supportsToolUse: true
+            supportsStreaming: true
+            supportsParallelToolCalls: true
+            supportsJsonSchema: true
+            supportsSystemPrompt: true
+            maxContextTokens: 8192
+            maxOutputTokens: 2048
+          multimodal:
+            input: [text, image]
+            maxImagesPerRequest: 8
+            supportedImageMimeTypes: [image/png]
+telemetry:
+  enabled: false
+`;
+
+const CONFIG_WITHOUT_G9_V_MED = `schemaVersion: 1
+agent:
+  model: openai/gpt-agent
+model:
+  providers:
+    openai:
+      protocol: openai
+      url: http://127.0.0.1:1/v1
+      apiKey: EMPTY
+      models:
+        gpt-agent:
+          capabilities:
+            supportsToolUse: true
+            supportsStreaming: true
+            supportsParallelToolCalls: true
+            supportsJsonSchema: true
+            supportsSystemPrompt: true
+            maxContextTokens: 8192
+            maxOutputTokens: 2048
+          multimodal:
+            input: [text, image]
+            maxImagesPerRequest: 8
+            supportedImageMimeTypes: [image/png]
+telemetry:
+  enabled: false
+`;
+
+test("createTraumaRunner picks local/G9-V-Med when it is configured (real assembly, not a copy)", async () => {
+  await withTraumaRunnerGateway("present", CONFIG_WITH_G9_V_MED, async ({ calls, projectRoot, registry }) => {
+    const runner = await registry.createTraumaRunner(projectRoot, "sess-present");
+    assert.equal(typeof runner.runTurn, "function");
+    // Only the pinned provider/model was probed — it resolved, so no
+    // fallback probe against the agent's model selection happened.
+    assert.deepEqual(calls, [["local", "G9-V-Med"]]);
+  });
 });
 
-test("fallback does not crash when neither the pinned model nor the agent model exist", () => {
-  const runtime = createModelRuntime({ providers: {} });
-
-  const modelSelection = { provider: "openai", model: "gpt-agent" };
-  let interpretationSelection = { provider: "local", model: "G9-V-Med" };
-  let supportsImages = false;
-  assert.doesNotThrow(() => {
-    try {
-      supportsImages = runtime.getMultimodal("local", "G9-V-Med").input.includes("image");
-    } catch {
-      interpretationSelection = modelSelection;
-      try {
-        supportsImages = runtime.getMultimodal(modelSelection.provider, modelSelection.model).input.includes("image");
-      } catch {
-        supportsImages = false;
-      }
-    }
+test("createTraumaRunner falls back to the agent model when local/G9-V-Med is absent (real assembly, not a copy)", async () => {
+  await withTraumaRunnerGateway("absent", CONFIG_WITHOUT_G9_V_MED, async ({ calls, projectRoot, registry }) => {
+    const runner = await registry.createTraumaRunner(projectRoot, "sess-absent");
+    assert.equal(typeof runner.runTurn, "function");
+    // First probe (pinned local/G9-V-Med) fails, so createTraumaRunner
+    // falls back to a second probe against the agent's configured model.
+    assert.deepEqual(calls, [
+      ["local", "G9-V-Med"],
+      ["openai", "gpt-agent"],
+    ]);
   });
-
-  assert.deepEqual(interpretationSelection, modelSelection);
-  assert.equal(supportsImages, false);
 });

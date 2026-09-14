@@ -110,6 +110,7 @@ import {
   createTraumaCaseStore,
   createTraumaTurnRunner,
   type TraumaAuditLogger,
+  type TraumaImageInput,
   type TraumaTurnRunner,
 } from "../trauma/index.js";
 
@@ -590,6 +591,22 @@ type ProjectRuntime = {
 const DEFAULT_BROWSER_ACTION_TIMEOUT_MS = 30_000;
 const DEFAULT_BROWSER_NAVIGATION_TIMEOUT_MS = 90_000;
 
+/**
+ * 工位 I 的 `readImage` 依赖：读取预览 PNG 并转成 base64；读不到时返回 null
+ * （契约见 `InterpretationStationDeps.readImage`）。`data` 必须是裸 base64，
+ * 不带 `data:` 前缀。
+ *
+ * Exported (like `sanitizeTraumaAttachments` in the bridge) purely so it
+ * can be unit tested directly.
+ */
+export async function readTraumaAttachmentPreviewImage(
+  path: string,
+): Promise<TraumaImageInput | null> {
+  const data = await readFile(path).catch(() => null);
+  if (!data) return null;
+  return { data: data.toString("base64"), mimeType: "image/png" };
+}
+
 class ProjectRuntimeRegistry {
   private readonly runtimes = new Map<string, ProjectRuntime>();
   private gateway?: InProcessGateway;
@@ -741,10 +758,7 @@ class ProjectRuntimeRegistry {
         model: interpretationSelection.model,
       }),
       parse: createMcpTraumaParseClient(callTraumaTool),
-      readImage: async (path) => {
-        const data = await readFile(path);
-        return { data: data.toString("base64"), mimeType: "image/png" };
-      },
+      readImage: readTraumaAttachmentPreviewImage,
       supportsImages,
     });
 
