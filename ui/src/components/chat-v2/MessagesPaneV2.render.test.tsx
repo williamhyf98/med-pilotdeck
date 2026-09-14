@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { FindShortcutProvider } from '../../contexts/FindShortcutContext';
 import type { ChatMessage, ChatRunMode } from '../chat/types/types';
+import type { Project } from '../../types/app';
 import MessagesPaneV2 from './MessagesPaneV2';
 import { getContextStatus } from './ComposerV2';
 
@@ -60,6 +61,7 @@ function createPaneElement({
   runMode = 'agent',
   planModeActive = false,
   navigateToChatMessageRef,
+  selectedProject = null,
 }: {
   messages: ChatMessage[];
   activityMessages?: ChatMessage[];
@@ -67,6 +69,7 @@ function createPaneElement({
   runMode?: ChatRunMode;
   planModeActive?: boolean;
   navigateToChatMessageRef?: React.MutableRefObject<((runId: string) => void | Promise<void>) | null>;
+  selectedProject?: Project | null;
 }) {
   const scrollContainerRef = React.createRef<HTMLDivElement>();
 
@@ -90,7 +93,7 @@ function createPaneElement({
         allMessagesLoaded
         isLoadingAllMessages={false}
         provider="pilotdeck"
-        selectedProject={null}
+        selectedProject={selectedProject}
         selectedSession={null}
         createDiff={() => []}
         setInput={() => {}}
@@ -109,6 +112,7 @@ function renderPane(options: {
   runMode?: ChatRunMode;
   planModeActive?: boolean;
   navigateToChatMessageRef?: React.MutableRefObject<((runId: string) => void | Promise<void>) | null>;
+  selectedProject?: Project | null;
 }) {
   return render(createPaneElement(options));
 }
@@ -149,6 +153,44 @@ function SessionPaneHarness({
 }
 
 describe('MessagesPaneV2 render behavior', () => {
+  it('shows the trauma-specific empty state for a new war-trauma conversation', () => {
+    renderPane({
+      messages: [],
+      selectedProject: {
+        name: 'trauma_med-field',
+        displayName: '战创伤项目',
+        fullPath: '/ws/trauma_med-field',
+        projectType: 'war_trauma',
+      },
+    });
+
+    expect(screen.getByText('战创伤救治推演助手')).toBeTruthy();
+    expect(screen.getByText(/输入伤员的自由描述/)).toBeTruthy();
+    expect(screen.queryByText('开始新对话')).toBeNull();
+    expect(screen.queryByText('Start a new conversation')).toBeNull();
+    expect(screen.getByAltText('Trauma Agent')).toBeTruthy();
+  });
+
+  it('removes the trauma empty state once the first message is visible', () => {
+    renderPane({
+      messages: [{
+        id: 'u-1',
+        type: 'user',
+        content: '爆炸伤，右大腿活动性出血',
+        timestamp: '2026-09-09T00:00:00.000Z',
+      }],
+      selectedProject: {
+        name: 'trauma_med-field',
+        displayName: '战创伤项目',
+        fullPath: '/ws/trauma_med-field',
+        projectType: 'war_trauma',
+      },
+    });
+
+    expect(screen.queryByText('战创伤救治推演助手')).toBeNull();
+    expect(screen.getByText('爆炸伤，右大腿活动性出血')).toBeTruthy();
+  });
+
   it('renders the default 100-message window without virtualization', () => {
     const messages = Array.from({ length: 100 }, (_, index) => makeMessage(index));
 

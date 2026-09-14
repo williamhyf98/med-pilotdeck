@@ -421,6 +421,70 @@ test("traumaExtract falls back to the raw narrative when extraction fails", asyn
   assert.match(counter.recordedUserText, new RegExp(rawInput));
 });
 
+for (const scenario of [
+  {
+    intent: "out_of_scope",
+    rawInput: "今天北京天气怎么样？",
+    expectedText: "当前页面仅支持战创伤救治推演",
+  },
+  {
+    intent: "domain_question_no_case",
+    rawInput: "战现场急救和早期救治有什么区别？",
+    expectedText: "这是战创伤救治相关问题",
+  },
+  {
+    intent: "system_help",
+    rawInput: "这个系统应该怎么用？",
+    expectedText: "这是战创伤救治推演页面",
+  },
+]) {
+  test(`traumaExtract returns fixed reply and skips runner for ${scenario.intent}`, async () => {
+    const extracted = {
+      inputIntent: scenario.intent,
+      scopeReason: "不进入病例推演",
+      injuryNarratives: [],
+      treatmentNarratives: [],
+      evacuationNarratives: [],
+      notes: [],
+      vitals: [],
+    };
+    const { gateway, counter } = createTestGateway("trauma_med-demo", { extractorResult: extracted });
+    const events = [];
+    for await (const event of gateway.submitTurn({
+      sessionKey: `web:s_${scenario.intent}`,
+      channelKey: "web",
+      projectKey: "trauma_med-demo",
+      message: scenario.rawInput,
+      traumaForm: {
+        statedSubStage: null,
+        injuryNarrative: scenario.rawInput,
+        treatmentNarrative: "",
+        evacuationNarrative: "",
+        note: "",
+        vitals: {},
+      },
+      traumaRawInput: scenario.rawInput,
+      traumaExtract: true,
+    })) {
+      events.push(event);
+    }
+
+    assert.equal(counter.trauma, 0);
+    assert.deepEqual(counter.extractorInput, {
+      rawText: scenario.rawInput,
+      caseHistory: "",
+    });
+    const streamedText = events
+      .filter((event) => event.type === "assistant_text_delta")
+      .map((event) => event.text)
+      .join("");
+    assert.match(streamedText, new RegExp(scenario.expectedText));
+    assert.equal(events.some((event) => event.type === "assistant_text_end"), true);
+    assert.equal(events.at(-1)?.type, "turn_completed");
+    assert.equal(counter.recordedUserText, scenario.rawInput);
+  });
+}
+
 test("traumaExtract uses fallback and emits extraction status when no extractor is configured", async () => {
   const rawInput = "左前臂裂伤";
   const { gateway, counter } = createTestGateway("trauma_med-demo");

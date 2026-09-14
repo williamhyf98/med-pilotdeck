@@ -42,7 +42,20 @@ export type ExtractedVitalItem = {
   sourceSpan: string;
 };
 
+export type TraumaInputIntent =
+  | "case_update"
+  | "out_of_scope"
+  | "domain_question_no_case"
+  | "system_help";
+
 export type ExtractedTurnForm = {
+  /**
+   * 本轮输入意图。缺省只用于兼容旧测试/历史数据；新 extractor schema 要求必须输出。
+   * 只有 case_update 会继续进入 runner，其余类型由网关固定话术直接结束本轮。
+   */
+  inputIntent?: TraumaInputIntent;
+  /** 一句话说明意图判断依据，主要用于日志/调试，不展示给用户。 */
+  scopeReason?: string;
   injuryNarratives: ExtractedNarrativeItem[];
   treatmentNarratives: ExtractedNarrativeItem[];
   evacuationNarratives: ExtractedNarrativeItem[];

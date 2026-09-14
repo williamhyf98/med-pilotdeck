@@ -39,9 +39,11 @@ export default function CitationSourceList({
         <ul className="space-y-1.5 border-t border-neutral-200 px-3 py-2.5 dark:border-neutral-800">
           {citations.map((citation) => (
             <li key={citation.index} className="flex gap-2 text-[12px] leading-5">
-              <span className="mt-0.5 shrink-0 rounded bg-blue-100 px-1 text-[11px] font-medium text-blue-700 dark:bg-blue-900 dark:text-blue-300">
+              <sup className="mt-0.5 inline-flex shrink-0 items-start">
+                <span className="rounded bg-blue-100 px-1 text-xs font-medium leading-4 text-blue-700 dark:bg-blue-900 dark:text-blue-300">
                 [{citation.index}]
-              </span>
+                </span>
+              </sup>
               <span className="min-w-0 text-neutral-600 dark:text-neutral-300">
                 <span className="font-medium text-neutral-800 dark:text-neutral-100">
                   {citation.title}

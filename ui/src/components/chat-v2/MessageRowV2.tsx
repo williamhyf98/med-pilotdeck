@@ -25,6 +25,7 @@ import ImageLightbox, { type LightboxImage } from '../chat/view/subcomponents/Im
 import { Markdown } from '../chat/view/subcomponents/Markdown';
 import CitationSourceList from './CitationSourceList';
 import { formatUsageLimitText } from '../chat/utils/chatFormatting';
+import { extractCitationsFromContent, stripCitationDetailsBlocks } from '../chat/utils/citationDetails';
 import { ProcessTrace } from './ProcessTrace';
 import {
   buildProcessToolSteps,
@@ -145,6 +146,22 @@ function MessageRowV2({
   // message is still growing.
   const thinkingDisplayText = formattedContent;
   const contentDisplayText = formattedContent;
+  const assistantCitations = useMemo(
+    () => (
+      Array.isArray(message.citations) && message.citations.length > 0
+        ? message.citations
+        : extractCitationsFromContent(contentDisplayText)
+    ),
+    [message.citations, contentDisplayText],
+  );
+  const assistantMarkdownText = useMemo(
+    () => (
+      assistantCitations.length > 0
+        ? stripCitationDetailsBlocks(contentDisplayText)
+        : contentDisplayText
+    ),
+    [assistantCitations, contentDisplayText],
+  );
   const assistantArtifacts = useMemo(
     () => (Array.isArray(message.artifacts) ? message.artifacts : []),
     [message.artifacts],
@@ -442,9 +459,9 @@ function MessageRowV2({
       ) : (
         <Markdown className="prose prose-sm prose-neutral max-w-none dark:prose-invert prose-headings:mb-2 prose-headings:mt-4 prose-h2:text-lg prose-h3:text-base prose-p:my-2 prose-pre:my-3 prose-ol:my-2 prose-ul:my-2 prose-table:my-0 prose-hr:my-4" projectName={selectedProject?.name}
         onFileOpen={onFileOpen} isStreaming={message.isStreaming} artifactFiles={assistantArtifacts}
-        citations={message.citations}>{contentDisplayText}</Markdown>
+        citations={assistantCitations}>{assistantMarkdownText}</Markdown>
       )}
-      <CitationSourceList citations={message.citations} isStreaming={message.isStreaming} />
+      <CitationSourceList citations={assistantCitations} isStreaming={message.isStreaming} />
       {assistantArtifacts.length > 0 ? (
         <AgentFileArtifactGroup
           artifacts={assistantArtifacts}

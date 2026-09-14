@@ -34,7 +34,15 @@ export type ExtractedVitalItem = {
   confidence?: number;
 };
 
+export type TraumaInputIntent =
+  | 'case_update'
+  | 'out_of_scope'
+  | 'domain_question_no_case'
+  | 'system_help';
+
 export type ExtractedTurnForm = {
+  inputIntent?: TraumaInputIntent;
+  scopeReason?: string;
   injuryNarratives: ExtractedNarrativeItem[];
   treatmentNarratives: ExtractedNarrativeItem[];
   evacuationNarratives: ExtractedNarrativeItem[];

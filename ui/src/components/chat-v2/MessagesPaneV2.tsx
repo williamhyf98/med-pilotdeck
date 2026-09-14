@@ -12,6 +12,8 @@ import type {
 } from '../chat/types/types';
 import type { SessionStore } from '../../stores/useSessionStore';
 import { getSessionRequestParams, isReadOnlySession, type Project, type ProjectSession, type SessionProvider } from '../../types/app';
+import { resolveProjectType } from '../app-shell/appShellSelection';
+import medAssistantLogo from '../../assets/med-assistant-logo.png';
 import { getIntrinsicMessageKey } from '../chat/utils/messageKeys';
 import MessageRowV2 from './MessageRowV2';
 import SubagentDetailModal from './SubagentDetailModal';
@@ -126,6 +128,60 @@ function isRenderableAssistantProse(message: ChatMessage): boolean {
 function isSubagentThinkingPlaceholder(message: ChatMessage): boolean {
   const id = String(message.id || '');
   return Boolean(message.isThinking && (id.startsWith('subagent_thinking_') || id.startsWith('__subagent_thinking_')));
+}
+
+function TraumaNewConversationEmptyState() {
+  return (
+    <div className="mx-auto flex h-full max-w-[760px] flex-col items-center justify-center px-6 py-10 text-center">
+      <div className="flex w-full flex-col items-center">
+        <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-red-100 bg-white shadow-sm shadow-red-950/5 dark:border-red-900/50 dark:bg-neutral-950">
+          <img
+            src={medAssistantLogo}
+            alt="Trauma Agent"
+            className="h-11 w-11 object-contain"
+          />
+        </div>
+
+        <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.22em] text-red-700/80 dark:text-red-300/80">
+          Trauma Agent
+        </p>
+        <h2 className="text-balance text-[26px] font-semibold tracking-tight text-neutral-950 dark:text-neutral-50">
+          战创伤救治推演助手
+        </h2>
+        <p className="mt-3 max-w-[560px] text-[14px] leading-7 text-neutral-600 dark:text-neutral-300">
+          输入伤员的自由描述，系统会抽取关键信息，结合战伤救治规则进行知识检索，
+          并生成本轮处置建议、后送判断和可追踪的推演记录。
+        </p>
+
+        <div className="mt-7 grid w-full gap-3 text-left sm:grid-cols-3">
+          {[
+            ['1', '描述伤情', '用自然语言说明伤部、生命体征、已处置措施和当前环境。'],
+            ['2', '选择救治级别', '在底部输入区选择当前所处救治阶段，系统会据此组织推演。'],
+            ['3', '查看推演结果', '答案、流程节点、细节页和引用依据会随本轮生成过程同步更新。'],
+          ].map(([step, title, description]) => (
+            <div
+              key={step}
+              className="rounded-2xl border border-neutral-200/80 bg-white/70 p-4 shadow-sm backdrop-blur dark:border-neutral-800/80 dark:bg-neutral-900/70"
+            >
+              <div className="mb-3 inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-red-700 px-2 text-[11px] font-semibold text-white dark:bg-red-500">
+                {step}
+              </div>
+              <div className="text-[13px] font-semibold text-neutral-900 dark:text-neutral-100">
+                {title}
+              </div>
+              <div className="mt-1.5 text-[12px] leading-5 text-neutral-500 dark:text-neutral-400">
+                {description}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-6 rounded-full border border-red-100 bg-white/75 px-4 py-2 text-[12px] text-red-800 shadow-sm dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-200">
+          从下方输入框提交第一轮信息后，此介绍会自动切换为对话记录。
+          </div>
+      </div>
+    </div>
+  );
 }
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -1112,6 +1168,9 @@ function MessagesPaneV2({
     renderWindowKey: `${virtualWindow.startIndex}:${virtualWindow.endIndex}`,
   });
   const searchIsRenderedByShell = useRegisterChatHistorySearchControls(chatHistorySearch);
+  const isWarTraumaProject = selectedProject
+    ? resolveProjectType(selectedProject) === 'war_trauma'
+    : false;
 
   return (
     <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -1160,6 +1219,8 @@ function MessagesPaneV2({
             <span>{t('loading', { defaultValue: 'Loading...' })}</span>
           </div>
         </div>
+      ) : isNewConversationEmpty && isWarTraumaProject ? (
+        <TraumaNewConversationEmptyState />
       ) : isNewConversationEmpty ? (
         <div className="mx-auto flex h-full max-w-[720px] flex-col items-center justify-center gap-4 px-6 py-10 text-center">
           <div className="text-[15px] font-medium text-neutral-900 dark:text-neutral-100">

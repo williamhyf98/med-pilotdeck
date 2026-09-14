@@ -306,8 +306,23 @@ const EXTRACTED_VITAL_ITEM = object({
   sourceSpan: STRING,
 });
 
+const TRAUMA_INPUT_INTENT = enumOf(
+  "case_update",
+  "out_of_scope",
+  "domain_question_no_case",
+  "system_help",
+);
+
 export const EXTRACTOR_OUTPUT_SCHEMA: Record<string, unknown> = described(
   object({
+    inputIntent: described(
+      TRAUMA_INPUT_INTENT,
+      "用户本轮输入意图。只有 case_update 表示包含具体伤员信息、可进入推演。",
+    ),
+    scopeReason: described(
+      STRING,
+      "一句话说明 inputIntent 的判断依据；不要输出推理过程。",
+    ),
     injuryNarratives: arrayOf(EXTRACTED_NARRATIVE_ITEM),
     treatmentNarratives: arrayOf(EXTRACTED_NARRATIVE_ITEM),
     evacuationNarratives: arrayOf(EXTRACTED_NARRATIVE_ITEM),
@@ -340,6 +355,13 @@ export function validateExtractedTurnForm(
   value: unknown,
 ): value is import("./types.js").ExtractedTurnForm {
   if (!isRecord(value)) return false;
+  if (
+    value.inputIntent !== undefined
+    && !["case_update", "out_of_scope", "domain_question_no_case", "system_help"].includes(String(value.inputIntent))
+  ) {
+    return false;
+  }
+  if (value.scopeReason !== undefined && typeof value.scopeReason !== "string") return false;
   const arrFields = ["injuryNarratives", "treatmentNarratives", "evacuationNarratives", "notes"] as const;
   for (const field of arrFields) {
     if (!Array.isArray(value[field])) return false;

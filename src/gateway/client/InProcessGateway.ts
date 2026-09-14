@@ -114,7 +114,7 @@ import {
   traumaTurnEvents,
   type TraumaTurnRunner,
 } from "../../trauma/index.js";
-import { normalizeExtractedForm } from "../../trauma/formDraft.js";
+import { extractedInputIntent, normalizeExtractedForm, traumaScopeReply } from "../../trauma/formDraft.js";
 
 const PLAN_COMMAND_USAGE = "用法：/plan <任务>\n例如：/plan 设计一个新功能";
 const MAX_GATEWAY_TOOL_RESULT_PREVIEW_CHARS = 20_000;
@@ -616,13 +616,44 @@ export class InProcessGateway implements Gateway {
                 projectKey: input.projectKey,
                 sessionKey: input.sessionKey,
               });
-              traumaForm = normalizeExtractedForm(await station.extract({
+              const extracted = await station.extract({
                 rawText: input.traumaRawInput.trim(),
                 caseHistory: "",
-              }));
+              });
               if (traumaAbortSignal.aborted) {
                 throw new Error("turn aborted");
               }
+              const inputIntent = extractedInputIntent(extracted);
+              if (inputIntent !== "case_update") {
+                const assistantText = traumaScopeReply(inputIntent);
+                emitTraumaProcessEvents(traumaExtractionEvents({
+                  runId,
+                  status: "finished",
+                  ok: true,
+                  detail: extracted.scopeReason
+                    ? `输入意图：${inputIntent}；${extracted.scopeReason}`
+                    : `输入意图：${inputIntent}`,
+                }));
+                emit({ type: "assistant_text_delta", text: assistantText, runId });
+                emit({ type: "assistant_text_end", runId });
+                await this.options.recordTraumaTurn?.({
+                  projectKey: input.projectKey,
+                  sessionKey: input.sessionKey,
+                  runId,
+                  userText: input.traumaRawInput.trim(),
+                  assistantText,
+                  aiTitle: "非推演输入",
+                  processMessages: traumaProcessMessages,
+                });
+                emit({
+                  type: "turn_completed",
+                  usage: {},
+                  finishReason: "completed",
+                  runId,
+                });
+                return;
+              }
+              traumaForm = normalizeExtractedForm(extracted);
               if (!validateTurnFormInput(traumaForm)) {
                 throw new Error("抽取结果未包含可用于推演的病例信息");
               }

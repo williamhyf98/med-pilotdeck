@@ -21,7 +21,19 @@ const FEW_SHOT_PAIRS: Array<{ user: string; assistant: string }> = [
 <currentUserInput>
 伤员右小腿开放性骨折，有活动性出血，意识清楚，面色苍白。已完成夹板固定和加压包扎，止血效果良好。心率 102，呼吸 24，体温 36.5。准备后送营救护站，车辆已就位，道路通畅。
 </currentUserInput>`,
-    assistant: `{"injuryNarratives":[{"text":"伤员右小腿开放性骨折，有活动性出血，意识清楚，面色苍白。","sourceSpan":"伤员右小腿开放性骨折，有活动性出血，意识清楚，面色苍白。"}],"treatmentNarratives":[{"text":"已完成夹板固定和加压包扎，止血效果良好。","sourceSpan":"已完成夹板固定和加压包扎，止血效果良好。"}],"evacuationNarratives":[{"text":"准备后送营救护站，车辆已就位，道路通畅。","sourceSpan":"准备后送营救护站，车辆已就位，道路通畅。"}],"notes":[],"vitals":[{"field":"heartRate","value":102,"unit":"次/分","sourceSpan":"心率 102"},{"field":"respiratoryRate","value":24,"unit":"次/分","sourceSpan":"呼吸 24"},{"field":"temperature","value":36.5,"unit":"℃","sourceSpan":"体温 36.5"}]}`,
+    assistant: JSON.stringify({
+      inputIntent: "case_update",
+      scopeReason: "输入包含具体伤员伤情、处置、后送和生命体征信息",
+      injuryNarratives: [{ text: "伤员右小腿开放性骨折，有活动性出血，意识清楚，面色苍白。", sourceSpan: "伤员右小腿开放性骨折，有活动性出血，意识清楚，面色苍白。" }],
+      treatmentNarratives: [{ text: "已完成夹板固定和加压包扎，止血效果良好。", sourceSpan: "已完成夹板固定和加压包扎，止血效果良好。" }],
+      evacuationNarratives: [{ text: "准备后送营救护站，车辆已就位，道路通畅。", sourceSpan: "准备后送营救护站，车辆已就位，道路通畅。" }],
+      notes: [],
+      vitals: [
+        { field: "heartRate", value: 102, unit: "次/分", sourceSpan: "心率 102" },
+        { field: "respiratoryRate", value: 24, unit: "次/分", sourceSpan: "呼吸 24" },
+        { field: "temperature", value: 36.5, unit: "℃", sourceSpan: "体温 36.5" },
+      ],
+    }),
   },
   {
     user: `<caseHistory></caseHistory>
@@ -29,7 +41,7 @@ const FEW_SHOT_PAIRS: Array<{ user: string; assistant: string }> = [
 <currentUserInput>
 腹部锐器伤，伤口约 5 厘米，有少量肠内容物外露，伤员喊痛但意识清楚。
 </currentUserInput>`,
-    assistant: `{"injuryNarratives":[{"text":"腹部锐器伤，伤口约 5 厘米，有少量肠内容物外露，伤员喊痛但意识清楚。","sourceSpan":"腹部锐器伤，伤口约 5 厘米，有少量肠内容物外露，伤员喊痛但意识清楚。"}],"treatmentNarratives":[],"evacuationNarratives":[],"notes":[],"vitals":[]}`,
+    assistant: `{"inputIntent":"case_update","scopeReason":"输入包含具体伤员伤情事实","injuryNarratives":[{"text":"腹部锐器伤，伤口约 5 厘米，有少量肠内容物外露，伤员喊痛但意识清楚。","sourceSpan":"腹部锐器伤，伤口约 5 厘米，有少量肠内容物外露，伤员喊痛但意识清楚。"}],"treatmentNarratives":[],"evacuationNarratives":[],"notes":[],"vitals":[]}`,
   },
   {
     user: `<caseHistory></caseHistory>
@@ -37,7 +49,19 @@ const FEW_SHOT_PAIRS: Array<{ user: string; assistant: string }> = [
 <currentUserInput>
 血压 92/60，心率 120，血氧 88%，瞳孔等大等圆，对光反射存在。已建立静脉通路，输液中。
 </currentUserInput>`,
-    assistant: `{"injuryNarratives":[{"text":"血压 92/60，瞳孔等大等圆，对光反射存在。","sourceSpan":"血压 92/60，瞳孔等大等圆，对光反射存在。"}],"treatmentNarratives":[{"text":"已建立静脉通路，输液中。","sourceSpan":"已建立静脉通路，输液中。"}],"evacuationNarratives":[],"notes":[],"vitals":[{"field":"systolicBloodPressure","value":92,"unit":"mmHg","sourceSpan":"血压 92/60"},{"field":"heartRate","value":120,"unit":"次/分","sourceSpan":"心率 120"},{"field":"spo2","value":88,"unit":"%","sourceSpan":"血氧 88%"}]}`,
+    assistant: JSON.stringify({
+      inputIntent: "case_update",
+      scopeReason: "输入包含具体伤员检查、处置和生命体征信息",
+      injuryNarratives: [{ text: "血压 92/60，瞳孔等大等圆，对光反射存在。", sourceSpan: "血压 92/60，瞳孔等大等圆，对光反射存在。" }],
+      treatmentNarratives: [{ text: "已建立静脉通路，输液中。", sourceSpan: "已建立静脉通路，输液中。" }],
+      evacuationNarratives: [],
+      notes: [],
+      vitals: [
+        { field: "systolicBloodPressure", value: 92, unit: "mmHg", sourceSpan: "血压 92/60" },
+        { field: "heartRate", value: 120, unit: "次/分", sourceSpan: "心率 120" },
+        { field: "spo2", value: 88, unit: "%", sourceSpan: "血氧 88%" },
+      ],
+    }),
   },
   {
     user: `<caseHistory></caseHistory>
@@ -45,7 +69,39 @@ const FEW_SHOT_PAIRS: Array<{ user: string; assistant: string }> = [
 <currentUserInput>
 上一轮说的开放伤不成立，实际只是擦伤，皮肤没有破损。前面报的心率 128 也要更正，刚复测是 104。
 </currentUserInput>`,
-    assistant: `{"injuryNarratives":[{"text":"上一轮说的开放伤不成立，实际只是擦伤，皮肤没有破损。前面报的心率 128 也要更正，刚复测是 104。","sourceSpan":"上一轮说的开放伤不成立，实际只是擦伤，皮肤没有破损。前面报的心率 128 也要更正，刚复测是 104。"}],"treatmentNarratives":[],"evacuationNarratives":[],"notes":[],"vitals":[{"field":"heartRate","value":104,"unit":"次/分","sourceSpan":"刚复测是 104"}]}`,
+    assistant: JSON.stringify({
+      inputIntent: "case_update",
+      scopeReason: "输入包含上一轮伤员信息更正和复测体征",
+      injuryNarratives: [{ text: "上一轮说的开放伤不成立，实际只是擦伤，皮肤没有破损。前面报的心率 128 也要更正，刚复测是 104。", sourceSpan: "上一轮说的开放伤不成立，实际只是擦伤，皮肤没有破损。前面报的心率 128 也要更正，刚复测是 104。" }],
+      treatmentNarratives: [],
+      evacuationNarratives: [],
+      notes: [],
+      vitals: [{ field: "heartRate", value: 104, unit: "次/分", sourceSpan: "刚复测是 104" }],
+    }),
+  },
+  {
+    user: `<caseHistory></caseHistory>
+
+<currentUserInput>
+这个系统应该怎么用？
+</currentUserInput>`,
+    assistant: `{"inputIntent":"system_help","scopeReason":"用户询问系统使用方式，没有提供具体伤员病例事实","injuryNarratives":[],"treatmentNarratives":[],"evacuationNarratives":[],"notes":[],"vitals":[]}`,
+  },
+  {
+    user: `<caseHistory></caseHistory>
+
+<currentUserInput>
+战现场急救和早期救治有什么区别？
+</currentUserInput>`,
+    assistant: `{"inputIntent":"domain_question_no_case","scopeReason":"用户询问战创伤救治相关知识，但没有提供具体伤员病例事实","injuryNarratives":[],"treatmentNarratives":[],"evacuationNarratives":[],"notes":[],"vitals":[]}`,
+  },
+  {
+    user: `<caseHistory></caseHistory>
+
+<currentUserInput>
+今天北京天气怎么样？
+</currentUserInput>`,
+    assistant: `{"inputIntent":"out_of_scope","scopeReason":"用户问题与战创伤救治推演无关","injuryNarratives":[],"treatmentNarratives":[],"evacuationNarratives":[],"notes":[],"vitals":[]}`,
   },
 ];
 

@@ -25,7 +25,7 @@ export {
   mergeFormInput,
   validateTurnFormInput,
 } from "./factMerge.js";
-export { normalizeExtractedForm } from "./formDraft.js";
+export { extractedInputIntent, normalizeExtractedForm, traumaScopeReply } from "./formDraft.js";
 export { createExtractionStation } from "./stations/extractor.js";
 export type { ExtractionStation, ExtractorInput } from "./stations/extractor.js";
 export { EXTRACTOR_OUTPUT_SCHEMA, validateExtractedTurnForm } from "./schemas.js";
@@ -37,6 +37,7 @@ export type {
   ExtractedTurnForm,
   ExtractedVitalItem,
   NarrativeEntry,
+  TraumaInputIntent,
   TurnFormInput,
   VitalItemKey,
   VitalsRoundRecord,
