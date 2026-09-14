@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  INTERPRETATION_OUTPUT_SCHEMA,
   PLACEMENT_OUTPUT_SCHEMA,
   REASONER_OUTPUT_SCHEMA,
+  validateAttachmentInterpretation,
   validatePlacementAssessment,
   validateReasonerOutput,
 } from "../../src/trauma/schemas.js";
@@ -106,4 +108,32 @@ test("reasoner validator accepts over-long memo fields (length is a soft hint, n
     validateReasonerOutput({ ...base, memo: { ...base.memo, inputPoints: "不是数组" } }),
     false,
   );
+});
+
+test("interpretation schema satisfies OpenAI strict mode", () => {
+  const schema = INTERPRETATION_OUTPUT_SCHEMA as any;
+  assert.equal(schema.type, "object");
+  assert.equal(schema.additionalProperties, false);
+  assert.deepEqual(schema.required, ["attachments", "overall"]);
+  const item = schema.properties.attachments.items;
+  assert.equal(item.additionalProperties, false);
+  assert.deepEqual(item.required, ["fileName", "keyFindings", "traumaRelevance"]);
+});
+
+test("validateAttachmentInterpretation accepts a well-formed output", () => {
+  assert.equal(validateAttachmentInterpretation({
+    attachments: [{ fileName: "ct.dcm", keyFindings: "右侧血气胸", traumaRelevance: "与胸部穿透伤一致" }],
+    overall: "提示张力性血气胸风险。",
+  }), true);
+});
+
+test("validateAttachmentInterpretation accepts an empty attachment list", () => {
+  assert.equal(validateAttachmentInterpretation({ attachments: [], overall: "" }), true);
+});
+
+test("validateAttachmentInterpretation rejects malformed items", () => {
+  assert.equal(validateAttachmentInterpretation({ attachments: [{ fileName: "a" }], overall: "x" }), false);
+  assert.equal(validateAttachmentInterpretation({ attachments: "nope", overall: "x" }), false);
+  assert.equal(validateAttachmentInterpretation({ attachments: [], overall: 1 }), false);
+  assert.equal(validateAttachmentInterpretation(null), false);
 });

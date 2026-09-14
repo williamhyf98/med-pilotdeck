@@ -86,6 +86,44 @@ export function validatePlacementAssessment(
   return true;
 }
 
+export const INTERPRETATION_OUTPUT_SCHEMA: Record<string, unknown> = described(
+  object({
+    attachments: described(
+      arrayOf(object({
+        fileName: described(STRING, "附件文件名，必须与输入中给出的文件名一致。"),
+        keyFindings: described(
+          STRING,
+          "该附件的关键发现，一到三句话。只描述可从材料直接读出的内容，不要推测。",
+        ),
+        traumaRelevance: described(
+          STRING,
+          "该发现与本轮战创伤救治决策的相关性；无相关性时写「与本轮救治决策无直接关联」。",
+        ),
+      })),
+      "按输入附件逐条给出的判读；解析为空的附件也要出现在列表中并说明原因。",
+    ),
+    overall: described(
+      STRING,
+      "跨附件的综合判读，不超过 200 字；没有可综合的内容时为空串。",
+    ),
+  }),
+  "工位 I 的战创伤影像判读输出，供检索与推理消费，不直接展示为长报告。",
+);
+
+export function validateAttachmentInterpretation(
+  value: unknown,
+): value is import("./types.js").AttachmentInterpretationOutput {
+  if (!isRecord(value)) return false;
+  if (typeof value.overall !== "string") return false;
+  if (!Array.isArray(value.attachments)) return false;
+  return value.attachments.every((item: unknown) => (
+    isRecord(item)
+    && typeof item.fileName === "string"
+    && typeof item.keyFindings === "string"
+    && typeof item.traumaRelevance === "string"
+  ));
+}
+
 const GATE_STATUSES = new Set(["ASSESSING", "STAY", "BLOCKED", "READY"]);
 
 
