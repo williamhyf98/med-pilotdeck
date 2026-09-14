@@ -299,6 +299,14 @@ export function createTraumaTurnRunner(deps: {
         });
       };
       const report = input.onProgress ?? (() => {});
+      // runTurn 可能已经通过 partial 分支 return 或者 catch 抛出而结束；工位 I
+      // 的支线在那之后仍可能异步 settle（正常完成、被取消、或故障），必须让它的
+      // 进度上报变成无操作，否则会向一个已经关闭的事件流里投递“迟到”事件。
+      let turnEnded = false;
+      const reportInterpretation = (progress: TraumaTurnProgress) => {
+        if (turnEnded) return;
+        report(progress);
+      };
       const interpretController = new AbortController();
       const cancelInterpretation = () => {
         interpretController.abort(input.abortSignal?.reason ?? "interpretation cancelled");
@@ -388,24 +396,32 @@ export function createTraumaTurnRunner(deps: {
         // 而 confirm_placement 要等用户点确认，这个窗口通常足以覆盖判读耗时。
         const attachments = input.attachments ?? [];
         const runInterpretation = Boolean(deps.interpreter) && attachments.length > 0;
+        // 传入 structuredClone(candidate) 而不是引用本身：step 3/4 会在支线运行期间
+        // 并发改写 candidate（currentStage/currentSubStage/currentCapabilities/
+        // placementRationale），工位 I 与定级并行、不依赖定级结果，快照要固定在
+        // step 2 合并完成后的状态，不能是时序竞争出来的任意中间态。
+        const interpretationSnapshot = structuredClone(candidate);
         const interpretationPromise: Promise<{ text: string; fileNames: string[] }> =
           runInterpretation
             ? (async () => {
-              report({ kind: "attachment_interpretation", status: "started" });
               try {
+                reportInterpretation({ kind: "attachment_interpretation", status: "started" });
                 const result = await deps.interpreter!.interpret({
-                  state: candidate,
+                  state: interpretationSnapshot,
                   attachments,
                   signal: interpretController.signal,
                 });
-                report({ kind: "attachment_interpretation", status: "finished", ok: Boolean(result.text) });
+                reportInterpretation({ kind: "attachment_interpretation", status: "finished", ok: Boolean(result.text) });
                 return result;
               } catch {
                 // 支线故障不该让整轮失败——判读置空，主线照常推演。
-                report({ kind: "attachment_interpretation", status: "finished", ok: false });
+                reportInterpretation({ kind: "attachment_interpretation", status: "finished", ok: false });
                 return { text: "", fileNames: [] };
               }
-            })()
+              // Belt and braces：即便 try/catch 之外（例如 reportInterpretation 本身
+              // 抛出、或上面的 catch 分支再次抛出）仍有异常逃逸，这里兜底吞掉，
+              // 防止一个未处理的 rejection 在支线于主线结束后才 settle 时杀掉进程。
+            })().catch(() => ({ text: "", fileNames: [] }))
             : Promise.resolve({ text: "", fileNames: [] });
 
         await beginStep(3, "assess_placement");
@@ -499,9 +515,9 @@ export function createTraumaTurnRunner(deps: {
 
         if (!candidate.currentStage || !candidate.currentSubStage) {
           // 本轮不会走到 reasoner，判读没有消费者；取消支线，避免它向一个
-          // 已经结束的轮次写状态。
+          // 已经结束的轮次写状态。支线自身的 promise 已经在启动处 .catch 兜底，
+          // 这里不需要（也无法通过 void 达到）再消费它一次。
           cancelInterpretation();
-          void interpretationPromise;
           const outOfScope = proposedPlacement.source === "out_of_scope";
           await beginStep(5, "build_partial_response_and_snapshot");
           const partialState: CaseState = {
@@ -552,6 +568,7 @@ export function createTraumaTurnRunner(deps: {
               round: partialState.round,
             },
           });
+          turnEnded = true;
           return response;
         }
 
@@ -809,6 +826,7 @@ export function createTraumaTurnRunner(deps: {
         });
         throw error;
       } finally {
+        turnEnded = true;
         input.abortSignal?.removeEventListener("abort", cancelInterpretation);
       }
     },

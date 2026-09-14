@@ -369,3 +369,107 @@ test("interpretation entries accumulate across rounds", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+test("partial-branch turns cancel the interpretation branch and never report progress after runTurn settles", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-interp-cancel-"));
+  try {
+    const store = createTraumaCaseStore(root);
+    const gate = deferred<void>();
+    let capturedSignal: AbortSignal | undefined;
+    let interpretCallCount = 0;
+    const slowInterpreter = {
+      async interpret(input: { attachments: Array<{ name: string }>; signal?: AbortSignal }) {
+        interpretCallCount += 1;
+        capturedSignal = input.signal;
+        // 挂起，直到测试在 runTurn 结束之后才放行——模拟支线判读比主线慢很多的情况。
+        await gate.promise;
+        if (input.signal?.aborted) {
+          const error = new Error("aborted");
+          error.name = "AbortError";
+          throw error;
+        }
+        return { text: "不应被使用", fileNames: input.attachments.map((item) => item.name) };
+      },
+    };
+    let runTurnSettled = false;
+    const progressEvents: Array<{ status: string; afterSettle: boolean }> = [];
+    const runner = createTraumaTurnRunner({
+      store,
+      model: model([], {
+        determined: false,
+        source: "undetermined",
+        stage: null,
+        subStage: null,
+        rationale: "信息不足",
+        definitionReferences: [],
+      }),
+      rag: rag({ count: 0 }),
+      interpreter: slowInterpreter,
+    });
+    const runPromise = runner.runTurn({
+      projectId: "trauma_med-demo", sessionId: "web:s", messageId: "m1", now,
+      form: form({ note: "undetermined round" }),
+      attachments: [{ path: "/inbox/b1/ct.dcm", name: "ct.dcm" }],
+      onProgress: (progress) => {
+        if ("kind" in progress && progress.kind === "attachment_interpretation") {
+          progressEvents.push({ status: progress.status, afterSettle: runTurnSettled });
+        }
+      },
+    });
+
+    const response = await runPromise;
+    runTurnSettled = true;
+
+    // 此时主线早已走了 partial 分支返回；工位 I 的 interpret() 仍卡在 gate 上。
+    assert.equal(interpretCallCount, 1);
+    assert.equal(capturedSignal?.aborted, true);
+
+    // 放行支线，让它在 runTurn 结束之后真正 settle（无论成功/失败），
+    // 用于验证它 settle 时不会再向 onProgress 投递事件。
+    gate.resolve();
+    await delay(20);
+
+    assert.equal(response.stage.sub, null);
+    assert.deepEqual(progressEvents.map((event) => event.status), ["started"]);
+    assert.deepEqual(progressEvents.filter((event) => event.afterSettle), []);
+    assert.equal((await store.load())?.attachmentInterpretations, undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an interpretation entry from a round with attachments survives into a later round with none", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-interp-survive-"));
+  try {
+    const store = createTraumaCaseStore(root);
+    const runner = createTraumaTurnRunner({
+      store, model: model([]), rag: rag({ count: 0 }), interpreter: interpreter([]),
+    });
+    await runner.runTurn({
+      projectId: "trauma_med-demo", sessionId: "web:s", messageId: "m1", now,
+      form: form({ statedSubStage: "primary_first_aid" }),
+      attachments: [{ path: "/inbox/b1/ct.dcm", name: "ct.dcm" }],
+    });
+    await runner.runTurn({
+      projectId: "trauma_med-demo", sessionId: "web:s", messageId: "m2", now,
+      form: form({ statedSubStage: "primary_first_aid" }),
+    });
+    const entries = (await store.load())?.attachmentInterpretations ?? [];
+    assert.deepEqual(entries.map((entry) => entry.round), [1]);
+    assert.ok(entries[0]?.text.includes("右侧血气胸"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
