@@ -1,6 +1,15 @@
 import { ChevronDown, Loader2, Sparkles, Square } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '../../lib/utils';
+import { authenticatedFetch } from '../../utils/api';
+import {
+  collectMedicalFilesFromFileList,
+  ensureUploadFailedMessage,
+  formatAttachmentLimitErrors,
+  totalFileBytes,
+  validateAttachmentBatch,
+  MEDICAL_ATTACHMENT_EXTENSIONS,
+} from '../chat/utils/medicalFolderUpload';
 import { SUBSTAGE_LABELS, SUBSTAGE_ORDER } from './domain/stageConfig';
 import type { SubStage, TurnFormInput } from './domain/types';
 import TraumaTurnForm from './TraumaTurnForm';
@@ -17,7 +26,12 @@ type TraumaComposerProps = {
   caseHistory?: string;
   /** 上一轮推理后由工位 P 落定的救治级别；用于限定本轮可选级别。 */
   previousSubStage?: SubStage | null;
-  onSubmit: (form: TurnFormInput, rawInput: string, extract?: boolean) => void | Promise<void>;
+  onSubmit: (
+    form: TurnFormInput,
+    rawInput: string,
+    extract?: boolean,
+    attachments?: Array<{ path: string; name: string }>,
+  ) => void | Promise<void>;
   onAbort?: () => void;
   submitting?: boolean;
 };
@@ -102,7 +116,7 @@ function LevelRadios({
 // ─── Component ─────────────────────────────────────────────────────────────────
 
 export default function TraumaComposer({
-  projectKey: _projectKey,
+  projectKey,
   sessionId: _sessionId,
   caseHistory: _caseHistory = '',
   previousSubStage,
@@ -114,9 +128,13 @@ export default function TraumaComposer({
   const [rawText, setRawText] = useState('');
   const [manualOpen, setManualOpen] = useState(false);
   const [freeSubStage, setFreeSubStage] = useState<SubStage | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isExtracting = state.phase === 'extracting';
-  const busy = submitting || isExtracting;
+  const busy = submitting || isExtracting || uploading;
 
   // Once a submission starts, clear the draft and collapse back to the free-text
   // surface. The parent drives the next round; we don't keep stale text around.
@@ -127,13 +145,77 @@ export default function TraumaComposer({
       setRawText('');
       setManualOpen(false);
       setFreeSubStage(null);
+      setPendingFiles([]);
+      setAttachmentError(null);
     }
     wasSubmitting.current = submitting;
   }, [submitting]);
 
+  function handleFilesPicked(list: FileList | null) {
+    if (!list || list.length === 0) return;
+    const collected = collectMedicalFilesFromFileList(list);
+    const incoming = collected.entries.map((item) => item.file);
+    const validation = validateAttachmentBatch({
+      existingCount: pendingFiles.length,
+      existingBytes: totalFileBytes(pendingFiles),
+      incoming,
+      scanOverflow: collected.scanOverflow,
+    });
+    if (!validation.ok) {
+      setAttachmentError(formatAttachmentLimitErrors(validation.errors));
+      return;
+    }
+    setAttachmentError(collected.warnings[0] ?? null);
+    setPendingFiles((current) => [...current, ...incoming]);
+  }
+
+  // 上传在提交瞬间完成，而不是在 runner 运行期间等待——附件只对当前轮有效。
+  async function uploadPendingFiles(): Promise<Array<{ path: string; name: string }> | null> {
+    if (pendingFiles.length === 0) return [];
+    if (!projectKey) {
+      setAttachmentError('上传失败：当前没有可用的项目。');
+      return null;
+    }
+    const formData = new FormData();
+    pendingFiles.forEach((file) => {
+      formData.append('attachments', file);
+    });
+    // 战创伤链路自己做预处理，不需要服务端回传 data-URL 图像。
+    formData.append('pathOnlyIndexes', JSON.stringify(pendingFiles.map((_, index) => index)));
+    try {
+      setUploading(true);
+      const response = await authenticatedFetch(
+        `/api/projects/${encodeURIComponent(projectKey)}/upload-attachments`,
+        { method: 'POST', headers: {}, body: formData },
+      );
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(typeof payload?.error === 'string' ? payload.error : '附件上传失败，请稍后重试');
+      }
+      const result = await response.json();
+      const files = [
+        ...(Array.isArray(result.files) ? result.files : []),
+        ...(Array.isArray(result.images) ? result.images : []),
+      ];
+      return files
+        .filter((file: { path?: string }) => Boolean(file?.path))
+        .map((file: { path: string; name: string }) => ({ path: file.path, name: file.name }));
+    } catch (error) {
+      setAttachmentError(ensureUploadFailedMessage(
+        error instanceof Error ? error.message : '未知错误',
+      ));
+      return null;
+    } finally {
+      setUploading(false);
+    }
+  }
+
   async function handleExtract() {
     const trimmed = rawText.trim();
-    if (!trimmed || busy) return;
+    // 只传附件不写字也是有效输入——判读本身就是本轮的信息。
+    if ((!trimmed && pendingFiles.length === 0) || busy) return;
+    const attachments = await uploadPendingFiles();
+    if (!attachments) return;
     // 抽取在同一个 runner turn 内异步执行；先把原始自由语句交给聊天区，
     // 网关随后负责模型抽取，失败时自动使用原文 injuryNarrative fallback。
     setState({ phase: 'extracting' });
@@ -146,11 +228,13 @@ export default function TraumaComposer({
       evacuationNarrative: '',
       note: '',
       vitals: {},
-    }, trimmed, true);
+    }, trimmed, true, attachments);
   }
 
   async function handleManualSubmit(form: TurnFormInput) {
-    await onSubmit(form, rawText.trim());
+    const attachments = await uploadPendingFiles();
+    if (!attachments) return;
+    await onSubmit(form, rawText.trim(), false, attachments);
   }
 
   return (
@@ -168,6 +252,30 @@ export default function TraumaComposer({
           className="block w-full resize-none bg-transparent text-xs leading-5 text-neutral-800 outline-none placeholder:text-neutral-400 disabled:opacity-60 dark:text-neutral-100 dark:placeholder:text-neutral-500"
           aria-label="本轮伤情自由输入"
         />
+        {pendingFiles.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {pendingFiles.map((file, index) => (
+              <span
+                key={`${file.name}:${index}`}
+                className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
+              >
+                {file.name}
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setPendingFiles((current) => current.filter((_, at) => at !== index))}
+                  className="text-neutral-400 hover:text-neutral-700 disabled:opacity-50 dark:hover:text-neutral-100"
+                  aria-label={`移除附件 ${file.name}`}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        {attachmentError && (
+          <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">{attachmentError}</p>
+        )}
         <div className="mt-2 flex items-center justify-between gap-2 border-t border-neutral-200 pt-2 dark:border-neutral-800">
           <LevelRadios
             previousSubStage={previousSubStage}
@@ -175,6 +283,25 @@ export default function TraumaComposer({
             onChange={setFreeSubStage}
             disabled={busy}
           />
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            hidden
+            accept={[...MEDICAL_ATTACHMENT_EXTENSIONS].map((ext) => `.${ext}`).join(',')}
+            onChange={(event) => {
+              handleFilesPicked(event.target.files);
+              event.target.value = '';
+            }}
+          />
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => fileInputRef.current?.click()}
+            className="shrink-0 rounded-lg border border-neutral-200 px-2 py-1 text-[11px] text-neutral-600 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+          >
+            {uploading ? '上传中…' : '+ 添加医学附件'}
+          </button>
           {submitting && onAbort ? (
             <button
               type="button"

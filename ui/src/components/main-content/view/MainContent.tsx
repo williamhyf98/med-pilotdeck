@@ -213,7 +213,12 @@ function MainContent({
     (text: string, targetSessionId?: string | null, runId?: string) => void
   ) | null>(null);
 
-  const submitTraumaForm = useCallback((form: TurnFormInput, rawInput = '', traumaExtract = false) => {
+  const submitTraumaForm = useCallback((
+    form: TurnFormInput,
+    rawInput = '',
+    traumaExtract = false,
+    traumaAttachments: Array<{ path: string; name: string }> = [],
+  ) => {
     if (!selectedProject || traumaSubmitting) return;
     const selectedSessionId = selectedSession?.id;
     const concreteSessionId = selectedSessionId && !isTemporarySessionId(selectedSessionId)
@@ -254,6 +259,7 @@ function MainContent({
         traumaForm: form,
         traumaRawInput: rawInput,
         traumaExtract,
+        ...(traumaAttachments.length > 0 ? { traumaAttachments } : {}),
       });
       onSessionActive?.(activatedSessionId);
       if (concreteSessionId) onSessionProcessing?.(concreteSessionId);
@@ -682,7 +688,12 @@ type SplitBodyProps = {
     optimisticTitle?: string,
   ) => void;
   processingSessions: Set<string>;
-  submitTraumaForm: (form: TurnFormInput, rawInput?: string, traumaExtract?: boolean) => void;
+  submitTraumaForm: (
+    form: TurnFormInput,
+    rawInput?: string,
+    traumaExtract?: boolean,
+    traumaAttachments?: Array<{ path: string; name: string }>,
+  ) => void;
   abortTraumaTurn: () => void;
   traumaOptimisticMessageRef: React.MutableRefObject<((text: string, targetSessionId?: string | null, runId?: string) => void) | null>;
   navigateToChatMessageRef: React.MutableRefObject<((runId: string) => void | Promise<void>) | null>;

@@ -22,7 +22,12 @@ type TraumaWorkspaceProps = {
   resetKey: string;
   projectKey?: string;
   sessionId?: string;
-  onSubmitForm?: (form: TurnFormInput, rawInput: string, traumaExtract?: boolean) => void | Promise<void>;
+  onSubmitForm?: (
+    form: TurnFormInput,
+    rawInput: string,
+    traumaExtract?: boolean,
+    attachments?: Array<{ path: string; name: string }>,
+  ) => void | Promise<void>;
   onAbortTurn?: () => void;
   submitting?: boolean;
   pendingRun?: {

@@ -36,6 +36,7 @@ export type StartSessionOptions = {
   traumaForm?: TurnFormInput;
   traumaRawInput?: string;
   traumaExtract?: boolean;
+  traumaAttachments?: Array<{ path: string; name: string }>;
 };
 
 const VALID_PERMISSION_MODES = new Set<PermissionMode>([
@@ -120,6 +121,7 @@ export function startSessionCommand({
   traumaForm,
   traumaRawInput,
   traumaExtract,
+  traumaAttachments,
 }: StartSessionOptions): string {
   const sessionToActivate =
     sessionId || temporarySessionId || createTemporarySessionId();
@@ -155,6 +157,9 @@ export function startSessionCommand({
       ...(traumaForm ? { traumaForm } : {}),
       ...(traumaRawInput ? { traumaRawInput } : {}),
       ...(traumaExtract ? { traumaExtract: true } : {}),
+      ...(Array.isArray(traumaAttachments) && traumaAttachments.length > 0
+        ? { traumaAttachments }
+        : {}),
     },
   });
 
