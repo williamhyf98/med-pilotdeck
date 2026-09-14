@@ -121,8 +121,32 @@ export function traumaProgressEvents(input: {
 }): GatewayEvent[] {
   const { progress, runId } = input;
   if ("kind" in progress && progress.kind === "attachment_interpretation") {
-    // 工位 I 的支线进度不占用主线步骤编号，暂不映射为网关事件（后续任务按需接入）。
-    return [];
+    // 工位 I 与主线并行，占用主线编号会让进度条跳跃甚至回退；
+    // 复用抽取工位已在用的 countInTotal:false 通道，单独显示一行。
+    const payload = runnerStepPayload({
+      phase: "interpret",
+      title: "附件影像判读",
+      runningTitle: "正在判读上传附件",
+      countInTotal: false,
+    });
+    const toolCallId = `trauma-interpretation:${runId}`;
+    if (progress.status === "started") {
+      return [{
+        type: "tool_call_started",
+        toolCallId,
+        name: payload.title,
+        argsPreview: previewPayload(payload),
+        runId,
+      }];
+    }
+    return [{
+      type: "tool_call_finished",
+      toolCallId,
+      toolName: payload.title,
+      ok: progress.ok,
+      resultPreview: previewPayload(payload),
+      runId,
+    }];
   }
   if ("kind" in progress && progress.kind === "runner_step") {
     const label = runnerStepLabel(progress.step, progress.phase);

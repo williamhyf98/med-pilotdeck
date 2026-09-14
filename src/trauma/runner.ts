@@ -518,6 +518,7 @@ export function createTraumaTurnRunner(deps: {
           // 已经结束的轮次写状态。支线自身的 promise 已经在启动处 .catch 兜底，
           // 这里不需要（也无法通过 void 达到）再消费它一次。
           cancelInterpretation();
+          turnEnded = true;
           const outOfScope = proposedPlacement.source === "out_of_scope";
           await beginStep(5, "build_partial_response_and_snapshot");
           const partialState: CaseState = {

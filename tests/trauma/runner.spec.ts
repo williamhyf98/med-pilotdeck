@@ -450,6 +450,57 @@ test("partial-branch turns cancel the interpretation branch and never report pro
   }
 });
 
+test("partial-branch turns mark turnEnded immediately, before a fast-rejecting interpretation can slip a late 'finished' report through", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-interp-fastfail-"));
+  try {
+    const store = createTraumaCaseStore(root);
+    // 不像上一测试那样挂起到测试放行——一旦支线信号被 abort，立即（微任务级别）拒绝，
+    // 用来暴露 cancelInterpretation() 与 turnEnded=true 之间若隔着若干 await
+    // （审计写入、store.saveTurn 等）就可能被这个“来得及”的 finished 事件穿透的窗口。
+    const fastFailInterpreter = {
+      interpret(input: { attachments: Array<{ name: string }>; signal?: AbortSignal }) {
+        return new Promise<{ text: string; fileNames: string[] }>((_, reject) => {
+          input.signal?.addEventListener("abort", () => {
+            const error = new Error("aborted");
+            error.name = "AbortError";
+            reject(error);
+          }, { once: true });
+        });
+      },
+    };
+    const progressEvents: Array<{ status: string }> = [];
+    const runner = createTraumaTurnRunner({
+      store,
+      model: model([], {
+        determined: false,
+        source: "undetermined",
+        stage: null,
+        subStage: null,
+        rationale: "信息不足",
+        definitionReferences: [],
+      }),
+      rag: rag({ count: 0 }),
+      interpreter: fastFailInterpreter,
+    });
+    const response = await runner.runTurn({
+      projectId: "trauma_med-demo", sessionId: "web:s", messageId: "m1", now,
+      form: form({ note: "undetermined round" }),
+      attachments: [{ path: "/inbox/b1/ct.dcm", name: "ct.dcm" }],
+      onProgress: (progress) => {
+        if ("kind" in progress && progress.kind === "attachment_interpretation") {
+          progressEvents.push({ status: progress.status });
+        }
+      },
+    });
+    await delay(20);
+
+    assert.equal(response.stage.sub, null);
+    assert.deepEqual(progressEvents.map((event) => event.status), ["started"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("an interpretation entry from a round with attachments survives into a later round with none", async () => {
   const root = await mkdtemp(join(tmpdir(), "trauma-interp-survive-"));
   try {
