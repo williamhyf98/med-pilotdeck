@@ -46,3 +46,36 @@ test("over budget keeps the earliest and the latest, noting the omitted range", 
 test("the default budget is 60000 characters", () => {
   assert.equal(MAX_INTERPRETATION_CHARS, 60000);
 });
+
+test("a total exactly at the budget is not truncated", () => {
+  const maxChars = 500;
+  const prefixLength = buildInterpretationContext([entry(1, "")], Number.MAX_SAFE_INTEGER).length;
+  const exact = entry(1, "x".repeat(maxChars - prefixLength));
+  const full = buildInterpretationContext([exact], Number.MAX_SAFE_INTEGER);
+  assert.equal(full.length, maxChars);
+
+  const context = buildInterpretationContext([exact], maxChars);
+  assert.equal(context, full);
+  assert.ok(!context.includes("已截断"));
+  assert.ok(!context.includes("已省略"));
+});
+
+test("one character over the budget triggers truncation", () => {
+  const maxChars = 500;
+  const prefixLength = buildInterpretationContext([entry(1, "")], Number.MAX_SAFE_INTEGER).length;
+  const overEntry = entry(1, "x".repeat(maxChars - prefixLength + 1));
+  const full = buildInterpretationContext([overEntry], Number.MAX_SAFE_INTEGER);
+  assert.equal(full.length, maxChars + 1);
+
+  const context = buildInterpretationContext([overEntry], maxChars);
+  assert.ok(context.length <= maxChars);
+  assert.notEqual(context, full);
+});
+
+test("a single entry that alone exceeds the budget is clipped even with other entries present", () => {
+  const maxChars = 1000;
+  const entries = [entry(1, "x".repeat(5000)), entry(2, "small"), entry(3, "small")];
+  const context = buildInterpretationContext(entries, maxChars);
+  assert.ok(context.length <= maxChars, `expected length <= ${maxChars}, got ${context.length}`);
+  assert.ok(context.includes("【第 1 轮影像判读】"), "baseline must still be present");
+});

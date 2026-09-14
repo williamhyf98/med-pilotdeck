@@ -11,12 +11,23 @@ export const MAX_INTERPRETATION_CHARS = 60000;
 const SEPARATOR = "\n\n";
 /** 为省略提示预留的字符数，避免裁剪后反而超出预算。 */
 const OMISSION_RESERVE = 64;
+/** 基线条目单独超出预算时使用的截断标记。 */
+const TRUNCATION_MARKER = "…【本轮判读过长，已截断】";
 
 function formatEntry(entry: InterpretationEntry): string {
   const files = entry.fileNames.length > 0
     ? `（附件：${entry.fileNames.join("、")}）`
     : "";
   return `【第 ${entry.round} 轮影像判读】${files}\n${entry.text}`;
+}
+
+/** 把 block 硬裁剪到 limit 字符以内，超出时追加截断标记；返回值长度恒不超过 limit。 */
+function clipToLimit(block: string, limit: number): string {
+  if (limit <= 0) return "";
+  if (block.length <= limit) return block;
+  const sliceLength = Math.max(limit - TRUNCATION_MARKER.length, 0);
+  const clipped = `${block.slice(0, sliceLength)}${TRUNCATION_MARKER}`;
+  return clipped.length <= limit ? clipped : clipped.slice(0, limit);
 }
 
 /**
@@ -31,11 +42,8 @@ export function buildInterpretationContext(
   const ordered = entries.slice().sort((left, right) => left.round - right.round);
   const blocks = ordered.map(formatEntry);
 
-  const total = blocks.reduce(
-    (sum, block) => sum + block.length + SEPARATOR.length,
-    0,
-  );
-  if (total <= maxChars) return blocks.join(SEPARATOR);
+  const full = blocks.join(SEPARATOR);
+  if (full.length <= maxChars) return full;
 
   const first = blocks[0] ?? "";
   const kept: string[] = [];
@@ -48,10 +56,16 @@ export function buildInterpretationContext(
   }
 
   const omittedCount = blocks.length - 1 - kept.length;
-  if (omittedCount <= 0) return [first, ...kept].join(SEPARATOR);
+  const restParts: string[] = [];
+  if (omittedCount > 0) {
+    const omittedStartRound = ordered[1]?.round ?? 0;
+    const omittedEndRound = ordered[blocks.length - kept.length - 1]?.round ?? omittedStartRound;
+    restParts.push(`【已省略第 ${omittedStartRound}–${omittedEndRound} 轮影像判读】`);
+  }
+  restParts.push(...kept);
 
-  const omittedStartRound = ordered[1]?.round ?? 0;
-  const omittedEndRound = ordered[blocks.length - kept.length - 1]?.round ?? omittedStartRound;
-  const notice = `【已省略第 ${omittedStartRound}–${omittedEndRound} 轮影像判读】`;
-  return [first, notice, ...kept].join(SEPARATOR);
+  const rest = restParts.length > 0 ? SEPARATOR + restParts.join(SEPARATOR) : "";
+  const firstBudget = maxChars - rest.length;
+  const firstOut = first.length > firstBudget ? clipToLimit(first, firstBudget) : first;
+  return firstOut + rest;
 }
