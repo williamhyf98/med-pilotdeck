@@ -586,3 +586,50 @@ test("a turn without attachments sends attachmentInterpretation: null and leaves
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("the interpretation is streamed ahead of the answer in the same message", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-interpret-stream-"));
+  try {
+    const deltas: string[] = [];
+    const runner = createTraumaTurnRunner({
+      store: createTraumaCaseStore(root),
+      model: model([]),
+      rag: rag({ count: 0 }),
+      interpreter: interpreter([]),
+    });
+    const result = await runner.runTurn({
+      projectId: "trauma_med-demo", sessionId: "web:s", messageId: "m1", now,
+      form: form({ statedSubStage: "primary_first_aid" }),
+      attachments: [{ path: "/inbox/b1/ct.dcm", name: "ct.dcm" }],
+      onAssistantTextDelta: (text) => { deltas.push(text); },
+    });
+    // 判读必须是这条消息里最先推出去的一段。
+    assert.ok(deltas[0]?.includes("附件影像判读"));
+    assert.ok(deltas[0]?.includes("右侧血气胸"));
+    // 落库的回答也要带上这一段，刷新页面后不能凭空消失。
+    assert.ok(result.naturalLanguageAnswer.includes("附件影像判读"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a turn without attachments streams nothing extra", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-no-interpret-stream-"));
+  try {
+    const deltas: string[] = [];
+    const runner = createTraumaTurnRunner({
+      store: createTraumaCaseStore(root),
+      model: model([]),
+      rag: rag({ count: 0 }),
+    });
+    const result = await runner.runTurn({
+      projectId: "trauma_med-demo", sessionId: "web:s", messageId: "m1", now,
+      form: form({ statedSubStage: "primary_first_aid" }),
+      onAssistantTextDelta: (text) => { deltas.push(text); },
+    });
+    assert.equal(deltas.some((text) => text.includes("附件影像判读")), false);
+    assert.equal(result.naturalLanguageAnswer.includes("附件影像判读"), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

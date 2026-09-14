@@ -206,6 +206,12 @@ type NormalizedAnswerCitations = {
   usedChunkIds: Set<string>;
 };
 
+export const INTERPRETATION_ANSWER_HEADING = "## 附件影像判读";
+
+function renderInterpretationSection(text: string): string {
+  return `${INTERPRETATION_ANSWER_HEADING}\n\n${text.trim()}\n\n`;
+}
+
 const DETAILS_RE = /<details>[\s\S]*?<\/details>/gi;
 const INLINE_CITATION_RE = /\[(\d{1,2})\]/g;
 
@@ -591,6 +597,15 @@ export function createTraumaTurnRunner(deps: {
           candidate.attachmentInterpretations ?? [],
         );
 
+        // 先把判读推出去；后面 baseline_retrieval / merge_retrieval 的进度条
+        // 会隔在中间，推演主文随后续到同一条消息上。
+        const interpretationSection = interpretation.text
+          ? renderInterpretationSection(interpretation.text)
+          : "";
+        if (interpretationSection) {
+          await input.onAssistantTextDelta?.(interpretationSection);
+        }
+
         // 级别在第 4 步就已确认，这里带上它，让流程图的「生成中」叶子节点
         // 在检索与生成开始前就挂到正确的子级下，而不是先落在默认位置再跳。
         await beginStep(5, "baseline_retrieval", {
@@ -673,7 +688,8 @@ export function createTraumaTurnRunner(deps: {
           merged.promptChunks,
         );
         await input.onAssistantCitations?.(normalizedAnswerCitations.citations);
-        const naturalLanguageAnswer = normalizeChineseDisplayText(normalizedAnswerCitations.answer);
+        const naturalLanguageAnswer = interpretationSection
+          + normalizeChineseDisplayText(normalizedAnswerCitations.answer);
         // 「已使用」严格等于正文里打了角标的知识块，这样知识块依据里的每一条
         // 都能显示出与参考来源列表一致的编号。
         const displayedCitationChunkIds = normalizedAnswerCitations.usedChunkIds;
