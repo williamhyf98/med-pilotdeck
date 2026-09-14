@@ -1,10 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
     createTrustedGatewayTurnOptions,
     gatewayEventToFrames,
     getGatewayTurnSafetyOverrides,
     isGatewayUnavailableError,
+    sanitizeTraumaAttachments,
     sanitizeTraumaFormInput,
 } from './pilotdeck-bridge.js';
 
@@ -369,6 +373,137 @@ describe('gatewayEventToFrames agent status errors', () => {
             code: 'gateway_unavailable',
             userHint: 'Start or restart the PilotDeck gateway, then retry this message.',
         });
+    });
+});
+
+describe('sanitizeTraumaAttachments', () => {
+    let projectRoot;
+    let inboxDir;
+
+    beforeEach(() => {
+        projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pilotdeck-trauma-attach-'));
+        inboxDir = path.join(projectRoot, 'inbox');
+        fs.mkdirSync(inboxDir, { recursive: true });
+    });
+
+    afterEach(() => {
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+    });
+
+    it('accepts an absolute path that resolves inside <projectRoot>/inbox', () => {
+        const filePath = path.join(inboxDir, 'ct-scan.dcm');
+        fs.writeFileSync(filePath, 'stub');
+
+        expect(sanitizeTraumaAttachments(
+            [{ path: filePath, name: 'ct-scan.dcm' }],
+            projectRoot,
+        )).toEqual([{ path: fs.realpathSync(filePath), name: 'ct-scan.dcm' }]);
+    });
+
+    it('accepts a file directly inside the inbox root itself', () => {
+        const filePath = path.join(inboxDir, 'report.pdf');
+        fs.writeFileSync(filePath, 'stub');
+
+        expect(sanitizeTraumaAttachments(
+            [{ path: filePath, name: 'report.pdf' }],
+            projectRoot,
+        )).toEqual([{ path: fs.realpathSync(filePath), name: 'report.pdf' }]);
+    });
+
+    it('rejects a lexical "../" traversal out of the inbox', () => {
+        const outside = path.join(projectRoot, 'secret.txt');
+        fs.writeFileSync(outside, 'top secret');
+        const traversal = path.join(inboxDir, '..', 'secret.txt');
+
+        expect(sanitizeTraumaAttachments(
+            [{ path: traversal, name: 'secret.txt' }],
+            projectRoot,
+        )).toBeUndefined();
+    });
+
+    it('rejects a symlink inside the inbox that points outside it', () => {
+        const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pilotdeck-trauma-outside-'));
+        const outsideFile = path.join(outsideDir, 'private.dcm');
+        fs.writeFileSync(outsideFile, 'private data');
+        const linkPath = path.join(inboxDir, 'looks-safe.dcm');
+        fs.symlinkSync(outsideFile, linkPath);
+
+        try {
+            // A naive `startsWith` check on the raw string would pass here
+            // (the lexical path IS under the inbox); realpath resolution
+            // must see through the symlink and reject it.
+            expect(sanitizeTraumaAttachments(
+                [{ path: linkPath, name: 'looks-safe.dcm' }],
+                projectRoot,
+            )).toBeUndefined();
+        } finally {
+            fs.rmSync(outsideDir, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects a path outside the inbox that merely shares its string prefix', () => {
+        // e.g. inbox is ".../inbox" and the attacker path is ".../inbox-evil/x"
+        // — a naive `startsWith(inboxRoot)` check (without the trailing
+        // separator) would wrongly accept this.
+        const siblingDir = `${inboxDir}-evil`;
+        fs.mkdirSync(siblingDir, { recursive: true });
+        const filePath = path.join(siblingDir, 'x.txt');
+        fs.writeFileSync(filePath, 'x');
+
+        expect(sanitizeTraumaAttachments(
+            [{ path: filePath, name: 'x.txt' }],
+            projectRoot,
+        )).toBeUndefined();
+    });
+
+    it('rejects a relative path even if it lexically resolves under the inbox', () => {
+        const filePath = path.join(inboxDir, 'relative.dcm');
+        fs.writeFileSync(filePath, 'stub');
+        const relative = path.relative(process.cwd(), filePath);
+
+        expect(sanitizeTraumaAttachments(
+            [{ path: relative, name: 'relative.dcm' }],
+            projectRoot,
+        )).toBeUndefined();
+    });
+
+    it('rejects an entry with an empty name', () => {
+        const filePath = path.join(inboxDir, 'no-name.dcm');
+        fs.writeFileSync(filePath, 'stub');
+
+        expect(sanitizeTraumaAttachments(
+            [{ path: filePath, name: '' }, { path: filePath, name: '   ' }],
+            projectRoot,
+        )).toBeUndefined();
+    });
+
+    it('drops malformed entries but keeps valid ones in the same batch', () => {
+        const good = path.join(inboxDir, 'good.dcm');
+        fs.writeFileSync(good, 'stub');
+
+        expect(sanitizeTraumaAttachments(
+            [
+                null,
+                42,
+                { path: 123, name: 'bad-path-type.dcm' },
+                { path: good, name: '' },
+                { path: good, name: 'good.dcm' },
+            ],
+            projectRoot,
+        )).toEqual([{ path: fs.realpathSync(good), name: 'good.dcm' }]);
+    });
+
+    it('returns undefined for non-array input or a missing projectRoot', () => {
+        expect(sanitizeTraumaAttachments(undefined, projectRoot)).toBeUndefined();
+        expect(sanitizeTraumaAttachments(null, projectRoot)).toBeUndefined();
+        expect(sanitizeTraumaAttachments('not-an-array', projectRoot)).toBeUndefined();
+        const filePath = path.join(inboxDir, 'a.dcm');
+        fs.writeFileSync(filePath, 'stub');
+        expect(sanitizeTraumaAttachments([{ path: filePath, name: 'a.dcm' }], undefined)).toBeUndefined();
+    });
+
+    it('returns undefined for an empty array', () => {
+        expect(sanitizeTraumaAttachments([], projectRoot)).toBeUndefined();
     });
 });
 

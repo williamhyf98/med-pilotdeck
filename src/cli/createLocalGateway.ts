@@ -1,4 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync as mkdirSyncFs, renameSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { dirname, resolve, join as joinPath, isAbsolute } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -102,6 +103,8 @@ import { createTelemetryCollector, type TelemetryClient } from "../telemetry/ind
 import {
   createTraumaAuditLogger,
   createExtractionStation,
+  createInterpretationStation,
+  createMcpTraumaParseClient,
   createMcpTraumaRagClient,
   createStructuredModelClient,
   createTraumaCaseStore,
@@ -683,10 +686,73 @@ class ProjectRuntimeRegistry {
       });
       return output.data ?? output.content;
     });
+
+    const callTraumaTool = async (name: string, toolInput: unknown, signal?: AbortSignal) => {
+      const tool = runtime.tools.get(name);
+      if (!tool) {
+        throw new Error(`Trauma tool is unavailable: ${name}`);
+      }
+      const output = await tool.execute(toolInput, {
+        sessionId: sessionKey,
+        turnId: `trauma-parse:${this.options.now().getTime()}`,
+        abortSignal: signal,
+        cwd: runtime.projectRoot,
+        permissionMode: "bypassPermissions",
+        permissionContext: createDefaultPermissionContext({
+          cwd: runtime.projectRoot,
+          mode: "bypassPermissions",
+          bypassAvailable: true,
+        }),
+        now: this.options.now,
+      });
+      return output.data ?? output.content;
+    };
+
+    // 影像判读交给医学微调 VLM；它正是 med_parse_medical 背后的同一个模型，
+    // 但 prompt 与输出长度由我们控制，避开那份冗长的通用报告。
+    const INTERPRETATION_PROVIDER = "local";
+    const INTERPRETATION_MODEL = "G9-V-Med";
+    let interpretationSelection = {
+      provider: INTERPRETATION_PROVIDER,
+      model: INTERPRETATION_MODEL,
+    };
+    let supportsImages = false;
+    try {
+      supportsImages = runtime.model
+        .getMultimodal(INTERPRETATION_PROVIDER, INTERPRETATION_MODEL)
+        .input.includes("image");
+    } catch {
+      // 配置里没有这个 provider/model，退回主 agent 模型。
+      interpretationSelection = modelSelection;
+      try {
+        supportsImages = runtime.model
+          .getMultimodal(modelSelection.provider, modelSelection.model)
+          .input.includes("image");
+      } catch {
+        supportsImages = false;
+      }
+    }
+
+    const interpreter = createInterpretationStation({
+      model: createStructuredModelClient({
+        complete: runtime.model.complete.bind(runtime.model),
+        stream: runtime.model.stream.bind(runtime.model),
+        provider: interpretationSelection.provider,
+        model: interpretationSelection.model,
+      }),
+      parse: createMcpTraumaParseClient(callTraumaTool),
+      readImage: async (path) => {
+        const data = await readFile(path);
+        return { data: data.toString("base64"), mimeType: "image/png" };
+      },
+      supportsImages,
+    });
+
     return createTraumaTurnRunner({
       store: createTraumaCaseStore(caseDirectory),
       model,
       rag,
+      interpreter,
       audit: this.traumaAudit,
       now: () => this.options.now().toISOString(),
     });

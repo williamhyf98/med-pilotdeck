@@ -47,7 +47,7 @@ import { randomUUID } from 'node:crypto';
 import { installGlobalProxy } from '../../src/cli/proxy.js';
 await installGlobalProxy();
 
-import { resolvePilotHome, createProjectId, sanitizeSessionIdForPath, resolveGatewayProjectKey, resolveProjectStorageId, resolveTypedProjectDir, listProjectStorageIds } from './utils/pilotPaths.js';
+import { resolvePilotHome, createProjectId, sanitizeSessionIdForPath, resolveGatewayProjectKey, resolveProjectStorageId, resolveTypedProjectDir, listProjectStorageIds, resolveAgentCwd } from './utils/pilotPaths.js';
 // Read the gateway client straight from TypeScript source via tsx — the UI
 // server is launched with `node --import tsx`, so no prior `npm run build`
 // is required. (A prior tsx 4.x JSDoc dynamic-import parse bug was fixed by
@@ -1227,6 +1227,51 @@ export function sanitizeTraumaFormInput(value) {
 }
 
 /**
+ * Resolve a path to its canonical, symlink-free form when it exists on
+ * disk; otherwise fall back to a plain lexical resolve (still collapses
+ * `..` segments). Used so the inbox-containment check below can't be
+ * fooled by a symlink that lexically looks like it's under the inbox.
+ *
+ * @param {string} p
+ * @returns {string}
+ */
+function resolveCanonicalPath(p) {
+    try {
+        return fs.realpathSync(p);
+    } catch {
+        return path.resolve(p);
+    }
+}
+
+/**
+ * 附件路径来自前端，必须是上传端点落盘的 inbox 绝对路径。
+ * 放任任意路径会让 med_parse_medical 读到项目外的文件。
+ *
+ * Exported (like `sanitizeTraumaFormInput`) purely so it can be unit
+ * tested directly; it is not part of the public bridge API.
+ *
+ * @param {unknown} value
+ * @param {string | undefined} projectRoot
+ * @returns {Array<{ path: string; name: string }> | undefined}
+ */
+export function sanitizeTraumaAttachments(value, projectRoot) {
+    if (!Array.isArray(value) || !projectRoot) return undefined;
+    const inboxRoot = resolveCanonicalPath(path.resolve(projectRoot, 'inbox'));
+    const sanitized = [];
+    for (const item of value) {
+        if (!item || typeof item !== 'object') continue;
+        const rawPath = typeof item.path === 'string' ? item.path : '';
+        const name = typeof item.name === 'string' ? item.name.trim() : '';
+        if (!rawPath || !name) continue;
+        if (!path.isAbsolute(rawPath)) continue;
+        const resolved = resolveCanonicalPath(rawPath);
+        if (resolved !== inboxRoot && !resolved.startsWith(`${inboxRoot}${path.sep}`)) continue;
+        sanitized.push({ path: resolved, name });
+    }
+    return sanitized.length > 0 ? sanitized : undefined;
+}
+
+/**
  * Run a chat command through the PilotDeck gateway.
  *
  * The frontend addresses sessions by the PilotDeck `sessionKey` itself
@@ -1300,6 +1345,10 @@ export async function runChatViaGateway(
     const traumaForm = sanitizeTraumaFormInput(options?.traumaForm);
     const traumaRawInput = typeof options?.traumaRawInput === 'string' ? options.traumaRawInput : undefined;
     const traumaExtract = options?.traumaExtract === true;
+    const traumaAttachments = sanitizeTraumaAttachments(
+        options?.traumaAttachments,
+        resolveAgentCwd(projectKey, GENERAL_HOME),
+    );
     console.log(`[pilotdeck-bridge] submitTurn runMode=${runMode} mode=${resolvedMode} (options.permissionMode=${options?.permissionMode}, options.mode=${options?.mode})`);
 
     let gw = null;
@@ -1345,6 +1394,7 @@ export async function runChatViaGateway(
             ...(traumaForm ? { traumaForm } : {}),
             ...(traumaRawInput ? { traumaRawInput } : {}),
             ...(traumaExtract ? { traumaExtract: true } : {}),
+            ...(traumaAttachments ? { traumaAttachments } : {}),
             runMode,
             mode: resolvedMode,
             // The web UI has an elicitation channel, so the agent may propose

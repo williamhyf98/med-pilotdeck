@@ -705,6 +705,7 @@ export class InProcessGateway implements Gateway {
             messageId: runId,
             form: traumaForm,
             rawInput: input.traumaRawInput,
+            ...(input.traumaAttachments?.length ? { attachments: input.traumaAttachments } : {}),
             now: this.now().toISOString(),
             abortSignal: traumaAbortSignal,
             onProgress: (progress) => {
