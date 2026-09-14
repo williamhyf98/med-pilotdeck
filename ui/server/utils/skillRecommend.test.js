@@ -123,6 +123,15 @@ describe('recommendSkills', () => {
     expect(top('患者在ICU用呼吸机，PEEP怎么调')).toBe('med-role-critical-care');
   });
 
+  it('lets the symptom decide the role, not the word 患者', () => {
+    // 患者 sits in exactly one description (critical care) and 胸痛 in exactly
+    // one (emergency), so before 患者 became a stopword the two scored an
+    // identical 0.439 and the alphabetical tie-break handed it to ICU.
+    expect(top('患者胸痛怎么处理')).toBe('med-role-emergency');
+    expect(recommendSkills('患者胸痛怎么处理', SKILLS).map((s) => s.slug))
+      .not.toContain('med-role-critical-care');
+  });
+
   it('routes lab values to the laboratory role', () => {
     expect(top('这份血气结果怎么解读，乳酸 6.2')).toBe('med-role-laboratory');
   });

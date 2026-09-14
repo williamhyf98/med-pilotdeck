@@ -61,6 +61,12 @@ const STOPWORDS = new Set([
   '以及', '或者', '如果', '但是', '因为', '所以', '我们', '你们', '他们', '还是',
   // SKILL.md frontmatter boilerplate
   '使用', '用户', '当用', '时使', '适用', '不适', '本技', '技能', '不解', '不出',
+  // Clinical framing. Every query here is about a patient, so these carry no
+  // topical signal — but in a pool this small each lands in exactly one
+  // description and IDF reads it as rare. That is what scored "患者胸痛怎么处理"
+  // at an identical 0.439 for both 重症 (matched 患者) and 急诊 (matched 胸痛),
+  // leaving the winner to an alphabetical tie-break on the skill name.
+  '患者', '病人', '病患',
   // English fillers
   'the', 'and', 'for', 'with', 'this', 'that', 'what', 'how', 'can', 'you',
   'please', 'help', 'need', 'want', 'about', 'into', 'from',
