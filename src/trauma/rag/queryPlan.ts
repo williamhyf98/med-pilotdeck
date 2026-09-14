@@ -508,8 +508,22 @@ function routeChapterHints(context: ReturnType<typeof buildQueryContext>): strin
   return hints.slice(0, 6);
 }
 
-export function buildBaselineQueries(state: CaseState): PlannedRagQuery[] {
+/** 从判读文本里抽取可作为检索关键词的短语，避免把整段判读塞进 query。 */
+function interpretationKeywords(interpretation: string | undefined): string[] {
+  if (!interpretation) return [];
+  const matches = interpretation.match(/关键发现：(.+)/gu) ?? [];
+  return matches
+    .map((line) => line.replace(/^关键发现：/u, "").trim())
+    .filter(Boolean)
+    .slice(0, 3);
+}
+
+export function buildBaselineQueries(
+  state: CaseState,
+  interpretation?: string,
+): PlannedRagQuery[] {
   const context = buildQueryContext(state);
+  const interpretationHints = interpretationKeywords(interpretation);
   const query1 = buildQuery([
     "战伤救治规则",
     "第二章 分级救治",
@@ -548,6 +562,7 @@ export function buildBaselineQueries(state: CaseState): PlannedRagQuery[] {
     ...context.complicationKeywords,
     ...context.environmentKeywords,
     ...context.actionKeywords,
+    ...interpretationHints,
     "处置",
   ]);
   return [

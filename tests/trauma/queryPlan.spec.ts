@@ -4,7 +4,7 @@ import test from "node:test";
 import { initialCaseState } from "../../src/trauma/stageConfig.js";
 import { buildBaselineQueries } from "../../src/trauma/rag/queryPlan.js";
 
-test("baseline plan is exactly three critical baseline queries", () => {
+function baseState() {
   const state = initialCaseState({
     projectId: "trauma_med-demo",
     sessionId: "web:s_demo",
@@ -50,7 +50,11 @@ test("baseline plan is exactly three critical baseline queries", () => {
       values: { respiratoryRate: 30 },
     },
   );
+  return state;
+}
 
+test("baseline plan is exactly three critical baseline queries", () => {
+  const state = baseState();
   const plan = buildBaselineQueries(state);
   assert.equal(plan.length, 3);
   assert.ok(plan.every((query) => query.critical));
@@ -84,4 +88,20 @@ test("baseline plan is exactly three critical baseline queries", () => {
 
   assert.ok(plan.every((query) => query.query.length < 2_000));
   assert.ok(plan.every((query) => !query.query.includes("时效")));
+});
+
+test("interpretation keywords widen the primary injury query", () => {
+  const state = baseState();
+  const withoutInterpretation = buildBaselineQueries(state)[2]?.query ?? "";
+  const withInterpretation = buildBaselineQueries(
+    state,
+    "· ct.dcm\n  关键发现：右侧血气胸\n  创伤相关性：需胸腔闭式引流",
+  )[2]?.query ?? "";
+  assert.notEqual(withInterpretation, withoutInterpretation);
+  assert.ok(withInterpretation.includes("右侧血气胸"));
+});
+
+test("an empty interpretation leaves the baseline queries byte-identical", () => {
+  const state = baseState();
+  assert.deepEqual(buildBaselineQueries(state, ""), buildBaselineQueries(state));
 });

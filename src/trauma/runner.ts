@@ -598,7 +598,7 @@ export function createTraumaTurnRunner(deps: {
           subStage: candidate.currentSubStage,
         });
         throwIfAborted();
-        const baseline = buildBaselineQueries(candidate);
+        const baseline = buildBaselineQueries(candidate, interpretationContext);
         const firstWaveResults = await Promise.all(baseline.map(async (query) => {
           const result = await deps.rag.query({ query: query.query, top_k: TRAUMA_RAG_TOP_K, topic: TRAUMA_RAG_TOPIC, signal: input.abortSignal });
           throwIfAborted();
@@ -642,6 +642,7 @@ export function createTraumaTurnRunner(deps: {
         const reasoned = await reasoner.reason({
           state: candidate,
           promptChunks: merged.promptChunks,
+          attachmentInterpretation: interpretationContext,
           signal: input.abortSignal,
           onNaturalLanguageDelta: input.onAssistantTextDelta,
           onNaturalLanguageEnd: input.onAssistantTextEnd,

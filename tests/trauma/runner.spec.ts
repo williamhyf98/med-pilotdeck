@@ -473,3 +473,65 @@ test("an interpretation entry from a round with attachments survives into a late
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("the interpretation reaches the reasoner user message", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-interp-reason-"));
+  try {
+    const users: Record<string, string> = {};
+    const capturing: StructuredModelClient = {
+      async completeJson<T>(input: CompleteJsonInput<T>): Promise<T> {
+        users[input.name] = input.user;
+        const payload = input.name === "trauma_place" ? null : reasonPayload();
+        return payload as T;
+      },
+    };
+    const store = createTraumaCaseStore(root);
+    const runner = createTraumaTurnRunner({
+      store, model: capturing, rag: rag({ count: 0 }), interpreter: interpreter([]),
+    });
+    await runner.runTurn({
+      projectId: "trauma_med-demo", sessionId: "web:s", messageId: "m1", now,
+      form: form({ statedSubStage: "primary_first_aid" }),
+      attachments: [{ path: "/inbox/b1/ct.dcm", name: "ct.dcm" }],
+    });
+    const reasonUser = JSON.parse(users.trauma_reason ?? "{}");
+    assert.ok(String(reasonUser.attachmentInterpretation).includes("右侧血气胸"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a turn without attachments sends attachmentInterpretation: null and leaves the rest of the reasoner user message unchanged", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-interp-null-"));
+  try {
+    const users: Record<string, string> = {};
+    const capturing: StructuredModelClient = {
+      async completeJson<T>(input: CompleteJsonInput<T>): Promise<T> {
+        users[input.name] = input.user;
+        const payload = input.name === "trauma_place" ? null : reasonPayload();
+        return payload as T;
+      },
+    };
+    const store = createTraumaCaseStore(root);
+    const runner = createTraumaTurnRunner({
+      store, model: capturing, rag: rag({ count: 0 }), interpreter: interpreter([]),
+    });
+    await runner.runTurn({
+      projectId: "trauma_med-demo", sessionId: "web:s", messageId: "m1", now,
+      form: form({ statedSubStage: "primary_first_aid" }),
+    });
+    const reasonUser = JSON.parse(users.trauma_reason ?? "{}");
+    assert.equal(reasonUser.attachmentInterpretation, null);
+    assert.ok("confirmedPlacement" in reasonUser);
+    assert.ok("state" in reasonUser);
+    assert.ok("promptChunks" in reasonUser);
+    assert.deepEqual(Object.keys(reasonUser).sort(), [
+      "attachmentInterpretation",
+      "confirmedPlacement",
+      "promptChunks",
+      "state",
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

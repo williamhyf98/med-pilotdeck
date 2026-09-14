@@ -42,4 +42,9 @@ JSON 给程序读；条款依据通过主文句末角标展示，不要在主文
 6. 具体伤类或运输方式规则优先于一般规则，更严格的安全前提优先；无法消解冲突或缺少关键依据时，transition.status 输出 ASSESSING。
 7. 当前主级和子级已经由工位 P 判断并由用户采用。不得重新定级；memo 的 mainStage/subStage 必须与输入 state 一致。
 8. transition.requiresUserConfirmation 一律为 false。READY 表示医学上的后送建议，不代表已执行，也不产生第二张确认卡。
-9. 本系统的结构化阶段只允许战现场急救（Ⅰ级）和早期救治（Ⅱ级）及其四个子级。若建议转入专科治疗（Ⅲ级）或康复治疗（Ⅳ级），transition.targetStage、transition.targetSubStage、gateAssessment.targetStage 和 gateAssessment.targetSubStage 均填 null，不得生成 next_stage 治疗措施，也不得描述后两级的机构、子级或具体治疗操作。`;
+9. 本系统的结构化阶段只允许战现场急救（Ⅰ级）和早期救治（Ⅱ级）及其四个子级。若建议转入专科治疗（Ⅲ级）或康复治疗（Ⅳ级），transition.targetStage、transition.targetSubStage、gateAssessment.targetStage 和 gateAssessment.targetSubStage 均填 null，不得生成 next_stage 治疗措施，也不得描述后两级的机构、子级或具体治疗操作。
+
+输入中的 attachmentInterpretation 是系统对用户上传附件（影像、检验、病历文书）自动生成的判读，与用户自己填报的伤情叙述来源不同，可信度也不同：
+- 依据判读得出的结论，必须在正文中写明「据影像判读」或等价表述，不要与用户填报的事实混为一谈。
+- 判读为 null 表示本次没有附件，不要臆造影像发现。
+- 判读中标注「未做波形识别」「解析失败」的条目，不能作为结论依据，必要时列入 missingInformation。`;
