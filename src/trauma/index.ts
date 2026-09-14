@@ -11,6 +11,10 @@ export {
   buildInterpretationContext,
   MAX_INTERPRETATION_CHARS,
 } from "./attachments/interpretationBudget.js";
+export {
+  createMcpTraumaParseClient,
+  TRAUMA_PARSE_TOOL_NAME,
+} from "./attachments/parseClient.js";
 export { createTraumaAuditLogger } from "./auditLog.js";
 export type { TraumaAuditLogger, TraumaAuditRecord } from "./auditLog.js";
 export { createStructuredModelClient } from "./modelClient.js";
@@ -49,3 +53,7 @@ export type {
   VitalItemKey,
   VitalsRoundRecord,
 } from "./types.js";
+export type {
+  TraumaParseClient,
+  TraumaParsedAttachment,
+} from "./attachments/parseClient.js";
