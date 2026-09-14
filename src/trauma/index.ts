@@ -36,6 +36,8 @@ export {
 export { extractedInputIntent, normalizeExtractedForm, traumaScopeReply } from "./formDraft.js";
 export { createExtractionStation } from "./stations/extractor.js";
 export type { ExtractionStation, ExtractorInput } from "./stations/extractor.js";
+export { createInterpretationStation, MAX_INTERPRETATION_IMAGES } from "./stations/interpreter.js";
+export type { InterpretationStation } from "./stations/interpreter.js";
 export { EXTRACTOR_OUTPUT_SCHEMA, validateExtractedTurnForm } from "./schemas.js";
 export type {
   AgentTurnResponse,
