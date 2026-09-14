@@ -2,6 +2,7 @@ import type { GatewayEvent } from "../gateway/protocol/types.js";
 import type {
   PlacementConfirmationDecision,
   PlacementConfirmationRequest,
+  TraumaTurnPhase,
   TraumaTurnProgress,
 } from "./runner.js";
 import type { AgentTurnResponse, SubStage } from "./types.js";
@@ -12,7 +13,7 @@ import {
   typicalFacilityForSubStage,
 } from "./stageConfig.js";
 
-const PHASE_LABELS: Record<TraumaTurnProgress["phase"], string> = {
+const PHASE_LABELS: Record<TraumaTurnPhase, string> = {
   validate: "校验并合并表单",
   place: "判断救治级别",
   retrieve: "检索战伤救治规则",
@@ -119,6 +120,10 @@ export function traumaProgressEvents(input: {
   runId: string;
 }): GatewayEvent[] {
   const { progress, runId } = input;
+  if ("kind" in progress && progress.kind === "attachment_interpretation") {
+    // 工位 I 的支线进度不占用主线步骤编号，暂不映射为网关事件（后续任务按需接入）。
+    return [];
+  }
   if ("kind" in progress && progress.kind === "runner_step") {
     const label = runnerStepLabel(progress.step, progress.phase);
     const payload = runnerStepPayload({

@@ -228,3 +228,144 @@ test("undetermined and out-of-scope placement persist the merged form without RA
     }
   }
 });
+
+function interpreter(calls: string[][], text = "· ct.dcm\n  关键发现：右侧血气胸\n  创伤相关性：需胸腔引流") {
+  return {
+    async interpret(input: { attachments: Array<{ name: string }>; signal?: AbortSignal }) {
+      calls.push(input.attachments.map((item) => item.name));
+      if (input.signal?.aborted) {
+        const error = new Error("aborted");
+        error.name = "AbortError";
+        throw error;
+      }
+      return { text, fileNames: input.attachments.map((item) => item.name) };
+    },
+  };
+}
+
+test("attachments produce an interpretation entry persisted on the case state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-interpret-"));
+  try {
+    const interpretCalls: string[][] = [];
+    const store = createTraumaCaseStore(root);
+    const runner = createTraumaTurnRunner({
+      store,
+      model: model([]),
+      rag: rag({ count: 0 }),
+      interpreter: interpreter(interpretCalls),
+    });
+    await runner.runTurn({
+      projectId: "trauma_med-demo", sessionId: "web:s", messageId: "m1", now,
+      form: form({ statedSubStage: "primary_first_aid" }),
+      attachments: [{ path: "/inbox/b1/ct.dcm", name: "ct.dcm" }],
+    });
+    assert.deepEqual(interpretCalls, [["ct.dcm"]]);
+    const entries = (await store.load())?.attachmentInterpretations ?? [];
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0]?.round, 1);
+    assert.deepEqual(entries[0]?.fileNames, ["ct.dcm"]);
+    assert.ok(entries[0]?.text.includes("右侧血气胸"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a turn with no attachments never starts the interpretation station", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-no-attach-"));
+  try {
+    const interpretCalls: string[][] = [];
+    const store = createTraumaCaseStore(root);
+    const runner = createTraumaTurnRunner({
+      store,
+      model: model([]),
+      rag: rag({ count: 0 }),
+      interpreter: interpreter(interpretCalls),
+    });
+    const steps: number[] = [];
+    await runner.runTurn({
+      projectId: "trauma_med-demo", sessionId: "web:s", messageId: "m1", now,
+      form: form({ statedSubStage: "primary_first_aid" }),
+      onProgress: (progress) => {
+        if ("kind" in progress && progress.kind === "runner_step" && progress.status === "started") {
+          steps.push(progress.step);
+        }
+      },
+    });
+    assert.deepEqual(interpretCalls, []);
+    assert.deepEqual(steps, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    assert.equal((await store.load())?.attachmentInterpretations, undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interpretation progress is reported outside the numbered main line", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-interp-progress-"));
+  try {
+    const store = createTraumaCaseStore(root);
+    const runner = createTraumaTurnRunner({
+      store, model: model([]), rag: rag({ count: 0 }), interpreter: interpreter([]),
+    });
+    const kinds: string[] = [];
+    await runner.runTurn({
+      projectId: "trauma_med-demo", sessionId: "web:s", messageId: "m1", now,
+      form: form({ statedSubStage: "primary_first_aid" }),
+      attachments: [{ path: "/inbox/b1/ct.dcm", name: "ct.dcm" }],
+      onProgress: (progress) => {
+        if ("kind" in progress && progress.kind === "attachment_interpretation") {
+          kinds.push(progress.status);
+        }
+      },
+    });
+    assert.deepEqual(kinds, ["started", "finished"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an interpretation failure leaves the main line intact with an empty interpretation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-interp-fail-"));
+  try {
+    const store = createTraumaCaseStore(root);
+    const runner = createTraumaTurnRunner({
+      store,
+      model: model([]),
+      rag: rag({ count: 0 }),
+      interpreter: {
+        async interpret() {
+          throw new Error("station exploded");
+        },
+      },
+    });
+    const response = await runner.runTurn({
+      projectId: "trauma_med-demo", sessionId: "web:s", messageId: "m1", now,
+      form: form({ statedSubStage: "primary_first_aid" }),
+      attachments: [{ path: "/inbox/b1/ct.dcm", name: "ct.dcm" }],
+    });
+    assert.equal(response.naturalLanguageAnswer.length > 0, true);
+    assert.equal((await store.load())?.attachmentInterpretations, undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("interpretation entries accumulate across rounds", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-interp-accum-"));
+  try {
+    const store = createTraumaCaseStore(root);
+    const runner = createTraumaTurnRunner({
+      store, model: model([]), rag: rag({ count: 0 }), interpreter: interpreter([]),
+    });
+    for (const messageId of ["m1", "m2"]) {
+      await runner.runTurn({
+        projectId: "trauma_med-demo", sessionId: "web:s", messageId, now,
+        form: form({ statedSubStage: "primary_first_aid" }),
+        attachments: [{ path: "/inbox/b1/ct.dcm", name: "ct.dcm" }],
+      });
+    }
+    const entries = (await store.load())?.attachmentInterpretations ?? [];
+    assert.deepEqual(entries.map((entry) => entry.round), [1, 2]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
