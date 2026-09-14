@@ -7,6 +7,10 @@ export {
   traumaProgressEvents,
   traumaTurnEvents,
 } from "./events.js";
+export {
+  buildInterpretationContext,
+  MAX_INTERPRETATION_CHARS,
+} from "./attachments/interpretationBudget.js";
 export { createTraumaAuditLogger } from "./auditLog.js";
 export type { TraumaAuditLogger, TraumaAuditRecord } from "./auditLog.js";
 export { createStructuredModelClient } from "./modelClient.js";
@@ -31,12 +35,15 @@ export type { ExtractionStation, ExtractorInput } from "./stations/extractor.js"
 export { EXTRACTOR_OUTPUT_SCHEMA, validateExtractedTurnForm } from "./schemas.js";
 export type {
   AgentTurnResponse,
+  AttachmentInterpretationOutput,
   CaseSnapshot,
   CaseState,
   ExtractedNarrativeItem,
   ExtractedTurnForm,
   ExtractedVitalItem,
+  InterpretationEntry,
   NarrativeEntry,
+  TraumaAttachmentRef,
   TraumaInputIntent,
   TurnFormInput,
   VitalItemKey,

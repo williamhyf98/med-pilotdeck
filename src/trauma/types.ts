@@ -72,6 +72,31 @@ export type TurnFormInput = {
   vitals: Partial<Record<VitalItemKey, number>>;
 };
 
+/** 用户本轮上传的医学附件引用；path 为服务端绝对路径。 */
+export type TraumaAttachmentRef = {
+  path: string;
+  name: string;
+};
+
+/** 工位 I 一轮产出的影像判读，随快照持久化并跨轮累积。 */
+export type InterpretationEntry = {
+  id: string;
+  round: number;
+  createdAt: string;
+  fileNames: string[];
+  text: string;
+};
+
+/** 工位 I 的结构化模型输出，由 station 渲染成 InterpretationEntry.text。 */
+export type AttachmentInterpretationOutput = {
+  attachments: Array<{
+    fileName: string;
+    keyFindings: string;
+    traumaRelevance: string;
+  }>;
+  overall: string;
+};
+
 export type NarrativeEntry = {
   round: number;
   createdAt: string;
@@ -289,6 +314,8 @@ export type CaseState = {
   evidence: EvidenceChunk[];
   memos: RoundMemo[];
   missingInformation: string[];
+  /** 历轮影像判读；没有附件的轮次不产生条目。 */
+  attachmentInterpretations?: InterpretationEntry[];
 };
 
 export type AgentTurnResponse = {
