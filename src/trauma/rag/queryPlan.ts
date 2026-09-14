@@ -513,7 +513,7 @@ function interpretationKeywords(interpretation: string | undefined): string[] {
   if (!interpretation) return [];
   const matches = interpretation.match(/关键发现：(.+)/gu) ?? [];
   return matches
-    .map((line) => line.replace(/^关键发现：/u, "").trim())
+    .map((line) => line.replace(/^关键发现：/u, "").trim().slice(0, 200))
     .filter(Boolean)
     .slice(0, 3);
 }
