@@ -8,6 +8,12 @@ import { extractStructuredOutput } from "../model/structuredOutput/extractStruct
 import { ANTHROPIC_STRUCTURED_OUTPUT_TOOL_NAME } from "../model/providers/anthropic/request.js";
 import { NaturalLanguageAnswerStreamExtractor } from "./streamingJson.js";
 
+/** 送进多模态工位的图像；data 为裸 base64，不带 data: 前缀。 */
+export type TraumaImageInput = {
+  data: string;
+  mimeType: string;
+};
+
 export type CompleteJsonInput<T> = {
   name: string;
   system: string;
@@ -16,6 +22,8 @@ export type CompleteJsonInput<T> = {
   validate: (value: unknown) => value is T;
   /** Applied after null-stripping and before validate. Use to drop leaked extra keys. */
   normalize?: (value: unknown) => unknown;
+  /** 仅多模态工位使用；其余工位不传，请求形态与改动前完全一致。 */
+  images?: TraumaImageInput[];
   signal?: AbortSignal;
 };
 
@@ -75,7 +83,15 @@ export function createStructuredModelClient(
     messages: [
       {
         role: "user",
-        content: [{ type: "text", text: input.user }],
+        content: [
+          ...(input.images ?? []).map((image) => ({
+            type: "image" as const,
+            source: "base64" as const,
+            data: image.data,
+            mimeType: image.mimeType,
+          })),
+          { type: "text" as const, text: input.user },
+        ],
       },
     ],
     temperature: 0,
