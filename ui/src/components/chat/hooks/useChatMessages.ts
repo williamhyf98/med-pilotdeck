@@ -4,9 +4,10 @@
  */
 
 import type { NormalizedMessage } from '../../../stores/useSessionStore';
-import type { ChatMessage, SubagentChildTool } from '../types/types';
+import type { ChatMessage, CitationMetadata, SubagentChildTool } from '../types/types';
 import { decodeHtmlEntities, unescapeWithMathProtection, formatUsageLimitText } from '../utils/chatFormatting';
 import { mergeUserAttachments, parseUserAttachmentNote } from '../utils/attachmentNotes';
+import { extractCitationsFromToolResult, mergeCitationsStable } from '../utils/ragCitations';
 
 // Per-message conversion cache keyed by NormalizedMessage reference.
 // When patchMergedStreamingMessage creates a new object for the streaming
@@ -472,15 +473,62 @@ function convertNormalizedMessages(
     ]);
   });
 
+  // RAG 引用：把同一轮里每次检索返回的 chunks 收拢，挂到该轮的助手正文上。
+  // 编号由 med-tools 全局分配（见 rag/query.py 的 `_apply_citations`），所以多次
+  // 检索的结果可以直接合并而不会撞号。没有 turn 标识的历史记录拿不到归属，
+  // 让它退回 Markdown.tsx 里刮 <details> 的兜底路径。
+  const ragCitationsByTurn = new Map<string, CitationMetadata[][]>();
+  converted.forEach((message) => {
+    if (!message.isToolUse) return;
+    const key = turnKey(message);
+    if (!key) return;
+    const found = extractCitationsFromToolResult(message.toolName, message.toolResult?.content);
+    if (found.length === 0) return;
+    const bucket = ragCitationsByTurn.get(key);
+    if (bucket) bucket.push(found);
+    else ragCitationsByTurn.set(key, [found]);
+  });
+
+  const citationsFor = (message: ChatMessage): CitationMetadata[] | undefined => {
+    if (!isArtifactAnchor(message)) return undefined;
+    const key = turnKey(message);
+    const groups = key ? ragCitationsByTurn.get(key) : undefined;
+    if (!groups) return undefined;
+    return mergeCitationsStable(key as string, groups);
+  };
+
   return converted.flatMap((message, index) => {
     if (anchoredArtifactIndexes.has(index)) return [];
     const attachedArtifacts = artifactsByAnchor.get(index);
-    if (!attachedArtifacts) return [message];
+    const citations = citationsFor(message);
+    if (!attachedArtifacts && !citations) return [message];
+    if (!attachedArtifacts) return [enrichWithCitations(message, citations as CitationMetadata[])];
     return [{
       ...message,
+      ...(citations ? { citations } : {}),
       artifacts: [...(message.artifacts ?? []), ...attachedArtifacts],
     }];
   });
+}
+
+// Attaching citations would otherwise hand `memo(MessageRowV2)` a brand-new
+// object on every conversion, and `Markdown` would re-parse the whole answer
+// with it. The base message reference is already stable via `msgConversionCache`,
+// so keying on it keeps the enriched object stable too.
+const citationEnrichCache = new WeakMap<
+  ChatMessage,
+  { citations: CitationMetadata[]; value: ChatMessage }
+>();
+
+function enrichWithCitations(
+  message: ChatMessage,
+  citations: CitationMetadata[],
+): ChatMessage {
+  const cached = citationEnrichCache.get(message);
+  if (cached && cached.citations === citations) return cached.value;
+  const value: ChatMessage = { ...message, citations };
+  citationEnrichCache.set(message, { citations, value });
+  return value;
 }
 
 /**

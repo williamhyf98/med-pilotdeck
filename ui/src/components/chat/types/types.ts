@@ -65,6 +65,20 @@ export interface CitationMetadata {
   evidenceGrade?: string;
   /** 证据质量 */
   evidenceQuality?: string;
+  /**
+   * 语料侧的 chunk 主键。只作身份用（跨调用去重、React key、排查时回溯语料），
+   * 从不进正文或引用列表 —— 正文里露出 `chunk-00001847` 这种串可读性极差。
+   * 同文献同章节的多个片段靠 `label` 里的正文首句后缀区分，不靠这个 id。
+   */
+  chunkId?: string;
+  /** chunk 原文，角标 hover 出摘要、点击看全文 */
+  text?: string;
+  /** 工具下发的成品标签（已含区分后缀与证据等级），优先于 title/section 拼接 */
+  label?: string;
+  /** 命中这条 chunk 的检索式，用来判断「为什么会引到它」 */
+  query?: string;
+  /** 检索得分，仅排查时展示 */
+  score?: number;
 }
 
 export interface ChatFileArtifact {

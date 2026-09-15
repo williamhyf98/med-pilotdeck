@@ -15,6 +15,7 @@ import { createRemarkCitationPlugin } from '../../utils/remarkCitationPlugin';
 import { remarkGroupImageParagraphs } from '../../utils/remarkGroupImages';
 import { collectMarkdownImages } from '../../utils/markdownImages';
 import { CitationPopover } from '../../utils/CitationPopover';
+import { splitCitationLabel } from '../../utils/ragCitations';
 import type { CitationMetadata } from '../../types/types';
 import ImageLightbox, { type LightboxImage } from './ImageLightbox';
 
@@ -64,25 +65,34 @@ const isImageOnlyParagraph = (node: unknown): boolean => {
   return meaningful.length > 0 && meaningful.every(isHastImage);
 };
 
-/** 从回答文本中提取 <details> 内的引用信息：- [N] title > section */
-const CITATION_LINE_RE = /^\s*-\s*\[(\d+)\]\s+(.+?)\s*>\s*(.+?)\s*$/;
+/**
+ * 兜底路径：从 <details> 块里刮 `- [N] 文献名 > 章节` 这样的行。
+ *
+ * 只有在结构化 citations 缺席时才会走到这里（旧会话、或者不是 med-tools 检索），
+ * 刮出来的引用没有 chunk 原文，点开也只能看到文献名。
+ *
+ * section 必须可选：远程语料的 `section_title` 经常为空，而原来的正则强制要求
+ * `>` 分隔符，于是没有章节的那一条整行匹配不上、根本进不了引用表 —— 表现就是
+ * 「大部分角标有 hover，偶尔一个没有」。
+ */
+const CITATION_LINE_RE = /^\s*[-*]\s*\[(\d{1,3})\]\s+(.+?)\s*$/;
+const DETAILS_BLOCK_RE = /<details\b[^>]*>[\s\S]*?<\/details>/gi;
 
 function extractCitationsFromContent(text: string): CitationMetadata[] {
-  // 找到 <details> ... </details> 块
-  const detailsMatch = text.match(/<details>[\s\S]*?<\/details>/i);
-  if (!detailsMatch) return [];
-  const detailsBlock = detailsMatch[0];
-
   const citations: CitationMetadata[] = [];
-  const lines = detailsBlock.split('\n');
-  for (const line of lines) {
-    const m = line.match(CITATION_LINE_RE);
-    if (m) {
-      citations.push({
-        index: parseInt(m[1], 10),
-        title: m[2].trim(),
-        section: m[3].trim(),
-      });
+  const seen = new Set<number>();
+
+  DETAILS_BLOCK_RE.lastIndex = 0;
+  let block: RegExpExecArray | null;
+  while ((block = DETAILS_BLOCK_RE.exec(text)) !== null) {
+    for (const line of block[0].split('\n')) {
+      const matched = line.match(CITATION_LINE_RE);
+      if (!matched) continue;
+      const index = parseInt(matched[1], 10);
+      if (seen.has(index)) continue;
+      seen.add(index);
+      const label = matched[2].trim();
+      citations.push({ index, ...splitCitationLabel(label), label });
     }
   }
   return citations;
@@ -152,11 +162,15 @@ function createMarkdownComponents(
         </a>
       );
     },
-    cite: (props) => (
+    // children 要透传：rehypeRaw 会放行模型自己写在正文里的字面 <cite> 标签，
+    // 那种节点没有 data-citation-index，对不上任何一条引用，原文得留着。
+    cite: ({ children, ...props }) => (
       <CitationPopover
         data-citation-index={(props as Record<string, unknown>)['data-citation-index'] as string}
         citations={citations}
-      />
+      >
+        {children}
+      </CitationPopover>
     ),
   };
 }

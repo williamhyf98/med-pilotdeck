@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 import time
 from typing import Any, Mapping
 
@@ -27,7 +28,148 @@ PRESENTATION = (
     "工具只返回检索证据。请由主模型基于 chunks 撰写综合救治辅助方案，"
     "区分「所见/用户陈述」与「检索文献」，并注明来源；不得编造未检索到的条文。"
     "输出仅供辅助，须医务人员复核。"
+    "\n引用编号：正文角标必须原样使用 chunks[i].citation_index，不要自行编号、重排或合并；"
+    "同一轮内多次检索时编号已全局分配，不会重复，照抄即可。"
+    "\n参考来源：每行必须原样使用 chunks[i].display_label，"
+    "不得改写、补全或猜测文献名与章节名；标签为空时只写编号。"
+    "\n不要向用户描述检索过程或工具行为，"
+    "例如「根据检索到的」「以上内容来自知识库」「注：以上图片均来自检索命中的原文页」一律不要输出；"
+    "直接给结论，来源用角标表示。"
 )
+
+# ---- citation numbering ----------------------------------------------------
+# `rank` restarts at 1 on every call, so two different chunks retrieved by two
+# calls inside one answer both come back as `[1]` and the citations collide.
+# The sequence below hands out numbers that stay unique for as long as an
+# answer can plausibly take to write; the idle reset only keeps them small and
+# readable, and repeat hits on the same chunk reuse the number they already got.
+_CITATION_IDLE_RESET_SECONDS = 180.0
+_CITATION_MAX = 999
+_citation_lock = threading.Lock()
+_citation_seq = 0
+_citation_touched_at = 0.0
+_citation_assigned: dict[str, int] = {}
+_citation_labels: dict[int, str] = {}
+
+_LABEL_UNTITLED = "未标注文献"
+_PREAMBLE_PREFIXES = ("卷：", "章节：")
+
+
+def _clean(value: object) -> str:
+    return " ".join(str(value or "").split())
+
+
+def _chunk_fingerprints(item: Mapping[str, Any]) -> list[str]:
+    """Keys under which a chunk may already hold a citation number."""
+
+    keys: list[str] = []
+    chunk_id = _clean(item.get("chunk_id"))
+    if chunk_id:
+        keys.append(f"id:{chunk_id}")
+    body = _clean(item.get("text"))
+    if body:
+        keys.append("text:" + hashlib.sha256(body.encode("utf-8")).hexdigest()[:32])
+    return keys
+
+
+def _assign_citation_indices(items: list[dict[str, Any]]) -> list[int]:
+    global _citation_seq, _citation_touched_at
+    if not items:
+        return []
+    with _citation_lock:
+        now = time.monotonic()
+        idle = _citation_touched_at and now - _citation_touched_at > _CITATION_IDLE_RESET_SECONDS
+        if idle or _citation_seq + len(items) > _CITATION_MAX:
+            _citation_seq = 0
+            _citation_assigned.clear()
+            _citation_labels.clear()
+        _citation_touched_at = now
+
+        indices: list[int] = []
+        used_here: set[int] = set()
+        for item in items:
+            keys = _chunk_fingerprints(item)
+            # Reuse only across calls: two rows inside one response must never
+            # share a number, or the model prints two identical `[N]` entries.
+            reused = next(
+                (
+                    _citation_assigned[key]
+                    for key in keys
+                    if key in _citation_assigned and _citation_assigned[key] not in used_here
+                ),
+                None,
+            )
+            if reused is None:
+                _citation_seq += 1
+                reused = _citation_seq
+            for key in keys:
+                _citation_assigned[key] = reused
+            used_here.add(reused)
+            indices.append(reused)
+        return indices
+
+
+def _body_snippet(text: object, limit: int = 20) -> str:
+    """First words of the chunk body, past the ``卷：``/``章节：`` header block.
+
+    Used only to tell apart two chunks that share a title and a section; the
+    snippet has to come from the body or every sibling would read the same.
+    """
+
+    started = False
+    body: list[str] = []
+    for raw in str(text or "").split("\n"):
+        line = raw.strip()
+        if not started:
+            if not line or line.startswith(_PREAMBLE_PREFIXES):
+                continue
+            started = True
+        body.append(line)
+    flat = " ".join(" ".join(body).split())
+    while flat.startswith("【"):
+        end = flat.find("】")
+        if end < 0:
+            break
+        flat = flat[end + 1 :].lstrip()
+    if not flat:
+        return ""
+    return flat[:limit] + ("…" if len(flat) > limit else "")
+
+
+def _base_label(item: Mapping[str, Any]) -> str:
+    title = _clean(item.get("title"))
+    if not title:
+        # The remote corpus ships blank titles. A doc_id stem still reads like a
+        # document name, and it stops the model inventing a plausible one.
+        stem = _clean(item.get("doc_id")).replace("\\", "/").rsplit("/", 1)[-1]
+        title = stem.rsplit(".", 1)[0] or _LABEL_UNTITLED
+    section = _clean(item.get("section"))
+    return f"{title} > {section}" if section else title
+
+
+def _apply_citations(items: list[dict[str, Any]]) -> None:
+    """Attach the display number and the ready-to-print label to each chunk."""
+
+    indices = _assign_citation_indices(items)
+    bases = [_base_label(item) for item in items]
+
+    collisions = {base for base in bases if bases.count(base) > 1}
+    for item, index, base in zip(items, indices, bases):
+        label = base
+        if base in collisions:
+            snippet = _body_snippet(item.get("text"))
+            if snippet:
+                label = f"{base} ·「{snippet}」"
+        grade = _clean(item.get("evidence_grade"))
+        quality = _clean(item.get("evidence_quality"))
+        marks = [mark for mark in (grade, quality) if mark]
+        if marks:
+            label = f"{label}（{'/'.join(marks)}）"
+        item["citation_index"] = index
+        # A chunk that comes back on a later call keeps the label it was first
+        # printed with, so one number never reads two different ways.
+        with _citation_lock:
+            item["display_label"] = _citation_labels.setdefault(index, label)
 
 
 def rag_status(
@@ -268,6 +410,7 @@ def _finalize(
 ) -> dict[str, Any]:
     for rank, item in enumerate(items, start=1):
         item["rank"] = rank
+    _apply_citations(items)
 
     query_id = hashlib.sha256(
         f"{corpus_id}\0{corpus_version}\0{mode}\0{topic}\0{query}".encode("utf-8")

@@ -26,7 +26,8 @@ description: 通过 RAG 进行战创伤知识点问答。用于教材/概念类�
 4. 按 `mode` 说明证据来源（见「检索后端与 mode」一节）：`remote` 正常作答不必声明；降级到本地时要简短说明。
 5. 用户明确要「生成救治方案 / 按某阶段出方案」→ **改走 `med-trauma-stage-plan`**，不要用本 Skill 硬写五段卡。
 6. **检索前必须改写 query**（见下节）；聊天气泡仍按用户原文理解与作答，不要把改写句当成用户原话展示。
-7. **图片引用**：检索结果每条 `chunks[i]` 可能包含 `image_refs` 数组（字段：`url`、`caption`）。回答中涉及具体操作步骤、器材使用、解剖结构时，必须从对应 chunk 的 `image_refs` 中选取相关图片，用 Markdown 格式 `![caption](url)` 嵌入对应段落。`caption` 为空时用 `图` 代替。不要堆砌与回答内容无关的图片，也不要引用工具未返回的图片 URL。**禁止使用 shell 命令（find/ls 等）搜索本地文件系统来寻找图片；图片的唯一来源是 RAG 工具返回的 `image_refs`。**
+7. **不要描述检索过程**：「根据检索到的资料」「以上内容来自知识库」「本次检索返回 N 条」「注：以上图片均来自检索命中的原文页」这类交代工具行为的话一律不要写进回答——来源用 `[N]` 角标表示就够了，正文只给结论。唯一例外是上节「检索后端与 mode」要求声明的降级情况（`vector` / `lexical` / `lexical-fallback`），那一句必须保留。
+8. **图片引用**：检索结果每条 `chunks[i]` 可能包含 `image_refs` 数组（字段：`url`、`caption`）。回答中涉及具体操作步骤、器材使用、解剖结构时，必须从对应 chunk 的 `image_refs` 中选取相关图片，用 Markdown 格式 `![caption](url)` 嵌入对应段落。`caption` 为空时用 `图` 代替。不要堆砌与回答内容无关的图片，也不要引用工具未返回的图片 URL。**禁止使用 shell 命令（find/ls 等）搜索本地文件系统来寻找图片；图片的唯一来源是 RAG 工具返回的 `image_refs`。**
 
 ## 检索后端与 mode
 
@@ -110,9 +111,9 @@ mcp__med-tools__med_trauma_rag_query(query=<改写后的检索句>)
 
 ## 建议输出结构
 
-1. **直接回答**（正文中引用检索资料事实时，在句末标注 `[N]`，N 为 chunks 中该条目的 rank 编号）
+1. **直接回答**（正文中引用检索资料事实时，在句末标注 `[N]`。**N 必须取该条目的 `citation_index`**——工具已分配好轮内唯一编号，同一轮里多次检索也不会重号。禁止自行编号、重排、合并，也不要改用 `rank`：`rank` 每次调用都从 1 重新开始，用它会让两个不同的 chunk 都变成 `[1]`）
 2. **简要处置要点**（可选，非正式方案）
-3. **参考来源**（正文结束后，用 `<details><summary>参考来源（点击展开）</summary>` 包裹，内部每条引用单独一行，格式为 `- [N] title > section`（用 markdown 无序列表，每行 `-` 开头）。有 evidence_grade、evidence_quality 则标注在章节路径后。不要输出 chunk_id、score、doc_id 等机器标识。若某条 chunk 的 title / section 为空，改写成可读的文献名+章节名再列。最后 `</details>` 闭合）
+3. **参考来源**（正文结束后，用 `<details><summary>参考来源（点击展开）</summary>` 包裹，内部每条引用单独一行，格式为 `- [N] <display_label>`，用 markdown 无序列表，每行 `-` 开头。`display_label` 由工具下发，**必须原样照抄**：不要改写、补全、翻译或重排；title / section 为空时**不要自己编文献名**，工具已经给出兜底标签（`未标注文献` 或 doc_id 词干）；evidence_grade / evidence_quality 已包含在标签里，不要再追加一遍。同文献同章节的多个片段，工具已在标签里附上 `·「正文首句…」` 做区分，照抄即可，不要删掉这段后缀——删了两条引用就会看起来一模一样。不要输出 chunk_id、score、doc_id 等机器标识。最后 `</details>` 闭合）
 4. **免责声明**
 
 边界：正式六阶段方案 → `med-trauma-stage-plan`；DICOM/PDF 解读 → `med-medical`。
