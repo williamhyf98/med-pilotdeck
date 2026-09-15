@@ -61,7 +61,15 @@ function EvidenceMarks({ cite, tone }: { cite: CitationMetadata; tone: 'tooltip'
  * 是模型写错了编号，还是这条 chunk 本身就被检索错了 —— 后者还能顺带看到命中它的
  * 检索式。chunk_id 放在最底下的小灰字里，只作回溯语料用，不进正文也不进引用列表。
  */
-function CitationChunkModal({ cite, onClose }: { cite: CitationMetadata; onClose: () => void }) {
+function CitationChunkModal({
+  cite,
+  displayIndex,
+  onClose,
+}: {
+  cite: CitationMetadata;
+  displayIndex: number;
+  onClose: () => void;
+}) {
   // 选中正文往外拖再松手，click 会落在遮罩上。只认「按下和抬起都在遮罩」的那一次，
   // 否则划词复制一段原文就会把弹窗关掉 —— 而看原文正是这个弹窗存在的理由。
   const pressedBackdrop = useRef(false);
@@ -93,7 +101,7 @@ function CitationChunkModal({ cite, onClose }: { cite: CitationMetadata; onClose
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={`引用 ${cite.index} 原文`}
+      aria-label={`引用 ${displayIndex} 原文`}
       className="fixed inset-0 z-[2147483646] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
       onMouseDown={(event) => {
         pressedBackdrop.current = event.target === event.currentTarget;
@@ -106,7 +114,7 @@ function CitationChunkModal({ cite, onClose }: { cite: CitationMetadata; onClose
       <div className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl dark:bg-neutral-900">
         <div className="flex items-start gap-3 border-b border-neutral-200 px-5 py-4 dark:border-neutral-700">
           <span className="mt-0.5 shrink-0 rounded bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900 dark:text-blue-300">
-            [{cite.index}]
+            [{displayIndex}]
           </span>
           <div className="min-w-0 flex-1">
             <div className="break-words text-sm font-semibold text-neutral-900 dark:text-neutral-100">
@@ -165,11 +173,13 @@ function CitationChunkModal({ cite, onClose }: { cite: CitationMetadata; onClose
  */
 export function CitationPopover({
   'data-citation-index': index,
+  'data-citation-display': display,
   citations,
   children,
   ...rest
 }: {
   'data-citation-index'?: string;
+  'data-citation-display'?: string;
   citations?: CitationMetadata[];
   children?: ReactNode;
   [key: string]: unknown;
@@ -185,6 +195,13 @@ export function CitationPopover({
   if (!cite) {
     return <>{children ?? (index ? `[${index}]` : null)}</>;
   }
+
+  // 角标上印压缩后的编号（后端编号全局递增，直接印出来会是带洞的 [2][4][6]…）。
+  // 缺这个属性时退回原始编号，至少不会印出个空号。
+  const parsedDisplay = parseInt(display ?? '', 10);
+  const displayIndex = Number.isFinite(parsedDisplay) && parsedDisplay > 0
+    ? parsedDisplay
+    : cite.index;
 
   const { title, section } = resolveHeadline(cite);
   const excerpt = toExcerpt(cite.text);
@@ -207,15 +224,15 @@ export function CitationPopover({
           <button
             type="button"
             aria-haspopup="dialog"
-            aria-label={`查看引用 ${cite.index} 的原文`}
+            aria-label={`查看引用 ${displayIndex} 的原文`}
             className={badgeClassName}
             onClick={() => setIsOpen(true)}
           >
-            [{cite.index}]
+            [{displayIndex}]
           </button>
         </sup>
       </Tooltip>
-      {isOpen && <CitationChunkModal cite={cite} onClose={close} />}
+      {isOpen && <CitationChunkModal cite={cite} displayIndex={displayIndex} onClose={close} />}
     </>
   );
 }

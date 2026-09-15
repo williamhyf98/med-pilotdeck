@@ -30,18 +30,24 @@ function asNumber(value: unknown): number | undefined {
  * MCP 的工具结果可能是 payload 本身的 JSON、也可能被包成 content block 数组
  * （`[{ type: 'text', text: '{...}' }]`）。两种都要吃得下，解析失败就放弃，
  * 绝不能因为一条脏结果把整轮渲染搞崩。
+ *
+ * 解析失败时把剥到的原始文本一并带出来：截断的 JSON 还能打捞（见 salvageChunks）。
  */
-function parseToolPayload(content: unknown): RawChunk | null {
+type ParsedToolResult = { payload: RawChunk | null; rawText: string };
+
+function parseToolPayload(content: unknown): ParsedToolResult {
   let value: unknown = content;
+  let rawText = '';
 
   for (let depth = 0; depth < 3; depth += 1) {
     if (typeof value === 'string') {
+      rawText = value;
       const trimmed = value.trim();
-      if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
+      if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return { payload: null, rawText };
       try {
         value = JSON.parse(trimmed);
       } catch {
-        return null;
+        return { payload: null, rawText };
       }
       continue;
     }
@@ -50,16 +56,86 @@ function parseToolPayload(content: unknown): RawChunk | null {
       const block = value.find(
         (item) => item && typeof item === 'object' && 'text' in (item as object),
       ) as { text?: unknown } | undefined;
-      if (!block) return null;
+      if (!block) return { payload: null, rawText };
       value = block.text;
       continue;
     }
     if (value && typeof value === 'object') {
-      return value as RawChunk;
+      return { payload: value as RawChunk, rawText };
     }
-    return null;
+    return { payload: null, rawText };
   }
-  return null;
+  return { payload: null, rawText };
+}
+
+/**
+ * 从截断的 JSON 里打捞 chunk 对象。
+ *
+ * 网关和 UI 服务端各自把工具结果掐到 20000 字符（`InProcessGateway.ts:118` 的
+ * `limitGatewayToolResultPreview`、`pilotdeck-bridge.js:149` 的
+ * `limitToolResultPreview`），掐法是「留头留尾、中间塞一行标记」。`top_k` 调大时
+ * 检索结果会超，`JSON.parse` 整个失败，这次检索的引用就全没了。
+ *
+ * 这里退一步：从 `"chunks": [` 往后按花括号配对逐个切对象、逐个解析，解不动的丢掉。
+ * 截断发生在中间，所以头部那几条 chunk 是完整的，能救回来。
+ */
+function salvageChunks(text: string): RawChunk[] {
+  const anchor = text.indexOf('"chunks"');
+  if (anchor < 0) return [];
+  const start = text.indexOf('[', anchor);
+  if (start < 0) return [];
+
+  const chunks: RawChunk[] = [];
+  let depth = 0;
+  let objectStart = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start + 1; i < text.length; i += 1) {
+    const char = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === '{') {
+      if (depth === 0) objectStart = i;
+      depth += 1;
+      continue;
+    }
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0 && objectStart >= 0) {
+        try {
+          const parsed = JSON.parse(text.slice(objectStart, i + 1));
+          if (parsed && typeof parsed === 'object') chunks.push(parsed as RawChunk);
+        } catch {
+          // 半截对象，丢掉继续往后找。
+        }
+        objectStart = -1;
+      }
+      continue;
+    }
+    // 顶层的 `]` 说明 chunks 数组正常收尾了。
+    if (char === ']' && depth === 0) break;
+  }
+  return chunks;
+}
+
+/** 打捞路径下捞一下检索式，没有就算了 —— 弹窗里少一行，不影响看原文。 */
+function salvageQuery(text: string): string {
+  const matched = /"query"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(text);
+  if (!matched) return '';
+  try {
+    return JSON.parse(`"${matched[1]}"`) as string;
+  } catch {
+    return '';
+  }
 }
 
 /** 正文里已经能读到的骨架（`卷：`/`章节：`/`【章节：…】`）对用户是噪声，剥掉。 */
@@ -114,24 +190,7 @@ function chunkToCitation(chunk: RawChunk, fallbackQuery: string): CitationMetada
   };
 }
 
-/** 单个工具结果里的 chunks → 引用元数据；不是检索结果就返回空数组。 */
-export function extractCitationsFromToolResult(
-  toolName: string | undefined,
-  toolResultContent: unknown,
-): CitationMetadata[] {
-  const payload = parseToolPayload(toolResultContent);
-  if (!payload) return [];
-
-  const chunks = payload.chunks;
-  if (!Array.isArray(chunks) || chunks.length === 0) return [];
-
-  // 名字对不上时看 payload 形状：`chunks` + `generation_owner` 是 med-tools 的
-  // 检索响应特征，够用来避免把别的工具结果误当引用。
-  const namedRag = RAG_TOOL_NAME_RE.test(String(toolName ?? ''))
-    || RAG_TOOL_NAME_RE.test(asString(payload.tool));
-  if (!namedRag && !asString(payload.generation_owner)) return [];
-
-  const query = asString(payload.query).trim();
+function toCitations(chunks: unknown[], query: string): CitationMetadata[] {
   const citations: CitationMetadata[] = [];
   for (const chunk of chunks) {
     if (!chunk || typeof chunk !== 'object') continue;
@@ -139,6 +198,33 @@ export function extractCitationsFromToolResult(
     if (citation) citations.push(citation);
   }
   return citations;
+}
+
+/** 单个工具结果里的 chunks → 引用元数据；不是检索结果就返回空数组。 */
+export function extractCitationsFromToolResult(
+  toolName: string | undefined,
+  toolResultContent: unknown,
+): CitationMetadata[] {
+  const namedRag = RAG_TOOL_NAME_RE.test(String(toolName ?? ''));
+  const { payload, rawText } = parseToolPayload(toolResultContent);
+
+  if (payload) {
+    const chunks = payload.chunks;
+    if (!Array.isArray(chunks) || chunks.length === 0) return [];
+    // 名字对不上时看 payload 形状：`chunks` + `generation_owner` 是 med-tools 的
+    // 检索响应特征，够用来避免把别的工具结果误当引用。
+    if (!namedRag
+      && !RAG_TOOL_NAME_RE.test(asString(payload.tool))
+      && !asString(payload.generation_owner)) return [];
+    return toCitations(chunks, asString(payload.query).trim());
+  }
+
+  // 解析失败最常见的原因是被掐到 20000 字符。打捞这条路没有完整 payload 可做形状
+  // 校验，所以只认工具名 —— 宁可漏，也不要把别的工具的 JSON 当成引用。
+  if (!namedRag || !rawText) return [];
+  const salvaged = salvageChunks(rawText);
+  if (salvaged.length === 0) return [];
+  return toCitations(salvaged, salvageQuery(rawText));
 }
 
 /**
@@ -168,6 +254,45 @@ export function stripGradeSuffix(label: string, marks: string[]): string {
   if (present.length === 0) return label;
   const suffix = `（${present.join('/')}）`;
   return label.endsWith(suffix) ? label.slice(0, -suffix.length).trimEnd() : label;
+}
+
+const CODE_FENCE_RE = /```[\s\S]*?(?:```|$)/g;
+const INLINE_CODE_RE = /`[^`\n]*`/g;
+const CITATION_REF_RE = /\[(\d{1,3})\]/g;
+
+/**
+ * 原始编号 → 展示编号（1..N）。
+ *
+ * 后端编号在进程内全局递增，一轮检索回 24 条、模型只引用其中 16 条，末尾的参考
+ * 来源就长成 `[2][4][6][7]…` 这种带洞的样子。编号全局唯一是防「两次检索都出 [1]」
+ * 的前提，不能退回去，所以压缩放在展示层：正文里真正出现过的编号，压成自然序列。
+ *
+ * 压缩按**原始编号升序**，不是按正文首次出现顺序。模型写参考来源列表时是按编号
+ * 升序排的，升序压缩才能保证那个列表是 1,2,3…；按首次出现排的话，正文里一旦先引
+ * 了大号，列表顺序就乱了。查 chunk 仍然用原始编号，展示编号只进 UI。
+ */
+export function buildCitationDisplayMap(
+  content: string,
+  citations: CitationMetadata[],
+): Map<number, number> {
+  const known = new Set(citations.map((citation) => citation.index));
+  // 代码块里的 [N] 不会被 remark 插件换成角标，预扫描也得跳过，
+  // 否则它白占一个展示号，洞就又回来了。
+  const scannable = content.replace(CODE_FENCE_RE, ' ').replace(INLINE_CODE_RE, ' ');
+
+  const used = new Set<number>();
+  CITATION_REF_RE.lastIndex = 0;
+  let matched: RegExpExecArray | null;
+  while ((matched = CITATION_REF_RE.exec(scannable)) !== null) {
+    const index = parseInt(matched[1], 10);
+    if (known.has(index)) used.add(index);
+  }
+
+  const display = new Map<number, number>();
+  [...used]
+    .sort((left, right) => left - right)
+    .forEach((index, position) => display.set(index, position + 1));
+  return display;
 }
 
 /**

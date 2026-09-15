@@ -20,12 +20,16 @@ const INLINE_CITATION_RE = /\[(\d{1,3})\]/g;
  * Remark 插件：在 markdown AST 的 text 节点中查找 [N] 引用标记，
  * 替换为自定义的 cite 节点（配合 react-markdown 的 components 渲染成 CitationPopover）。
  */
-export function createRemarkCitationPlugin(citations: CitationMetadata[]) {
+export function createRemarkCitationPlugin(
+  citations: CitationMetadata[],
+  /** 原始编号 → 展示编号，见 `buildCitationDisplayMap`。缺省则原样显示。 */
+  displayIndexMap?: Map<number, number>,
+) {
   const citationMap = new Map(citations.map((c) => [c.index, c]));
 
   return function remarkCitation() {
     return (tree: MarkdownAstNode) => {
-      transformCitationNodes(tree, citationMap);
+      transformCitationNodes(tree, citationMap, displayIndexMap);
     };
   };
 }
@@ -33,6 +37,7 @@ export function createRemarkCitationPlugin(citations: CitationMetadata[]) {
 function transformCitationNodes(
   node: MarkdownAstNode,
   citationMap: Map<number, CitationMetadata>,
+  displayIndexMap?: Map<number, number>,
 ) {
   if (!node.children) return;
 
@@ -49,16 +54,19 @@ function transformCitationNodes(
         // 替换当前 text 节点为多个 text/cite 节点
         const replacements: MarkdownAstNode[] = parts.map((part) => {
           if (part.type === 'cite') {
+            // 角标上印的是压缩后的展示编号，查 chunk 仍然用原始编号。
+            const display = displayIndexMap?.get(part.index) ?? part.index;
             return {
               type: 'element',
               data: {
                 hName: 'cite',
                 hProperties: {
                   'data-citation-index': String(part.index),
+                  'data-citation-display': String(display),
                   className: 'inline-citation',
                 },
               },
-              children: [{ type: 'text', value: `[${part.index}]` }],
+              children: [{ type: 'text', value: `[${display}]` }],
             };
           }
           return { type: 'text', value: part.text };
@@ -72,7 +80,7 @@ function transformCitationNodes(
     // 不处理 code / inlineCode 节点
     if (child.type === 'code' || child.type === 'inlineCode') continue;
 
-    transformCitationNodes(child, citationMap);
+    transformCitationNodes(child, citationMap, displayIndexMap);
   }
 }
 

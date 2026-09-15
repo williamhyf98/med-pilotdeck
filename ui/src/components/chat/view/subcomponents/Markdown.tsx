@@ -15,7 +15,7 @@ import { createRemarkCitationPlugin } from '../../utils/remarkCitationPlugin';
 import { remarkGroupImageParagraphs } from '../../utils/remarkGroupImages';
 import { collectMarkdownImages } from '../../utils/markdownImages';
 import { CitationPopover } from '../../utils/CitationPopover';
-import { splitCitationLabel } from '../../utils/ragCitations';
+import { buildCitationDisplayMap, splitCitationLabel } from '../../utils/ragCitations';
 import type { CitationMetadata } from '../../types/types';
 import ImageLightbox, { type LightboxImage } from './ImageLightbox';
 
@@ -164,14 +164,18 @@ function createMarkdownComponents(
     },
     // children 要透传：rehypeRaw 会放行模型自己写在正文里的字面 <cite> 标签，
     // 那种节点没有 data-citation-index，对不上任何一条引用，原文得留着。
-    cite: ({ children, ...props }) => (
-      <CitationPopover
-        data-citation-index={(props as Record<string, unknown>)['data-citation-index'] as string}
-        citations={citations}
-      >
-        {children}
-      </CitationPopover>
-    ),
+    cite: ({ children, ...props }) => {
+      const attributes = props as Record<string, unknown>;
+      return (
+        <CitationPopover
+          data-citation-index={attributes['data-citation-index'] as string}
+          data-citation-display={attributes['data-citation-display'] as string}
+          citations={citations}
+        >
+          {children}
+        </CitationPopover>
+      );
+    },
   };
 }
 
@@ -192,6 +196,12 @@ export function Markdown({
   const resolvedCitations = useMemo(
     () => citations && citations.length > 0 ? citations : extractCitationsFromContent(content),
     [citations, content],
+  );
+
+  // 编号压缩要拿最终正文算，所以放在 resolvedCitations 之后、插件构建之前。
+  const citationDisplayMap = useMemo(
+    () => buildCitationDisplayMap(content, resolvedCitations),
+    [content, resolvedCitations],
   );
 
   const [zoomedSrc, setZoomedSrc] = useState<string | null>(null);
@@ -219,13 +229,13 @@ export function Markdown({
     if (isStreaming) return [remarkGfm, remarkGroupImageParagraphs];
     const base = [remarkGfm, remarkMath, remarkGroupImageParagraphs];
     if (resolvedCitations && resolvedCitations.length > 0) {
-      base.push(createRemarkCitationPlugin(resolvedCitations));
+      base.push(createRemarkCitationPlugin(resolvedCitations, citationDisplayMap));
     }
     if (artifactFiles !== undefined) {
       base.push(createRemarkArtifactFileTextPlugin(artifactFiles));
     }
     return base;
-  }, [artifactFiles, resolvedCitations, isStreaming]);
+  }, [artifactFiles, resolvedCitations, citationDisplayMap, isStreaming]);
 
   return (
     <div className={className}>
