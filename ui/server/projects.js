@@ -43,6 +43,7 @@ import {
     GENERAL_WORKSPACE_ID,
     ensureWorkspaceLayout,
 } from './utils/pilotPaths.js';
+import { deleteSessionArtifacts } from './utils/sessionCleanup.js';
 import { archiveAndDeleteProjectStorage } from './utils/projectDelete.js';
 import { mapCronRunOutcome } from '../../src/cron/protocol/types.js';
 import sessionManager from './sessionManager.js';
@@ -558,38 +559,8 @@ async function renameProject(_projectName, _displayName) {
 
 async function deleteSession(projectName, sessionId, _options = {}) {
     const pilotHome = resolvePilotHome(process.env);
-    const chatDir = resolveProjectChatDir(projectName, pilotHome);
-    // Try the sanitized filename first (current storage layout), then the
-    // raw form (legacy files written before the sanitize fix).
-    const safeId = sanitizeSessionIdForPath(sessionId);
-    const filenames = safeId === sessionId ? [sessionId] : [safeId, sessionId];
-    let removed = false;
-    for (const name of filenames) {
-        const transcript = path.join(chatDir, `${name}.jsonl`);
-        try {
-            await fs.unlink(transcript);
-            removed = true;
-        } catch (error) {
-            if (error?.code !== 'ENOENT') {
-                throw error;
-            }
-        }
-    }
-
-    // Trauma/general medical uploads are staged under the project workspace
-    // at inbox/<sessionId>.  Session deletion owns that session-scoped inbox
-    // directory; project deletion handles the whole workspace separately.
-    try {
-        const workspaceDir = resolveWorkspaceDirectoryForProjectName(projectName, pilotHome);
-        const inboxDir = path.join(workspaceDir, 'inbox', safeId);
-        await fs.rm(inboxDir, { recursive: true, force: true });
-    } catch (error) {
-        if (error?.code !== 'ENOENT') {
-            throw error;
-        }
-    }
-
-    return removed;
+    const result = await deleteSessionArtifacts(projectName, sessionId, { pilotHome });
+    return result;
 }
 
 /**

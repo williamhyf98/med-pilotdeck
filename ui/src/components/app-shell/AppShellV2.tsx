@@ -889,8 +889,12 @@ function DeleteSessionDialog({
   onCancel,
   onConfirm,
 }: DeleteSessionDialogProps) {
+  const { t } = useTranslation('sidebar');
   const projectName = target.project.displayName || target.project.name;
   const sessionTitle = sessionDisplayTitle(target.session);
+  const isWarTrauma =
+    target.project.projectType === 'war_trauma' ||
+    target.project.type === 'war_trauma';
 
   return (
     <div className="fixed inset-0 z-[65] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
@@ -900,7 +904,7 @@ function DeleteSessionDialog({
             <Trash2 className="h-5 w-5" strokeWidth={1.75} />
           </div>
           <div className="min-w-0 flex-1">
-            <h3 className="text-base font-semibold text-foreground">Delete conversation?</h3>
+            <h3 className="text-base font-semibold text-foreground">{t('actions.deleteSession')}</h3>
             <p className="mt-1 truncate text-sm text-muted-foreground">
               {sessionTitle}
             </p>
@@ -909,8 +913,14 @@ function DeleteSessionDialog({
 
         <div className="space-y-3 p-5">
           <p className="text-sm text-foreground">
-            This removes the conversation from <span className="font-medium">{projectName}</span>.
+            {t('messages.deleteSessionConfirm')}
           </p>
+
+          {isWarTrauma ? (
+            <p className="text-sm text-destructive">
+              {t('messages.deleteSessionTraumaCaseWarning')}
+            </p>
+          ) : null}
 
           {error ? (
             <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -926,7 +936,7 @@ function DeleteSessionDialog({
             disabled={isDeleting}
             className="inline-flex h-9 items-center justify-center rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground hover:bg-accent disabled:opacity-50"
           >
-            Cancel
+            {t('actions.cancel')}
           </button>
           <button
             type="button"
@@ -935,7 +945,7 @@ function DeleteSessionDialog({
             className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-destructive px-3 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-60"
           >
             {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" strokeWidth={1.75} />}
-            {isDeleting ? 'Deleting…' : 'Delete conversation'}
+            {isDeleting ? t('status.deleting') : t('actions.deleteSession')}
           </button>
         </div>
       </div>

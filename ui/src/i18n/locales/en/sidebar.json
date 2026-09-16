@@ -129,6 +129,7 @@
     "deleteSuccess": "Deleted successfully",
     "errorOccurred": "An error occurred",
     "deleteSessionConfirm": "Are you sure you want to delete this session? This action cannot be undone.",
+    "deleteSessionTraumaCaseWarning": "This also permanently deletes the trauma case data for this session.",
     "deleteProjectConfirm": "Are you sure you want to delete this project? Conversations and project memory will be permanently deleted; generated files will be archived.",
     "enterProjectPath": "Please enter a project path",
     "deleteSessionFailed": "Failed to delete session. Please try again.",
