@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync as mkdirSyncFs, renameSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { dirname, resolve, join as joinPath, isAbsolute } from "node:path";
+import { readFile, stat } from "node:fs/promises";
+import { dirname, extname, relative, resolve, join as joinPath, isAbsolute } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { EdgeClawMemoryService } from "edgeclaw-memory-core";
@@ -61,7 +61,7 @@ import {
   loadMcpServerConfig,
   parsePluginMcpServers,
 } from "../mcp/index.js";
-import { createModelRuntime, type ModelRuntime } from "../model/index.js";
+import { createModelRuntime, type CanonicalMessage, type ModelRuntime } from "../model/index.js";
 import { createDefaultPermissionContext, type PermissionRule } from "../permission/index.js";
 import { loadPilotConfig, resolvePilotHome, type PilotProxyConfig } from "../pilot/index.js";
 import {
@@ -107,6 +107,8 @@ import {
   createMcpTraumaParseClient,
   createMcpTraumaRagClient,
   createStructuredModelClient,
+  createKnowledgeQaStation,
+  createKnowledgeQueryRewriter,
   createTraumaCaseStore,
   createTraumaTurnRunner,
   type TraumaAuditLogger,
@@ -331,6 +333,8 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
     setSessionCwd: (sessionKey, cwd) => registry.setSessionCwd(sessionKey, cwd),
     traumaRunnerFactory: ({ projectKey, sessionKey }) =>
       registry.createTraumaRunner(projectKey, sessionKey),
+    traumaKnowledgeQaFactory: ({ projectKey, sessionKey }) =>
+      registry.createTraumaKnowledgeQa(projectKey, sessionKey),
     traumaExtractorFactory: ({ projectKey, sessionKey }) =>
       registry.createExtractionStation(projectKey, sessionKey),
     traumaCaseReader: ({ projectKey, sessionKey }) =>
@@ -350,12 +354,18 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
         });
         await metadataStore.saveAiTitle(input.aiTitle.trim(), input.runId);
       }
+      const userContent = await buildTraumaUserTranscriptContent(
+        input.userText,
+        input.attachments,
+        resolveAgentCwd(input.projectKey, pilotHome),
+      );
       await storage.transcript.recordDurableMessage(
         input.sessionKey,
         input.runId,
         {
           role: "user",
-          content: [{ type: "text", text: input.userText }],
+          content: userContent,
+          metadata: { purpose: "trauma_user_input" },
         },
       );
       for (const processMessage of input.processMessages ?? []) {
@@ -607,6 +617,108 @@ export async function readTraumaAttachmentPreviewImage(
   return { data: data.toString("base64"), mimeType: "image/png" };
 }
 
+type TranscriptAttachmentRef = {
+  name: string;
+  path: string;
+  size?: number;
+  mimeType?: string;
+  relativePath?: string;
+};
+
+const TRAUMA_ATTACHMENT_NOTE_MARKER = "[Files attached by user and available for reading in the project:]";
+const TRAUMA_ATTACHMENT_NOTE_END_MARKER = "[End files attached by user]";
+const TRAUMA_HISTORY_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+
+const TRAUMA_HISTORY_IMAGE_MIME_BY_EXT: Record<string, string> = {
+  ".apng": "image/apng",
+  ".avif": "image/avif",
+  ".gif": "image/gif",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".webp": "image/webp",
+};
+
+function sanitizeTranscriptAttachments(value: unknown): TranscriptAttachmentRef[] {
+  if (!Array.isArray(value)) return [];
+  const sanitized: TranscriptAttachmentRef[] = [];
+  const seenPaths = new Set<string>();
+  for (const item of value) {
+    if (sanitized.length >= 20) break;
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const path = typeof record.path === "string" ? record.path.trim() : "";
+    const name = typeof record.name === "string" ? record.name.trim() : "";
+    if (!path || !name || seenPaths.has(path)) continue;
+    seenPaths.add(path);
+    sanitized.push({
+      name,
+      path,
+      ...(typeof record.size === "number" && Number.isFinite(record.size) ? { size: record.size } : {}),
+      ...(typeof record.mimeType === "string" && record.mimeType.trim() ? { mimeType: record.mimeType.trim() } : {}),
+      ...(typeof record.relativePath === "string" && record.relativePath.trim() ? { relativePath: record.relativePath.trim() } : {}),
+    });
+  }
+  return sanitized;
+}
+
+function traumaAttachmentMimeType(attachment: TranscriptAttachmentRef): string | undefined {
+  if (attachment.mimeType) return attachment.mimeType;
+  const ext = extname(attachment.name || attachment.path).toLowerCase();
+  return TRAUMA_HISTORY_IMAGE_MIME_BY_EXT[ext];
+}
+
+function isSafeProjectFile(path: string, projectRoot: string): boolean {
+  if (!isAbsolute(path)) return false;
+  const normalizedPath = resolve(path);
+  const normalizedRoot = resolve(projectRoot);
+  const rel = relative(normalizedRoot, normalizedPath);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function buildTraumaAttachmentPathNote(attachments: TranscriptAttachmentRef[]): string {
+  if (attachments.length === 0) return "";
+  const lines = attachments.map((attachment) => {
+    if (attachment.relativePath && attachment.relativePath !== attachment.name) {
+      return `- ${attachment.name} (${attachment.relativePath}): ${attachment.path}`;
+    }
+    return `- ${attachment.name}: ${attachment.path}`;
+  });
+  return `\n\n${TRAUMA_ATTACHMENT_NOTE_MARKER}\n${lines.join("\n")}\n${TRAUMA_ATTACHMENT_NOTE_END_MARKER}\n`;
+}
+
+export async function buildTraumaUserTranscriptContent(
+  userText: string,
+  rawAttachments: unknown,
+  attachmentRoot: string,
+): Promise<CanonicalMessage["content"]> {
+  const attachments = sanitizeTranscriptAttachments(rawAttachments)
+    .filter((attachment) => isSafeProjectFile(attachment.path, attachmentRoot));
+  const content: CanonicalMessage["content"] = [];
+  const pathNote = buildTraumaAttachmentPathNote(attachments);
+  content.push({ type: "text", text: `${userText}${pathNote}` });
+  for (const attachment of attachments) {
+    const mimeType = traumaAttachmentMimeType(attachment);
+    if (!mimeType || !mimeType.startsWith("image/")) continue;
+    try {
+      const fileStat = await stat(attachment.path);
+      if (!fileStat.isFile() || fileStat.size > TRAUMA_HISTORY_IMAGE_MAX_BYTES) continue;
+      const data = await readFile(attachment.path);
+      content.push({
+        type: "image",
+        source: "base64",
+        data: data.toString("base64"),
+        mimeType,
+        bytes: fileStat.size,
+      });
+    } catch {
+      // Keep the path note. Missing/unreadable files simply won't render as inline images.
+    }
+  }
+  return content;
+}
+
 class ProjectRuntimeRegistry {
   private readonly runtimes = new Map<string, ProjectRuntime>();
   private gateway?: InProcessGateway;
@@ -783,6 +895,41 @@ class ProjectRuntimeRegistry {
       model: modelSelection.model,
     });
     return createExtractionStation(model);
+  }
+
+  async createTraumaKnowledgeQa(projectKey: string, sessionKey: string) {
+    const runtime = this.resolve(projectKey);
+    await runtime.pluginRuntime.refresh();
+    const modelSelection = runtime.snapshot.config.agent.model;
+    const model = createStructuredModelClient({
+      complete: runtime.model.complete.bind(runtime.model),
+      stream: runtime.model.stream.bind(runtime.model),
+      provider: modelSelection.provider,
+      model: modelSelection.model,
+    });
+    const rag = createMcpTraumaRagClient(async (name, input, signal) => {
+      const tool = runtime.tools.get(name);
+      if (!tool) throw new Error(`Trauma RAG tool is unavailable: ${name}`);
+      const output = await tool.execute(input, {
+        sessionId: sessionKey,
+        turnId: `trauma-knowledge-rag:${this.options.now().getTime()}`,
+        abortSignal: signal,
+        cwd: runtime.projectRoot,
+        permissionMode: "bypassPermissions",
+        permissionContext: createDefaultPermissionContext({
+          cwd: runtime.projectRoot,
+          mode: "bypassPermissions",
+          bypassAvailable: true,
+        }),
+        now: this.options.now,
+      });
+      return output.data ?? output.content;
+    });
+    return {
+      rewriter: createKnowledgeQueryRewriter(model),
+      rag,
+      qa: createKnowledgeQaStation(model),
+    };
   }
 
   async readTraumaCase(projectKey: string, sessionKey: string) {

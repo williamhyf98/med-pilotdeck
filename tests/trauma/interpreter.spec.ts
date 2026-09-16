@@ -64,13 +64,14 @@ function modelClient(calls: any[], output?: any): StructuredModelClient {
 
 test("renderInterpretation formats per-attachment findings and the overall note", () => {
   const text = renderInterpretation({
-    attachments: [{ fileName: "ct.dcm", keyFindings: "右侧血气胸", traumaRelevance: "需胸腔引流" }],
-    overall: "张力性血气胸风险。",
+    attachments: [{ fileName: "ct.dcm", keyFindings: "ct.dcm 提示右侧血气胸", traumaRelevance: "ct 提示需胸腔引流" }],
+    overall: "ct.dcm 提示张力性血气胸风险。",
   });
-  assert.ok(text.includes("ct.dcm"));
-  assert.ok(text.includes("关键发现：右侧血气胸"));
-  assert.ok(text.includes("创伤相关性：需胸腔引流"));
-  assert.ok(text.includes("综合判读：张力性血气胸风险。"));
+  assert.ok(text.includes("第 1 份资料"));
+  assert.ok(!text.includes("ct.dcm"));
+  assert.ok(text.includes("关键发现：该资料 提示右侧血气胸"));
+  assert.ok(text.includes("创伤相关性：ct 提示需胸腔引流"));
+  assert.ok(text.includes("综合判读：该资料 提示张力性血气胸风险。"));
 });
 
 test("interpret returns rendered text and the file names it covered", async () => {

@@ -177,7 +177,22 @@ export type CitationMetadata = {
 export type RagQueryKind =
   | "stage"
   | "classification_transport"
-  | "primary_injury";
+  | "primary_injury"
+  | "knowledge";
+
+export type KnowledgeQueryRewrite = {
+  rewrittenQueries: Array<{
+    query: string;
+    reason: string;
+  }>;
+  unresolvedReferences: string[];
+  needsClarification: boolean;
+};
+
+export type KnowledgeQaOutput = {
+  naturalLanguageAnswer: string;
+  citationChunkIds: string[];
+};
 
 export type RetrievalTrace = {
   queries: Array<{

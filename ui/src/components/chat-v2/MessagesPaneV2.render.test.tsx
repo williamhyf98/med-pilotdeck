@@ -191,6 +191,64 @@ describe('MessagesPaneV2 render behavior', () => {
     expect(screen.getByText('爆炸伤，右大腿活动性出血')).toBeTruthy();
   });
 
+  it('renders the trauma stop copy without processed status or process steps', () => {
+    renderPane({
+      messages: [
+        {
+          id: 'u-1',
+          type: 'user',
+          content: '胸部爆震伤，呼吸困难',
+          timestamp: '2026-09-16T08:00:00.000Z',
+        },
+        {
+          id: 'trauma-step-1',
+          type: 'assistant',
+          content: '',
+          timestamp: '2026-09-16T08:00:01.000Z',
+          isToolUse: true,
+          toolName: '读取病例状态',
+          toolId: 'trauma-step-1',
+          toolInput: {
+            traumaRunnerStep: true,
+            stepNumber: 1,
+            phase: 'trauma',
+            title: '读取病例状态',
+            runningTitle: '正在读取病例状态',
+            expectedTotalSteps: 11,
+          },
+        },
+        {
+          id: 'stopped-notice',
+          type: 'system',
+          content: '本轮推演已停止。',
+          timestamp: '2026-09-16T08:00:02.000Z',
+          isInterruptedNotice: true,
+        },
+        {
+          id: 'summary-1',
+          type: 'system',
+          content: 'Process summary',
+          timestamp: '2026-09-16T08:00:02.000Z',
+          isAgentActivitySummary: true,
+          durationMs: 2000,
+          state: 'cancelled',
+        },
+      ],
+      isAssistantWorking: true,
+      selectedProject: {
+        name: 'trauma_med-field',
+        displayName: '战创伤项目',
+        fullPath: '/ws/trauma_med-field',
+        projectType: 'war_trauma',
+      },
+    });
+
+    expect(screen.getByText('本轮推演已停止。')).toBeTruthy();
+    expect(screen.queryByText(/已处理|Processed/)).toBeNull();
+    expect(screen.queryByText('读取病例状态')).toBeNull();
+    expect(screen.queryByText('已被用户暂停')).toBeNull();
+  });
+
   it('renders the default 100-message window without virtualization', () => {
     const messages = Array.from({ length: 100 }, (_, index) => makeMessage(index));
 

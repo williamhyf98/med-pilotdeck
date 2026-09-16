@@ -575,6 +575,20 @@ async function deleteSession(projectName, sessionId, _options = {}) {
             }
         }
     }
+
+    // Trauma/general medical uploads are staged under the project workspace
+    // at inbox/<sessionId>.  Session deletion owns that session-scoped inbox
+    // directory; project deletion handles the whole workspace separately.
+    try {
+        const workspaceDir = resolveWorkspaceDirectoryForProjectName(projectName, pilotHome);
+        const inboxDir = path.join(workspaceDir, 'inbox', safeId);
+        await fs.rm(inboxDir, { recursive: true, force: true });
+    } catch (error) {
+        if (error?.code !== 'ENOENT') {
+            throw error;
+        }
+    }
+
     return removed;
 }
 

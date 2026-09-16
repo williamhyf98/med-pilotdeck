@@ -2,12 +2,14 @@ import { compactCaseStateForDownstream } from "../factMerge.js";
 import { SUBSTAGE_TO_MAIN } from "../stageConfig.js";
 import type { CaseState, MainStage, RagQueryKind, SubStage } from "../types.js";
 
-export type PlannedRagQuery = {
+export type RetrievalQuery = {
   kind: RagQueryKind;
   query: string;
   reason: string;
   critical: boolean;
 };
+
+export type PlannedRagQuery = RetrievalQuery;
 
 const SUBSTAGE_LABEL: Record<SubStage, string> = {
   primary_first_aid: "初级急救",

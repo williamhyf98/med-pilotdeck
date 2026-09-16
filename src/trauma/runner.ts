@@ -6,9 +6,10 @@ import { normalizeChineseDisplayText } from "./displayLabels.js";
 import { resolveGate } from "./gate.js";
 import { resolveStagePlacement } from "./placement.js";
 import type { StructuredModelClient } from "./modelClient.js";
-import { TRAUMA_RAG_TOPIC, TRAUMA_RAG_TOP_K, type TraumaRagClient } from "./rag/client.js";
+import type { TraumaRagClient } from "./rag/client.js";
 import { mergeRetrieval } from "./rag/merge.js";
 import { buildBaselineQueries } from "./rag/queryPlan.js";
+import { runBaselineRetrieval } from "./rag/retrieval.js";
 import { initialCaseState, isLaterSubStage, SUBSTAGE_TO_MAIN, typicalFacilityForSubStage } from "./stageConfig.js";
 import { createPlacementStation } from "./stations/placer.js";
 import { createReasonerStation } from "./stations/reasoner.js";
@@ -615,11 +616,12 @@ export function createTraumaTurnRunner(deps: {
         });
         throwIfAborted();
         const baseline = buildBaselineQueries(candidate, interpretationContext);
-        const firstWaveResults = await Promise.all(baseline.map(async (query) => {
-          const result = await deps.rag.query({ query: query.query, top_k: TRAUMA_RAG_TOP_K, topic: TRAUMA_RAG_TOPIC, signal: input.abortSignal });
-          throwIfAborted();
-          return { query, chunks: result.chunks, backend: result.retrieval_backend };
-        }));
+        const firstWaveResults = await runBaselineRetrieval({
+          queries: baseline,
+          rag: deps.rag,
+          signal: input.abortSignal,
+        });
+        throwIfAborted();
         const merged = mergeRetrieval({
           queries: baseline,
           results: firstWaveResults,

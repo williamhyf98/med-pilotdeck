@@ -1,5 +1,6 @@
-import { ChevronDown, Loader2, Sparkles, Square } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Loader2, Sparkles, Square } from 'lucide-react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import ImageAttachment from '../chat/view/subcomponents/ImageAttachment';
 import { cn } from '../../lib/utils';
 import { authenticatedFetch } from '../../utils/api';
 import {
@@ -10,6 +11,7 @@ import {
   validateAttachmentBatch,
   MEDICAL_ATTACHMENT_EXTENSIONS,
 } from '../chat/utils/medicalFolderUpload';
+import { createPilotDeckSessionId, isTemporarySessionId } from '../chat/utils/sessionLauncher';
 import { SUBSTAGE_LABELS, SUBSTAGE_ORDER } from './domain/stageConfig';
 import type { SubStage, TurnFormInput } from './domain/types';
 import TraumaTurnForm from './TraumaTurnForm';
@@ -19,6 +21,10 @@ import TraumaTurnForm from './TraumaTurnForm';
 type ComposerState =
   | { phase: 'idle' }
   | { phase: 'extracting' };
+
+type InputMode = 'free' | 'manual';
+
+type PanelTransitionDirection = 'forward' | 'backward';
 
 type TraumaComposerProps = {
   projectKey?: string;
@@ -30,7 +36,8 @@ type TraumaComposerProps = {
     form: TurnFormInput,
     rawInput: string,
     extract?: boolean,
-    attachments?: Array<{ path: string; name: string }>,
+    attachments?: Array<{ path: string; name: string; previewUrl?: string }>,
+    sessionId?: string,
   ) => void | Promise<void>;
   onAbort?: () => void;
   submitting?: boolean;
@@ -117,7 +124,7 @@ function LevelRadios({
 
 export default function TraumaComposer({
   projectKey,
-  sessionId: _sessionId,
+  sessionId,
   caseHistory: _caseHistory = '',
   previousSubStage,
   onSubmit,
@@ -126,15 +133,27 @@ export default function TraumaComposer({
 }: TraumaComposerProps) {
   const [state, setState] = useState<ComposerState>({ phase: 'idle' });
   const [rawText, setRawText] = useState('');
-  const [manualOpen, setManualOpen] = useState(false);
+  const [inputMode, setInputMode] = useState<InputMode>('free');
+  const [exitingPanel, setExitingPanel] = useState<{
+    mode: InputMode;
+    direction: PanelTransitionDirection;
+  } | null>(null);
+  const [enterDirection, setEnterDirection] = useState<PanelTransitionDirection>('forward');
+  const [panelHeight, setPanelHeight] = useState<number | null>(null);
   const [freeSubStage, setFreeSubStage] = useState<SubStage | null>(null);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadingImages] = useState<Map<string, number>>(new Map());
+  const [imageErrors] = useState<Map<string, string>>(new Map());
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const freeTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const isExtracting = state.phase === 'extracting';
   const busy = submitting || isExtracting || uploading;
+  const transitionTimerRef = useRef<number | null>(null);
+  const heightTimerRef = useRef<number | null>(null);
+  const panelBodyRef = useRef<HTMLDivElement>(null);
 
   // Once a submission starts, clear the draft and collapse back to the free-text
   // surface. The parent drives the next round; we don't keep stale text around.
@@ -143,13 +162,72 @@ export default function TraumaComposer({
     if (submitting && !wasSubmitting.current) {
       setState({ phase: 'idle' });
       setRawText('');
-      setManualOpen(false);
+      setInputMode('free');
+      setExitingPanel(null);
+      setPanelHeight(null);
       setFreeSubStage(null);
       setPendingFiles([]);
       setAttachmentError(null);
     }
     wasSubmitting.current = submitting;
   }, [submitting]);
+
+  useEffect(() => () => {
+    if (transitionTimerRef.current !== null) {
+      window.clearTimeout(transitionTimerRef.current);
+    }
+    if (heightTimerRef.current !== null) {
+      window.clearTimeout(heightTimerRef.current);
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    if (panelHeight === null) return;
+    const nextHeight = panelBodyRef.current?.offsetHeight ?? null;
+    if (nextHeight === null) return;
+    window.requestAnimationFrame(() => {
+      setPanelHeight(nextHeight);
+    });
+    if (heightTimerRef.current !== null) {
+      window.clearTimeout(heightTimerRef.current);
+    }
+    heightTimerRef.current = window.setTimeout(() => {
+      setPanelHeight(null);
+      heightTimerRef.current = null;
+    }, 260);
+  }, [inputMode, panelHeight]);
+
+  useLayoutEffect(() => {
+    if (inputMode !== 'free') return;
+    resizeFreeTextarea(freeTextareaRef.current);
+  }, [inputMode, rawText]);
+
+  function resizeFreeTextarea(element: HTMLTextAreaElement | null) {
+    if (!element) return;
+    element.style.height = 'auto';
+    if (element.value.trim()) {
+      element.style.height = `${element.scrollHeight}px`;
+    }
+  }
+
+  function switchInputMode(nextMode: InputMode) {
+    if (nextMode === inputMode || busy) return;
+    const direction: PanelTransitionDirection = nextMode === 'manual' ? 'forward' : 'backward';
+    if (transitionTimerRef.current !== null) {
+      window.clearTimeout(transitionTimerRef.current);
+    }
+    if (heightTimerRef.current !== null) {
+      window.clearTimeout(heightTimerRef.current);
+    }
+    setPanelHeight(panelBodyRef.current?.offsetHeight ?? null);
+    setExitingPanel({ mode: inputMode, direction });
+    setEnterDirection(direction);
+    setInputMode(nextMode);
+    transitionTimerRef.current = window.setTimeout(() => {
+      setExitingPanel(null);
+      transitionTimerRef.current = null;
+    }, 240);
+  }
 
   function handleFilesPicked(list: FileList | null) {
     if (!list || list.length === 0) return;
@@ -170,16 +248,33 @@ export default function TraumaComposer({
   }
 
   // 上传在提交瞬间完成，而不是在 runner 运行期间等待——附件只对当前轮有效。
-  async function uploadPendingFiles(): Promise<Array<{ path: string; name: string }> | null> {
+  function resolveUploadSessionId(): string | undefined {
+    return sessionId && !isTemporarySessionId(sessionId)
+      ? sessionId
+      : createPilotDeckSessionId();
+  }
+
+  async function uploadPendingFiles(targetSessionId?: string): Promise<Array<{ path: string; name: string; previewUrl?: string }> | null> {
     if (pendingFiles.length === 0) return [];
     if (!projectKey) {
       setAttachmentError('上传失败：当前没有可用的项目。');
       return null;
     }
+    // 为图片文件创建本地预览 URL，用于乐观消息气泡中的缩略图显示。
+    // Blob URL 的生命周期与页面绑定，无需主动释放（消息泡一直可见期间有效）。
+    const blobUrls = new Map<string, string>();
+    for (const file of pendingFiles) {
+      if (file.type.startsWith('image/')) {
+        blobUrls.set(file.name, URL.createObjectURL(file));
+      }
+    }
     const formData = new FormData();
     pendingFiles.forEach((file) => {
       formData.append('attachments', file);
     });
+    if (targetSessionId) {
+      formData.append('sessionId', targetSessionId);
+    }
     // 战创伤链路自己做预处理，不需要服务端回传 data-URL 图像。
     formData.append('pathOnlyIndexes', JSON.stringify(pendingFiles.map((_, index) => index)));
     try {
@@ -199,8 +294,13 @@ export default function TraumaComposer({
       ];
       return files
         .filter((file: { path?: string }) => Boolean(file?.path))
-        .map((file: { path: string; name: string }) => ({ path: file.path, name: file.name }));
+        .map((file: { path: string; name: string }) => ({
+          path: file.path,
+          name: file.name,
+          previewUrl: blobUrls.get(file.name),
+        }));
     } catch (error) {
+      for (const url of blobUrls.values()) URL.revokeObjectURL(url);
       setAttachmentError(ensureUploadFailedMessage(
         error instanceof Error ? error.message : '未知错误',
       ));
@@ -214,12 +314,13 @@ export default function TraumaComposer({
     const trimmed = rawText.trim();
     // 只传附件不写字也是有效输入——判读本身就是本轮的信息。
     if ((!trimmed && pendingFiles.length === 0) || busy) return;
-    const attachments = await uploadPendingFiles();
+    const targetSessionId = pendingFiles.length > 0 ? resolveUploadSessionId() : undefined;
+    const attachments = await uploadPendingFiles(targetSessionId);
     if (!attachments) return;
     // 抽取在同一个 runner turn 内异步执行；先把原始自由语句交给聊天区，
     // 网关随后负责模型抽取，失败时自动使用原文 injuryNarrative fallback。
     setState({ phase: 'extracting' });
-    await onSubmit({
+    const draft: TurnFormInput = {
       statedSubStage: freeSubStage,
       // Keep the transport-safe draft within the form limit; the complete
       // free text is carried separately in rawInput for extraction/audit.
@@ -228,95 +329,100 @@ export default function TraumaComposer({
       evacuationNarrative: '',
       note: '',
       vitals: {},
-    }, trimmed, true, attachments);
+    };
+    if (attachments.length > 0 || targetSessionId) {
+      await onSubmit(draft, trimmed, true, attachments, targetSessionId);
+      return;
+    }
+    await onSubmit(draft, trimmed, true);
   }
 
   async function handleManualSubmit(form: TurnFormInput) {
-    const attachments = await uploadPendingFiles();
+    const targetSessionId = pendingFiles.length > 0 ? resolveUploadSessionId() : undefined;
+    const attachments = await uploadPendingFiles(targetSessionId);
     if (!attachments) return;
-    await onSubmit(form, rawText.trim(), false, attachments);
+    if (attachments.length > 0 || targetSessionId) {
+      await onSubmit(form, rawText.trim(), false, attachments, targetSessionId);
+      return;
+    }
+    await onSubmit(form, rawText.trim(), false);
   }
 
-  return (
-    <div className="space-y-3">
-      {/* ── Free-text input ─────────────────────────────────────────── */}
-      <div className="rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
-        <textarea
-          value={rawText}
-          onChange={(e) => {
-            setRawText(e.target.value);
-          }}
-          disabled={isExtracting}
-          placeholder="用自然语言描述本轮伤情、处置与后送情况，点「整理」后自动抽取并开始本轮推演。"
-          rows={4}
-          className="block w-full resize-none bg-transparent text-xs leading-5 text-neutral-800 outline-none placeholder:text-neutral-400 disabled:opacity-60 dark:text-neutral-100 dark:placeholder:text-neutral-500"
-          aria-label="本轮伤情自由输入"
-        />
-        {pendingFiles.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1">
-            {pendingFiles.map((file, index) => (
-              <span
-                key={`${file.name}:${index}`}
-                className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
-              >
-                {file.name}
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => setPendingFiles((current) => current.filter((_, at) => at !== index))}
-                  className="text-neutral-400 hover:text-neutral-700 disabled:opacity-50 dark:hover:text-neutral-100"
-                  aria-label={`移除附件 ${file.name}`}
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-        {attachmentError && (
-          <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">{attachmentError}</p>
-        )}
-        <div className="mt-2 flex items-center justify-between gap-2 border-t border-neutral-200 pt-2 dark:border-neutral-800">
+  const attachButton = (
+    <>
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        hidden
+        accept={[...MEDICAL_ATTACHMENT_EXTENSIONS].map((ext) => `.${ext}`).join(',')}
+        onChange={(event) => {
+          handleFilesPicked(event.target.files);
+          event.target.value = '';
+        }}
+      />
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => fileInputRef.current?.click()}
+        className="pd-composer-icon-button inline-flex h-7 shrink-0 items-center justify-center rounded-md border border-neutral-200 px-2 text-[11px] font-medium text-neutral-600 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+      >
+        {uploading ? '上传中…' : '+ 添加医学附件'}
+      </button>
+    </>
+  );
+
+  const stopButton = submitting && onAbort ? (
+    <button
+      type="button"
+      onClick={onAbort}
+      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-red-300 bg-red-50 px-3 text-xs font-semibold text-red-700 transition hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300"
+    >
+      <Square className="h-3 w-3 fill-current" />
+      停止本轮推演
+    </button>
+  ) : null;
+
+  const freePanel = (
+    <div className="space-y-2">
+      <textarea
+        ref={freeTextareaRef}
+        value={rawText}
+        onChange={(e) => {
+          setRawText(e.target.value);
+        }}
+        onInput={(event) => resizeFreeTextarea(event.currentTarget)}
+        disabled={isExtracting}
+        placeholder="用自然语言描述本轮伤情、处置与后送情况，点「整理」后自动抽取并开始本轮推演。"
+        rows={2}
+        className="block max-h-[40vh] min-h-[52px] w-full resize-none overflow-y-auto bg-transparent px-2 pt-1.5 text-[14px] leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 disabled:opacity-60 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+        aria-label="本轮伤情自由输入"
+      />
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200 px-1 pt-2 dark:border-neutral-800">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
           <LevelRadios
             previousSubStage={previousSubStage}
             value={freeSubStage}
             onChange={setFreeSubStage}
             disabled={busy}
           />
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            hidden
-            accept={[...MEDICAL_ATTACHMENT_EXTENSIONS].map((ext) => `.${ext}`).join(',')}
-            onChange={(event) => {
-              handleFilesPicked(event.target.files);
-              event.target.value = '';
-            }}
-          />
           <button
             type="button"
             disabled={busy}
-            onClick={() => fileInputRef.current?.click()}
-            className="shrink-0 rounded-lg border border-neutral-200 px-2 py-1 text-[11px] text-neutral-600 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            onClick={() => switchInputMode('manual')}
+            className="pd-composer-icon-button inline-flex h-7 shrink-0 items-center justify-center rounded-md px-2 text-[12px] font-medium text-neutral-600 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-neutral-300 dark:hover:bg-neutral-800"
           >
-            {uploading ? '上传中…' : '+ 添加医学附件'}
+            精确录入
           </button>
-          {submitting && onAbort ? (
-            <button
-              type="button"
-              onClick={onAbort}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-red-300 bg-red-50 px-3.5 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300"
-            >
-              <Square className="h-3 w-3 fill-current" />
-              停止本轮推演
-            </button>
-          ) : (
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {attachButton}
+          {stopButton ?? (
             <button
               type="button"
               onClick={() => void handleExtract()}
-              disabled={busy || !rawText.trim()}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-teal-700 px-3.5 py-2 text-xs font-semibold text-white transition hover:bg-teal-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={busy || (!rawText.trim() && pendingFiles.length === 0)}
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-teal-700 px-3.5 text-xs font-semibold text-white transition hover:bg-teal-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isExtracting
                 ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -326,32 +432,100 @@ export default function TraumaComposer({
           )}
         </div>
       </div>
+    </div>
+  );
 
-      {/* ── 精确录入 disclosure ───────────────────────────────────────── */}
-      <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
-        <button
-          type="button"
-          onClick={() => setManualOpen((open) => !open)}
-          className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left text-[11px] font-semibold text-neutral-600 transition hover:bg-neutral-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-teal-500 dark:text-neutral-400 dark:hover:bg-neutral-800/50"
-          aria-expanded={manualOpen}
-        >
-          <span>精确录入</span>
-          <ChevronDown
-            className={cn(
-              'h-3.5 w-3.5 text-neutral-400 transition-transform duration-200',
-              manualOpen && 'rotate-180',
-            )}
-          />
-        </button>
-        {manualOpen ? (
-          <div className="border-t border-neutral-200 p-3 pt-0 dark:border-neutral-800">
-            <TraumaTurnForm
-              mode="manual"
-              onSubmit={(form) => void handleManualSubmit(form)}
-              submitting={submitting}
-            />
+  const manualPanel = (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+        <div className="min-w-0">
+          <p className="text-[12px] font-semibold text-neutral-800 dark:text-neutral-100">精确录入</p>
+          <p className="text-[10px] leading-4 text-neutral-400">逐项填写本轮伤情、处置、后送条件与生命体征。</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => switchInputMode('free')}
+            className="pd-composer-icon-button inline-flex h-7 items-center justify-center rounded-md px-2 text-[12px] font-medium text-neutral-600 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-neutral-300 dark:hover:bg-neutral-800"
+          >
+            自由对话
+          </button>
+          {attachButton}
+          {stopButton}
+        </div>
+      </div>
+      <div className="max-h-[42vh] overflow-y-auto overscroll-contain pr-1">
+        <TraumaTurnForm
+          mode="manual"
+          embedded
+          onSubmit={(form) => void handleManualSubmit(form)}
+          submitting={submitting}
+        />
+      </div>
+    </div>
+  );
+
+  function renderPanel(mode: InputMode) {
+    return mode === 'free' ? freePanel : manualPanel;
+  }
+
+  return (
+    <div className="pd-composer-container relative min-w-0">
+      <div
+        className={cn(
+          'group rounded-xl border bg-white p-2 shadow-sm transition-colors',
+          'border-neutral-200 focus-within:border-neutral-300',
+          'dark:border-neutral-800 dark:bg-neutral-900 dark:focus-within:border-neutral-700',
+        )}
+      >
+        {pendingFiles.length > 0 && (
+          <div className="pd-composer-attachment-panel mb-2 rounded-lg border border-neutral-200 bg-neutral-50 p-2 dark:border-neutral-700 dark:bg-neutral-900">
+            <div className="flex flex-wrap gap-2">
+              {pendingFiles.map((file, index) => (
+                <ImageAttachment
+                  key={`${file.name}:${index}`}
+                  file={file}
+                  onRemove={() => setPendingFiles((current) => current.filter((_, at) => at !== index))}
+                  uploadProgress={uploadingImages.get(file.name)}
+                  error={imageErrors.get(file.name)}
+                />
+              ))}
+            </div>
           </div>
-        ) : null}
+        )}
+        {attachmentError && (
+          <p className="mb-2 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] text-red-600 dark:border-red-900/70 dark:bg-red-950/25 dark:text-red-400">{attachmentError}</p>
+        )}
+        <div
+          className="relative overflow-hidden transition-[height] duration-200 ease-out"
+          style={panelHeight === null ? undefined : { height: panelHeight }}
+        >
+          {exitingPanel ? (
+            <div
+              aria-hidden="true"
+              className={cn(
+                'pointer-events-none absolute inset-x-0 top-0 z-10',
+                exitingPanel.direction === 'forward'
+                  ? 'animate-[trauma-panel-exit-left_220ms_ease-in_forwards]'
+                  : 'animate-[trauma-panel-exit-right_220ms_ease-in_forwards]',
+              )}
+            >
+              {renderPanel(exitingPanel.mode)}
+            </div>
+          ) : null}
+          <div
+            ref={panelBodyRef}
+            key={inputMode}
+            className={cn(
+              enterDirection === 'forward'
+                ? 'animate-[trauma-panel-enter-right_220ms_ease-out]'
+                : 'animate-[trauma-panel-enter-left_220ms_ease-out]',
+            )}
+          >
+            {renderPanel(inputMode)}
+          </div>
+        </div>
       </div>
     </div>
   );

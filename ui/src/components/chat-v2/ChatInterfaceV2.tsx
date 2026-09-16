@@ -4,7 +4,7 @@ import { MessageSquare } from 'lucide-react';
 import { useTasksSettings } from '../../contexts/TasksSettingsContext';
 import { useToast } from '../../contexts/ToastContext';
 import { api } from '../../utils/api';
-import type { ChatInterfaceProps, ChatMessage, ChatRunMode, Provider } from '../chat/types/types';
+import type { ChatAttachment, ChatInterfaceProps, ChatMessage, ChatRunMode, Provider } from '../chat/types/types';
 import {
   getSessionRequestParams,
   isReadOnlySession,
@@ -32,6 +32,7 @@ export function ChatInterfaceLayout({
   compact: _compact,
   messagePane,
   composerSlot,
+  externalComposerSlot,
   permissionSlot,
   hiddenComposerNotice,
   welcome,
@@ -41,6 +42,7 @@ export function ChatInterfaceLayout({
   compact: boolean;
   messagePane: React.ReactNode;
   composerSlot: React.ReactNode;
+  externalComposerSlot?: React.ReactNode;
   permissionSlot?: React.ReactNode;
   hiddenComposerNotice?: string;
   welcome: React.ReactNode;
@@ -49,6 +51,7 @@ export function ChatInterfaceLayout({
     return (
       <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-white dark:bg-neutral-950">
         {messagePane}
+        {externalComposerSlot}
         {permissionSlot || hiddenComposerNotice ? (
           <div className="shrink-0 border-t border-neutral-200 bg-white px-3 pt-3 dark:border-neutral-800 dark:bg-neutral-950">
             {hiddenComposerNotice ? (
@@ -124,8 +127,10 @@ function ChatInterfaceV2({
   composerFooterStart,
   composerFooterEnd,
   composerChrome = 'default',
+  externalComposerSlot,
   traumaOptimisticMessageRef,
   navigateToChatMessageRef,
+  traumaAbortUIRef,
   onTraumaProcessStateChange,
 }: ChatInterfaceProps) {
   const { t } = useTranslation('chat');
@@ -250,19 +255,37 @@ function ChatInterfaceV2({
     sessionStore,
   });
 
-  const addOptimisticTraumaMessage = useCallback((text: string, targetSessionId?: string | null, runId?: string) => {
-    const content = text.trim();
-    if (!content) return;
+  const addOptimisticTraumaMessage = useCallback((
+    text: string,
+    targetSessionId?: string | null,
+    runId?: string,
+    traumaAttachments?: Array<{ name: string; path?: string; previewUrl?: string }>,
+  ) => {
+    const hasAttachments = Boolean(traumaAttachments?.length);
+    const content = text.trim() || (hasAttachments ? '已上传医学附件' : '');
+    if (!content && !hasAttachments) return;
     // A null target deliberately uses the hook's pending-message handoff so
     // the bubble remains visible while a new session is being created.
     if (!targetSessionId) {
       pendingViewSessionRef.current = { sessionId: null, startedAt: Date.now() };
     }
+    // Split: image files (have a previewUrl blob) go into message.images so the
+    // bubble renders actual thumbnails; everything else stays as file cards.
+    const imageEntries = traumaAttachments?.filter((a) => Boolean(a.previewUrl)) ?? [];
+    const fileEntries = traumaAttachments?.filter((a) => !a.previewUrl) ?? [];
+    const images = imageEntries.length
+      ? imageEntries.map((a) => ({ data: a.previewUrl!, name: a.name, path: a.path }))
+      : undefined;
+    const attachments: ChatAttachment[] | undefined = fileEntries.length
+      ? fileEntries.map((a) => ({ kind: 'file' as const, name: a.name, path: a.path }))
+      : undefined;
     addMessage({
       type: 'user',
       content,
       timestamp: new Date(),
       ...(runId ? { runId, turnId: runId } : {}),
+      ...(images ? { images } : {}),
+      ...(attachments ? { attachments } : {}),
     }, targetSessionId ?? null);
     setIsUserScrolledUp(false);
     setTimeout(() => scrollToBottom(), 100);
@@ -277,6 +300,25 @@ function ChatInterfaceV2({
       }
     };
   }, [addOptimisticTraumaMessage, traumaOptimisticMessageRef]);
+
+  useEffect(() => {
+    if (!traumaAbortUIRef) return undefined;
+    const abortUI = () => {
+      setIsLoading(false);
+      addMessage({
+        type: 'assistant',
+        content: '本轮推演已停止。',
+        isInterruptedNotice: true,
+        timestamp: Date.now(),
+      });
+    };
+    traumaAbortUIRef.current = abortUI;
+    return () => {
+      if (traumaAbortUIRef.current === abortUI) {
+        traumaAbortUIRef.current = null;
+      }
+    };
+  }, [addMessage, setIsLoading, traumaAbortUIRef]);
 
   const watchedSessionId = selectedSession?.id || currentSessionId || null;
   useSessionWatch({ sessionId: watchedSessionId, ws, sendMessage });
@@ -468,7 +510,16 @@ function ChatInterfaceV2({
     if (!isLoading || !canAbortSession || isAbortPending) return;
     handleAbortSession();
     setIsAbortPending(true);
-  }, [canAbortSession, handleAbortSession, isAbortPending, isLoading]);
+    // Immediately reflect the stop in the UI: clear the loading state and
+    // inject a local interrupted divider so the conversation list responds
+    // at once rather than waiting for the backend's WebSocket message.
+    setIsLoading(false);
+    addMessage({
+      type: 'assistant',
+      isInterruptedNotice: true,
+      timestamp: Date.now(),
+    });
+  }, [addMessage, canAbortSession, handleAbortSession, isAbortPending, isLoading, setIsLoading]);
 
   const handleFork = useCallback(async (message: ChatMessage, _carriedPreview: number) => {
     if (isForkPending || isLoading || sessionIsReadOnly) return;
@@ -752,6 +803,7 @@ function ChatInterfaceV2({
         compact={compact}
         messagePane={messagePane}
         composerSlot={composerSlot}
+        externalComposerSlot={externalComposerSlot}
         permissionSlot={pendingPermissionRequests.length > 0 ? permissionSlot : null}
         hiddenComposerNotice={hiddenComposerNotice}
         welcome={null}
@@ -814,6 +866,7 @@ function ChatInterfaceV2({
       compact={compact}
       messagePane={messagePane}
       composerSlot={composerSlot}
+      externalComposerSlot={undefined}
       permissionSlot={null}
       hiddenComposerNotice={undefined}
       welcome={null}

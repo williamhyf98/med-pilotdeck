@@ -202,6 +202,10 @@ function MainContent({
   const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings() as TasksSettingsContextValue;
   const [toast, setToast] = useState<MainContentToast>(null);
   const [traumaSubmitting, setTraumaSubmitting] = useState(false);
+  // Set to true the moment the user clicks stop so submitting=false fires
+  // immediately, without waiting for external state (processingSessions,
+  // traumaSubmitting) to propagate through parent re-renders.
+  const [traumaLocallyAborted, setTraumaLocallyAborted] = useState(false);
   const [pendingTraumaRun, setPendingTraumaRun] = useState<{
     runId: string;
     mainStage?: string;
@@ -209,8 +213,9 @@ function MainContent({
     round?: number;
   } | null>(null);
   const navigateToChatMessageRef = useRef<((runId: string) => void | Promise<void>) | null>(null);
+  const traumaAbortUIRef = useRef<(() => void) | null>(null);
   const traumaOptimisticMessageRef = useRef<(
-    (text: string, targetSessionId?: string | null, runId?: string) => void
+    (text: string, targetSessionId?: string | null, runId?: string, traumaAttachments?: Array<{ name: string; path?: string; previewUrl?: string }>) => void
   ) | null>(null);
 
   const submitTraumaForm = useCallback((
@@ -218,18 +223,21 @@ function MainContent({
     rawInput = '',
     traumaExtract = false,
     traumaAttachments: Array<{ path: string; name: string }> = [],
+    preferredSessionId?: string,
   ) => {
     if (!selectedProject || traumaSubmitting) return;
     const selectedSessionId = selectedSession?.id;
-    const concreteSessionId = selectedSessionId && !isTemporarySessionId(selectedSessionId)
-      ? selectedSessionId
-      : undefined;
+    const concreteSessionId = preferredSessionId
+      ?? (selectedSessionId && !isTemporarySessionId(selectedSessionId)
+        ? selectedSessionId
+        : undefined);
     const temporarySessionId = concreteSessionId
       ? undefined
       : selectedSessionId || createTemporarySessionId();
     const summary = summarizeTraumaForm(form);
     const runId = createClientRunId();
     const visibleInput = traumaExtract && rawInput.trim() ? rawInput.trim() : summary;
+    setTraumaLocallyAborted(false);
     setTraumaSubmitting(true);
     try {
       // Keep the sidebar in sync with the generic chat flow: create/bump the
@@ -246,7 +254,7 @@ function MainContent({
           visibleInput,
         );
       }
-      traumaOptimisticMessageRef.current?.(visibleInput, concreteSessionId, runId);
+      traumaOptimisticMessageRef.current?.(visibleInput, concreteSessionId, runId, traumaAttachments);
       const activatedSessionId = startSessionCommand({
         sendMessage,
         selectedProject,
@@ -263,6 +271,9 @@ function MainContent({
       });
       onSessionActive?.(activatedSessionId);
       if (concreteSessionId) onSessionProcessing?.(concreteSessionId);
+      if (activatedSessionId && !isTemporarySessionId(activatedSessionId)) {
+        onNavigateToSession?.(activatedSessionId);
+      }
     } catch (error) {
       setTraumaSubmitting(false);
       throw error;
@@ -273,6 +284,7 @@ function MainContent({
     selectedProject,
     selectedSession?.id,
     onSessionActivityBump,
+    onNavigateToSession,
     sendMessage,
     traumaSubmitting,
   ]);
@@ -284,12 +296,18 @@ function MainContent({
     const sessionId = [selectedSession?.id, pendingSessionId]
       .find((value) => Boolean(value) && !isTemporarySessionId(value));
     if (!sessionId) return;
+    // Set the local abort flag first — this short-circuits the submitting prop
+    // calculation immediately, before any external state (traumaSubmitting,
+    // processingSessions) propagates through parent re-renders.
+    setTraumaLocallyAborted(true);
+    setTraumaSubmitting(false);
+    setPendingTraumaRun(null);
+    traumaAbortUIRef.current?.();
     sendMessage({
       type: 'abort-session',
       sessionId,
       provider: 'pilotdeck',
     });
-    setPendingTraumaRun(null);
   }, [selectedSession?.id, sendMessage]);
 
   const handleTraumaProcessStateChange = useCallback((state: {
@@ -601,7 +619,9 @@ function MainContent({
           abortTraumaTurn={abortTraumaTurn}
           traumaOptimisticMessageRef={traumaOptimisticMessageRef}
           navigateToChatMessageRef={navigateToChatMessageRef}
+          traumaAbortUIRef={traumaAbortUIRef}
           traumaSubmitting={traumaSubmitting}
+          traumaLocallyAborted={traumaLocallyAborted}
           pendingTraumaRun={pendingTraumaRun}
           onTraumaProcessStateChange={handleTraumaProcessStateChange}
           unreadSessionIds={unreadSessionIds}
@@ -692,12 +712,15 @@ type SplitBodyProps = {
     form: TurnFormInput,
     rawInput?: string,
     traumaExtract?: boolean,
-    traumaAttachments?: Array<{ path: string; name: string }>,
+    traumaAttachments?: Array<{ path: string; name: string; previewUrl?: string }>,
+    sessionId?: string,
   ) => void;
   abortTraumaTurn: () => void;
-  traumaOptimisticMessageRef: React.MutableRefObject<((text: string, targetSessionId?: string | null, runId?: string) => void) | null>;
+  traumaOptimisticMessageRef: React.MutableRefObject<((text: string, targetSessionId?: string | null, runId?: string, traumaAttachments?: Array<{ name: string; path?: string; previewUrl?: string }>) => void) | null>;
   navigateToChatMessageRef: React.MutableRefObject<((runId: string) => void | Promise<void>) | null>;
+  traumaAbortUIRef: React.MutableRefObject<(() => void) | null>;
   traumaSubmitting: boolean;
+  traumaLocallyAborted: boolean;
   pendingTraumaRun: {
     runId: string;
     mainStage?: string;
@@ -763,7 +786,9 @@ function SplitBody(props: SplitBodyProps) {
     abortTraumaTurn,
     traumaOptimisticMessageRef,
     navigateToChatMessageRef,
+    traumaAbortUIRef,
     traumaSubmitting,
+    traumaLocallyAborted,
     pendingTraumaRun,
     onTraumaProcessStateChange,
     unreadSessionIds,
@@ -1062,6 +1087,7 @@ function SplitBody(props: SplitBodyProps) {
       hideComposer={isWarTraumaProject}
       traumaOptimisticMessageRef={traumaOptimisticMessageRef}
       navigateToChatMessageRef={navigateToChatMessageRef}
+      traumaAbortUIRef={traumaAbortUIRef}
       onTraumaProcessStateChange={onTraumaProcessStateChange}
       hiddenComposerNotice={isWarTraumaProject && isFiles
         ? '战创伤病例请切换到对话工作区，通过结构化表单提交本轮信息。'
@@ -1212,9 +1238,9 @@ function SplitBody(props: SplitBodyProps) {
               pendingRun={pendingTraumaRun}
               onNavigateToChatMessage={(runId) => navigateToChatMessageRef.current?.(runId)}
               runtimePanel={chatInterface}
-              submitting={traumaSubmitting || Boolean(
+              submitting={!traumaLocallyAborted && (traumaSubmitting || Boolean(
                 selectedSession?.id && processingSessions.has(selectedSession.id)
-              )}
+              ))}
             />
           ) : chatInterface}
           </ErrorBoundary>

@@ -37,12 +37,36 @@ export type InterpretationStationDeps = {
   supportsImages: boolean;
 };
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function sanitizeDisplayedInterpretationText(text: string, fileNames: string[]): string {
+  let sanitized = text;
+  const names = fileNames
+    .map((name) => name.trim())
+    .filter(Boolean)
+    .flatMap((name) => {
+      const dot = name.lastIndexOf(".");
+      const stem = dot > 0 ? name.slice(0, dot) : "";
+      return stem && stem !== name && Array.from(stem).length >= 3 ? [name, stem] : [name];
+    })
+    .sort((left, right) => right.length - left.length);
+  for (const name of names) {
+    sanitized = sanitized.replace(new RegExp(escapeRegExp(name), "gu"), "该资料");
+  }
+  return sanitized;
+}
+
 export function renderInterpretation(output: AttachmentInterpretationOutput): string {
-  const blocks = output.attachments.map((item) => (
-    `· ${item.fileName}\n  关键发现：${item.keyFindings}\n  创伤相关性：${item.traumaRelevance}`
-  ));
+  const fileNames = output.attachments.map((item) => item.fileName);
+  const blocks = output.attachments.map((item, index) => {
+    const keyFindings = sanitizeDisplayedInterpretationText(item.keyFindings, fileNames);
+    const traumaRelevance = sanitizeDisplayedInterpretationText(item.traumaRelevance, fileNames);
+    return `· 第 ${index + 1} 份资料\n  关键发现：${keyFindings}\n  创伤相关性：${traumaRelevance}`;
+  });
   if (output.overall.trim()) {
-    blocks.push(`综合判读：${output.overall.trim()}`);
+    blocks.push(`综合判读：${sanitizeDisplayedInterpretationText(output.overall.trim(), fileNames)}`);
   }
   return blocks.join("\n");
 }

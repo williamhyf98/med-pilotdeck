@@ -370,6 +370,50 @@ export const EXTRACTOR_OUTPUT_SCHEMA: Record<string, unknown> = described(
   "工位 F 从用户自由文本中抽取的结构化表单草稿。",
 );
 
+export const KNOWLEDGE_QUERY_REWRITE_SCHEMA: Record<string, unknown> = described(
+  object({
+    rewrittenQueries: arrayOf(object({
+      query: STRING,
+      reason: STRING,
+    })),
+    unresolvedReferences: STRING_ARRAY,
+    needsClarification: BOOLEAN,
+  }),
+  "战创伤知识问题的检索查询改写结果。",
+);
+
+export function validateKnowledgeQueryRewrite(
+  value: unknown,
+): value is import("./types.js").KnowledgeQueryRewrite {
+  if (!isRecord(value)) return false;
+  if (!Array.isArray(value.rewrittenQueries)) return false;
+  if (!value.rewrittenQueries.every((item: unknown) => (
+    isRecord(item)
+    && typeof item.query === "string"
+    && typeof item.reason === "string"
+  ))) return false;
+  if (!Array.isArray(value.unresolvedReferences)
+    || !value.unresolvedReferences.every((item: unknown) => typeof item === "string")) return false;
+  return typeof value.needsClarification === "boolean";
+}
+
+export const KNOWLEDGE_QA_OUTPUT_SCHEMA: Record<string, unknown> = described(
+  object({
+    naturalLanguageAnswer: STRING,
+    citationChunkIds: STRING_ARRAY,
+  }),
+  "战创伤知识问答答案及其引用的知识块 ID。",
+);
+
+export function validateKnowledgeQaOutput(
+  value: unknown,
+): value is import("./types.js").KnowledgeQaOutput {
+  if (!isRecord(value)) return false;
+  return typeof value.naturalLanguageAnswer === "string"
+    && Array.isArray(value.citationChunkIds)
+    && value.citationChunkIds.every((item: unknown) => typeof item === "string");
+}
+
 function isExtractedNarrativeItem(value: unknown): value is import("./types.js").ExtractedNarrativeItem {
   if (!isRecord(value)) return false;
   return typeof value.text === "string" && typeof value.sourceSpan === "string";

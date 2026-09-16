@@ -1,5 +1,14 @@
 import { ShieldAlert } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  cloneElement,
+  isValidElement,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
 import { cn } from '../../lib/utils';
 import { TRAUMA_STAGES } from './demoCase';
 import StageOverrideDialog from './detail/StageOverrideDialog';
@@ -27,6 +36,7 @@ type TraumaWorkspaceProps = {
     rawInput: string,
     traumaExtract?: boolean,
     attachments?: Array<{ path: string; name: string }>,
+    sessionId?: string,
   ) => void | Promise<void>;
   onAbortTurn?: () => void;
   submitting?: boolean;
@@ -55,11 +65,13 @@ export default function TraumaWorkspace({
   const [showStageOverride, setShowStageOverride] = useState(false);
   const autoOpenedPendingRunRef = useRef<string | null>(null);
   const caseStore = useCaseStore(projectKey, sessionId);
+  const currentCase = caseStore.current;
+  const snapshots = caseStore.snapshots;
   const rounds = useMemo(
-    () => snapshotsToRounds(caseStore.snapshots, caseStore.current),
-    [caseStore.current, caseStore.snapshots],
+    () => snapshotsToRounds(snapshots, currentCase),
+    [currentCase, snapshots],
   );
-  const hasLiveCase = Boolean(caseStore.current && rounds.length > 0);
+  const hasLiveCase = Boolean(currentCase && rounds.length > 0);
   const currentRoundIndex = Math.max(0, rounds.length - 1);
   const currentRound = rounds.at(-1);
   const position: TreePosition = currentRound
@@ -69,7 +81,7 @@ export default function TraumaWorkspace({
       round: currentRound.round,
       blocked: currentRound.gate.status === 'BLOCKED',
       transferPending: currentRound.transitionTone === 'warning',
-      unplaced: Boolean(currentRound.unplaced || !caseStore.current?.currentSubStage),
+      unplaced: Boolean(currentRound.unplaced || !currentCase?.currentSubStage),
     }
     : INITIAL_POSITION;
   const stage = TRAUMA_STAGES.find((item) => item.id === position.stageId);
@@ -117,8 +129,59 @@ export default function TraumaWorkspace({
   }, [currentRound, pendingRun, pendingMemo]);
   const viewingHistoricalSnapshot = Boolean(
     selectedMemo?.snapshotVersion
-    && selectedMemo.snapshotVersion !== caseStore.current?.version,
+    && selectedMemo.snapshotVersion !== currentCase?.version,
   );
+  const traumaComposerSlot = useMemo(() => (
+    <div data-chat-composer-slot className="min-h-0 shrink-0 bg-white px-6 pb-6 pt-3 dark:bg-neutral-950">
+      <div className="mx-auto w-full max-w-[720px]">
+        <TraumaComposer
+          key={`${currentCase?.caseId ?? 'unpersisted'}:${resetKey}`}
+          projectKey={projectKey}
+          sessionId={sessionId}
+          previousSubStage={currentCase?.currentSubStage ?? null}
+          onSubmit={onSubmitForm}
+          onAbort={onAbortTurn}
+          submitting={submitting}
+        />
+      </div>
+    </div>
+  ), [
+    currentCase?.caseId,
+    currentCase?.currentSubStage,
+    onAbortTurn,
+    onSubmitForm,
+    projectKey,
+    resetKey,
+    sessionId,
+    submitting,
+  ]);
+  const renderedRuntimePanel = useMemo(() => {
+    if (!runtimePanel) {
+      return (
+        <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-white dark:bg-neutral-950">
+          <div className="flex min-h-0 items-center justify-center px-6 text-center text-[12px] text-neutral-400 dark:text-neutral-500">
+            等待对话区初始化…
+          </div>
+          {traumaComposerSlot}
+        </div>
+      );
+    }
+    if (isValidElement(runtimePanel) && typeof runtimePanel.type !== 'string') {
+      return cloneElement(
+        runtimePanel as ReactElement<{ externalComposerSlot?: ReactNode }>,
+        { externalComposerSlot: traumaComposerSlot },
+      );
+    }
+    return (
+      <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-white dark:bg-neutral-950">
+        <div className="min-h-0 overflow-hidden">{runtimePanel}</div>
+        {traumaComposerSlot}
+      </div>
+    );
+  }, [
+    runtimePanel,
+    traumaComposerSlot,
+  ]);
 
   useEffect(() => {
     setSelectedMemoId(null);
@@ -137,17 +200,17 @@ export default function TraumaWorkspace({
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-neutral-50/50 dark:bg-neutral-950">
       <div className="grid shrink-0 grid-cols-2 gap-x-3 gap-y-1 border-b border-neutral-200 bg-white px-3 py-2 dark:border-neutral-800 dark:bg-neutral-950 sm:grid-cols-4">
-        <StatusCell label="病例进度" value={caseStore.current ? `第 ${caseStore.current.round} 轮` : '等待首轮提交'} />
+        <StatusCell label="病例进度" value={currentCase ? `第 ${currentCase.round} 轮` : '等待首轮提交'} />
         <StatusCell
           label="当前位置"
-          value={caseStore.current?.currentSubStage && caseStore.current.currentFacility
-            ? caseStore.current.currentFacility.name
+          value={currentCase?.currentSubStage && currentCase.currentFacility
+            ? currentCase.currentFacility.name
             : '未定级'}
           tone="info"
         />
         <StatusCell
           label="当前阶段"
-          value={caseStore.current?.currentSubStage ? `${stage?.index} · ${substep?.name}` : '由系统判定'}
+          value={currentCase?.currentSubStage ? `${stage?.index} · ${substep?.name}` : '由系统判定'}
         />
         <StatusCell
           label="阶段转换"
@@ -165,33 +228,16 @@ export default function TraumaWorkspace({
       >
         <section
           aria-label="伤情推演工作区"
-          className="grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-950"
+          className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)] overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-950"
         >
-          <div className="min-h-0 overflow-hidden bg-white dark:bg-neutral-950">
-            {runtimePanel ? (
-              <div
-                role="region"
-                aria-label="推演对话"
-                className="h-full min-h-0 overflow-hidden"
-              >
-                {runtimePanel}
-              </div>
-            ) : (
-              <div className="flex h-full items-center justify-center px-6 text-center text-[12px] text-neutral-400 dark:text-neutral-500">
-                等待对话区初始化…
-              </div>
-            )}
-          </div>
-          <div className="max-h-[58vh] overflow-y-auto border-t border-neutral-200 bg-neutral-50/50 p-4 dark:border-neutral-800 dark:bg-neutral-900/20">
-            <TraumaComposer
-              key={`${caseStore.current?.caseId ?? 'unpersisted'}:${resetKey}`}
-              projectKey={projectKey}
-              sessionId={sessionId}
-              previousSubStage={caseStore.current?.currentSubStage ?? null}
-              onSubmit={onSubmitForm}
-              onAbort={onAbortTurn}
-              submitting={submitting}
-            />
+          <div className="h-full min-h-0 overflow-hidden bg-white dark:bg-neutral-950">
+            <div
+              role="region"
+              aria-label="推演对话"
+              className="h-full min-h-0 overflow-hidden"
+            >
+              {renderedRuntimePanel}
+            </div>
           </div>
         </section>
 
@@ -250,10 +296,10 @@ export default function TraumaWorkspace({
                   canOverrideStage={!viewingHistoricalSnapshot}
                 />
               )}
-              {showStageOverride && caseStore.current && !viewingHistoricalSnapshot ? (
+              {showStageOverride && currentCase && !viewingHistoricalSnapshot ? (
                 <div className="mt-3">
                   <StageOverrideDialog
-                    state={caseStore.current}
+                    state={currentCase}
                     onClose={() => setShowStageOverride(false)}
                     onSubmit={async (override) => {
                       const response = await fetch(

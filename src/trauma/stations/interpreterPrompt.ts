@@ -12,5 +12,6 @@ export const INTERPRETATION_SYSTEM_PROMPT = `你是战创伤救治推演系统�
 - 心电类文件（.ecg/.edf/.atr/.qrs/.scp）本轮不做波形识别，统一写「心电数据未做波形识别」。
 - 每条 keyFindings 一到三句话；overall 不超过 200 字。这是给下游检索与推理用的素材，不是给用户看的完整影像报告，不要写成长篇报告，不要写检查技术参数罗列。
 - traumaRelevance 必须落到本轮战创伤救治决策上（例如提示某类损伤、某项处置的必要性、后送优先级）；确实无关时写「与本轮救治决策无直接关联」。
-- attachments 数组必须覆盖输入中给出的每一个附件文件名，顺序一致，fileName 逐字照抄。
+- attachments 数组必须覆盖输入中给出的每一个附件，顺序一致；fileName 仅用于系统内部匹配，必须逐字照抄输入文件名。
+- keyFindings、traumaRelevance 和 overall 是会展示给用户的判读正文，严禁出现任何文件名、路径、扩展名或“某某文件/附件名为...”等表述；需要区分多个附件时，只能使用「第一份资料」「第二份影像」这类泛称。
 - 不要输出思考过程，直接给出符合 schema 的 JSON。`;

@@ -157,9 +157,89 @@ function createTestGateway(projectKey, options = { askPlacement: false }) {
         throw new Error("not used");
       },
     }),
+    ...(options.knowledgeQaFactory ? { traumaKnowledgeQaFactory: options.knowledgeQaFactory } : {}),
   });
   return { gateway, counter, projectKey };
 }
+
+test("domain_question_no_case uses independent knowledge QA with shared RAG and citations", async () => {
+  const calls = { runner: 0, rewrite: 0, rag: 0, qa: 0 };
+  const { gateway, counter } = createTestGateway("trauma_med-demo", {
+    extractorResult: {
+      inputIntent: "domain_question_no_case",
+      scopeReason: "知识问题",
+      injuryNarratives: [],
+      treatmentNarratives: [],
+      evacuationNarratives: [],
+      notes: [],
+      vitals: [],
+    },
+    knowledgeQaFactory: async () => ({
+      rewriter: {
+        async rewrite() {
+          calls.rewrite += 1;
+          return {
+            rewrittenQueries: [{ query: "战现场急救定义", reason: "标准化" }],
+            unresolvedReferences: [],
+            needsClarification: false,
+          };
+        },
+      },
+      rag: {
+        async query(input) {
+          calls.rag += 1;
+          assert.equal(input.topic, "战创伤");
+          return {
+            retrieval_backend: "remote",
+            chunks: [{
+              chunk_id: "knowledge-1",
+              text: "战现场急救原则",
+              score: 0.9,
+              title: "战伤救治规则",
+              section: "第二章",
+              retrieval_backend: "remote",
+            }],
+          };
+        },
+      },
+      qa: {
+        async answer(input) {
+          calls.qa += 1;
+          assert.equal(input.promptChunks[0]?.id, "knowledge-1");
+          await input.onNaturalLanguageDelta?.("战现场急救见[1]。");
+          await input.onNaturalLanguageEnd?.();
+          return {
+            naturalLanguageAnswer: "战现场急救见[1]。",
+            citationChunkIds: ["knowledge-1"],
+          };
+        },
+      },
+    }),
+  });
+  const events = [];
+  for await (const event of gateway.submitTurn({
+    sessionKey: "web:s_knowledge",
+    channelKey: "web",
+    projectKey: "trauma_med-demo",
+    message: "战现场急救是什么？",
+    traumaRawInput: "战现场急救是什么？",
+    traumaExtract: true,
+    traumaForm: {
+      statedSubStage: null,
+      injuryNarrative: "",
+      treatmentNarrative: "",
+      evacuationNarrative: "",
+      note: "",
+      vitals: {},
+    },
+  })) events.push(event);
+  assert.deepEqual(calls, { runner: 0, rewrite: 1, rag: 1, qa: 1 });
+  assert.equal(counter.trauma, 0);
+  assert.match(events.filter((event) => event.type === "assistant_text_delta").map((event) => event.text).join(""), /战现场急救/);
+  assert.deepEqual(events.find((event) => event.type === "assistant_text_end")?.citations, [
+    { index: 1, title: "战伤救治规则", section: "第二章" },
+  ]);
+});
 
 test("war_trauma submitTurn uses TraumaTurnRunner instead of AgentSession.submit", async () => {
   const { gateway, counter } = createTestGateway("trauma_med-demo");
@@ -425,17 +505,17 @@ for (const scenario of [
   {
     intent: "out_of_scope",
     rawInput: "今天北京天气怎么样？",
-    expectedText: "当前页面仅支持战创伤救治推演",
+    expectedText: "你好！我是战创伤辅助救治助手",
   },
   {
     intent: "domain_question_no_case",
     rawInput: "战现场急救和早期救治有什么区别？",
-    expectedText: "这是战创伤救治相关问题",
+    expectedText: "这是战创伤救治相关知识问题",
   },
   {
     intent: "system_help",
     rawInput: "这个系统应该怎么用？",
-    expectedText: "这是战创伤救治推演页面",
+    expectedText: "你好！这里是战创伤辅助救治助手",
   },
 ]) {
   test(`traumaExtract returns fixed reply and skips runner for ${scenario.intent}`, async () => {

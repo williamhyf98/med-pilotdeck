@@ -412,16 +412,27 @@ function MessagesPaneV2({
   const [scrollViewport, setScrollViewport] = useState({ scrollTop: 0, height: 0 });
   const [expandedProcessRows, setExpandedProcessRows] = useState<Map<string, boolean>>(() => new Map());
   const [openSubagentId, setOpenSubagentId] = useState<string | null>(null);
-  const wasAssistantWorkingRef = useRef(isAssistantWorking);
+  const hasStoppedTraumaTurn = useMemo(() => {
+    let lastUserIndex = -1;
+    visibleMessages.forEach((message, index) => {
+      if (message.type === 'user') lastUserIndex = index;
+    });
+    return visibleMessages.slice(lastUserIndex + 1).some((message) => (
+      message.isInterruptedNotice
+      && String(message.content || '').trim() === '本轮推演已停止。'
+    ));
+  }, [visibleMessages]);
+  const isEffectiveAssistantWorking = isAssistantWorking && !hasStoppedTraumaTurn;
+  const wasAssistantWorkingRef = useRef(isEffectiveAssistantWorking);
 
   // After the assistant turn finishes, live process panels unmount. Drop live
   // expand prefs so the completed last-turn summaries can use their own default.
   useEffect(() => {
-    if (wasAssistantWorkingRef.current && !isAssistantWorking) {
+    if (wasAssistantWorkingRef.current && !isEffectiveAssistantWorking) {
       setExpandedProcessRows(new Map());
     }
-    wasAssistantWorkingRef.current = isAssistantWorking;
-  }, [isAssistantWorking]);
+    wasAssistantWorkingRef.current = isEffectiveAssistantWorking;
+  }, [isEffectiveAssistantWorking]);
 
   const handleOpenSubagentDetail = useCallback((subagentId: string) => {
     setOpenSubagentId(subagentId);
@@ -548,7 +559,7 @@ function MessagesPaneV2({
   );
   const renderableMessages = useMemo(
     () => {
-      const lastUserIndex = isAssistantWorking
+      const lastUserIndex = isEffectiveAssistantWorking
         ? visibleMessages.reduce((lastIndex, message, index) => (
             message.type === 'user' ? index : lastIndex
           ), -1)
@@ -556,24 +567,24 @@ function MessagesPaneV2({
       const filtered = visibleMessages.filter((message, index) =>
         !message.isAgentActivity &&
         !isSubagentThinkingPlaceholder(message) &&
-        !(isAssistantWorking && message.isThinking && !message.isStreaming && index < lastUserIndex) &&
+        !(isEffectiveAssistantWorking && message.isThinking && !message.isStreaming && index < lastUserIndex) &&
         (!inlineThinking && isStreamingThinkingMessage(message) ? false : true) &&
         !(message.isThinking && !showThinking)
       );
       return filtered;
     },
-    [visibleMessages, showThinking, inlineThinking, isAssistantWorking],
+    [visibleMessages, showThinking, inlineThinking, isEffectiveAssistantWorking],
   );
   const liveProcessDetailMessages = useMemo(
-    () => isAssistantWorking ? getLiveProcessDetailMessages(renderableMessages) : [],
-    [isAssistantWorking, renderableMessages],
+    () => isEffectiveAssistantWorking ? getLiveProcessDetailMessages(renderableMessages) : [],
+    [isEffectiveAssistantWorking, renderableMessages],
   );
   const liveProcessGroups = useMemo(
-    () => isAssistantWorking
-      ? getLiveProcessGroups(renderableMessages, { isAssistantWorking })
+    () => isEffectiveAssistantWorking
+      ? getLiveProcessGroups(renderableMessages, { isAssistantWorking: true })
         .filter((group) => shouldRenderLiveProcessGroup(group, runMode))
       : [],
-    [isAssistantWorking, renderableMessages, runMode],
+    [isEffectiveAssistantWorking, renderableMessages, runMode],
   );
   const liveProcessGroupsByAnchor = useMemo(() => {
     const groupsByAnchor = new Map<number, LiveProcessGroup[]>();
@@ -585,8 +596,8 @@ function MessagesPaneV2({
     return groupsByAnchor;
   }, [liveProcessGroups]);
   const renderableMessageItems = useMemo(
-    () => buildRenderableMessageItems(renderableMessages, { isAssistantWorking }),
-    [isAssistantWorking, renderableMessages],
+    () => buildRenderableMessageItems(renderableMessages, { isAssistantWorking: isEffectiveAssistantWorking }),
+    [isEffectiveAssistantWorking, renderableMessages],
   );
   const keyedMessageItems = useMemo<KeyedRenderableMessageItem[]>(
     () => renderableMessageItems.map((item, index) => ({
@@ -627,14 +638,14 @@ function MessagesPaneV2({
     : keyedMessageItems;
   const [pendingNavigationRunId, setPendingNavigationRunId] = useState<string | null>(null);
   const liveProcessHeaderIndex = useMemo(() => {
-    if (!isAssistantWorking) return -1;
+    if (!isEffectiveAssistantWorking) return -1;
     for (let index = keyedMessageItems.length - 1; index >= 0; index -= 1) {
       if (keyedMessageItems[index].message.type === 'user') {
         return Math.min(index + 1, keyedMessageItems.length);
       }
     }
     return keyedMessageItems.length > 0 ? 0 : -1;
-  }, [isAssistantWorking, keyedMessageItems]);
+  }, [isEffectiveAssistantWorking, keyedMessageItems]);
   const lastUserRenderIndex = useMemo(() => {
     for (let index = keyedMessageItems.length - 1; index >= 0; index -= 1) {
       if (keyedMessageItems[index].message.type === 'user') return index;
@@ -647,14 +658,14 @@ function MessagesPaneV2({
   // activity-based timing is unreliable because `activityMessages` accumulates
   // across turns in the session store.
   const liveProcessStartedAtMs = useMemo(() => {
-    if (!isAssistantWorking || liveProcessHeaderIndex <= 0) return null;
+    if (!isEffectiveAssistantWorking || liveProcessHeaderIndex <= 0) return null;
     const anchorMessage = keyedMessageItems[liveProcessHeaderIndex - 1]?.message;
     if (anchorMessage?.type !== 'user' || anchorMessage.timestamp == null) return null;
     const parsed = Date.parse(String(anchorMessage.timestamp));
     return Number.isFinite(parsed) ? parsed : null;
-  }, [isAssistantWorking, keyedMessageItems, liveProcessHeaderIndex]);
+  }, [isEffectiveAssistantWorking, keyedMessageItems, liveProcessHeaderIndex]);
   const hasLiveAssistantContent = useMemo(() => {
-    if (!isAssistantWorking || liveProcessHeaderIndex < 0) return false;
+    if (!isEffectiveAssistantWorking || liveProcessHeaderIndex < 0) return false;
     return keyedMessageItems.slice(liveProcessHeaderIndex).some((item) => (
       item.message.type === 'assistant' &&
       !item.message.isThinking &&
@@ -662,9 +673,9 @@ function MessagesPaneV2({
       typeof item.message.content === 'string' &&
       item.message.content.trim().length > 0
     ));
-  }, [isAssistantWorking, keyedMessageItems, liveProcessHeaderIndex]);
+  }, [isEffectiveAssistantWorking, keyedMessageItems, liveProcessHeaderIndex]);
   const hasPendingToolUse = useMemo(() => {
-    if (!isAssistantWorking || liveProcessHeaderIndex < 0) return false;
+    if (!isEffectiveAssistantWorking || liveProcessHeaderIndex < 0) return false;
     const liveItems = keyedMessageItems.slice(liveProcessHeaderIndex);
     let lastToolUseIdx = -1;
     for (let index = liveItems.length - 1; index >= 0; index -= 1) {
@@ -679,13 +690,13 @@ function MessagesPaneV2({
       typeof item.message.content === 'string' && item.message.content.trim().length > 0
     );
     return !hasContentAfterTool;
-  }, [isAssistantWorking, keyedMessageItems, liveProcessHeaderIndex]);
+  }, [isEffectiveAssistantWorking, keyedMessageItems, liveProcessHeaderIndex]);
   const runningSubagentActivity = useMemo(
     () => [...subagentActivities].reverse().find(isRunningActivity) || null,
     [subagentActivities],
   );
   const streamingThinkingContent = useMemo(() => {
-    if (!showThinking || !isAssistantWorking) {
+    if (!showThinking || !isEffectiveAssistantWorking) {
       return null;
     }
     for (let i = visibleMessages.length - 1; i >= 0; i--) {
@@ -696,7 +707,7 @@ function MessagesPaneV2({
       if (msg.type === 'user') break;
     }
     return null;
-  }, [showThinking, isAssistantWorking, visibleMessages]);
+  }, [showThinking, isEffectiveAssistantWorking, visibleMessages]);
   const liveStatusStep = useMemo<ProcessTraceStep>(() => {
     if (streamingThinkingContent) {
       return {
@@ -726,7 +737,7 @@ function MessagesPaneV2({
     workingStatus,
   ]);
   const hasOpenEndedLiveProcessGroup = liveProcessGroups.some((group) => group.isRunning);
-  const shouldRenderBottomLiveStatus = isAssistantWorking && !hasOpenEndedLiveProcessGroup;
+  const shouldRenderBottomLiveStatus = isEffectiveAssistantWorking && !hasOpenEndedLiveProcessGroup;
 
   const bumpHeightVersion = useCallback(() => {
     if (heightVersionRafRef.current !== null) return;
@@ -938,7 +949,7 @@ function MessagesPaneV2({
         onOpenSubagentDetail={handleOpenSubagentDetail}
         subagentActivityById={subagentActivityById}
         subagentThinkingById={subagentThinkingById}
-        isSessionRunning={isAssistantWorking}
+        isSessionRunning={isEffectiveAssistantWorking}
       />
     ))
   ), [
@@ -958,7 +969,7 @@ function MessagesPaneV2({
     handleProcessExpandedChange,
     showRawParameters,
     showThinking,
-    isAssistantWorking,
+    isEffectiveAssistantWorking,
   ]);
 
   const renderLiveProcessGroup = useCallback((group: LiveProcessGroup, index: number) => {
@@ -997,7 +1008,6 @@ function MessagesPaneV2({
     );
   }, [
     handleProcessExpandedChange,
-    isAssistantWorking,
     isProcessExpanded,
     liveProcessGroups,
     liveStatusStep,
@@ -1011,7 +1021,7 @@ function MessagesPaneV2({
     const nextMessage = item.renderIndex < keyedMessageItems.length - 1
       ? keyedMessageItems[item.renderIndex + 1].message
       : null;
-    const isLast = !isAssistantWorking && item.renderIndex === keyedMessageItems.length - 1;
+    const isLast = !isEffectiveAssistantWorking && item.renderIndex === keyedMessageItems.length - 1;
     const forkCarriedMessageCount = countForkCarriedMessages(
       renderableMessages,
       item.originalIndex,
@@ -1023,7 +1033,7 @@ function MessagesPaneV2({
       if (!isRenderableAssistantProse(item.message)) {
         return false;
       }
-      if (isAssistantWorking && item.renderIndex >= liveProcessHeaderIndex) {
+      if (isEffectiveAssistantWorking && item.renderIndex >= liveProcessHeaderIndex) {
         return false;
       }
 
@@ -1085,11 +1095,11 @@ function MessagesPaneV2({
             inlineThinking={inlineThinking}
             isProcessExpanded={isProcessExpanded}
             onProcessExpandedChange={handleProcessExpandedChange}
-            defaultProcessExpanded={!isAssistantWorking && lastUserRenderIndex >= 0 && item.renderIndex > lastUserRenderIndex}
+            defaultProcessExpanded={!isEffectiveAssistantWorking && lastUserRenderIndex >= 0 && item.renderIndex > lastUserRenderIndex}
             onOpenSubagentDetail={handleOpenSubagentDetail}
             subagentActivityById={subagentActivityById}
             subagentThinkingById={subagentThinkingById}
-            isSessionRunning={isAssistantWorking}
+            isSessionRunning={isEffectiveAssistantWorking}
             onFork={onFork}
             forkCarriedMessageCount={forkCarriedMessageCount}
             forkDisabled={forkDisabled}
@@ -1124,7 +1134,7 @@ function MessagesPaneV2({
     handleProcessExpandedChange,
     inlineThinking,
     isProcessExpanded,
-    isAssistantWorking,
+    isEffectiveAssistantWorking,
     keyedMessageItems,
     lastUserRenderIndex,
     renderableMessages,
@@ -1355,7 +1365,7 @@ function MessagesPaneV2({
             <div aria-hidden="true" style={{ height: virtualWindow.bottomPadding }} />
           ) : null}
 
-          {isAssistantWorking &&
+          {isEffectiveAssistantWorking &&
           liveProcessHeaderIndex === keyedMessageItems.length &&
           keyedMessageItems[liveProcessHeaderIndex - 1]?.message.type !== 'user' ? (
             <LiveProcessHeader

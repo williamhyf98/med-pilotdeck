@@ -61,6 +61,13 @@ import {
 } from "../../trauma/displayLabels.js";
 import { validateTurnFormInput } from "../../trauma/factMerge.js";
 import type { CitationMetadata, TurnFormInput } from "../../trauma/types.js";
+import type { KnowledgeQueryRewriter } from "../../trauma/stations/knowledgeQueryRewriter.js";
+import type { KnowledgeQaStation } from "../../trauma/stations/knowledgeQa.js";
+import type { TraumaRagClient } from "../../trauma/rag/client.js";
+import { mergeRetrieval } from "../../trauma/rag/merge.js";
+import { runBaselineRetrieval } from "../../trauma/rag/retrieval.js";
+import type { RetrievalQuery } from "../../trauma/rag/queryPlan.js";
+import type { EvidenceChunk } from "../../trauma/types.js";
 import type {
   CronCreateInput,
   CronCreateResult,
@@ -115,6 +122,7 @@ import {
   type TraumaTurnRunner,
 } from "../../trauma/index.js";
 import { extractedInputIntent, normalizeExtractedForm, traumaScopeReply } from "../../trauma/formDraft.js";
+import { extractRecentConversationMessages, renderRecentConversation } from "../../trauma/conversationHistory.js";
 
 const PLAN_COMMAND_USAGE = "用法：/plan <任务>\n例如：/plan 设计一个新功能";
 const MAX_GATEWAY_TOOL_RESULT_PREVIEW_CHARS = 20_000;
@@ -139,6 +147,14 @@ function resolveStreamedCitations(
     .filter((citation) => indexes.has(citation.index))
     .sort((left, right) => left.index - right.index);
   return used.length > 0 ? used : undefined;
+}
+
+function traumaCitationMetadata(chunks: EvidenceChunk[]): CitationMetadata[] {
+  return chunks.map((chunk, index) => ({
+    index: index + 1,
+    title: normalizeChineseDisplayText(chunk.documentTitle),
+    section: normalizeChineseDisplayText(chunk.section || chunk.chapter || chunk.heading || "未标注章节"),
+  }));
 }
 
 function isTraumaProject(projectKey: string | undefined): projectKey is string {
@@ -263,6 +279,14 @@ export type InProcessGatewayOptions = {
     projectKey: string;
     sessionKey: string;
   }) => TraumaTurnRunner | Promise<TraumaTurnRunner>;
+  traumaKnowledgeQaFactory?: (input: {
+    projectKey: string;
+    sessionKey: string;
+  }) => Promise<{
+    rewriter: KnowledgeQueryRewriter;
+    rag: TraumaRagClient;
+    qa: KnowledgeQaStation;
+  }>;
   /** Persists the bypassed user/assistant pair to the normal transcript. */
   recordTraumaTurn?: (input: {
     projectKey: string;
@@ -270,6 +294,7 @@ export type InProcessGatewayOptions = {
     runId: string;
     userText: string;
     assistantText: string;
+    attachments?: Array<{ path: string; name: string; size?: number; mimeType?: string; relativePath?: string }>;
     aiTitle?: string;
     citations?: CitationMetadata[];
     processMessages?: CanonicalMessage[];
@@ -530,16 +555,10 @@ export class InProcessGateway implements Gateway {
           }, input.timeoutMs);
         }
         if (isTraumaProject(input.projectKey)) {
-          if (!this.options.traumaRunnerFactory) {
-            throw new Error("war_trauma runner is not configured");
-          }
           const traumaController = new AbortController();
           this.traumaTurnControllers.set(input.sessionKey, { runId, controller: traumaController });
           const traumaAbortSignal = traumaController.signal;
-          const runner = await this.options.traumaRunnerFactory({
-            projectKey: input.projectKey,
-            sessionKey: input.sessionKey,
-          });
+          let runner: TraumaTurnRunner | undefined;
           // 先把 turn_started 和逐阶段进度推给宿主，否则界面在整轮结束前只能一直显示「连接中」。
           const emit = (gatewayEvent: GatewayEvent) => {
             this.recordActiveTurnEvent(input.sessionKey, gatewayEvent);
@@ -625,7 +644,6 @@ export class InProcessGateway implements Gateway {
               }
               const inputIntent = extractedInputIntent(extracted);
               if (inputIntent !== "case_update") {
-                const assistantText = traumaScopeReply(inputIntent);
                 emitTraumaProcessEvents(traumaExtractionEvents({
                   runId,
                   status: "finished",
@@ -634,6 +652,109 @@ export class InProcessGateway implements Gateway {
                     ? `输入意图：${inputIntent}；${extracted.scopeReason}`
                     : `输入意图：${inputIntent}`,
                 }));
+                if (inputIntent === "domain_question_no_case" && this.options.traumaKnowledgeQaFactory) {
+                  const knowledge = await this.options.traumaKnowledgeQaFactory({
+                    projectKey: input.projectKey,
+                    sessionKey: input.sessionKey,
+                  });
+                  const recent = this.options.readSessionMessages
+                    ? await this.options.readSessionMessages({
+                      sessionKey: input.sessionKey,
+                      projectKey: input.projectKey,
+                      limit: 12,
+                      direction: "backward",
+                    }).then((result) => renderRecentConversation(
+                      extractRecentConversationMessages(
+                        result.messages,
+                        input.traumaRawInput?.trim(),
+                      ),
+                    )).catch(() => "")
+                    : "";
+                  const rewrite = await knowledge.rewriter.rewrite({
+                    rawQuestion: input.traumaRawInput.trim(),
+                    recentConversation: recent,
+                    signal: traumaAbortSignal,
+                  });
+                  const retrievalQueries: RetrievalQuery[] = rewrite.rewrittenQueries.map((item) => ({
+                    kind: "knowledge",
+                    query: item.query,
+                    reason: item.reason,
+                    critical: false,
+                  }));
+                  const results = await runBaselineRetrieval({
+                    queries: retrievalQueries,
+                    rag: knowledge.rag,
+                    signal: traumaAbortSignal,
+                  });
+                  const merged = mergeRetrieval({
+                    queries: retrievalQueries,
+                    results,
+                  });
+                  const citations = traumaCitationMetadata(merged.promptChunks);
+                  let streamedText = "";
+                  let citationsSent = false;
+                  const displayStream = createChineseDisplayStreamNormalizer();
+                  const qaResponse = await knowledge.qa.answer({
+                    question: input.traumaRawInput.trim(),
+                    rewrittenQueries: rewrite.rewrittenQueries.map((item) => item.query),
+                    promptChunks: merged.promptChunks,
+                    signal: traumaAbortSignal,
+                    onNaturalLanguageDelta: (text) => {
+                      const displayText = displayStream.push(text);
+                      if (!displayText) return;
+                      streamedText += displayText;
+                      const attach = !citationsSent && citations.length > 0;
+                      if (attach) citationsSent = true;
+                      emit({
+                        type: "assistant_text_delta",
+                        text: displayText,
+                        runId,
+                        ...(attach ? { citations } : {}),
+                      });
+                    },
+                    onNaturalLanguageEnd: () => {
+                      const finalText = displayStream.flush();
+                      if (finalText) {
+                        streamedText += finalText;
+                        emit({ type: "assistant_text_delta", text: finalText, runId });
+                      }
+                    },
+                  });
+                  if (!streamedText && qaResponse.naturalLanguageAnswer) {
+                    streamedText = normalizeChineseDisplayText(qaResponse.naturalLanguageAnswer);
+                    emit({
+                      type: "assistant_text_delta",
+                      text: streamedText,
+                      runId,
+                      ...(citations.length > 0 ? { citations } : {}),
+                    });
+                  }
+                  const citedIds = new Set(qaResponse.citationChunkIds);
+                  const usedCitations = resolveStreamedCitations(streamedText, citations)
+                    ?.filter((citation) => merged.promptChunks[citation.index - 1]
+                      && citedIds.has(merged.promptChunks[citation.index - 1].id));
+                  const finalCitations = usedCitations && usedCitations.length > 0
+                    ? usedCitations
+                    : undefined;
+                  emit({
+                    type: "assistant_text_end",
+                    runId,
+                    ...(finalCitations ? { citations: finalCitations } : {}),
+                  });
+                  await this.options.recordTraumaTurn?.({
+                    projectKey: input.projectKey,
+                    sessionKey: input.sessionKey,
+                    runId,
+                    userText: input.traumaRawInput.trim(),
+                    assistantText: normalizeChineseDisplayText(streamedText),
+                    ...(input.traumaAttachments?.length ? { attachments: input.traumaAttachments } : {}),
+                    aiTitle: "战创伤知识问答",
+                    ...(finalCitations ? { citations: finalCitations } : {}),
+                  });
+                  emit({ type: "turn_completed", usage: {}, finishReason: "completed", runId });
+                  return;
+                }
+                const assistantText = traumaScopeReply(inputIntent);
                 emit({ type: "assistant_text_delta", text: assistantText, runId });
                 emit({ type: "assistant_text_end", runId });
                 await this.options.recordTraumaTurn?.({
@@ -642,6 +763,7 @@ export class InProcessGateway implements Gateway {
                   runId,
                   userText: input.traumaRawInput.trim(),
                   assistantText,
+                  ...(input.traumaAttachments?.length ? { attachments: input.traumaAttachments } : {}),
                   aiTitle: "非推演输入",
                   processMessages: traumaProcessMessages,
                 });
@@ -653,6 +775,13 @@ export class InProcessGateway implements Gateway {
                 });
                 return;
               }
+              if (!this.options.traumaRunnerFactory) {
+                throw new Error("war_trauma runner is not configured");
+              }
+              runner = await this.options.traumaRunnerFactory({
+                projectKey: input.projectKey,
+                sessionKey: input.sessionKey,
+              });
               traumaForm = normalizeExtractedForm(extracted);
               if (!validateTurnFormInput(traumaForm)) {
                 throw new Error("抽取结果未包含可用于推演的病例信息");
@@ -685,6 +814,15 @@ export class InProcessGateway implements Gateway {
           }
           if (!validateTurnFormInput(traumaForm)) {
             throw new Error("war_trauma turns require a valid traumaForm");
+          }
+          if (!runner) {
+            if (!this.options.traumaRunnerFactory) {
+              throw new Error("war_trauma runner is not configured");
+            }
+            runner = await this.options.traumaRunnerFactory({
+              projectKey: input.projectKey,
+              sessionKey: input.sessionKey,
+            });
           }
           let assistantTextStreamed = false;
           let assistantTextEnded = false;
@@ -820,6 +958,7 @@ export class InProcessGateway implements Gateway {
             runId,
             userText: input.traumaRawInput?.trim() || summarizeTraumaForm(traumaForm),
             assistantText: normalizeChineseDisplayText(response.naturalLanguageAnswer),
+            ...(input.traumaAttachments?.length ? { attachments: input.traumaAttachments } : {}),
             aiTitle: normalizeChineseDisplayText(response.memo.title),
             ...(assistantCitations && assistantCitations.length > 0 ? { citations: assistantCitations } : {}),
             processMessages: traumaProcessMessages,

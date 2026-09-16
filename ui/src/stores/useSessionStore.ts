@@ -276,25 +276,34 @@ function normalizeUserVisibleText(content?: string): string {
   return normalizeRealtimeText(parseUserAttachmentNote(content ?? '').content);
 }
 
-function isConfirmedUserMessageDuplicate(
+function findConfirmedUserMessageDuplicateIndex(
   realtimeMessage: NormalizedMessage,
   serverMessages: NormalizedMessage[],
-): boolean {
+): number {
   if (
     realtimeMessage.kind !== 'text'
     || realtimeMessage.role !== 'user'
     || !realtimeMessage.id.startsWith('local_')
   ) {
-    return false;
+    return -1;
+  }
+
+  const realtimeTurnId = getMessageTurnId(realtimeMessage);
+  if (realtimeTurnId) {
+    const sameTurnIndex = serverMessages.findIndex((serverMessage) => (
+      serverMessage.kind === 'text'
+      && serverMessage.role === 'user'
+      && getMessageTurnId(serverMessage) === realtimeTurnId
+    ));
+    if (sameTurnIndex >= 0) return sameTurnIndex;
   }
 
   const realtimeText = normalizeUserVisibleText(realtimeMessage.content);
-  if (!realtimeText) return false;
+  if (!realtimeText) return -1;
 
-  const realtimeTurnId = getMessageTurnId(realtimeMessage);
   const realtimeTimestamp = parseTimestampMs(realtimeMessage.timestamp);
 
-  return serverMessages.some((serverMessage) => {
+  return serverMessages.findIndex((serverMessage) => {
     if (serverMessage.kind !== 'text' || serverMessage.role !== 'user') {
       return false;
     }
@@ -319,6 +328,79 @@ function isConfirmedUserMessageDuplicate(
 
     return Math.abs(serverTimestamp - realtimeTimestamp) <= 10_000;
   });
+}
+
+function isConfirmedUserMessageDuplicate(
+  realtimeMessage: NormalizedMessage,
+  serverMessages: NormalizedMessage[],
+): boolean {
+  return findConfirmedUserMessageDuplicateIndex(realtimeMessage, serverMessages) >= 0;
+}
+
+/**
+ * 缩略图与附件卡片只存在于客户端：图片是 blob URL，附件元数据来自上传那一刻，
+ * 服务端转录里两者都没有。乐观用户气泡一旦被服务端同轮的 user 帧取代（见
+ * `shouldKeepRealtimeAfterServerRefresh`），不搬运这两个字段的话，答案输出完毕
+ * 的瞬间气泡里的图片和文件名卡片就会消失。
+ *
+ * 就地替换 `serverMessages` 中被匹配到的条目（合并出新对象，不改原引用的字段），
+ * 必须在把该数组交给 slot 之前调用。
+ */
+function carryOverLocalUserAttachments(
+  realtimeMessages: NormalizedMessage[],
+  serverMessages: NormalizedMessage[],
+): void {
+  for (const realtimeMessage of realtimeMessages) {
+    if (!hasClientOnlyUserMedia(realtimeMessage)) continue;
+    const index = findConfirmedUserMessageDuplicateIndex(realtimeMessage, serverMessages);
+    if (index < 0) continue;
+    mergeUserMediaInto(serverMessages, index, realtimeMessage);
+  }
+}
+
+/**
+ * 同一原因的第二道搬运：乐观气泡在第一次刷新后就被丢弃了，之后每次
+ * `refreshFromServer` 都会用全新的服务端数组整体替换 `serverMessages`。若不把上一份
+ * 快照里已搬运过的字段继续带过来，图片会在「下一轮」而不是「本轮」消失。
+ * 按 id 配对（服务端 id 跨刷新稳定），且只在新条目自身没有该字段时填充。
+ */
+function carryOverServerUserAttachments(
+  previousServerMessages: NormalizedMessage[],
+  incomingMessages: NormalizedMessage[],
+): void {
+  const byId = new Map<string, NormalizedMessage>();
+  for (const message of previousServerMessages) {
+    if (hasClientOnlyUserMedia(message)) byId.set(message.id, message);
+  }
+  if (byId.size === 0) return;
+
+  for (let index = 0; index < incomingMessages.length; index += 1) {
+    const source = byId.get(incomingMessages[index].id);
+    if (source) mergeUserMediaInto(incomingMessages, index, source);
+  }
+}
+
+function hasClientOnlyUserMedia(message: NormalizedMessage): boolean {
+  if (message.kind !== 'text' || message.role !== 'user') return false;
+  return Boolean(message.images?.length) || Boolean(message.attachments?.length);
+}
+
+function mergeUserMediaInto(
+  target: NormalizedMessage[],
+  index: number,
+  source: NormalizedMessage,
+): void {
+  const existing = target[index];
+  // 目标条目若自己带了同类字段，以它为准——它才是持久化的真相。
+  const takeImages = Boolean(source.images?.length) && !existing.images?.length;
+  const takeAttachments = Boolean(source.attachments?.length) && !existing.attachments?.length;
+  if (!takeImages && !takeAttachments) return;
+
+  target[index] = {
+    ...existing,
+    ...(takeImages ? { images: source.images } : {}),
+    ...(takeAttachments ? { attachments: source.attachments } : {}),
+  };
 }
 
 /**
@@ -906,6 +988,14 @@ export function useSessionStore() {
       slot._serverAppliedGeneration = requestGeneration;
       const messages: NormalizedMessage[] = data.messages || [];
 
+      // 在服务端消息取代乐观气泡之前，把仅存在于客户端的缩略图/附件卡片搬过去。
+      if (messages.length > 0) {
+        if (slot.realtimeMessages.length > 0) {
+          carryOverLocalUserAttachments(slot.realtimeMessages, messages);
+        }
+        carryOverServerUserAttachments(slot.serverMessages, messages);
+      }
+
       slot.serverMessages = messages;
       slot.total = data.total ?? messages.length;
       slot.hasMore = Boolean(data.hasMore);
@@ -1319,6 +1409,13 @@ export function useSessionStore() {
         return;
       }
       slot._serverAppliedGeneration = requestGeneration;
+      // 在服务端消息取代乐观气泡之前，把仅存在于客户端的缩略图/附件卡片搬过去。
+      if (incomingMessages.length > 0) {
+        if (slot.realtimeMessages.length > 0) {
+          carryOverLocalUserAttachments(slot.realtimeMessages, incomingMessages);
+        }
+        carryOverServerUserAttachments(slot.serverMessages, incomingMessages);
+      }
       // Don't overwrite existing server messages with empty response
       // (race condition: server hasn't committed yet after stop/complete).
       if (incomingMessages.length > 0 || slot.serverMessages.length === 0) {

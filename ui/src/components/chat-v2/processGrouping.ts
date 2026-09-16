@@ -1007,6 +1007,27 @@ export function buildRenderableMessageItems(
   const collapsedIndices = new Set<number>();
   const turns = createMessageTurns(messages);
   const liveTurn = options.isAssistantWorking ? turns[turns.length - 1] : null;
+  const stoppedTraumaTurns = new Map<MessageTurn, number>();
+  const stoppedTraumaTurnByMessageIndex = new Map<number, MessageTurn>();
+
+  for (const turn of turns) {
+    let stopNoticeIndex = -1;
+    for (let index = turn.start; index < turn.end; index += 1) {
+      const message = messages[index];
+      if (
+        message?.isInterruptedNotice
+        && String(message.content || '').trim() === '本轮推演已停止。'
+      ) {
+        stopNoticeIndex = index;
+      }
+    }
+    if (stopNoticeIndex >= 0) {
+      stoppedTraumaTurns.set(turn, stopNoticeIndex);
+      for (let index = turn.start; index < turn.end; index += 1) {
+        stoppedTraumaTurnByMessageIndex.set(index, turn);
+      }
+    }
+  }
 
   const liveStandaloneThinkingIndices = new Set<number>();
   if (liveTurn) {
@@ -1046,6 +1067,14 @@ export function buildRenderableMessageItems(
     if (message.isAgentActivitySummary) {
       return;
     }
+    const stoppedTurn = stoppedTraumaTurnByMessageIndex.get(originalIndex);
+    if (stoppedTurn) {
+      const stopNoticeIndex = stoppedTraumaTurns.get(stoppedTurn);
+      if (message.type !== 'user' && originalIndex !== stopNoticeIndex) {
+        collapsedIndices.add(originalIndex);
+        return;
+      }
+    }
     if (
       liveTurn &&
       originalIndex >= liveTurn.start &&
@@ -1072,6 +1101,9 @@ export function buildRenderableMessageItems(
   attachSummariesToTurns(messages, turns);
 
   turns.forEach((turn, turnIndex) => {
+    if (stoppedTraumaTurns.has(turn)) {
+      return;
+    }
     const isLatestTurn = turnIndex === turns.length - 1;
     if (options.isAssistantWorking && isLatestTurn) {
       return;

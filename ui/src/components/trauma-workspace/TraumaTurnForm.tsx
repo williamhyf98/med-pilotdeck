@@ -27,6 +27,8 @@ type TraumaTurnFormProps = {
   onReExtract?: () => void;
   /** 锁定救治级别（如只剩外科复苏），禁用级别选择并强制使用该值。 */
   statedSubStageLocked?: boolean;
+  /** 嵌入外层 composer 时使用更轻的表格外观，避免卡片套卡片。 */
+  embedded?: boolean;
 };
 
 type NarrativeKey = 'injuryNarrative' | 'treatmentNarrative' | 'evacuationNarrative' | 'note';
@@ -206,6 +208,7 @@ export default function TraumaTurnForm({
   mode = 'manual',
   onReExtract,
   statedSubStageLocked = false,
+  embedded = false,
 }: TraumaTurnFormProps) {
   const [values, setValues] = useState<FormValues>(() => {
     if (initialValues) {
@@ -256,7 +259,11 @@ export default function TraumaTurnForm({
     <form
       aria-label="本轮伤情录入"
       onSubmit={(event) => void handleSubmit(event)}
-      className="rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm dark:border-neutral-800 dark:bg-neutral-900"
+      className={cn(
+        embedded
+          ? 'rounded-lg border border-neutral-200/80 bg-neutral-50/60 p-2 dark:border-neutral-800 dark:bg-neutral-900/45'
+          : 'rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm dark:border-neutral-800 dark:bg-neutral-900',
+      )}
       noValidate
     >
       {mode === 'confirm' && sourceText ? (

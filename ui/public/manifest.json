@@ -1,7 +1,7 @@
 {
-  "name": "PilotDeck",
-  "short_name": "PilotDeck",
-  "description": "PilotDeck — agent-driven development workspace",
+  "name": "MedPD",
+  "short_name": "MedPD",
+  "description": "MedPD — 医学辅助对话助手",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",

@@ -27,6 +27,89 @@ afterEach(() => {
 });
 
 describe('TraumaComposer', () => {
+  it('auto-grows the free text area while retaining a max-height scroll cap', () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'scrollHeight',
+    );
+    Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get() {
+        return 168;
+      },
+    });
+
+    render(
+      <TraumaComposer
+        projectKey="trauma_med-demo"
+        sessionId="web:s_1"
+        onSubmit={vi.fn(async () => undefined)}
+      />,
+    );
+
+    const textarea = screen.getByLabelText('本轮伤情自由输入') as HTMLTextAreaElement;
+    fireEvent.change(textarea, {
+      target: { value: '第一行\n第二行\n第三行\n第四行' },
+    });
+
+    expect(textarea.style.height).toBe('168px');
+    expect(textarea.className).toContain('max-h-[40vh]');
+    expect(textarea.className).toContain('overflow-y-auto');
+
+    if (originalDescriptor) {
+      Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', originalDescriptor);
+    } else {
+      delete (HTMLTextAreaElement.prototype as unknown as { scrollHeight?: number }).scrollHeight;
+    }
+  });
+
+  it('switches between free text and exact-entry modes', async () => {
+    render(
+      <TraumaComposer
+        projectKey="trauma_med-demo"
+        sessionId="web:s_1"
+        onSubmit={vi.fn(async () => undefined)}
+      />,
+    );
+
+    expect(screen.getByLabelText('本轮伤情自由输入')).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '精确录入' }));
+    expect(screen.getByRole('form', { name: '本轮伤情录入' })).not.toBeNull();
+    expect(screen.getByRole('button', { name: '自由对话' })).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '自由对话' }));
+    await waitFor(() => {
+      expect(screen.getByLabelText('本轮伤情自由输入')).not.toBeNull();
+    });
+  });
+
+  it('submits the exact-entry form without asking the runner to extract', async () => {
+    const onSubmit = vi.fn(async () => undefined);
+    render(
+      <TraumaComposer
+        projectKey="trauma_med-demo"
+        sessionId="web:s_1"
+        onSubmit={onSubmit}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '精确录入' }));
+    fireEvent.change(screen.getByLabelText('伤情描述'), {
+      target: { value: '右小腿开放伤，渗血' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '提交本轮信息' }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        injuryNarrative: '右小腿开放伤，渗血',
+      }),
+      '',
+      false,
+    );
+  });
+
   it('submits free text immediately and asks the runner to extract it', async () => {
     const onSubmit = vi.fn(async () => undefined);
     render(

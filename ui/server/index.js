@@ -3297,8 +3297,13 @@ app.post('/api/projects/:projectName/upload-attachments', authenticateToken, asy
         let attachmentDir = null;
         try {
             const projectRoot = await extractProjectDirectory(req.params.projectName);
-            const batchId = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-            const targetDir = path.join(projectRoot, 'inbox', batchId);
+            const requestedSessionId = typeof req.body?.sessionId === 'string'
+                ? req.body.sessionId.trim()
+                : '';
+            const safeSessionId = requestedSessionId
+                ? sanitizeSessionIdForPath(requestedSessionId)
+                : `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+            const targetDir = path.join(projectRoot, 'inbox', safeSessionId);
             const validation = validatePathInProject(projectRoot, targetDir);
             if (!validation.valid) {
                 throw new Error(validation.error || 'Invalid attachment target');

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { ReactNode } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import TraumaWorkspace from './TraumaWorkspace';
@@ -26,6 +27,28 @@ afterEach(() => {
 });
 
 describe('TraumaWorkspace', () => {
+  it('injects the trauma composer into a runtime chat panel composer slot', () => {
+    function RuntimePanel({ externalComposerSlot }: { externalComposerSlot?: ReactNode }) {
+      return (
+        <div data-testid="runtime-chat-shell">
+          <div>runtime messages</div>
+          <div data-testid="runtime-composer-slot">{externalComposerSlot}</div>
+        </div>
+      );
+    }
+
+    render(
+      <TraumaWorkspace
+        resetKey="trauma:slot"
+        onSubmitForm={vi.fn()}
+        runtimePanel={<RuntimePanel />}
+      />,
+    );
+
+    expect(screen.getByText('runtime messages')).not.toBeNull();
+    expect(within(screen.getByTestId('runtime-composer-slot')).getByLabelText('本轮伤情自由输入')).not.toBeNull();
+  });
+
   it('renders the focused form and can host the chat surface without the old timeline', () => {
     render(
       <TraumaWorkspace

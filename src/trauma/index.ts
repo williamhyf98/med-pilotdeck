@@ -20,6 +20,7 @@ export type { TraumaAuditLogger, TraumaAuditRecord } from "./auditLog.js";
 export { createStructuredModelClient } from "./modelClient.js";
 export type { TraumaImageInput } from "./modelClient.js";
 export { createMcpTraumaRagClient } from "./rag/client.js";
+export { runBaselineRetrieval } from "./rag/retrieval.js";
 export { createTraumaTurnRunner } from "./runner.js";
 export { createTraumaCaseStore } from "./store.js";
 export type {
@@ -37,6 +38,10 @@ export {
 export { extractedInputIntent, normalizeExtractedForm, traumaScopeReply } from "./formDraft.js";
 export { createExtractionStation } from "./stations/extractor.js";
 export type { ExtractionStation, ExtractorInput } from "./stations/extractor.js";
+export { createKnowledgeQaStation } from "./stations/knowledgeQa.js";
+export type { KnowledgeQaStation } from "./stations/knowledgeQa.js";
+export { createKnowledgeQueryRewriter } from "./stations/knowledgeQueryRewriter.js";
+export type { KnowledgeQueryRewriter } from "./stations/knowledgeQueryRewriter.js";
 export { createInterpretationStation, MAX_INTERPRETATION_IMAGES } from "./stations/interpreter.js";
 export type { InterpretationStation } from "./stations/interpreter.js";
 export { EXTRACTOR_OUTPUT_SCHEMA, validateExtractedTurnForm } from "./schemas.js";

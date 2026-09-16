@@ -1113,6 +1113,57 @@
     scrollbar-gutter: stable;
   }
 
+  @keyframes trauma-panel-enter-right {
+    from {
+      opacity: 0;
+      transform: translateX(1.5rem) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0) scale(1);
+    }
+  }
+
+  @keyframes trauma-panel-enter-left {
+    from {
+      opacity: 0;
+      transform: translateX(-1.5rem) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0) scale(1);
+    }
+  }
+
+  @keyframes trauma-panel-exit-left {
+    from {
+      opacity: 1;
+      transform: translateX(0) scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: translateX(-1.5rem) scale(0.985);
+    }
+  }
+
+  @keyframes trauma-panel-exit-right {
+    from {
+      opacity: 1;
+      transform: translateX(0) scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: translateX(1.5rem) scale(0.985);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pd-composer-container [class*='trauma-panel-enter'],
+    .pd-composer-container [class*='trauma-panel-exit'] {
+      animation-duration: 1ms !important;
+    }
+  }
+
   /*
    * Sent messages keep the same bounded attachment area as the composer, so a
    * bubble with many files/images never pushes the conversation out of view.
