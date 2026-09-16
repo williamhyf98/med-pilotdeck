@@ -550,6 +550,16 @@ export function isRealtimeMessageRepresentedOnServer(
 
   const candidates = getSameTurnServerCandidates(realtimeMessage, serverMessages);
   switch (realtimeMessage.kind) {
+    case 'stream_delta': {
+      if (!getMessageTurnId(realtimeMessage)) return false;
+      const content = normalizeRealtimeText(realtimeMessage.content);
+      if (!content) return false;
+      return candidates.some((message) => (
+        message.kind === 'text'
+        && message.role === 'assistant'
+        && normalizeRealtimeText(message.content) === content
+      ));
+    }
     case 'text':
     case 'thinking': {
       const content = normalizeRealtimeText(realtimeMessage.content);
@@ -622,7 +632,7 @@ export function shouldKeepRealtimeAfterServerRefresh(
   serverMessages: NormalizedMessage[],
 ): boolean {
   if (realtimeMessage.id.startsWith('__streaming_')) {
-    return true;
+    return !isRealtimeMessageRepresentedOnServer(realtimeMessage, serverMessages);
   }
   if (!PERSISTED_RENDERABLE_KINDS.has(realtimeMessage.kind)) return false;
   return !isRealtimeMessageRepresentedOnServer(realtimeMessage, serverMessages);

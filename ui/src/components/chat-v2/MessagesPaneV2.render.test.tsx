@@ -168,7 +168,13 @@ describe('MessagesPaneV2 render behavior', () => {
     expect(screen.getByText(/输入伤员的自由描述/)).toBeTruthy();
     expect(screen.queryByText('开始新对话')).toBeNull();
     expect(screen.queryByText('Start a new conversation')).toBeNull();
-    expect(screen.getByAltText('Trauma Agent')).toBeTruthy();
+    const logo = screen.getByAltText('Trauma Agent');
+    expect(screen.queryByText(/^Trauma Agent$/i)).toBeNull();
+    expect(logo.className).toContain('h-auto');
+    expect(logo.className).toContain('w-52');
+    expect(logo.className).toContain('mb-3');
+    expect(logo.className).not.toContain('h-64');
+    expect(logo.parentElement?.className).not.toContain('border');
   });
 
   it('removes the trauma empty state once the first message is visible', () => {

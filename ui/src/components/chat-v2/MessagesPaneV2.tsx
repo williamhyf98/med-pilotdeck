@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, MutableRefObject, ReactNode, RefObject, SetStateAction } from 'react';
 import { useTranslation } from 'react-i18next';
-import { XCircle, GitBranch } from 'lucide-react';
+import { GitBranch, XCircle } from 'lucide-react';
 import type {
   ChatMessage,
   ChatRunMode,
@@ -134,17 +134,11 @@ function TraumaNewConversationEmptyState() {
   return (
     <div className="mx-auto flex h-full max-w-[760px] flex-col items-center justify-center px-6 py-10 text-center">
       <div className="flex w-full flex-col items-center">
-        <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-red-100 bg-white shadow-sm shadow-red-950/5 dark:border-red-900/50 dark:bg-neutral-950">
-          <img
-            src={medAssistantLogo}
-            alt="Trauma Agent"
-            className="h-11 w-11 object-contain"
-          />
-        </div>
-
-        <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.22em] text-red-700/80 dark:text-red-300/80">
-          Trauma Agent
-        </p>
+        <img
+          src={medAssistantLogo}
+          alt="Trauma Agent"
+          className="mb-3 h-auto w-52 max-w-[65vw] object-contain"
+        />
         <h2 className="text-balance text-[26px] font-semibold tracking-tight text-neutral-950 dark:text-neutral-50">
           战创伤救治推演助手
         </h2>
@@ -1178,9 +1172,8 @@ function MessagesPaneV2({
     renderWindowKey: `${virtualWindow.startIndex}:${virtualWindow.endIndex}`,
   });
   const searchIsRenderedByShell = useRegisterChatHistorySearchControls(chatHistorySearch);
-  const isWarTraumaProject = selectedProject
-    ? resolveProjectType(selectedProject) === 'war_trauma'
-    : false;
+  const selectedProjectType = selectedProject ? resolveProjectType(selectedProject) : null;
+  const isWarTraumaProject = selectedProjectType === 'war_trauma';
 
   return (
     <div className="relative min-h-0 flex-1 overflow-hidden">
