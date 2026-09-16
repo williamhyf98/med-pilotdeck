@@ -367,7 +367,12 @@ Task 4/5/10/11 都要改这个 vendored 子包，它目前**没有 test 脚本�
 - Create: `src/context/memory/edgeclaw-memory-core/test/service.test.ts`
 - Create: `src/context/memory/edgeclaw-memory-core/test/prompts.test.ts`
 
-- [ ] 加 `"test"` 脚本。与根仓库保持一致：`tsc -p tsconfig.json && node --test "test/**/*.test.js"`，或直接用根仓库已有的 `tsx` 跑源码。选定一种并写回本文档。
+- [ ] 加 `"test": "tsx --test \"test/**/*.test.ts\""`。**已定，不要再选**——理由：
+  - 子包 `tsconfig.json` 是 `rootDir: "./src"` + `include: ["src/**/*.ts"]`，测试文件不在编译范围内。走「先 tsc 再 node --test」必须另建 `tsconfig.test.json`，且产物会落进 `lib/`，而 `build` 脚本第一步就是 `rm -rf lib`。
+  - 根仓库已有 `tsx ^4.21.0`，方案中其他本地测试命令也都是 `tsx --test`，保持一致。
+  - 子包**不是 pnpm workspace 成员**（`pnpm-workspace.yaml` 只列了 `ui`），没有自己的 `node_modules`；`tsx` 靠父目录查找解析到根 `node_modules/.bin`。这可行但很隐蔽，**首次实现时必须实跑一次确认**；若失败则改为从根目录起跑：`pnpm exec tsx --test "src/context/memory/edgeclaw-memory-core/test/**/*.test.ts"`，并把本文档的运行命令一并改掉。
+  - `node --test` 的 glob 参数需要 Node 22+；子包 `engines` 已声明 `>=22.13.0 <23`，满足。
+- [ ] 确认新增 `test/` 目录不影响根 `prebuild`（它执行 `cd 子包 && npm run build`，`include` 只有 `src/**`，测试不会被编译进 `lib/`）。
 - [ ] `service.test.ts` 覆盖 `runDueScheduledMaintenance` 的现有门控：`intervalMinutes <= 0` 不执行、backlog 阈值 20、`changedFilesSinceLastDream === 0` 时不 Dream。**这是 Task 10 的回归基线，必须先固化当前行为。**
 - [ ] `prompts.test.ts` 对 5 个活提示词常量做结构快照（非全文），作为 Task 4/5/11 改写时的 diff 锚点。**不要为 `EXTRACTION_SYSTEM_PROMPT` 建快照**——它是死代码（§1.3），Task 12 会删。
 
