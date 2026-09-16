@@ -28,6 +28,10 @@ export interface FileMemoryClassificationResult {
     shouldStore: boolean;
     labels: MemoryClassificationLabel[];
 }
+export declare const MEMORY_CLASSIFICATION_SYSTEM_PROMPT: string;
+export declare const USER_NOTE_CREATE_SYSTEM_PROMPT: string;
+export declare const PROJECT_NOTE_CREATE_SYSTEM_PROMPT: string;
+export declare const FEEDBACK_NOTE_CREATE_SYSTEM_PROMPT: string;
 export interface LlmDreamFileProjectMetaInput {
     projectId: string;
     projectName: string;
@@ -197,6 +201,7 @@ export interface LlmDreamProjectMetaReviewOutput {
         status: string;
     };
 }
+export declare const USER_PROFILE_REWRITE_SYSTEM_PROMPT: string;
 export declare class LlmMemoryExtractor {
     private readonly config;
     private readonly runtime;

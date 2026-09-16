@@ -48,7 +48,7 @@ const DEFAULT_FILE_MEMORY_GATE_TIMEOUT_MS = 45_000;
 const DEFAULT_FILE_MEMORY_PROJECT_SELECTION_TIMEOUT_MS = 45_000;
 const DEFAULT_FILE_MEMORY_SELECTION_TIMEOUT_MS = 45_000;
 const DEFAULT_FILE_MEMORY_EXTRACTION_TIMEOUT_MS = 75_000;
-const MEMORY_CLASSIFICATION_SYSTEM_PROMPT = `
+export const MEMORY_CLASSIFICATION_SYSTEM_PROMPT = `
 You classify one focus user turn for a long-term memory indexing pipeline.
 
 You are only deciding categories. Do not generate the memory file yet.
@@ -82,7 +82,7 @@ Use this exact JSON shape:
   ]
 }
 `.trim();
-const USER_NOTE_CREATE_SYSTEM_PROMPT = `
+export const USER_NOTE_CREATE_SYSTEM_PROMPT = `
 You create one append-only user memory note from a focus user turn.
 
 Rules:
@@ -107,7 +107,7 @@ Use this exact JSON shape:
   "markdown": "markdown body"
 }
 `.trim();
-const PROJECT_NOTE_CREATE_SYSTEM_PROMPT = `
+export const PROJECT_NOTE_CREATE_SYSTEM_PROMPT = `
 You create one append-only project memory note from a focus user turn.
 
 Rules:
@@ -132,7 +132,7 @@ Use this exact JSON shape:
   "markdown": "markdown body"
 }
 `.trim();
-const FEEDBACK_NOTE_CREATE_SYSTEM_PROMPT = `
+export const FEEDBACK_NOTE_CREATE_SYSTEM_PROMPT = `
 You create one append-only feedback memory note from a focus user turn.
 
 Rules:
@@ -204,7 +204,7 @@ Use this exact JSON shape:
   ]
 }
 `.trim();
-const USER_PROFILE_REWRITE_SYSTEM_PROMPT = `
+export const USER_PROFILE_REWRITE_SYSTEM_PROMPT = `
 You rewrite the single "身份背景" section of a global user profile for a conversational memory system.
 
 Rules:

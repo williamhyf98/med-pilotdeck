@@ -1,0 +1,11 @@
+// 只做类型检查，不产出任何文件——测试用 tsx 直接跑 .ts，编译产物 lib/ 必须保持只含 src/。
+// 独立成一份配置的原因：tsconfig.json 的 include 只有 src/**，测试文件不在其中，
+// 而它又必须保持这样（build 的 rootDir 是 ./src）。
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

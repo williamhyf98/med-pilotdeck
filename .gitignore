@@ -217,6 +217,12 @@ test/
 test.ts
 *.test.ts
 
+# 例外：edgeclaw-memory-core 的子包测试套件是正式产物，不是本地草稿。
+# 上面的 `test/` 和 `*.test.ts` 会在任意层级命中它，必须显式反向包含整个目录，
+# 否则新增用例会被静默丢弃（记忆模块改造计划后续任务会持续往这里加测试）。
+!src/context/memory/edgeclaw-memory-core/test/
+!src/context/memory/edgeclaw-memory-core/test/**
+
 # Auto-Research-Skills (local-only)
 Auto-Research-Skills/
 
