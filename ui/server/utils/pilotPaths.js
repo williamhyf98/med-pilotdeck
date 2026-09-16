@@ -209,6 +209,39 @@ export function sanitizeSessionIdForPath(sessionId) {
     return sessionId.replace(illegal, '-').replace(/^-+|-+$/g, '') || 'session';
 }
 
+/**
+ * Alias of `sanitizeSessionIdForPath` under the canonical name used by
+ * `src/pilot/paths.ts`. Lets `memoryIdentity.js` import a consistent pair.
+ *
+ * Keep in sync with `sanitizeSessionIdForTranscript` in `src/pilot/paths.ts`.
+ */
+export const sanitizeSessionIdForTranscript = sanitizeSessionIdForPath;
+
+/**
+ * Sanitize a sessionId for safe use as a **Case State directory name**.
+ *
+ * Stricter than the transcript variant: replaces every character outside
+ * `[A-Za-z0-9._-]` with `_`, then hash-escapes the dangerous dot-only names
+ * (`.`, `..`) and the empty result to prevent directory traversal above the
+ * `cases/` parent.
+ *
+ * The two sanitizers are intentionally incompatible — see `src/pilot/paths.ts`
+ * for the full explanation. Never unify them; both produce on-disk paths that
+ * already exist for real users.
+ *
+ * Keep in sync with `sanitizeSessionIdForCaseDir` in `src/pilot/paths.ts`.
+ *
+ * @param {string} sessionId Raw session key.
+ * @returns {string} Directory-name-safe session identifier.
+ */
+export function sanitizeSessionIdForCaseDir(sessionId) {
+    const sanitized = sessionId.replace(/[^A-Za-z0-9._-]/gu, '_');
+    if (sanitized === '.' || sanitized === '..' || sanitized.length === 0) {
+        return createHash('sha256').update(sessionId).digest('hex').slice(0, 24);
+    }
+    return sanitized;
+}
+
 function createLegacyProjectId(projectRoot) {
     // Normalize to forward slashes so the same physical path produces the same
     // project ID on Windows (\) and Unix (/). Also strip a Windows drive-letter

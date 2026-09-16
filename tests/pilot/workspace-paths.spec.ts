@@ -111,3 +111,60 @@ test("general and typed projects never resolve memory under memory/workspaces", 
     await rm(pilotHome, { recursive: true, force: true });
   }
 });
+
+test("sanitizeSessionIdForTranscript: only path separators become dashes", async () => {
+  const {
+    sanitizeSessionIdForTranscript,
+  } = await import("../../src/pilot/paths.js");
+
+  // slashes become dashes, leading/trailing dashes stripped
+  assert.equal(sanitizeSessionIdForTranscript("a/b/c"), "a-b-c");
+  assert.equal(sanitizeSessionIdForTranscript("/leading"), "leading");
+  assert.equal(sanitizeSessionIdForTranscript("trailing/"), "trailing");
+  // non-separator chars (space, colon, unicode) are preserved on posix
+  assert.equal(sanitizeSessionIdForTranscript("2026-09-16 case A"), "2026-09-16 case A");
+  assert.equal(sanitizeSessionIdForTranscript("web:s_abc"), "web:s_abc");
+  assert.equal(sanitizeSessionIdForTranscript("emoji-🩺"), "emoji-🩺");
+  // empty / all-separator falls back to "session"
+  assert.equal(sanitizeSessionIdForTranscript(""), "session");
+  assert.equal(sanitizeSessionIdForTranscript("///"), "session");
+});
+
+test("sanitizeSessionIdForTranscript", async () => {
+  const { sanitizeSessionIdForTranscript } = await import("../../src/pilot/paths.js");
+  assert.equal(sanitizeSessionIdForTranscript("a/b/c"), "a-b-c");
+  assert.equal(sanitizeSessionIdForTranscript(""), "session");
+});
+
+test("sanitizeSessionIdForCaseDir: all non-[A-Za-z0-9._-] become underscore; dot-only and empty are hashed", async () => {
+  const { sanitizeSessionIdForCaseDir } = await import("../../src/pilot/paths.js");
+
+  // safe chars unchanged
+  assert.equal(sanitizeSessionIdForCaseDir("trauma_med-demo"), "trauma_med-demo");
+  assert.equal(sanitizeSessionIdForCaseDir("a"), "a");
+  // slashes, spaces, colons → underscores
+  assert.equal(sanitizeSessionIdForCaseDir("a/b/c"), "a_b_c");
+  assert.equal(sanitizeSessionIdForCaseDir("2026-09-16 case A"), "2026-09-16_case_A");
+  assert.equal(sanitizeSessionIdForCaseDir("web:s_abc"), "web_s_abc");
+  // dot-escape: "." and ".." must not be returned as-is (directory traversal)
+  const dotHash = sanitizeSessionIdForCaseDir(".");
+  assert.ok(dotHash.length === 24 && /^[0-9a-f]+$/.test(dotHash), `"." hash should be 24 hex chars: ${dotHash}`);
+  const dotDotHash = sanitizeSessionIdForCaseDir("..");
+  assert.ok(dotDotHash.length === 24 && /^[0-9a-f]+$/.test(dotDotHash));
+  assert.notEqual(dotHash, dotDotHash);
+  // empty string → hash of ""
+  const emptyHash = sanitizeSessionIdForCaseDir("");
+  assert.ok(emptyHash.length === 24 && /^[0-9a-f]+$/.test(emptyHash));
+});
+
+test("sanitizeSessionIdForCaseDir produces different results from sanitizeSessionIdForTranscript for space and colon inputs", async () => {
+  const { sanitizeSessionIdForTranscript, sanitizeSessionIdForCaseDir } =
+    await import("../../src/pilot/paths.js");
+  // This is the core regression guard: the two algorithms must not be unified.
+  const id = "2026-09-16 case A";
+  assert.equal(sanitizeSessionIdForTranscript(id), "2026-09-16 case A"); // space kept
+  assert.equal(sanitizeSessionIdForCaseDir(id),    "2026-09-16_case_A"); // space → _
+  const id2 = "web:s_3f2a1b";
+  assert.equal(sanitizeSessionIdForTranscript(id2), "web:s_3f2a1b"); // colon kept
+  assert.equal(sanitizeSessionIdForCaseDir(id2),    "web_s_3f2a1b"); // colon → _
+});

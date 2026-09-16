@@ -69,10 +69,12 @@ import {
   isGeneralProjectKey,
   projectMetaTypeFromProjectPath,
   projectTypeKeyFromProjectId,
+  PROJECT_TYPE_KEYS,
   resolveAgentAdditionalWorkingDirectories,
   resolveAgentCwd,
   resolveGatewayProjectKey,
   resolveTraumaCaseDir,
+  resolveWorkspaceId,
 } from "../pilot/paths.js";
 import { filterSkillsForProjectType } from "../pilot/projectTypePolicy.js";
 import { createPilotConfigStoreSync, type PilotConfigStore } from "../pilot/config/PilotConfigStore.js";
@@ -781,8 +783,7 @@ class ProjectRuntimeRegistry {
     const runtime = this.resolve(projectKey);
     await runtime.pluginRuntime.refresh();
     await this.ensureMcpReady(runtime);
-    const projectId = projectKey.replace(/\\/gu, "/").split("/").filter(Boolean).at(-1)
-      ?? projectKey;
+    const projectId = resolveWorkspaceId(projectKey, this.options.pilotHome);
     const caseDirectory = resolveTraumaCaseDir(
       projectId,
       sessionKey,
@@ -933,9 +934,8 @@ class ProjectRuntimeRegistry {
   }
 
   async readTraumaCase(projectKey: string, sessionKey: string) {
-    const projectId = projectKey.replace(/\\/gu, "/").split("/").filter(Boolean).at(-1)
-      ?? projectKey;
-    if (projectTypeKeyFromProjectId(projectId) !== "trauma_med") {
+    const projectId = resolveWorkspaceId(projectKey, this.options.pilotHome);
+    if (projectTypeKeyFromProjectId(projectId) !== PROJECT_TYPE_KEYS.war_trauma) {
       return { current: null, snapshots: [] };
     }
     const store = createTraumaCaseStore(resolveTraumaCaseDir(

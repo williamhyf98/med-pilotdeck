@@ -98,24 +98,31 @@ function getOrCreateServiceForDataDir(dataDir, workspaceDir = dataDir) {
   };
 }
 
-function getOrCreateServiceForProjectPath(projectPath) {
-  const normalizedProjectPath = normalizePath(projectPath);
-  if (!normalizedProjectPath) {
+function getOrCreateServiceForProjectPath(projectKey) {
+  const trimmed = typeof projectKey === 'string' ? projectKey.trim() : '';
+  if (!trimmed) {
     throw new Error('projectPath is required');
   }
-  const dataDir = resolveWorkspaceDataDir(normalizedProjectPath);
-  const existing = servicesByDataDir.get(path.resolve(dataDir));
-  if (existing && existing.workspaceDir !== normalizedProjectPath) {
+  // Do not path.resolve() a bare project ID (e.g. "trauma_med-demo") — that would
+  // anchor it to cwd and produce a wrong absolute path.  resolveWorkspaceDataDir already
+  // understands both bare IDs and absolute paths via resolveProjectMemoryDataDir.
+  const dataDir = resolveWorkspaceDataDir(trimmed);
+  // For absolute-path keys (linked repos) the EdgeClaw workspaceDir tracks the actual
+  // project root.  For bare project IDs the data dir doubles as the workspace root.
+  const workspaceDir = path.isAbsolute(trimmed) ? path.resolve(trimmed) : dataDir;
+  const normalizedDataDir = path.resolve(dataDir);
+  const existing = servicesByDataDir.get(normalizedDataDir);
+  if (existing && existing.workspaceDir !== workspaceDir) {
     try {
       existing.close();
     } catch {
       // ignore close failures when refreshing workspace context
     }
-    servicesByDataDir.delete(path.resolve(dataDir));
+    servicesByDataDir.delete(normalizedDataDir);
   }
   return {
-    projectPath: normalizedProjectPath,
-    ...getOrCreateServiceForDataDir(dataDir, normalizedProjectPath),
+    projectPath: workspaceDir,
+    ...getOrCreateServiceForDataDir(dataDir, workspaceDir),
   };
 }
 
