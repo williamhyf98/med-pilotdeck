@@ -98,7 +98,7 @@ export function getStoredPermissionMode(
 }
 
 export function getSelectedProjectPath(selectedProject: Project): string {
-  return selectedProject.fullPath || selectedProject.path || '';
+  return selectedProject.fullPath || selectedProject.path || selectedProject.name || '';
 }
 
 export function startSessionCommand({

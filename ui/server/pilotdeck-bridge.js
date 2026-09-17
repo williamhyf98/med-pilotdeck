@@ -1315,8 +1315,14 @@ export function sanitizeTraumaAttachments(value, projectRoot) {
         const name = sanitizeTraumaAttachmentName(rawName);
         if (!name) continue;
         const resolved = resolveExistingInboxFile(rawPath);
-        if (!resolved) continue;
-        if (resolved !== inboxRoot && !resolved.startsWith(`${inboxRoot}${path.sep}`)) continue;
+        if (!resolved) {
+            console.warn(`[pilotdeck-bridge] dropping trauma attachment, file not found: ${rawPath}`);
+            continue;
+        }
+        if (resolved !== inboxRoot && !resolved.startsWith(`${inboxRoot}${path.sep}`)) {
+            console.warn(`[pilotdeck-bridge] dropping trauma attachment outside inbox root: resolved=${resolved} inboxRoot=${inboxRoot}`);
+            continue;
+        }
         if (seenPaths.has(resolved)) continue;
         seenPaths.add(resolved);
         sanitized.push({ path: resolved, name });
