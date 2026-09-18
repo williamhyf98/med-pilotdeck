@@ -5,7 +5,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
-import { normalizeInlineCodeFences } from '../../utils/chatFormatting';
+import { normalizeDetailsBlocks, normalizeInlineCodeFences } from '../../utils/chatFormatting';
 import { resolveMarkdownFileHref } from '../../utils/resolveMarkdownFileHref';
 import {
   createRemarkArtifactFileTextPlugin,
@@ -188,7 +188,7 @@ export function Markdown({
   citations,
 }: MarkdownProps) {
   const content = useMemo(
-    () => normalizeInlineCodeFences(String(children ?? '')),
+    () => normalizeDetailsBlocks(normalizeInlineCodeFences(String(children ?? ''))),
     [children],
   );
 

@@ -50,6 +50,7 @@ _citation_seq = 0
 _citation_touched_at = 0.0
 _citation_assigned: dict[str, int] = {}
 _citation_labels: dict[int, str] = {}
+_citation_bases: dict[str, int] = {}  # base label -> first index printed under it
 
 _LABEL_UNTITLED = "未标注文献"
 _PREAMBLE_PREFIXES = ("卷：", "章节：")
@@ -83,6 +84,7 @@ def _assign_citation_indices(items: list[dict[str, Any]]) -> list[int]:
             _citation_seq = 0
             _citation_assigned.clear()
             _citation_labels.clear()
+            _citation_bases.clear()
         _citation_touched_at = now
 
         indices: list[int] = []
@@ -153,10 +155,18 @@ def _apply_citations(items: list[dict[str, Any]]) -> None:
     indices = _assign_citation_indices(items)
     bases = [_base_label(item) for item in items]
 
+    # Collision detection must span calls, not just this response: two
+    # retrievals inside one answer can each hit a *different* chunk of the
+    # same title+section, and neither call sees a duplicate on its own — the
+    # printed list then shows two identical lines under different numbers.
+    # The registry keeps the first index printed under each base label; a
+    # later, different index on the same base gets the body-snippet suffix.
     collisions = {base for base in bases if bases.count(base) > 1}
     for item, index, base in zip(items, indices, bases):
+        with _citation_lock:
+            base_owner = _citation_bases.setdefault(base, index)
         label = base
-        if base in collisions:
+        if base in collisions or base_owner != index:
             snippet = _body_snippet(item.get("text"))
             if snippet:
                 label = f"{base} ·「{snippet}」"
