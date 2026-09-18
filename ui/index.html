@@ -22,6 +22,22 @@
     <!-- Theme Color -->
     <meta name="theme-color" content="#ffffff" />
     <meta name="msapplication-TileColor" content="#ffffff" />
+
+    <script>
+      (() => {
+        try {
+          const theme = localStorage.getItem('themeMode') || localStorage.getItem('theme') || 'system';
+          const prefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+          const isDark = theme === 'dark' || theme === 'command' || (theme === 'system' && prefersDark);
+          if (theme === 'warm' || theme === 'command') {
+            document.documentElement.dataset.theme = theme;
+          }
+          document.documentElement.classList.toggle('dark', Boolean(isDark));
+        } catch {
+          // ThemeProvider applies the fallback once the application mounts.
+        }
+      })();
+    </script>
     
     <!-- Prevent zoom on iOS -->
     <meta name="format-detection" content="telephone=no" />

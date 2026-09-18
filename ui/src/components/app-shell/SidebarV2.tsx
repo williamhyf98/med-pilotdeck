@@ -12,14 +12,17 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   ChevronRight,
+  Database,
   Folder,
   FolderOpen,
+  HardDrive,
   MessageSquarePlus,
   PanelLeftClose,
   Pencil,
   Plus,
   GitBranch,
   Settings as SettingsIcon,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 import type { TFunction } from 'i18next';
@@ -35,6 +38,7 @@ import {
 } from '../../lib/customNames';
 import { filterProjectsByType, resolveProjectType } from './appShellSelection';
 import medAssistantLogo from '../../assets/med-assistant-logo.png';
+import medAssistantLogoCommand from '../../assets/med-assistant-logo-command.png';
 
 const asTimestamp = (value: unknown): number => {
   if (typeof value === 'number') return value;
@@ -256,6 +260,8 @@ export type SidebarV2Props = {
   onCollapse?: () => void;
   onLoadMoreSessions?: (projectName: string) => void;
   loadingMoreProjectIds?: Set<string>;
+  onSectionChange?: (section: ProjectType) => void;
+  onSelectTab?: (tab: AppTab) => void;
 };
 
 type SidebarContextMenu =
@@ -307,6 +313,8 @@ export default function SidebarV2({
   onCollapse,
   onLoadMoreSessions,
   loadingMoreProjectIds,
+  onSectionChange,
+  onSelectTab,
 }: SidebarV2Props) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -461,7 +469,8 @@ export default function SidebarV2({
 
   const handleSectionClick = useCallback((section: SidebarSection) => {
     setActiveSection(section);
-  }, []);
+    onSectionChange?.(section);
+  }, [onSectionChange]);
 
   const toggleProjectExpanded = useCallback((project: Project) => {
     setExpandedGroups((previous) => {
@@ -686,7 +695,7 @@ export default function SidebarV2({
       const isSessionActive =
         selectedProject?.name === project.name &&
         selectedSession?.id === sessionId &&
-        activeTab === 'chat';
+        (activeTab === 'chat' || activeTab === 'memory');
       const isSessionRenaming = renamingSession === sessionId;
       const isOptimisticRow =
         typeof sessionId === 'string' && sessionId.startsWith('new-session-');
@@ -714,9 +723,9 @@ export default function SidebarV2({
               isOptimisticRow ? undefined : openSessionContextMenu(event, project, session)
             }
             className={cn(
-              'group/session relative w-full rounded-md transition-colors',
+              'pd-session-row group/session relative w-full rounded-md border border-transparent transition-colors',
               isSessionActive
-                ? 'bg-neutral-200/70 dark:bg-neutral-800'
+                ? 'pd-session-row-active bg-neutral-200/70 dark:bg-neutral-800'
                 : 'hover:bg-neutral-100 dark:hover:bg-neutral-800',
             )}
           >
@@ -736,6 +745,7 @@ export default function SidebarV2({
             ) : (
               <button
                 type="button"
+                aria-current={isSessionActive ? 'page' : undefined}
                 onClick={
                   isOptimisticRow
                     ? undefined
@@ -756,7 +766,7 @@ export default function SidebarV2({
                 <div className="min-w-0 flex-1">
                   <div
                     className={cn(
-                      'flex min-w-0 items-center gap-1 truncate text-[12.5px] text-neutral-900 dark:text-neutral-100',
+                      'pd-session-title flex min-w-0 items-center gap-1 truncate text-[12.5px] text-neutral-900 dark:text-neutral-100',
                       isOptimisticRow && 'italic text-neutral-600 dark:text-neutral-300',
                     )}
                   >
@@ -765,7 +775,7 @@ export default function SidebarV2({
                     ) : null}
                     <span className="truncate">{sessionDisplayTitle(session)}</span>
                   </div>
-                  <div className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                  <div className="pd-session-meta text-[11px] text-neutral-500 dark:text-neutral-400">
                     {isOptimisticRow
                       ? t('sidebar:sessions.sending', { defaultValue: 'Sending…' })
                       : isForkChild
@@ -885,9 +895,9 @@ export default function SidebarV2({
         <div
           onContextMenu={(event) => openProjectContextMenu(event, project, isGeneral)}
           className={cn(
-            'group/project flex h-8 w-full items-center rounded-lg pr-1 text-[13px] transition-colors',
+            'pd-project-row group/project flex h-8 w-full items-center rounded-lg border border-transparent pr-1 text-[13px] transition-colors',
             isSelected
-              ? 'bg-neutral-200/70 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100'
+              ? 'pd-project-row-active bg-neutral-200/70 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100'
               : 'text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800',
           )}
         >
@@ -989,9 +999,7 @@ export default function SidebarV2({
         // On mobile the parent wraps this aside in an overlay constrained
         // to 85vw, so force the inline width style off with !w-full there.
         'relative flex h-full shrink-0 flex-col max-md:!w-full',
-        'bg-neutral-50 text-neutral-900',
-        'dark:bg-neutral-900 dark:text-neutral-100',
-        'border-r border-neutral-200 dark:border-neutral-800',
+        'workspace-sidebar-surface border-r border-border text-foreground',
       )}
     >
       <div className="flex h-16 items-center justify-between pl-2 pr-4">
@@ -1009,12 +1017,21 @@ export default function SidebarV2({
             title="医学助手"
             className="flex min-w-0 shrink items-center gap-2 rounded-md p-1 transition hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-300 dark:focus-visible:ring-neutral-700"
           >
-            <img
-              src={medAssistantLogo}
-              alt="医学助手"
-              className="h-11 w-auto max-w-[180px] select-none object-contain"
-              draggable={false}
-            />
+            <span className="relative block h-11 w-[141px] max-w-[180px] shrink-0">
+              <img
+                src={medAssistantLogo}
+                alt="医学助手"
+                className="pd-brand-logo-default absolute inset-0 h-11 w-auto max-w-[180px] select-none object-contain"
+                draggable={false}
+              />
+              <img
+                src={medAssistantLogoCommand}
+                alt=""
+                aria-hidden="true"
+                className="pd-brand-logo-command absolute inset-0 h-11 w-auto max-w-[180px] select-none object-contain"
+                draggable={false}
+              />
+            </span>
           </button>
         </div>
         {onCollapse ? (
@@ -1023,7 +1040,7 @@ export default function SidebarV2({
             onClick={onCollapse}
             aria-label={t('sidebar:tooltips.hideSidebar', { defaultValue: 'Hide sidebar' }) as string}
             title={t('sidebar:tooltips.hideSidebar', { defaultValue: 'Hide sidebar' }) as string}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
           >
             <PanelLeftClose className="h-4 w-4" strokeWidth={1.75} />
           </button>
@@ -1035,7 +1052,7 @@ export default function SidebarV2({
         <div
           role="tablist"
           aria-label={t('sidebar:sectionToggle.label', { defaultValue: 'Project type' }) as string}
-          className="flex w-full rounded-md bg-neutral-100 p-0.5 dark:bg-neutral-900"
+          className="pd-section-tabs flex w-full rounded-md bg-muted p-0.5"
         >
           <button
             type="button"
@@ -1046,8 +1063,8 @@ export default function SidebarV2({
               'flex-1 rounded px-1 text-[11px] font-medium transition-colors',
               'h-7 leading-tight',
               activeSection === 'general_medicine'
-                ? 'bg-white text-neutral-900 shadow-sm dark:bg-neutral-700 dark:text-neutral-100'
-                : 'text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200',
+                ? 'bg-card text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
             )}
           >
             {t('sidebar:types.generalMedicine', { defaultValue: 'General Med' })}
@@ -1061,8 +1078,8 @@ export default function SidebarV2({
               'flex-1 rounded px-1 text-[11px] font-medium transition-colors',
               'h-7 leading-tight',
               activeSection === 'war_trauma'
-                ? 'bg-white text-neutral-900 shadow-sm dark:bg-neutral-700 dark:text-neutral-100'
-                : 'text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200',
+                ? 'bg-card text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
             )}
           >
             {t('sidebar:types.warTrauma', { defaultValue: 'War Trauma' })}
@@ -1072,7 +1089,7 @@ export default function SidebarV2({
 
       <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {isLoading && safeProjects.length === 0 ? (
-          <div className="px-2 py-4 text-xs text-neutral-500 dark:text-neutral-400">
+          <div className="px-2 py-4 text-xs text-muted-foreground">
             {t('sidebar:sessions.loading', { defaultValue: 'Loading...' })}
           </div>
         ) : (
@@ -1084,9 +1101,9 @@ export default function SidebarV2({
                 aria-label={t('sidebar:projects.newProject', { defaultValue: 'New Project' }) as string}
                 title={t('sidebar:projects.newProject', { defaultValue: 'New Project' }) as string}
                 className={cn(
+                  'pd-new-project-action',
                   'inline-flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-[12px] font-medium transition-colors',
-                  'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900',
-                  'dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-neutral-100',
+                  'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
                 )}
               >
                 <Plus className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
@@ -1097,7 +1114,7 @@ export default function SidebarV2({
             </div>
 
             {visibleProjects.length === 0 ? (
-              <div className="px-3 py-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-400">
+              <div className="px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
                 <p>
                   {t('sidebar:types.empty', {
                     defaultValue: 'No projects in this type yet. Create one above.',
@@ -1113,13 +1130,44 @@ export default function SidebarV2({
         )}
       </div>
 
-      <div className="border-t border-neutral-200 px-2 py-2 dark:border-neutral-800">
+      <div className="px-2 pb-2 pt-1">
+        <div className="grid grid-cols-3 gap-1" aria-label={t('navigation.tools', { defaultValue: 'Tools' }) as string}>
+          {([
+            { id: 'skills' as const, label: t('tabs.skills', { defaultValue: '技能' }), icon: Sparkles },
+            { id: 'memory' as const, label: t('tabs.memory', { defaultValue: '记忆' }), icon: Database },
+            { id: 'storage' as const, label: t('tabs.storage', { defaultValue: '存储' }), icon: HardDrive },
+          ]).map((tool) => {
+            const Icon = tool.icon;
+            const isActive = activeTab === tool.id;
+            return (
+              <button
+                key={tool.id}
+                type="button"
+                onClick={() => onSelectTab?.(isActive ? 'chat' : tool.id)}
+                aria-pressed={isActive}
+                title={tool.label as string}
+                className={cn(
+                  'flex h-12 min-w-0 flex-col items-center justify-center gap-1 rounded-md px-1 text-[11px] font-medium transition-colors',
+                  isActive
+                    ? 'bg-accent text-accent-foreground shadow-sm'
+                    : 'text-muted-foreground hover:bg-accent/70 hover:text-accent-foreground',
+                )}
+              >
+                <Icon className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+                <span className="max-w-full truncate">{tool.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="border-t border-border px-2 pb-2 pt-2">
         <button
           type="button"
           onClick={onShowSettings}
           aria-label={t('sidebar:actions.settings', { defaultValue: 'Settings' }) as string}
           title={t('sidebar:actions.settings', { defaultValue: 'Settings' }) as string}
-          className="flex h-9 w-full items-center justify-start gap-2 rounded-lg px-6 text-[13px] font-medium text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
+          className="flex h-9 w-full items-center justify-start gap-2 rounded-lg px-6 text-[13px] font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
         >
           <SettingsIcon className="h-4 w-4" strokeWidth={1.75} />
           <span>{t('sidebar:actions.settings', { defaultValue: 'Settings' })}</span>

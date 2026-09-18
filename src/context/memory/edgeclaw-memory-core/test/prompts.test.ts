@@ -9,7 +9,7 @@
  *
  * 哈希失配 = 提示词内容被改动了。这不一定是错误：
  *   - Task 4 会改 USER_PROFILE_REWRITE_SYSTEM_PROMPT（全局画像三段化）
- *   - Task 11 会改 classification / project / feedback 三个（通用医学医学化）
+ *   - 提示词中文化会在保持语义和协议不变的前提下更新全部快照
  *   这些任务里更新下面的 expected 值是**预期动作**；但在 Task 5 里更新它，
  *   说明搬运不忠实，必须回退重来。
  *
@@ -47,42 +47,42 @@ const SNAPSHOTS: readonly PromptSnapshot[] = [
   {
     name: "MEMORY_CLASSIFICATION_SYSTEM_PROMPT",
     prompt: MEMORY_CLASSIFICATION_SYSTEM_PROMPT,
-    sha256: "8c869abc528842dc",
-    length: 2074,
+    sha256: "586ee0a12f2549d3",
+    length: 882,
     lines: 32,
-    ownedBy: "Task 11b（分类器医学判别）",
+    ownedBy: "Index/Dream 提示词中文化",
   },
   {
     name: "USER_NOTE_CREATE_SYSTEM_PROMPT",
     prompt: USER_NOTE_CREATE_SYSTEM_PROMPT,
-    sha256: "3b8bebce87c19fb3",
-    length: 1330,
+    sha256: "e853652cf034dbb6",
+    length: 550,
     lines: 23,
-    ownedBy: "Task 11（通用医学档案填充）",
+    ownedBy: "Index/Dream 提示词中文化",
   },
   {
     name: "PROJECT_NOTE_CREATE_SYSTEM_PROMPT",
     prompt: PROJECT_NOTE_CREATE_SYSTEM_PROMPT,
-    sha256: "b3dfe0c42229f795",
-    length: 1252,
+    sha256: "9a5d17fcd2b3e645",
+    length: 568,
     lines: 23,
-    ownedBy: "Task 11a（项目记忆患者病历化）",
+    ownedBy: "Index/Dream 提示词中文化",
   },
   {
     name: "FEEDBACK_NOTE_CREATE_SYSTEM_PROMPT",
     prompt: FEEDBACK_NOTE_CREATE_SYSTEM_PROMPT,
-    sha256: "fe0d910bdbcc763a",
-    length: 1037,
+    sha256: "b700ea429faf93f9",
+    length: 497,
     lines: 21,
-    ownedBy: "Task 11b（feedback 医学化）",
+    ownedBy: "Index/Dream 提示词中文化",
   },
   {
     name: "USER_PROFILE_REWRITE_SYSTEM_PROMPT",
     prompt: USER_PROFILE_REWRITE_SYSTEM_PROMPT,
-    sha256: "06358b00444d8b6d",
-    length: 1297,
-    lines: 19,
-    ownedBy: "Task 4（全局画像三段化）",
+    sha256: "cfe8c80ed66bb353",
+    length: 708,
+    lines: 22,
+    ownedBy: "Index/Dream 提示词中文化",
   },
 ];
 

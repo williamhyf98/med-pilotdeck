@@ -72,6 +72,12 @@
   "skillsTab": {
     "pickProject": "选一个项目来管理它的技能。",
     "generalChat": "通用聊天 — 内置技能和用户技能",
+    "library": "技能库",
+    "title": "技能",
+    "description": "查看和管理当前项目可使用的技能提示词。",
+    "promptContent": "提示词内容",
+    "closeDetail": "关闭技能详情",
+    "noDescription": "暂无技能介绍",
     "refresh": "刷新",
     "backToSkills": "返回技能列表",
     "loading": "加载中…",

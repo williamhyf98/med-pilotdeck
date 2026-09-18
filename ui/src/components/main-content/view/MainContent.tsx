@@ -2,7 +2,6 @@ import React, { Suspense, useCallback, useEffect, useRef, useState } from 'react
 import { useTranslation } from 'react-i18next';
 import {
   BarChart3,
-  Database,
   FileText,
   FolderOpen,
   MessageSquare,
@@ -10,7 +9,6 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Radio,
-  Sparkles,
   type LucideIcon,
 } from 'lucide-react';
 import { resolveProjectType } from '../../app-shell/appShellSelection';
@@ -92,13 +90,11 @@ const TOOL_PANEL_MIN_WIDTH = 360;
 const TOOL_PANEL_MAX_WIDTH = 720;
 const TOOL_PANEL_MAX_LAYOUT_RATIO = 0.48;
 
-type DashboardPanelTab = Extract<AppTab, 'skills' | 'dashboard' | 'memory' | 'always-on'>;
+type DashboardPanelTab = Extract<AppTab, 'dashboard' | 'always-on'>;
 
-const DASHBOARD_PANEL_TABS = new Set<AppTab>(['skills', 'dashboard', 'memory', 'always-on']);
+const DASHBOARD_PANEL_TABS = new Set<AppTab>(['dashboard', 'always-on']);
 const DASHBOARD_PANEL_META: Record<DashboardPanelTab, { labelKey: string; icon: LucideIcon }> = {
-  skills: { labelKey: 'tabs.skills', icon: Sparkles },
   dashboard: { labelKey: 'tabs.dashboard', icon: BarChart3 },
-  memory: { labelKey: 'tabs.memory', icon: Database },
   'always-on': { labelKey: 'tabs.alwaysOn', icon: Radio },
 };
 
@@ -579,6 +575,7 @@ function MainContent({
     !selectedProject
     && activeTab !== 'dashboard'
     && activeTab !== 'cron'
+    && activeTab !== 'skills'
     && activeTab !== 'storage'
   ) {
     return (
@@ -592,10 +589,9 @@ function MainContent({
   }
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+    <div className="workspace-content-surface relative flex h-full min-h-0 flex-col text-neutral-900 dark:text-neutral-100">
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <SplitBody
-          projects={projects}
           selectedProject={selectedProject}
           selectedSession={selectedSession}
           activeTab={activeTab}
@@ -682,9 +678,8 @@ function MainContent({
 }
 
 // V2 split body: chat is the persistent primary surface, Files is a dedicated
-// workbench, and the management dashboards open in a resizable side panel.
+// workbench, and auxiliary dashboards open in a resizable side panel.
 type SplitBodyProps = {
-  projects: Project[];
   selectedProject: Project | null;
   selectedSession: ProjectSession | null;
   activeTab: AppTab;
@@ -762,7 +757,6 @@ type SplitBodyProps = {
 function SplitBody(props: SplitBodyProps) {
   const { t } = useTranslation();
   const {
-    projects,
     selectedProject,
     selectedSession,
     activeTab,
@@ -816,14 +810,16 @@ function SplitBody(props: SplitBodyProps) {
     editorSidebarProps,
   } = props;
 
-  // Shell, Git, Tasks, and plugin tabs retain their full-screen mode.
-  // Skills, Routing, Memory, and Always-On are auxiliary dashboards paired
-  // with chat. Files stays a separate explorer + artifact + assistant mode.
+  // Shell, Git, Memory, Skills, Storage, Tasks, and plugin tabs use the full workspace.
+  // Dashboard and Always-On remain auxiliary panels paired with chat.
+  // Files stays a separate explorer + artifact + assistant mode.
   const isPlugin = typeof activeTab === 'string' && activeTab.startsWith('plugin:');
   const fullScreenToolTabs = new Set([
     'shell',
     'git',
     'cron',
+    'memory',
+    'skills',
     'storage',
     'tasks',
   ]);
@@ -1022,8 +1018,8 @@ function SplitBody(props: SplitBodyProps) {
     }
     if (activeTab === 'cron') return <CronV2 />;
     if (activeTab === 'dashboard') return <DashboardV2 projectFilter={selectedProject?.name} projectFullPath={selectedProject?.fullPath} onSelectProject={onSelectProjectByName} compact />;
-    if (activeTab === 'memory') return <MemoryPanel selectedProject={selectedProject} />;
-    if (activeTab === 'skills') return <SkillsV2 selectedProject={selectedProject} projects={projects} compact />;
+    if (activeTab === 'memory') return <MemoryPanel selectedProject={selectedProject} selectedSession={selectedSession} />;
+    if (activeTab === 'skills') return <SkillsV2 selectedProject={selectedProject} />;
     if (activeTab === 'storage') return <StorageV2 />;
     if (renderTasksAsTool) return <TasksV2 isVisible />;
     if (isPlugin) {
@@ -1181,7 +1177,7 @@ function SplitBody(props: SplitBodyProps) {
       <div
         key="agent-surface"
         className={cn(
-          'flex min-h-0 min-w-0 flex-col bg-white dark:bg-neutral-950',
+          'workspace-chat-surface flex min-h-0 min-w-0 flex-col',
           !showChat && 'invisible absolute h-0 w-0 overflow-hidden',
           showChat && !isFiles && 'flex-1',
           assistantVisible && !assistantIsOverlay && 'flex-shrink-0 border-l border-neutral-200 dark:border-neutral-800',

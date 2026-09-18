@@ -22,6 +22,7 @@ import {
   runManualMemoryFlush,
 } from '../services/memoryService.js';
 import { getProjectDisplayNameForPath } from '../utils/projectDisplayName.js';
+import caseStateRoutes from './caseState.js';
 
 const router = express.Router();
 const __filename = fileURLToPath(import.meta.url);
@@ -325,6 +326,8 @@ function getSelectedProjectId(req) {
 
 function hasDashboardRequestContext(req) {
   return [
+    req.query?.projectId,
+    req.body?.projectId,
     req.query?.projectPath,
     req.body?.projectPath,
     req.query?.projectName,
@@ -334,12 +337,35 @@ function hasDashboardRequestContext(req) {
 
 async function withMemoryService(req, res, fn) {
   try {
-    const { projectPath, dataDir, service } = await getMemoryServiceForRequest(req);
-    return await fn({ projectPath, dataDir, service, repository: service.repository });
+    const { projectPath, dataDir, service, identity } = await getMemoryServiceForRequest(req);
+    return await fn({ projectPath, dataDir, service, identity, repository: service.repository });
   } catch (error) {
+    // A request whose projectId and projectPath disagree is ambiguous, not
+    // malformed: refuse it as a conflict rather than guessing which one the
+    // caller meant (Task 8 — "don't edit project B from project A's panel").
+    if (error?.code === 'MEMORY_SCOPE_MISMATCH') {
+      return res.status(409).json({
+        error: error.message,
+        code: error.code,
+        projectId: error.projectId,
+        projectPath: error.projectPath,
+      });
+    }
     const message = error instanceof Error ? error.message : String(error);
     return res.status(400).json({ error: message });
   }
+}
+
+/**
+ * Routes renamed in Task 8.  `/cases` now belongs to Case State, so the memory
+ * dashboard's recall traces moved to `/index-case-traces`.  The old paths stay
+ * for one version, answering with a Deprecation header so a stale iframe keeps
+ * working while telling anyone reading the network tab where to go.
+ */
+function markDeprecatedRoute(res, replacement) {
+  res.setHeader('Deprecation', 'true');
+  res.setHeader('Link', `<${replacement}>; rel="successor-version"`);
+  res.setHeader('Warning', `299 - "Deprecated route; use ${replacement}"`);
 }
 
 function buildDownloadFileName(prefix, exportedAt) {
@@ -357,6 +383,15 @@ function sendBundleDownload(res, bundle, prefix) {
   );
   res.send(JSON.stringify(bundle, null, 2));
 }
+
+// The Dashboard's scope bar (Task 8): which project type, which stable id,
+// where the data lives, whether it is writable.  Answered by the server rather
+// than inferred in the browser, so what the panel shows is what the writes hit.
+router.get('/identity', async (req, res) =>
+  withMemoryService(req, res, async ({ identity }) => {
+    res.json(identity);
+  }),
+);
 
 router.get('/overview', async (req, res) =>
   withMemoryService(req, res, async ({ service }) => {
@@ -510,13 +545,23 @@ router.get('/workspace', async (req, res) =>
   }),
 );
 
-router.get('/cases', async (req, res) =>
+/**
+ * Case State（战创伤病例状态，只读）。
+ *
+ * 必须挂在下面那两条 `/cases` 弃用别名**之前**：Express 的子路由不匹配时会
+ * `next()`，于是 `/cases/current`、`/cases/snapshots` 落到这里，而过渡期里
+ * 的 `/cases` 和 `/cases/<traceId>` 继续落到别名上。别名删掉之后这个顺序就
+ * 不再重要，但在那之前挪动它会让病例状态被 `:caseId` 吞掉。
+ */
+router.use('/cases', caseStateRoutes);
+
+router.get('/index-case-traces', async (req, res) =>
   withMemoryService(req, res, async ({ service }) => {
     res.json(service.listCaseTraces(parseLimit(req.query.limit, 12)));
   }),
 );
 
-router.get('/cases/:caseId', async (req, res) =>
+router.get('/index-case-traces/:caseId', async (req, res) =>
   withMemoryService(req, res, async ({ service }) => {
     const record = service.getCaseTrace(req.params.caseId);
     if (!record) {
@@ -525,6 +570,25 @@ router.get('/cases/:caseId', async (req, res) =>
     res.json(record);
   }),
 );
+
+// Deprecated aliases — remove after one version.
+router.get('/cases', async (req, res) => {
+  markDeprecatedRoute(res, '/api/memory/index-case-traces');
+  return withMemoryService(req, res, async ({ service }) => {
+    res.json(service.listCaseTraces(parseLimit(req.query.limit, 12)));
+  });
+});
+
+router.get('/cases/:caseId', async (req, res) => {
+  markDeprecatedRoute(res, '/api/memory/index-case-traces/:caseId');
+  return withMemoryService(req, res, async ({ service }) => {
+    const record = service.getCaseTrace(req.params.caseId);
+    if (!record) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    res.json(record);
+  });
+});
 
 router.get('/index-traces', async (req, res) =>
   withMemoryService(req, res, async ({ service }) => {

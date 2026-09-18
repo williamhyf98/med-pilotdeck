@@ -365,7 +365,7 @@ export default function TraumaComposer({
         type="button"
         disabled={busy}
         onClick={() => fileInputRef.current?.click()}
-        className="pd-composer-icon-button inline-flex h-7 shrink-0 items-center justify-center rounded-md border border-neutral-200 px-2 text-[11px] font-medium text-neutral-600 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+        className="pd-composer-icon-button inline-flex h-7 shrink-0 items-center justify-center rounded-md border border-border px-2 text-[11px] font-medium text-muted-foreground transition hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50"
       >
         {uploading ? '上传中…' : '+ 添加医学附件'}
       </button>
@@ -395,10 +395,10 @@ export default function TraumaComposer({
         disabled={isExtracting}
         placeholder="用自然语言描述本轮伤情、处置与后送情况，点「整理」后自动抽取并开始本轮推演。"
         rows={2}
-        className="block max-h-[40vh] min-h-[52px] w-full resize-none overflow-y-auto bg-transparent px-2 pt-1.5 text-[14px] leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 disabled:opacity-60 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+        className="block max-h-[40vh] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-2 pt-1.5 text-[14px] leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 disabled:opacity-60 dark:text-neutral-100 dark:placeholder:text-neutral-500"
         aria-label="本轮伤情自由输入"
       />
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200 px-1 pt-2 dark:border-neutral-800">
+      <div className="pd-composer-control-row flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-1 pt-1">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
           <LevelRadios
             previousSubStage={previousSubStage}
@@ -410,7 +410,7 @@ export default function TraumaComposer({
             type="button"
             disabled={busy}
             onClick={() => switchInputMode('manual')}
-            className="pd-composer-icon-button inline-flex h-7 shrink-0 items-center justify-center rounded-md px-2 text-[12px] font-medium text-neutral-600 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            className="pd-composer-icon-button inline-flex h-7 shrink-0 items-center justify-center rounded-md px-2 text-[12px] font-medium text-muted-foreground transition hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50"
           >
             精确录入
           </button>
@@ -439,15 +439,15 @@ export default function TraumaComposer({
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2 px-1">
         <div className="min-w-0">
-          <p className="text-[12px] font-semibold text-neutral-800 dark:text-neutral-100">精确录入</p>
-          <p className="text-[10px] leading-4 text-neutral-400">逐项填写本轮伤情、处置、后送条件与生命体征。</p>
+          <p className="text-[12px] font-semibold text-foreground">精确录入</p>
+          <p className="text-[10px] leading-4 text-muted-foreground">逐项填写本轮伤情、处置、后送条件与生命体征。</p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           <button
             type="button"
             disabled={busy}
             onClick={() => switchInputMode('free')}
-            className="pd-composer-icon-button inline-flex h-7 items-center justify-center rounded-md px-2 text-[12px] font-medium text-neutral-600 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            className="pd-composer-icon-button inline-flex h-7 items-center justify-center rounded-md px-2 text-[12px] font-medium text-muted-foreground transition hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50"
           >
             自由对话
           </button>
@@ -474,13 +474,13 @@ export default function TraumaComposer({
     <div className="pd-composer-container relative min-w-0">
       <div
         className={cn(
-          'group rounded-xl border bg-white p-2 shadow-sm transition-colors',
-          'border-neutral-200 focus-within:border-neutral-300',
-          'dark:border-neutral-800 dark:bg-neutral-900 dark:focus-within:border-neutral-700',
+          'workspace-composer-surface group rounded-xl border p-2 transition-colors',
+          'border-neutral-300/70 focus-within:border-neutral-400',
+          'dark:border-neutral-700/80 dark:focus-within:border-neutral-600',
         )}
       >
         {pendingFiles.length > 0 && (
-          <div className="pd-composer-attachment-panel mb-2 rounded-lg border border-neutral-200 bg-neutral-50 p-2 dark:border-neutral-700 dark:bg-neutral-900">
+          <div className="pd-composer-attachment-panel mb-2 rounded-lg border border-border bg-transparent p-2">
             <div className="flex flex-wrap gap-2">
               {pendingFiles.map((file, index) => (
                 <ImageAttachment

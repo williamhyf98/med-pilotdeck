@@ -72,7 +72,7 @@ export default function DemoTranscript({ rounds, currentRoundIndex }: DemoTransc
     <div
       ref={scrollRef}
       aria-label="演示案例对话"
-      className="h-full overflow-y-auto overflow-x-hidden bg-white dark:bg-neutral-950"
+      className="h-full overflow-y-auto overflow-x-hidden bg-transparent"
     >
       <div className="mx-auto max-w-[860px] px-6 py-10">
         {messages.map((message, index) => (

@@ -69,8 +69,8 @@ export default function TraumaRoundTimeline({
             return (
               <li key={`${snapshot.triggerMessageId}-${round}`} className="relative pl-5">
                 <span className="absolute left-0 top-1.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-teal-600 ring-1 ring-teal-200 dark:border-neutral-950 dark:ring-teal-900" />
-                <article className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-950">
-                  <header className="flex items-center justify-between gap-3 border-b border-neutral-200 bg-neutral-50/80 px-3 py-2 dark:border-neutral-800 dark:bg-neutral-900/50">
+                <article className="overflow-hidden rounded-xl border border-border bg-transparent">
+                  <header className="flex items-center justify-between gap-3 border-b border-border bg-transparent px-3 py-2">
                     <h3 className="text-[11px] font-semibold">第 {round} 轮提交</h3>
                     <time className="text-[9px] text-neutral-400">
                       {new Date(snapshot.createdAt).toLocaleString()}
@@ -92,7 +92,7 @@ export default function TraumaRoundTimeline({
                       </p>
                     ) : null}
                   </div>
-                  <div className="border-t border-neutral-200 px-3 py-3 dark:border-neutral-800">
+                  <div className="border-t border-border px-3 py-3">
                     <p className="mb-1 text-[9px] font-semibold uppercase tracking-wider text-teal-700 dark:text-teal-300">系统研判</p>
                     <Markdown className="prose prose-sm prose-neutral max-w-none text-[11px] leading-5 dark:prose-invert prose-headings:mb-1 prose-headings:mt-3 prose-p:my-1.5 prose-ol:my-1.5 prose-ul:my-1.5">
                       {snapshot.response?.naturalLanguageAnswer

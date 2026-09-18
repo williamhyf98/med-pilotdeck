@@ -136,7 +136,7 @@ function TimelineGroupRow({
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className={`group inline-flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-[13px] leading-relaxed transition hover:bg-neutral-100 dark:hover:bg-neutral-800/60 ${
+        className={`pd-process-group group inline-flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-[13px] leading-relaxed transition hover:bg-neutral-100 dark:hover:bg-neutral-800/60 ${
           group.isRunning
             ? 'text-neutral-600 dark:text-neutral-300'
             : 'text-neutral-400 dark:text-neutral-500'
@@ -189,7 +189,7 @@ function TimelineStepRow({ step }: { step: ProcessTraceStep }) {
 
   return (
     <div
-      className={`flex min-w-0 items-start gap-2 py-0.5 text-[12px] leading-relaxed ${
+      className={`pd-process-step flex min-w-0 items-start gap-2 py-0.5 text-[12px] leading-relaxed ${
         isFailed
           ? 'text-amber-600 dark:text-amber-400'
           : isRunning
@@ -200,7 +200,7 @@ function TimelineStepRow({ step }: { step: ProcessTraceStep }) {
       <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-50" />
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-baseline gap-1.5">
-          <span className="shrink-0 font-medium text-neutral-700 dark:text-neutral-200">
+          <span className="pd-process-step-title shrink-0 font-medium text-neutral-700 dark:text-neutral-200">
             {toolLabel}
           </span>
           {target ? (
@@ -217,18 +217,18 @@ function TimelineStepRow({ step }: { step: ProcessTraceStep }) {
             </>
           ) : null}
           {context ? (
-            <span className="ml-auto min-w-0 max-w-[45%] shrink-0 truncate text-[11px] text-neutral-400 dark:text-neutral-500">
+            <span className="pd-process-step-detail ml-auto min-w-0 max-w-[45%] shrink-0 truncate text-[11px] text-neutral-400 dark:text-neutral-500">
               {context}
             </span>
           ) : null}
         </div>
         {showCommand ? (
-          <div className="mt-0.5 break-all font-mono text-[11px] leading-4 text-neutral-400 dark:text-neutral-500" title={commandDetail}>
+          <div className="pd-process-step-detail mt-0.5 break-all font-mono text-[11px] leading-4 text-neutral-400 dark:text-neutral-500" title={commandDetail}>
             {commandDetail}
           </div>
         ) : null}
         {resultDetail ? (
-          <div className="mt-0.5 break-all font-mono text-[11px] leading-4 text-neutral-400 dark:text-neutral-500">
+          <div className="pd-process-step-detail mt-0.5 break-all font-mono text-[11px] leading-4 text-neutral-400 dark:text-neutral-500">
             <span className="text-neutral-500 dark:text-neutral-600">&gt;</span>
             {' '}
             {resultDetail}

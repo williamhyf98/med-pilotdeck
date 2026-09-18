@@ -60,6 +60,7 @@ function createPaneElement({
   isAssistantWorking = false,
   runMode = 'agent',
   planModeActive = false,
+  showThinking,
   navigateToChatMessageRef,
   selectedProject = null,
 }: {
@@ -68,6 +69,7 @@ function createPaneElement({
   isAssistantWorking?: boolean;
   runMode?: ChatRunMode;
   planModeActive?: boolean;
+  showThinking?: boolean;
   navigateToChatMessageRef?: React.MutableRefObject<((runId: string) => void | Promise<void>) | null>;
   selectedProject?: Project | null;
 }) {
@@ -100,6 +102,7 @@ function createPaneElement({
         isAssistantWorking={isAssistantWorking}
         runMode={runMode}
         planModeActive={planModeActive}
+        showThinking={showThinking}
       />
     </FindShortcutProvider>
   );
@@ -111,6 +114,7 @@ function renderPane(options: {
   isAssistantWorking?: boolean;
   runMode?: ChatRunMode;
   planModeActive?: boolean;
+  showThinking?: boolean;
   navigateToChatMessageRef?: React.MutableRefObject<((runId: string) => void | Promise<void>) | null>;
   selectedProject?: Project | null;
 }) {
@@ -153,6 +157,42 @@ function SessionPaneHarness({
 }
 
 describe('MessagesPaneV2 render behavior', () => {
+  it('places the completed thinking summary and answer in one assistant turn panel', () => {
+    renderPane({
+      showThinking: true,
+      messages: [
+        {
+          id: 'u-1',
+          type: 'user',
+          content: '头痛伴发热两天',
+          timestamp: '2026-09-18T08:00:00.000Z',
+        },
+        {
+          id: 'thinking-1',
+          type: 'assistant',
+          content: '正在分析症状和危险信号。',
+          timestamp: '2026-09-18T08:00:01.000Z',
+          isThinking: true,
+        },
+        {
+          id: 'a-1',
+          type: 'assistant',
+          content: '建议首先测量体温并评估伴随症状。',
+          timestamp: '2026-09-18T08:00:02.000Z',
+        },
+      ],
+    });
+
+    const processSummary = screen.getByText('Thought through next step');
+    const runSummary = screen.getByText(/^Processed /);
+    const answer = screen.getByText('建议首先测量体温并评估伴随症状。');
+    const panel = answer.closest('.pd-assistant-turn-surface-single');
+
+    expect(panel).toBeTruthy();
+    expect(panel?.contains(processSummary)).toBe(true);
+    expect(panel?.contains(runSummary)).toBe(true);
+  });
+
   it('shows the trauma-specific empty state for a new war-trauma conversation', () => {
     renderPane({
       messages: [],
@@ -307,6 +347,50 @@ describe('MessagesPaneV2 render behavior', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Session B message 0')).toBeTruthy();
+    });
+  });
+
+  it('resets completed process expansion when switching conversations', async () => {
+    const processMessages: ChatMessage[] = [
+      {
+        id: 'u-1',
+        type: 'user',
+        content: '检查文件',
+        timestamp: '2026-09-18T08:00:00.000Z',
+      },
+      {
+        id: 'tool-read-1',
+        type: 'assistant',
+        content: '',
+        timestamp: '2026-09-18T08:00:01.000Z',
+        isToolUse: true,
+        toolName: 'Read',
+        toolId: 'tool-read-1',
+        toolInput: '{"file_path":"src/ReadHidden.tsx"}',
+        toolResult: { content: 'ok', isError: false },
+      },
+      {
+        id: 'a-1',
+        type: 'assistant',
+        content: 'Done.',
+        timestamp: '2026-09-18T08:00:02.000Z',
+      },
+    ];
+    const view = render(
+      <SessionPaneHarness sessionId="session-a" messages={processMessages} />,
+    );
+
+    const firstButton = screen.getByText('Explored 1 file').closest('button');
+    fireEvent.click(firstButton as HTMLButtonElement);
+    expect(firstButton?.getAttribute('aria-expanded')).toBe('true');
+
+    view.rerender(
+      <SessionPaneHarness sessionId="session-b" messages={processMessages} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Explored 1 file').closest('button')?.getAttribute('aria-expanded'))
+        .toBe('false');
     });
   });
 
@@ -590,7 +674,7 @@ describe('MessagesPaneV2 render behavior', () => {
     expect(screen.getByText('ReadHidden.tsx')).toBeTruthy();
   });
 
-  it('preserves process row expansion when a live turn completes', () => {
+  it('collapses a process row when a live turn completes', () => {
     const now = new Date().toISOString();
     const baseMessages: ChatMessage[] = [
       {
@@ -648,8 +732,8 @@ describe('MessagesPaneV2 render behavior', () => {
 
     const summary = screen.getByText('Explored 1 file');
     const completedButton = summary.closest('button');
-    expect(completedButton?.getAttribute('aria-expanded')).toBe('true');
-    expect(screen.getByText('ReadHidden.tsx')).toBeTruthy();
+    expect(completedButton?.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('ReadHidden.tsx')).toBeNull();
   });
 
   it('does not search hidden completed process detail content', async () => {
@@ -1172,7 +1256,12 @@ describe('MessagesPaneV2 render behavior', () => {
 
     renderPane({ messages });
 
-    expect(screen.getByText('First assistant line.').closest('.chat-message')?.className).toContain('pb-4');
-    expect(screen.getByText('First assistant line.').closest('.chat-message')?.className).not.toContain('pb-8');
+    const firstAssistant = screen.getByText('First assistant line.').closest('.chat-message');
+    const secondAssistant = screen.getByText('Second assistant line.').closest('.chat-message');
+
+    expect(firstAssistant?.className).toContain('pb-4');
+    expect(firstAssistant?.className).not.toContain('pb-8');
+    expect(firstAssistant?.className).toContain('pd-assistant-turn-start');
+    expect(secondAssistant?.className).toContain('pd-assistant-turn-end');
   });
 });

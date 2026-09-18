@@ -23,13 +23,13 @@ const extension = {
       name: "general-custom",
       description: "general custom",
       path: "/pilot-home/skills/general-custom/SKILL.md",
-      availability: ["general_medicine"] as const,
+      availability: ["global"] as const,
     },
     {
       name: "trauma-custom",
       description: "trauma custom",
       path: "/pilot-home/skills/trauma-custom/SKILL.md",
-      availability: ["war_trauma"] as const,
+      availability: ["global"] as const,
     },
   ],
   listMcpInstructions: () => [],
@@ -46,7 +46,7 @@ function assemble(cwd: string): string {
   }).joined;
 }
 
-test("general-medicine projects receive their persona and all medical skills", () => {
+test("general-medicine projects receive their persona and all skills", () => {
   const prompt = assemble("/pilot/workspaces/general_med/general_med-example");
   assert.match(prompt, /九格通用医学智能体助手/u);
   assert.match(prompt, /med-tools:med-case-report/u);
@@ -54,10 +54,10 @@ test("general-medicine projects receive their persona and all medical skills", (
   assert.match(prompt, /med-tools:med-trauma-assist/u);
   assert.match(prompt, /med-tools:med-trauma-stage-plan/u);
   assert.match(prompt, /general-custom/u);
-  assert.doesNotMatch(prompt, /trauma-custom/u);
+  assert.match(prompt, /trauma-custom/u);
 });
 
-test("war-trauma projects retain their persona and receive all medical skills", () => {
+test("war-trauma projects retain their persona and receive all skills", () => {
   const prompt = assemble("/pilot/workspaces/trauma_med/trauma_med-example");
   assert.match(prompt, /九格战创伤医学智能体助手/u);
   assert.match(prompt, /med-tools:med-case-report/u);
@@ -65,7 +65,7 @@ test("war-trauma projects retain their persona and receive all medical skills", 
   assert.match(prompt, /med-tools:med-trauma-assist/u);
   assert.match(prompt, /med-tools:med-trauma-stage-plan/u);
   assert.match(prompt, /trauma-custom/u);
-  assert.doesNotMatch(prompt, /general-custom/u);
+  assert.match(prompt, /general-custom/u);
 });
 
 test("personas describe the shared full medical capability set", () => {

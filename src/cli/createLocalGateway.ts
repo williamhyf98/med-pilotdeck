@@ -30,6 +30,15 @@ import {
   ToolResultBudget,
   createEdgeClawMemoryProviderFromConfig,
 } from "../context/index.js";
+import { MemoryDomainFacade } from "../context/memory/MemoryDomainFacade.js";
+import { resolveMemoryScopeIdentity } from "../context/memory/MemoryScopeIdentity.js";
+import type { TraumaPresentationMemoryProvider } from "../trauma/memory/TraumaMemoryContext.js";
+import {
+  createTraumaMemoryCaptureSink,
+  resolveTraumaMemoryCaptureMode,
+  type TraumaMemoryCaptureMode,
+  type TraumaMemoryCaptureSink,
+} from "../trauma/memory/TraumaMemoryCapturePolicy.js";
 import { FileHistoryStore } from "../session/filesystem/FileHistoryStore.js";
 import { SessionMetadataStore } from "../session/index.js";
 import type { AgentSubagentTranscriptHooks } from "../agent/runtime/AgentRuntimeDependencies.js";
@@ -339,8 +348,14 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
       registry.createTraumaKnowledgeQa(projectKey, sessionKey),
     traumaExtractorFactory: ({ projectKey, sessionKey }) =>
       registry.createExtractionStation(projectKey, sessionKey),
+    traumaPreferenceProvider: ({ projectKey, sessionKey }) =>
+      registry.createTraumaMemoryProvider(projectKey, sessionKey)?.() ?? null,
     traumaCaseReader: ({ projectKey, sessionKey }) =>
       registry.readTraumaCase(projectKey, sessionKey),
+    // 战创伤长期记忆写入（Task 7）。sink 按项目构建，未启用时为 undefined。
+    captureTraumaMemory: ({ projectKey, ...turn }) => {
+      registry.createTraumaMemoryCaptureSink(projectKey)?.(turn);
+    },
     async recordTraumaTurn(input) {
       const storage = createAgentProjectSessionStorage({
         projectRoot: input.projectKey,
@@ -779,6 +794,73 @@ class ProjectRuntimeRegistry {
     this.gateway = gateway;
   }
 
+  /**
+   * 构建战创伤的只读记忆 provider（Task 6）。
+   *
+   * 记忆未启用时返回 undefined——战创伤按无记忆运行，与改造前行为一致。
+   * facade 绑定的是**本项目**的 service 实例，跨项目召回在结构上不可能发生。
+   */
+  createTraumaMemoryProvider(
+    projectKey: string,
+    sessionKey: string,
+  ): TraumaPresentationMemoryProvider | undefined {
+    const runtime = this.resolve(projectKey);
+    const service = runtime.memoryService;
+    if (!service) return undefined;
+
+    const facade = new MemoryDomainFacade({
+      service,
+      identity: resolveMemoryScopeIdentity({
+        projectKey,
+        pilotHome: this.options.pilotHome,
+        sessionId: sessionKey,
+      }),
+      logger: console,
+    });
+
+    return () => facade.readPresentationMemory();
+  }
+
+  /**
+   * 构建战创伤的长期记忆写入 sink（Task 7，`feedback_only`）。
+   *
+   * 记忆未启用、或策略为 `off` 时返回 undefined，战创伤按不写入运行。
+   * 策略非法（例如配置里写了未实现的 `eligible_turns`）时同样返回 undefined
+   * 并记 warning——配置层已经会在启动时报错，这里只是兜底，不能让它拖垮回合。
+   */
+  createTraumaMemoryCaptureSink(
+    projectKey: string,
+  ): TraumaMemoryCaptureSink | undefined {
+    const runtime = this.resolve(projectKey);
+    const service = runtime.memoryService;
+    if (!service) return undefined;
+
+    let mode: TraumaMemoryCaptureMode;
+    try {
+      mode = resolveTraumaMemoryCaptureMode(runtime.snapshot.config.memory?.traumaCapture);
+    } catch (error) {
+      console.warn(
+        "[memory] 战创伤写入策略配置无效，本项目不写入长期记忆：",
+        error instanceof Error ? error.message : String(error),
+      );
+      return undefined;
+    }
+    if (mode === "off") return undefined;
+
+    const identity = resolveMemoryScopeIdentity({
+      projectKey,
+      pilotHome: this.options.pilotHome,
+    });
+    const facade = new MemoryDomainFacade({ service, identity, logger: console });
+
+    return createTraumaMemoryCaptureSink({
+      writer: facade,
+      mode,
+      scope: identity.projectId,
+      logger: console,
+    });
+  }
+
   async createTraumaRunner(projectKey: string, sessionKey: string): Promise<TraumaTurnRunner> {
     const runtime = this.resolve(projectKey);
     await runtime.pluginRuntime.refresh();
@@ -1159,6 +1241,12 @@ class ProjectRuntimeRegistry {
       pilotHome: this.options.pilotHome,
       now: this.options.now,
       telemetry: this.options.telemetry,
+      // 选中提示词档案（Task 5）。不传的话战创伤项目会退回通用医学档案，
+      // allowedTypes 硬闸也就形同虚设。
+      projectType: resolveMemoryScopeIdentity({
+        projectKey: identityKey,
+        pilotHome: this.options.pilotHome,
+      }).projectType,
     });
 
     const runtime: ProjectRuntime = {

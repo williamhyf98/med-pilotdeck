@@ -168,6 +168,76 @@ button:disabled {
 
 /* ── Topbar ── */
 
+.memory-header {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+
+.memory-header-main,
+.memory-header-nav {
+  width: min(100%, 1184px);
+  margin: 0 auto;
+  padding-inline: 16px;
+}
+
+.memory-header-main {
+  min-height: 92px;
+  padding-block: 18px 14px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.memory-heading {
+  min-width: 0;
+}
+
+.memory-eyebrow {
+  margin: 0 0 3px;
+  color: var(--status-feedback);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.memory-heading h1 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.35;
+  font-weight: 650;
+}
+
+.memory-subtitle {
+  margin: 4px 0 0;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+.memory-header-main > .toolbar {
+  padding-top: 4px;
+}
+
+.memory-header-nav {
+  min-height: 52px;
+  padding-block: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.memory-header-tools {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
 .topbar {
   flex-shrink: 0;
   display: flex;
@@ -252,7 +322,14 @@ button:disabled {
 .nav-tabs {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.nav-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .nav-tab {
@@ -260,7 +337,8 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
+  min-height: 34px;
+  padding: 6px 14px;
   border-radius: var(--radius-md);
   font-size: 13px;
   font-weight: 500;
@@ -275,12 +353,37 @@ button:disabled {
 }
 
 .nav-tab.active {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-on);
   font-weight: 600;
+  box-shadow: var(--shadow-sm);
 }
 
 .nav-tab-label {
+  pointer-events: none;
+}
+
+/* 分组标签：用一条细分隔线 + 小字标题把三类数据区分开。 */
+.nav-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.nav-group + .nav-group {
+  margin-left: 10px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
+
+.nav-group-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3, var(--text-2));
+  padding-right: 4px;
+  white-space: nowrap;
   pointer-events: none;
 }
 
@@ -694,6 +797,36 @@ button:disabled {
   font-size: 13px;
 }
 
+/* ── Scope bar（Task 8：维护状态，常驻） ── */
+
+.scope-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: min(calc(100% - 32px), 1152px);
+  margin: 10px auto 0;
+  font-size: 11px;
+}
+
+.scope-chip {
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.scope-chip[data-kind="readOnly"] {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 /* ── Workspace / Main ── */
 
 .workspace {
@@ -713,6 +846,8 @@ button:disabled {
 
 .board-content {
   display: none;
+  width: min(100%, 1152px);
+  margin: 0 auto;
 }
 
 .board-content.board-active {
@@ -1277,6 +1412,59 @@ button:disabled {
   color: var(--status-deprecated);
 }
 
+/* 只读徽标（病例状态页）——刻意用中性灰，不能看起来像可操作的状态标签。 */
+.entry-badge[data-kind="readonly"] {
+  background: var(--bg-hover);
+  color: var(--text-2);
+}
+
+/* 条目上的 scope / 来源 / Dream 合并标注，比 entry-badge 更轻。 */
+.entry-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 4px;
+}
+
+.entry-tag {
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.entry-tag[data-kind="dream"] {
+  border-color: transparent;
+  background: var(--status-trace-soft);
+  color: var(--status-trace);
+}
+
+/* ── Case State Board ── */
+
+.case-narrative {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+}
+
+.case-narrative-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: 4px;
+}
+
+.case-narrative-text {
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
 .trace-badge {
   background: var(--status-trace-soft);
   color: var(--status-trace);
@@ -1661,6 +1849,33 @@ li + li {
     align-items: stretch;
     padding: 8px 12px;
     gap: 8px;
+  }
+
+  .memory-header-main {
+    min-height: 0;
+    padding-block: 14px 10px;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .memory-header-main > .toolbar {
+    width: 100%;
+    padding-top: 0;
+    overflow-x: auto;
+  }
+
+  .memory-header-nav {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .memory-header-tools {
+    justify-content: stretch;
+  }
+
+  .memory-header-tools .search-row {
+    flex: 1;
   }
 
   .topbar-left,

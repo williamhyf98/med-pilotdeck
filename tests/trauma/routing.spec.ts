@@ -91,6 +91,9 @@ function createTestGateway(projectKey, options = { askPlacement: false }) {
     trauma: 0,
     recordedUserText: "",
     runnerForm: null,
+    runnerPresentationPolicy: null,
+    qaPresentationPolicy: null,
+    capturedPreferences: [],
     processMessages: [],
     extractorInput: null,
   };
@@ -118,6 +121,8 @@ function createTestGateway(projectKey, options = { askPlacement: false }) {
       async runTurn(input) {
         counter.trauma += 1;
         counter.runnerForm = input.form;
+        counter.runnerPresentationPolicy = input.presentationPolicy ?? null;
+        if (options.runnerError) throw options.runnerError;
         if (options.streamAnswer) {
           await input.onAssistantTextDelta?.("当前仍在");
           await input.onAssistantTextDelta?.("初级急救。");
@@ -157,6 +162,13 @@ function createTestGateway(projectKey, options = { askPlacement: false }) {
         throw new Error("not used");
       },
     }),
+    traumaPreferenceProvider: options.preferenceMemory
+      ? async () => options.preferenceMemory
+      : undefined,
+    captureTraumaMemory(input) {
+      counter.capturedPreferences.push(...(input.preferences ?? []));
+      if (options.captureError) throw options.captureError;
+    },
     ...(options.knowledgeQaFactory ? { traumaKnowledgeQaFactory: options.knowledgeQaFactory } : {}),
   });
   return { gateway, counter, projectKey };
@@ -459,6 +471,294 @@ test("traumaExtract runs extraction before the runner and records it as a non-co
     message.metadata?.purpose === "trauma_runner_step").length >= 2, true);
   assert.equal(counter.processMessages.some((message) =>
     JSON.stringify(message).includes("大模型信息抽取")), true);
+});
+
+test("case update plus preference applies the preference now and captures it after success", async () => {
+  const rawInput = "以后先给结论。患者心率 130。";
+  const { gateway, counter } = createTestGateway("trauma_med-demo", {
+    extractorResult: {
+      inputIntent: "case_update",
+      scopeReason: "病例更新并包含表达偏好",
+      preferences: [{
+        sourceSpan: "以后先给结论",
+        directive: "回答时先给结论",
+        category: "format",
+      }],
+      injuryNarratives: [],
+      treatmentNarratives: [],
+      evacuationNarratives: [],
+      notes: [],
+      vitals: [{ field: "heartRate", value: 130, unit: "次/分", sourceSpan: "心率 130" }],
+    },
+    preferenceMemory: {
+      projectFeedback: "默认使用编号列表",
+      globalProfile: "## 专业领域\n- 战创伤复苏",
+    },
+  });
+
+  for await (const _event of gateway.submitTurn({
+    sessionKey: "web:s_case_preference",
+    channelKey: "web",
+    projectKey: "trauma_med-demo",
+    message: rawInput,
+    traumaRawInput: rawInput,
+    traumaExtract: true,
+    traumaForm: {
+      statedSubStage: null,
+      injuryNarrative: rawInput,
+      treatmentNarrative: "",
+      evacuationNarrative: "",
+      note: "",
+      vitals: {},
+    },
+  })) {}
+
+  assert.equal(counter.trauma, 1);
+  assert.equal(counter.runnerForm?.vitals.heartRate, 130);
+  assert.doesNotMatch(JSON.stringify(counter.runnerForm), /先给结论/u);
+  assert.match(counter.runnerPresentationPolicy ?? "", /当前轮偏好[\s\S]*回答时先给结论/u);
+  assert.match(counter.runnerPresentationPolicy ?? "", /当前项目 Feedback[\s\S]*默认使用编号列表/u);
+  assert.match(counter.runnerPresentationPolicy ?? "", /全局用户画像[\s\S]*战创伤复苏/u);
+  assert.deepEqual(counter.capturedPreferences.map((item) => item.directive), ["回答时先给结论"]);
+});
+
+test("preference-only input acknowledges and persists without constructing the runner", async () => {
+  const rawInput = "以后所有回答都先给结论，再用表格列出处置措施。";
+  const { gateway, counter } = createTestGateway("trauma_med-demo", {
+    extractorResult: {
+      inputIntent: "out_of_scope",
+      scopeReason: "仅包含输出偏好",
+      preferences: [{
+        sourceSpan: rawInput,
+        directive: "先给结论，并用表格列出处置措施",
+        category: "format",
+      }],
+      injuryNarratives: [],
+      treatmentNarratives: [],
+      evacuationNarratives: [],
+      notes: [],
+      vitals: [],
+    },
+  });
+  const events = [];
+
+  for await (const event of gateway.submitTurn({
+    sessionKey: "web:s_preference_only",
+    channelKey: "web",
+    projectKey: "trauma_med-demo",
+    message: rawInput,
+    traumaRawInput: rawInput,
+    traumaExtract: true,
+    traumaForm: {
+      statedSubStage: null,
+      injuryNarrative: rawInput,
+      treatmentNarrative: "",
+      evacuationNarrative: "",
+      note: "",
+      vitals: {},
+    },
+  })) events.push(event);
+
+  assert.equal(counter.trauma, 0);
+  assert.match(
+    events.filter((event) => event.type === "assistant_text_delta").map((event) => event.text).join(""),
+    /已记录.*先给结论/u,
+  );
+  assert.deepEqual(counter.capturedPreferences.map((item) => item.directive), [
+    "先给结论，并用表格列出处置措施",
+  ]);
+});
+
+test("preference plus unrelated request acknowledges the preference and appends a scope note", async () => {
+  const rawInput = "以后回答简洁。今天北京天气怎么样？";
+  const { gateway } = createTestGateway("trauma_med-demo", {
+    extractorResult: {
+      inputIntent: "out_of_scope",
+      scopeReason: "包含偏好和非战创伤问题",
+      preferences: [{
+        sourceSpan: "以后回答简洁",
+        directive: "回答保持简洁",
+        category: "detail",
+      }],
+      injuryNarratives: [],
+      treatmentNarratives: [],
+      evacuationNarratives: [],
+      notes: [],
+      vitals: [],
+    },
+  });
+  const events = [];
+
+  for await (const event of gateway.submitTurn({
+    sessionKey: "web:s_preference_scope",
+    channelKey: "web",
+    projectKey: "trauma_med-demo",
+    message: rawInput,
+    traumaRawInput: rawInput,
+    traumaExtract: true,
+    traumaForm: {
+      statedSubStage: null,
+      injuryNarrative: rawInput,
+      treatmentNarrative: "",
+      evacuationNarrative: "",
+      note: "",
+      vitals: {},
+    },
+  })) events.push(event);
+
+  const answer = events
+    .filter((event) => event.type === "assistant_text_delta")
+    .map((event) => event.text)
+    .join("");
+  assert.match(answer, /已记录.*回答保持简洁/u);
+  assert.match(answer, /不属于战创伤救治范围/u);
+});
+
+test("knowledge question plus preference passes the same-turn policy to Knowledge QA", async () => {
+  const rawInput = "解释止血带使用原则，以后回答简洁一些。";
+  const { gateway, counter } = createTestGateway("trauma_med-demo", {
+    extractorResult: {
+      inputIntent: "domain_question_no_case",
+      scopeReason: "知识问题并包含详略偏好",
+      preferences: [{
+        sourceSpan: "以后回答简洁一些",
+        directive: "回答保持简洁",
+        category: "detail",
+      }],
+      injuryNarratives: [],
+      treatmentNarratives: [],
+      evacuationNarratives: [],
+      notes: [],
+      vitals: [],
+    },
+    knowledgeQaFactory: async () => ({
+      rewriter: {
+        async rewrite() {
+          return {
+            rewrittenQueries: [{ query: "止血带使用原则", reason: "标准化" }],
+            unresolvedReferences: [],
+            needsClarification: false,
+          };
+        },
+      },
+      rag: {
+        async query() {
+          return { retrieval_backend: "local", chunks: [] };
+        },
+      },
+      qa: {
+        async answer(input) {
+          counter.qaPresentationPolicy = input.presentationPolicy ?? null;
+          return { naturalLanguageAnswer: "简要回答。", citationChunkIds: [] };
+        },
+      },
+    }),
+  });
+
+  for await (const _event of gateway.submitTurn({
+    sessionKey: "web:s_knowledge_preference",
+    channelKey: "web",
+    projectKey: "trauma_med-demo",
+    message: rawInput,
+    traumaRawInput: rawInput,
+    traumaExtract: true,
+    traumaForm: {
+      statedSubStage: null,
+      injuryNarrative: rawInput,
+      treatmentNarrative: "",
+      evacuationNarrative: "",
+      note: "",
+      vitals: {},
+    },
+  })) {}
+
+  assert.equal(counter.trauma, 0);
+  assert.match(counter.qaPresentationPolicy ?? "", /当前轮偏好[\s\S]*回答保持简洁/u);
+  assert.deepEqual(counter.capturedPreferences.map((item) => item.directive), ["回答保持简洁"]);
+});
+
+test("failed primary workflow does not persist current-turn preferences", async () => {
+  const rawInput = "以后先给结论。患者心率 130。";
+  const { gateway, counter } = createTestGateway("trauma_med-demo", {
+    runnerError: new Error("reasoner failed"),
+    extractorResult: {
+      inputIntent: "case_update",
+      scopeReason: "病例更新并包含表达偏好",
+      preferences: [{
+        sourceSpan: "以后先给结论",
+        directive: "回答时先给结论",
+        category: "format",
+      }],
+      injuryNarratives: [],
+      treatmentNarratives: [],
+      evacuationNarratives: [],
+      notes: [],
+      vitals: [{ field: "heartRate", value: 130, unit: "次/分", sourceSpan: "心率 130" }],
+    },
+  });
+
+  const events = [];
+  for await (const event of gateway.submitTurn({
+    sessionKey: "web:s_failed_preference",
+    channelKey: "web",
+    projectKey: "trauma_med-demo",
+    message: rawInput,
+    traumaRawInput: rawInput,
+    traumaExtract: true,
+    traumaForm: {
+      statedSubStage: null,
+      injuryNarrative: rawInput,
+      treatmentNarrative: "",
+      evacuationNarrative: "",
+      note: "",
+      vitals: {},
+    },
+  })) events.push(event);
+
+  assert.equal(events.at(-1)?.type, "error");
+  assert.deepEqual(counter.capturedPreferences, []);
+});
+
+test("preference persistence failure does not replace a successful answer", async () => {
+  const rawInput = "以后先给结论。患者心率 130。";
+  const { gateway } = createTestGateway("trauma_med-demo", {
+    captureError: new Error("memory unavailable"),
+    extractorResult: {
+      inputIntent: "case_update",
+      scopeReason: "病例更新并包含表达偏好",
+      preferences: [{
+        sourceSpan: "以后先给结论",
+        directive: "回答时先给结论",
+        category: "format",
+      }],
+      injuryNarratives: [],
+      treatmentNarratives: [],
+      evacuationNarratives: [],
+      notes: [],
+      vitals: [{ field: "heartRate", value: 130, unit: "次/分", sourceSpan: "心率 130" }],
+    },
+  });
+
+  const events = [];
+  for await (const event of gateway.submitTurn({
+    sessionKey: "web:s_capture_failure",
+    channelKey: "web",
+    projectKey: "trauma_med-demo",
+    message: rawInput,
+    traumaRawInput: rawInput,
+    traumaExtract: true,
+    traumaForm: {
+      statedSubStage: null,
+      injuryNarrative: rawInput,
+      treatmentNarrative: "",
+      evacuationNarrative: "",
+      note: "",
+      vitals: {},
+    },
+  })) events.push(event);
+
+  assert.equal(events.at(-1)?.type, "turn_completed");
+  assert.equal(events.some((event) => event.type === "error"), false);
 });
 
 test("traumaExtract falls back to the raw narrative when extraction fails", async () => {

@@ -61,8 +61,8 @@ export default function ToolSidePanel({
         aria-label={title}
         className={
           isMobile
-            ? 'absolute inset-0 z-40 flex min-h-0 flex-col bg-white shadow-2xl dark:bg-neutral-950'
-            : 'flex min-h-0 shrink-0 flex-col bg-white dark:bg-neutral-950'
+            ? 'workspace-detail-surface absolute inset-0 z-40 flex min-h-0 flex-col shadow-2xl'
+            : 'workspace-detail-surface flex min-h-0 shrink-0 flex-col'
         }
         style={isMobile ? undefined : { width }}
       >

@@ -4,29 +4,22 @@ import CodeMirror from '@uiw/react-codemirror';
 import { markdown } from '@codemirror/lang-markdown';
 import { EditorView } from '@codemirror/view';
 import {
-  ArrowLeft,
   Loader2,
   PencilLine,
   RefreshCw,
   Save,
   Sparkles,
   Trash2,
+  X,
 } from 'lucide-react';
 import type { Project } from '../../types/app';
 import { authenticatedFetch } from '../../utils/api';
 import { useTheme } from '../../contexts/ThemeContext';
 import { zincDarkTheme, zincLightTheme } from '../code-editor/utils/zincThemes';
 import { cn } from '../../lib/utils.js';
-import {
-  availabilityBucket,
-  nextSkillAvailability,
-  type SkillAvailability,
-} from './skillAvailability';
 
 type SkillsV2Props = {
   selectedProject: Project | null;
-  projects: Project[];
-  compact?: boolean;
 };
 
 type SkillScope = 'builtin' | 'user' | 'project' | 'medical';
@@ -42,8 +35,6 @@ type Skill = {
   overriddenBy?: 'user' | 'project';
   overridesBuiltin?: boolean;
   mtime: number | null;
-  availability: SkillAvailability[];
-  availabilityMutable: boolean;
 };
 
 type SkillsListResponse = {
@@ -85,7 +76,7 @@ async function api<T>(url: string, body: unknown): Promise<T> {
 
 // ---------------------------------------------------------------------------
 
-export default function SkillsV2({ selectedProject, compact = false }: SkillsV2Props) {
+export default function SkillsV2({ selectedProject }: SkillsV2Props) {
   const { t } = useTranslation();
   const { isDarkMode } = useTheme() as { isDarkMode: boolean };
 
@@ -274,42 +265,22 @@ export default function SkillsV2({ selectedProject, compact = false }: SkillsV2P
     setActiveScope(skill.scope);
   }, [isDirty, t]);
 
-  const handleAvailabilityChange = useCallback(async (
-    skill: Skill,
-    availability: SkillAvailability[],
-  ) => {
-    if (!skill.availabilityMutable) return;
-    setSaving(true);
-    try {
-      const result = await api<{ skill: Skill }>('/api/skills/availability', {
-        skillPath: skill.skillDir,
-        projectPath: effectiveProjectPath,
-        availability,
-      });
-      setSkills((prev) => {
-        if (!prev) return prev;
-        const updateIn = (list: Skill[]) => list.map((entry) =>
-          entry.slug === skill.slug && entry.scope === skill.scope
-            ? { ...entry, ...result.skill }
-            : entry);
-        return {
-          ...prev,
-          builtin: updateIn(prev.builtin),
-          user: updateIn(prev.user),
-          project: updateIn(prev.project),
-          medical: updateIn(prev.medical),
-        };
-      });
-      flashToast({
-        kind: 'success',
-        text: t('skillsTab.availabilitySaved', { defaultValue: '技能归属已更新' }),
-      });
-    } catch (error) {
-      flashToast({ kind: 'error', text: (error as Error).message });
-    } finally {
-      setSaving(false);
+  const handleCloseDetail = useCallback(() => {
+    if (isDirty && !window.confirm(t('skillsTab.discardUnsaved', { defaultValue: 'Discard unsaved changes?' }) as string)) {
+      return;
     }
-  }, [effectiveProjectPath, flashToast, t]);
+    setActiveSlug(null);
+    setActiveScope(null);
+  }, [isDirty, t]);
+
+  useEffect(() => {
+    if (!activeSkill) return undefined;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') handleCloseDetail();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeSkill, handleCloseDetail]);
 
   // ------------------------------------------------------------------------
 
@@ -322,55 +293,43 @@ export default function SkillsV2({ selectedProject, compact = false }: SkillsV2P
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-white dark:bg-neutral-950">
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-neutral-50/60 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
       <Header
-        cwd={cwd}
         generalCwd={generalCwd}
         loading={loading}
         onRefresh={refresh}
-        compact={compact}
         t={t}
       />
 
-      <div className="flex min-h-0 flex-1">
-        {!compact || !activeSkill ? (
-          <SkillsList
-            skills={skills}
-            loading={loading}
-            activeSlug={activeSlug}
-            activeScope={activeScope}
-            onSelect={handleSelect}
-            selectedSkill={activeSkill}
-            effectiveProjectPath={effectiveProjectPath}
-            refresh={refresh}
-            flashToast={flashToast}
-            setActiveSlug={setActiveSlug}
-            setActiveScope={setActiveScope}
-            compact={compact}
-            onAvailabilityChange={handleAvailabilityChange}
-            t={t}
+      <SkillsList
+        skills={skills}
+        loading={loading}
+        activeSlug={activeSlug}
+        activeScope={activeScope}
+        onSelect={handleSelect}
+        selectedSkill={activeSkill}
+        effectiveProjectPath={effectiveProjectPath}
+        refresh={refresh}
+        flashToast={flashToast}
+        setActiveSlug={setActiveSlug}
+        setActiveScope={setActiveScope}
+        t={t}
+      />
+
+      {activeSkill ? (
+        <div className="absolute inset-0 z-40 flex justify-end overflow-hidden">
+          <button
+            type="button"
+            className="absolute inset-0 cursor-default bg-black/10 backdrop-blur-[1px] dark:bg-black/30"
+            aria-label={t('skillsTab.closeDetail', { defaultValue: '关闭技能详情' }) as string}
+            onClick={handleCloseDetail}
           />
-        ) : null}
-        {!compact || activeSkill ? (
-        <div className={cn(
-          'flex min-h-0 flex-1 flex-col',
-          !compact && 'border-l border-neutral-200 dark:border-neutral-800',
-        )}>
-          {compact && activeSkill ? (
-            <button
-              type="button"
-              onClick={() => {
-                if (isDirty && !window.confirm(t('skillsTab.discardUnsaved', { defaultValue: 'Discard unsaved changes?' }) as string)) return;
-                setActiveSlug(null);
-                setActiveScope(null);
-              }}
-              className="flex h-9 shrink-0 items-center gap-1.5 border-b border-neutral-200 px-3 text-[12px] font-medium text-neutral-600 transition-colors hover:bg-neutral-50 hover:text-neutral-900 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.75} />
-              <span>{t('skillsTab.backToSkills', { defaultValue: 'Back to skills' })}</span>
-            </button>
-          ) : null}
-          {activeSkill ? (
+          <aside
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${activeSkill.name} ${t('skillsTab.promptContent', { defaultValue: '提示词内容' })}`}
+            className="skill-detail-drawer relative z-10 flex h-full w-full max-w-[760px] flex-col border-l border-neutral-200 bg-white shadow-2xl dark:border-neutral-800 dark:bg-neutral-950"
+          >
             <SkillDetail
               skill={activeSkill}
               content={editorContent}
@@ -383,16 +342,12 @@ export default function SkillsV2({ selectedProject, compact = false }: SkillsV2P
               onDelete={handleDelete}
               onCreateUserOverride={handleCreateUserOverride}
               onRevert={() => setEditorContent(originalContent)}
-              onAvailabilityChange={handleAvailabilityChange}
-              compact={compact}
+              onClose={handleCloseDetail}
               t={t}
             />
-          ) : (
-            <EmptyState t={t} />
-          )}
+          </aside>
         </div>
-        ) : null}
-      </div>
+      ) : null}
 
       {toast ? (
         <div
@@ -413,46 +368,44 @@ export default function SkillsV2({ selectedProject, compact = false }: SkillsV2P
 // ---------------------------------------------------------------------------
 
 function Header({
-  cwd,
   generalCwd,
   loading,
   onRefresh,
-  compact,
   t,
 }: {
-  cwd: string | null;
   generalCwd: boolean;
   loading: boolean;
   onRefresh: () => void;
-  compact: boolean;
   t: ReturnType<typeof useTranslation>['t'];
 }) {
   return (
-    <div className={cn(
-      'flex h-10 shrink-0 items-center justify-between border-b border-neutral-200 dark:border-neutral-800',
-      compact ? 'px-3' : 'px-6',
-    )}>
-      <div className="flex min-w-0 items-center gap-2 truncate font-mono text-xxs text-neutral-500 dark:text-neutral-400">
-        <Sparkles className="h-3.5 w-3.5 text-amber-500" strokeWidth={1.75} />
-        {generalCwd ? (
-          <span>{t('skillsTab.generalChat', { defaultValue: 'General chat — user-scope skills only' })}</span>
-        ) : (
-          <span className="truncate">{cwd}</span>
-        )}
-      </div>
-      <div className="flex items-center gap-1">
+    <header className="shrink-0 border-b border-neutral-200 bg-white px-6 py-5 dark:border-neutral-800 dark:bg-neutral-950">
+      <div className="mx-auto flex max-w-6xl flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-600 dark:text-amber-400">
+            <Sparkles className="h-3.5 w-3.5" strokeWidth={1.75} />
+            {t('skillsTab.library', { defaultValue: '技能库' })}
+          </div>
+          <h1 className="text-xl font-semibold tracking-tight">
+            {t('skillsTab.title', { defaultValue: '技能' })}
+          </h1>
+          <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+            {generalCwd
+              ? t('skillsTab.generalChat', { defaultValue: '通用聊天 — 内置技能和用户技能' })
+              : t('skillsTab.description', { defaultValue: '查看和管理当前项目可使用的技能提示词。' })}
+          </p>
+        </div>
         <button
           type="button"
           onClick={onRefresh}
           disabled={loading}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-neutral-600 transition hover:bg-neutral-100 disabled:opacity-50 dark:text-neutral-300 dark:hover:bg-neutral-900"
-          title={t('skillsTab.refresh', { defaultValue: 'Refresh' }) as string}
-          aria-label={t('skillsTab.refresh', { defaultValue: 'Refresh' }) as string}
+          className="inline-flex h-9 items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 text-sm font-medium shadow-sm transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:hover:bg-neutral-800"
         >
-          <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} strokeWidth={1.75} />
+          <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} strokeWidth={1.75} />
+          {t('skillsTab.refresh', { defaultValue: '刷新' })}
         </button>
       </div>
-    </div>
+    </header>
   );
 }
 
@@ -468,8 +421,6 @@ function SkillsList({
   flashToast,
   setActiveSlug,
   setActiveScope,
-  compact,
-  onAvailabilityChange,
   t,
 }: {
   skills: SkillsListResponse | null;
@@ -483,8 +434,6 @@ function SkillsList({
   flashToast: (t: ToastState, ms?: number) => void;
   setActiveSlug: (slug: string | null) => void;
   setActiveScope: (scope: SkillScope | null) => void;
-  compact: boolean;
-  onAvailabilityChange: (skill: Skill, availability: SkillAvailability[]) => Promise<void>;
   t: ReturnType<typeof useTranslation>['t'];
 }) {
   const handleDeleteSkill = useCallback(async (skill: Skill) => {
@@ -508,63 +457,29 @@ function SkillsList({
     }
   }, [effectiveProjectPath, selectedSkill, refresh, flashToast, setActiveSlug, setActiveScope, t]);
 
-  const groupedSkills = useMemo(() => {
-    const groups: Record<SkillAvailability, Skill[]> = {
-      global: [],
-      general_medicine: [],
-      war_trauma: [],
-    };
-    if (!skills) return groups;
-    for (const skill of [...skills.builtin, ...skills.user, ...skills.medical]) {
-      groups[availabilityBucket(skill.availability)].push(skill);
-    }
-    return groups;
-  }, [skills]);
+  const allSkills = useMemo(
+    () => skills
+      ? [...skills.builtin, ...skills.user, ...skills.medical, ...skills.project]
+      : [],
+    [skills],
+  );
 
   return (
-    <div className={cn(
-      'flex shrink-0 flex-col',
-      compact ? 'w-full' : 'w-72 border-r border-neutral-200 dark:border-neutral-800',
-    )}>
-      <div className="min-h-0 flex-1 overflow-y-auto py-2 text-[13px]">
+    <main className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+      <div className="mx-auto max-w-6xl text-[13px]">
         {loading && !skills ? (
-          <div className="flex items-center justify-center gap-2 py-6 text-xxs text-neutral-500 dark:text-neutral-400">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.75} />
+          <div className="flex min-h-52 items-center justify-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
+            <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.75} />
             <span>{t('skillsTab.loading', { defaultValue: 'Loading…' })}</span>
           </div>
         ) : (
           <>
-            <ListSection
-              title={t('skillsTab.globalSkills', { defaultValue: '全局技能' })}
-              availability="global"
-              items={groupedSkills.global}
+            <SkillsGrid
+              items={allSkills}
               activeSlug={activeSlug}
               activeScope={activeScope}
               onSelect={onSelect}
               onDelete={handleDeleteSkill}
-              onAvailabilityChange={onAvailabilityChange}
-              t={t}
-            />
-            <ListSection
-              title={t('skillsTab.generalMedicineSkills', { defaultValue: '通用医学技能' })}
-              availability="general_medicine"
-              items={groupedSkills.general_medicine}
-              activeSlug={activeSlug}
-              activeScope={activeScope}
-              onSelect={onSelect}
-              onDelete={handleDeleteSkill}
-              onAvailabilityChange={onAvailabilityChange}
-              t={t}
-            />
-            <ListSection
-              title={t('skillsTab.warTraumaSkills', { defaultValue: '战创伤医学技能' })}
-              availability="war_trauma"
-              items={groupedSkills.war_trauma}
-              activeSlug={activeSlug}
-              activeScope={activeScope}
-              onSelect={onSelect}
-              onDelete={handleDeleteSkill}
-              onAvailabilityChange={onAvailabilityChange}
               t={t}
             />
             {skills &&
@@ -579,120 +494,47 @@ function SkillsList({
           </>
         )}
       </div>
-    </div>
+    </main>
   );
 }
 
-function ListSection({
-  title,
-  availability,
+function SkillsGrid({
   items,
   activeSlug,
   activeScope,
   onSelect,
   onDelete,
-  onAvailabilityChange,
   t,
 }: {
-  title: string;
-  availability: SkillAvailability;
   items: Skill[];
   activeSlug: string | null;
   activeScope: SkillScope | null;
   onSelect: (s: Skill) => void;
   onDelete: (s: Skill) => void;
-  onAvailabilityChange: (skill: Skill, availability: SkillAvailability[]) => Promise<void>;
   t: ReturnType<typeof useTranslation>['t'];
 }) {
-  const [isDragOver, setIsDragOver] = useState(false);
-
   return (
-    <div
-      className={cn(
-        'mb-2 rounded-lg border border-transparent transition-colors',
-        isDragOver && 'border-blue-300 bg-blue-50/70 dark:border-blue-700 dark:bg-blue-950/20',
-      )}
-      onDragOver={(event) => {
-        if (!event.dataTransfer.types.includes('application/x-pilotdeck-skill')) return;
-        event.preventDefault();
-        event.dataTransfer.dropEffect = 'move';
-        setIsDragOver(true);
-      }}
-      onDragLeave={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-          setIsDragOver(false);
-        }
-      }}
-      onDrop={(event) => {
-        event.preventDefault();
-        setIsDragOver(false);
-        try {
-          const skill = JSON.parse(
-            event.dataTransfer.getData('application/x-pilotdeck-skill'),
-          ) as Skill;
-          if (skill.availabilityMutable) {
-            void onAvailabilityChange(skill, [availability]);
-          }
-        } catch {
-          // Ignore malformed external drag payloads.
-        }
-      }}
-    >
-      <div className="px-4 py-1 text-xxs uppercase tracking-wider text-neutral-400 dark:text-neutral-500">
-        {title} <span className="text-neutral-300 dark:text-neutral-600">· {items.length}</span>
-      </div>
-      <ul className="space-y-0.5 px-2">
+    <div className="mb-6">
+      <ul className="grid auto-rows-[132px] grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
         {items.map((s) => {
           const isActive = activeSlug === s.slug && activeScope === s.scope;
           return (
-            <li key={`${s.scope}:${s.slug}`} className="group relative">
+            <li key={`${s.scope}:${s.slug}`} className="group relative h-full min-w-0">
               <button
                 type="button"
                 onClick={() => onSelect(s)}
-                draggable={s.availabilityMutable}
-                onDragStart={(event) => {
-                  if (!s.availabilityMutable) {
-                    event.preventDefault();
-                    return;
-                  }
-                  event.dataTransfer.effectAllowed = 'move';
-                  event.dataTransfer.setData(
-                    'application/x-pilotdeck-skill',
-                    JSON.stringify(s),
-                  );
-                }}
+                aria-pressed={isActive}
                 className={cn(
-                  'block w-full truncate rounded-md px-2 py-1.5 pr-8 text-left text-[13px] transition-colors',
-                  s.availabilityMutable && 'cursor-grab active:cursor-grabbing',
+                  'flex h-full w-full flex-col overflow-hidden rounded-lg border bg-white p-4 pr-11 text-left shadow-sm transition-[border-color,background-color,box-shadow,transform] duration-150 dark:bg-neutral-900',
                   isActive
-                    ? 'bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100'
-                    : 'text-neutral-700 hover:bg-neutral-50 dark:text-neutral-300 dark:hover:bg-neutral-900/60',
+                    ? 'border-blue-400 bg-blue-50 text-neutral-900 ring-2 ring-blue-500/10 dark:border-blue-600 dark:bg-blue-950/35 dark:text-neutral-100'
+                    : 'border-neutral-200 text-neutral-800 hover:-translate-y-px hover:border-neutral-300 hover:shadow-md dark:border-neutral-800 dark:text-neutral-200 dark:hover:border-neutral-700',
                 )}
-                title={s.description || s.name}
               >
-                <div className="flex items-center gap-1.5 truncate font-medium">
-                  <span className="truncate">{s.name}</span>
-                  {s.version ? (
-                    <span className="shrink-0 rounded bg-neutral-200 px-1 py-px text-[10px] text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400">
-                      v{s.version}
-                    </span>
-                  ) : null}
-                  {s.overriddenBy ? (
-                    <span className="shrink-0 rounded bg-neutral-200 px-1 py-px text-[10px] text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
-                      {t('skillsTab.overridden', { defaultValue: 'overridden' })}
-                    </span>
-                  ) : null}
-                  {s.overridesBuiltin ? (
-                    <span className="shrink-0 rounded bg-violet-100 px-1 py-px text-[10px] text-violet-700 dark:bg-violet-950/50 dark:text-violet-300">
-                      {t('skillsTab.override', { defaultValue: 'override' })}
-                    </span>
-                  ) : null}
-                </div>
-                {s.description ? (
-                  <div className="mt-0.5 line-clamp-1 text-xxs text-neutral-500 dark:text-neutral-400">
-                    {s.description}
-                  </div>
-                ) : null}
+                <span className="line-clamp-2 text-sm font-semibold leading-5">{s.name}</span>
+                <span className="mt-2 line-clamp-3 text-xs leading-5 text-neutral-500 dark:text-neutral-400">
+                  {s.description || t('skillsTab.noDescription', { defaultValue: '暂无技能介绍' })}
+                </span>
               </button>
               {!s.readonly ? (
                 <button
@@ -701,8 +543,9 @@ function ListSection({
                     e.stopPropagation();
                     onDelete(s);
                   }}
-                  className="absolute right-1.5 top-1/2 hidden h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-neutral-400 hover:bg-red-50 hover:text-red-600 group-hover:inline-flex dark:text-neutral-500 dark:hover:bg-red-950/40 dark:hover:text-red-400"
+                  className="absolute right-3 top-3 hidden h-7 w-7 items-center justify-center rounded-md text-neutral-400 hover:bg-red-50 hover:text-red-600 focus:inline-flex group-hover:inline-flex dark:text-neutral-500 dark:hover:bg-red-950/40 dark:hover:text-red-400"
                   title={t('skillsTab.delete', { defaultValue: 'Delete' }) as string}
+                  aria-label={t('skillsTab.delete', { defaultValue: 'Delete' }) as string}
                 >
                   <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
                 </button>
@@ -711,83 +554,7 @@ function ListSection({
           );
         })}
       </ul>
-
     </div>
-  );
-}
-
-function EmptyState({ t }: { t: ReturnType<typeof useTranslation>['t'] }) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-[13px] text-neutral-500 dark:text-neutral-400">
-      <Sparkles className="h-8 w-8 text-neutral-300 dark:text-neutral-700" strokeWidth={1.5} />
-      <div>{t('skillsTab.selectHint', { defaultValue: 'Pick a skill on the left to view or edit its SKILL.md.' })}</div>
-    </div>
-  );
-}
-
-const AVAILABILITY_OPTIONS: Array<{ value: SkillAvailability; label: string }> = [
-  { value: 'global', label: '全局' },
-  { value: 'general_medicine', label: '通用医学' },
-  { value: 'war_trauma', label: '战创伤医学' },
-];
-
-function AvailabilityControl({
-  skill,
-  saving,
-  onChange,
-}: {
-  skill: Skill;
-  saving: boolean;
-  onChange: (availability: SkillAvailability[]) => void;
-}) {
-  const selected = new Set(skill.availability);
-  const label = selected.has('global')
-    ? '全局'
-    : selected.has('general_medicine')
-      ? '仅通用医学'
-      : '仅战创伤医学';
-
-  if (!skill.availabilityMutable) {
-    return (
-      <div className="mt-2 flex items-center gap-2 text-[11px] text-neutral-500 dark:text-neutral-400">
-        <span>技能归属</span>
-        <span className="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-          {label}
-        </span>
-        <span>只读</span>
-      </div>
-    );
-  }
-
-  const toggle = (value: SkillAvailability) => {
-    const next = nextSkillAvailability(skill.availability, value);
-    if (next.length !== skill.availability.length || next[0] !== skill.availability[0]) {
-      onChange(next);
-    }
-  };
-
-  return (
-    <fieldset className="mt-3" disabled={saving}>
-      <legend className="mb-1.5 text-[11px] font-medium text-neutral-600 dark:text-neutral-300">
-        技能归属
-      </legend>
-      <div className="flex flex-wrap gap-3">
-        {AVAILABILITY_OPTIONS.map((option) => (
-          <label
-            key={option.value}
-            className="inline-flex cursor-pointer items-center gap-1.5 text-[12px] text-neutral-700 dark:text-neutral-300"
-          >
-            <input
-              type="checkbox"
-              checked={selected.has(option.value)}
-              onChange={() => toggle(option.value)}
-              className="h-3.5 w-3.5 rounded border-neutral-300 accent-blue-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
-            />
-            <span>{option.label}</span>
-          </label>
-        ))}
-      </div>
-    </fieldset>
   );
 }
 
@@ -803,8 +570,7 @@ function SkillDetail({
   onDelete,
   onCreateUserOverride,
   onRevert,
-  onAvailabilityChange,
-  compact,
+  onClose,
   t,
 }: {
   skill: Skill;
@@ -818,88 +584,71 @@ function SkillDetail({
   onDelete: () => void;
   onCreateUserOverride: () => void;
   onRevert: () => void;
-  onAvailabilityChange: (skill: Skill, availability: SkillAvailability[]) => Promise<void>;
-  compact: boolean;
+  onClose: () => void;
   t: ReturnType<typeof useTranslation>['t'];
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className={cn(
-        'shrink-0 border-b border-neutral-200 py-3 dark:border-neutral-800',
-        compact ? 'px-4' : 'px-6',
-      )}>
-        <div className="flex items-baseline gap-2">
-          <h2 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-            {skill.name}
-          </h2>
-          <span
-            className={cn(
-              'rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider',
-              skill.scope === 'medical'
-                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
-                : skill.scope === 'project'
-                ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300'
-                : skill.scope === 'builtin'
-                  ? 'bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300'
-                  : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300',
-            )}
+      <div className="shrink-0 border-b border-neutral-200 px-6 py-4 dark:border-neutral-800">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-blue-600 dark:text-blue-400">
+              {t('skillsTab.promptContent', { defaultValue: '提示词内容' })}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
+                {skill.name}
+              </h2>
+              {skill.version ? (
+                <span className="text-xxs text-neutral-500 dark:text-neutral-400">v{skill.version}</span>
+              ) : null}
+            </div>
+            {skill.description ? (
+              <p className="mt-1 text-xs leading-5 text-neutral-500 dark:text-neutral-400">{skill.description}</p>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
+            aria-label={t('skillsTab.closeDetail', { defaultValue: '关闭技能详情' }) as string}
+            title={t('skillsTab.closeDetail', { defaultValue: '关闭技能详情' }) as string}
           >
-            {skill.scope === 'medical'
-              ? t('skillsTab.scopeMedical', { defaultValue: '医学' })
-              : skill.scope === 'builtin'
-              ? t('skillsTab.scopeBuiltin', { defaultValue: 'Built-in' })
-              : skill.scope === 'project'
-                ? t('skillsTab.scopeProject', { defaultValue: 'Project' })
-                : t('skillsTab.scopeUser', { defaultValue: 'User' })}
-          </span>
-          {skill.version ? (
-            <span className="text-xxs text-neutral-500 dark:text-neutral-400">v{skill.version}</span>
-          ) : null}
+            <X className="h-4 w-4" strokeWidth={1.8} />
+          </button>
         </div>
-        {skill.description ? (
-          <p className="mt-1 text-xxs text-neutral-500 dark:text-neutral-400">{skill.description}</p>
-        ) : null}
-        <div className="mt-1 truncate font-mono text-[10px] text-neutral-400 dark:text-neutral-500">
-          {skill.skillDir}
-        </div>
-        <AvailabilityControl
-          skill={skill}
-          saving={saving}
-          onChange={(availability) => onAvailabilityChange(skill, availability)}
-        />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div className="min-h-0 flex-1 bg-neutral-50/80 p-3 dark:bg-neutral-900/45 sm:p-5">
         {loading ? (
-          <div className="flex h-full items-center justify-center gap-2 text-xxs text-neutral-500 dark:text-neutral-400">
+          <div className="flex h-full items-center justify-center gap-2 rounded-lg border border-neutral-200 bg-white text-xxs text-neutral-500 shadow-sm dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-400">
             <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.75} />
             <span>{t('skillsTab.loading', { defaultValue: 'Loading…' })}</span>
           </div>
         ) : (
-          <CodeMirror
-            value={content}
-            onChange={onChange}
-            editable={!skill.readonly}
-            extensions={[markdown(), EditorView.lineWrapping]}
-            theme={isDarkMode ? zincDarkTheme : zincLightTheme}
-            height="100%"
-            style={{ height: '100%', fontSize: '13px' }}
-            basicSetup={{
-              lineNumbers: false,
-              foldGutter: false,
-              highlightActiveLine: false,
-              indentOnInput: true,
-              autocompletion: false,
-              searchKeymap: true,
-            }}
-          />
+          <div className="h-full overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm ring-1 ring-black/[0.02] dark:border-neutral-700 dark:bg-neutral-950 dark:ring-white/[0.03]">
+            <CodeMirror
+              value={content}
+              onChange={onChange}
+              editable={!skill.readonly}
+              extensions={[markdown(), EditorView.lineWrapping]}
+              theme={isDarkMode ? zincDarkTheme : zincLightTheme}
+              height="100%"
+              style={{ height: '100%', fontSize: '13px' }}
+              basicSetup={{
+                lineNumbers: false,
+                foldGutter: false,
+                highlightActiveLine: false,
+                indentOnInput: true,
+                autocompletion: false,
+                searchKeymap: true,
+              }}
+            />
+          </div>
         )}
       </div>
 
-      <div className={cn(
-        'flex shrink-0 items-center justify-between gap-2 border-t border-neutral-200 py-2 dark:border-neutral-800',
-        compact ? 'flex-wrap px-3' : 'px-6',
-      )}>
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-neutral-200 px-6 py-3 dark:border-neutral-800">
         {skill.readonly ? (
           <span className="text-[11px] text-neutral-500 dark:text-neutral-400">
             {skill.overriddenBy

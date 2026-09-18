@@ -299,6 +299,19 @@ feedback 写「在这个项目里怎么跟我配合」：
 
 **生命体征、伤情分级、救治阶段、患者标识一律只留在 Case State**，不进任何长期记忆。§3.3 的患者病历化是通用医学的能力，战创伤不启用。
 
+#### 2026-09-17 多意图与偏好即时生效补充
+
+战创伤输入现按“一个主意图 + 多个偏好侧意图”处理。主意图仍由代码确定性分发到病例 Runner、知识问答、系统帮助或范围提示；偏好侧意图独立验证，并在同一轮回答生成前合并进 `presentationPolicy`。纯偏好输入只返回自然确认，不创建或修改 Case State。
+
+长期偏好不再依赖通用语义召回 gate。每轮确定性读取当前项目的有效 Feedback 和紧凑全局画像，再按以下两条独立优先级处理：
+
+```text
+Clinical authority: current input > Case State > RAG evidence
+Presentation: current preference > project Feedback > global preference > default
+```
+
+Feedback 只能覆盖默认展示方式，例如标题、顺序、表格/列表、详略和语言；医学安全、证据与引用、阶段边界、结构化字段和医务人员复核提示不可覆盖。回答成功后，已验证偏好才进入 L0，并由战创伤 `immediate` 模式异步执行 Index / Dream。当前轮偏好的使用不依赖持久化，记忆读取、捕获、Index 或 Dream 失败都不改变已完成的医疗回答。
+
 ### 3.8 提示词档案：两种模式分开，其余共享
 
 战创伤与通用医学的提取语义差别很大——通用医学要把患者病历沉淀成项目记忆，战创伤**明确禁止**这么做。用一套提示词同时描述两种相反的要求，只会让两边都判不准。所以提示词按项目类型分档，但**只分该分的那一部分**。
@@ -525,15 +538,15 @@ pnpm exec tsx --test tests/context/memory/promptProfile.spec.ts
 
 背景：战创伤消息在 `InProcessGateway` 走独立的 extractor / knowledge QA / Trauma Runner，**不走** `DefaultContextRuntime.prepareForModel`，所以当前没有 EdgeClaw retrieve/capture。
 
-- [ ] Facade 提供按 `MemoryScopeIdentity` 读取全局画像（三段）和当前项目 Feedback 的**窄接口**，不向 Trauma 暴露底层 repository。
-- [ ] 召回内容执行 Task 3 的过滤和长度限制。
-- [ ] 作为**独立 prompt section** 传给 Runner 与知识问答，**不塞进 `caseHistory`**。
-- [ ] 固定召回优先级并写进 prompt：
+- [x] Facade 提供按 `MemoryScopeIdentity` 读取全局画像（三段）和当前项目 Feedback 的**窄接口**，不向 Trauma 暴露底层 repository。
+- [x] 召回内容执行 Task 3 的过滤和长度限制。
+- [x] 作为**独立 prompt section** 传给 Runner 与知识问答，**不塞进 `caseHistory`**。
+- [x] 固定召回优先级并写进 prompt：
   ```text
   当前轮明确输入 > 当前病例 Case State > 已验证的医学知识/RAG 证据 > 当前项目 Feedback > 全局用户画像
   ```
-- [ ] 召回失败只记 warning，不中断战创伤流程。
-- [ ] **必测**：其他项目的记忆、其他病例的 Case State 均不会被召回。
+- [x] 召回失败只记 warning，不中断战创伤流程。
+- [x] **必测**：其他项目的记忆、其他病例的 Case State 均不会被召回。
 
 运行：
 ```bash
@@ -552,16 +565,16 @@ pnpm exec tsx --test tests/trauma/memoryContext.spec.ts tests/trauma/runner.spec
 - Modify: `ui/src/components/settings/view/agentMemory/index.tsx`
 - Create: `tests/trauma/memoryCapturePolicy.spec.ts`
 
-- [ ] 实现 `"off" | "feedback_only"`，默认 `feedback_only`。
+- [x] 实现 `"off" | "feedback_only"`，默认 `feedback_only`。
   **`eligible_turns` 本期不实现**——类型里预留但拒绝启用并给出明确错误。
-- [ ] 只接受：明确纠错、稳定展示偏好、汇报格式偏好、工作流规则。
-- [ ] **拒绝**：生命体征、伤情分级、救治阶段、患者标识、任何病例医学事实。这层由 Task 5 的 `allowedTypes` 硬闸兜底，本任务负责在策略层再判一次。
-- [ ] 落盘前调用 Task 3 的 `MemoryPrivacyPolicy`。
-- [ ] errored / aborted / 模型未完成的 turn 默认不捕获。
-- [ ] 每次捕获记录 policy、原因、被删除字段数、目标 scope。
-- [ ] UI 说明该策略的隐私影响。
-- [ ] **必测**：一段包含生命体征的战创伤对话跑完后，长期记忆里不出现任何生命体征数值。
-- [ ] **必测（绕过验证）**：即使人为把分类结果篡改为 `project`，`allowedTypes` 硬闸仍然拦住，长期记忆无写入。
+- [x] 只接受：明确纠错、稳定展示偏好、汇报格式偏好、工作流规则。
+- [x] **拒绝**：生命体征、伤情分级、救治阶段、患者标识、任何病例医学事实。这层由 Task 5 的 `allowedTypes` 硬闸兜底，本任务负责在策略层再判一次。
+- [x] 落盘前调用 Task 3 的 `MemoryPrivacyPolicy`。
+- [x] errored / aborted / 模型未完成的 turn 默认不捕获。
+- [x] 每次捕获记录 policy、原因、被删除字段数、目标 scope。
+- [x] UI 说明该策略的隐私影响。
+- [x] **必测**：一段包含生命体征的战创伤对话跑完后，长期记忆里不出现任何生命体征数值。
+- [x] **必测（绕过验证）**：即使人为把分类结果篡改为 `project`，`allowedTypes` 硬闸仍然拦住，长期记忆无写入。
 
 运行：
 ```bash
@@ -582,12 +595,12 @@ Task 9 的前置。
 - Create: `ui/src/components/main-content/view/memory/MemoryPanel.test.tsx`
 - Test: `ui/server/routes/memory.test.js`
 
-- [ ] iframe URL 改为传 `projectId` + `projectType` + 当前 `sessionId`，`projectPath` 降级为展示参数。
-- [ ] **`/cases` 改名为 `/index-case-traces`**（§2.1），把 `cases` 这个词让给 Case State。保留旧路径一个版本并返回 deprecation 头。
-- [ ] Dashboard 顶部始终显示项目类型、稳定 project id、数据目录、只读状态。
-- [ ] 防止在项目 A 的面板中编辑项目 B 的 meta。
-- [ ] 导入导出 bundle 使用稳定 project id，兼容旧 bundle 的 projectPath。
-- [ ] 注意 `MemoryPanel.test.tsx` 只能测到 iframe URL 拼装；`app.js` 侧的行为放进 Task 0 建立的子包测试。
+- [x] iframe URL 改为传 `projectId` + `projectType` + 当前 `sessionId`，`projectPath` 降级为展示参数。
+- [x] **`/cases` 改名为 `/index-case-traces`**（§2.1），把 `cases` 这个词让给 Case State。保留旧路径一个版本并返回 deprecation 头。
+- [x] Dashboard 顶部始终显示项目类型、稳定 project id、数据目录、只读状态。
+- [x] 防止在项目 A 的面板中编辑项目 B 的 meta。
+- [x] 导入导出 bundle 使用稳定 project id，兼容旧 bundle 的 projectPath。
+- [x] 注意 `MemoryPanel.test.tsx` 只能测到 iframe URL 拼装；`app.js` 侧的行为放进 Task 0 建立的子包测试。
 
 运行：
 ```bash
@@ -604,12 +617,12 @@ pnpm --dir ui typecheck
 - Modify: `ui/server/routes/memory.js`
 - Modify: `ui/src/components/main-content/view/memory/MemoryPanel.tsx`
 
-- [ ] 面板一级导航区分「长期记忆 / 病例状态 / 运行记录」。
-- [ ] **通用医学隐藏病例状态页**；战创伤展示当前 session 的 `current.json` 摘要 + `snapshots.jsonl` 时间线。
-- [ ] 复用 `readTraumaCase`（`createLocalGateway.ts:936`）的读取路径，经 Task 1 的 resolver 定位。
-- [ ] **病例状态只读展示**，编辑仍走 Trauma 专用业务接口。不得把 Case State 表现成可自由编辑的 Markdown memory。
-- [ ] 长期记忆条目标注 scope、来源、更新时间、是否已被 Dream 合并。
-- [ ] 依赖 Task 8 的 `/cases` 改名，否则两个「病例」入口会撞。
+- [x] 面板一级导航区分「长期记忆 / 病例状态 / 运行记录」。
+- [x] **通用医学隐藏病例状态页**；战创伤展示当前 session 的 `current.json` 摘要 + `snapshots.jsonl` 时间线。
+- [x] 复用 `readTraumaCase`（`createLocalGateway.ts:936`）的读取路径，经 Task 1 的 resolver 定位。
+- [x] **病例状态只读展示**，编辑仍走 Trauma 专用业务接口。不得把 Case State 表现成可自由编辑的 Markdown memory。
+- [x] 长期记忆条目标注 scope、来源、更新时间、是否已被 Dream 合并。
+- [x] 依赖 Task 8 的 `/cases` 改名，否则两个「病例」入口会撞。
 
 运行：
 ```bash
@@ -632,22 +645,32 @@ pnpm --dir ui typecheck
 - Test: `src/context/memory/edgeclaw-memory-core/test/service.test.ts`
 - Create: `tests/context/memory/globalProfileLock.spec.ts`
 
-- [ ] 新增显式语义，**不复用 `0`**：
+- [x] 新增显式语义，**不复用 `0`**：
   ```ts
   type MemoryMaintenanceMode = "immediate" | "interval" | "manual";
   ```
   `immediate` = 去掉时间门、保留内容门；`interval` = 现有行为；`manual` = 只有手动按钮。
-- [ ] **按项目类型分别配置**。本任务把战创伤默认设为 `immediate`，**通用医学保持 `interval`**——通用医学档案要到 Task 11 才医学化，提前提频只会加速积累通用框架的噪音。切换是 Task 11 的收尾项。
-- [ ] `runDueScheduledMaintenance`（`service.ts:915`）在 `immediate` 下：Index 条件收缩为 `overview.pendingSessions > 0`；Dream 条件收缩为 `changedFilesSinceLastDream > 0`。
-- [ ] 保留 `intervalMinutes <= 0 → 禁用` 的现有语义不变，避免破坏老配置。写迁移测试。
-- [ ] 同步 `sqlite.ts:1713-1714` 和 `memoryIntervals.ts` 两处默认值，并在设置 UI 暴露 mode 选择。
-- [ ] **全局画像单写锁**（`GlobalProfileLock`）：跨项目、跨进程有效的文件锁或 CAS。**全局画像是两种模式共用的单一文件**（§3.8），所以锁的作用域必须是全局而非按项目类型划分。锁必须有超时，超时可观测、不破坏数据；拿不到锁时**跳过本次 Dream 而不是排队堆积**。
-- [ ] 成本护栏：Dream 连续失败 N 次后自动降级为 `interval` 并在 Dashboard 提示。
+- [x] **按项目类型分别配置**。本任务把战创伤默认设为 `immediate`，**通用医学保持 `interval`**——通用医学档案要到 Task 11 才医学化，提前提频只会加速积累通用框架的噪音。切换是 Task 11 的收尾项。
+- [x] `runDueScheduledMaintenance`（`service.ts:915`）在 `immediate` 下：Index 条件收缩为 `overview.pendingSessions > 0`；Dream 条件收缩为 `changedFilesSinceLastDream > 0`。
+- [x] 保留 `intervalMinutes <= 0 → 禁用` 的现有语义不变，避免破坏老配置。写迁移测试。
+- [x] 同步 `sqlite.ts:1713-1714` 和 `memoryIntervals.ts` 两处默认值，并在设置 UI 暴露 mode 选择。
+- [x] **全局画像单写锁**（`GlobalProfileLock`）：跨项目、跨进程有效的文件锁或 CAS。**全局画像是两种模式共用的单一文件**（§3.8），所以锁的作用域必须是全局而非按项目类型划分。锁必须有超时，超时可观测、不破坏数据；拿不到锁时**跳过本次 Dream 而不是排队堆积**。
+- [x] 成本护栏：Dream 连续失败 N 次后自动降级为 `interval` 并在 Dashboard 提示。
 - [ ] 为每个 turn 展示 `captured -> pending_index -> indexed -> pending_dream -> consolidated` 状态。
 - [ ] 捕获失败写 trace/warning，仍不阻断对话。
-- [ ] Dashboard 显示 backlog、最近捕获/索引/Dream 时间、失败原因、当前 mode。
+- [x] Dashboard 显示 backlog、最近捕获/索引/Dream 时间、失败原因、当前 mode。
+  - ✅ 在 scope bar 中添加维护模式显示
+  - ✅ 在 scope bar 中添加待处理会话数显示
+  - ✅ 在 scope bar 中添加降级警告提示
+  - ✅ 添加中英文国际化翻译
 - [ ] 手动 Index 后刷新同一 snapshot，避免用户以为按钮没生效。
-- [ ] **必测**：一个战创伤项目与一个通用医学项目并发触发 Dream，全局画像不丢内容；`immediate` 下单轮对话后 Index/Dream 确实执行；老配置升级后行为可预期。
+- [x] **必测**：一个战创伤项目与一个通用医学项目并发触发 Dream，全局画像不丢内容；`immediate` 下单轮对话后 Index/Dream 确实执行；老配置升级后行为可预期。
+  - ✅ 添加 4 个 `immediate` 模式单元测试（单轮立即执行、interval 对比、manual 模式、绕过 intervalMinutes=0）
+  - ✅ 添加并发 Dream 锁测试（验证全局锁互斥、数据完整性）
+  - ✅ 所有 28 个测试通过
+  - ✅ 在 Settings UI 中添加 `maintenanceMode` 选择器
+  - ✅ 添加中英文国际化翻译
+  - ✅ UI TypeScript 编译通过
 
 运行：
 ```bash

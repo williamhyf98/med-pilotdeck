@@ -6,10 +6,50 @@ import {
   mergeFormInput,
   validateTurnFormInput,
 } from "../../src/trauma/factMerge.js";
+import { normalizeTraumaIntentPlan } from "../../src/trauma/formDraft.js";
 import { initialCaseState } from "../../src/trauma/stageConfig.js";
 import type { TurnFormInput } from "../../src/trauma/types.js";
 
 const now = "2026-09-03T15:09:00+08:00";
+
+test("normalizes one primary intent plus exact-source preference side intents", () => {
+  const rawText = "以后先给结论。患者右腿持续出血。";
+  const plan = normalizeTraumaIntentPlan(rawText, {
+    inputIntent: "case_update",
+    scopeReason: "同时包含病例更新和输出偏好",
+    preferences: [
+      { sourceSpan: "以后先给结论", directive: "回答时先给结论", category: "format" },
+      { sourceSpan: "原文不存在", directive: "使用表格", category: "format" },
+    ],
+    injuryNarratives: [{ text: "患者右腿持续出血", sourceSpan: "患者右腿持续出血" }],
+    treatmentNarratives: [],
+    evacuationNarratives: [],
+    notes: [],
+    vitals: [],
+  });
+
+  assert.equal(plan.primaryIntent, "case_update");
+  assert.deepEqual(plan.preferences, [
+    { sourceSpan: "以后先给结论", directive: "回答时先给结论", category: "format" },
+  ]);
+  assert.equal(plan.caseForm.injuryNarrative, "患者右腿持续出血");
+});
+
+test("normalizes legacy knowledge intent without requiring preferences", () => {
+  const plan = normalizeTraumaIntentPlan("止血带应该使用多久？", {
+    inputIntent: "domain_question_no_case",
+    scopeReason: "战创伤知识问题",
+    injuryNarratives: [],
+    treatmentNarratives: [],
+    evacuationNarratives: [],
+    notes: [],
+    vitals: [],
+  });
+
+  assert.equal(plan.primaryIntent, "knowledge_question");
+  assert.equal(plan.knowledgeQuestion, "止血带应该使用多久？");
+  assert.deepEqual(plan.preferences, []);
+});
 
 function form(overrides: Partial<TurnFormInput> = {}): TurnFormInput {
   return {

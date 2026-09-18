@@ -186,3 +186,231 @@ test("reason 前缀不影响门控判定", async () => {
     assert.equal(result.indexRan, true);
   });
 });
+
+// ========== Task 10: immediate 模式测试 ==========
+
+test("maintenanceMode: immediate 下单轮对话后立即执行索引", async () => {
+  await withHarness(
+    { autoIndexIntervalMinutes: 30, autoDreamIntervalMinutes: 60, maintenanceMode: "immediate" },
+    async (h) => {
+      // 投喂一轮对话，时间戳是「刚刚」（1 分钟前），interval 模式下不满足时间条件
+      captureTurns(h.service, 1, 1);
+      const result = await h.service.runDueScheduledMaintenance();
+      assert.equal(
+        result.indexRan,
+        true,
+        "immediate 模式下只要有待索引内容就应该立即执行，不受时间间隔限制",
+      );
+      assert.equal(h.flushCalls, 1);
+    },
+  );
+});
+
+test("maintenanceMode: interval 下单轮对话且时间未到不执行索引", async () => {
+  await withHarness(
+    { autoIndexIntervalMinutes: 30, autoDreamIntervalMinutes: 60, maintenanceMode: "interval" },
+    async (h) => {
+      captureTurns(h.service, 1, 1);
+      const result = await h.service.runDueScheduledMaintenance();
+      assert.equal(
+        result.indexRan,
+        false,
+        "interval 模式下时间未到应该不执行索引",
+      );
+      assert.equal(h.flushCalls, 0);
+    },
+  );
+});
+
+test("maintenanceMode: manual 下即使有大量待索引内容也不执行", async () => {
+  await withHarness(
+    { autoIndexIntervalMinutes: 30, autoDreamIntervalMinutes: 60, maintenanceMode: "manual" },
+    async (h) => {
+      // 投喂大量陈旧内容，interval 模式下肯定会触发
+      captureTurns(h.service, BACKLOG_THRESHOLD + 10, 24 * 60);
+      const result = await h.service.runDueScheduledMaintenance();
+      assert.equal(
+        result.indexRan,
+        false,
+        "manual 模式下定时维护完全不应该执行索引",
+      );
+      assert.equal(h.flushCalls, 0);
+    },
+  );
+});
+
+test("maintenanceMode: immediate 且 intervalMinutes = 0 时仍执行", async () => {
+  await withHarness(
+    { autoIndexIntervalMinutes: 0, autoDreamIntervalMinutes: 0, maintenanceMode: "immediate" },
+    async (h) => {
+      captureTurns(h.service, 1, 1);
+      const result = await h.service.runDueScheduledMaintenance();
+      assert.equal(
+        result.indexRan,
+        true,
+        "immediate 模式应该绕过 intervalMinutes = 0 的「关闭」语义",
+      );
+      assert.equal(h.flushCalls, 1);
+    },
+  );
+});
+
+test("readPresentationMemory 确定性读取全局画像和当前项目 Feedback", () => {
+  const rootDir = mkdtempSync(join(tmpdir(), "ec-presentation-root-"));
+  const workspaceDir = mkdtempSync(join(tmpdir(), "ec-presentation-workspace-"));
+  const service = new EdgeClawMemoryService({ workspaceDir, rootDir });
+
+  try {
+    service.repository.getGlobalUserStore().upsertUserProfile({
+      type: "user",
+      scope: "global",
+      name: "user-profile",
+      description: "全局用户画像",
+      body: [
+        "## 身份背景",
+        "- 急诊外科医师",
+        "",
+        "## 专业领域",
+        "- 战创伤复苏",
+        "",
+        "## 临床偏好",
+        "- 回答保持简洁",
+      ].join("\n"),
+    });
+    service.repository.getFileMemoryStore().upsertCandidate({
+      type: "feedback",
+      scope: "project",
+      name: "presentation-rule",
+      description: "输出偏好",
+      rule: "先给结论",
+      howToApply: "使用编号列表",
+    });
+    service.repository.getFileMemoryStore().upsertCandidate({
+      type: "project",
+      scope: "project",
+      name: "patient-state",
+      description: "病例事实",
+      summary: "患者收缩压 80mmHg，左下肢开放性骨折",
+    });
+
+    const memory = service.readPresentationMemory();
+    assert.match(memory.globalProfile ?? "", /急诊外科医师/u);
+    assert.match(memory.globalProfile ?? "", /战创伤复苏/u);
+    assert.doesNotMatch(memory.globalProfile ?? "", /回答保持简洁|临床偏好/u);
+    assert.match(memory.projectFeedback ?? "", /先给结论/u);
+    assert.match(memory.projectFeedback ?? "", /使用编号列表/u);
+    assert.doesNotMatch(memory.projectFeedback ?? "", /80mmHg|开放性骨折/u);
+  } finally {
+    service.close();
+    rmSync(rootDir, { recursive: true, force: true });
+    rmSync(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("readPresentationMemory 按更新时间取最新 Feedback 并排除 deprecated", () => {
+  const rootDir = mkdtempSync(join(tmpdir(), "ec-presentation-limit-root-"));
+  const workspaceDir = mkdtempSync(join(tmpdir(), "ec-presentation-limit-workspace-"));
+  const service = new EdgeClawMemoryService({ workspaceDir, rootDir });
+
+  try {
+    const store = service.repository.getFileMemoryStore();
+    const older = store.upsertCandidate({
+      type: "feedback",
+      scope: "project",
+      name: "older-rule",
+      description: "旧偏好",
+      rule: "旧规则",
+    });
+    const deprecated = store.upsertCandidate({
+      type: "feedback",
+      scope: "project",
+      name: "deprecated-rule",
+      description: "废弃偏好",
+      rule: "废弃规则",
+    });
+    store.markEntriesDeprecated([deprecated.relativePath]);
+    store.upsertCandidate({
+      type: "feedback",
+      scope: "project",
+      name: "newer-rule",
+      description: "新偏好",
+      rule: "新规则",
+    });
+
+    const memory = service.readPresentationMemory({ feedbackLimit: 1 });
+    assert.match(memory.projectFeedback ?? "", /新规则/u);
+    assert.doesNotMatch(memory.projectFeedback ?? "", /旧规则|废弃规则/u);
+    assert.ok(older.relativePath);
+  } finally {
+    service.close();
+    rmSync(rootDir, { recursive: true, force: true });
+    rmSync(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("并发 Dream 时全局画像写锁确保数据完整性", async () => {
+  // 创建两个共享同一 rootDir 的 service 实例，模拟两个项目
+  const sharedRoot = mkdtempSync(join(tmpdir(), "ec-concurrent-"));
+  const projectA = mkdtempSync(join(tmpdir(), "project-a-"));
+  const projectB = mkdtempSync(join(tmpdir(), "project-b-"));
+
+  try {
+    const serviceA = new EdgeClawMemoryService({
+      workspaceDir: projectA,
+      rootDir: sharedRoot,
+    });
+    const serviceB = new EdgeClawMemoryService({
+      workspaceDir: projectB,
+      rootDir: sharedRoot,
+    });
+
+    // 包装 dream 方法，在获取锁后、执行 Dream 期间人工延长持有时间
+    const originalDreamA = serviceA.dream.bind(serviceA);
+    let lockAcquiredA = false;
+    serviceA.dream = async (trigger = "manual") => {
+      // 先调用原始 Dream 开始获取锁
+      const resultPromise = originalDreamA(trigger);
+      // 如果成功获取锁，延长持有时间以确保与 B 的并发冲突
+      if (serviceA["globalProfileLock"]["acquired"]) {
+        lockAcquiredA = true;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return resultPromise;
+    };
+
+    let lockConflictB = false;
+    const originalDreamB = serviceB.dream.bind(serviceB);
+    serviceB.dream = async (trigger = "manual") => {
+      const result = await originalDreamB(trigger);
+      if (result.status === "skipped" && result.skipReason === "global_profile_locked") {
+        lockConflictB = true;
+      }
+      return result;
+    };
+
+    // 并发触发两个 Dream
+    const [resultA, resultB] = await Promise.all([
+      serviceA.dream("manual"),
+      serviceB.dream("manual"),
+    ]);
+
+    // 验证：A 应该成功并持有锁一段时间，B 应该因为锁冲突而 skip
+    assert.ok(
+      lockAcquiredA,
+      "serviceA 应该成功获取锁",
+    );
+    assert.equal(
+      resultB.status,
+      "skipped",
+      "serviceB 应该因为无法获取全局锁而被 skip",
+    );
+    assert.ok(lockConflictB, "应该记录锁冲突原因");
+
+    serviceA.close();
+    serviceB.close();
+  } finally {
+    rmSync(projectA, { recursive: true, force: true });
+    rmSync(projectB, { recursive: true, force: true });
+    rmSync(sharedRoot, { recursive: true, force: true });
+  }
+});

@@ -115,7 +115,7 @@ export function ProcessLiveStatus({
       <div className="min-w-0">
         <div className="truncate">{title}</div>
         {step.detail ? (
-          <div className="truncate text-[12px] leading-5 text-neutral-400/80 dark:text-neutral-500/80">
+          <div className="pd-process-detail truncate text-[12px] leading-5 text-neutral-400/80 dark:text-neutral-500/80">
             {step.detail}
           </div>
         ) : null}
@@ -217,7 +217,7 @@ function ProcessTraceLine({ step }: { step: ProcessTraceStep }) {
 
   return (
     <div
-      className={`inline-flex min-w-0 max-w-full items-start gap-2 text-[14px] leading-relaxed text-neutral-400 dark:text-neutral-500 ${
+      className={`pd-process-step inline-flex min-w-0 max-w-full items-start gap-2 text-[14px] leading-relaxed text-neutral-400 dark:text-neutral-500 ${
         isRunning ? 'animate-pulse' : ''
       }`}
     >
@@ -230,17 +230,17 @@ function ProcessTraceLine({ step }: { step: ProcessTraceStep }) {
       <div className="min-w-0">
         <div className="truncate">{title}</div>
         {step.target && step.target !== title ? (
-          <div className="break-all text-[12px] leading-5 text-neutral-400/80 dark:text-neutral-500/80">
+          <div className="pd-process-detail break-all text-[12px] leading-5 text-neutral-400/80 dark:text-neutral-500/80">
             {step.target}
           </div>
         ) : null}
         {step.detail && step.detail !== step.target && step.detail !== title ? (
-          <div className="break-all text-[12px] leading-5 text-neutral-400/80 dark:text-neutral-500/80">
+          <div className="pd-process-detail break-all text-[12px] leading-5 text-neutral-400/80 dark:text-neutral-500/80">
             {step.detail}
           </div>
         ) : null}
         {step.resultDetail ? (
-          <div className="break-all text-[12px] leading-5 text-neutral-400/80 dark:text-neutral-500/80">
+          <div className="pd-process-detail break-all text-[12px] leading-5 text-neutral-400/80 dark:text-neutral-500/80">
             {step.resultDetail}
           </div>
         ) : null}
@@ -307,7 +307,7 @@ export function ProcessTrace({
         />
         <span className="min-w-0 truncate tabular-nums">{label}</span>
         {visibleCollapsedDetail ? (
-          <span className="min-w-0 shrink truncate text-neutral-400/75 dark:text-neutral-500/75">
+          <span className="pd-process-detail min-w-0 shrink truncate text-neutral-400/75 dark:text-neutral-500/75">
             {visibleCollapsedDetail}
           </span>
         ) : null}

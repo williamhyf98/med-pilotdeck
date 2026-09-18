@@ -8,3 +8,4 @@ export * from "./pipeline/heartbeat.js";
 export * from "./retrieval/reasoning-loop.js";
 export * from "./file-memory.js";
 export * from "./storage/sqlite.js";
+export * from "./GlobalProfileLock.js";

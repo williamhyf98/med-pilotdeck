@@ -63,6 +63,17 @@ import { validateTurnFormInput } from "../../trauma/factMerge.js";
 import type { CitationMetadata, TurnFormInput } from "../../trauma/types.js";
 import type { KnowledgeQueryRewriter } from "../../trauma/stations/knowledgeQueryRewriter.js";
 import type { KnowledgeQaStation } from "../../trauma/stations/knowledgeQa.js";
+import {
+  resolveTraumaPresentationMemory,
+  type TraumaMemoryContext,
+} from "../../trauma/memory/TraumaMemoryContext.js";
+import type { TraumaMemoryCaptureSink } from "../../trauma/memory/TraumaMemoryCapturePolicy.js";
+import { validateTraumaPreferences } from "../../trauma/memory/TraumaPreferencePolicy.js";
+import type { ValidatedTraumaPreference } from "../../trauma/memory/TraumaPreferencePolicy.js";
+import {
+  buildEffectivePresentationPolicy,
+  renderEffectivePresentationPolicy,
+} from "../../trauma/memory/EffectivePresentationPolicy.js";
 import type { TraumaRagClient } from "../../trauma/rag/client.js";
 import { mergeRetrieval } from "../../trauma/rag/merge.js";
 import { runBaselineRetrieval } from "../../trauma/rag/retrieval.js";
@@ -121,7 +132,7 @@ import {
   traumaTurnEvents,
   type TraumaTurnRunner,
 } from "../../trauma/index.js";
-import { extractedInputIntent, normalizeExtractedForm, traumaScopeReply } from "../../trauma/formDraft.js";
+import { normalizeTraumaIntentPlan, traumaScopeReply } from "../../trauma/formDraft.js";
 import { extractRecentConversationMessages, renderRecentConversation } from "../../trauma/conversationHistory.js";
 
 const PLAN_COMMAND_USAGE = "用法：/plan <任务>\n例如：/plan 设计一个新功能";
@@ -160,6 +171,23 @@ function traumaCitationMetadata(chunks: EvidenceChunk[]): CitationMetadata[] {
 function isTraumaProject(projectKey: string | undefined): projectKey is string {
   return projectTypeKeyFromProjectId(projectKey) === "trauma_med"
     || projectMetaTypeFromProjectPath(projectKey) === "war_trauma";
+}
+
+function traumaPreferenceAcknowledgement(
+  preferences: readonly ValidatedTraumaPreference[],
+): string {
+  return `已记录你的表达偏好：${preferences.map((item) => item.directive).join("；")}。后续回答会按此调整；医学事实、证据与安全要求保持不变。`;
+}
+
+function hasNonPreferenceRemainder(
+  rawText: string,
+  preferences: readonly ValidatedTraumaPreference[],
+): boolean {
+  let remainder = rawText;
+  for (const preference of preferences) {
+    remainder = remainder.replace(preference.sourceSpan, "");
+  }
+  return remainder.replace(/[\s，。！？、；：,.!?;:'"“”‘’（）()\[\]{}-]+/gu, "").length > 0;
 }
 
 function summarizeTraumaForm(form: TurnFormInput): string {
@@ -287,6 +315,19 @@ export type InProcessGatewayOptions = {
     rag: TraumaRagClient;
     qa: KnowledgeQaStation;
   }>;
+  traumaPreferenceProvider?: (input: {
+    projectKey: string;
+    sessionKey: string;
+  }) => TraumaMemoryContext | null | Promise<TraumaMemoryContext | null>;
+  /**
+   * 战创伤长期记忆写入（Task 7，`feedback_only`）。
+   *
+   * 只在回合正常完成后调用，且只交出用户输入——助手回答不进候选池。
+   * 判定与脱敏都在 sink 内部，网关不做内容判断。
+   */
+  captureTraumaMemory?: (
+    input: { projectKey: string } & Parameters<TraumaMemoryCaptureSink>[0],
+  ) => void;
   /** Persists the bypassed user/assistant pair to the normal transcript. */
   recordTraumaTurn?: (input: {
     projectKey: string;
@@ -625,6 +666,38 @@ export class InProcessGateway implements Gateway {
           };
           emit({ type: "turn_started", runId });
           let traumaForm = input.traumaForm;
+          let acceptedPreferences: ValidatedTraumaPreference[] = [];
+          let presentationPolicy: string | null | undefined;
+          const loadPresentationPolicy = async (): Promise<string | null> => {
+            if (presentationPolicy !== undefined) return presentationPolicy;
+            const recalled = await resolveTraumaPresentationMemory(
+              this.options.traumaPreferenceProvider
+                ? () => this.options.traumaPreferenceProvider!({
+                  projectKey: input.projectKey!,
+                  sessionKey: input.sessionKey,
+                })
+                : undefined,
+            );
+            presentationPolicy = renderEffectivePresentationPolicy(
+              buildEffectivePresentationPolicy({
+                currentTurn: acceptedPreferences,
+                recalled,
+              }),
+            );
+            return presentationPolicy;
+          };
+          const captureAcceptedPreferences = () => {
+            try {
+              this.options.captureTraumaMemory?.({
+                projectKey: input.projectKey!,
+                sessionId: input.sessionKey,
+                preferences: acceptedPreferences,
+                turnStatus: "completed",
+              });
+            } catch {
+              // Long-term memory is best-effort and must not change a completed response.
+            }
+          };
           if (input.traumaExtract && input.traumaRawInput?.trim()) {
             emitTraumaProcessEvents(traumaExtractionEvents({ runId, status: "started" }));
             try {
@@ -642,17 +715,23 @@ export class InProcessGateway implements Gateway {
               if (traumaAbortSignal.aborted) {
                 throw new Error("turn aborted");
               }
-              const inputIntent = extractedInputIntent(extracted);
-              if (inputIntent !== "case_update") {
+              const rawText = input.traumaRawInput.trim();
+              const plan = normalizeTraumaIntentPlan(rawText, extracted);
+              acceptedPreferences = validateTraumaPreferences({
+                rawText,
+                preferences: plan.preferences,
+              }).accepted;
+              await loadPresentationPolicy();
+              if (plan.primaryIntent !== "case_update") {
                 emitTraumaProcessEvents(traumaExtractionEvents({
                   runId,
                   status: "finished",
                   ok: true,
-                  detail: extracted.scopeReason
-                    ? `输入意图：${inputIntent}；${extracted.scopeReason}`
-                    : `输入意图：${inputIntent}`,
+                  detail: plan.scopeReason
+                    ? `输入意图：${plan.primaryIntent}；${plan.scopeReason}`
+                    : `输入意图：${plan.primaryIntent}`,
                 }));
-                if (inputIntent === "domain_question_no_case" && this.options.traumaKnowledgeQaFactory) {
+                if (plan.primaryIntent === "knowledge_question" && this.options.traumaKnowledgeQaFactory) {
                   const knowledge = await this.options.traumaKnowledgeQaFactory({
                     projectKey: input.projectKey,
                     sessionKey: input.sessionKey,
@@ -698,6 +777,7 @@ export class InProcessGateway implements Gateway {
                     question: input.traumaRawInput.trim(),
                     rewrittenQueries: rewrite.rewrittenQueries.map((item) => item.query),
                     promptChunks: merged.promptChunks,
+                    presentationPolicy: presentationPolicy ?? null,
                     signal: traumaAbortSignal,
                     onNaturalLanguageDelta: (text) => {
                       const displayText = displayStream.push(text);
@@ -751,10 +831,28 @@ export class InProcessGateway implements Gateway {
                     aiTitle: "战创伤知识问答",
                     ...(finalCitations ? { citations: finalCitations } : {}),
                   });
+                  captureAcceptedPreferences();
                   emit({ type: "turn_completed", usage: {}, finishReason: "completed", runId });
                   return;
                 }
-                const assistantText = traumaScopeReply(inputIntent);
+                let assistantText: string;
+                if (acceptedPreferences.length > 0) {
+                  assistantText = traumaPreferenceAcknowledgement(acceptedPreferences);
+                  if (plan.primaryIntent === "system_help") {
+                    assistantText += `\n\n${traumaScopeReply("system_help")}`;
+                  } else if (
+                    plan.primaryIntent === "out_of_scope"
+                    && hasNonPreferenceRemainder(rawText, acceptedPreferences)
+                  ) {
+                    assistantText += "\n\n你消息中的其余内容不属于战创伤救治范围，因此本页面不作答。";
+                  }
+                } else {
+                  assistantText = traumaScopeReply(
+                    plan.primaryIntent === "knowledge_question"
+                      ? "domain_question_no_case"
+                      : plan.primaryIntent,
+                  );
+                }
                 emit({ type: "assistant_text_delta", text: assistantText, runId });
                 emit({ type: "assistant_text_end", runId });
                 await this.options.recordTraumaTurn?.({
@@ -767,6 +865,9 @@ export class InProcessGateway implements Gateway {
                   aiTitle: "非推演输入",
                   processMessages: traumaProcessMessages,
                 });
+                // 非推演输入恰恰是协作规则最常出现的地方（「以后先给结论」），
+                // 所以这条路径同样要捕获。
+                captureAcceptedPreferences();
                 emit({
                   type: "turn_completed",
                   usage: {},
@@ -782,7 +883,7 @@ export class InProcessGateway implements Gateway {
                 projectKey: input.projectKey,
                 sessionKey: input.sessionKey,
               });
-              traumaForm = normalizeExtractedForm(extracted);
+              traumaForm = plan.caseForm;
               if (!validateTurnFormInput(traumaForm)) {
                 throw new Error("抽取结果未包含可用于推演的病例信息");
               }
@@ -815,6 +916,7 @@ export class InProcessGateway implements Gateway {
           if (!validateTurnFormInput(traumaForm)) {
             throw new Error("war_trauma turns require a valid traumaForm");
           }
+          await loadPresentationPolicy();
           if (!runner) {
             if (!this.options.traumaRunnerFactory) {
               throw new Error("war_trauma runner is not configured");
@@ -843,6 +945,7 @@ export class InProcessGateway implements Gateway {
             messageId: runId,
             form: traumaForm,
             rawInput: input.traumaRawInput,
+            presentationPolicy: presentationPolicy ?? null,
             ...(input.traumaAttachments?.length ? { attachments: input.traumaAttachments } : {}),
             now: this.now().toISOString(),
             abortSignal: traumaAbortSignal,
@@ -963,6 +1066,7 @@ export class InProcessGateway implements Gateway {
             ...(assistantCitations && assistantCitations.length > 0 ? { citations: assistantCitations } : {}),
             processMessages: traumaProcessMessages,
           });
+          captureAcceptedPreferences();
           const displayResponse = {
             ...response,
             naturalLanguageAnswer: normalizeChineseDisplayText(response.naturalLanguageAnswer),

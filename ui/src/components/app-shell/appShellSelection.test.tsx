@@ -3,8 +3,11 @@ import { describe, expect, it } from 'vitest';
 import type { Project } from '../../types/app';
 import {
   chooseDefaultProject,
+  findMostRecentProject,
+  findMostRecentSessionTarget,
   filterProjectsByType,
   resolveProjectType,
+  shouldPreserveTabOnSessionSelection,
 } from './appShellSelection';
 
 const virtualGeneral: Project = {
@@ -85,5 +88,52 @@ describe('chooseDefaultProject', () => {
 
   it('returns null when there are no projects', () => {
     expect(chooseDefaultProject([])).toBeNull();
+  });
+});
+
+describe('shouldPreserveTabOnSessionSelection', () => {
+  it('keeps memory open while selecting another conversation', () => {
+    expect(shouldPreserveTabOnSessionSelection('memory')).toBe(true);
+    expect(shouldPreserveTabOnSessionSelection('chat')).toBe(false);
+    expect(shouldPreserveTabOnSessionSelection('files', true)).toBe(true);
+  });
+});
+
+describe('typed workspace selection', () => {
+  it('chooses the most recently active regular conversation in the requested type', () => {
+    const olderTrauma: Project = {
+      ...traumaMed,
+      name: 'trauma_med-older',
+      sessions: [{ id: 'trauma-old', lastActivity: '2026-09-17T10:00:00Z' }],
+    };
+    const newerTrauma: Project = {
+      ...traumaMed,
+      name: 'trauma_med-newer',
+      sessions: [
+        {
+          id: 'background-task',
+          sessionKind: 'background_task',
+          parentSessionId: 'trauma-new',
+          relativeTranscriptPath: 'background.jsonl',
+          lastActivity: '2026-09-18T12:00:00Z',
+        },
+        { id: 'trauma-new', updated_at: '2026-09-18T11:00:00Z' },
+      ],
+    };
+
+    expect(findMostRecentSessionTarget(
+      [generalMed, olderTrauma, newerTrauma],
+      'war_trauma',
+    )).toEqual({
+      project: newerTrauma,
+      session: newerTrauma.sessions?.[1],
+    });
+  });
+
+  it('returns the most recent project as the empty-type fallback', () => {
+    const older = { ...traumaMed, name: 'trauma_med-a', updated_at: '2026-09-17T10:00:00Z' };
+    const newer = { ...traumaMed, name: 'trauma_med-b', updated_at: '2026-09-18T10:00:00Z' };
+
+    expect(findMostRecentProject([older, generalMed, newer], 'war_trauma')).toBe(newer);
   });
 });

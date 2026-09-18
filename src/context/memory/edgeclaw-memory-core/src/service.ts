@@ -9,6 +9,7 @@ import {
   type DreamRollbackResult,
   type DreamRuntimeStateSnapshot,
   DreamRewriteRunner,
+  GlobalProfileLock,
   type HeartbeatStats,
   HeartbeatIndexer,
   type IndexingSettings,
@@ -20,8 +21,10 @@ import {
   type MemoryExportBundle,
   type MemoryImportResult,
   type MemoryImportableBundle,
+  type MemoryMaintenanceMode,
   type MemoryMessage,
   type MemoryRecordType,
+  type PresentationMemorySnapshot,
   type MemoryTransferCounts,
   type MemoryUiSnapshot,
   MemoryRepository,
@@ -30,6 +33,7 @@ import {
   hashText,
   nowIso,
 } from "./core/index.js";
+import { resolveMemoryPromptProfile } from "./core/skills/prompts/index.js";
 import {
   normalizeMessages,
   type TranscriptMessageInfo,
@@ -73,6 +77,8 @@ export interface EdgeClawMemoryServiceOptions {
   llm?: EdgeClawMemoryLlmOptions;
   runtime?: Record<string, unknown>;
   logger?: LoggerLike;
+  /** Selects the prompt archive: "general_medicine" | "war_trauma". Defaults to "general_medicine". */
+  projectType?: string;
 }
 
 export interface CaptureTurnResult {
@@ -330,7 +336,16 @@ function buildLlmConfig(options: EdgeClawMemoryLlmOptions | undefined): Record<s
 
 function mergeIndexingSettings(
   partial: Partial<IndexingSettings> | undefined,
+  projectType: string | undefined,
 ): IndexingSettings {
+  // Task 10 —— 按项目类型分别默认维护模式。
+  // 战创伤：immediate（去掉时间门，对话即索引、有改动即Dream）
+  // 通用医学：interval（保持现有定时行为），到 Task 11 才切换。
+  const defaultMode: MemoryMaintenanceMode = projectType === "war_trauma" ? "immediate" : "interval";
+  const rawMode = partial?.maintenanceMode;
+  const mode: MemoryMaintenanceMode =
+    rawMode === "immediate" || rawMode === "interval" || rawMode === "manual" ? rawMode : defaultMode;
+
   return {
     reasoningMode: partial?.reasoningMode === "accuracy_first" ? "accuracy_first" : "answer_first",
     autoIndexIntervalMinutes: typeof partial?.autoIndexIntervalMinutes === "number"
@@ -339,6 +354,7 @@ function mergeIndexingSettings(
     autoDreamIntervalMinutes: typeof partial?.autoDreamIntervalMinutes === "number"
       ? Math.max(0, Math.floor(partial.autoDreamIntervalMinutes))
       : 60,
+    maintenanceMode: mode,
   };
 }
 
@@ -607,6 +623,7 @@ export class EdgeClawMemoryService {
   readonly extractor: LlmMemoryExtractor;
   readonly indexer: HeartbeatIndexer;
   readonly retriever: ReasoningRetriever;
+  private readonly globalProfileLock: GlobalProfileLock;
 
   private readonly logger?: LoggerLike;
   private readonly captureStrategy: "last_turn" | "full_session";
@@ -623,23 +640,26 @@ export class EdgeClawMemoryService {
     );
     this.dbPath = resolve(options.dbPath ?? join(this.dataDir, "control.sqlite"));
     this.memoryDir = resolve(options.memoryDir ?? join(this.dataDir, "memory"));
-    this.defaultIndexingSettings = mergeIndexingSettings(options.defaultIndexingSettings);
+    this.defaultIndexingSettings = mergeIndexingSettings(options.defaultIndexingSettings, options.projectType);
     this.logger = options.logger;
     this.captureStrategy = options.captureStrategy ?? "last_turn";
     this.includeAssistant = options.includeAssistant ?? true;
     this.maxMessageChars = options.maxMessageChars ?? 6000;
     this.source = options.source ?? "edgeclaw";
 
+    const globalRootDir = join(rootDir, "global");
     this.repository = new MemoryRepository(this.dbPath, {
       memoryDir: this.memoryDir,
-      globalRootDir: join(rootDir, "global"),
+      globalRootDir,
       workspaceDir: this.workspaceDir,
     });
     this.repository.setPipelineState("workspaceDir", this.workspaceDir);
+    this.globalProfileLock = new GlobalProfileLock({ globalRootDir });
     this.extractor = new LlmMemoryExtractor(
       buildLlmConfig(options.llm),
       options.runtime,
       this.logger,
+      resolveMemoryPromptProfile(options.projectType),
     );
     this.indexer = new HeartbeatIndexer(this.repository, this.extractor, {
       settings: this.repository.getIndexingSettings(this.defaultIndexingSettings),
@@ -800,82 +820,146 @@ export class EdgeClawMemoryService {
     if (trigger === "manual") {
       this.reconcileAutoDreamAnchor({ manualResetAt: nowIso() });
     }
-    const prepFlush = await this.flush({
-      reason: trigger === "manual" ? "manual_dream_prep" : "scheduled_dream_prep",
-    });
-    const stage = this.repository.createDreamStage("dream");
-    let outcome;
-    let stagedSnapshot;
+
+    // Task 10 —— 尝试获取全局画像锁。拿不到时跳过本次 Dream，不排队。
+    const lockAcquired = this.globalProfileLock.tryAcquire();
+    if (!lockAcquired) {
+      const reason = "global_profile_locked";
+      this.repository.setPipelineState("lastDreamFailureReason", reason);
+      this.incrementDreamFailureCount();
+      return {
+        prepFlush: {
+          capturedSessions: 0,
+          writtenFiles: 0,
+          writtenUserFiles: 0,
+          writtenProjectFiles: 0,
+          writtenFeedbackFiles: 0,
+          userProfilesUpdated: 0,
+          failedSessions: 0,
+        },
+        reviewedFiles: 0,
+        rewrittenProjects: 0,
+        deletedProjects: 0,
+        deletedFiles: 0,
+        profileUpdated: false,
+        duplicateTopicCount: 0,
+        conflictTopicCount: 0,
+        summary: "Skipped: global profile lock held by another process",
+        trigger,
+        status: "skipped",
+        skipReason: reason,
+      };
+    }
+
     try {
-      const stagedRunner = new DreamRewriteRunner(stage.repository, this.extractor, {
-        logger: this.logger,
+      const prepFlush = await this.flush({
+        reason: trigger === "manual" ? "manual_dream_prep" : "scheduled_dream_prep",
       });
-      outcome = await stagedRunner.run(trigger);
-      stagedSnapshot = stage.repository.captureCurrentMemorySnapshot();
-      stage.repository.close();
-    } catch (error) {
-      stage.dispose();
-      throw error;
-    }
-
-    if (!outcome || !stagedSnapshot) {
-      stage.dispose();
-      throw new Error("Dream staging failed before a valid outcome was produced.");
-    }
-
-    try {
-      if (!outcome.isNoOp) {
-        const lastDreamSnapshotMetadata = buildLastDreamSnapshotMetadata({
-          sourceAction: "dream",
-          workspaceDir: this.workspaceDir,
-          capturedAt: outcome.finishedAt,
-          before: {
-            workspaceVersion: stage.snapshot.workspaceVersion,
-            globalVersion: stage.snapshot.globalVersion,
-            counts: stage.snapshot.counts,
-            runtimeState: stage.snapshot.runtimeState,
-          },
-          after: {
-            workspaceVersion: stagedSnapshot.workspaceVersion,
-            globalVersion: stagedSnapshot.globalVersion,
-            counts: stagedSnapshot.counts,
-            runtimeState: {
-              lastDreamAt: outcome.finishedAt,
-              lastDreamStatus: "success",
-              lastDreamSummary: outcome.summary,
-            },
-          },
-          trigger,
-          dreamTraceId: outcome.trace.dreamTraceId,
-          summary: outcome.summary,
+      const stage = this.repository.createDreamStage("dream");
+      let outcome;
+      let stagedSnapshot;
+      try {
+        const stagedRunner = new DreamRewriteRunner(stage.repository, this.extractor, {
+          logger: this.logger,
         });
-        this.repository.installLastDreamSnapshot(stage.snapshot, lastDreamSnapshotMetadata);
-        this.repository.replaceLiveRootsWithStage(stage, stage.snapshot);
+        outcome = await stagedRunner.run(trigger);
+        stagedSnapshot = stage.repository.captureCurrentMemorySnapshot();
+        stage.repository.close();
+      } catch (error) {
+        stage.dispose();
+        throw error;
       }
-    } finally {
-      stage.dispose();
-    }
 
-    this.repository.setPipelineState("lastDreamAt", outcome.finishedAt);
-    this.repository.setPipelineState("lastDreamStatus", "success");
-    this.repository.setPipelineState("lastDreamSummary", outcome.summary);
-    this.repository.saveDreamTrace(outcome.trace);
-    this.reconcileAutoDreamAnchor();
-    this.repository.getFileMemoryStore().repairManifests();
-    this.retriever.resetTransientState();
-    return {
-      prepFlush,
-      reviewedFiles: outcome.reviewedFiles,
-      rewrittenProjects: outcome.rewrittenProjects,
-      deletedProjects: outcome.deletedProjects,
-      deletedFiles: outcome.deletedFiles,
-      profileUpdated: outcome.profileUpdated,
-      duplicateTopicCount: outcome.duplicateTopicCount,
-      conflictTopicCount: outcome.conflictTopicCount,
-      summary: outcome.summary,
-      trigger,
-      status: "success",
-    };
+      if (!outcome || !stagedSnapshot) {
+        stage.dispose();
+        throw new Error("Dream staging failed before a valid outcome was produced.");
+      }
+
+      try {
+        if (!outcome.isNoOp) {
+          const lastDreamSnapshotMetadata = buildLastDreamSnapshotMetadata({
+            sourceAction: "dream",
+            workspaceDir: this.workspaceDir,
+            capturedAt: outcome.finishedAt,
+            before: {
+              workspaceVersion: stage.snapshot.workspaceVersion,
+              globalVersion: stage.snapshot.globalVersion,
+              counts: stage.snapshot.counts,
+              runtimeState: stage.snapshot.runtimeState,
+            },
+            after: {
+              workspaceVersion: stagedSnapshot.workspaceVersion,
+              globalVersion: stagedSnapshot.globalVersion,
+              counts: stagedSnapshot.counts,
+              runtimeState: {
+                lastDreamAt: outcome.finishedAt,
+                lastDreamStatus: "success",
+                lastDreamSummary: outcome.summary,
+              },
+            },
+            trigger,
+            dreamTraceId: outcome.trace.dreamTraceId,
+            summary: outcome.summary,
+          });
+          this.repository.installLastDreamSnapshot(stage.snapshot, lastDreamSnapshotMetadata);
+          this.repository.replaceLiveRootsWithStage(stage, stage.snapshot);
+        }
+      } finally {
+        stage.dispose();
+      }
+
+      this.repository.setPipelineState("lastDreamAt", outcome.finishedAt);
+      this.repository.setPipelineState("lastDreamStatus", "success");
+      this.repository.setPipelineState("lastDreamSummary", outcome.summary);
+      this.repository.deletePipelineState("lastDreamFailureReason");
+      this.repository.setPipelineState("dreamConsecutiveFailures", 0);
+      this.repository.saveDreamTrace(outcome.trace);
+      this.reconcileAutoDreamAnchor();
+      this.repository.getFileMemoryStore().repairManifests();
+      this.retriever.resetTransientState();
+      return {
+        prepFlush,
+        reviewedFiles: outcome.reviewedFiles,
+        rewrittenProjects: outcome.rewrittenProjects,
+        deletedProjects: outcome.deletedProjects,
+        deletedFiles: outcome.deletedFiles,
+        profileUpdated: outcome.profileUpdated,
+        duplicateTopicCount: outcome.duplicateTopicCount,
+        conflictTopicCount: outcome.conflictTopicCount,
+        summary: outcome.summary,
+        trigger,
+        status: "success",
+      };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.repository.setPipelineState("lastDreamFailureReason", reason);
+      this.incrementDreamFailureCount();
+      throw error;
+    } finally {
+      this.globalProfileLock.release();
+    }
+  }
+
+  private incrementDreamFailureCount(): void {
+    const current = Number(this.repository.getPipelineState<number>("dreamConsecutiveFailures") ?? 0);
+    const next = current + 1;
+    this.repository.setPipelineState("dreamConsecutiveFailures", next);
+
+    // Task 10 —— 成本护栏：连续失败 3 次后自动降级为 interval
+    const FAILURE_THRESHOLD = 3;
+    if (next >= FAILURE_THRESHOLD) {
+      const settings = this.getSettings();
+      if (settings.maintenanceMode === "immediate") {
+        const downgrade = {
+          from: "immediate" as const,
+          to: "interval" as const,
+          at: nowIso(),
+          reason: `${next} consecutive Dream failures`,
+        };
+        this.repository.setPipelineState("maintenanceDowngrade", downgrade);
+        this.saveSettings({ maintenanceMode: "interval" });
+      }
+    }
   }
 
   rollbackLastDream(): DreamRollbackResult {
@@ -919,6 +1003,11 @@ export class EdgeClawMemoryService {
     dreamResult?: DreamRunResult;
   }> {
     const settings = this.getSettings();
+    // Task 10 —— manual 模式完全跳过 scheduled 路径。
+    if (settings.maintenanceMode === "manual") {
+      return { indexRan: false, dreamRan: false };
+    }
+
     const nowMs = Date.now();
     let overview = this.overview();
     let indexStats: HeartbeatStats | undefined;
@@ -926,12 +1015,17 @@ export class EdgeClawMemoryService {
     const indexAnchorAt = this.reconcileAutoIndexAnchor();
     const pendingDialogueTurns = this.repository.countPendingDialogueTurns();
     const shouldIndexByBacklog = pendingDialogueTurns >= AUTO_INDEX_PENDING_DIALOGUE_TURN_THRESHOLD;
-    const shouldIndexByInterval = overview.pendingSessions > 0
-      && hasElapsedMinutes(
-        indexAnchorAt,
-        settings.autoIndexIntervalMinutes,
-        nowMs,
-      );
+
+    // Task 10 —— immediate 模式收缩 Index 条件：只要有待处理的 session 就触发，
+    // 不再判断 hasElapsedMinutes。interval 模式保持「内容门 + 时间门」。
+    const shouldIndexByInterval = settings.maintenanceMode === "immediate"
+      ? overview.pendingSessions > 0
+      : overview.pendingSessions > 0
+        && hasElapsedMinutes(
+          indexAnchorAt,
+          settings.autoIndexIntervalMinutes,
+          nowMs,
+        );
 
     if (shouldIndexByBacklog || shouldIndexByInterval) {
       const scheduledReason = reason.startsWith("scheduled") ? reason : `scheduled:${reason}`;
@@ -949,14 +1043,17 @@ export class EdgeClawMemoryService {
       .changedFilesSinceLastDream;
     const dreamAnchorAt = this.reconcileAutoDreamAnchor();
 
-    if (
-      changedFilesSinceLastDream > 0
-      && hasElapsedMinutes(
-        dreamAnchorAt,
-        settings.autoDreamIntervalMinutes,
-        nowMs,
-      )
-    ) {
+    // Task 10 —— immediate 模式收缩 Dream 条件：有改动就触发，不再判断时间门。
+    const shouldDream = settings.maintenanceMode === "immediate"
+      ? changedFilesSinceLastDream > 0
+      : changedFilesSinceLastDream > 0
+        && hasElapsedMinutes(
+          dreamAnchorAt,
+          settings.autoDreamIntervalMinutes,
+          nowMs,
+        );
+
+    if (shouldDream) {
       dreamResult = await this.dream("scheduled");
     }
 
@@ -988,6 +1085,30 @@ export class EdgeClawMemoryService {
 
   getUserSummary() {
     return this.repository.getUserSummary();
+  }
+
+  readPresentationMemory(options: {
+    feedbackLimit?: number;
+  } = {}): PresentationMemorySnapshot {
+    const globalProfile = this.repository.getUserSummary().files[0]?.content.trim();
+    const feedbackLimit = Math.max(1, Math.floor(options.feedbackLimit ?? 8));
+    const feedbackEntries = this.repository.listMemoryEntries({
+      kinds: ["feedback"],
+      scope: "project",
+      includeDeprecated: false,
+      limit: feedbackLimit,
+      offset: 0,
+    });
+    const projectFeedback = this.repository
+      .getMemoryRecordsByIds(feedbackEntries.map((entry) => entry.relativePath), 5000)
+      .map((record) => record.content.trim())
+      .filter(Boolean)
+      .join("\n\n");
+
+    return {
+      ...(globalProfile ? { globalProfile } : {}),
+      ...(projectFeedback ? { projectFeedback } : {}),
+    };
   }
 
   getProjectMeta() {

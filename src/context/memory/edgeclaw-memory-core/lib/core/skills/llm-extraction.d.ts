@@ -1,4 +1,5 @@
 import type { MemoryCandidate, MemoryMessage, MemoryRoute, MemoryUserSummary, ProjectIdentityHint, ProjectMetaRecord, ProjectShortlistCandidate, RecallHeaderEntry, RetrievalPromptDebug } from "../types.js";
+import { type MemoryPromptProfile } from "./prompts/index.js";
 type LoggerLike = {
     info?: (...args: unknown[]) => void;
     warn?: (...args: unknown[]) => void;
@@ -17,6 +18,14 @@ export interface FileMemoryExtractionDebug {
     discarded: FileMemoryExtractionDiscardedCandidate[];
     finalCandidates: MemoryCandidate[];
     fallbackApplied?: string;
+}
+export interface RawUserProfilePayload {
+    identity_background_markdown?: unknown;
+    /** Legacy alias kept so profiles written before Task 4 still parse. */
+    identity_background?: unknown;
+    specialty_markdown?: unknown;
+    /** Legacy model output. Accepted for parsing but intentionally not persisted. */
+    clinical_preference_markdown?: unknown;
 }
 type MemoryCreateKind = "user" | "project" | "feedback";
 export interface MemoryClassificationLabel {
@@ -202,11 +211,18 @@ export interface LlmDreamProjectMetaReviewOutput {
     };
 }
 export declare const USER_PROFILE_REWRITE_SYSTEM_PROMPT: string;
+/**
+ * Build the full profile body markdown from the identity and specialty sections.
+ * PHI redaction is applied to the assembled body before returning.
+ * Returns null when all sections are empty (nothing to write to disk).
+ */
+export declare function buildUserProfileBodyFromParsedSections(payload: RawUserProfilePayload): string | null;
 export declare class LlmMemoryExtractor {
     private readonly config;
     private readonly runtime;
     private readonly logger?;
-    constructor(config: Record<string, unknown>, runtime: Record<string, unknown> | undefined, logger?: LoggerLike | undefined);
+    private readonly prompts;
+    constructor(config: Record<string, unknown>, runtime: Record<string, unknown> | undefined, logger?: LoggerLike | undefined, promptProfile?: MemoryPromptProfile);
     private resolveSelection;
     private resolveApiKey;
     private callStructuredJson;

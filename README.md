@@ -212,6 +212,10 @@ In black-box agents, mixing tasks in a shared context pool inevitably pollutes m
 </tbody>
 </table>
 
+War-trauma workspaces support multiple intents in one message: the system selects one primary workflow (case update, knowledge question, help, or scope response) while independently extracting explicit presentation preferences. Current-turn preferences affect the same answer immediately, without waiting for persistence. After a successful response, they are captured as project Feedback and consolidated asynchronously by Index and Dream. A preference-only message acknowledges the preference without running the case workflow or changing Case State.
+
+Two independent priority chains apply. Clinical authority is `current input > Case State > RAG evidence`; presentation is `current-turn preference > project Feedback > global preference > default`. Preferences may change headings, ordering, tables/lists, detail, and language, but cannot override medical safety, evidence and citation rules, stage boundaries, structured fields, or the required clinical-review notice. Memory reads/writes and Index/Dream failures do not invalidate a completed medical response, and patient facts, vital signs, and identifiers never enter war-trauma long-term memory.
+
 ---
 
 ## 🖥️ UI & Demo

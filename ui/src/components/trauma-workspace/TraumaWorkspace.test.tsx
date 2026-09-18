@@ -67,6 +67,8 @@ describe('TraumaWorkspace', () => {
     expect(screen.getByRole('button', { name: '整理' })).not.toBeNull();
     expect(screen.queryByPlaceholderText(/发送消息/)).toBeNull();
     expect(screen.queryByRole('button', { name: /沿用/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: '调整救治阶段' })).toBeNull();
+    expect(screen.queryByText(/当前流程树由真实病例快照驱动/)).toBeNull();
     expect(screen.queryByLabelText('推演轮次时间线')).toBeNull();
   });
 
@@ -160,12 +162,24 @@ describe('TraumaWorkspace', () => {
     expect(screen.getByRole('region', { name: '推演对话' })).not.toBeNull();
     expect(screen.getByText('runtime chat surface')).not.toBeNull();
     expect(screen.queryByLabelText('推演轮次时间线')).toBeNull();
-    expect(screen.getByText(/阶段转换建议不会自动执行/)).not.toBeNull();
+    expect(screen.queryByText(/阶段转换建议不会自动执行/)).toBeNull();
+    expect(screen.queryByRole('button', { name: '调整救治阶段' })).toBeNull();
     expect(screen.queryByText(/阶段转换只有确认/)).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: /R2真实病例/ }));
+    const memoButton = screen.getByRole('button', { name: /R2真实病例/ });
+    expect(memoButton.classList.contains('trauma-tree-memo-selected')).toBe(true);
+    expect(memoButton.getAttribute('aria-current')).toBe('step');
+    expect(memoButton.getAttribute('aria-expanded')).toBe('false');
+
+    fireEvent.click(memoButton);
+    expect(memoButton.classList.contains('trauma-tree-memo-selected')).toBe(true);
+    expect(memoButton.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByText('执行状态：')).not.toBeNull();
     expect(screen.queryByText('用户确认：')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '收起轮次详情' }));
+    expect(memoButton.classList.contains('trauma-tree-memo-selected')).toBe(true);
+    expect(memoButton.getAttribute('aria-expanded')).toBe('false');
   });
 
   it('navigates the chat to the matching input bubble when selecting a round memo', () => {

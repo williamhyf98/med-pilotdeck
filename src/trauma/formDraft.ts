@@ -1,4 +1,12 @@
-import type { ExtractedTurnForm, TraumaInputIntent, TurnFormInput, VitalItemKey } from "./types.js";
+import type {
+  ExtractedTraumaPreference,
+  ExtractedTurnForm,
+  TraumaInputIntent,
+  TraumaIntentPlan,
+  TraumaPrimaryIntent,
+  TurnFormInput,
+  VitalItemKey,
+} from "./types.js";
 
 const TEXT_LIMITS = {
   injuryNarrative: 1_000,
@@ -28,6 +36,36 @@ export function traumaScopeReply(intent: Exclude<TraumaInputIntent, "case_update
     case "system_help":
       return "你好！这里是战创伤辅助救治助手，主要用于围绕具体伤员开展分级救治推演。你可以直接输入“右大腿开放性损伤，持续出血，已用止血带处理，心率 120，准备后送”，也可以补充已实施处置、后送条件、现场环境和当前救治级别。系统会自动抽取信息、检索战伤救治规则，并生成本轮处置建议、后送判断、流程节点和参考来源。如果只想咨询战创伤救治的一般知识，也可以直接提问，系统会进入知识问答模式，不修改当前病例状态。";
   }
+}
+
+function normalizePrimaryIntent(intent: TraumaInputIntent): TraumaPrimaryIntent {
+  return intent === "domain_question_no_case" ? "knowledge_question" : intent;
+}
+
+function validateExtractedPreferenceSpans(
+  rawText: string,
+  preferences: readonly ExtractedTraumaPreference[],
+): ExtractedTraumaPreference[] {
+  return preferences.flatMap((preference) => {
+    const sourceSpan = preference.sourceSpan.trim();
+    const directive = preference.directive.trim();
+    if (!sourceSpan || !directive || !rawText.includes(sourceSpan)) return [];
+    return [{ ...preference, sourceSpan, directive }];
+  });
+}
+
+export function normalizeTraumaIntentPlan(
+  rawText: string,
+  extracted: ExtractedTurnForm,
+): TraumaIntentPlan {
+  const primaryIntent = normalizePrimaryIntent(extractedInputIntent(extracted));
+  return {
+    primaryIntent,
+    scopeReason: extracted.scopeReason?.trim() ?? "",
+    preferences: validateExtractedPreferenceSpans(rawText, extracted.preferences ?? []),
+    caseForm: normalizeExtractedForm(extracted),
+    ...(primaryIntent === "knowledge_question" ? { knowledgeQuestion: rawText.trim() } : {}),
+  };
 }
 
 /**

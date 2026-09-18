@@ -134,7 +134,7 @@ test("SkillManager lists all medical skills for management with fixed availabili
     }
 });
 
-test("SkillManager updates user availability and keeps medical skills global", async () => {
+test("SkillManager keeps user availability global", async () => {
     const root = await mkdtemp(join(tmpdir(), "pilotdeck-skill-manager-availability-"));
     try {
         const pilotHome = join(root, "pilot-home");
@@ -146,11 +146,25 @@ test("SkillManager updates user availability and keeps medical skills global", a
         const userResult = await manager.setAvailability({
             scope: "user",
             slug: "custom",
-            availability: ["war_trauma"],
+            availability: ["global"],
         });
-        assert.deepEqual(userResult.skill.availability, ["war_trauma"]);
+        assert.deepEqual(userResult.skill.availability, ["global"]);
+        assert.equal(userResult.skill.availabilityMutable, false);
         const userRead = await manager.read({ scope: "user", slug: "custom" });
-        assert.match(userRead.content, /availability:\n\s+- war_trauma/u);
+        assert.match(userRead.content, /availability:\n\s+- global/u);
+
+        await assert.rejects(
+            () => manager.setAvailability({
+                scope: "user",
+                slug: "custom",
+                availability: ["war_trauma" as never],
+            }),
+            (error) => {
+                assert.equal(error instanceof SkillManagerError, true);
+                assert.equal(error.code, "invalid_input");
+                return true;
+            },
+        );
 
         await assert.rejects(
             () => manager.setAvailability({

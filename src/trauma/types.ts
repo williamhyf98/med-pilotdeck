@@ -48,6 +48,24 @@ export type TraumaInputIntent =
   | "domain_question_no_case"
   | "system_help";
 
+export type TraumaPrimaryIntent =
+  | "case_update"
+  | "knowledge_question"
+  | "out_of_scope"
+  | "system_help";
+
+export type TraumaPreferenceCategory =
+  | "format"
+  | "detail"
+  | "language"
+  | "workflow";
+
+export type ExtractedTraumaPreference = {
+  sourceSpan: string;
+  directive: string;
+  category: TraumaPreferenceCategory;
+};
+
 export type ExtractedTurnForm = {
   /**
    * 本轮输入意图。缺省只用于兼容旧测试/历史数据；新 extractor schema 要求必须输出。
@@ -56,6 +74,8 @@ export type ExtractedTurnForm = {
   inputIntent?: TraumaInputIntent;
   /** 一句话说明意图判断依据，主要用于日志/调试，不展示给用户。 */
   scopeReason?: string;
+  /** 与主意图正交的表达或协作偏好；旧输出缺省时按空数组处理。 */
+  preferences?: ExtractedTraumaPreference[];
   injuryNarratives: ExtractedNarrativeItem[];
   treatmentNarratives: ExtractedNarrativeItem[];
   evacuationNarratives: ExtractedNarrativeItem[];
@@ -70,6 +90,14 @@ export type TurnFormInput = {
   evacuationNarrative: string;
   note: string;
   vitals: Partial<Record<VitalItemKey, number>>;
+};
+
+export type TraumaIntentPlan = {
+  primaryIntent: TraumaPrimaryIntent;
+  scopeReason: string;
+  preferences: ExtractedTraumaPreference[];
+  caseForm: TurnFormInput;
+  knowledgeQuestion?: string;
 };
 
 /** 用户本轮上传的医学附件引用；path 为服务端绝对路径。 */

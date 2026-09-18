@@ -89,6 +89,8 @@ type KeyedRenderableMessageItem = RenderableMessageItem & {
   estimatedHeight: number;
 };
 
+type AssistantTurnPanelPosition = 'single' | 'start' | 'middle' | 'end';
+
 export type VirtualMessageWindow = {
   startIndex: number;
   endIndex: number;
@@ -263,6 +265,7 @@ function MeasuredMessageItem({
   message,
   isLast,
   compactBottomSpacing = false,
+  assistantTurnPanelPosition,
   onHeightChange,
   children,
 }: {
@@ -270,6 +273,7 @@ function MeasuredMessageItem({
   message: ChatMessage;
   isLast: boolean;
   compactBottomSpacing?: boolean;
+  assistantTurnPanelPosition?: AssistantTurnPanelPosition | null;
   onHeightChange: (itemKey: string, height: number) => void;
   children: ReactNode;
 }) {
@@ -309,15 +313,47 @@ function MeasuredMessageItem({
   return (
     <div
       ref={itemRef}
-      className={`chat-message ${isLast ? '' : compactBottomSpacing ? 'pb-2' : 'pb-4'}`}
+      className={`chat-message ${assistantTurnPanelPosition ? `pd-assistant-turn-item pd-assistant-turn-${assistantTurnPanelPosition}` : ''} ${isLast ? '' : compactBottomSpacing ? 'pb-2' : 'pb-4'}`}
       data-message-key={itemKey}
       data-message-run-id={typeof message.runId === 'string' ? message.runId : undefined}
       data-message-turn-id={typeof message.turnId === 'string' ? message.turnId : undefined}
       data-message-timestamp={message.timestamp ? String(message.timestamp) : undefined}
     >
-      {children}
+      {assistantTurnPanelPosition ? (
+        <div className={`pd-assistant-turn-surface pd-assistant-turn-surface-${assistantTurnPanelPosition}`}>
+          {children}
+        </div>
+      ) : children}
     </div>
   );
+}
+
+function getAssistantTurnAnchor(items: KeyedRenderableMessageItem[], index: number): string | null {
+  const item = items[index];
+  if (!item || item.message.type === 'user') return null;
+
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    const candidate = items[cursor];
+    if (candidate.message.type === 'user') return candidate.itemKey;
+  }
+
+  return 'assistant-turn-before-first-user';
+}
+
+function getAssistantTurnPanelPosition(
+  items: KeyedRenderableMessageItem[],
+  index: number,
+): AssistantTurnPanelPosition | null {
+  const anchor = getAssistantTurnAnchor(items, index);
+  if (!anchor) return null;
+
+  const joinsPrevious = getAssistantTurnAnchor(items, index - 1) === anchor;
+  const joinsNext = getAssistantTurnAnchor(items, index + 1) === anchor;
+
+  if (joinsPrevious && joinsNext) return 'middle';
+  if (joinsPrevious) return 'end';
+  if (joinsNext) return 'start';
+  return 'single';
 }
 
 function countCarriedMessagesBefore(
@@ -435,6 +471,10 @@ function MessagesPaneV2({
   const sessionId = selectedSession?.id ?? null;
   const messageWindowScope = `${selectedProject?.fullPath || selectedProject?.name || 'no-project'}:${sessionId ?? 'new-session'}`;
   const projectPath = selectedProject?.fullPath || selectedProject?.path || undefined;
+
+  useEffect(() => {
+    setExpandedProcessRows(new Map());
+  }, [messageWindowScope]);
 
   const getMessageKey = useCallback((message: ChatMessage, index: number) => {
     const existingKey = messageKeyMapRef.current.get(message);
@@ -640,12 +680,6 @@ function MessagesPaneV2({
     }
     return keyedMessageItems.length > 0 ? 0 : -1;
   }, [isEffectiveAssistantWorking, keyedMessageItems]);
-  const lastUserRenderIndex = useMemo(() => {
-    for (let index = keyedMessageItems.length - 1; index >= 0; index -= 1) {
-      if (keyedMessageItems[index].message.type === 'user') return index;
-    }
-    return -1;
-  }, [keyedMessageItems]);
   // The current turn's "started at" is anchored to the latest user message's
   // timestamp (set by the composer when the user submits). This is the only
   // signal that survives a page refresh and reliably resets between turns —
@@ -1011,7 +1045,8 @@ function MessagesPaneV2({
   ]);
 
   const renderMessageItem = useCallback((item: KeyedRenderableMessageItem) => {
-    const previousMessage = item.renderIndex > 0 ? keyedMessageItems[item.renderIndex - 1].message : null;
+    const previousItem = item.renderIndex > 0 ? keyedMessageItems[item.renderIndex - 1] : null;
+    const previousMessage = previousItem?.message ?? null;
     const nextMessage = item.renderIndex < keyedMessageItems.length - 1
       ? keyedMessageItems[item.renderIndex + 1].message
       : null;
@@ -1023,6 +1058,17 @@ function MessagesPaneV2({
     );
     const anchoredLiveGroups = liveProcessGroupsByAnchor.get(item.originalIndex) || [];
     const rendersLiveHeaderAfterItem = item.renderIndex === liveProcessHeaderIndex - 1;
+    const assistantTurnPanelPosition = getAssistantTurnPanelPosition(
+      keyedMessageItems,
+      item.renderIndex,
+    );
+    const carriedRunAttachment = assistantTurnPanelPosition
+      && previousItem?.message.type === 'user'
+      ? previousItem.afterRunAttachment
+      : null;
+    const defersRunAttachmentToAssistantPanel = item.message.type === 'user'
+      && item.afterRunAttachment
+      && getAssistantTurnPanelPosition(keyedMessageItems, item.renderIndex + 1) !== null;
     const showAssistantActions = (() => {
       if (!isRenderableAssistantProse(item.message)) {
         return false;
@@ -1063,8 +1109,15 @@ function MessagesPaneV2({
           message={item.message}
           isLast={isLast}
           compactBottomSpacing={anchoredLiveGroups.length > 0 || rendersLiveHeaderAfterItem}
+          assistantTurnPanelPosition={assistantTurnPanelPosition}
           onHeightChange={handleMeasuredItemHeight}
         >
+          {carriedRunAttachment ? (
+            <CompletedProcessHeader
+              durationMs={carriedRunAttachment.durationMs}
+              t={t}
+            />
+          ) : null}
           {item.beforeRunAttachment ? (
             <CompletedProcessHeader
               durationMs={item.beforeRunAttachment.durationMs}
@@ -1089,7 +1142,7 @@ function MessagesPaneV2({
             inlineThinking={inlineThinking}
             isProcessExpanded={isProcessExpanded}
             onProcessExpandedChange={handleProcessExpandedChange}
-            defaultProcessExpanded={!isEffectiveAssistantWorking && lastUserRenderIndex >= 0 && item.renderIndex > lastUserRenderIndex}
+            defaultProcessExpanded={false}
             onOpenSubagentDetail={handleOpenSubagentDetail}
             subagentActivityById={subagentActivityById}
             subagentThinkingById={subagentThinkingById}
@@ -1106,7 +1159,7 @@ function MessagesPaneV2({
               t={t}
             />
           ) : null}
-          {item.afterRunAttachment ? (
+          {item.afterRunAttachment && !defersRunAttachmentToAssistantPanel ? (
             <CompletedProcessHeader
               durationMs={item.afterRunAttachment.durationMs}
               t={t}
@@ -1130,7 +1183,6 @@ function MessagesPaneV2({
     isProcessExpanded,
     isEffectiveAssistantWorking,
     keyedMessageItems,
-    lastUserRenderIndex,
     renderableMessages,
     nonSubagentLiveActivities,
     liveProcessGroupsByAnchor,
@@ -1194,7 +1246,7 @@ function MessagesPaneV2({
         data-chat-search-surface
         onWheel={onWheel}
         onTouchMove={onTouchMove}
-        className="h-full overflow-y-auto overflow-x-hidden bg-white dark:bg-neutral-950"
+        className="h-full overflow-y-auto overflow-x-hidden bg-transparent"
       >
       {hasSessionLoadError ? (
         <div className="mx-auto flex h-full max-w-[720px] flex-col items-center justify-center gap-3 px-6 py-10 text-center">

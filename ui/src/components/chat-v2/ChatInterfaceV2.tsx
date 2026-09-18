@@ -50,11 +50,11 @@ export function ChatInterfaceLayout({
 }) {
   if (hideComposer) {
     return (
-      <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-white dark:bg-neutral-950">
+      <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-transparent">
         {messagePane}
         {externalComposerSlot}
         {permissionSlot || hiddenComposerNotice ? (
-          <div className="shrink-0 border-t border-neutral-200 bg-white px-3 pt-3 dark:border-neutral-800 dark:bg-neutral-950">
+          <div className="workspace-dock-surface shrink-0 border-t border-neutral-200 px-3 pt-3 dark:border-neutral-800">
             {hiddenComposerNotice ? (
               <p role="note" className="mb-3 text-[10px] leading-4 text-neutral-500 dark:text-neutral-400">
                 {hiddenComposerNotice}
@@ -68,7 +68,7 @@ export function ChatInterfaceLayout({
   }
   if (isWelcomeMode) return <>{welcome}</>;
   return (
-    <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-white dark:bg-neutral-950">
+    <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-transparent">
       {messagePane}
       {composerSlot}
     </div>

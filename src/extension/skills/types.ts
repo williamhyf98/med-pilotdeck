@@ -42,9 +42,9 @@ export type SkillSummary = {
   overridesBuiltin?: boolean;
   /** Last-modified time of SKILL.md in epoch ms, or null if unreadable. */
   mtime: number | null;
-  /** Project types where the skill is available. `global` means every type. */
+  /** Compatibility field. Skills are always globally available. */
   availability: SkillAvailability[];
-  /** Whether the user may change availability without editing the skill body. */
+  /** Compatibility field. Always false because skills are global. */
   availabilityMutable: boolean;
 };
 

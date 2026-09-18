@@ -56,7 +56,7 @@ export default function ChatWelcomeV2({
 
   if (showGeneralMedicineOverview) {
     return (
-      <div className="pd-chat-welcome flex h-full min-h-0 flex-col overflow-hidden bg-white dark:bg-neutral-950">
+      <div className="pd-chat-welcome flex h-full min-h-0 flex-col overflow-hidden bg-transparent">
         <div
           data-testid="general-medicine-overview"
           className="min-h-0 flex-1 overflow-y-auto"
@@ -81,7 +81,7 @@ export default function ChatWelcomeV2({
               {GENERAL_MEDICINE_CAPABILITIES.map(({ title, description, Icon, iconClassName }) => (
                 <div
                   key={title}
-                  className="min-h-[116px] rounded-lg border border-neutral-200/80 bg-white p-3.5 shadow-sm dark:border-neutral-800 dark:bg-neutral-900"
+                  className="workspace-panel-surface min-h-[116px] rounded-lg border border-neutral-200/80 p-3.5 shadow-sm dark:border-neutral-800"
                 >
                   <div className={`flex h-8 w-8 items-center justify-center rounded-md ${iconClassName}`}>
                     <Icon className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
@@ -103,7 +103,7 @@ export default function ChatWelcomeV2({
         </div>
         <div
           data-testid="general-medicine-composer-dock"
-          className="shrink-0 bg-white px-5 pb-5 pt-3 dark:bg-neutral-950 sm:px-8"
+          className="workspace-dock-surface shrink-0 px-5 pb-5 pt-3 sm:px-8"
         >
           <div className="mx-auto w-full max-w-[900px]">
             {composerSlot}
@@ -114,7 +114,7 @@ export default function ChatWelcomeV2({
   }
 
   return (
-    <div className="pd-chat-welcome flex h-full flex-col bg-white dark:bg-neutral-950">
+    <div className="pd-chat-welcome flex h-full flex-col bg-transparent">
       <div className="pd-chat-welcome-body flex min-h-0 flex-1 flex-col items-center justify-center px-6">
         <div className="pd-chat-welcome-column w-full max-w-[720px]">
           <h1 className="pd-chat-welcome-title mb-8 text-center text-[26px] font-medium tracking-tight text-neutral-900 dark:text-neutral-100">

@@ -1,4 +1,3 @@
-import { ShieldAlert } from 'lucide-react';
 import {
   cloneElement,
   isValidElement,
@@ -11,7 +10,6 @@ import {
 } from 'react';
 import { cn } from '../../lib/utils';
 import { TRAUMA_STAGES } from './demoCase';
-import StageOverrideDialog from './detail/StageOverrideDialog';
 import { snapshotsToRounds } from './domain/snapshotAdapter';
 import type { TurnFormInput } from './domain/types';
 import { SUBSTAGE_ORDER, SUBSTAGE_TO_MAIN } from './domain/stageConfig';
@@ -62,7 +60,6 @@ export default function TraumaWorkspace({
   runtimePanel,
 }: TraumaWorkspaceProps) {
   const [selectedMemoId, setSelectedMemoId] = useState<string | null>(null);
-  const [showStageOverride, setShowStageOverride] = useState(false);
   const autoOpenedPendingRunRef = useRef<string | null>(null);
   const caseStore = useCaseStore(projectKey, sessionId);
   const currentCase = caseStore.current;
@@ -127,12 +124,8 @@ export default function TraumaWorkspace({
     // （见 src/trauma/placement.ts 的注释），前端不该替它做这个假设。
     return null;
   }, [currentRound, pendingRun, pendingMemo]);
-  const viewingHistoricalSnapshot = Boolean(
-    selectedMemo?.snapshotVersion
-    && selectedMemo.snapshotVersion !== currentCase?.version,
-  );
   const traumaComposerSlot = useMemo(() => (
-    <div data-chat-composer-slot className="min-h-0 shrink-0 bg-white px-6 pb-6 pt-3 dark:bg-neutral-950">
+    <div data-chat-composer-slot className="workspace-dock-surface min-h-0 shrink-0 px-6 pb-6 pt-3">
       <div className="mx-auto w-full max-w-[720px]">
         <TraumaComposer
           key={`${currentCase?.caseId ?? 'unpersisted'}:${resetKey}`}
@@ -158,8 +151,8 @@ export default function TraumaWorkspace({
   const renderedRuntimePanel = useMemo(() => {
     if (!runtimePanel) {
       return (
-        <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-white dark:bg-neutral-950">
-          <div className="flex min-h-0 items-center justify-center px-6 text-center text-[12px] text-neutral-400 dark:text-neutral-500">
+        <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-transparent">
+          <div className="flex min-h-0 items-center justify-center px-6 text-center text-[12px] text-muted-foreground">
             等待对话区初始化…
           </div>
           {traumaComposerSlot}
@@ -173,7 +166,7 @@ export default function TraumaWorkspace({
       );
     }
     return (
-      <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-white dark:bg-neutral-950">
+      <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-transparent">
         <div className="min-h-0 overflow-hidden">{runtimePanel}</div>
         {traumaComposerSlot}
       </div>
@@ -185,7 +178,6 @@ export default function TraumaWorkspace({
 
   useEffect(() => {
     setSelectedMemoId(null);
-    setShowStageOverride(false);
     autoOpenedPendingRunRef.current = null;
   }, [resetKey]);
 
@@ -198,8 +190,8 @@ export default function TraumaWorkspace({
   }, [pendingMemo, pendingRun?.runId]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-neutral-50/50 dark:bg-neutral-950">
-      <div className="grid shrink-0 grid-cols-2 gap-x-3 gap-y-1 border-b border-neutral-200 bg-white px-3 py-2 dark:border-neutral-800 dark:bg-neutral-950 sm:grid-cols-4">
+    <div className="trauma-workspace flex h-full min-h-0 flex-col overflow-hidden bg-transparent">
+      <div className="trauma-status-panel workspace-panel-surface grid min-h-[52px] shrink-0 grid-cols-2 gap-x-5 gap-y-1 border-b border-border px-4 py-1.5 sm:grid-cols-4">
         <StatusCell label="病例进度" value={currentCase ? `第 ${currentCase.round} 轮` : '等待首轮提交'} />
         <StatusCell
           label="当前位置"
@@ -228,9 +220,9 @@ export default function TraumaWorkspace({
       >
         <section
           aria-label="伤情推演工作区"
-          className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)] overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-950"
+          className="trauma-conversation-panel workspace-panel-surface grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)] overflow-hidden rounded-xl border border-border shadow-sm"
         >
-          <div className="h-full min-h-0 overflow-hidden bg-white dark:bg-neutral-950">
+          <div className="h-full min-h-0 overflow-hidden bg-transparent">
             <div
               role="region"
               aria-label="推演对话"
@@ -243,14 +235,14 @@ export default function TraumaWorkspace({
 
         <section
           aria-labelledby="trauma-workflow-title"
-          className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-950"
+          className="trauma-workflow-panel workspace-panel-surface grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-xl border border-border shadow-sm"
         >
-          <header className="flex min-h-12 min-w-0 items-center justify-between gap-2 border-b border-neutral-200 px-3 py-2 dark:border-neutral-800">
+          <header className="flex min-h-12 min-w-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
             <div className="min-w-0">
               <h2 id="trauma-workflow-title" className="truncate text-[12px] font-semibold">分级救治全过程</h2>
-              <p className="truncate text-[9px] text-neutral-400">主级 → 子级 → 轮次纪要</p>
+              <p className="truncate text-[9px] text-muted-foreground">主级 → 子级 → 轮次纪要</p>
             </div>
-            <span className="text-[9px] text-neutral-500">
+            <span className="text-[9px] text-muted-foreground">
               {hasLiveCase ? `实时病例 · R${position.round}` : '等待首轮推演'}
             </span>
           </header>
@@ -262,17 +254,9 @@ export default function TraumaWorkspace({
           >
             <div className={cn(
               'min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-3',
-              selectedMemo && 'border-b border-neutral-200 dark:border-neutral-800 xl:border-b-0 xl:border-r',
+              selectedMemo && 'border-b border-border xl:border-b-0 xl:border-r',
             )}
             >
-              <div className="mb-3 flex items-start gap-2 rounded-md border border-neutral-200 bg-neutral-50 px-2.5 py-2 dark:border-neutral-800 dark:bg-neutral-900">
-                <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neutral-400" />
-                <p className="text-[9px] leading-4 text-neutral-500 dark:text-neutral-400">
-                  {hasLiveCase
-                    ? '当前流程树由真实病例快照驱动；阶段转换建议不会自动执行，救治级别落位确认与带审计人工覆盖仍按独立流程处理。'
-                    : '新建病例尚无轮次纪要。请提交本轮伤情表单，系统将按分级定义判定应处级别。'}
-                </p>
-              </div>
               {caseStore.error ? (
                 <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[10px] text-red-700 dark:border-red-900 dark:bg-red-950/25 dark:text-red-300">
                   病例状态加载失败：{caseStore.error}
@@ -284,7 +268,7 @@ export default function TraumaWorkspace({
                   currentRoundIndex={currentRoundIndex}
                   position={position}
                   pendingRound={pendingPosition}
-                  selectedMemoId={selectedMemoId}
+                  selectedMemoId={selectedMemo?.id ?? null}
                   onSelectMemo={(memoId) => {
                     setSelectedMemoId((current) => current === memoId ? null : memoId);
                     const memo = rounds.find((item) => item.id === memoId);
@@ -292,35 +276,12 @@ export default function TraumaWorkspace({
                       void onNavigateToChatMessage?.(memo.triggerMessageId);
                     }
                   }}
-                  onRequestStageOverride={hasLiveCase ? () => setShowStageOverride(true) : undefined}
-                  canOverrideStage={!viewingHistoricalSnapshot}
                 />
               )}
-              {showStageOverride && currentCase && !viewingHistoricalSnapshot ? (
-                <div className="mt-3">
-                  <StageOverrideDialog
-                    state={currentCase}
-                    onClose={() => setShowStageOverride(false)}
-                    onSubmit={async (override) => {
-                      const response = await fetch(
-                        `/api/trauma/cases/${encodeURIComponent(sessionId ?? '')}/override`,
-                        {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ projectKey, actorId: 'web-user', ...override }),
-                        },
-                      );
-                      if (!response.ok) throw new Error('阶段调整失败');
-                      setShowStageOverride(false);
-                      await caseStore.refresh();
-                    }}
-                  />
-                </div>
-              ) : null}
             </div>
 
             {selectedMemo ? (
-              <aside aria-label="轮次纪要详情" className="min-h-0 min-w-0 overflow-y-auto overflow-x-hidden bg-neutral-50/60 p-3 dark:bg-neutral-900/25">
+              <aside aria-label="轮次纪要详情" className="trauma-detail-panel workspace-detail-surface min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-3">
                 <MemoDetailPanel
                   memo={selectedMemo}
                   isLatest={selectedMemo.round === position.round}
@@ -349,10 +310,10 @@ function StatusCell({
   tone?: 'info' | 'warning' | 'danger' | 'success';
 }) {
   return (
-    <div className="min-w-0">
-      <p className="text-[9px] text-neutral-400">{label}</p>
+    <div className="flex min-w-0 flex-col justify-center">
+      <p className="text-[11px] leading-4 text-muted-foreground">{label}</p>
       <p className={cn(
-        'truncate text-[10px] font-medium text-neutral-700 dark:text-neutral-200',
+        'mt-0.5 truncate text-[13px] font-semibold leading-5 text-foreground',
         tone === 'info' && 'text-teal-700 dark:text-teal-300',
         tone === 'warning' && 'text-amber-700 dark:text-amber-300',
         tone === 'danger' && 'text-red-700 dark:text-red-300',

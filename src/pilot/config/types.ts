@@ -92,11 +92,15 @@ export type PilotMemoryApiType =
   | "anthropic"
   | "google";
 export type PilotMemoryReasoningMode = "answer_first" | "accuracy_first";
+/** 见 `src/trauma/memory/TraumaMemoryCapturePolicy.ts`。`eligible_turns` 仅预留。 */
+export type PilotTraumaMemoryCaptureMode = "off" | "feedback_only" | "eligible_turns";
 
 export type PilotMemoryScheduleConfig = {
   reasoningMode?: PilotMemoryReasoningMode;
   autoIndexIntervalMinutes?: number;
   autoDreamIntervalMinutes?: number;
+  /** Task 10：维护模式。immediate = 去时间门、interval = 现有行为、manual = 只手动。 */
+  maintenanceMode?: "immediate" | "interval" | "manual";
 };
 
 export type PilotMemoryConfig = {
@@ -112,6 +116,13 @@ export type PilotMemoryConfig = {
   apiType?: PilotMemoryApiType;
   schedule?: PilotMemoryScheduleConfig;
   heartbeatBatchSize?: number;
+  /**
+   * 战创伤项目的长期记忆写入策略（Task 7，§3.7）。默认 `feedback_only`。
+   *
+   * `eligible_turns` 在类型层预留但**本期拒绝启用**——配置里写它会直接报错，
+   * 避免用户误以为按轮次筛选已经生效。
+   */
+  traumaCapture?: PilotTraumaMemoryCaptureMode;
 };
 
 export type PilotGatewayConfig = {

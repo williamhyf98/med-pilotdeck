@@ -100,11 +100,58 @@ describe('SidebarV2 type tabs (P3)', () => {
     expect(props.onCreateProject).toHaveBeenCalledTimes(1);
   });
 
+  it('reports section changes so the workspace background follows the selected type', () => {
+    const onSectionChange = vi.fn();
+    renderSidebar(null, [generalMed, traumaMed], { onSectionChange });
+
+    fireEvent.click(screen.getByRole('tab', { name: 'War Trauma' }));
+
+    expect(onSectionChange).toHaveBeenCalledWith('war_trauma');
+  });
+
   it('opens project files from the folder action next to new chat', () => {
     const onOpenProjectFiles = vi.fn();
     renderSidebar(generalMed, [generalMed, traumaMed], { onOpenProjectFiles });
 
     fireEvent.click(screen.getByRole('button', { name: 'Files' }));
     expect(onOpenProjectFiles).toHaveBeenCalledWith(generalMed);
+  });
+
+  it('shows only Skills, Memory, and Storage above Settings', () => {
+    const onSelectTab = vi.fn();
+    renderSidebar(generalMed, [generalMed, traumaMed], { onSelectTab });
+
+    expect(screen.getByRole('button', { name: '技能' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '记忆' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '存储' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Dashboard' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Always On' })).toBeNull();
+    expect(screen.getByRole('button', { name: '技能' }).closest('.border-t')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Settings' }).parentElement?.className)
+      .toContain('border-t');
+
+    fireEvent.click(screen.getByRole('button', { name: '记忆' }));
+    expect(onSelectTab).toHaveBeenCalledWith('memory');
+  });
+
+  it('keeps the selected conversation highlighted while Memory is open and returns to chat', () => {
+    const onSelectTab = vi.fn();
+    const session = { id: 'session-memory', title: '当前问诊' };
+    const project = { ...generalMed, sessions: [session] };
+
+    renderSidebar(project, [project], {
+      activeTab: 'memory',
+      selectedSession: session,
+      onSelectTab,
+    });
+
+    const sessionButton = screen.getByRole('button', { name: /当前问诊/ });
+    expect(sessionButton.getAttribute('aria-current')).toBe('page');
+    expect(sessionButton.closest('.pd-session-row')?.className).toContain('pd-session-row-active');
+
+    const memoryButton = screen.getByRole('button', { name: '记忆' });
+    expect(memoryButton.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(memoryButton);
+    expect(onSelectTab).toHaveBeenCalledWith('chat');
   });
 });

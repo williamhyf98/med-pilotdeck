@@ -27,6 +27,14 @@ export type ReasonerResult = Pick<
   | "memo"
 >;
 
+export type ReasonerAttachmentInterpretationContext = {
+  current: {
+    round: number;
+    text: string;
+  } | null;
+  history: string | null;
+};
+
 function assertKnownEvidence(
   actions: unknown,
   assessment: unknown,
@@ -84,8 +92,10 @@ export function createReasonerStation(model: StructuredModelClient): {
 	  reason(input: {
 	    state: CaseState;
 	    promptChunks: EvidenceChunk[];
-	    /** 工位 I 产出的历轮影像判读，已按字符预算裁剪；无判读时为空串。 */
-	    attachmentInterpretation?: string;
+	    /** 本轮判读与历史判读分开提供；历史只用于内部综合判断。 */
+	    attachmentInterpretation?: ReasonerAttachmentInterpretationContext | null;
+	    /** 已合并、已脱敏的表达策略；不能作为伤情或医学依据。 */
+	    presentationPolicy?: string | null;
 	    signal?: AbortSignal;
 	    onNaturalLanguageDelta?: (text: string) => void | Promise<void>;
 	    onNaturalLanguageEnd?: () => void | Promise<void>;
@@ -105,7 +115,8 @@ export function createReasonerStation(model: StructuredModelClient): {
             rationale: input.state.placementRationale ?? null,
           },
           state: compactCaseStateForDownstream(input.state),
-          attachmentInterpretation: input.attachmentInterpretation || null,
+          attachmentInterpretation: input.attachmentInterpretation ?? null,
+          presentationPolicy: input.presentationPolicy || null,
           promptChunks: input.promptChunks.map((chunk, index) => ({
             citationIndex: index + 1,
             id: chunk.id,

@@ -21,6 +21,7 @@ import {
   type AppTab,
   type Project,
   type ProjectSession,
+  type ProjectType,
   type SessionProvider,
 } from '../../types/app';
 import { api } from '../../utils/api';
@@ -28,7 +29,13 @@ import { resolveMarkdownFileHref } from '../chat/utils/resolveMarkdownFileHref';
 import type { SessionNavigationOptions } from '../main-content/types/types';
 import SidebarV2 from './SidebarV2';
 import MainAreaV2 from './MainAreaV2';
-import { chooseDefaultProject } from './appShellSelection';
+import {
+  chooseDefaultProject,
+  findMostRecentProject,
+  findMostRecentSessionTarget,
+  resolveProjectType,
+  shouldPreserveTabOnSessionSelection,
+} from './appShellSelection';
 import { ConnectionBanner } from '../ui/ConnectionBanner';
 
 type TypedSettingsProps = {
@@ -106,6 +113,7 @@ export default function AppShellV2() {
 
   const { isMobile } = useDeviceSettings({ trackPWA: false });
   const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
+  const [workspaceType, setWorkspaceType] = useState<ProjectType>('general_medicine');
   const { ws, sendMessage, latestMessage, isConnected, subscribe } = useWebSocket();
   const wasConnectedRef = useRef(false);
   const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => new Set());
@@ -153,6 +161,11 @@ export default function AppShellV2() {
     isMobile,
     activeSessions,
   });
+
+  useEffect(() => {
+    const selectedType = selectedProject ? resolveProjectType(selectedProject) : null;
+    if (selectedType) setWorkspaceType(selectedType);
+  }, [selectedProject]);
 
   const misroutedFileFromUrl = useMemo(() => {
     if (!sessionId) return null;
@@ -550,11 +563,11 @@ export default function AppShellV2() {
       } else {
         navigate(`/session/${sessId}`);
       }
-      if (!options?.preserveActiveTab) {
+      if (!shouldPreserveTabOnSessionSelection(activeTab, options?.preserveActiveTab)) {
         setActiveTab('chat');
       }
     },
-    [handleProjectSelect, handleSessionSelect, navigate, selectedProject?.name, setActiveTab],
+    [activeTab, handleProjectSelect, handleSessionSelect, navigate, selectedProject?.name, setActiveTab],
   );
 
   const handleSelectTab = useCallback(
@@ -576,6 +589,38 @@ export default function AppShellV2() {
     },
     [navigate, selectedProject, setActiveTab, setSelectedSession],
   );
+
+  const handleSectionChange = useCallback((section: ProjectType) => {
+    setWorkspaceType(section);
+
+    const recentTarget = findMostRecentSessionTarget(sidebarSharedProps.projects, section);
+    if (recentTarget) {
+      handleSelectSession(recentTarget.project, recentTarget.session.id);
+      return;
+    }
+
+    const recentProject = findMostRecentProject(sidebarSharedProps.projects, section);
+    if (recentProject) {
+      handleProjectSelect(recentProject);
+      setSelectedSession(null);
+      setActiveTab('chat');
+      navigate(`/p/${encodeURIComponent(recentProject.name)}`);
+      return;
+    }
+
+    setSelectedProject(null);
+    setSelectedSession(null);
+    setActiveTab('chat');
+    navigate('/');
+  }, [
+    handleProjectSelect,
+    handleSelectSession,
+    navigate,
+    setActiveTab,
+    setSelectedProject,
+    setSelectedSession,
+    sidebarSharedProps.projects,
+  ]);
 
   const handleStartNewSession = useCallback(
     (project: Project | null, options?: SessionNavigationOptions) => {
@@ -641,11 +686,16 @@ export default function AppShellV2() {
 	      onCollapse={onCollapseSidebar}
 	      onLoadMoreSessions={loadMoreSessions}
 	      loadingMoreProjectIds={loadingMoreProjectIds}
+	      onSectionChange={handleSectionChange}
+	      onSelectTab={handleSelectTab}
 	    />
   );
 
   return (
-    <div className="ui-v2 fixed inset-0 flex flex-col bg-white font-sans text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+    <div
+      className="ui-v2 workspace-canvas fixed inset-0 flex flex-col font-sans text-foreground"
+      data-workspace-type={workspaceType}
+    >
       <ConnectionBanner />
       <div className="flex min-h-0 flex-1">
       {!isMobile ? (

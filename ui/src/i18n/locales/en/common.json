@@ -72,6 +72,12 @@
   "skillsTab": {
     "pickProject": "Open a project to manage its skills.",
     "generalChat": "General chat — built-in and user skills",
+    "library": "Skill library",
+    "title": "Skills",
+    "description": "View and manage the skill prompts available to this project.",
+    "promptContent": "Prompt content",
+    "closeDetail": "Close skill details",
+    "noDescription": "No description available",
     "refresh": "Refresh",
     "backToSkills": "Back to skills",
     "loading": "Loading…",

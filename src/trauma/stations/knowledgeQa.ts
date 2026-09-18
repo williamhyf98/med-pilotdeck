@@ -11,6 +11,8 @@ export type KnowledgeQaStation = {
     question: string;
     rewrittenQueries: string[];
     promptChunks: EvidenceChunk[];
+    /** 已合并、已脱敏的表达策略；不能作为知识依据。 */
+    presentationPolicy?: string | null;
     signal?: AbortSignal;
     onNaturalLanguageDelta?: (text: string) => void | Promise<void>;
     onNaturalLanguageEnd?: () => void | Promise<void>;
@@ -28,6 +30,7 @@ export function createKnowledgeQaStation(model: StructuredModelClient): Knowledg
           user: JSON.stringify({
             question: input.question,
             rewrittenQueries: input.rewrittenQueries,
+            presentationPolicy: input.presentationPolicy || null,
             promptChunks: input.promptChunks.map((chunk, index) => ({
               citationIndex: index + 1,
               id: chunk.id,
@@ -52,6 +55,7 @@ export function createKnowledgeQaStation(model: StructuredModelClient): Knowledg
           user: JSON.stringify({
             question: input.question,
             rewrittenQueries: input.rewrittenQueries,
+            presentationPolicy: input.presentationPolicy || null,
             promptChunks: input.promptChunks.map((chunk, index) => ({
               citationIndex: index + 1,
               id: chunk.id,

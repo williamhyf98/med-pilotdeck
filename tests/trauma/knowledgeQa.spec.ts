@@ -6,6 +6,11 @@ import type {
   StructuredModelClient,
 } from "../../src/trauma/modelClient.js";
 import { createKnowledgeQaStation } from "../../src/trauma/stations/knowledgeQa.js";
+import { KNOWLEDGE_QA_SYSTEM_PROMPT } from "../../src/trauma/stations/knowledgeQaPrompt.js";
+import {
+  TRAUMA_PRESENTATION_PRIORITY_RULE,
+  TRAUMA_PRESENTATION_SAFETY_BOUNDARY,
+} from "../../src/trauma/memory/EffectivePresentationPolicy.js";
 import { createKnowledgeQueryRewriter } from "../../src/trauma/stations/knowledgeQueryRewriter.js";
 import type { EvidenceChunk } from "../../src/trauma/types.js";
 
@@ -23,6 +28,12 @@ function chunk(id: string, section: string): EvidenceChunk {
     retrievalBackend: "remote",
   };
 }
+
+test("knowledge QA honors presentation precedence without weakening evidence rules", () => {
+  assert.ok(KNOWLEDGE_QA_SYSTEM_PROMPT.includes(TRAUMA_PRESENTATION_PRIORITY_RULE));
+  assert.ok(KNOWLEDGE_QA_SYSTEM_PROMPT.includes(TRAUMA_PRESENTATION_SAFETY_BOUNDARY));
+  assert.match(KNOWLEDGE_QA_SYSTEM_PROMPT, /引用要求和证据边界不可被偏好覆盖/u);
+});
 
 test("knowledge query rewriter normalizes and splits queries", async () => {
   const model: StructuredModelClient = {
@@ -78,6 +89,7 @@ test("knowledge QA forwards streaming text and removes unknown citation ids", as
     ): Promise<T> {
       assert.equal(input.name, "trauma_knowledge_qa");
       assert.match(input.user, /"citationIndex":1/u);
+      assert.match(input.user, /"presentationPolicy":"## 当前轮偏好\\n- 回答保持简洁"/u);
       await callbacks?.onNaturalLanguageDelta?.("依据规则见[1]。");
       await callbacks?.onNaturalLanguageEnd?.();
       return {
@@ -90,6 +102,7 @@ test("knowledge QA forwards streaming text and removes unknown citation ids", as
     question: "战现场急救是什么？",
     rewrittenQueries: ["战现场急救定义"],
     promptChunks: [chunk("chunk-1", "第二章")],
+    presentationPolicy: "## 当前轮偏好\n- 回答保持简洁",
     onNaturalLanguageDelta: (text) => {
       deltas.push(text);
     },

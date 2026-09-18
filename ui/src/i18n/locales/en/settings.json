@@ -196,10 +196,12 @@
     },
     "appearanceMode": {
       "title": "Theme Mode",
-      "detail": "Follow the system appearance, or pin a light / dark theme.",
+      "detail": "Choose the system appearance or a clinical workspace theme.",
       "system": "Follow System",
       "light": "Light",
-      "dark": "Dark"
+      "dark": "Dark",
+      "warm": "Warm Clinic",
+      "command": "Command Center"
     },
     "chatInput": {
       "title": "Chat & Input",
@@ -961,6 +963,19 @@
           "label": "Memory Model",
           "description": "Provider/model the memory pipeline calls.",
           "inherit": "inherit (use main agent's model)"
+        },
+        "traumaCapture": {
+          "label": "War-trauma memory writes",
+          "description": "War-trauma projects only write collaboration rules to long-term memory: reporting format, wording preferences, workflow rules, and explicit corrections. Vital signs, injury severity, resuscitation stage, and patient identifiers stay in Case State and never enter long-term memory; whatever is kept is redacted before it is stored.",
+          "feedbackOnly": "Collaboration rules only (recommended)",
+          "off": "Do not write"
+        },
+        "maintenanceMode": {
+          "label": "Maintenance Mode",
+          "description": "immediate = index and consolidate right after conversations, best for active use; interval = run on schedule (default); manual = only when triggered manually.",
+          "immediate": "Immediate",
+          "interval": "Scheduled",
+          "manual": "Manual only"
         },
         "automation": {
           "autoIndex": {

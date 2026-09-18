@@ -2,8 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { CompleteJsonInput, StructuredModelClient } from "../../src/trauma/modelClient.js";
+import { REASONER_OUTPUT_SCHEMA } from "../../src/trauma/schemas.js";
 import { initialCaseState } from "../../src/trauma/stageConfig.js";
 import { createReasonerStation } from "../../src/trauma/stations/reasoner.js";
+import { REASONER_SYSTEM_PROMPT } from "../../src/trauma/stations/reasonerPrompt.js";
+import {
+  TRAUMA_PRESENTATION_PRIORITY_RULE,
+  TRAUMA_PRESENTATION_SAFETY_BOUNDARY,
+} from "../../src/trauma/memory/EffectivePresentationPolicy.js";
+import { TRAUMA_DEFAULT_REASONER_ANSWER_LENGTH_RULE } from "../../src/trauma/presentationDefaults.js";
 import type { EvidenceChunk } from "../../src/trauma/types.js";
 
 const now = "2026-09-03T15:09:00+08:00";
@@ -94,6 +101,50 @@ function validPayload(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+test("reasoner treats clinical sections and attachment interpretation as preference-aware defaults", () => {
+  assert.match(
+    REASONER_SYSTEM_PROMPT,
+    /必须覆盖：结论、确认阶段、当前措施、阶段\/后送建议、关键缺失信息，以及 attachmentInterpretation\.current 非空时的影像\/附件判读/u,
+  );
+  assert.match(REASONER_SYSTEM_PROMPT, /没有适用表达偏好时，必须使用五至六段式/u);
+  assert.match(REASONER_SYSTEM_PROMPT, /presentationPolicy 存在表达偏好需求时，必须按照其中的需求进行输出/u);
+  assert.doesNotMatch(REASONER_SYSTEM_PROMPT, /缺一不可/u);
+  assert.ok(REASONER_SYSTEM_PROMPT.includes(TRAUMA_PRESENTATION_PRIORITY_RULE));
+  assert.ok(REASONER_SYSTEM_PROMPT.includes(TRAUMA_PRESENTATION_SAFETY_BOUNDARY));
+  assert.match(REASONER_SYSTEM_PROMPT, /只输出 attachmentInterpretation\.current/u);
+  assert.match(REASONER_SYSTEM_PROMPT, /current 为 null 时，不生成/u);
+  assert.match(REASONER_SYSTEM_PROMPT, /history 仅用于内部综合判断/u);
+});
+
+test("reasoner uses one shared longer default-answer rule in its prompt and output schema", () => {
+  const schema = REASONER_OUTPUT_SCHEMA as any;
+  const answerDescription = schema.properties.naturalLanguageAnswer.description;
+
+  assert.match(TRAUMA_DEFAULT_REASONER_ANSWER_LENGTH_RULE, /1200～2500/u);
+  assert.ok(REASONER_SYSTEM_PROMPT.includes(TRAUMA_DEFAULT_REASONER_ANSWER_LENGTH_RULE));
+  assert.ok(answerDescription.includes(TRAUMA_DEFAULT_REASONER_ANSWER_LENGTH_RULE));
+});
+
+test("reasoner sends presentationPolicy as a separate non-clinical input", async () => {
+  let userPayload = "";
+  const client: StructuredModelClient = {
+    async completeJson<T>(input: CompleteJsonInput<T>): Promise<T> {
+      userPayload = input.user;
+      return validPayload() as T;
+    },
+  };
+
+  await createReasonerStation(client).reason({
+    state,
+    promptChunks,
+    presentationPolicy: "## 当前轮偏好\n- 使用表格",
+  });
+
+  const parsed = JSON.parse(userPayload);
+  assert.equal(parsed.presentationPolicy, "## 当前轮偏好\n- 使用表格");
+  assert.equal("memoryContext" in parsed, false);
+});
 
 test("rejects current_stage actions that cite unknown chunk ids", async () => {
   const { reason } = createReasonerStation(fakeClient(validPayload({

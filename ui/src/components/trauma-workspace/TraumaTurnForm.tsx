@@ -261,8 +261,8 @@ export default function TraumaTurnForm({
       onSubmit={(event) => void handleSubmit(event)}
       className={cn(
         embedded
-          ? 'rounded-lg border border-neutral-200/80 bg-neutral-50/60 p-2 dark:border-neutral-800 dark:bg-neutral-900/45'
-          : 'rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm dark:border-neutral-800 dark:bg-neutral-900',
+          ? 'rounded-lg border border-border bg-transparent p-2'
+          : 'rounded-2xl border border-border bg-transparent p-3',
       )}
       noValidate
     >
@@ -284,7 +284,7 @@ export default function TraumaTurnForm({
                 (event.target.value || null) as SubStage | null,
               )}
               disabled={statedSubStageLocked}
-              className="rounded-md border border-neutral-300 bg-white px-2 py-0.5 text-xs leading-5 text-neutral-800 outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/15 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
+              className="rounded-md border border-input bg-background/35 px-2 py-0.5 text-xs leading-5 text-foreground outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/15 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {stageOptions.map((option) => (
                 <option key={option.value ?? 'system'} value={option.value ?? ''}>
@@ -387,7 +387,7 @@ export default function TraumaTurnForm({
         </p>
       ) : null}
 
-      <div className="mt-2 flex items-center justify-between gap-3 border-t border-neutral-200 pt-2 dark:border-neutral-800">
+      <div className="mt-2 flex items-center justify-between gap-3 border-t border-border pt-2">
         <p className="text-[9px] leading-4 text-neutral-400">提交后将进入分级、规则检索与研判流程。</p>
         {mode === 'confirm' ? (
           <div className="flex shrink-0 items-center gap-2">
@@ -395,7 +395,7 @@ export default function TraumaTurnForm({
               type="button"
               onClick={onReExtract}
               disabled={busy}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/25 px-3 py-2 text-xs font-semibold text-foreground transition hover:bg-accent/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <RotateCcw className="h-3.5 w-3.5" />
               重新整理

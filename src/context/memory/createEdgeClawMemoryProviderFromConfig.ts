@@ -46,6 +46,8 @@ export type CreateEdgeClawMemoryProviderOptions = {
   /** Optional `now` for deterministic tests. */
   now?: () => Date;
   telemetry?: TelemetryClient;
+  /** Selects the prompt archive: "general_medicine" | "war_trauma". Defaults to "general_medicine". */
+  projectType?: string;
 };
 
 export function createEdgeClawMemoryProviderFromConfig(
@@ -76,6 +78,7 @@ export function createEdgeClawMemoryProviderFromConfig(
     logger: options.logger,
     llm,
     runtime: options.telemetry ? { telemetry: options.telemetry } : undefined,
+    projectType: options.projectType,
   });
 
   const provider = new EdgeClawMemoryProvider({

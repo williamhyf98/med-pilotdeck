@@ -12,7 +12,10 @@ import { buildBaselineQueries } from "./rag/queryPlan.js";
 import { runBaselineRetrieval } from "./rag/retrieval.js";
 import { initialCaseState, isLaterSubStage, SUBSTAGE_TO_MAIN, typicalFacilityForSubStage } from "./stageConfig.js";
 import { createPlacementStation } from "./stations/placer.js";
-import { createReasonerStation } from "./stations/reasoner.js";
+import {
+  createReasonerStation,
+  type ReasonerAttachmentInterpretationContext,
+} from "./stations/reasoner.js";
 import type { TraumaCaseStore } from "./store.js";
 import { buildInterpretationContext } from "./attachments/interpretationBudget.js";
 import type { InterpretationStation } from "./stations/interpreter.js";
@@ -65,6 +68,8 @@ export type TraumaTurnInput = {
   form: TurnFormInput;
   /** 用户本轮原始自由文本，存入快照供审计与回溯，不参与推演逻辑。 */
   rawInput?: string;
+  /** 网关已合并好的表达策略；只影响自然语言呈现。 */
+  presentationPolicy?: string | null;
   /** 本轮上传的医学附件；为空或缺省时工位 I 不启动。 */
   attachments?: TraumaAttachmentRef[];
   now: string;
@@ -206,12 +211,6 @@ type NormalizedAnswerCitations = {
   citations: CitationMetadata[];
   usedChunkIds: Set<string>;
 };
-
-export const INTERPRETATION_ANSWER_HEADING = "## 附件影像判读";
-
-function renderInterpretationSection(text: string): string {
-  return `${INTERPRETATION_ANSWER_HEADING}\n\n${text.trim()}\n\n`;
-}
 
 const DETAILS_RE = /<details>[\s\S]*?<\/details>/gi;
 const INLINE_CITATION_RE = /\[(\d{1,2})\]/g;
@@ -581,6 +580,7 @@ export function createTraumaTurnRunner(deps: {
         }
 
         const interpretation = await interpretationPromise;
+        let currentInterpretation: ReasonerAttachmentInterpretationContext["current"] = null;
         if (interpretation.text) {
           const entry: InterpretationEntry = {
             id: randomUUID(),
@@ -589,23 +589,26 @@ export function createTraumaTurnRunner(deps: {
             fileNames: interpretation.fileNames,
             text: interpretation.text,
           };
+          currentInterpretation = { round: entry.round, text: entry.text };
           candidate.attachmentInterpretations = [
             ...(previous.attachmentInterpretations ?? []),
             entry,
           ];
         }
-        const interpretationContext = buildInterpretationContext(
-          candidate.attachmentInterpretations ?? [],
+        const historicalInterpretationContext = buildInterpretationContext(
+          previous.attachmentInterpretations ?? [],
         );
-
-        // 先把判读推出去；后面 baseline_retrieval / merge_retrieval 的进度条
-        // 会隔在中间，推演主文随后续到同一条消息上。
-        const interpretationSection = interpretation.text
-          ? renderInterpretationSection(interpretation.text)
-          : "";
-        if (interpretationSection) {
-          await input.onAssistantTextDelta?.(interpretationSection);
-        }
+        const retrievalInterpretationContext = [
+          currentInterpretation?.text,
+          historicalInterpretationContext,
+        ].filter((text): text is string => Boolean(text)).join("\n\n");
+        const reasonerInterpretationContext: ReasonerAttachmentInterpretationContext | null =
+          currentInterpretation || historicalInterpretationContext
+            ? {
+                current: currentInterpretation,
+                history: historicalInterpretationContext || null,
+              }
+            : null;
 
         // 级别在第 4 步就已确认，这里带上它，让流程图的「生成中」叶子节点
         // 在检索与生成开始前就挂到正确的子级下，而不是先落在默认位置再跳。
@@ -615,7 +618,7 @@ export function createTraumaTurnRunner(deps: {
           subStage: candidate.currentSubStage,
         });
         throwIfAborted();
-        const baseline = buildBaselineQueries(candidate, interpretationContext);
+        const baseline = buildBaselineQueries(candidate, retrievalInterpretationContext);
         const firstWaveResults = await runBaselineRetrieval({
           queries: baseline,
           rag: deps.rag,
@@ -657,10 +660,12 @@ export function createTraumaTurnRunner(deps: {
         throwIfAborted();
         const citations = buildCitationMetadata(merged.promptChunks);
         await input.onAssistantCitations?.(citations);
+        // 记忆是可选增强：取不到就按无记忆推演，不影响本轮任何其他步骤。
         const reasoned = await reasoner.reason({
           state: candidate,
           promptChunks: merged.promptChunks,
-          attachmentInterpretation: interpretationContext,
+          attachmentInterpretation: reasonerInterpretationContext,
+          presentationPolicy: input.presentationPolicy ?? null,
           signal: input.abortSignal,
           onNaturalLanguageDelta: input.onAssistantTextDelta,
           onNaturalLanguageEnd: input.onAssistantTextEnd,
@@ -690,8 +695,9 @@ export function createTraumaTurnRunner(deps: {
           merged.promptChunks,
         );
         await input.onAssistantCitations?.(normalizedAnswerCitations.citations);
-        const naturalLanguageAnswer = interpretationSection
-          + normalizeChineseDisplayText(normalizedAnswerCitations.answer);
+        const naturalLanguageAnswer = normalizeChineseDisplayText(
+          normalizedAnswerCitations.answer,
+        );
         // 「已使用」严格等于正文里打了角标的知识块，这样知识块依据里的每一条
         // 都能显示出与参考来源列表一致的编号。
         const displayedCitationChunkIds = normalizedAnswerCitations.usedChunkIds;

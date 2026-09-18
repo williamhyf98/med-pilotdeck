@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync, } from "node:fs";
+import { redact } from "../MemoryPrivacyPolicy.js";
 import { dirname, join, relative, resolve } from "node:path";
 import { GENERAL_PROJECT_META_DIR } from "./general-projects.js";
 import { hashText, nowIso } from "./utils/id.js";
@@ -176,6 +177,16 @@ function parseMarkdownSections(body) {
     if (current)
         sections.set(current, bucket);
     return sections;
+}
+function projectUserProfileContent(body) {
+    const sections = parseMarkdownSections(body);
+    const blocks = [];
+    for (const title of ["身份背景", "专业领域"]) {
+        const content = sections.get(title)?.join("\n").trim();
+        if (content)
+            blocks.push(`## ${title}\n${content}`);
+    }
+    return blocks.join("\n\n");
 }
 function parseListSection(lines) {
     if (!lines)
@@ -595,7 +606,13 @@ export class FileMemoryStore {
     writeRecord(input) {
         const absolutePath = this.resolveRelativePath(input.relativePath);
         ensureDir(dirname(absolutePath));
-        const rendered = `${renderFrontmatter(input.frontmatter)}${input.body.trim()}\n`;
+        const { text: cleanBody, removedCount, hits } = redact(input.body.trim());
+        if (removedCount > 0) {
+            // Surface PHI removal in the manifest trace so callers can audit without
+            // needing to diff the file contents themselves.
+            this.__lastRedactTrace = { removedCount, hits };
+        }
+        const rendered = `${renderFrontmatter(input.frontmatter)}${cleanBody}\n`;
         writeFileSync(absolutePath, rendered, "utf8");
         this.repairManifests();
         return this.getMemoryRecordsByIds([input.relativePath], 5000)[0];
@@ -924,9 +941,14 @@ export class FileMemoryStore {
             };
         }
         const sections = parseMarkdownSections(record.content);
+        const content = projectUserProfileContent(record.content);
         return {
             identityBackground: uniqueStrings(parseFactSection(sections.get("身份背景"))),
-            files: [record],
+            files: [{
+                    ...record,
+                    content,
+                    preview: previewContent(content),
+                }],
         };
     }
     upsertUserProfile(candidate) {
