@@ -56,6 +56,7 @@ export type WsGatewayMethod =
   | "skill_import"
   | "skill_validate"
   | "skill_scan"
+  | "skill_generate_draft"
   | "always_on_apply"
   | "always_on_rerun_plan";
 

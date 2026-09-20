@@ -11,6 +11,19 @@ export type {
   MigrateLegacyBundledSkillsOptions,
 } from "./migrateLegacyBundledSkills.js";
 export { migrateSkillsToPilotDeck } from "./migrateSkills.js";
+export {
+  createSkillDraftStation,
+  buildSkillDraftUserMessage,
+  validateSkillDraft,
+  SKILL_DRAFT_OUTPUT_SCHEMA,
+  SKILL_DRAFT_SYSTEM_PROMPT,
+  SKILL_SLUG_RE,
+} from "./draftStation.js";
+export type {
+  SkillDraft,
+  SkillDraftInput,
+  SkillDraftStation,
+} from "./draftStation.js";
 export type {
   MigrateSkillsToPilotDeckOptions,
   SkillMigrationConflictMode,

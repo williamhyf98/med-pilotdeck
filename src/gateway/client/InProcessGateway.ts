@@ -26,6 +26,8 @@ import type {
   GatewayElicitationResponseInput,
   GatewayExtractTraumaFormInput,
   GatewayExtractTraumaFormOutput,
+  GatewaySkillGenerateDraftInput,
+  GatewaySkillGenerateDraftOutput,
   GatewayTraumaCaseInput,
   GatewayTraumaConfirmTransitionInput,
   GatewayTraumaOverrideStageInput,
@@ -258,6 +260,11 @@ export type InProcessGatewayOptions = {
     projectKey: string;
     sessionKey: string;
   }) => import("../../trauma/stations/extractor.js").ExtractionStation | Promise<import("../../trauma/stations/extractor.js").ExtractionStation>;
+  /** Builds the stateless draft station used by the skillGenerateDraft RPC. */
+  skillDraftFactory?: (input: {
+    projectKey: string;
+    sessionKey: string;
+  }) => import("../../extension/skills/draftStation.js").SkillDraftStation | Promise<import("../../extension/skills/draftStation.js").SkillDraftStation>;
 };
 
 const ACTIVE_TURN_EVENT_LIMIT = 500;
@@ -1019,6 +1026,23 @@ export class InProcessGateway implements Gateway {
       caseHistory: input.caseHistory,
     });
     return { extracted };
+  }
+
+  async skillGenerateDraft(
+    input: GatewaySkillGenerateDraftInput,
+  ): Promise<GatewaySkillGenerateDraftOutput> {
+    if (!this.options.skillDraftFactory) {
+      throw new Error("skill draft generation is not configured");
+    }
+    const station = await this.options.skillDraftFactory({
+      projectKey: input.projectKey,
+      sessionKey: input.sessionKey,
+    });
+    const draft = await station.generate({
+      conversation: input.conversation,
+      existingSlugs: input.existingSlugs ?? [],
+    });
+    return { draft };
   }
 
   async permissionDecide(input: GatewayPermissionDecisionInput): Promise<{ delivered: boolean }> {

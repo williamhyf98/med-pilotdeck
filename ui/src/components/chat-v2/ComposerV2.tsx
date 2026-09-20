@@ -25,6 +25,7 @@ import {
   FolderOpen,
   X,
   ShieldAlert,
+  Sparkles,
   Square,
   type LucideIcon,
 } from 'lucide-react';
@@ -152,6 +153,13 @@ export type ComposerV2Props = {
   skillRecommendProjectPath?: string | null;
   skillRecommendProjectType?: string | null;
   onInsertSkillHint?: (text: string) => void;
+
+  /**
+   * Turns the current conversation into a skill draft. Only the live chat
+   * composer passes this, so the button stays hidden in welcome mode/tests.
+   */
+  onGenerateSkill?: () => void;
+  generateSkillDisabled?: boolean;
 };
 
 export function PermissionRequestsSlot({
@@ -406,6 +414,8 @@ export default function ComposerV2({
   skillRecommendProjectPath = null,
   skillRecommendProjectType = null,
   onInsertSkillHint,
+  onGenerateSkill,
+  generateSkillDisabled = false,
 }: ComposerV2Props) {
   const { t } = useTranslation('chat');
   const [isContextPopoverOpen, setIsContextPopoverOpen] = useState(false);
@@ -859,6 +869,19 @@ export default function ComposerV2({
                   >
                     <AtSign className="h-4 w-4" strokeWidth={1.75} />
                   </button>
+                  {onGenerateSkill ? (
+                    <button
+                      type="button"
+                      onClick={onGenerateSkill}
+                      disabled={generateSkillDisabled}
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-neutral-500 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100 dark:disabled:hover:bg-transparent dark:disabled:hover:text-neutral-400"
+                      title={t('input.generateSkill', {
+                        defaultValue: 'Generate skill from conversation',
+                      }) as string}
+                    >
+                      <Sparkles className="h-4 w-4" strokeWidth={1.75} />
+                    </button>
+                  ) : null}
                     <div
                       className="relative"
                     onBlur={(event) => {

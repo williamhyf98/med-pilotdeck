@@ -19,6 +19,7 @@ import { getDraftInputStorageKey, safeLocalStorage } from '../chat/utils/chatSto
 import { useSessionWatch } from '../../hooks/useSessionWatch';
 import MessagesPaneV2 from './MessagesPaneV2';
 import ComposerV2, { PermissionRequestsSlot } from './ComposerV2';
+import SkillDraftDialog from './SkillDraftDialog';
 import { buildReconnectStatusMessage, refreshSessionAfterReconnect, shouldRefreshSessionOnReconnect } from './reconnectRecovery';
 
 type PendingViewSession = {
@@ -143,6 +144,10 @@ function ChatInterfaceV2({
   const [isAbortPending, setIsAbortPending] = useState(false);
   const [runMode, setRunMode] = useState<ChatRunMode>('agent');
   const [isForkPending, setIsForkPending] = useState(false);
+  // Session captured when the composer's "generate skill" button was clicked,
+  // so the draft keeps pointing at that transcript even if the user switches
+  // sessions while the dialog is open. Null = dialog closed.
+  const [skillDraftSessionId, setSkillDraftSessionId] = useState<string | null>(null);
   const { addToast } = useToast();
 
   const resetStreamingState = useCallback(() => {
@@ -398,6 +403,24 @@ function ChatInterfaceV2({
     },
     [insertAtCursor],
   );
+
+  // Paths for the skill-draft dialog. The general project can't own
+  // project-scope skills, so its effective path collapses to null and the
+  // dialog only offers user scope (mirrors SkillsV2's general handling).
+  const chatProjectPath = selectedProject?.fullPath ?? selectedProject?.path ?? null;
+  const isGeneralChatProject =
+    selectedProject?.name === 'general' || selectedProject?.displayName === 'general';
+  const skillDraftProjectPath = isGeneralChatProject ? null : chatProjectPath;
+
+  const handleGenerateSkill = useCallback(() => {
+    if (skillDraftSessionId) return;
+    const sessionId = currentSessionId || selectedSession?.id;
+    if (!sessionId) {
+      addToast('error', t('skillDraft.noSession', { defaultValue: '先开始一段对话，再生成技能' }));
+      return;
+    }
+    setSkillDraftSessionId(sessionId);
+  }, [skillDraftSessionId, currentSessionId, selectedSession?.id, addToast, t]);
 
   const handleWebSocketReconnect = useCallback(async () => {
     if (!selectedProject || !selectedSession) return;
@@ -670,6 +693,8 @@ function ChatInterfaceV2({
       skillRecommendProjectPath={selectedProject?.fullPath ?? selectedProject?.path ?? null}
       skillRecommendProjectType={selectedProject?.projectType ?? selectedProject?.type ?? null}
       onInsertSkillHint={handleInsertSkillHint}
+      onGenerateSkill={handleGenerateSkill}
+      generateSkillDisabled={(!currentSessionId && !selectedSession?.id) || Boolean(skillDraftSessionId)}
       getRootProps={getRootProps as (...args: unknown[]) => Record<string, unknown>}
       getInputProps={getInputProps as (...args: unknown[]) => Record<string, unknown>}
       isDragActive={isDragActive}
@@ -703,6 +728,21 @@ function ChatInterfaceV2({
   const composerSlot = (
     <div data-chat-composer-slot className="min-h-0 shrink-0">
       {composer}
+      {skillDraftSessionId ? (
+        <SkillDraftDialog
+          sessionId={skillDraftSessionId}
+          projectPath={chatProjectPath}
+          effectiveProjectPath={skillDraftProjectPath}
+          onClose={() => setSkillDraftSessionId(null)}
+          onCreated={({ name }) => {
+            setSkillDraftSessionId(null);
+            addToast(
+              'success',
+              t('skillDraft.created', { name, defaultValue: '技能「{{name}}」已创建' }),
+            );
+          }}
+        />
+      ) : null}
     </div>
   );
 

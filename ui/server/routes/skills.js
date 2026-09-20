@@ -29,7 +29,7 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
 import { getPilotDeckGateway } from '../pilotdeck-bridge.js';
-import { resolvePilotHome, isGeneralProjectKey, resolveLinkedRepoPath } from '../utils/pilotPaths.js';
+import { resolvePilotHome, isGeneralProjectKey, resolveLinkedRepoPath, resolveGatewayProjectKey } from '../utils/pilotPaths.js';
 import { moveDirectoryAcrossDevicesSafe } from '../utils/fileMoves.js';
 import { recommendSkills } from '../utils/skillRecommend.js';
 
@@ -378,6 +378,104 @@ router.post('/create', async (req, res) => {
       await callGateway('reloadExtensions', {});
     }
     res.json(result);
+  } catch (e) {
+    sendGatewayError(res, e);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Generate a skill draft from a chat session's transcript.
+//
+// Reads the authoritative JSONL through the gateway (the browser store may
+// hold a paginated slice), flattens it to plain text, and asks the gateway's
+// `skillGenerateDraft` RPC (one structured LLM call, no side effects) for a
+// draft. Creation still goes through `/create` after the user confirms.
+// ---------------------------------------------------------------------------
+
+const DRAFT_MIN_CONVERSATION_CHARS = 40;
+const DRAFT_MIN_MESSAGES = 2;
+const DRAFT_MAX_CONVERSATION_CHARS = 48000;
+const DRAFT_HEAD_CHARS = 24000;
+const DRAFT_TAIL_CHARS = 24000;
+const DRAFT_MAX_TOOL_INPUT_CHARS = 200;
+
+function formatConversationForDraft(messages) {
+  const lines = [];
+  for (const m of messages) {
+    if (!m) continue;
+    if (m.kind === 'text' && (m.role === 'user' || m.role === 'assistant')) {
+      const text = String(m.text || '').trim();
+      if (!text) continue;
+      lines.push(`${m.role === 'user' ? '用户' : '助手'}：${text}`);
+    } else if (m.kind === 'tool_use') {
+      const name = m.toolName || 'tool';
+      const arg = String(m.toolInput || '')
+        .replace(/\s+/gu, ' ')
+        .trim()
+        .slice(0, DRAFT_MAX_TOOL_INPUT_CHARS);
+      lines.push(`[助手调用工具 ${name}${arg ? `：${arg}` : ''}]`);
+    }
+    // thinking / tool_result / status / permission / error: skipped — they
+    // are either internal or too bulky to help the draft.
+  }
+  let text = lines.join('\n\n').trim();
+  if (text.length > DRAFT_MAX_CONVERSATION_CHARS) {
+    const omitted = text.length - DRAFT_HEAD_CHARS - DRAFT_TAIL_CHARS;
+    text = `${text.slice(0, DRAFT_HEAD_CHARS)}\n\n……（中间省略约 ${omitted} 字）……\n\n${text.slice(text.length - DRAFT_TAIL_CHARS)}`;
+  }
+  return text;
+}
+
+router.post('/generate-from-session', async (req, res) => {
+  try {
+    const { sessionId, projectPath } = req.body || {};
+    if (!sessionId || typeof sessionId !== 'string') {
+      return res.status(400).json({ error: 'sessionId is required' });
+    }
+    // Same project-key resolution the chat pipeline and /api/sessions/:id/messages
+    // use — NOT gatewayProjectKey(), which resolves the linked-repo skills root.
+    const chatProjectKey = resolveGatewayProjectKey(
+      String(projectPath || process.cwd()),
+      PILOT_HOME,
+    );
+    const read = await callGateway('readSessionMessages', {
+      sessionKey: sessionId,
+      projectKey: chatProjectKey,
+    });
+    const messages = Array.isArray(read?.messages) ? read.messages : [];
+    const meaningful = messages.filter(
+      (m) => m && m.kind === 'text' && (m.role === 'user' || m.role === 'assistant')
+        && String(m.text || '').trim(),
+    );
+    const conversation = formatConversationForDraft(messages);
+    if (conversation.length < DRAFT_MIN_CONVERSATION_CHARS || meaningful.length < DRAFT_MIN_MESSAGES) {
+      // Same `{ error, code }` shape sendGatewayError produces, so the UI
+      // can branch on `code` and localise the message.
+      return res.status(422).json({
+        error: '当前对话内容太少，无法生成技能',
+        code: 'conversation_too_short',
+      });
+    }
+    let existingSlugs = [];
+    try {
+      const list = await callGateway('skillsList', { projectKey: gatewayProjectKey(projectPath) });
+      existingSlugs = [
+        ...(list.builtin ?? []),
+        ...(list.user ?? []),
+        ...(list.project ?? []),
+        ...(list.medical ?? []),
+      ].map((s) => s && s.slug).filter(Boolean);
+    } catch {
+      // Best-effort only: a failed list just weakens duplicate avoidance;
+      // /create still rejects real slug conflicts with 409.
+    }
+    const out = await callGateway('skillGenerateDraft', {
+      projectKey: chatProjectKey,
+      sessionKey: sessionId,
+      conversation,
+      existingSlugs,
+    });
+    res.json({ draft: out.draft });
   } catch (e) {
     sendGatewayError(res, e);
   }

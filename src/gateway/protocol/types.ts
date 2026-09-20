@@ -307,6 +307,21 @@ export type GatewayExtractTraumaFormOutput = {
   extracted: import("../../trauma/types.js").ExtractedTurnForm;
 };
 
+/** 从会话对话文本生成技能草稿 RPC 的输入。无副作用，不落盘。 */
+export type GatewaySkillGenerateDraftInput = {
+  projectKey: string;
+  sessionKey: string;
+  /** 已格式化为纯文本的完整对话（含必要截断）。 */
+  conversation: string;
+  /** 已存在的技能 slug，用于生成时避让重名。 */
+  existingSlugs?: string[];
+};
+
+/** 从会话对话文本生成技能草稿 RPC 的输出。 */
+export type GatewaySkillGenerateDraftOutput = {
+  draft: import("../../extension/skills/draftStation.js").SkillDraft;
+};
+
 /**
  * Web-facing permission decision input. Mirrors the elicitation
  * round-trip pattern: the agent (via `GatewayPermissionBus`) emits a
@@ -559,4 +574,7 @@ export interface Gateway {
   skillImport?(input: SkillImportInput): Promise<SkillImportResult>;
   skillValidate?(input: SkillValidateInput): Promise<SkillValidationResult>;
   skillScan?(input: SkillScanInput): Promise<SkillScanResult>;
+  skillGenerateDraft?(
+    input: GatewaySkillGenerateDraftInput,
+  ): Promise<GatewaySkillGenerateDraftOutput>;
 }

@@ -95,7 +95,7 @@ import { SessionRouterStore } from "../router/session/SessionRouterStore.js";
 import type { RouterEventBus, RouterEvent } from "../router/protocol/events.js";
 import type { EdgeClawMemoryProvider } from "../context/index.js";
 import { loadBuiltinPlugins } from "../extension/plugins/builtin/loadBuiltinPlugins.js";
-import { SkillManager, migrateLegacyBundledSkillCopies } from "../extension/skills/index.js";
+import { SkillManager, createSkillDraftStation, migrateLegacyBundledSkillCopies } from "../extension/skills/index.js";
 import { ExtensionWatchManager, type ExtensionWatchEvent } from "./ExtensionWatchManager.js";
 import { createTelemetryCollector, type TelemetryClient } from "../telemetry/index.js";
 import {
@@ -328,6 +328,8 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
       registry.createTraumaRunner(projectKey, sessionKey),
     traumaExtractorFactory: ({ projectKey, sessionKey }) =>
       registry.createExtractionStation(projectKey, sessionKey),
+    skillDraftFactory: ({ projectKey }) =>
+      registry.createSkillDraftStation(projectKey),
     traumaCaseReader: ({ projectKey, sessionKey }) =>
       registry.readTraumaCase(projectKey, sessionKey),
     async recordTraumaTurn(input) {
@@ -690,6 +692,19 @@ class ProjectRuntimeRegistry {
       model: modelSelection.model,
     });
     return createExtractionStation(model);
+  }
+
+  async createSkillDraftStation(projectKey: string) {
+    const runtime = this.resolve(projectKey);
+    await runtime.pluginRuntime.refresh();
+    const modelSelection = runtime.snapshot.config.agent.model;
+    const model = createStructuredModelClient({
+      complete: runtime.model.complete.bind(runtime.model),
+      stream: runtime.model.stream.bind(runtime.model),
+      provider: modelSelection.provider,
+      model: modelSelection.model,
+    });
+    return createSkillDraftStation(model);
   }
 
   async readTraumaCase(projectKey: string, sessionKey: string) {
