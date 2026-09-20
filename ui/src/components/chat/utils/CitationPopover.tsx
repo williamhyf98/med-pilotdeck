@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom';
 import Tooltip from '../../../shared/view/ui/Tooltip';
 import {
+  isLexicalMatch,
+  relevanceOf,
   splitCitationLabel,
   splitFigureBlock,
   stripDisambiguationSuffix,
@@ -138,6 +140,10 @@ export function CitationChunkModal({
   if (typeof document === 'undefined') return null;
 
   const { title, section } = resolveHeadline(cite);
+  // 原始 score 量纲不一（RRF/余弦/BM25），对用户只显示统一的「相关度」；
+  // 没有相似度语义的分数宁可不显示，也不给一个会被当成置信度的假数。
+  const relevance = relevanceOf(cite);
+  const lexical = isLexicalMatch(cite);
 
   return createPortal(
     <div
@@ -192,12 +198,15 @@ export function CitationChunkModal({
           )}
         </div>
 
-        {(cite.query || cite.chunkId || cite.score !== undefined) && (
+        {(cite.query || cite.chunkId || relevance !== null || lexical) && (
           <div className="space-y-1 border-t border-neutral-200 px-5 py-3 text-xs text-neutral-400 dark:border-neutral-700 dark:text-neutral-500">
             {cite.query && <div className="break-words">检索式：{cite.query}</div>}
             <div className="flex flex-wrap gap-x-4 gap-y-1">
               {cite.chunkId && <span className="break-all font-mono">chunk：{cite.chunkId}</span>}
-              {cite.score !== undefined && <span className="tabular-nums">score：{cite.score.toFixed(4)}</span>}
+              {relevance !== null && (
+                <span className="tabular-nums">相关度：{Math.round(relevance * 100)}%</span>
+              )}
+              {lexical && <span>关键词匹配</span>}
             </div>
           </div>
         )}

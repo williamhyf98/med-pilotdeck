@@ -77,8 +77,16 @@ export interface CitationMetadata {
   label?: string;
   /** 命中这条 chunk 的检索式，用来判断「为什么会引到它」 */
   query?: string;
-  /** 检索得分，仅排查时展示 */
+  /**
+   * 原始检索得分。量纲随检索路径变：远程 hybrid_w 是 RRF 融合值（≤0.04，只是
+   * 名次的函数）、本地向量是余弦（0–1）、词法回退是 BM25（无上界）。因此它
+   * **不直接展示**，用户可见的数字统一走 `relevanceOf`。
+   */
   score?: number;
+  /** 重排模型给的相关度（0–1 sigmoid）。远程服务开重排时每条都带，是首选展示值 */
+  rerankScore?: number;
+  /** 本次检索模式（remote / vector / lexical / lexical-fallback），决定 score 的量纲 */
+  retrievalMode?: string;
 }
 
 export interface ChatFileArtifact {

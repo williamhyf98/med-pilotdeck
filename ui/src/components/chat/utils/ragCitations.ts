@@ -138,6 +138,12 @@ function salvageQuery(text: string): string {
   }
 }
 
+/** 打捞检索模式。`mode` 在 payload 头部（chunks 之前），截断掐的是中间，一般还在。 */
+function salvageMode(text: string): string {
+  const matched = /"mode"\s*:\s*"([a-z-]+)"/.exec(text);
+  return matched ? matched[1] : '';
+}
+
 /** 正文里已经能读到的骨架（`书名：`/`卷：`/`章节：`/`【章节：…】`）对用户是噪声，剥掉。 */
 export function stripChunkPreamble(text: string): string {
   const lines = text.split('\n');
@@ -166,7 +172,11 @@ function clampChunkText(text: string): string {
   return `${body.slice(0, MAX_CHUNK_TEXT)}…（原文已截断）`;
 }
 
-function chunkToCitation(chunk: RawChunk, fallbackQuery: string): CitationMetadata | null {
+function chunkToCitation(
+  chunk: RawChunk,
+  fallbackQuery: string,
+  retrievalMode: string,
+): CitationMetadata | null {
   // 编号由 query.py 的 `_apply_citations` 下发，轮内唯一。老版本的 payload 没有
   // 这个字段，退回 rank —— 那种情况下多次检索仍可能撞号，但至少能显示。
   const index = asNumber(chunk.citation_index) ?? asNumber(chunk.rank);
@@ -187,14 +197,16 @@ function chunkToCitation(chunk: RawChunk, fallbackQuery: string): CitationMetada
     ...(asString(chunk.evidence_quality).trim() ? { evidenceQuality: asString(chunk.evidence_quality).trim() } : {}),
     ...(fallbackQuery ? { query: fallbackQuery } : {}),
     ...(asNumber(chunk.score) !== undefined ? { score: asNumber(chunk.score) } : {}),
+    ...(asNumber(chunk.rerank_score) !== undefined ? { rerankScore: asNumber(chunk.rerank_score) } : {}),
+    ...(retrievalMode ? { retrievalMode } : {}),
   };
 }
 
-function toCitations(chunks: unknown[], query: string): CitationMetadata[] {
+function toCitations(chunks: unknown[], query: string, retrievalMode: string): CitationMetadata[] {
   const citations: CitationMetadata[] = [];
   for (const chunk of chunks) {
     if (!chunk || typeof chunk !== 'object') continue;
-    const citation = chunkToCitation(chunk as RawChunk, query);
+    const citation = chunkToCitation(chunk as RawChunk, query, retrievalMode);
     if (citation) citations.push(citation);
   }
   return citations;
@@ -216,7 +228,7 @@ export function extractCitationsFromToolResult(
     if (!namedRag
       && !RAG_TOOL_NAME_RE.test(asString(payload.tool))
       && !asString(payload.generation_owner)) return [];
-    return toCitations(chunks, asString(payload.query).trim());
+    return toCitations(chunks, asString(payload.query).trim(), asString(payload.mode).trim());
   }
 
   // 解析失败最常见的原因是被掐到 20000 字符。打捞这条路没有完整 payload 可做形状
@@ -224,7 +236,32 @@ export function extractCitationsFromToolResult(
   if (!namedRag || !rawText) return [];
   const salvaged = salvageChunks(rawText);
   if (salvaged.length === 0) return [];
-  return toCitations(salvaged, salvageQuery(rawText));
+  return toCitations(salvaged, salvageQuery(rawText), salvageMode(rawText));
+}
+
+/**
+ * 用户可见的统一「相关度」（0–1），没有可信值时返回 null。
+ *
+ * 三种原始分只有两种有相似度语义：重排分（远程，交叉编码器 sigmoid）和余弦
+ * （本地向量回退），两者都是 0–1、越大越相关，可以直接当同一个指标展示。
+ * 远程的 `score` 是 RRF 名次融合值（上限约 0.04），词法回退是 BM25 词频量
+ * （无上界）——都不是相关度，硬换算成百分比等于造假，所以返回 null 不显示数字。
+ * 0.05 这个界与两个量纲天然分离（RRF ≤0.041，余弦下限 0.35），老 payload 缺
+ * `retrievalMode` 时也能凭它分开。
+ */
+export function relevanceOf(citation: CitationMetadata): number | null {
+  if (citation.rerankScore !== undefined) {
+    return Math.min(1, Math.max(0, citation.rerankScore));
+  }
+  if (isLexicalMatch(citation)) return null;
+  const score = citation.score;
+  if (score === undefined || score <= 0.05 || score > 1) return null;
+  return score;
+}
+
+/** 词法（BM25）命中：分数无相似度语义，卡片上用「关键词匹配」标签代替数字。 */
+export function isLexicalMatch(citation: CitationMetadata): boolean {
+  return citation.retrievalMode !== undefined && citation.retrievalMode.startsWith('lexical');
 }
 
 /**

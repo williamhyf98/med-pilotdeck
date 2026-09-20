@@ -7,7 +7,12 @@ import {
   resolveHeadline,
   toExcerpt,
 } from './CitationPopover';
-import { orderCitationsForSources, type OrderedCitation } from './ragCitations';
+import {
+  isLexicalMatch,
+  orderCitationsForSources,
+  relevanceOf,
+  type OrderedCitation,
+} from './ragCitations';
 import type { CitationMetadata } from '../types/types';
 
 const citedBadgeClassName =
@@ -52,6 +57,10 @@ export function CitationSourcesBar({
           {entries.map((entry) => {
             const { title, section } = resolveHeadline(entry.citation);
             const excerpt = toExcerpt(entry.citation.text);
+            // 原始 score 的量纲随检索路径变（RRF/余弦/BM25），直接打印会在同一个
+            // 列表里混出 0.0165 和 0.79 两种数。统一走 relevanceOf：有相似度语义
+            // 才显示百分比，词法命中给文字标签，其余不显示数字。
+            const relevance = relevanceOf(entry.citation);
             return (
               <li key={entry.citation.chunkId ?? `index-${entry.citation.index}`}>
                 <button
@@ -78,11 +87,18 @@ export function CitationSourcesBar({
                       </div>
                     )}
                   </div>
-                  {entry.citation.score !== undefined && (
+                  {relevance !== null ? (
                     <span className="mt-0.5 shrink-0 text-[11px] tabular-nums text-neutral-400 dark:text-neutral-500">
-                      {entry.citation.score.toFixed(4)}
+                      {t('citations.relevance', {
+                        percent: Math.round(relevance * 100),
+                        defaultValue: '相关度 {{percent}}%',
+                      })}
                     </span>
-                  )}
+                  ) : isLexicalMatch(entry.citation) ? (
+                    <span className="mt-0.5 shrink-0 rounded bg-neutral-100 px-1 text-[11px] text-neutral-400 dark:bg-neutral-800 dark:text-neutral-500">
+                      {t('citations.lexicalMatch', { defaultValue: '关键词匹配' })}
+                    </span>
+                  ) : null}
                 </button>
               </li>
             );
