@@ -239,7 +239,8 @@
     "scopeProject": "本项目",
     "noSession": "先开始一段对话，再生成技能",
     "created": "技能「{{name}}」已创建",
-    "tooShort": "当前对话内容太少，无法生成技能"
+    "tooShort": "当前对话内容太少，无法生成技能",
+    "flowTooSimple": "流程图内容太少，无法生成技能：至少需要两个填写了文字的节点"
   },
   "input": {
     "placeholder": "输入 / 调用命令，@ 选择文件，或向 {{provider}} 提问...",

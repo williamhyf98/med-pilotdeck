@@ -11,11 +11,14 @@ import { cn } from '../../lib/utils.js';
  * field (and regenerate wholesale) before the draft is persisted through the
  * existing `/api/skills/create` route — so validation, slug-conflict 409s and
  * the user-scope `reloadExtensions` all behave exactly like the Skills page.
+ *
+ * The flow editor reuses the whole dialog by passing `generateOverride`,
+ * which replaces only the draft request; editing/creation stays identical.
  */
 
 const SLUG_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/;
 
-type SkillDraft = {
+export type SkillDraft = {
   name: string;
   slug: string;
   description: string;
@@ -23,13 +26,20 @@ type SkillDraft = {
 };
 
 type SkillDraftDialogProps = {
-  sessionId: string;
+  /** Chat session to read; required unless `generateOverride` is provided. */
+  sessionId?: string;
   /** Chat-pipeline project path (fullPath ?? path); resolves the transcript. */
-  projectPath: string | null;
+  projectPath?: string | null;
+  /**
+   * Replaces the session-based draft request (flow editor entry). Must be
+   * referentially stable while the dialog is open — a new identity re-runs
+   * generation.
+   */
+  generateOverride?: () => Promise<{ draft: SkillDraft }>;
   /** Null for the general project — collapses scope choice to `user`. */
   effectiveProjectPath: string | null;
   onClose: () => void;
-  onCreated: (skill: { slug: string; name: string }) => void;
+  onCreated: (skill: { slug: string; name: string; scope: 'user' | 'project' }) => void;
 };
 
 async function api<T>(url: string, body: unknown): Promise<T> {
@@ -51,6 +61,7 @@ async function api<T>(url: string, body: unknown): Promise<T> {
 export default function SkillDraftDialog({
   sessionId,
   projectPath,
+  generateOverride,
   effectiveProjectPath,
   onClose,
   onCreated,
@@ -75,10 +86,12 @@ export default function SkillDraftDialog({
     setPhase('generating');
     setError(null);
     try {
-      const result = await api<{ draft: SkillDraft }>('/api/skills/generate-from-session', {
-        sessionId,
-        projectPath,
-      });
+      const result = generateOverride
+        ? await generateOverride()
+        : await api<{ draft: SkillDraft }>('/api/skills/generate-from-session', {
+            sessionId,
+            projectPath,
+          });
       if (seq !== requestSeq.current) return;
       setSlug(result.draft.slug || '');
       setName(result.draft.name || '');
@@ -90,7 +103,7 @@ export default function SkillDraftDialog({
       setError({ code: (e as Error & { code?: string }).code, message: (e as Error).message });
       setPhase('editing');
     }
-  }, [sessionId, projectPath]);
+  }, [sessionId, projectPath, generateOverride]);
 
   useEffect(() => {
     void generate();
@@ -108,16 +121,17 @@ export default function SkillDraftDialog({
     if (!canSubmit) return;
     setPhase('submitting');
     setError(null);
+    const finalScope = canUseProjectScope ? scope : 'user';
     try {
       await api('/api/skills/create', {
         slug: trimmedSlug,
         name: name.trim() || trimmedSlug,
         description: description.trim(),
         body: body.trim(),
-        scope: canUseProjectScope ? scope : 'user',
+        scope: finalScope,
         projectPath: effectiveProjectPath,
       });
-      onCreated({ slug: trimmedSlug, name: name.trim() || trimmedSlug });
+      onCreated({ slug: trimmedSlug, name: name.trim() || trimmedSlug, scope: finalScope });
     } catch (e) {
       setError({ code: (e as Error & { code?: string }).code, message: (e as Error).message });
       setPhase('editing');
@@ -127,7 +141,9 @@ export default function SkillDraftDialog({
   const errorText = error
     ? error.code === 'conversation_too_short'
       ? (t('skillDraft.tooShort', { defaultValue: '当前对话内容太少，无法生成技能' }) as string)
-      : error.message
+      : error.code === 'flow_too_simple'
+        ? (t('skillDraft.flowTooSimple', { defaultValue: '流程图内容太少，无法生成技能：至少需要两个填写了文字的节点' }) as string)
+        : error.message
     : null;
 
   return (

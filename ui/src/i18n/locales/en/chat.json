@@ -257,7 +257,8 @@
     "scopeProject": "This project",
     "noSession": "Start a conversation first, then generate a skill",
     "created": "Skill \"{{name}}\" created",
-    "tooShort": "The conversation is too short to generate a skill"
+    "tooShort": "The conversation is too short to generate a skill",
+    "flowTooSimple": "The flowchart is too sparse to generate a skill: fill in at least two nodes"
   },
   "input": {
     "placeholder": "Type / for commands, @ for files, or ask {{provider}} anything...",

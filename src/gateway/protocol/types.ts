@@ -315,6 +315,8 @@ export type GatewaySkillGenerateDraftInput = {
   conversation: string;
   /** 已存在的技能 slug，用于生成时避让重名。 */
   existingSlugs?: string[];
+  /** 素材来源：聊天会话（默认）或流程图画布的文字化描述。 */
+  source?: import("../../extension/skills/draftStation.js").SkillDraftSource;
 };
 
 /** 从会话对话文本生成技能草稿 RPC 的输出。 */

@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import CodeMirror from '@uiw/react-codemirror';
 import { markdown } from '@codemirror/lang-markdown';
@@ -12,6 +12,7 @@ import {
   Save,
   Sparkles,
   Trash2,
+  Workflow,
   X,
 } from 'lucide-react';
 import type { Project } from '../../types/app';
@@ -24,6 +25,9 @@ import {
   nextSkillAvailability,
   type SkillAvailability,
 } from './skillAvailability';
+
+// React Flow (+ its stylesheet) only loads when the flow editor opens.
+const SkillFlowEditor = lazy(() => import('./SkillFlowEditor'));
 
 type SkillsV2Props = {
   selectedProject: Project | null;
@@ -131,6 +135,7 @@ export default function SkillsV2({ selectedProject, compact = false }: SkillsV2P
   const [editorLoading, setEditorLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showNewSkill, setShowNewSkill] = useState(false);
+  const [showFlowEditor, setShowFlowEditor] = useState(false);
   const [toast, setToast] = useState<ToastState>(null);
 
   const serverGeneralCwd = Boolean(cwd && serverGeneralCwdPath === cwd);
@@ -305,6 +310,21 @@ export default function SkillsV2({ selectedProject, compact = false }: SkillsV2P
     });
   }, [flashToast, refresh, t]);
 
+  const handleFlowSkillCreated = useCallback(async (created: {
+    slug: string;
+    name: string;
+    scope: 'user' | 'project';
+  }) => {
+    setShowFlowEditor(false);
+    await refresh();
+    setActiveSlug(created.slug);
+    setActiveScope(created.scope);
+    flashToast({
+      kind: 'success',
+      text: t('skillsTab.createdSuccess', { defaultValue: '已创建「{{name}}」', name: created.name }) as string,
+    });
+  }, [flashToast, refresh, t]);
+
   const handleSelect = useCallback((skill: Skill) => {
     if (isDirty) {
       if (!window.confirm(t('skillsTab.discardUnsaved', { defaultValue: 'Discard unsaved changes?' }) as string)) {
@@ -370,6 +390,7 @@ export default function SkillsV2({ selectedProject, compact = false }: SkillsV2P
         loading={loading}
         onRefresh={refresh}
         onNewSkill={() => setShowNewSkill(true)}
+        onFlowSkill={() => setShowFlowEditor(true)}
         compact={compact}
         t={t}
       />
@@ -445,6 +466,23 @@ export default function SkillsV2({ selectedProject, compact = false }: SkillsV2P
         />
       ) : null}
 
+      {showFlowEditor ? (
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-white/80 dark:bg-neutral-950/80">
+              <Loader2 className="h-6 w-6 animate-spin text-neutral-400" strokeWidth={1.75} />
+            </div>
+          }
+        >
+          <SkillFlowEditor
+            projectPath={cwd}
+            effectiveProjectPath={effectiveProjectPath}
+            onClose={() => setShowFlowEditor(false)}
+            onCreated={handleFlowSkillCreated}
+          />
+        </Suspense>
+      ) : null}
+
       {toast ? (
         <div
           className={cn(
@@ -469,6 +507,7 @@ function Header({
   loading,
   onRefresh,
   onNewSkill,
+  onFlowSkill,
   compact,
   t,
 }: {
@@ -477,6 +516,7 @@ function Header({
   loading: boolean;
   onRefresh: () => void;
   onNewSkill: () => void;
+  onFlowSkill: () => void;
   compact: boolean;
   t: ReturnType<typeof useTranslation>['t'];
 }) {
@@ -502,6 +542,15 @@ function Header({
         >
           <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
           <span>{t('skillsTab.newSkill', { defaultValue: '新建技能' })}</span>
+        </button>
+        <button
+          type="button"
+          onClick={onFlowSkill}
+          className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-neutral-700 transition hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-900"
+          title={t('skillsTab.flowSkill', { defaultValue: '流程图创建' }) as string}
+        >
+          <Workflow className="h-3.5 w-3.5" strokeWidth={1.75} />
+          <span>{t('skillsTab.flowSkill', { defaultValue: '流程图创建' })}</span>
         </button>
         <button
           type="button"

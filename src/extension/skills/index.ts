@@ -14,14 +14,17 @@ export { migrateSkillsToPilotDeck } from "./migrateSkills.js";
 export {
   createSkillDraftStation,
   buildSkillDraftUserMessage,
+  buildSkillFlowUserMessage,
   validateSkillDraft,
   SKILL_DRAFT_OUTPUT_SCHEMA,
   SKILL_DRAFT_SYSTEM_PROMPT,
+  SKILL_FLOW_SYSTEM_PROMPT,
   SKILL_SLUG_RE,
 } from "./draftStation.js";
 export type {
   SkillDraft,
   SkillDraftInput,
+  SkillDraftSource,
   SkillDraftStation,
 } from "./draftStation.js";
 export type {

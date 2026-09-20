@@ -481,6 +481,128 @@ router.post('/generate-from-session', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Generate a skill draft from a user-drawn flowchart.
+//
+// The flow editor sends its graph as plain JSON ({nodes, edges}); we render it
+// into a deterministic text description and reuse the same `skillGenerateDraft`
+// RPC with `source: 'flow'` (which swaps in a flowchart-specific prompt).
+// Creation still goes through `/create` after the user confirms.
+// ---------------------------------------------------------------------------
+
+const FLOW_MAX_NODES = 100;
+const FLOW_MAX_NODE_TEXT_CHARS = 2000;
+const FLOW_MIN_TEXT_NODES = 2;
+const FLOW_MIN_TOTAL_CHARS = 20;
+
+/**
+ * Render {nodes, edges} into the numbered-list text the draft station reads.
+ * Listing nodes and edges separately (instead of attempting a topological
+ * walk) keeps this robust against cycles and disconnected fragments — the
+ * LLM handles graph reasoning better than a lossy linearisation would.
+ */
+function serializeFlowForDraft(flow) {
+  const nodes = Array.isArray(flow?.nodes) ? flow.nodes : null;
+  const edges = Array.isArray(flow?.edges) ? flow.edges : [];
+  if (!nodes || nodes.length === 0) {
+    return { ok: false, error: 'flow.nodes must be a non-empty array' };
+  }
+  if (nodes.length > FLOW_MAX_NODES) {
+    return { ok: false, error: `flow.nodes exceeds ${FLOW_MAX_NODES} nodes` };
+  }
+
+  const numbering = new Map();
+  const nodeLines = [];
+  let meaningfulNodes = 0;
+  let totalChars = 0;
+  for (const [i, n] of nodes.entries()) {
+    const id = String(n?.id ?? '');
+    if (!id || numbering.has(id)) {
+      return { ok: false, error: 'every flow node needs a unique id' };
+    }
+    const label = `N${i + 1}`;
+    numbering.set(id, label);
+    const kind = n?.kind === 'decision' ? '判断' : '步骤';
+    const text = String(n?.text || '')
+      .replace(/\s+/gu, ' ')
+      .trim()
+      .slice(0, FLOW_MAX_NODE_TEXT_CHARS);
+    if (text) {
+      meaningfulNodes += 1;
+      totalChars += text.length;
+    }
+    nodeLines.push(`${label}（${kind}）：${text || '（未填写）'}`);
+  }
+
+  const edgeLines = [];
+  for (const e of edges) {
+    const from = numbering.get(String(e?.source ?? ''));
+    const to = numbering.get(String(e?.target ?? ''));
+    if (!from || !to) continue; // dangling edge — ignore
+    const branch = e?.sourceHandle === 'yes' ? '是' : e?.sourceHandle === 'no' ? '否' : null;
+    edgeLines.push(branch ? `${from} →（${branch}）→ ${to}` : `${from} → ${to}`);
+  }
+
+  const text = [
+    '【节点】',
+    ...nodeLines,
+    '',
+    '【连线】',
+    edgeLines.length > 0 ? edgeLines.join('\n') : '（无连线；请按节点顺序理解）',
+  ].join('\n');
+  return { ok: true, text, meaningfulNodes, totalChars };
+}
+
+router.post('/generate-from-flow', async (req, res) => {
+  try {
+    const { flow, projectPath } = req.body || {};
+    const serialized = serializeFlowForDraft(flow);
+    if (!serialized.ok) {
+      return res.status(400).json({ error: serialized.error, code: 'invalid_flow' });
+    }
+    if (
+      serialized.meaningfulNodes < FLOW_MIN_TEXT_NODES ||
+      serialized.totalChars < FLOW_MIN_TOTAL_CHARS
+    ) {
+      // Same `{ error, code }` shape sendGatewayError produces, so the UI
+      // can branch on `code` and localise the message.
+      return res.status(422).json({
+        error: '流程图内容太少，无法生成技能：至少需要两个填写了文字的节点',
+        code: 'flow_too_simple',
+      });
+    }
+    // Same model-resolution key the session-based route uses; the station
+    // factory only reads projectKey, so the sessionKey is a fixed marker.
+    const chatProjectKey = resolveGatewayProjectKey(
+      String(projectPath || process.cwd()),
+      PILOT_HOME,
+    );
+    let existingSlugs = [];
+    try {
+      const list = await callGateway('skillsList', { projectKey: gatewayProjectKey(projectPath) });
+      existingSlugs = [
+        ...(list.builtin ?? []),
+        ...(list.user ?? []),
+        ...(list.project ?? []),
+        ...(list.medical ?? []),
+      ].map((s) => s && s.slug).filter(Boolean);
+    } catch {
+      // Best-effort only: a failed list just weakens duplicate avoidance;
+      // /create still rejects real slug conflicts with 409.
+    }
+    const out = await callGateway('skillGenerateDraft', {
+      projectKey: chatProjectKey,
+      sessionKey: 'flow-draft',
+      conversation: serialized.text,
+      existingSlugs,
+      source: 'flow',
+    });
+    res.json({ draft: out.draft });
+  } catch (e) {
+    sendGatewayError(res, e);
+  }
+});
+
 router.post('/delete', async (req, res) => {
   try {
     const { skillPath, projectPath } = req.body || {};

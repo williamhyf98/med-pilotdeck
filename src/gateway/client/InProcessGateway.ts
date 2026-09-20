@@ -1041,6 +1041,7 @@ export class InProcessGateway implements Gateway {
     const draft = await station.generate({
       conversation: input.conversation,
       existingSlugs: input.existingSlugs ?? [],
+      source: input.source,
     });
     return { draft };
   }
