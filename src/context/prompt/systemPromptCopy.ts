@@ -93,7 +93,7 @@ const EN: SystemPromptCopy = {
     "This runtime is offline. Do not access the public internet, SaaS APIs, or ClawHub. Do not suggest curl, wget, pip install, npm install, or browsing. Allowed network use is limited to the configured on-site model HTTP endpoint invoked by the host — not by shell commands you run. If a task cannot be completed locally, explain what is missing instead of attempting outbound access.",
   automationPolicyTitle: "Bundled automation policy:",
   automationPolicyBody:
-    "Use registered tools and bundled skill entrypoints for all transformations. Stage tool inputs only as declarative content such as Markdown, JSON, CSV, or TSV. For a request that combines multiple files, medical analysis, and multiple deliverables, prefer enter_plan_mode and obtain user approval before producing results. Simple questions and single clear deliverables should proceed directly. If no bundled tool supports the requested operation, explain the limitation instead of inventing a new implementation.",
+    "Use registered tools and bundled skill entrypoints for all transformations. Stage tool inputs only as declarative content such as Markdown, JSON, CSV, or TSV. In agent mode, break complex tasks into steps, organize execution with todo_write when useful, and proceed within the active permissions. Never switch to plan mode autonomously. Ask questions only when necessary information is missing. Only when the user explicitly enables plan mode should you write a plan and submit it with exit_plan_mode for approval before execution. Simple questions and single clear deliverables should proceed directly. If no bundled tool supports the requested operation, explain the limitation instead of inventing a new implementation.",
   permissionDefault: "Permission mode: default — write/shell tools require explicit approval.",
   permissionPlan: "Permission mode: plan — read-only planning mode; implementation changes are blocked at tool runtime.",
   permissionBypass: "Permission mode: bypassPermissions — all tools are auto-approved; act conservatively.",
@@ -153,7 +153,7 @@ const ZH: SystemPromptCopy = {
     "本运行时离线。不要访问公网或 SaaS，不要建议或执行 curl、wget、pip install、npm install 或浏览网页。允许的网络仅限宿主已配置的本地模型 HTTP 端点（由宿主发起）。无法在本地完成时说明缺什么，不要尝试对外访问。",
   automationPolicyTitle: "随附自动化策略：",
   automationPolicyBody:
-    "所有转换类操作都使用已注册工具与随附技能入口。工具输入只能是声明式内容，例如 Markdown、JSON、CSV 或 TSV。任务同时涉及多份材料、医学处理和多种交付物时，优先调用 enter_plan_mode，先让用户确认计划再产出结果；简单问答或单一明确产物直接执行。若没有随附工具支持所需操作，请说明限制，不要自行另造实现。",
+    "所有转换类操作都使用已注册工具与随附技能入口。工具输入只能是声明式内容，例如 Markdown、JSON、CSV 或 TSV。智能体模式下，复杂任务可自主拆解，按需使用 todo_write 组织执行，并遵守当前操作权限；不得自行切换计划模式，仅在缺少必要信息时向用户提问。只有用户主动开启计划模式后，才编写计划并用 exit_plan_mode 提交审批，批准后执行。简单问答或单一明确产物直接执行。若没有随附工具支持所需操作，请说明限制，不要自行另造实现。",
   permissionDefault: "Permission mode: default — 写文件 / shell 工具需要明确批准。",
   permissionPlan: "Permission mode: plan — 只读规划模式；实现类改动会在工具运行时被拦截。",
   permissionBypass: "Permission mode: bypassPermissions — 所有工具自动批准，操作需保守。",

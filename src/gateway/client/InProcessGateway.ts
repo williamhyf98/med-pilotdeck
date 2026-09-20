@@ -1088,7 +1088,9 @@ export class InProcessGateway implements Gateway {
           ?? (inputMode === "plan" ? "plan" : "agent");
         const permissionMode = inputMode ?? (permissionSettings.skipPermissions ? "bypassPermissions" : undefined);
         const basePermissionMode = normalizeGatewayModeForLegacyInput((input as { basePermissionMode?: unknown }).basePermissionMode);
-        const allowPlanModeTools = input.allowPlanModeTools ?? inputMode === "plan";
+        const allowPlanModeTools = inputMode === "plan"
+          && runMode === "plan"
+          && input.allowPlanModeTools !== false;
         const persistedRules = permissionSettingsToRuleSet(permissionSettings);
         const sessionAllowRules = this.sessionPermissionGrants.get(input.sessionKey) ?? [];
         this.options.telemetry?.trackFeatureLoopStage({

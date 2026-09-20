@@ -18,21 +18,12 @@ test("exit_plan_mode is callable while plan mode is active", () => {
   assert.ok(!PLAN_MODE_ALLOWED_TOOLS.has("mcp__med-tools__parse_document"));
 });
 
-test("enter_plan_mode describes medical workspace planning instead of coding", async () => {
+test("enter_plan_mode cannot switch modes even when invoked directly", async () => {
   const tool = createEnterPlanModeTool();
-  assert.match(tool.description, /医学工作区/);
-  assert.match(tool.description, /医学解析|战创伤 RAG/);
-  assert.doesNotMatch(tool.description, /codebase|implementation|coding/i);
-
-  const result = await tool.execute({}, {
+  await assert.rejects(tool.execute({}, {
     permissionMode: "default",
     planDirectory: { path: "/workspace/.pilotdeck/plans" },
-  });
-  const text = result.content[0]?.text ?? "";
-  assert.match(text, /查看当前工作区的附件/);
-  assert.match(text, /mcp__med-tools__|医学 MCP/);
-  assert.doesNotMatch(text, /start coding|explore the codebase/i);
-  assert.deepEqual(result.data, { requestedMode: "plan" });
+  }), { code: "permission_denied" });
 });
 
 test("exit_plan_mode approval restores execution with medical tool guidance", async () => {

@@ -4,10 +4,20 @@
  * runtime boundary is the security check.
  */
 
-/**
- * Tools the model is allowed to invoke while plan mode is active.
- * Everything else is blocked at runtime.
- */
+/** Shared visibility and execution gate for user-controlled plan tools. */
+export function isPlanToolAvailable(
+  toolName: string,
+  context: { permissionMode: string; runMode?: string; allowPlanModeTools?: boolean },
+): boolean {
+  // Entering plan mode is a user action, never a model tool decision.
+  if (toolName === "enter_plan_mode") return false;
+  if (toolName !== "exit_plan_mode") return true;
+  return context.allowPlanModeTools === true
+    && context.permissionMode === "plan"
+    && context.runMode !== "ask";
+}
+
+/** Tools allowed while plan mode is active; everything else is blocked. */
 export const PLAN_MODE_ALLOWED_TOOLS = new Set([
   "read_file",
   "get_current_time",

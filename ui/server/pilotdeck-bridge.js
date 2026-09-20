@@ -1456,9 +1456,8 @@ export async function runChatViaGateway(
             ...(traumaAttachments ? { traumaAttachments } : {}),
             runMode,
             mode: resolvedMode,
-            // The web UI has an elicitation channel, so the agent may propose
-            // switching a complex medical workspace task into plan mode.
-            allowPlanModeTools: true,
+            // Only an explicit user-selected plan mode enables plan submission.
+            allowPlanModeTools: runMode === 'plan' && resolvedMode === 'plan',
             runId,
             ...(basePermissionMode ? { basePermissionMode } : {}),
             ...(attachments.length > 0 ? { attachments } : {}),
