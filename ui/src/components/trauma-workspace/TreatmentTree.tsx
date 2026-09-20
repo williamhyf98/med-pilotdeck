@@ -221,6 +221,7 @@ export default function TreatmentTree({
                                   nodeClasses(memoStatus, 'blue'),
                                   'hover:border-neutral-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400',
                                   'dark:hover:border-neutral-600',
+                                  !highlighted && 'trauma-tree-memo-clickable',
                                   highlighted && 'trauma-tree-memo-selected ring-1 ring-neutral-400 dark:ring-neutral-500',
                                 )}
                               >

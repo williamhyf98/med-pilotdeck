@@ -46,6 +46,7 @@ type TraumaWorkspaceProps = {
   } | null;
   onNavigateToChatMessage?: (runId: string) => void | Promise<void>;
   runtimePanel?: ReactNode;
+  conversationOnly?: boolean;
 };
 
 export default function TraumaWorkspace({
@@ -58,6 +59,7 @@ export default function TraumaWorkspace({
   pendingRun = null,
   onNavigateToChatMessage,
   runtimePanel,
+  conversationOnly = false,
 }: TraumaWorkspaceProps) {
   const [selectedMemoId, setSelectedMemoId] = useState<string | null>(null);
   const autoOpenedPendingRunRef = useRef<string | null>(null);
@@ -188,6 +190,19 @@ export default function TraumaWorkspace({
       autoOpenedPendingRunRef.current = pendingRunKey;
     }
   }, [pendingMemo, pendingRun?.runId]);
+
+  if (conversationOnly) {
+    return (
+      <div className="trauma-workspace h-full min-h-0 overflow-hidden bg-transparent p-2">
+        <section
+          aria-label="伤情推演对话"
+          className="trauma-conversation-panel workspace-panel-surface h-full min-h-0 min-w-0 overflow-hidden rounded-xl border border-border shadow-sm"
+        >
+          {renderedRuntimePanel}
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="trauma-workspace flex h-full min-h-0 flex-col overflow-hidden bg-transparent">

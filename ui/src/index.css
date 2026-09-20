@@ -863,6 +863,16 @@
 
   :root:not(.dark):not([data-theme="warm"]):not([data-theme="command"])
     .workspace-canvas
+    .trauma-workspace
+    .trauma-tree-memo-clickable {
+    border-color: hsl(174 26% 72% / 0.62);
+    background-color: hsl(172 34% 96% / 0.72) !important;
+    background-image: none;
+    box-shadow: inset 2px 0 0 hsl(174 38% 54% / 0.42);
+  }
+
+  :root:not(.dark):not([data-theme="warm"]):not([data-theme="command"])
+    .workspace-canvas
     .pd-session-row-active,
   :root:not(.dark):not([data-theme="warm"]):not([data-theme="command"])
     .workspace-canvas
@@ -886,6 +896,16 @@
     .workspace-canvas
     .pd-session-row-active .pd-session-meta {
     color: hsl(174 20% 39%);
+  }
+
+  :root.dark:not([data-theme="command"])
+    .workspace-canvas
+    .trauma-workspace
+    .trauma-tree-memo-clickable {
+    border-color: hsl(205 34% 39% / 0.52);
+    background-color: hsl(211 35% 15% / 0.62) !important;
+    background-image: none;
+    box-shadow: inset 2px 0 0 hsl(199 60% 48% / 0.38);
   }
 
   :root.dark:not([data-theme="command"])
@@ -918,6 +938,16 @@
   :root[data-theme="warm"]
     .workspace-canvas
     .trauma-workspace
+    .trauma-tree-memo-clickable {
+    border-color: hsl(26 35% 72% / 0.58);
+    background-color: hsl(30 55% 96% / 0.74) !important;
+    background-image: none;
+    box-shadow: inset 2px 0 0 hsl(20 42% 61% / 0.4);
+  }
+
+  :root[data-theme="warm"]
+    .workspace-canvas
+    .trauma-workspace
     .trauma-tree-memo-selected {
     border-color: hsl(20 55% 63% / 0.56);
     background-color: hsl(24 68% 92% / 0.88) !important;
@@ -925,6 +955,16 @@
     box-shadow:
       inset 3px 0 0 hsl(8 55% 56% / 0.92),
       0 4px 14px hsl(24 28% 20% / 0.07);
+  }
+
+  :root[data-theme="command"]
+    .workspace-canvas
+    .trauma-workspace
+    .trauma-tree-memo-clickable {
+    border-color: hsl(190 60% 42% / 0.24);
+    background-color: hsl(201 54% 22% / 0.13) !important;
+    background-image: none;
+    box-shadow: inset 2px 0 0 hsl(185 72% 48% / 0.3);
   }
 
   :root[data-theme="command"]

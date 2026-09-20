@@ -64,8 +64,26 @@ describe('CodeEditorTabBar', () => {
       name: 'index.html — /workspace/hundouluo/index.html',
     });
     expect(tab.getAttribute('title')).toBe('/workspace/hundouluo/index.html');
-    expect(screen.getByRole('tablist', { name: 'Open files' }).className).toContain('pr-32');
+    const tablist = screen.getByRole('tablist', { name: 'Open files' });
+    expect(tablist.className).toContain('pr-32');
+    expect(tablist.className).toContain('scroll-pr-4');
+    expect(tablist.lastElementChild?.getAttribute('aria-hidden')).toBe('true');
     expect(screen.queryByRole('button', { name: 'More tab actions' })).toBeNull();
+  });
+
+  it('keeps a visible right gutter when no overlaid toolbar is present', () => {
+    render(
+      <CodeEditorTabBar
+        tabs={[tabs[0]]}
+        activeTabId="editor-tab-0"
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+        onCloseTabs={vi.fn()}
+        labels={labels}
+      />,
+    );
+
+    expect(screen.getByRole('tablist', { name: 'Open files' }).className).toContain('pr-4');
   });
 
   it('closes all tabs from the tab context menu', () => {

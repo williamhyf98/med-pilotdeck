@@ -1,4 +1,5 @@
 import { createElement, useCallback, useEffect, useId, useMemo, useRef, useState, type ComponentType, type CSSProperties, type ReactNode, type RefObject } from 'react';
+import './PdfDocumentPreview.css';
 import { useTranslation } from 'react-i18next';
 import {
   ChevronDown,
@@ -1501,10 +1502,11 @@ export default function PdfDocumentPreview({
     <div
       ref={surfaceRef}
       data-file-search-surface
-      className="flex h-full w-full flex-col bg-neutral-100 dark:bg-neutral-900"
+      className="pdf-preview-surface flex h-full w-full min-w-0 flex-col bg-neutral-100 dark:bg-neutral-900"
     >
       <div className="relative z-20 min-w-0 shrink-0">
-        <div className="scrollbar-hide flex min-h-11 w-full min-w-0 items-center gap-1.5 overflow-x-auto border-b border-neutral-200 bg-white px-3 py-1.5 dark:border-neutral-800 dark:bg-neutral-950">
+        <div className="pdf-preview-toolbar border-b border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950">
+        <div className="pdf-preview-toolbar-group">
         {navigationMode !== 'none' ? (
           <>
             <ToolbarButton
@@ -1518,7 +1520,7 @@ export default function PdfDocumentPreview({
             <ToolbarSeparator />
           </>
         ) : null}
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-1">
           <ToolbarButton
             title={t('pdfToolbar.zoomOut')}
             disabled={!isLoaded || !canZoomOut}
@@ -1597,6 +1599,8 @@ export default function PdfDocumentPreview({
             </>
           ) : null}
         </div>
+        </div>
+        <div className="pdf-preview-toolbar-group pdf-preview-toolbar-actions">
         {showPageControls ? (
           <>
             <ToolbarSeparator />
@@ -1685,6 +1689,7 @@ export default function PdfDocumentPreview({
             {renderToolbarIcon(Download)}
           </ToolbarLink>
         ) : null}
+        </div>
         </div>
         {searchOpen ? (
           <FloatingFileSearchControls

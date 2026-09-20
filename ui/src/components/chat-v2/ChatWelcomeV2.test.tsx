@@ -2,10 +2,24 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import ChatWelcomeV2 from './ChatWelcomeV2';
+import MainContentStateView from '../main-content/view/subcomponents/MainContentStateView';
 
 afterEach(cleanup);
 
 describe('ChatWelcomeV2', () => {
+  it('renders exactly the same welcome content for an unselected project and a new conversation', () => {
+    const { rerender } = render(<MainContentStateView mode="empty" isMobile={false} onMenuClick={() => {}} />);
+    const emptyContent = screen.getByTestId('general-medicine-overview').innerHTML;
+    rerender(<ChatWelcomeV2 selectedProject={{ name: 'general_med-clinic', displayName: '通用医学', fullPath: '/ws/clinic', projectType: 'general_medicine' }} composerSlot={null} />);
+    expect(screen.getByTestId('general-medicine-overview').innerHTML).toBe(emptyContent);
+  });
+
+  it('uses the same branded welcome when no project is selected', () => {
+    render(<ChatWelcomeV2 selectedProject={null} composerSlot={null} />);
+    expect(screen.getByRole('heading', { name: '通用医学智能助手' })).toBeTruthy();
+    expect(screen.getByAltText('通用医学智能助手')).toBeTruthy();
+  });
+
   it('shows the general-medicine capability overview instead of the generic greeting', () => {
     render(
       <ChatWelcomeV2

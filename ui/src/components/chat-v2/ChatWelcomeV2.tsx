@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react';
-import { useTranslation } from 'react-i18next';
 import { FileText, FolderOutput, ShieldPlus, Stethoscope } from 'lucide-react';
 import type { Project } from '../../types/app';
 import { resolveProjectType } from '../app-shell/appShellSelection';
@@ -10,6 +9,7 @@ type ChatWelcomeV2Props = {
   welcomeTitle?: string;
   welcomeDescription?: string;
   composerSlot: ReactNode;
+  onCreateProject?: () => void;
 };
 
 const GENERAL_MEDICINE_CAPABILITIES = [
@@ -44,17 +44,12 @@ export default function ChatWelcomeV2({
   welcomeTitle,
   welcomeDescription,
   composerSlot,
+  onCreateProject,
 }: ChatWelcomeV2Props) {
-  const { t } = useTranslation('chat');
-  const projectName = selectedProject?.displayName || selectedProject?.name || '';
-  const showGeneralMedicineOverview = Boolean(
-    selectedProject
-    && resolveProjectType(selectedProject) === 'general_medicine'
-    && !welcomeTitle
-    && !welcomeDescription,
-  );
+  const title = welcomeTitle || (selectedProject && resolveProjectType(selectedProject) === 'war_trauma'
+    ? '战创伤医学智能助手'
+    : '通用医学智能助手');
 
-  if (showGeneralMedicineOverview) {
     return (
       <div className="pd-chat-welcome flex h-full min-h-0 flex-col overflow-hidden bg-transparent">
         <div
@@ -64,14 +59,14 @@ export default function ChatWelcomeV2({
           <div className="mx-auto flex min-h-full w-full max-w-[1120px] flex-col items-center justify-center px-5 py-5 text-center sm:px-8">
             <img
               src={medAssistantLogo}
-              alt="通用医学智能助手"
+              alt={title}
               className="mb-2 h-auto w-44 max-w-[60vw] object-contain"
             />
             <h1 className="text-balance text-[24px] font-semibold tracking-tight text-neutral-950 dark:text-neutral-50">
-              通用医学智能助手
+              {title}
             </h1>
             <p className="mt-2 max-w-[720px] text-[13px] leading-6 text-neutral-600 dark:text-neutral-300">
-              支持临床分析、医学资料解读、战创伤辅助，以及 PDF、Word、PPT、表格和可视化内容制作。
+              {welcomeDescription || '支持临床分析、医学资料解读、战创伤辅助，以及 PDF、Word、PPT、表格和可视化内容制作。'}
             </p>
 
             <div
@@ -107,34 +102,16 @@ export default function ChatWelcomeV2({
         >
           <div className="mx-auto w-full max-w-[900px]">
             {composerSlot}
+            {!composerSlot && onCreateProject ? (
+              <div className="text-center">
+                <button type="button" onClick={onCreateProject}
+                  className="inline-flex h-9 items-center justify-center rounded-md bg-primary px-4 text-[13px] font-medium text-primary-foreground hover:opacity-90">
+                  创建项目
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
     );
-  }
-
-  return (
-    <div className="pd-chat-welcome flex h-full flex-col bg-transparent">
-      <div className="pd-chat-welcome-body flex min-h-0 flex-1 flex-col items-center justify-center px-6">
-        <div className="pd-chat-welcome-column w-full max-w-[720px]">
-          <h1 className="pd-chat-welcome-title mb-8 text-center text-[26px] font-medium tracking-tight text-neutral-900 dark:text-neutral-100">
-            {welcomeTitle || (selectedProject
-              ? t('welcome.greetingWithProject', {
-                  project: projectName,
-                  defaultValue: `What's on the plan today?`,
-                })
-              : t('welcome.noProject', {
-                  defaultValue: 'Pick a project from the sidebar to get started',
-                }))}
-          </h1>
-          {welcomeDescription ? (
-            <p className="pd-chat-welcome-description text-center text-[13px] leading-6 text-neutral-500 dark:text-neutral-400">
-              {welcomeDescription}
-            </p>
-          ) : null}
-          {composerSlot}
-        </div>
-      </div>
-    </div>
-  );
 }

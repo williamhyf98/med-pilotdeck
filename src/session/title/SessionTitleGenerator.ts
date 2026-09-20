@@ -5,21 +5,27 @@ export const SESSION_TITLE_MAX_INPUT_CHARS = 1200;
 export const SESSION_TITLE_MAX_OUTPUT_CHARS = 80;
 export const SESSION_TITLE_TIMEOUT_MS = 30_000;
 
-const SESSION_TITLE_SYSTEM_PROMPT = `Generate a concise, sentence-case title (3-7 words) that captures the main topic or goal of this coding session. The title should be clear enough that the user recognizes the session in a list. Use sentence case: capitalize only the first word and proper nouns.
+const SESSION_TITLE_SYSTEM_PROMPT = `请根据本次会话的主要主题或目标，生成一个简洁、易识别的简体中文标题。
 
-Return JSON with a single "title" field.
+要求：
+- 标题只能使用简体中文，可包含阿拉伯数字；不要使用英文字母，即使原文包含英文产品名或技术缩写，也要改写成自然的中文主题。
+- 建议 4 至 12 个汉字，不要超过 20 个汉字。
+- 不要添加引号、句号、冒号、书名号或“关于”等无意义前缀。
 
-Good examples:
-{"title": "Fix login button on mobile"}
-{"title": "Add OAuth authentication"}
-{"title": "Debug failing CI tests"}
-{"title": "Refactor API client error handling"}
+只返回包含一个 "title" 字段的 JSON。
 
-Bad (too vague): {"title": "Code changes"}
-Bad (too long): {"title": "Investigate and fix the issue where the login button does not respond on mobile devices"}
-Bad (wrong case): {"title": "Fix Login Button On Mobile"}
+正确示例：
+{"title": "优化移动端登录"}
+{"title": "接入开放授权认证"}
+{"title": "排查构建失败"}
+{"title": "分析胸部影像"}
 
-Do not output Markdown, code fences, explanations, analysis, thinking text, <think> tags, or extra fields.`;
+错误示例：
+{"title": "Fix login button"}
+{"title": "问题处理"}
+{"title": "关于用户提出的移动端登录按钮无法响应问题的分析与修改"}
+
+不要输出 Markdown、代码围栏、解释、分析、思考文本、<think> 标签或额外字段。`;
 
 export type SessionTitleGeneratorInput = {
   text: string;
@@ -129,6 +135,10 @@ function sanitizeGeneratedTitle(title: string): string | null {
   const normalized = title.replace(/\s+/g, " ").trim();
   if (!normalized) {
     logSessionTitleFailure("missing_title");
+    return null;
+  }
+  if (!/\p{Script=Han}/u.test(normalized) || /\p{Script=Latin}/u.test(normalized)) {
+    logSessionTitleFailure("non_chinese_title");
     return null;
   }
   return normalized.length > SESSION_TITLE_MAX_OUTPUT_CHARS

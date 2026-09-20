@@ -68,20 +68,20 @@ const UI_STRINGS = {
     "nav.feedback": "协作反馈",
     "nav.user": "用户画像",
     "nav.trace": "记忆追踪",
-    "nav.case": "当前病例",
+    "nav.case": "病例状态记录",
     "nav.group.memory": "长期记忆",
     "nav.group.case": "病例状态",
     "nav.group.run": "运行记录",
-    "case.summary.title": "当前病例状态",
-    "case.summary.subtitle": "本 session 的权威病例数据，由推演流程写入。",
+    "case.summary.title": "病例状态记录",
+    "case.summary.subtitle": "按轮查看推演时实际使用的伤员病例上下文、本轮新增信息和研判结果。",
     "case.readOnlyBadge": "只读",
     "case.timeline.title": "状态快照时间线",
     "case.timeline.subtitle": "每次回合推进或阶段变更留下的快照，最新在前。",
-    "case.empty": "本 session 还没有病例状态。",
-    "case.empty.session": "未选择 session，无法定位病例状态。",
+    "case.empty": "当前对话还没有病例状态。",
+    "case.empty.session": "未选择对话，无法定位病例状态。",
     "case.timeline.empty": "还没有状态快照。",
     "case.loadFailed": "病例状态读取失败：{0}",
-    "case.field.caseId": "病例 ID",
+    "case.field.caseId": "病例编号",
     "case.field.round": "回合",
     "case.field.version": "版本",
     "case.field.updatedAt": "更新时间",
@@ -348,12 +348,12 @@ const UI_STRINGS = {
     "nav.feedback": "Collaboration Feedback",
     "nav.user": "User Profile",
     "nav.trace": "Memory Traces",
-    "nav.case": "Current Case",
+    "nav.case": "Case State Records",
     "nav.group.memory": "Long-term Memory",
     "nav.group.case": "Case State",
     "nav.group.run": "Run Records",
-    "case.summary.title": "Current Case State",
-    "case.summary.subtitle": "Authoritative case data for this session, written by the simulation flow.",
+    "case.summary.title": "Case State Records",
+    "case.summary.subtitle": "Review the casualty context, new input, and result used for each reasoning round.",
     "case.readOnlyBadge": "Read-only",
     "case.timeline.title": "State Snapshot Timeline",
     "case.timeline.subtitle": "A snapshot per round advance or stage change, newest first.",
@@ -689,7 +689,7 @@ const state = {
   selectedProjectId: params.get("selectedProjectId") || "",
   locale: MEMORY_LOCALE,
   workspaceQuery: "",
-  activePage: "project",
+  activePage: DASHBOARD_SCOPE.projectType === "war_trauma" ? "case" : "project",
   activeTraceTab: "recall",
   overview: null,
   settings: null,
@@ -699,6 +699,8 @@ const state = {
   /** 病例状态（只读投影）。null = 还没加载或不适用；见 loadCaseState。 */
   caseState: null,
   caseSnapshots: [],
+  caseRounds: [],
+  selectedCaseRoundKey: "",
   caseStateError: "",
   indexTraces: [],
   dreamTraces: [],
@@ -754,8 +756,9 @@ const userBoardEl = document.getElementById("userBoard");
 const traceBoardEl = document.getElementById("traceBoard");
 const caseBoardEl = document.getElementById("caseBoard");
 const caseSummaryEl = document.getElementById("caseSummary");
-const caseTimelineEl = document.getElementById("caseTimeline");
+const caseRoundNavEl = document.getElementById("caseRoundNav");
 const navCaseTabEl = document.getElementById("navCaseTab");
+const navProjectTabEl = document.getElementById("navProjectTab");
 const projectContextSectionEl = document.getElementById("projectContextSection");
 const projectEntriesEl = document.getElementById("projectEntries");
 const feedbackEntriesSectionEl = document.getElementById("feedbackEntriesSection");
@@ -1314,7 +1317,10 @@ function isCasePageAvailable() {
 function applyCaseNavVisibility() {
   const available = isCasePageAvailable();
   if (navCaseTabEl) navCaseTabEl.classList.toggle("hidden", !available);
-  // 隐藏页签而停在该页上会剩一块空白板，退回项目记忆。
+  // 战创伤不生成也不召回 project 类型记忆，因此不展示无效的项目记忆页。
+  if (navProjectTabEl) navProjectTabEl.classList.toggle("hidden", available);
+  if (available && state.activePage === "project") state.activePage = "case";
+  // 通用医学隐藏病例页时退回项目记忆。
   if (!available && state.activePage === "case") state.activePage = "project";
 }
 
@@ -1977,6 +1983,8 @@ async function loadCaseState() {
   if (!isCasePageAvailable() || !state.sessionId) {
     state.caseState = null;
     state.caseSnapshots = [];
+    state.caseRounds = [];
+    state.selectedCaseRoundKey = "";
     state.caseStateError = "";
     renderCaseBoard();
     return;
@@ -1984,113 +1992,377 @@ async function loadCaseState() {
   try {
     const [current, snapshots] = await Promise.all([
       fetchJson("/api/memory/cases/current"),
-      fetchJson("/api/memory/cases/snapshots?limit=50"),
+      fetchJson("/api/memory/cases/snapshots?limit=500"),
     ]);
     state.caseState = current?.current ?? null;
     state.caseSnapshots = Array.isArray(snapshots?.snapshots) ? snapshots.snapshots : [];
+    state.caseRounds = Array.isArray(snapshots?.rounds) ? snapshots.rounds : [];
+    const availableKeys = new Set(state.caseRounds.map(caseRoundKey));
+    if (!availableKeys.has(state.selectedCaseRoundKey)) {
+      state.selectedCaseRoundKey = state.caseRounds[0] ? caseRoundKey(state.caseRounds[0]) : "";
+    }
     state.caseStateError = "";
   } catch (err) {
     state.caseState = null;
     state.caseSnapshots = [];
+    state.caseRounds = [];
+    state.selectedCaseRoundKey = "";
     state.caseStateError = err instanceof Error ? err.message : String(err);
   }
   renderCaseBoard();
 }
 
-function renderCaseNarrative(labelKey, narrative) {
-  if (!narrative || !narrative.count) return null;
-  const box = el("div", "case-narrative");
-  const head = el("div", "case-narrative-head");
-  head.append(el("span", "", t(labelKey)));
-  head.append(el("span", "entry-tag", t("case.narrative.count", narrative.count, narrative.latestRound ?? "—")));
-  box.append(head);
-  box.append(el("div", "case-narrative-text", narrative.latestText || "—"));
-  return box;
+const CASE_VALUE_LABELS = {
+  mainStage: {
+    battlefield_first_aid: ["Ⅰ级·战现场急救", "Level I · Battlefield first aid"],
+    early_treatment: ["Ⅱ级·早期救治", "Level II · Early treatment"],
+    role1: ["Ⅰ级·战现场急救", "Level I · Battlefield first aid"],
+    role2: ["Ⅱ级·早期救治", "Level II · Early treatment"],
+  },
+  subStage: {
+    primary_first_aid: ["初级急救", "Primary first aid"],
+    advanced_first_aid: ["高级急救", "Advanced first aid"],
+    emergency_treatment: ["紧急处置", "Emergency treatment"],
+    surgical_resuscitation: ["外科复苏", "Surgical resuscitation"],
+    damage_control: ["损伤控制", "Damage control"],
+  },
+  severity: {
+    unknown: ["待评估", "Pending assessment"],
+    mild: ["轻伤", "Mild"],
+    moderate: ["中度伤", "Moderate"],
+    severe: ["重伤", "Severe"],
+    critical: ["危重伤", "Critical"],
+  },
+  priority: {
+    pending: ["待评估", "Pending"],
+    routine: ["常规", "Routine"],
+    delayed: ["可延后", "Delayed"],
+    priority: ["优先", "Priority"],
+    urgent: ["紧急", "Urgent"],
+    immediate: ["立即", "Immediate"],
+  },
+  readiness: {
+    unknown: ["待评估", "Unknown"],
+    ready: ["已具备后送条件", "Ready"],
+    not_ready: ["尚未具备后送条件", "Not ready"],
+  },
+  gate: {
+    ASSESSING: ["评估中", "Assessing"],
+    STAY: ["留在本级", "Stay"],
+    READY: ["建议后送", "Ready for transfer"],
+    BLOCKED: ["暂缓后送", "Transfer blocked"],
+    COMPLETED: ["转换完成", "Completed"],
+    open: ["通道开放", "Open"],
+  },
+  event: {
+    agent_turn: ["病例推演", "Case reasoning"],
+    transition_confirmation: ["阶段转换确认", "Stage transition confirmation"],
+    manual_stage_override: ["人工调整阶段", "Manual stage override"],
+    stage_transition: ["阶段转换", "Stage transition"],
+  },
+};
+
+const CASE_VITALS = {
+  respiratoryRate: ["呼吸频率", "Respiratory rate", "次/分"],
+  systolicBloodPressure: ["收缩压", "Systolic pressure", "mmHg"],
+  heartRate: ["心率", "Heart rate", "次/分"],
+  temperature: ["体温", "Temperature", "℃"],
+  spo2: ["血氧饱和度", "Oxygen saturation", "%"],
+  rr: ["呼吸频率", "Respiratory rate", "次/分"],
+  sbp: ["收缩压", "Systolic pressure", "mmHg"],
+  hr: ["心率", "Heart rate", "次/分"],
+};
+
+function caseText(zh, en) {
+  return state.locale === "zh" ? zh : en;
 }
 
-function formatCaseVitals(vitals) {
-  if (!vitals) return "—";
-  const pairs = Object.entries(vitals.values || {}).filter(([, v]) => v !== null && v !== undefined && v !== "");
-  if (!pairs.length) return "—";
-  return pairs.map(([k, v]) => `${k} ${v}`).join(" · ");
+function caseValue(group, value) {
+  if (!value) return "—";
+  const labels = CASE_VALUE_LABELS[group]?.[value];
+  return labels ? caseText(labels[0], labels[1]) : String(value);
+}
+
+function caseTone(value) {
+  if (["critical", "urgent", "immediate", "BLOCKED", "not_ready"].includes(value)) return "danger";
+  if (["severe", "priority", "READY"].includes(value)) return "warning";
+  if (["mild", "routine", "ready", "COMPLETED", "open"].includes(value)) return "success";
+  return "neutral";
+}
+
+function buildCaseSection(title, subtitle) {
+  const section = el("section", "case-detail-card");
+  const header = el("header", "case-detail-card-head");
+  const marker = el("span", "case-detail-marker");
+  const copy = el("div", "case-detail-card-copy");
+  copy.append(el("h5", "", title));
+  if (subtitle) copy.append(el("p", "", subtitle));
+  header.append(marker, copy);
+  section.append(header);
+  return section;
+}
+
+function buildCaseMetric(label, value, tone = "neutral") {
+  const row = el("div", "case-metric");
+  row.append(el("span", "case-metric-label", label));
+  const display = el("span", "case-metric-value", value || "—");
+  display.dataset.tone = tone;
+  row.append(display);
+  return row;
+}
+
+function buildCaseBadge(text, tone = "neutral") {
+  const badge = el("span", "case-status-badge", text);
+  badge.dataset.tone = tone;
+  return badge;
+}
+
+function caseRoundKey(round) {
+  return `${round?.round ?? "unknown"}:${round?.version ?? "unknown"}`;
+}
+
+function caseVitalDisplay(key, value) {
+  const config = CASE_VITALS[key] || [key, key, ""];
+  return {
+    label: caseText(config[0], config[1]),
+    value: `${value}${config[2] ? ` ${config[2]}` : ""}`,
+  };
+}
+
+function appendCaseTextBlock(container, label, text, meta = "") {
+  if (!text) return;
+  const block = el("article", "case-text-block");
+  const header = el("div", "case-text-block-head");
+  header.append(el("h6", "", label));
+  if (meta) header.append(el("span", "case-text-block-meta", meta));
+  block.append(header, el("p", "", text));
+  container.append(block);
+}
+
+function buildNarrativeList(title, entries) {
+  const section = buildCaseSection(title, caseText("Runner 使用的最近记录，最新在前", "Recent records used by the runner, newest first"));
+  const list = el("div", "case-record-list");
+  if (!entries?.length) {
+    list.append(el("p", "case-inline-empty", caseText("暂无记录", "No records")));
+  } else {
+    entries.forEach((entry) => appendCaseTextBlock(
+      list,
+      `${caseText("第", "Round ")}${entry.round ?? "—"}${caseText("轮", "")}`,
+      entry.text || "—",
+      formatDateTime(entry.createdAt || ""),
+    ));
+  }
+  section.append(list);
+  return section;
+}
+
+function renderCaseRoundNav() {
+  if (!caseRoundNavEl) return;
+  clearNode(caseRoundNavEl);
+  state.caseRounds.forEach((round, index) => {
+    const key = caseRoundKey(round);
+    const active = key === state.selectedCaseRoundKey;
+    const button = el("button", `case-round-tab${active ? " active" : ""}`);
+    button.type = "button";
+    button.setAttribute("aria-pressed", String(active));
+    button.append(el("strong", "", `${caseText("第", "Round ")}${round.round ?? "—"}${caseText("轮", "")}`));
+    button.append(el("span", "", index === 0 ? caseText("当前", "Current") : formatDateTime(round.createdAt || "")));
+    button.addEventListener("click", () => {
+      state.selectedCaseRoundKey = key;
+      renderCaseBoard();
+    });
+    caseRoundNavEl.append(button);
+  });
+}
+
+function renderCaseContext(container, round) {
+  const context = round.context || {};
+  const hero = el("section", "case-hero");
+  const heroCopy = el("div", "case-hero-copy");
+  heroCopy.append(el("p", "case-hero-eyebrow", `${caseText("第", "Round ")}${round.round ?? "—"}${caseText("轮 · Runner 病例上下文", " · Runner context")}`));
+  heroCopy.append(el("h3", "", [
+    caseValue("mainStage", context.currentStage),
+    caseValue("subStage", context.currentSubStage),
+  ].filter((value) => value !== "—").join(" · ") || caseText("尚未完成分级", "Not classified")));
+  heroCopy.append(el("p", "case-hero-meta", `${context.facility?.name || caseText("救治机构待确认", "Facility pending")} · ${formatDateTime(round.createdAt || "")}`));
+  const heroBadges = el("div", "case-hero-badges");
+  heroBadges.append(buildCaseBadge(caseText(`第 ${round.version ?? "—"} 版`, `V${round.version ?? "—"}`), "info"));
+  (round.events || []).forEach((event) => heroBadges.append(buildCaseBadge(
+    caseValue("event", event.eventType),
+    event.eventType === "manual_stage_override" ? "warning" : "neutral",
+  )));
+  hero.append(heroCopy, heroBadges);
+  container.append(hero);
+
+  const placement = buildCaseSection(caseText("当轮救治位置", "Care placement for this round"));
+  placement.append(buildCaseMetric(caseText("主救治级别", "Main care level"), caseValue("mainStage", context.currentStage)));
+  placement.append(buildCaseMetric(caseText("当前子阶段", "Current substage"), caseValue("subStage", context.currentSubStage), "info"));
+  placement.append(buildCaseMetric(caseText("当前救治机构", "Current facility"), context.facility?.name || "—"));
+  placement.append(buildCaseMetric(caseText("机构能力", "Capabilities"), context.facility?.capabilities?.join("、") || "—"));
+
+  const latestVitals = buildCaseSection(
+    caseText("Runner 看到的生命体征", "Vital signs seen by the runner"),
+    context.vitals?.measuredThisRound
+      ? caseText("本轮已测量", "Measured this round")
+      : caseText("包含沿用自历史轮次的最新值", "Includes latest values carried from prior rounds"),
+  );
+  const vitalGrid = el("div", "case-vital-grid");
+  const vitalEntries = Object.entries(context.vitals?.latestByField || {});
+  if (!vitalEntries.length) {
+    vitalGrid.append(el("p", "case-inline-empty", caseText("暂无生命体征记录", "No vital signs")));
+  } else {
+    vitalEntries.forEach(([key, detail]) => {
+      const display = caseVitalDisplay(key, detail.value);
+      const item = el("div", "case-vital");
+      const head = el("div", "case-vital-head");
+      head.append(el("span", "case-vital-label", display.label));
+      if (detail.stale) head.append(buildCaseBadge(caseText(`第 ${detail.round} 轮`, `Round ${detail.round}`), "warning"));
+      item.append(head, el("strong", "case-vital-value", display.value));
+      vitalGrid.append(item);
+    });
+  }
+  latestVitals.append(vitalGrid);
+  const topGrid = el("div", "case-section-grid");
+  topGrid.append(placement, latestVitals);
+  container.append(topGrid);
+
+  const narrativeGrid = el("div", "case-section-grid");
+  narrativeGrid.append(
+    buildNarrativeList(caseText("累计伤情记录", "Accumulated injury records"), context.injuryNarratives),
+    buildNarrativeList(caseText("累计处置记录", "Accumulated treatment records"), context.treatmentNarratives),
+    buildNarrativeList(caseText("累计后送记录", "Accumulated evacuation records"), context.evacuationNarratives),
+  );
+  const notes = buildCaseSection(caseText("本轮备注", "Current-round note"));
+  if (context.note?.text) appendCaseTextBlock(notes, caseText("备注", "Note"), context.note.text, formatDateTime(context.note.createdAt || ""));
+  else notes.append(el("p", "case-inline-empty", caseText("本轮没有备注", "No note for this round")));
+  narrativeGrid.append(notes);
+  container.append(narrativeGrid);
+
+  const history = buildCaseSection(caseText("最近生命体征记录", "Recent vital history"), caseText("最多展示 Runner 使用的最近 6 轮", "Up to the six most recent records used by the runner"));
+  const historyList = el("div", "case-vital-history");
+  if (!context.vitals?.recentRecords?.length) {
+    historyList.append(el("p", "case-inline-empty", caseText("暂无记录", "No records")));
+  } else {
+    context.vitals.recentRecords.forEach((record) => {
+      const row = el("div", "case-vital-history-row");
+      row.append(el("span", "case-vital-history-round", `${caseText("第", "Round ")}${record.round ?? "—"}${caseText("轮", "")}`));
+      const values = Object.entries(record.values || {}).map(([key, value]) => {
+        const display = caseVitalDisplay(key, value);
+        return `${display.label} ${display.value}`;
+      });
+      row.append(el("span", "case-vital-history-values", values.join(" · ") || "—"));
+      row.append(el("span", "case-vital-history-time", formatDateTime(record.recordedAt || "")));
+      historyList.append(row);
+    });
+  }
+  history.append(historyList);
+  container.append(history);
+}
+
+function renderCaseRoundInput(container, round) {
+  const input = round.input || {};
+  const section = buildCaseSection(caseText("本轮新增信息", "New information this round"), caseText("用户在本轮提交并合并进病例状态的内容", "Content submitted and merged into the case state"));
+  const grid = el("div", "case-input-grid");
+  appendCaseTextBlock(grid, caseText("原始输入", "Raw input"), input.rawInput);
+  appendCaseTextBlock(grid, caseText("新增伤情", "New injury information"), input.injuryNarrative);
+  appendCaseTextBlock(grid, caseText("新增处置", "New treatment information"), input.treatmentNarrative);
+  appendCaseTextBlock(grid, caseText("新增后送信息", "New evacuation information"), input.evacuationNarrative);
+  appendCaseTextBlock(grid, caseText("本轮备注", "Round note"), input.note);
+  appendCaseTextBlock(grid, caseText("本轮附件判读", "Round attachment interpretation"), input.attachmentInterpretation);
+  const vitalEntries = Object.entries(input.vitals || {});
+  if (vitalEntries.length) {
+    const vitalText = vitalEntries.map(([key, value]) => {
+      const display = caseVitalDisplay(key, value);
+      return `${display.label} ${display.value}`;
+    }).join(" · ");
+    appendCaseTextBlock(grid, caseText("本轮测量", "Measurements this round"), vitalText);
+  }
+  if (!grid.childElementCount) grid.append(el("p", "case-inline-empty", caseText("该轮没有可展示的新增输入", "No displayable new input for this round")));
+  section.append(grid);
+  container.append(section);
+}
+
+function renderCaseRoundResult(container, round) {
+  const result = round.result || {};
+  const grid = el("div", "case-section-grid");
+  const classification = buildCaseSection(caseText("动态分类", "Dynamic classification"));
+  classification.append(buildCaseMetric(caseText("伤情分级", "Severity"), caseValue("severity", result.classification?.severity), caseTone(result.classification?.severity)));
+  classification.append(buildCaseMetric(caseText("救治优先级", "Treatment priority"), caseValue("priority", result.classification?.treatmentPriority), caseTone(result.classification?.treatmentPriority)));
+  classification.append(buildCaseMetric(caseText("后送优先级", "Transport priority"), caseValue("priority", result.classification?.transportPriority), caseTone(result.classification?.transportPriority)));
+  (result.classification?.rationale || []).forEach((item) => classification.append(el("p", "case-rationale", item)));
+
+  const transport = buildCaseSection(caseText("后送与阶段建议", "Evacuation and stage recommendation"));
+  transport.append(buildCaseMetric(caseText("状态", "Status"), caseValue("gate", result.transport?.gateStatus || result.transition?.status), caseTone(result.transport?.gateStatus || result.transition?.status)));
+  transport.append(buildCaseMetric(caseText("准备状态", "Readiness"), caseValue("readiness", result.transport?.readiness), caseTone(result.transport?.readiness)));
+  if (result.transition?.targetStage || result.transition?.targetSubStage) {
+    transport.append(buildCaseMetric(caseText("建议目标", "Suggested target"), [
+      caseValue("mainStage", result.transition.targetStage),
+      caseValue("subStage", result.transition.targetSubStage),
+    ].filter((value) => value !== "—").join(" · ")));
+  }
+  if (result.transition?.reason) transport.append(el("p", "case-rationale", result.transition.reason));
+  if (result.transport?.blockingReason) transport.append(el("p", "case-alert", result.transport.blockingReason));
+  grid.append(classification, transport);
+  container.append(grid);
+
+  if (result.treatmentPlan?.length) {
+    const plan = buildCaseSection(caseText("本轮处置计划", "Treatment plan for this round"));
+    const list = el("ol", "case-action-list");
+    result.treatmentPlan.forEach((action) => {
+      const item = el("li", "case-action-item");
+      item.append(el("strong", "", action.title || caseText("处置建议", "Treatment action")));
+      if (action.description) item.append(el("p", "", action.description));
+      list.append(item);
+    });
+    plan.append(list);
+    container.append(plan);
+  }
+
+  if (result.memo) {
+    const memo = buildCaseSection(caseText("本轮纪要", "Round memo"), result.memo.title || "");
+    const memoGrid = el("div", "case-input-grid");
+    appendCaseTextBlock(memoGrid, caseText("输入要点", "Input points"), (result.memo.inputPoints || []).join("；"));
+    appendCaseTextBlock(memoGrid, caseText("处置要点", "Action points"), (result.memo.actionPoints || []).join("；"));
+    appendCaseTextBlock(memoGrid, caseText("结论", "Conclusion"), result.memo.conclusion);
+    memo.append(memoGrid);
+    container.append(memo);
+  }
+
+  if (result.requiredCapabilities?.length || result.missingInformation?.length) {
+    const followup = buildCaseSection(caseText("后续所需", "Follow-up needs"));
+    if (result.requiredCapabilities?.length) followup.append(buildCaseMetric(caseText("所需能力", "Required capabilities"), result.requiredCapabilities.join("、"), "info"));
+    if (result.missingInformation?.length) {
+      const chips = el("div", "case-chip-list");
+      result.missingInformation.forEach((item) => chips.append(buildCaseBadge(item, "warning")));
+      followup.append(chips);
+    }
+    container.append(followup);
+  }
 }
 
 function renderCaseBoard() {
-  if (!caseSummaryEl || !caseTimelineEl) return;
-
+  if (!caseSummaryEl || !caseRoundNavEl) return;
   clearNode(caseSummaryEl);
+  renderCaseRoundNav();
   if (state.caseStateError) {
     caseSummaryEl.append(el("div", "empty-state", t("case.loadFailed", state.caseStateError)));
-  } else if (!state.sessionId) {
-    caseSummaryEl.append(el("div", "empty-state", t("case.empty.session")));
-  } else if (!state.caseState) {
-    caseSummaryEl.append(el("div", "empty-state", t("case.empty")));
-  } else {
-    const c = state.caseState;
-    const grid = el("div", "kv-grid");
-    grid.append(buildKvCell(t("case.field.caseId"), c.caseId || "—"));
-    grid.append(buildKvCell(t("case.field.round"), c.round === null || c.round === undefined ? "—" : String(c.round)));
-    grid.append(buildKvCell(t("case.field.version"), c.version === null || c.version === undefined ? "—" : String(c.version)));
-    grid.append(buildKvCell(t("case.field.updatedAt"), formatDateTime(c.updatedAt || "")));
-    grid.append(buildKvCell(
-      t("case.field.stage"),
-      [c.stage?.main, c.stage?.sub].filter(Boolean).join(" / ") || "—",
-    ));
-    grid.append(buildKvCell(t("case.field.facility"), c.facility?.name || "—"));
-    grid.append(buildKvCell(t("case.field.severity"), c.classification?.severity || "—"));
-    grid.append(buildKvCell(t("case.field.treatmentPriority"), c.classification?.treatmentPriority || "—"));
-    grid.append(buildKvCell(
-      t("case.field.transport"),
-      c.transport?.needed
-        ? t("case.transport.needed", c.transport.priority || "—", c.transport.readiness || "—")
-        : t("case.transport.notNeeded"),
-    ));
-    grid.append(buildKvCell(t("case.field.vitals"), formatCaseVitals(c.vitals)));
-    if (c.missingInformation?.length) {
-      grid.append(buildKvCell(t("case.field.missingInformation"), c.missingInformation.join(" · ")));
-    }
-    if (c.pendingTransition) {
-      grid.append(buildKvCell(
-        t("case.field.pendingTransition"),
-        [c.pendingTransition.toStage, c.pendingTransition.toSubStage].filter(Boolean).join(" / ")
-          || t("status.yes"),
-      ));
-    }
-    caseSummaryEl.append(grid);
-
-    [
-      ["case.narrative.injury", c.narratives?.injury],
-      ["case.narrative.treatment", c.narratives?.treatment],
-      ["case.narrative.evacuation", c.narratives?.evacuation],
-      ["case.narrative.note", c.narratives?.note],
-    ].forEach(([key, narrative]) => {
-      const box = renderCaseNarrative(key, narrative);
-      if (box) caseSummaryEl.append(box);
-    });
-  }
-
-  // 快照时间线复用 trace 的 buildTimelineStep：同一种「按时间读一串事件」的形状。
-  clearNode(caseTimelineEl);
-  if (!state.caseSnapshots.length) {
-    caseTimelineEl.append(el("div", "empty-state", t("case.timeline.empty")));
     return;
   }
-  state.caseSnapshots.forEach((snap, i) => {
-    caseTimelineEl.append(buildTimelineStep(i + 1, {
-      status: "info",
-      title: `${t("case.snapshot.round", snap.round ?? "—")} · ${snap.eventType || "—"}`,
-      inputSummary: [
-        formatDateTime(snap.createdAt || ""),
-        [snap.stage?.main, snap.stage?.sub].filter(Boolean).join(" / "),
-        snap.facilityName,
-      ].filter(Boolean).join(" · "),
-      outputSummary: [
-        snap.severity ? `${t("case.field.severity")} ${snap.severity}` : "",
-        snap.transportPriority ? `${t("case.field.transport")} ${snap.transportPriority}` : "",
-        snap.version === null || snap.version === undefined ? "" : `${t("case.field.version")} ${snap.version}`,
-      ].filter(Boolean).join(" · "),
-    }));
-  });
+  if (!state.sessionId) {
+    caseSummaryEl.append(el("div", "empty-state", t("case.empty.session")));
+    return;
+  }
+  if (!state.caseRounds.length) {
+    caseSummaryEl.append(el("div", "empty-state", state.caseState
+      ? caseText("已有当前病例状态，但没有可读取的历史轮次快照。", "Current case state exists, but no readable round snapshots were found.")
+      : t("case.empty")));
+    return;
+  }
+  const selected = state.caseRounds.find((round) => caseRoundKey(round) === state.selectedCaseRoundKey)
+    || state.caseRounds[0];
+  renderCaseContext(caseSummaryEl, selected);
+  renderCaseRoundInput(caseSummaryEl, selected);
+  renderCaseRoundResult(caseSummaryEl, selected);
 }
 
 async function loadTraces() {
@@ -2452,6 +2724,6 @@ renderUserSummary();
 renderRecallCaseList();
 renderIndexTraceSelect();
 renderDreamTraceSelect();
-setActivePage("project");
+setActivePage(isCasePageAvailable() ? "case" : "project");
 applyTraceTabChrome();
 void loadDashboard();

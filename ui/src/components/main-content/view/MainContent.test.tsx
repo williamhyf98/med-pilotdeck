@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   handleFileOpen: vi.fn(),
   onMisroutedFileUrlHandled: vi.fn(),
   chatProps: [] as any[],
+  editorExpanded: false,
 }));
 
 vi.mock('../../../contexts/TaskMasterContext', () => ({
@@ -60,7 +61,7 @@ vi.mock('../../code-editor/hooks/useEditorSidebar', () => ({
       diffInfo: null,
     },
     editorWidth: 600,
-    editorExpanded: false,
+    editorExpanded: mocks.editorExpanded,
     hasManualWidth: false,
     resizeHandleRef: { current: null },
     handleFileOpen: mocks.handleFileOpen,
@@ -182,6 +183,7 @@ beforeEach(() => {
   mocks.handleFileOpen.mockReset();
   mocks.onMisroutedFileUrlHandled.mockReset();
   mocks.chatProps.length = 0;
+  mocks.editorExpanded = false;
 });
 
 afterEach(() => {
@@ -230,32 +232,30 @@ describe('MainContent file workspace routing', () => {
     expect(mocks.onMisroutedFileUrlHandled).toHaveBeenCalledOnce();
   });
 
-  it('keeps the agent panel collapsible and persists keyboard resizing', async () => {
+  it('keeps the conversation visible and opens files plus preview on the right', async () => {
     render(<MainContent {...propsFor('files')} />);
 
-    const conversationTrigger = await screen.findByTestId('files-conversation-switcher-trigger');
-    const labels = conversationTrigger.querySelectorAll('span.block');
-    expect(labels[0]?.textContent).toBe('filesWorkbench.assistant');
-    expect(labels[1]?.textContent).toBe('filesWorkbench.conversations.newConversation');
+    expect(await screen.findByTestId('runtime-chat')).not.toBeNull();
+    const preview = screen.getByRole('complementary', { name: '文件预览' });
+    const files = screen.getByRole('complementary', { name: '项目文件' });
+    expect(preview).not.toBeNull();
+    expect(files).not.toBeNull();
+    expect(preview.nextElementSibling).toBe(files);
+    expect(screen.getByTestId('files-explorer')).not.toBeNull();
+    expect(screen.getByTestId('editor-sidebar')).not.toBeNull();
+  });
 
-    const resizeHandle = screen.getByRole('separator', {
-      name: 'filesWorkbench.resizeAssistant',
-    });
-    expect(resizeHandle.getAttribute('aria-valuenow')).toBe('380');
+  it.each([false, true])('lets the expanded preview hide the conversation (mobile: %s)', (isMobile) => {
+    mocks.editorExpanded = true;
+    render(<MainContent {...propsFor('files')} isMobile={isMobile} />);
 
-    fireEvent.keyDown(resizeHandle, { key: 'ArrowLeft' });
-    expect(resizeHandle.getAttribute('aria-valuenow')).toBe('396');
-    await waitFor(() => {
-      expect(localStorage.getItem('pilotdeck:files-assistant-width')).toBe('396');
-    });
-
-    fireEvent.click(screen.getByRole('button', { name: 'filesWorkbench.collapseAssistant' }));
-    expect(screen.queryByRole('separator', { name: 'filesWorkbench.resizeAssistant' })).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: 'filesWorkbench.openAssistant' }));
-    expect(screen.getByRole('separator', {
-      name: 'filesWorkbench.resizeAssistant',
-    }).getAttribute('aria-valuenow')).toBe('396');
+    const chat = screen.getByTestId('runtime-chat').parentElement;
+    const preview = screen.getByRole('complementary', { name: '文件预览' });
+    const files = screen.getByRole('complementary', { name: '项目文件' });
+    expect(chat?.className).toContain('invisible');
+    expect(preview.className).toContain('flex-1');
+    expect(preview.getAttribute('style')).toBeNull();
+    expect(preview.nextElementSibling).toBe(files);
   });
 });
 
@@ -381,7 +381,7 @@ describe('MainContent project-type workspace routing', () => {
     expect(screen.getByRole('button', { name: 'Open workspace file' })).not.toBeNull();
   });
 
-  it('directs trauma Files users to the structured form workspace', () => {
+  it('keeps the trauma structured composer available beside project files', () => {
     const traumaProject: Project = {
       ...project,
       name: 'trauma_med-demo',
@@ -395,7 +395,10 @@ describe('MainContent project-type workspace routing', () => {
       />,
     );
 
-    expect(screen.getByRole('note').textContent).toContain('切换到对话工作区');
+    expect(screen.getByRole('region', { name: '伤情推演对话' })).not.toBeNull();
+    expect(screen.getByLabelText('本轮伤情自由输入')).not.toBeNull();
+    expect(screen.queryByRole('heading', { name: '分级救治全过程' })).toBeNull();
+    expect(screen.getByRole('complementary', { name: '项目文件' })).not.toBeNull();
     expect(mocks.chatProps.some((props) => props.hideComposer === true)).toBe(true);
   });
 });

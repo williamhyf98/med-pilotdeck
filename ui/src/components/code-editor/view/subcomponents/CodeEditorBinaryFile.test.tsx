@@ -15,6 +15,22 @@ const webSocketMock = vi.hoisted(() => ({
   subscribers: new Set<(message: unknown) => void>(),
 }));
 
+class ResizeObserverMock {
+  private readonly callback: ResizeObserverCallback;
+
+  constructor(callback: ResizeObserverCallback) {
+    this.callback = callback;
+  }
+
+  observe(target: Element) {
+    Object.defineProperty(target, 'clientWidth', { configurable: true, value: 800 });
+    Object.defineProperty(target, 'clientHeight', { configurable: true, value: 600 });
+    this.callback([], this as unknown as ResizeObserver);
+  }
+
+  disconnect() {}
+}
+
 vi.mock('../../../../contexts/WebSocketContext', () => ({
   useWebSocket: () => ({
     subscribe: (handler: (message: unknown) => void) => {
@@ -98,6 +114,7 @@ function broadcastConfigReload(config: unknown) {
 }
 
 beforeEach(() => {
+  vi.stubGlobal('ResizeObserver', ResizeObserverMock);
   readOfficePreviewStatusMock.mockReset();
   readOfficePreviewStatusMock.mockResolvedValue({
     service: 'builtin',
@@ -109,6 +126,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   webSocketMock.subscribers.clear();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -119,11 +137,25 @@ describe('CodeEditorBinaryFile', () => {
     expect(screen.getByText('archive.bin')).not.toBeNull();
   });
 
-  it('does not add an empty overlay above the workspace file tabs', () => {
-    const { container } = render(<CodeEditorBinaryFile {...baseProps} compactHeader />);
+  it('adds a workspace expansion action above image and fallback previews', () => {
+    const onToggleExpand = vi.fn();
+    const { rerender } = render(
+      <CodeEditorBinaryFile {...baseProps} compactHeader onToggleExpand={onToggleExpand} />,
+    );
 
     expect(screen.queryByText('archive.bin')).toBeNull();
-    expect(container.querySelector('.absolute.right-2.top-1')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'actions.expand' }));
+    expect(onToggleExpand).toHaveBeenCalledOnce();
+
+    rerender(
+      <CodeEditorBinaryFile
+        {...baseProps}
+        compactHeader
+        isExpanded
+        onToggleExpand={onToggleExpand}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'actions.collapse' })).not.toBeNull();
   });
 
   it('enables page navigation and workspace expansion for PDF files', () => {

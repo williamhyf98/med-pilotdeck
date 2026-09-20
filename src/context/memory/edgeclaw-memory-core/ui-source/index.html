@@ -40,7 +40,7 @@
         </div>
         <div class="memory-header-nav">
           <nav id="boardNavTabs" class="nav-tabs" aria-label="Memory views">
-            <button class="nav-tab active" data-page="project" type="button">
+            <button class="nav-tab active" id="navProjectTab" data-page="project" type="button">
               <span class="nav-tab-label" data-i18n="nav.project"></span>
             </button>
             <button class="nav-tab" data-page="feedback" type="button">
@@ -122,18 +122,13 @@
                这里展示的是病例流程的权威数据，不是 Markdown memory：没有编辑、
                删除、废弃按钮，修改一律走推演/阶段确认等 Trauma 业务接口。 -->
           <div id="caseBoard" class="board-content">
-            <section class="board-group">
+            <section class="board-group case-records-shell">
               <div class="board-group-header">
                 <div><h4 data-i18n="case.summary.title"></h4><p class="board-group-subtitle" data-i18n="case.summary.subtitle"></p></div>
                 <span class="entry-badge" data-kind="readonly" data-i18n="case.readOnlyBadge"></span>
               </div>
+              <div id="caseRoundNav" class="case-round-nav" aria-label="Case rounds"></div>
               <div id="caseSummary" class="stack"></div>
-            </section>
-            <section class="board-group">
-              <div class="board-group-header">
-                <div><h4 data-i18n="case.timeline.title"></h4><p class="board-group-subtitle" data-i18n="case.timeline.subtitle"></p></div>
-              </div>
-              <div id="caseTimeline" class="timeline"></div>
             </section>
           </div>
 

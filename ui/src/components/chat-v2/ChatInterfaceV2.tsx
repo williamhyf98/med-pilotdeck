@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { MessageSquare } from 'lucide-react';
 import { useTasksSettings } from '../../contexts/TasksSettingsContext';
 import { useToast } from '../../contexts/ToastContext';
 import { api } from '../../utils/api';
@@ -733,7 +732,7 @@ function ChatInterfaceV2({
       planModeAvailable={true}
       onPlanExecutionApproved={handlePlanExecutionApproved}
       sendByCtrlEnter={sendByCtrlEnter}
-      chromeless={isWelcomeMode && !compact}
+      chromeless={isWelcomeMode}
       headerSlot={composerHeader}
       footerStartSlot={composerFooterStart}
       footerEndSlot={composerFooterEnd}
@@ -813,26 +812,6 @@ function ChatInterfaceV2({
   }
 
   if (isWelcomeMode) {
-    if (compact) {
-      return (
-        <div className="flex h-full min-w-0 flex-col bg-white dark:bg-neutral-950">
-          <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
-            <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl border border-neutral-200 bg-neutral-50 text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-              <MessageSquare className="h-4 w-4" strokeWidth={1.8} />
-            </div>
-            <p className="text-[13px] font-medium text-neutral-700 dark:text-neutral-300">
-              {t('workspace.emptyTitle', { defaultValue: 'Ask PilotDeck about this project' })}
-            </p>
-            <p className="mt-1 max-w-56 text-[12px] leading-5 text-neutral-400 dark:text-neutral-500">
-              {t('workspace.emptyDescription', {
-                defaultValue: 'Reference a workspace file with @ when you want it included.',
-              })}
-            </p>
-          </div>
-          {composerSlot}
-        </div>
-      );
-    }
     return (
       <ChatWelcomeV2
         selectedProject={selectedProject}

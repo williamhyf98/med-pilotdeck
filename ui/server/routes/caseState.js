@@ -24,6 +24,11 @@ import { resolvePilotHome, resolveTypedProjectMemoryDir } from '../utils/pilotPa
 const router = express.Router();
 
 const DEFAULT_SNAPSHOT_LIMIT = 50;
+const VITAL_KEYS = [
+  'respiratoryRate', 'systolicBloodPressure', 'heartRate', 'temperature', 'spo2',
+  // 兼容早期病例文件。
+  'rr', 'sbp', 'hr',
+];
 
 function readField(req, field) {
   const value = req.query?.[field] ?? req.body?.[field];
@@ -150,6 +155,141 @@ export function summarizeSnapshot(snapshot) {
   };
 }
 
+function recentNarratives(entries) {
+  return (Array.isArray(entries) ? entries : [])
+    .slice()
+    .sort((left, right) => Number(right?.round ?? 0) - Number(left?.round ?? 0))
+    .slice(0, 6)
+    .map((entry) => ({
+      round: entry?.round ?? null,
+      createdAt: entry?.createdAt ?? null,
+      text: typeof entry?.text === 'string' ? entry.text.slice(0, 300) : '',
+    }));
+}
+
+/** 与 runner 的 compactCaseStateForDownstream 保持同一展示语义。 */
+export function summarizeRunnerContext(state) {
+  const vitalHistory = Array.isArray(state?.vitalSignsHistory) ? state.vitalSignsHistory : [];
+  const recentRecords = vitalHistory.slice(-6).reverse().map((record) => ({
+    round: record?.round ?? null,
+    recordedAt: record?.recordedAt ?? null,
+    values: Object.fromEntries(VITAL_KEYS.flatMap((key) => (
+      record?.values?.[key] === undefined ? [] : [[key, record.values[key]]]
+    ))),
+  }));
+  const latestByField = {};
+  const values = {};
+  for (let index = vitalHistory.length - 1; index >= 0; index -= 1) {
+    const record = vitalHistory[index];
+    for (const key of VITAL_KEYS) {
+      const value = record?.values?.[key];
+      if (value === undefined || latestByField[key]) continue;
+      latestByField[key] = { value, round: record?.round ?? null, stale: record?.round !== state?.round };
+      values[key] = value;
+    }
+  }
+  const notes = Array.isArray(state?.notes) ? state.notes : [];
+  const note = notes.slice().reverse().find((entry) => entry?.round === state?.round) ?? null;
+  const latestVitals = vitalHistory.at(-1);
+  return {
+    currentStage: state?.currentStage ?? null,
+    currentSubStage: state?.currentSubStage ?? null,
+    facility: state?.currentFacility
+      ? {
+        name: state.currentFacility.name ?? '',
+        type: state.currentFacility.type ?? '',
+        capabilities: Array.isArray(state.currentFacility.capabilities)
+          ? state.currentFacility.capabilities
+          : [],
+      }
+      : null,
+    injuryNarratives: recentNarratives(state?.injuryNarratives),
+    treatmentNarratives: recentNarratives(state?.treatmentNarratives),
+    evacuationNarratives: recentNarratives(state?.evacuationNarratives),
+    note: note
+      ? { round: note.round ?? null, createdAt: note.createdAt ?? null, text: note.text ?? '' }
+      : null,
+    vitals: {
+      recentRecords,
+      latestByField,
+      latestMeasuredRound: latestVitals?.round ?? null,
+      measuredThisRound: latestVitals?.round === state?.round,
+      values,
+    },
+  };
+}
+
+export function summarizeRound(snapshot) {
+  if (snapshot?.eventType !== 'agent_turn') return null;
+  const state = snapshot?.state ?? {};
+  const response = snapshot?.response ?? {};
+  const classification = response.classification ?? lastOf(state.classificationHistory);
+  const currentInterpretation = (Array.isArray(state.attachmentInterpretations)
+    ? state.attachmentInterpretations
+    : []).slice().reverse().find((entry) => entry?.round === snapshot.round);
+  return {
+    round: snapshot.round ?? state.round ?? null,
+    version: state.version ?? null,
+    createdAt: snapshot.createdAt ?? state.updatedAt ?? null,
+    triggerMessageId: snapshot.triggerMessageId ?? null,
+    context: summarizeRunnerContext(state),
+    input: {
+      rawInput: typeof snapshot.rawInput === 'string' ? snapshot.rawInput : '',
+      statedSubStage: snapshot.form?.statedSubStage ?? null,
+      injuryNarrative: snapshot.form?.injuryNarrative ?? '',
+      treatmentNarrative: snapshot.form?.treatmentNarrative ?? '',
+      evacuationNarrative: snapshot.form?.evacuationNarrative ?? '',
+      note: snapshot.form?.note ?? '',
+      vitals: snapshot.form?.vitals && typeof snapshot.form.vitals === 'object'
+        ? snapshot.form.vitals
+        : {},
+      attachmentInterpretation: currentInterpretation?.text ?? '',
+    },
+    result: {
+      classification: classification
+        ? {
+          severity: classification.severity ?? 'unknown',
+          treatmentPriority: classification.treatmentPriority ?? 'pending',
+          transportPriority: classification.transportPriority ?? 'pending',
+          rationale: Array.isArray(classification.rationale) ? classification.rationale : [],
+        }
+        : null,
+      treatmentPlan: Array.isArray(response.treatmentPlan) ? response.treatmentPlan.map((item) => ({
+        title: item?.title ?? '',
+        description: item?.description ?? '',
+        scope: item?.scope ?? null,
+      })) : [],
+      transition: response.transition
+        ? {
+          status: response.transition.status ?? state.transport?.gateStatus ?? null,
+          targetStage: response.transition.targetStage ?? null,
+          targetSubStage: response.transition.targetSubStage ?? null,
+          reason: response.transition.reason ?? '',
+        }
+        : null,
+      memo: response.memo
+        ? {
+          title: response.memo.title ?? '',
+          inputPoints: Array.isArray(response.memo.inputPoints) ? response.memo.inputPoints : [],
+          actionPoints: Array.isArray(response.memo.actionPoints) ? response.memo.actionPoints : [],
+          conclusion: response.memo.conclusion ?? '',
+        }
+        : null,
+      missingInformation: Array.isArray(response.missingInformation)
+        ? response.missingInformation
+        : Array.isArray(state.missingInformation) ? state.missingInformation : [],
+      transport: {
+        needed: Boolean(state.transport?.needed),
+        priority: state.transport?.priority ?? 'pending',
+        readiness: state.transport?.readiness ?? 'unknown',
+        gateStatus: state.transport?.gateStatus ?? null,
+        blockingReason: state.transport?.blockingReason ?? '',
+      },
+      requiredCapabilities: Array.isArray(state.requiredCapabilities) ? state.requiredCapabilities : [],
+    },
+  };
+}
+
 async function readCurrent(caseDir) {
   try {
     return { state: JSON.parse(await fs.readFile(path.join(caseDir, 'current.json'), 'utf8')) };
@@ -174,7 +314,7 @@ async function readSnapshots(caseDir, limit) {
   let skipped = 0;
   for (const line of lines) {
     try {
-      parsed.push(summarizeSnapshot(JSON.parse(line)));
+      parsed.push(JSON.parse(line));
     } catch {
       // 一行坏了不该让整条时间线消失；计数后继续。
       skipped += 1;
@@ -182,7 +322,19 @@ async function readSnapshots(caseDir, limit) {
   }
   // 最新的在前：时间线是倒序看的。
   parsed.reverse();
-  return { snapshots: parsed.slice(0, limit), total: parsed.length, skipped };
+  const selected = parsed.slice(0, limit);
+  const rounds = selected.map(summarizeRound).filter(Boolean).map((round) => ({
+    ...round,
+    events: selected
+      .filter((snapshot) => snapshot?.eventType !== 'agent_turn' && snapshot?.round === round.round)
+      .map(summarizeSnapshot),
+  }));
+  return {
+    snapshots: selected.map(summarizeSnapshot),
+    rounds,
+    total: parsed.length,
+    skipped,
+  };
 }
 
 /**

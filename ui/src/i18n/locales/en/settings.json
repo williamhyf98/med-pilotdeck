@@ -196,8 +196,7 @@
     },
     "appearanceMode": {
       "title": "Theme Mode",
-      "detail": "Choose the system appearance or a clinical workspace theme.",
-      "system": "Follow System",
+      "detail": "Choose Light, Dark, Warm Clinic, or Command Center.",
       "light": "Light",
       "dark": "Dark",
       "warm": "Warm Clinic",
