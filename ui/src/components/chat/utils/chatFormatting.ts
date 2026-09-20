@@ -55,6 +55,25 @@ export function normalizeDetailsBlocks(text: string): string {
   return out.join('\n');
 }
 
+/** 只剥「来源清单」性质的 details，模型自写的其他折叠块一律不动。 */
+const REFERENCE_SUMMARY_RE = /参考来源|参考文献|引用来源|references?/i;
+const REFERENCE_DETAILS_RE =
+  /<details\b[^>]*>\s*<summary\b[^>]*>([\s\S]*?)<\/summary>[\s\S]*?(?:<\/details>|$)/gi;
+
+/**
+ * 隐藏回答末尾的「参考来源」<details> 列表。来源改由界面自绘折叠条展示
+ * （CitationSourcesBar），这份模型手写的列表不再渲染 —— 但老会话的引用数据只存在
+ * 于这个列表里，兜底抓取（extractCitationsFromContent）必须在剥离**之前**跑。
+ * 流式期间块尚未闭合时删到文末，避免打字过程中列表闪现又消失。
+ */
+export function stripReferenceDetails(text: string): string {
+  if (!text || typeof text !== 'string' || !/<details/i.test(text)) return text;
+  const stripped = text.replace(REFERENCE_DETAILS_RE, (block, summary: string) =>
+    (REFERENCE_SUMMARY_RE.test(summary) ? '' : block));
+  if (stripped === text) return text;
+  return stripped.replace(/\n{3,}/g, '\n\n').trimEnd();
+}
+
 export function unescapeWithMathProtection(text: string) {
   if (!text || typeof text !== 'string') return text;
 

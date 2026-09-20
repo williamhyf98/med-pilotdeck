@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from '../../../shared/view/ui/Tooltip';
-import { splitCitationLabel, stripGradeSuffix } from './ragCitations';
+import {
+  splitCitationLabel,
+  splitFigureBlock,
+  stripDisambiguationSuffix,
+  stripGradeSuffix,
+} from './ragCitations';
 import type { CitationMetadata } from '../types/types';
 
 /**
@@ -15,7 +20,7 @@ const badgeClassName =
   'cursor-pointer rounded bg-blue-100 px-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:bg-blue-900 dark:text-blue-300 dark:hover:bg-blue-800';
 
 /** 摘要要压成一行一行的散文，chunk 原文里的换行在窄卡片里只会撑出锯齿。 */
-function toExcerpt(text: string | undefined): string {
+export function toExcerpt(text: string | undefined): string {
   if (!text) return '';
   const flat = text.replace(/\s+/g, ' ').trim();
   if (flat.length <= EXCERPT_LIMIT) return flat;
@@ -23,23 +28,28 @@ function toExcerpt(text: string | undefined): string {
 }
 
 /**
- * 卡片抬头：优先用工具下发的 display_label。
- *
- * 它比 title/section 多带了区分后缀（`·「正文首句…」`），两条同文献同章节的引用
- * 靠它才分得开 —— 这正是「隐藏 chunk_id 之后引用看起来重复」的解法：区分靠正文
- * 首句，不靠机器 id。
+ * 卡片抬头：优先用工具下发的结构化 title/section，读起来干净；两者皆空才回退
+ * 解析 display_label（老会话从尾部列表刮出来的引用只有 label）。无论哪条路，
+ * 章节尾部的 `·「正文首句…」` 消歧后缀都剥掉 —— 同名条目的区分交给摘录行和
+ * 弹窗正文，不再塞进抬头。
  */
-function resolveHeadline(cite: CitationMetadata): { title: string; section: string } {
+export function resolveHeadline(cite: CitationMetadata): { title: string; section: string } {
+  const structuredTitle = cite.title?.trim() ?? '';
+  const structuredSection = stripDisambiguationSuffix(cite.section?.trim() ?? '');
+  if (structuredTitle) return { title: structuredTitle, section: structuredSection };
+
   const label = cite.label?.trim();
   if (label) {
     const stripped = stripGradeSuffix(label, [cite.evidenceGrade ?? '', cite.evidenceQuality ?? '']);
     const parsed = splitCitationLabel(stripped);
-    if (parsed.title) return parsed;
+    if (parsed.title) {
+      return { title: parsed.title, section: stripDisambiguationSuffix(parsed.section) };
+    }
   }
-  return { title: cite.title?.trim() || '未标注文献', section: cite.section?.trim() || '' };
+  return { title: '未标注文献', section: structuredSection };
 }
 
-function EvidenceMarks({ cite, tone }: { cite: CitationMetadata; tone: 'tooltip' | 'modal' }) {
+export function EvidenceMarks({ cite, tone }: { cite: CitationMetadata; tone: 'tooltip' | 'modal' }) {
   if (!cite.evidenceGrade && !cite.evidenceQuality) return null;
   // Tooltip 在暗色主题下底色翻成浅灰（Tooltip.tsx:184 的 dark:bg-gray-100），
   // 只给 bg-white/20 的话徽标会糊在背景里看不见。
@@ -54,6 +64,38 @@ function EvidenceMarks({ cite, tone }: { cite: CitationMetadata; tone: 'tooltip'
   );
 }
 
+/** 图注常是「①…②…③…」连排，圈号前断行让每条图注独立成行（U+2460-2473 连续）。 */
+function breakFigureItems(text: string): string {
+  return text.replace(/\s*([①-⑳])/g, '\n$1').replace(/^\n/, '');
+}
+
+/**
+ * chunk 全文的分段渲染：按空行拆段（段内单换行仍由 pre-wrap 断行，枚举行不被
+ * 过度拉开），`相关图示：` 之后的内容拆成独立小节。
+ */
+function ChunkBody({ text }: { text: string }) {
+  const { body, figures } = splitFigureBlock(text);
+  const paragraphs = body
+    .split(/\n\s*\n/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return (
+    <div className="space-y-2 text-sm leading-relaxed text-neutral-800 dark:text-neutral-200">
+      {paragraphs.map((paragraph, position) => (
+        <p key={position} className="whitespace-pre-wrap break-words">
+          {paragraph}
+        </p>
+      ))}
+      {figures && (
+        <div className="rounded bg-neutral-50 px-3 py-2 dark:bg-neutral-800/60">
+          <div className="mb-1 text-xs font-medium text-neutral-400 dark:text-neutral-500">相关图示</div>
+          <p className="whitespace-pre-wrap break-words">{breakFigureItems(figures)}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * 点开角标后的 chunk 全文弹窗。
  *
@@ -61,7 +103,7 @@ function EvidenceMarks({ cite, tone }: { cite: CitationMetadata; tone: 'tooltip'
  * 是模型写错了编号，还是这条 chunk 本身就被检索错了 —— 后者还能顺带看到命中它的
  * 检索式。chunk_id 放在最底下的小灰字里，只作回溯语料用，不进正文也不进引用列表。
  */
-function CitationChunkModal({
+export function CitationChunkModal({
   cite,
   displayIndex,
   onClose,
@@ -141,9 +183,7 @@ function CitationChunkModal({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {cite.text ? (
-            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-neutral-800 dark:text-neutral-200">
-              {cite.text}
-            </p>
+            <ChunkBody text={cite.text} />
           ) : (
             <p className="text-sm text-neutral-500 dark:text-neutral-400">
               这条引用是从回答末尾的参考来源列表里还原的，没有对应的 chunk 原文

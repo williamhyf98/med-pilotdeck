@@ -138,13 +138,13 @@ function salvageQuery(text: string): string {
   }
 }
 
-/** 正文里已经能读到的骨架（`卷：`/`章节：`/`【章节：…】`）对用户是噪声，剥掉。 */
+/** 正文里已经能读到的骨架（`书名：`/`卷：`/`章节：`/`【章节：…】`）对用户是噪声，剥掉。 */
 export function stripChunkPreamble(text: string): string {
   const lines = text.split('\n');
   let start = 0;
   while (start < lines.length) {
     const line = lines[start].trim();
-    if (!line || line.startsWith('卷：') || line.startsWith('章节：')) {
+    if (!line || line.startsWith('卷：') || line.startsWith('章节：') || line.startsWith('书名：')) {
       start += 1;
       continue;
     }
@@ -254,6 +254,80 @@ export function stripGradeSuffix(label: string, marks: string[]): string {
   if (present.length === 0) return label;
   const suffix = `（${present.join('/')}）`;
   return label.endsWith(suffix) ? label.slice(0, -suffix.length).trimEnd() : label;
+}
+
+/**
+ * 去掉章节尾部的 `·「正文首句…」` 消歧后缀。
+ *
+ * 后端在 display_label 撞车时追加这段摘录（`_apply_citations`），塞在抬头里只会
+ * 让「书名 > 章节」读成一长串重复文本。摘录本身不丢：弹窗正文和折叠条卡片的
+ * 摘录行都能看到原文。
+ */
+export function stripDisambiguationSuffix(value: string): string {
+  const marker = value.indexOf('·「');
+  if (marker < 0) return value;
+  return value.slice(0, marker).trimEnd();
+}
+
+/**
+ * 把 chunk 原文按「相关图示：」拆成正文和图注两块。
+ *
+ * 军事医学语料把图注（①②③… 连排）直接拼在段尾，弹窗里混在正文中读不出层次。
+ * 标记保留在 text 里（stripChunkPreamble 不剥它），渲染层据此拆出独立小节。
+ * 标记后的内容整体视为图注 —— 语料里它总在 chunk 尾部。
+ */
+export function splitFigureBlock(text: string): { body: string; figures: string } {
+  const matched = /(?:^|\n)\s*相关图示：/.exec(text);
+  if (!matched) return { body: text, figures: '' };
+  const start = matched.index;
+  const figures = text
+    .slice(start)
+    .replace(/^\s*相关图示：/, '')
+    .trim();
+  return { body: text.slice(0, start).trimEnd(), figures };
+}
+
+export type OrderedCitation = {
+  citation: CitationMetadata;
+  display: number;
+  citedInline: boolean;
+};
+
+/**
+ * 折叠条的展示顺序：被正文引用过的来源按压缩后的展示号升序排前（与角标一致），
+ * 未被引用的来源续号排后（按原始编号升序）。条目按 chunkId 去重（缺 chunkId 用
+ * 原始编号兜底）；同一 chunk 被引用多号时，卡片只留最小展示号那条。
+ */
+export function orderCitationsForSources(
+  displayMap: Map<number, number>,
+  citations: CitationMetadata[],
+): OrderedCitation[] {
+  const sorted = [...citations].sort((left, right) => left.index - right.index);
+  const keyOf = (citation: CitationMetadata) => citation.chunkId || `index:${citation.index}`;
+
+  const seen = new Set<string>();
+  const cited: OrderedCitation[] = [];
+  // 先收被引用的，去重时才不会被靠前的未引用同 chunk 条目挤掉展示号。
+  for (const citation of sorted) {
+    const display = displayMap.get(citation.index);
+    if (display === undefined) continue;
+    const key = keyOf(citation);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    cited.push({ citation, display, citedInline: true });
+  }
+  cited.sort((left, right) => left.display - right.display);
+
+  const ordered = [...cited];
+  let next = cited.length > 0 ? cited[cited.length - 1].display : 0;
+  for (const citation of sorted) {
+    const key = keyOf(citation);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    next += 1;
+    ordered.push({ citation, display: next, citedInline: false });
+  }
+  return ordered;
 }
 
 const CODE_FENCE_RE = /```[\s\S]*?(?:```|$)/g;

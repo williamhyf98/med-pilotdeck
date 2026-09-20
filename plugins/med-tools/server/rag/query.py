@@ -30,8 +30,8 @@ PRESENTATION = (
     "输出仅供辅助，须医务人员复核。"
     "\n引用编号：正文角标必须原样使用 chunks[i].citation_index，不要自行编号、重排或合并；"
     "同一轮内多次检索时编号已全局分配，不会重复，照抄即可。"
-    "\n参考来源：每行必须原样使用 chunks[i].display_label，"
-    "不得改写、补全或猜测文献名与章节名；标签为空时只写编号。"
+    "\n不要在回答末尾输出「参考来源」清单或任何形式的来源列表——"
+    "界面会基于检索结果自动展示来源；来源只通过正文 [N] 角标传达。"
     "\n不要向用户描述检索过程或工具行为，"
     "例如「根据检索到的」「以上内容来自知识库」「注：以上图片均来自检索命中的原文页」一律不要输出；"
     "直接给结论，来源用角标表示。"
@@ -53,7 +53,8 @@ _citation_labels: dict[int, str] = {}
 _citation_bases: dict[str, int] = {}  # base label -> first index printed under it
 
 _LABEL_UNTITLED = "未标注文献"
-_PREAMBLE_PREFIXES = ("卷：", "章节：")
+_PREAMBLE_PREFIXES = ("卷：", "章节：", "书名：")
+_FIGURE_PREFIX = "相关图示："
 
 
 def _clean(value: object) -> str:
@@ -112,10 +113,14 @@ def _assign_citation_indices(items: list[dict[str, Any]]) -> list[int]:
 
 
 def _body_snippet(text: object, limit: int = 20) -> str:
-    """First words of the chunk body, past the ``卷：``/``章节：`` header block.
+    """First words of the chunk body, past the ``书名：``/``卷：``/``章节：`` header block.
 
     Used only to tell apart two chunks that share a title and a section; the
     snippet has to come from the body or every sibling would read the same.
+    The remote military-medicine corpus leads with a ``书名：`` line, which used
+    to leak into the snippet and repeat the base title verbatim. Figure-only
+    chunks start with ``相关图示：``; the marker is dropped so the caption text
+    itself becomes the snippet.
     """
 
     started = False
@@ -133,6 +138,8 @@ def _body_snippet(text: object, limit: int = 20) -> str:
         if end < 0:
             break
         flat = flat[end + 1 :].lstrip()
+    if flat.startswith(_FIGURE_PREFIX):
+        flat = flat[len(_FIGURE_PREFIX) :].lstrip()
     if not flat:
         return ""
     return flat[:limit] + ("…" if len(flat) > limit else "")

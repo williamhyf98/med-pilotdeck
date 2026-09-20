@@ -513,15 +513,30 @@ function convertNormalizedMessages(
     return mergeCitationsStable(segmentKeys[bucket], groups);
   };
 
+  // 「参考来源」折叠条每段只画一次：挂了引用的正文可能有多条（引用挂到段内全部
+  // 正文），把段内最后一条标成页脚，折叠条只跟着它走。
+  const footerIndexBySegment = new Map<number, number>();
+  converted.forEach((message, index) => {
+    if (!isArtifactAnchor(message)) return;
+    const bucket = segmentOf[index];
+    if (bucket < 0 || (segmentGroups[bucket]?.length ?? 0) === 0) return;
+    footerIndexBySegment.set(bucket, index);
+  });
+  const citationFooterIndexes = new Set(footerIndexBySegment.values());
+
   return converted.flatMap((message, index) => {
     if (anchoredArtifactIndexes.has(index)) return [];
     const attachedArtifacts = artifactsByAnchor.get(index);
     const citations = citationsFor(message, index);
+    const citationsFooter = citations !== undefined && citationFooterIndexes.has(index);
     if (!attachedArtifacts && !citations) return [message];
-    if (!attachedArtifacts) return [enrichWithCitations(message, citations as CitationMetadata[])];
+    if (!attachedArtifacts) {
+      return [enrichWithCitations(message, citations as CitationMetadata[], citationsFooter)];
+    }
     return [{
       ...message,
       ...(citations ? { citations } : {}),
+      ...(citationsFooter ? { citationsFooter: true } : {}),
       artifacts: [...(message.artifacts ?? []), ...attachedArtifacts],
     }];
   });
@@ -533,17 +548,24 @@ function convertNormalizedMessages(
 // so keying on it keeps the enriched object stable too.
 const citationEnrichCache = new WeakMap<
   ChatMessage,
-  { citations: CitationMetadata[]; value: ChatMessage }
+  { citations: CitationMetadata[]; citationsFooter: boolean; value: ChatMessage }
 >();
 
 function enrichWithCitations(
   message: ChatMessage,
   citations: CitationMetadata[],
+  citationsFooter: boolean,
 ): ChatMessage {
   const cached = citationEnrichCache.get(message);
-  if (cached && cached.citations === citations) return cached.value;
-  const value: ChatMessage = { ...message, citations };
-  citationEnrichCache.set(message, { citations, value });
+  if (cached && cached.citations === citations && cached.citationsFooter === citationsFooter) {
+    return cached.value;
+  }
+  const value: ChatMessage = {
+    ...message,
+    citations,
+    ...(citationsFooter ? { citationsFooter: true } : {}),
+  };
+  citationEnrichCache.set(message, { citations, citationsFooter, value });
   return value;
 }
 

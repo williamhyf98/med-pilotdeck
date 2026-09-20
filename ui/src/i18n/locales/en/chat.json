@@ -160,6 +160,9 @@
     "completed": "Thought process",
     "emoji": "💭 Thinking..."
   },
+  "citations": {
+    "summary": "Sources · {{total}}"
+  },
   "json": {
     "response": "JSON Response"
   },

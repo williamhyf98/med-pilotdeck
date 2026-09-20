@@ -160,6 +160,9 @@
     "completed": "思考过程",
     "emoji": "💭 思考中..."
   },
+  "citations": {
+    "summary": "参考来源 · {{total}}"
+  },
   "json": {
     "response": "JSON 响应"
   },

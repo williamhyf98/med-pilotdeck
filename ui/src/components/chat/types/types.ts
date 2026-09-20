@@ -177,6 +177,8 @@ export interface ChatMessage {
   ragSearchCount?: number;
   /** 行内引用元数据（从 RAG 工具返回的 chunks 中提取），供 Markdown 渲染 [N] 角标时使用 */
   citations?: CitationMetadata[];
+  /** 本段的「参考来源」折叠条挂在这条消息上（每段只标最后一条挂了引用的正文，防重复渲染） */
+  citationsFooter?: boolean;
   editedFileCount?: number;
   exploredFileCount?: number;
   commandCount?: number;
