@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import {
   Background,
@@ -323,8 +324,11 @@ export default function SkillFlowEditor({
     onClose();
   }, [nodes, onClose, t]);
 
-  return (
-    <div className="fixed inset-0 z-[60] flex flex-col bg-white dark:bg-neutral-950">
+  // Portaled to <body>: the main area's content wrapper is a `z-0` stacking
+  // context below the app header (z-[80]), so a fixed overlay rendered in
+  // place can never cover the header regardless of its own z-index.
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex flex-col bg-white dark:bg-neutral-950">
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-neutral-200 px-3 dark:border-neutral-800">
         <div className="flex min-w-0 items-center gap-2">
           <Workflow className="h-4 w-4 shrink-0 text-sky-500" strokeWidth={1.75} />
@@ -402,6 +406,7 @@ export default function SkillFlowEditor({
           onCreated={onCreated}
         />
       ) : null}
-    </div>
+    </div>,
+    document.body,
   );
 }

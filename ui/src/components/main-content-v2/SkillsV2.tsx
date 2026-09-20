@@ -1,4 +1,5 @@
 import { type ReactNode, lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import CodeMirror from '@uiw/react-codemirror';
 import { markdown } from '@codemirror/lang-markdown';
@@ -468,11 +469,12 @@ export default function SkillsV2({ selectedProject, compact = false }: SkillsV2P
 
       {showFlowEditor ? (
         <Suspense
-          fallback={
-            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-white/80 dark:bg-neutral-950/80">
+          fallback={createPortal(
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/80 dark:bg-neutral-950/80">
               <Loader2 className="h-6 w-6 animate-spin text-neutral-400" strokeWidth={1.75} />
-            </div>
-          }
+            </div>,
+            document.body,
+          )}
         >
           <SkillFlowEditor
             projectPath={cwd}
@@ -533,24 +535,24 @@ function Header({
           <span className="truncate">{cwd}</span>
         )}
       </div>
-      <div className="flex items-center gap-1">
+      <div className="flex shrink-0 items-center gap-1">
         <button
           type="button"
           onClick={onNewSkill}
-          className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-neutral-700 transition hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-900"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-neutral-600 transition hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-900"
           title={t('skillsTab.newSkill', { defaultValue: '新建技能' }) as string}
+          aria-label={t('skillsTab.newSkill', { defaultValue: '新建技能' }) as string}
         >
           <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
-          <span>{t('skillsTab.newSkill', { defaultValue: '新建技能' })}</span>
         </button>
         <button
           type="button"
           onClick={onFlowSkill}
-          className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-neutral-700 transition hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-900"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-neutral-600 transition hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-900"
           title={t('skillsTab.flowSkill', { defaultValue: '流程图创建' }) as string}
+          aria-label={t('skillsTab.flowSkill', { defaultValue: '流程图创建' }) as string}
         >
           <Workflow className="h-3.5 w-3.5" strokeWidth={1.75} />
-          <span>{t('skillsTab.flowSkill', { defaultValue: '流程图创建' })}</span>
         </button>
         <button
           type="button"
