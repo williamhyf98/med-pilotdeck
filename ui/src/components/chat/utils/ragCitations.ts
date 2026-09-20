@@ -293,10 +293,33 @@ export type OrderedCitation = {
   citedInline: boolean;
 };
 
+/** 与卡片摘录（CitationPopover 的 EXCERPT_LIMIT）保持一致：前 120 字相同即视觉重复。 */
+const CONTENT_KEY_LIMIT = 120;
+
+/**
+ * 内容级去重键：文献名 + 章节 + 正文前 120 字（压平空白）。
+ *
+ * 语料库里存在同一文档重复入库的镜像 chunk（chunk_id 只差批次前缀、文本逐字节
+ * 相同），还有相邻 chunk 共享同一段「相关图示」图注 —— 它们 chunk_id 不同、全文
+ * 指纹不同，后端会各给一个引用号，折叠条里就是两张一模一样的卡。这里按「用户
+ * 实际看到的内容」（抬头 + 摘录）判重。没有正文的旧条目返回 null，不参与判重。
+ */
+function contentKeyOf(citation: CitationMetadata): string | null {
+  const flat = (citation.text ?? '').replace(/\s+/g, ' ').trim();
+  if (!flat) return null;
+  const title = (citation.title ?? '').trim();
+  const section = (citation.section ?? '').trim();
+  return `${title} ${section} ${flat.slice(0, CONTENT_KEY_LIMIT)}`;
+}
+
 /**
  * 折叠条的展示顺序：被正文引用过的来源按压缩后的展示号升序排前（与角标一致），
  * 未被引用的来源续号排后（按原始编号升序）。条目按 chunkId 去重（缺 chunkId 用
  * 原始编号兜底）；同一 chunk 被引用多号时，卡片只留最小展示号那条。
+ *
+ * 在此之上做内容级去重：被引用的条目永远保留（正文角标必须有对应卡片）；未被
+ * 引用的条目若与某条被引用条目内容相同则丢弃，未引用条目彼此内容相同时只留
+ * score 最高的一条。纯前端 O(n) 计算，条目数量级几十，无可感知延迟。
  */
 export function orderCitationsForSources(
   displayMap: Map<number, number>,
@@ -306,6 +329,7 @@ export function orderCitationsForSources(
   const keyOf = (citation: CitationMetadata) => citation.chunkId || `index:${citation.index}`;
 
   const seen = new Set<string>();
+  const citedContentKeys = new Set<string>();
   const cited: OrderedCitation[] = [];
   // 先收被引用的，去重时才不会被靠前的未引用同 chunk 条目挤掉展示号。
   for (const citation of sorted) {
@@ -314,16 +338,40 @@ export function orderCitationsForSources(
     const key = keyOf(citation);
     if (seen.has(key)) continue;
     seen.add(key);
+    const contentKey = contentKeyOf(citation);
+    if (contentKey) citedContentKeys.add(contentKey);
     cited.push({ citation, display, citedInline: true });
   }
   cited.sort((left, right) => left.display - right.display);
 
-  const ordered = [...cited];
-  let next = cited.length > 0 ? cited[cited.length - 1].display : 0;
+  // 未引用条目：按内容分组，与已引用内容重复的整组丢弃，组内留最高分。
+  const uncitedBest = new Map<string, CitationMetadata>();
+  const uncitedPlain: CitationMetadata[] = [];
   for (const citation of sorted) {
     const key = keyOf(citation);
     if (seen.has(key)) continue;
     seen.add(key);
+    const contentKey = contentKeyOf(citation);
+    if (!contentKey) {
+      uncitedPlain.push(citation);
+      continue;
+    }
+    if (citedContentKeys.has(contentKey)) continue;
+    const existing = uncitedBest.get(contentKey);
+    if (
+      !existing ||
+      (citation.score ?? Number.NEGATIVE_INFINITY) > (existing.score ?? Number.NEGATIVE_INFINITY)
+    ) {
+      uncitedBest.set(contentKey, citation);
+    }
+  }
+
+  const ordered = [...cited];
+  let next = cited.length > 0 ? cited[cited.length - 1].display : 0;
+  const survivors = [...uncitedBest.values(), ...uncitedPlain].sort(
+    (left, right) => left.index - right.index,
+  );
+  for (const citation of survivors) {
     next += 1;
     ordered.push({ citation, display: next, citedInline: false });
   }
