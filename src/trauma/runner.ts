@@ -6,21 +6,29 @@ import { normalizeChineseDisplayText } from "./displayLabels.js";
 import { resolveGate } from "./gate.js";
 import { resolveStagePlacement } from "./placement.js";
 import type { StructuredModelClient } from "./modelClient.js";
-import { TRAUMA_RAG_TOPIC, TRAUMA_RAG_TOP_K, type TraumaRagClient } from "./rag/client.js";
+import type { TraumaRagClient } from "./rag/client.js";
 import { mergeRetrieval } from "./rag/merge.js";
 import { buildBaselineQueries } from "./rag/queryPlan.js";
+import { runBaselineRetrieval } from "./rag/retrieval.js";
 import { initialCaseState, isLaterSubStage, SUBSTAGE_TO_MAIN, typicalFacilityForSubStage } from "./stageConfig.js";
 import { createPlacementStation } from "./stations/placer.js";
-import { createReasonerStation } from "./stations/reasoner.js";
+import {
+  createReasonerStation,
+  type ReasonerAttachmentInterpretationContext,
+} from "./stations/reasoner.js";
 import type { TraumaCaseStore } from "./store.js";
+import { buildInterpretationContext } from "./attachments/interpretationBudget.js";
+import type { InterpretationStation } from "./stations/interpreter.js";
 import type {
   AgentTurnResponse,
   CaseSnapshot,
   CaseState,
+  InterpretationEntry,
   MainStage,
   PlacementAssessment,
   SubStage,
   CitationMetadata,
+  TraumaAttachmentRef,
   TurnFormInput,
 } from "./types.js";
 
@@ -49,7 +57,9 @@ export type TraumaTurnProgress =
       detail?: string;
       durationMs?: number;
       details?: Record<string, unknown>;
-    };
+    }
+  | { kind: "attachment_interpretation"; status: "started" }
+  | { kind: "attachment_interpretation"; status: "finished"; ok: boolean };
 
 export type TraumaTurnInput = {
   projectId: string;
@@ -58,6 +68,10 @@ export type TraumaTurnInput = {
   form: TurnFormInput;
   /** 用户本轮原始自由文本，存入快照供审计与回溯，不参与推演逻辑。 */
   rawInput?: string;
+  /** 网关已合并好的表达策略；只影响自然语言呈现。 */
+  presentationPolicy?: string | null;
+  /** 本轮上传的医学附件；为空或缺省时工位 I 不启动。 */
+  attachments?: TraumaAttachmentRef[];
   now: string;
   onProgress?: (progress: TraumaTurnProgress) => void;
   onAssistantTextDelta?: (text: string) => void | Promise<void>;
@@ -257,6 +271,8 @@ export function createTraumaTurnRunner(deps: {
   store: TraumaCaseStore;
   model: StructuredModelClient;
   rag: TraumaRagClient;
+  /** 工位 I；未注入时附件被忽略，行为与无附件轮次一致。 */
+  interpreter?: InterpretationStation;
   audit?: TraumaAuditLogger;
   now?: () => string;
 }): TraumaTurnRunner {
@@ -289,6 +305,19 @@ export function createTraumaTurnRunner(deps: {
         });
       };
       const report = input.onProgress ?? (() => {});
+      // runTurn 可能已经通过 partial 分支 return 或者 catch 抛出而结束；工位 I
+      // 的支线在那之后仍可能异步 settle（正常完成、被取消、或故障），必须让它的
+      // 进度上报变成无操作，否则会向一个已经关闭的事件流里投递“迟到”事件。
+      let turnEnded = false;
+      const reportInterpretation = (progress: TraumaTurnProgress) => {
+        if (turnEnded) return;
+        report(progress);
+      };
+      const interpretController = new AbortController();
+      const cancelInterpretation = () => {
+        interpretController.abort(input.abortSignal?.reason ?? "interpretation cancelled");
+      };
+      input.abortSignal?.addEventListener("abort", cancelInterpretation, { once: true });
       const beginStep = async (
         number: number,
         phase: string,
@@ -368,6 +397,38 @@ export function createTraumaTurnRunner(deps: {
             + candidate.notes.length,
           vitalHistoryCount: candidate.vitalSignsHistory.length,
         });
+
+        // 工位 I 与 step 3/4 并行：定级只看表单生命体征与叙述，不需要影像；
+        // 而 confirm_placement 要等用户点确认，这个窗口通常足以覆盖判读耗时。
+        const attachments = input.attachments ?? [];
+        const runInterpretation = Boolean(deps.interpreter) && attachments.length > 0;
+        // 传入 structuredClone(candidate) 而不是引用本身：step 3/4 会在支线运行期间
+        // 并发改写 candidate（currentStage/currentSubStage/currentCapabilities/
+        // placementRationale），工位 I 与定级并行、不依赖定级结果，快照要固定在
+        // step 2 合并完成后的状态，不能是时序竞争出来的任意中间态。
+        const interpretationSnapshot = structuredClone(candidate);
+        const interpretationPromise: Promise<{ text: string; fileNames: string[] }> =
+          runInterpretation
+            ? (async () => {
+              try {
+                reportInterpretation({ kind: "attachment_interpretation", status: "started" });
+                const result = await deps.interpreter!.interpret({
+                  state: interpretationSnapshot,
+                  attachments,
+                  signal: interpretController.signal,
+                });
+                reportInterpretation({ kind: "attachment_interpretation", status: "finished", ok: Boolean(result.text) });
+                return result;
+              } catch {
+                // 支线故障不该让整轮失败——判读置空，主线照常推演。
+                reportInterpretation({ kind: "attachment_interpretation", status: "finished", ok: false });
+                return { text: "", fileNames: [] };
+              }
+              // Belt and braces：即便 try/catch 之外（例如 reportInterpretation 本身
+              // 抛出、或上面的 catch 分支再次抛出）仍有异常逃逸，这里兜底吞掉，
+              // 防止一个未处理的 rejection 在支线于主线结束后才 settle 时杀掉进程。
+            })().catch(() => ({ text: "", fileNames: [] }))
+            : Promise.resolve({ text: "", fileNames: [] });
 
         await beginStep(3, "assess_placement");
         const proposedPlacement: PlacementAssessment = input.form.statedSubStage
@@ -459,6 +520,11 @@ export function createTraumaTurnRunner(deps: {
         });
 
         if (!candidate.currentStage || !candidate.currentSubStage) {
+          // 本轮不会走到 reasoner，判读没有消费者；取消支线，避免它向一个
+          // 已经结束的轮次写状态。支线自身的 promise 已经在启动处 .catch 兜底，
+          // 这里不需要（也无法通过 void 达到）再消费它一次。
+          cancelInterpretation();
+          turnEnded = true;
           const outOfScope = proposedPlacement.source === "out_of_scope";
           await beginStep(5, "build_partial_response_and_snapshot");
           const partialState: CaseState = {
@@ -509,8 +575,40 @@ export function createTraumaTurnRunner(deps: {
               round: partialState.round,
             },
           });
+          turnEnded = true;
           return response;
         }
+
+        const interpretation = await interpretationPromise;
+        let currentInterpretation: ReasonerAttachmentInterpretationContext["current"] = null;
+        if (interpretation.text) {
+          const entry: InterpretationEntry = {
+            id: randomUUID(),
+            round: nextRound,
+            createdAt: now,
+            fileNames: interpretation.fileNames,
+            text: interpretation.text,
+          };
+          currentInterpretation = { round: entry.round, text: entry.text };
+          candidate.attachmentInterpretations = [
+            ...(previous.attachmentInterpretations ?? []),
+            entry,
+          ];
+        }
+        const historicalInterpretationContext = buildInterpretationContext(
+          previous.attachmentInterpretations ?? [],
+        );
+        const retrievalInterpretationContext = [
+          currentInterpretation?.text,
+          historicalInterpretationContext,
+        ].filter((text): text is string => Boolean(text)).join("\n\n");
+        const reasonerInterpretationContext: ReasonerAttachmentInterpretationContext | null =
+          currentInterpretation || historicalInterpretationContext
+            ? {
+                current: currentInterpretation,
+                history: historicalInterpretationContext || null,
+              }
+            : null;
 
         // 级别在第 4 步就已确认，这里带上它，让流程图的「生成中」叶子节点
         // 在检索与生成开始前就挂到正确的子级下，而不是先落在默认位置再跳。
@@ -520,12 +618,13 @@ export function createTraumaTurnRunner(deps: {
           subStage: candidate.currentSubStage,
         });
         throwIfAborted();
-        const baseline = buildBaselineQueries(candidate);
-        const firstWaveResults = await Promise.all(baseline.map(async (query) => {
-          const result = await deps.rag.query({ query: query.query, top_k: TRAUMA_RAG_TOP_K, topic: TRAUMA_RAG_TOPIC, signal: input.abortSignal });
-          throwIfAborted();
-          return { query, chunks: result.chunks, backend: result.retrieval_backend };
-        }));
+        const baseline = buildBaselineQueries(candidate, retrievalInterpretationContext);
+        const firstWaveResults = await runBaselineRetrieval({
+          queries: baseline,
+          rag: deps.rag,
+          signal: input.abortSignal,
+        });
+        throwIfAborted();
         const merged = mergeRetrieval({
           queries: baseline,
           results: firstWaveResults,
@@ -561,9 +660,12 @@ export function createTraumaTurnRunner(deps: {
         throwIfAborted();
         const citations = buildCitationMetadata(merged.promptChunks);
         await input.onAssistantCitations?.(citations);
+        // 记忆是可选增强：取不到就按无记忆推演，不影响本轮任何其他步骤。
         const reasoned = await reasoner.reason({
           state: candidate,
           promptChunks: merged.promptChunks,
+          attachmentInterpretation: reasonerInterpretationContext,
+          presentationPolicy: input.presentationPolicy ?? null,
           signal: input.abortSignal,
           onNaturalLanguageDelta: input.onAssistantTextDelta,
           onNaturalLanguageEnd: input.onAssistantTextEnd,
@@ -593,7 +695,9 @@ export function createTraumaTurnRunner(deps: {
           merged.promptChunks,
         );
         await input.onAssistantCitations?.(normalizedAnswerCitations.citations);
-        const naturalLanguageAnswer = normalizeChineseDisplayText(normalizedAnswerCitations.answer);
+        const naturalLanguageAnswer = normalizeChineseDisplayText(
+          normalizedAnswerCitations.answer,
+        );
         // 「已使用」严格等于正文里打了角标的知识块，这样知识块依据里的每一条
         // 都能显示出与参考来源列表一致的编号。
         const displayedCitationChunkIds = normalizedAnswerCitations.usedChunkIds;
@@ -747,6 +851,9 @@ export function createTraumaTurnRunner(deps: {
           error,
         });
         throw error;
+      } finally {
+        turnEnded = true;
+        input.abortSignal?.removeEventListener("abort", cancelInterpretation);
       }
     },
 

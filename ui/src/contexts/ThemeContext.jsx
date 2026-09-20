@@ -3,6 +3,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 const ThemeContext = createContext();
 const THEME_MODE_KEY = 'themeMode';
 const LEGACY_THEME_KEY = 'theme';
+const PRODUCT_THEMES = new Set(['warm', 'command']);
 
 const getSystemDarkMode = () => (
   typeof window !== 'undefined' &&
@@ -11,7 +12,13 @@ const getSystemDarkMode = () => (
 );
 
 const normalizeThemeMode = (value) => (
-  value === 'light' || value === 'dark' || value === 'system' ? value : null
+  value === 'light'
+  || value === 'dark'
+  || value === 'system'
+  || value === 'warm'
+  || value === 'command'
+    ? value
+    : null
 );
 
 const readInitialThemeMode = () => {
@@ -25,7 +32,7 @@ const readInitialThemeMode = () => {
 };
 
 const resolveThemeMode = (mode) => (
-  mode === 'system' ? getSystemDarkMode() : mode === 'dark'
+  mode === 'system' ? getSystemDarkMode() : mode === 'dark' || mode === 'command'
 );
 
 // eslint-disable-next-line react-refresh/only-export-components
@@ -46,6 +53,12 @@ export const ThemeProvider = ({ children }) => {
     const nextIsDark = resolveThemeMode(themeMode);
     setIsDarkMode(nextIsDark);
 
+    if (PRODUCT_THEMES.has(themeMode)) {
+      document.documentElement.dataset.theme = themeMode;
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+
     if (nextIsDark) {
       document.documentElement.classList.add('dark');
 
@@ -57,7 +70,7 @@ export const ThemeProvider = ({ children }) => {
       
       const themeColorMeta = document.querySelector('meta[name="theme-color"]');
       if (themeColorMeta) {
-        themeColorMeta.setAttribute('content', '#0c1117'); // Dark background color (hsl(222.2 84% 4.9%))
+        themeColorMeta.setAttribute('content', themeMode === 'command' ? '#0a111f' : '#0c1117');
       }
     } else {
       document.documentElement.classList.remove('dark');
@@ -70,7 +83,7 @@ export const ThemeProvider = ({ children }) => {
       
       const themeColorMeta = document.querySelector('meta[name="theme-color"]');
       if (themeColorMeta) {
-        themeColorMeta.setAttribute('content', '#ffffff'); // Light background color
+        themeColorMeta.setAttribute('content', themeMode === 'warm' ? '#faf8f4' : '#ffffff');
       }
     }
 

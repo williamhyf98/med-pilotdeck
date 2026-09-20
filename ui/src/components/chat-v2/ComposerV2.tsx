@@ -506,7 +506,7 @@ export default function ComposerV2({
     <div
       className={cn(
         'min-w-0 shrink-0',
-        chromeless ? '' : 'bg-white px-6 pb-6 pt-3 dark:bg-neutral-950',
+        chromeless ? '' : 'workspace-dock-surface px-6 pb-6 pt-3',
       )}
     >
       <div className={cn('min-w-0', chromeless ? '' : 'mx-auto max-w-[720px]')}>
@@ -623,9 +623,9 @@ export default function ComposerV2({
             <div
               {...getRootProps()}
               className={cn(
-                'group rounded-xl border bg-white p-2 shadow-sm transition-colors',
-                'border-neutral-200 focus-within:border-neutral-300',
-                'dark:border-neutral-800 dark:bg-neutral-900 dark:focus-within:border-neutral-700',
+                'workspace-composer-surface group rounded-xl border p-2 transition-colors',
+                'border-neutral-300/70 focus-within:border-neutral-400',
+                'dark:border-neutral-700/80 dark:focus-within:border-neutral-600',
                 isDragActive && 'border-dashed border-neutral-400 dark:border-neutral-500',
               )}
             >

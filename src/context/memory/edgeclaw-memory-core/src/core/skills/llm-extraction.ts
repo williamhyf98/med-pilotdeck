@@ -10,6 +10,12 @@ import type {
   RecallHeaderEntry,
   RetrievalPromptDebug,
 } from "../types.js";
+import { redact } from "../../MemoryPrivacyPolicy.js";
+import {
+  type MemoryPromptProfile,
+  GENERAL_MEDICINE_PROFILE,
+  resolveMemoryPromptProfile,
+} from "./prompts/index.js";
 
 type LoggerLike = {
   info?: (...args: unknown[]) => void;
@@ -86,9 +92,13 @@ interface ModelSelection {
   headers?: ProviderHeaders;
 }
 
-interface RawUserProfilePayload {
+export interface RawUserProfilePayload {
   identity_background_markdown?: unknown;
+  /** Legacy alias kept so profiles written before Task 4 still parse. */
   identity_background?: unknown;
+  specialty_markdown?: unknown;
+  /** Legacy model output. Accepted for parsing but intentionally not persisted. */
+  clinical_preference_markdown?: unknown;
 }
 
 type MemoryCreateKind = "user" | "project" | "feedback";
@@ -215,116 +225,15 @@ const DEFAULT_FILE_MEMORY_PROJECT_SELECTION_TIMEOUT_MS = 45_000;
 const DEFAULT_FILE_MEMORY_SELECTION_TIMEOUT_MS = 45_000;
 const DEFAULT_FILE_MEMORY_EXTRACTION_TIMEOUT_MS = 75_000;
 
-const MEMORY_CLASSIFICATION_SYSTEM_PROMPT = `
-You classify one focus user turn for a long-term memory indexing pipeline.
+// These 4 constants are re-exported from the general_medicine prompt profile so
+// that their values remain accessible at this path (the prompts.test.ts snapshot
+// test imports from here). Task 5 is a pure mechanical move — the strings are
+// identical to the inline definitions that lived here before.
+export const MEMORY_CLASSIFICATION_SYSTEM_PROMPT = GENERAL_MEDICINE_PROFILE.classify;
 
-You are only deciding categories. Do not generate the memory file yet.
-
-Rules:
-- Base the decision on the focus user turn first.
-- You may use the neighboring user/assistant turns only to disambiguate the focus turn.
-- Assistant text is context only. Never classify something that exists only in assistant wording.
-- A turn can match multiple categories, but at most once per category.
-- Allowed categories:
-  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.
-  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.
-  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.
-- Identity test: only use user when the focus turn is describing the user as a person.
-- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.
-- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.
-- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.
-- If the user explicitly says "请记住", "帮我记住", or "remember this", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.
-- If nothing durable should be remembered, return should_store=false and labels=[].
-- Return JSON only.
-
-Use this exact JSON shape:
-{
-  "should_store": true,
-  "labels": [
-    {
-      "type": "user | project | feedback",
-      "reason": "why this category applies",
-      "evidence": "short quote or evidence summary from the focus turn"
-    }
-  ]
-}
-`.trim();
-
-const USER_NOTE_CREATE_SYSTEM_PROMPT = `
-You create one append-only user memory note from a focus user turn.
-
-Rules:
-- Create at most one user note.
-- The note must capture only durable cross-project personal identity/background information about who the user is.
-- Keep only long-lived identity facts such as name, profession, stable role context, life background, or durable relationship context.
-- Do not include language choices, answer structure, formatting habits, style preferences, file boundaries, tool boundaries, or project-specific collaboration rules.
-- One note should express one durable identity/background fact rather than a full profile rewrite.
-- The visible output language must follow the dominant user language in the focus user turn and neighboring user turns.
-- If the surrounding dialogue mixes languages, prefer the focus user turn language first, then the nearest neighboring user language.
-- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.
-- Keep the note readable markdown.
-- Do not force the note into a fixed profile template. Use headings only when they genuinely help readability.
-- Return JSON only.
-
-Use this exact JSON shape:
-{
-  "skip": false,
-  "reason": "",
-  "name": "short user-memory title",
-  "description": "one-line description",
-  "markdown": "markdown body"
-}
-`.trim();
-
-const PROJECT_NOTE_CREATE_SYSTEM_PROMPT = `
-You create one append-only project memory note from a focus user turn.
-
-Rules:
-- Create at most one project note.
-- The note belongs to the current project only.
-- Capture durable project facts: what the project is, stable scope, goals, key progress, blockers, risks, important decisions, important next steps.
-- Do not reduce the note to a vague status line.
-- Do not focus on highly volatile percentages, fleeting schedules, or trivial short-term updates unless they reveal a durable blocker/risk/fact.
-- The visible output language must follow the dominant user language in the focus user turn and neighboring user turns.
-- If the surrounding dialogue mixes languages, prefer the focus user turn language first, then the nearest neighboring user language.
-- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.
-- Keep the note readable markdown.
-- Prefer meaningful headings when useful, such as: ## Summary, ## Current Stage, ## Constraints, ## Blockers, ## Next Steps, ## Timeline, ## Notes.
-- Return JSON only.
-
-Use this exact JSON shape:
-{
-  "skip": false,
-  "reason": "",
-  "name": "short project-memory title",
-  "description": "one-line description",
-  "markdown": "markdown body"
-}
-`.trim();
-
-const FEEDBACK_NOTE_CREATE_SYSTEM_PROMPT = `
-You create one append-only feedback memory note from a focus user turn.
-
-Rules:
-- Create at most one feedback note.
-- The note belongs to the current project only.
-- Use feedback for collaboration rules, delivery order, style constraints, title/body template rules, confirmed output expectations, language rules, and file/tool boundaries.
-- The visible output language must follow the dominant user language in the focus user turn and neighboring user turns.
-- If the surrounding dialogue mixes languages, prefer the focus user turn language first, then the nearest neighboring user language.
-- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.
-- Keep the note readable markdown.
-- Prefer meaningful headings when useful, especially: ## Rule, ## Why, ## How To Apply, ## Notes.
-- Return JSON only.
-
-Use this exact JSON shape:
-{
-  "skip": false,
-  "reason": "",
-  "name": "short feedback-memory title",
-  "description": "one-line description",
-  "markdown": "markdown body"
-}
-`.trim();
+export const USER_NOTE_CREATE_SYSTEM_PROMPT = GENERAL_MEDICINE_PROFILE.noteCreate.user!;
+export const PROJECT_NOTE_CREATE_SYSTEM_PROMPT = GENERAL_MEDICINE_PROFILE.noteCreate.project!;
+export const FEEDBACK_NOTE_CREATE_SYSTEM_PROMPT = GENERAL_MEDICINE_PROFILE.noteCreate.feedback;
 
 export interface LlmDreamFileProjectMetaInput {
   projectId: string;
@@ -513,118 +422,121 @@ export interface LlmDreamProjectMetaReviewOutput {
 }
 
 const EXTRACTION_SYSTEM_PROMPT = `
-You are a memory indexing engine for a conversational assistant.
+你是对话助手的记忆索引引擎。
 
-Your job is to convert a visible user/assistant conversation into durable memory indexes.
+你的任务是把可见的用户/助手对话转换为持久记忆索引。
 
-Rules:
-- Only use information explicitly present in the conversation.
-- Ignore system prompts, tool scaffolding, hidden reasoning, formatting artifacts, and operational chatter.
-- Be conservative. If something is ambiguous, omit it.
-- Track projects only when they look like a real ongoing effort, task stream, research topic, implementation effort, or recurring problem worth revisiting later.
-- "Project" here is broad: it can be a workstream, submission, research effort, health/problem thread, or other ongoing topic the user is likely to revisit.
-- If the conversation contains multiple independent ongoing threads, return multiple project items instead of collapsing them into one.
-- Repeated caregiving, illness handling, symptom tracking, recovery follow-up, or other ongoing real-world problem-solving threads should be treated as projects when the user is actively managing them.
-- Example: "friend has diarrhea / user buys medicine / later reports recovery" is a project-like thread.
-- Example: "preparing an EMNLP submission" is another independent project-like thread.
-- Do not treat casual one-off mentions as projects.
-- Extract facts only when they are likely to matter in future conversations: preferences, constraints, goals, identity, long-lived context, stable relationships, or durable project context.
-- The facts are intermediate material for a later global profile rewrite, so prefer stable facts over temporary situation notes.
-- Natural-language output fields must use the dominant language of the user messages. If user messages are mixed, prefer the most recent user language. Keys and enums must stay in English.
-- Each project summary must be a compact 1-2 sentence project memory, not a generic status line.
-- A good project summary should preserve: what the project is, what stage it is in now, and the next step / blocker / missing info when available.
-- Do not output vague summaries like "the user is working on this project", "progress is going well", "things are okay", or "handling something" unless the project-specific context is also included.
-- latest_progress must stay short and only capture the newest meaningful update, newest blocker, or newest confirmation state.
-- Return valid JSON only. No markdown fences, no commentary.
+规则：
+- 只能使用对话中明确出现的信息。
+- 忽略系统提示词、工具脚手架、隐藏推理、格式噪声和运行过程闲聊。
+- 保守判断。如果内容存在歧义，就省略它。
+- 只有当某个主题看起来是真实的持续工作、任务流、研究主题、实施工作或值得以后再次回顾的重复问题时，才将其作为项目跟踪。
+- 此处“项目”的含义较宽，可以是工作流、投稿、研究工作、健康/问题线索，或用户可能反复讨论的其他持续主题。
+- 如果对话包含多个相互独立的持续主题，返回多个 project 项，不要合并成一个。
+- 当用户正在持续处理照护、疾病应对、症状追踪、康复随访或其他现实问题时，应将这些重复的问题解决线索视为项目。
+- 示例：“朋友腹泻 / 用户购买药物 / 后续反馈康复”是一条项目型线索。
+- 示例：“准备 EMNLP 投稿”是另一条独立的项目型线索。
+- 不要把随口提及的一次性内容视为项目。
+- 只提取可能影响未来对话的事实：偏好、约束、目标、身份、长期上下文、稳定关系或持久项目上下文。
+- 这些事实是后续全局画像重写的中间材料，因此应优先保留稳定事实，而不是临时情境记录。
+- 自然语言输出字段必须使用用户消息中的主要语言。如果用户消息混合多种语言，优先采用最近一条用户消息的语言。键名和枚举值必须保持英文。
+- 每个项目摘要必须是紧凑的 1 至 2 句项目记忆，不能只是通用状态句。
+- 良好的项目摘要应尽量保留：项目是什么、当前处于什么阶段，以及可用时的后续步骤、阻塞或缺失信息。
+- 不要输出“用户正在做这个项目”“进展顺利”“情况还好”或“正在处理某事”之类含糊摘要，除非同时包含项目特定上下文。
+- latest_progress 必须简短，只记录最新的有意义进展、最新阻塞或最新确认状态。
+- 只返回有效 JSON，不要使用 Markdown 代码围栏，也不要附加说明。
 
-Use this exact JSON shape:
+严格使用以下 JSON 结构：
 {
-  "summary": "short session summary",
-  "situation_time_info": "short time-aware progress line",
+  "summary": "简短的会话摘要",
+  "situation_time_info": "简短且包含时间语境的进展说明",
   "facts": [
     {
       "category": "preference | profile | goal | constraint | relationship | project | context | other",
-      "subject": "stable english key fragment",
-      "value": "durable fact text",
+      "subject": "稳定的英文键名片段",
+      "value": "持久事实文本",
       "confidence": 0.0
     }
   ],
   "projects": [
     {
-      "key": "stable english identifier, lower-kebab-case",
-      "name": "project name as the user would recognize it",
+      "key": "稳定的英文标识符，使用 lower-kebab-case",
+      "name": "用户能够识别的项目名称",
       "status": "planned | in_progress | done",
-      "summary": "rolling 1-2 sentence summary: what this project is + current phase + next step/blocker when known",
-      "latest_progress": "short latest meaningful progress or blocker, without repeating the full project background",
+      "summary": "滚动更新的 1 至 2 句摘要：项目是什么 + 当前阶段 + 已知时的后续步骤/阻塞",
+      "latest_progress": "简短的最新有效进展或阻塞，不重复完整项目背景",
       "confidence": 0.0
     }
   ]
 }
 `.trim();
 
-const USER_PROFILE_REWRITE_SYSTEM_PROMPT = `
-You rewrite the single "身份背景" section of a global user profile for a conversational memory system.
+export const USER_PROFILE_REWRITE_SYSTEM_PROMPT = `
+你负责重写对话记忆系统中的全局用户画像。
+画像包含两个部分，每个部分都应在对应字段中使用 Markdown 项目符号列表书写。
 
-Rules:
-- Return JSON only.
-- The existing profile markdown is the previous draft. The incoming user notes are the newest evidence.
-- Rewrite the section from scratch. Do not append blindly, and do not keep duplicate or near-duplicate facts just because they already exist.
-- Keep only durable personal identity/background information that should persist across future sessions.
-- If old profile content conflicts with newer, clearer incoming evidence, prefer the newer evidence and rewrite the section accordingly.
-- If the incoming evidence only describes reply preferences, formatting habits, style choices, language choices, file/tool boundaries, or project collaboration rules, do not include them in the rewritten section.
-- Do not include project progress, project-specific collaboration rules, deadlines, blockers, or temporary tasks.
-- Keep the language aligned with the user's language in the incoming content.
-- "identity_background_markdown" must contain only the markdown content that belongs under the "## 身份背景" heading.
-- Do not include the heading itself.
-- Prefer concise bullet-list markdown when possible.
+规则：
+- 只返回 JSON。
+- existing profile markdown 是上一版画像，incoming user notes 是最新证据。
+- 从头重写每个部分。不要盲目追加，也不要保留近似重复的事实。
+- 如果旧画像与更新、更明确的证据冲突，优先采用新证据。
+- 只保留应跨未来会话持续存在的信息。
+- 不要包含项目进展、截止时间、阻塞、临时任务或项目特定的协作规则。
+- 输出语言应与传入内容中的用户语言一致。
+- 字段值中不要包含章节标题。
+- 优先使用简洁的 Markdown 项目符号列表；某个字段没有证据时，将其省略或设为 null/空字符串。
+- "identity_background_markdown"：记录用户是谁，包括姓名、机构、职务或资历、从业年限和稳定职业角色。不要放入专业方向、疾病、操作/手术、回答偏好或协作规则。
+- "specialty_markdown"：记录用户的临床专业或亚专业、长期擅长的疾病和损伤类型、操作或手术专长，以及反复出现的临床场景。不要放入姓名、机构、职务、从业年限、回答偏好或协作规则。
+- 回答风格、格式、交付、工作流、语言、文件和工具偏好都属于项目 Feedback，不属于全局用户画像。不要将它们放入上述任一字段。
 
-Use this exact JSON shape:
+严格使用以下 JSON 结构：
 {
-  "identity_background_markdown": "- ..."
+  "identity_background_markdown": "- ...",
+  "specialty_markdown": "- ..."
 }
 `.trim();
 
 const STABLE_FORMAL_PROJECT_ID_PATTERN = /^project_[a-z0-9]+$/;
 
 const DREAM_FILE_GLOBAL_PLAN_SYSTEM_PROMPT = `
-You are the Dream global audit planner for a file-memory system.
+你是文件记忆系统的 Dream 全局审计规划器。
 
-Your job is to inspect the current project's metadata and memory files, then produce a single executable reorganization plan for that current project.
+你的任务是检查当前项目的元数据和记忆文件，然后为该项目生成一份可直接执行的重组计划。
 
-Rules:
-- Use only the supplied current-project metadata and memory file snapshots as evidence.
-- Do not invent projects, files, facts, or merges that are not supported by the provided memory files.
-- This runtime has exactly one top-level current project for the active workspace.
-- Do not create extra sibling projects, tmp projects, or umbrella projects.
-- Decide the final file-level organization for the current project before any rewrite happens.
-- Natural-language output fields must follow the dominant language already present in the supplied records and project metas.
-- If the supplied evidence is mainly Chinese, write summaries, project_name, description, and any other natural-language output in Chinese.
-- Keys and enums must remain in English.
-- Multiple Project/*.md and Feedback/*.md files under the current project are expected and correct.
-- If two explicit project names appear in the memories, treat them as alternative names, phases, or topic labels inside the same current project unless the evidence clearly says they are unrelated noise that should be deleted.
-- You may:
-  - rewrite current-project metadata
-  - merge redundant files within the current project
-  - keep multiple files when they represent distinct durable memories within the current project
-  - delete old files only when their durable content is fully absorbed elsewhere
-- If you consolidate files that use different project labels inside the same current project, keep project_name user-recognizable.
-- Each retained entry id must appear in exactly one output project.
-- deleted_entry_ids should only include files that are redundant, superseded, or absorbed by other rewritten files.
-- deleted_project_ids should stay empty in current-project mode.
-- Keep project names user-recognizable.
-- Return valid JSON only.
+规则：
+- 只能使用提供的当前项目元数据和记忆文件快照作为证据。
+- 不要虚构所提供记忆文件不支持的项目、文件、事实或合并关系。
+- 当前运行时的活动工作区只有一个顶层当前项目。
+- 不要创建额外的同级项目、临时项目或上位总括项目。
+- 在执行任何重写之前，先确定当前项目最终的文件级组织结构。
+- 自然语言输出字段必须跟随所提供记录和项目元数据中的主要语言。
+- 如果证据主要是中文，summary、project_name、description 及其他自然语言输出都使用中文。
+- 键名和枚举值必须保持英文。
+- 当前项目下存在多个 Project/*.md 和 Feedback/*.md 文件是预期且正确的。
+- 如果记忆中出现两个明确项目名，除非证据清楚表明其中之一是应删除的无关噪声，否则将它们视为同一当前项目中的别名、阶段名或主题标签。
+- 你可以：
+  - 重写当前项目元数据
+  - 合并当前项目内的冗余文件
+  - 当文件代表当前项目内不同的持久记忆时保留多个文件
+  - 仅当旧文件的持久内容已被其他位置完整吸收时删除旧文件
+- 如果合并同一当前项目中使用不同项目标签的文件，project_name 必须保持用户可识别。
+- 每个 retained entry id 必须且只能出现在一个输出项目中。
+- deleted_entry_ids 只能包含冗余、已被取代或已被其他重写文件吸收的文件。
+- 当前项目模式下 deleted_project_ids 必须保持为空。
+- 项目名称必须保持用户可识别。
+- 只返回有效 JSON。
 
-Use this exact JSON shape:
+严格使用以下 JSON 结构：
 {
-  "summary": "short audit summary",
+  "summary": "简短的审计摘要",
   "duplicate_topic_count": 0,
   "conflict_topic_count": 0,
   "projects": [
     {
-      "plan_key": "stable planner-local key",
+      "plan_key": "规划器内部使用的稳定键",
       "target_project_id": "current_project",
-      "project_name": "final project name",
-      "description": "final project description",
+      "project_name": "最终项目名称",
+      "description": "最终项目描述",
       "status": "active",
       "merge_reason": "",
       "evidence_entry_ids": ["Project/current-stage.md"],
@@ -637,56 +549,56 @@ Use this exact JSON shape:
 `.trim();
 
 const DREAM_FILE_PROJECT_REWRITE_SYSTEM_PROMPT = `
-You are the Dream project rewrite engine for a file-memory system.
+你是文件记忆系统的 Dream 项目重写引擎。
 
-Your job is to rewrite one final project from the supplied project and feedback memory files.
+你的任务是根据提供的 project 与 feedback 记忆文件，重写一个最终项目。
 
-Rules:
-- Use only the supplied records as evidence.
-- Do not create a project-level summary file.
-- Preserve atomic memory granularity: output a small set of project files and feedback files.
-- Merge only when files are clearly redundant or conflicting enough that one cleaner file is better.
-- Keep the supplied final project boundary and final project name. Do not broaden it into a more abstract umbrella project.
-- Natural-language output fields must follow the dominant language already present in the supplied records and current project meta.
-- If the supplied evidence is mainly Chinese, write project_meta fields and all project/feedback body fields in Chinese.
-- Keys and enums must remain in English.
-- Project files must describe project state: stage, decisions, constraints, next steps, blockers, timeline, notes.
-- Feedback files must describe collaboration rules: rule, why, how_to_apply, notes.
-- deleted_entry_ids should only include source files that are fully absorbed by rewritten files or are redundant.
-- Every rewritten file must cite at least one source_entry_id from the supplied records.
-- Return valid JSON only.
+规则：
+- 只能使用提供的记录作为证据。
+- 不要创建项目级汇总文件。
+- 保持原子化记忆粒度：输出少量 project 文件和 feedback 文件。
+- 只有当文件明显冗余，或冲突程度足以说明合并成一个更清晰文件更好时，才进行合并。
+- 保持给定的最终项目边界和最终项目名称。不要将其扩大成更抽象的上位总括项目。
+- 自然语言输出字段必须跟随所提供记录和当前项目元数据中的主要语言。
+- 如果证据主要是中文，project_meta 字段以及所有 project/feedback 正文字段都使用中文。
+- 键名和枚举值必须保持英文。
+- project 文件必须描述项目状态：stage、decisions、constraints、next_steps、blockers、timeline、notes。
+- feedback 文件必须描述协作规则：rule、why、how_to_apply、notes。
+- deleted_entry_ids 只能包含已被重写文件完整吸收或本身冗余的源文件。
+- 每个重写文件必须引用至少一个来自所提供记录的 source_entry_id。
+- 只返回有效 JSON。
 
-Use this exact JSON shape:
+严格使用以下 JSON 结构：
 {
-  "summary": "short rewrite summary",
+  "summary": "简短的重写摘要",
   "project_meta": {
-    "project_name": "final project name",
-    "description": "final project description",
+    "project_name": "最终项目名称",
+    "description": "最终项目描述",
     "status": "active"
   },
   "files": [
     {
       "type": "project",
       "name": "current-stage",
-      "description": "current project state",
+      "description": "当前项目状态",
       "source_entry_ids": ["Project/a.md"],
-      "stage": "current stage",
-      "decisions": ["decision"],
-      "constraints": ["constraint"],
-      "next_steps": ["next step"],
-      "blockers": ["blocker"],
-      "timeline": ["timeline item"],
-      "notes": ["note"]
+      "stage": "当前阶段",
+      "decisions": ["决策"],
+      "constraints": ["约束"],
+      "next_steps": ["后续步骤"],
+      "blockers": ["阻塞"],
+      "timeline": ["时间线条目"],
+      "notes": ["备注"]
     },
     {
       "type": "feedback",
       "name": "delivery-rule",
-      "description": "delivery preference",
+      "description": "交付偏好",
       "source_entry_ids": ["Feedback/b.md"],
-      "rule": "the rule",
-      "why": "why it matters",
-      "how_to_apply": "when to apply it",
-      "notes": ["note"]
+      "rule": "规则内容",
+      "why": "该规则为什么重要",
+      "how_to_apply": "何时应用该规则",
+      "notes": ["备注"]
     }
   ],
   "deleted_entry_ids": ["Project/obsolete.md"]
@@ -694,33 +606,33 @@ Use this exact JSON shape:
 `.trim();
 
 const GENERAL_PROJECT_META_MERGE_SYSTEM_PROMPT = `
-You are the General Dream project-meta merge planner for a file-memory system.
+你是文件记忆系统中 General Dream 的项目元数据合并规划器。
 
-Your job is to inspect all General project metadata records and decide which project nodes clearly describe the same real project.
+你的任务是检查所有 General 项目元数据记录，判断哪些项目节点明确描述的是同一个真实项目。
 
-Rules:
-- Use only the supplied project metadata records as evidence.
-- Be conservative. If there is any meaningful uncertainty, do not merge.
-- Merge only when multiple project metas clearly refer to the same real project, same ongoing workstream, same external mirrored project identity, or an obvious alias/rename of the same project.
-- Do not merge merely because projects share a domain, platform, customer type, content format, date, model, workflow, or broad business category.
-- Do not merge separate named workstreams with different goals or deliverables.
-- Example: "GBX-A 20260423 HoneydewPulse" and "GBX-B 20260423 ClinicFlow" must remain separate because they name different projects with different targets.
-- For external mirrors, matching source_workspace_path plus source_project_id is strong evidence for merging.
-- keeper_project_id and every duplicate_project_id must be one of the supplied project ids.
-- A project id may appear in at most one merge group.
-- The keeper must not appear in duplicate_project_ids.
-- Return an empty merge_groups array when no merge is clearly justified.
-- Natural-language output fields should follow the dominant language already present in the supplied project metas.
-- Return valid JSON only.
+规则：
+- 只能使用提供的项目元数据记录作为证据。
+- 保守判断。只要存在有意义的不确定性，就不要合并。
+- 仅当多个项目元数据明确指向同一个真实项目、同一持续工作流、同一外部镜像项目身份，或同一项目的明显别名/改名时，才进行合并。
+- 不要仅仅因为项目共享领域、平台、客户类型、内容格式、日期、模型、工作流或宽泛业务类别就进行合并。
+- 不要合并名称不同且目标或交付物不同的独立工作流。
+- 示例：“GBX-A 20260423 HoneydewPulse”和“GBX-B 20260423 ClinicFlow”必须保持分离，因为它们是目标不同的两个项目。
+- 对于外部镜像，source_workspace_path 与 source_project_id 同时匹配是支持合并的强证据。
+- keeper_project_id 和每个 duplicate_project_id 都必须是提供的项目 ID 之一。
+- 一个项目 ID 最多只能出现在一个合并组中。
+- keeper 不得出现在 duplicate_project_ids 中。
+- 没有明确合并依据时，返回空的 merge_groups 数组。
+- 自然语言输出字段应跟随所提供项目元数据中的主要语言。
+- 只返回有效 JSON。
 
-Use this exact JSON shape:
+严格使用以下 JSON 结构：
 {
-  "summary": "short merge planning summary",
+  "summary": "简短的合并规划摘要",
   "merge_groups": [
     {
-      "keeper_project_id": "project id to keep",
-      "duplicate_project_ids": ["project id to merge into keeper"],
-      "reason": "specific evidence that these metas are the same real project"
+      "keeper_project_id": "要保留的项目 ID",
+      "duplicate_project_ids": ["要合并到 keeper 的项目 ID"],
+      "reason": "这些元数据属于同一真实项目的具体证据"
     }
   ]
 }
@@ -729,35 +641,35 @@ Use this exact JSON shape:
 function buildDreamClusterPlanSystemPrompt(kind: "project" | "feedback"): string {
   const kindLabel = kind === "project" ? "Project" : "Feedback";
   const categoryDescription = kind === "project"
-    ? "Project memory files capture durable project facts such as project definition, scope, goals, blockers, risks, and important progress."
-    : "Feedback memory files capture durable collaboration rules, delivery rules, style rules, title/body template rules, and confirmed output constraints.";
+    ? "Project 记忆文件记录持久的项目事实，例如项目定义、范围、目标、阻塞、风险和重要进展。"
+    : "Feedback 记忆文件记录持久的协作规则、交付规则、风格规则、标题/正文模板规则和已确认的输出约束。";
   return `
-You are the ${kindLabel} Dream cluster planner for a file-memory system.
+你是文件记忆系统的 ${kindLabel} Dream 聚类规划器。
 
-Your job is to inspect lightweight header information only and decide which files should be refined together.
+你的任务是仅检查轻量级头部信息，并判断哪些文件应放在一起精炼。
 
-Rules:
-- Use only the supplied header metadata as evidence.
-- Do not assume full file contents beyond what the header says.
+规则：
+- 只能使用提供的头部元数据作为证据。
+- 不要假设头部信息之外的完整文件内容。
 - ${categoryDescription}
-- Return mutually exclusive candidate clusters only.
-- A file may appear in at most one cluster.
-- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.
-- If files are distinct and should remain separate, leave them out of clusters.
-- Files belonging to the same current project is not, by itself, a merge reason.
-- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.
-- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.
-- Keep reasons concise and specific.
-- Natural-language output should follow the dominant language already visible in the supplied headers.
-- Return valid JSON only.
+- 只返回彼此互斥的候选聚类。
+- 一个文件最多只能出现在一个聚类中。
+- 只有当至少两个文件很可能存在重叠、冲突，或应合并为一个更清晰的记忆文件时，才创建聚类。
+- 如果文件内容彼此独立且应保持分离，就不要把它们放入任何聚类。
+- 文件属于同一个当前项目，本身不能作为合并理由。
+- 共享工作区、共享项目归属、共享领域或共享主题都不足以支持合并，除非头部明确体现具体的语义重叠、事实冲突、规则重复或明显的整合价值。
+- 每个聚类的 reason 必须指出支持精炼的具体重叠、冲突、重复规则、重复事实或整合主题。
+- reason 保持简短、具体。
+- 自然语言输出应跟随所提供头部中已经可见的主要语言。
+- 只返回有效 JSON。
 
-Use this exact JSON shape:
+严格使用以下 JSON 结构：
 {
-  "summary": "short planning summary",
+  "summary": "简短的规划摘要",
   "clusters": [
     {
       "member_relative_paths": ["Project/a.md", "Project/b.md"],
-      "reason": "why these files should be refined together"
+      "reason": "为什么这些文件应放在一起精炼"
     }
   ]
 }
@@ -768,63 +680,63 @@ function buildDreamClusterRefineSystemPrompt(kind: "project" | "feedback"): stri
   const kindLabel = kind === "project" ? "Project" : "Feedback";
   const categoryInstruction = kind === "project"
     ? [
-        "Produce exactly one project memory file.",
-        "Keep durable project facts only: what the project is, stable scope, goals, important progress, blockers, risks, and important decisions.",
-        "Do not reduce the file to a vague status line.",
-        "Prefer readable markdown headings such as ## Summary, ## Current Stage, ## Constraints, ## Blockers, ## Next Steps, ## Timeline, ## Notes when useful.",
+        "必须且只能生成一个 project 记忆文件。",
+        "只保留持久的项目事实：项目是什么、稳定范围、目标、重要进展、阻塞、风险和重要决策。",
+        "不要把文件简化成含糊的状态句。",
+        "适合时优先使用可读的 Markdown 标题，例如：## 摘要、## 当前阶段、## 约束、## 阻塞、## 后续步骤、## 时间线、## 备注。",
       ].join("\n- ")
     : [
-        "Produce exactly one feedback memory file.",
-        "Keep durable collaboration rules only: delivery order, output structure, style constraints, title/body template guidance, and confirmed review preferences.",
-        "Prefer readable markdown headings such as ## Rule, ## Why, ## How To Apply, ## Notes when useful.",
+        "必须且只能生成一个 feedback 记忆文件。",
+        "只保留持久的协作规则：交付顺序、输出结构、风格约束、标题/正文模板指导和已确认的审阅偏好。",
+        "适合时优先使用可读的 Markdown 标题，例如：## 规则、## 原因、## 应用方式、## 备注。",
       ].join("\n- ");
   return `
-You are the ${kindLabel} Dream refine engine for a file-memory system.
+你是文件记忆系统的 ${kindLabel} Dream 精炼引擎。
 
-Your job is to merge one cluster of existing memory files into exactly one cleaner memory file.
+你的任务是把一组现有记忆文件合并成且仅合并成一个更清晰的记忆文件。
 
-Rules:
-- Use only the supplied full file contents as evidence.
-- Resolve overlap, deduplicate repeated details, and keep the most useful durable facts.
-- Do not invent new facts.
-- Output exactly one refined file.
-- The visible output language must follow the dominant language already present in the supplied files. If the supplied files are mixed, prefer the dominant language of the cluster.
-- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.
+规则：
+- 只能使用提供的完整文件内容作为证据。
+- 解决内容重叠、去除重复细节，并保留最有用的持久事实。
+- 不要虚构新事实。
+- 必须且只能输出一个精炼后的文件。
+- 可见输出的语言必须跟随所提供文件中已有的主要语言。如果文件混合使用多种语言，采用该聚类中的主要语言。
+- 标题/name、description、Markdown 标题和 Markdown 正文都必须一致遵循该语言规则。
 - ${categoryInstruction}
-- Return valid JSON only.
+- 只返回有效 JSON。
 
-Use this exact JSON shape:
+严格使用以下 JSON 结构：
 {
-  "summary": "short refine summary",
-  "name": "refined file title",
-  "description": "one-line description",
-  "markdown": "full markdown body"
+  "summary": "简短的精炼摘要",
+  "name": "精炼后的文件标题",
+  "description": "单行描述",
+  "markdown": "完整的 Markdown 正文"
 }
 `.trim();
 }
 
 const DREAM_PROJECT_META_REVIEW_SYSTEM_PROMPT = `
-You are the Dream project metadata reviewer for a file-memory system.
+你是文件记忆系统的 Dream 项目元数据审查器。
 
-Your job is to decide whether the current project metadata is clearly incorrect or outdated after project/feedback refinement.
+你的任务是判断 project/feedback 精炼完成后，当前项目元数据是否明确错误或已经过时。
 
-Rules:
-- Use only the supplied current metadata and the recent project/feedback files as evidence.
-- Be conservative. Keep the current metadata unless the supplied evidence clearly supports a change.
-- You may update only:
+规则：
+- 只能使用提供的当前元数据和最近的 project/feedback 文件作为证据。
+- 保守判断。除非提供的证据明确支持修改，否则保留当前元数据。
+- 只能更新：
   - project_name
   - description
   - status
-- Do not rewrite metadata just to paraphrase it.
-- Natural-language output fields must follow the dominant language already present in the supplied project/feedback files.
-- Return valid JSON only.
+- 不要仅为了换一种说法而重写元数据。
+- 自然语言输出字段必须跟随所提供 project/feedback 文件中的主要语言。
+- 只返回有效 JSON。
 
-Use this exact JSON shape:
+严格使用以下 JSON 结构：
 {
   "should_update": false,
-  "reason": "why metadata should or should not change",
-  "project_name": "final project name",
-  "description": "final description",
+  "reason": "为什么应该或不应该修改元数据",
+  "project_name": "最终项目名称",
+  "description": "最终描述",
   "status": "in_progress"
 }
 `.trim();
@@ -940,7 +852,7 @@ function renderIdentityBackgroundMarkdownFromItems(items: string[]): string {
   return normalized.map((item) => `- ${item}`).join("\n");
 }
 
-function normalizeIdentityBackgroundSectionMarkdown(value: unknown): string {
+function normalizeSectionMarkdown(value: unknown, headingPattern: RegExp): string {
   if (typeof value !== "string") {
     if (Array.isArray(value)) {
       return renderIdentityBackgroundMarkdownFromItems(
@@ -949,21 +861,37 @@ function normalizeIdentityBackgroundSectionMarkdown(value: unknown): string {
     }
     return "";
   }
-
   let normalized = value
     .replace(/\r/g, "\n")
     .replace(/^```(?:markdown)?\s*/i, "")
     .replace(/```$/i, "")
     .trim();
-
-  normalized = normalized.replace(/^#{1,6}\s*身份背景\s*\n+/i, "").trim();
+  normalized = normalized.replace(headingPattern, "").trim();
   return normalized;
 }
 
-function buildUserProfileBodyFromSectionMarkdown(sectionMarkdown: unknown): string | null {
-  const normalizedSection = normalizeIdentityBackgroundSectionMarkdown(sectionMarkdown);
-  if (!normalizedSection) return null;
-  return `## 身份背景\n${normalizedSection.trim()}\n`;
+/**
+ * Build the full profile body markdown from the identity and specialty sections.
+ * PHI redaction is applied to the assembled body before returning.
+ * Returns null when all sections are empty (nothing to write to disk).
+ */
+export function buildUserProfileBodyFromParsedSections(payload: RawUserProfilePayload): string | null {
+  const identityContent = normalizeSectionMarkdown(
+    payload.identity_background_markdown ?? payload.identity_background,
+    /^#{1,6}\s*身份背景\s*\n+/i,
+  );
+  const specialtyContent = normalizeSectionMarkdown(
+    payload.specialty_markdown,
+    /^#{1,6}\s*专业领域\s*\n+/i,
+  );
+  const sections: string[] = [];
+  if (identityContent) sections.push(`## 身份背景\n${identityContent}\n`);
+  if (specialtyContent) sections.push(`## 专业领域\n${specialtyContent}\n`);
+
+  if (sections.length === 0) return null;
+
+  const { text: redacted } = redact(sections.join("\n"));
+  return redacted;
 }
 
 function extractIdentityBackgroundFactsFromProfileBody(body: string): string[] {
@@ -971,10 +899,10 @@ function extractIdentityBackgroundFactsFromProfileBody(body: string): string[] {
 }
 
 function buildRewrittenUserProfileCandidate(input: {
-  sectionMarkdown: unknown;
+  payload: RawUserProfilePayload;
   latestCandidate?: MemoryCandidate;
 }): MemoryCandidate | null {
-  const body = buildUserProfileBodyFromSectionMarkdown(input.sectionMarkdown);
+  const body = buildUserProfileBodyFromParsedSections(input.payload);
   if (!body) return null;
 
   const facts = extractIdentityBackgroundFactsFromProfileBody(body);
@@ -2182,11 +2110,16 @@ function memoryPhaseFromLabel(label: string): "retrieve" | "capture" | "index" |
 }
 
 export class LlmMemoryExtractor {
+  private readonly prompts: MemoryPromptProfile;
+
   constructor(
     private readonly config: Record<string, unknown>,
     private readonly runtime: Record<string, unknown> | undefined,
     private readonly logger?: LoggerLike,
-  ) {}
+    promptProfile?: MemoryPromptProfile,
+  ) {
+    this.prompts = promptProfile ?? GENERAL_MEDICINE_PROFILE;
+  }
 
   private resolveSelection(agentId?: string): ModelSelection {
     const modelRef = resolveAgentPrimaryModel(this.config, agentId);
@@ -2510,7 +2443,7 @@ export class LlmMemoryExtractor {
         parse: (raw) => JSON.parse(extractFirstJsonObject(raw)) as RawUserProfilePayload,
       });
       return buildRewrittenUserProfileCandidate({
-        sectionMarkdown: parsed.identity_background_markdown ?? parsed.identity_background ?? "",
+        payload: parsed,
         latestCandidate,
       });
     } catch (error) {
@@ -2532,7 +2465,7 @@ export class LlmMemoryExtractor {
   }): Promise<FileMemoryClassificationResult> {
     try {
       const parsed = await this.callStructuredJsonWithDebug<RawMemoryClassificationPayload>({
-        systemPrompt: MEMORY_CLASSIFICATION_SYSTEM_PROMPT,
+        systemPrompt: this.prompts.classify,
         userPrompt: buildIndexPromptWindow({
           batchContextMessages: input.batchContextMessages,
           focusUserTurn: input.focusUserTurn,
@@ -2565,16 +2498,23 @@ export class LlmMemoryExtractor {
     timeoutMs?: number;
     debugTrace?: PromptDebugSink;
   }): Promise<MemoryCandidate | null> {
+    // Hard gate: discard note kinds not in this profile's allowedTypes.
+    if (!(this.prompts.allowedTypes as ReadonlyArray<string>).includes(input.kind)) {
+      this.logger?.info?.(
+        `[clawxmemory] note kind "${input.kind}" is not allowed by profile "${this.prompts.type}" — discarding`,
+      );
+      return null;
+    }
     const requestLabel = input.kind === "user"
       ? "User memory create"
       : input.kind === "project"
         ? "Project memory create"
         : "Feedback memory create";
     const systemPrompt = input.kind === "user"
-      ? USER_NOTE_CREATE_SYSTEM_PROMPT
+      ? this.prompts.noteCreate.user!
       : input.kind === "project"
-        ? PROJECT_NOTE_CREATE_SYSTEM_PROMPT
-        : FEEDBACK_NOTE_CREATE_SYSTEM_PROMPT;
+        ? this.prompts.noteCreate.project!
+        : this.prompts.noteCreate.feedback;
     const userPrompt = JSON.stringify({
       classification: {
         type: input.classification.type,
@@ -3042,18 +2982,18 @@ export class LlmMemoryExtractor {
         reason?: unknown;
       }>({
         systemPrompt: [
-          "You assign a newly generated long-term memory item to a General Chat project.",
-          "This is index-time memory assignment, not recall.",
-          "Return JSON only with decision, selected_project_id, and reason.",
-          "decision must be one of: attach_existing, create_new.",
-          "The primary evidence is candidate_memory_preview: the memory item that will be written.",
-          "Use the focus user turn and recent user messages only as supporting context for disambiguation.",
-          "Choose attach_existing only when the candidate clearly belongs to exactly one existing General project.",
-          "Choose create_new when the candidate is a new project, evidence is insufficient, multiple projects remain plausible, or the match is only a broad domain similarity.",
-          "Do not attach just because projects share a category such as SaaS, copywriting, Xiaohongshu, marketing, planning, or content creation.",
-          "All shortlist projects are General-local assignment targets; never infer or write to an external workspace.",
-          "If decision is attach_existing, selected_project_id must be one id from the shortlist.",
-          "If decision is create_new, selected_project_id must be an empty string.",
+          "你负责把一条新生成的长期记忆分配给某个 General Chat 项目。",
+          "这是索引阶段的记忆归属判断，不是记忆召回。",
+          "只返回 JSON，包含 decision、selected_project_id 和 reason。",
+          "decision 必须是 attach_existing 或 create_new。",
+          "主要证据是 candidate_memory_preview，即将要写入的记忆内容。",
+          "焦点用户轮次和近期用户消息只能作为消除歧义的辅助上下文。",
+          "只有当候选记忆明确且唯一地属于某个现有 General 项目时，才选择 attach_existing。",
+          "如果候选记忆属于新项目、证据不足、仍可能对应多个项目，或仅有宽泛领域相似性，应选择 create_new。",
+          "不要仅仅因为项目同属 SaaS、文案、小红书、营销、规划或内容创作等类别就进行关联。",
+          "shortlist 中的所有项目都是 General 本地归属目标；绝不能推断或写入外部工作区。",
+          "如果 decision 为 attach_existing，selected_project_id 必须是 shortlist 中的某个 ID。",
+          "如果 decision 为 create_new，selected_project_id 必须是空字符串。",
         ].join("\n"),
         userPrompt: JSON.stringify({
           candidate: {
@@ -3230,41 +3170,41 @@ export class LlmMemoryExtractor {
     try {
       const parsed = await this.callStructuredJsonWithDebug<{ items?: unknown[] }>({
         systemPrompt: [
-          "You extract long-term memory candidates for one focus conversation turn using recent session context since the last indexing cursor.",
-          "Return JSON only with an items array.",
-          "Allowed item.type values: user, feedback, project.",
-          "Discard anything that is too transient or not useful across future sessions.",
-          "Use the batch context to interpret ambiguous references in the focus turn, but only emit memories justified by the focus user turn itself.",
-          "known_projects contains the durable identity of the current workspace project.",
-          "The assistant replies in the batch context are supporting context only. Never create a memory candidate from assistant wording alone.",
-          "For user items only keep stable personal identity/background facts or durable relationships. Never place project state, collaboration rules, reply preferences, language choices, style rules, or file boundaries inside user memory.",
-          "If a first-person statement is really about how the assistant should collaborate, write, format, reply, or operate on files, it is feedback, not user.",
-          "Global-seeming reply preferences and personal file boundaries still belong to feedback in this runtime. Examples: '默认使用中文输出', '如果有结论先给结论再给细节', '不要改动我的 .gitignore 文件', '我更关心项目进度、风险和上线阻塞点'.",
-          "If the focus turn tells the assistant how to collaborate, deliver, report, format, or structure outputs, that is feedback, not project.",
-          "If the focus turn says how outputs should be delivered, such as title count, body order, cover copy, progress update order, or reply structure, you must classify it as feedback rather than project.",
-          "For feedback items always provide rule, why, and how_to_apply.",
-          "For feedback items: why means why the user gave this feedback, usually a past incident, strong preference, or explicit dissatisfaction. Do not invent a reason if the transcript does not contain one.",
-          "For feedback items: how_to_apply means when or where this guidance should be applied, such as during progress updates, reviews, or project replies. Do not restate the rule verbatim if the application context is unclear.",
-          "If the transcript gives a rule but not enough evidence for why or how_to_apply, return an empty string for those fields.",
-          "Feedback belongs to the current project workflow; if project_id is unclear you may omit it because the runtime already knows the current project.",
-          "If the batch context contains the current project identity, you may attach project_id to the feedback item; leaving it empty is also acceptable in current-project mode.",
-          "If the focus user turn explicitly asks the assistant to remember something long-term, such as '请记住', '帮我记住', or 'remember this', treat that as a stronger signal that durable memory should be extracted.",
-          "That stronger signal is still based on the raw user text itself. Do not rely on any hidden remember flag or external rule; decide only from the visible transcript content.",
-          "For project items always prefer name plus description. project_id is optional and only refers to the current project identity when supplied.",
-          "If you only know the project's human-readable title, put it in name and leave project_id empty.",
-          "Do not put a human-readable project title only inside project_id.",
-          "For project items provide stage, decisions, constraints, next_steps, blockers, and absolute-date timeline entries when dates are mentioned. You may omit project_id when the project identity is still unclear.",
-          "A project-definition turn is about project name, what the project is, its stage, goals, blockers, milestones, or timeline. A delivery rule alone is never a project item.",
-          "Treat explicit project-definition statements as project memory even without a remember command. Examples: '这个项目先叫 Boreal', '它是一个本地知识库整理工具', '目前还在设计阶段'.",
-          "Natural follow-up turns can still be project memory even when they do not repeat the project name.",
-          "If the batch context already contains the current project identity, and the focus turn says things like '这个项目接下来最该补的是...', '这个方向还差...', '先把镜头顺序模板化', or mentions stage, priorities, blockers, constraints, target audience, or content angle, emit a project item for that current project.",
-          "If known_projects contains the current project identity and the focus turn states current scope, retained tools, risks, blockers, or project follow-up facts without repeating the project name, attach the memory to that current project instead of inventing a new top-level project.",
-          "Do not require the focus turn to repeat the project name when the batch context already makes the project identity unique.",
-          "Treat explicit collaboration instructions as feedback. Example: '在这个项目里，每次给我交付时都先给3个标题，再给正文，再给封面文案。'",
-          "When a transcript names a project, describes what the project is, or states its current stage, emit a project item unless the content is obviously too transient.",
-          "Do not create placeholder project names like overview, project, or memory-item.",
-          "Generic anchors such as '这个项目' only become project memory when the batch context provides a unique project identity.",
-          "If no durable memory should be saved, return {\"items\":[]}.",
+          "你需要利用自上次索引游标以来的近期会话上下文，从一个焦点对话轮次中提取长期记忆候选项。",
+          "只返回 JSON，且必须包含 items 数组。",
+          "允许的 item.type 值为 user、feedback、project。",
+          "丢弃过于短暂或对未来会话没有价值的内容。",
+          "可以使用批次上下文解释焦点轮次中的模糊指代，但只能输出由焦点用户轮次本身支持的记忆。",
+          "known_projects 包含当前工作区项目的持久身份信息。",
+          "批次上下文中的助手回复仅作为辅助上下文。绝不能仅根据助手措辞创建记忆候选项。",
+          "user 项只保留稳定的个人身份/背景事实或持久关系。绝不能把项目状态、协作规则、回复偏好、语言选择、风格规则或文件边界放入 user 记忆。",
+          "如果第一人称陈述实际是在说明助手应如何协作、写作、格式化、回复或操作文件，它属于 feedback，而不是 user。",
+          "看起来全局有效的回复偏好和个人文件边界，在当前运行时中仍属于 feedback。例如：'默认使用中文输出'、'如果有结论先给结论再给细节'、'不要改动我的 .gitignore 文件'、'我更关心项目进度、风险和上线阻塞点'。",
+          "如果焦点轮次告诉助手应如何协作、交付、汇报、格式化或组织输出，它属于 feedback，而不是 project。",
+          "如果焦点轮次说明输出应如何交付，例如标题数量、正文顺序、封面文案、进展汇报顺序或回复结构，必须分类为 feedback，而不是 project。",
+          "feedback 项必须始终提供 rule、why 和 how_to_apply。",
+          "对于 feedback 项，why 表示用户为什么提出该反馈，通常是过去的事件、强烈偏好或明确不满。如果对话中没有原因，不要虚构。",
+          "对于 feedback 项，how_to_apply 表示应在何时或何处应用该指导，例如进展更新、审阅或项目回复。若应用场景不明确，不要原样重复 rule。",
+          "如果对话给出了规则，但没有足够证据填写 why 或 how_to_apply，对相应字段返回空字符串。",
+          "Feedback 属于当前项目工作流；如果 project_id 不明确，可以省略，因为运行时已经知道当前项目。",
+          "如果批次上下文包含当前项目身份，可以为 feedback 项附加 project_id；在当前项目模式下留空也可以接受。",
+          "如果焦点用户轮次明确要求助手长期记住某事，例如'请记住'、'帮我记住'或'remember this'，将其视为应提取持久记忆的更强信号。",
+          "该强信号仍必须基于原始用户文本本身。不要依赖任何隐藏的 remember 标记或外部规则，只根据可见对话内容判断。",
+          "project 项应始终优先提供 name 和 description。project_id 可选，提供时只能表示当前项目身份。",
+          "如果只知道项目的人类可读标题，将其放入 name，并将 project_id 留空。",
+          "不要只把人类可读的项目标题放入 project_id。",
+          "project 项应提供 stage、decisions、constraints、next_steps、blockers；提到日期时还应提供使用绝对日期的 timeline 条目。项目身份仍不明确时可以省略 project_id。",
+          "项目定义轮次涉及项目名称、项目是什么、所处阶段、目标、阻塞、里程碑或时间线。单独的交付规则绝不是 project 项。",
+          "即使没有记忆指令，也要把明确的项目定义陈述视为 project 记忆。例如：'这个项目先叫 Boreal'、'它是一个本地知识库整理工具'、'目前还在设计阶段'。",
+          "自然的后续轮次即使没有重复项目名称，也仍然可以成为 project 记忆。",
+          "如果批次上下文已包含当前项目身份，而焦点轮次出现'这个项目接下来最该补的是...'、'这个方向还差...'、'先把镜头顺序模板化'等表达，或提到阶段、优先级、阻塞、约束、目标受众或内容角度，应为当前项目输出 project 项。",
+          "如果 known_projects 包含当前项目身份，且焦点轮次在未重复项目名称的情况下陈述当前范围、保留工具、风险、阻塞或项目后续事实，应将记忆关联到当前项目，而不是虚构新的顶层项目。",
+          "当批次上下文已经唯一确定项目身份时，不要要求焦点轮次重复项目名称。",
+          "明确的协作指令应视为 feedback。例如：'在这个项目里，每次给我交付时都先给3个标题，再给正文，再给封面文案。'",
+          "当对话给出项目名称、描述项目是什么或说明当前阶段时，应输出 project 项，除非内容明显过于短暂。",
+          "不要创建 overview、project 或 memory-item 之类占位项目名。",
+          "'这个项目'之类通用指代，只有在批次上下文提供唯一项目身份时，才能成为 project 记忆。",
+          "如果没有应保存的持久记忆，返回 {\"items\":[]}。",
         ].join("\n"),
         userPrompt: JSON.stringify({
           timestamp: input.timestamp,

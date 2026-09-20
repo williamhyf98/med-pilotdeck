@@ -47,7 +47,7 @@ import { randomUUID } from 'node:crypto';
 import { installGlobalProxy } from '../../src/cli/proxy.js';
 await installGlobalProxy();
 
-import { resolvePilotHome, createProjectId, sanitizeSessionIdForPath, resolveGatewayProjectKey, resolveProjectStorageId, resolveTypedProjectDir, listProjectStorageIds } from './utils/pilotPaths.js';
+import { resolvePilotHome, createProjectId, sanitizeSessionIdForPath, resolveGatewayProjectKey, resolveProjectStorageId, resolveTypedProjectDir, listProjectStorageIds, resolveAgentCwd } from './utils/pilotPaths.js';
 // Read the gateway client straight from TypeScript source via tsx — the UI
 // server is launched with `node --import tsx`, so no prior `npm run build`
 // is required. (A prior tsx 4.x JSDoc dynamic-import parse bug was fixed by
@@ -1227,6 +1227,110 @@ export function sanitizeTraumaFormInput(value) {
 }
 
 /**
+ * Same per-request file cap the upload endpoint already enforces
+ * (`ATTACHMENT_UPLOAD_MAX_FILES` in ui/server/index.js:3107). There is no
+ * existing import path between these two modules, so this is kept as its
+ * own named constant rather than imported across them — keep the two in
+ * sync by hand if either changes.
+ */
+const TRAUMA_ATTACHMENT_MAX_FILES = 64;
+
+/** Longest `name` we'll carry through into the model prompt / case snapshot. */
+const TRAUMA_ATTACHMENT_MAX_NAME_LENGTH = 200;
+
+/**
+ * `name` flows untruncated into the interpreter station's prompt and is
+ * persisted/re-rendered in later rounds, so it must not be able to carry
+ * path separators (it's never used to build a filesystem path, but a
+ * separator-laden name reads as a path in the UI/prompt) or control
+ * characters, and must be bounded in length. Returns '' when nothing
+ * usable survives.
+ *
+ * @param {string} rawName
+ * @returns {string}
+ */
+function sanitizeTraumaAttachmentName(rawName) {
+    const stripped = rawName
+        .replace(/[\\/]/gu, '')
+        // eslint-disable-next-line no-control-regex
+        .replace(/[\x00-\x1f\x7f]/gu, '')
+        .trim();
+    return stripped.slice(0, TRAUMA_ATTACHMENT_MAX_NAME_LENGTH);
+}
+
+/**
+ * Resolve `p` to its canonical, symlink-free form and confirm it names an
+ * existing regular file — not a directory (the inbox root itself or any
+ * subdirectory under it), and not a path that doesn't exist yet. Returns
+ * null when either check fails. Requiring existence keeps this aligned
+ * with `inboxRoot` below (also `realpathSync`'d): a lexical fallback for
+ * one side and a canonical resolve for the other would let a real inbox
+ * path that hasn't been created yet compare unequal to itself whenever a
+ * symlinked path component sits between the two (e.g. macOS `/var` →
+ * `/private/var`).
+ *
+ * @param {string} p
+ * @returns {string | null}
+ */
+function resolveExistingInboxFile(p) {
+    let resolved;
+    try {
+        resolved = fs.realpathSync(p);
+    } catch {
+        return null;
+    }
+    const stat = fs.statSync(resolved, { throwIfNoEntry: false });
+    return stat && stat.isFile() ? resolved : null;
+}
+
+/**
+ * 附件路径来自前端，必须是上传端点落盘的 inbox 绝对路径。
+ * 放任任意路径会让 med_parse_medical 读到项目外的文件。
+ *
+ * Exported (like `sanitizeTraumaFormInput`) purely so it can be unit
+ * tested directly; it is not part of the public bridge API.
+ *
+ * @param {unknown} value
+ * @param {string | undefined} projectRoot
+ * @returns {Array<{ path: string; name: string }> | undefined}
+ */
+export function sanitizeTraumaAttachments(value, projectRoot) {
+    if (!Array.isArray(value) || !projectRoot) return undefined;
+    let inboxRoot;
+    try {
+        inboxRoot = fs.realpathSync(path.resolve(projectRoot, 'inbox'));
+    } catch {
+        // Inbox directory doesn't exist yet -> nothing can genuinely be inside it.
+        return undefined;
+    }
+    const sanitized = [];
+    const seenPaths = new Set();
+    for (const item of value) {
+        if (sanitized.length >= TRAUMA_ATTACHMENT_MAX_FILES) break;
+        if (!item || typeof item !== 'object') continue;
+        const rawPath = typeof item.path === 'string' ? item.path : '';
+        const rawName = typeof item.name === 'string' ? item.name : '';
+        if (!rawPath || !rawName) continue;
+        if (!path.isAbsolute(rawPath)) continue;
+        const name = sanitizeTraumaAttachmentName(rawName);
+        if (!name) continue;
+        const resolved = resolveExistingInboxFile(rawPath);
+        if (!resolved) {
+            console.warn(`[pilotdeck-bridge] dropping trauma attachment, file not found: ${rawPath}`);
+            continue;
+        }
+        if (resolved !== inboxRoot && !resolved.startsWith(`${inboxRoot}${path.sep}`)) {
+            console.warn(`[pilotdeck-bridge] dropping trauma attachment outside inbox root: resolved=${resolved} inboxRoot=${inboxRoot}`);
+            continue;
+        }
+        if (seenPaths.has(resolved)) continue;
+        seenPaths.add(resolved);
+        sanitized.push({ path: resolved, name });
+    }
+    return sanitized.length > 0 ? sanitized : undefined;
+}
+
+/**
  * Run a chat command through the PilotDeck gateway.
  *
  * The frontend addresses sessions by the PilotDeck `sessionKey` itself
@@ -1300,6 +1404,10 @@ export async function runChatViaGateway(
     const traumaForm = sanitizeTraumaFormInput(options?.traumaForm);
     const traumaRawInput = typeof options?.traumaRawInput === 'string' ? options.traumaRawInput : undefined;
     const traumaExtract = options?.traumaExtract === true;
+    const traumaAttachments = sanitizeTraumaAttachments(
+        options?.traumaAttachments,
+        resolveAgentCwd(projectKey, GENERAL_HOME),
+    );
     console.log(`[pilotdeck-bridge] submitTurn runMode=${runMode} mode=${resolvedMode} (options.permissionMode=${options?.permissionMode}, options.mode=${options?.mode})`);
 
     let gw = null;
@@ -1345,6 +1453,7 @@ export async function runChatViaGateway(
             ...(traumaForm ? { traumaForm } : {}),
             ...(traumaRawInput ? { traumaRawInput } : {}),
             ...(traumaExtract ? { traumaExtract: true } : {}),
+            ...(traumaAttachments ? { traumaAttachments } : {}),
             runMode,
             mode: resolvedMode,
             // The web UI has an elicitation channel, so the agent may propose

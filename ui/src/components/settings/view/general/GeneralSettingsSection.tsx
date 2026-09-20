@@ -12,7 +12,7 @@ import { cn } from "../../../../lib/utils";
 import { PageSectionHeader, SettingsCard } from "../../shared/view";
 import type { ProjectSortOrder } from "../../shared/types";
 
-type ThemeMode = "system" | "light" | "dark";
+type ThemeMode = "system" | "light" | "dark" | "warm" | "command";
 
 type GeneralSettingsSectionProps = {
   projectSortOrder: ProjectSortOrder;
@@ -104,6 +104,8 @@ export default function GeneralSettingsSection({
               { value: "system", label: t("settingsHome.appearanceMode.system") },
               { value: "light", label: t("settingsHome.appearanceMode.light") },
               { value: "dark", label: t("settingsHome.appearanceMode.dark") },
+              { value: "warm", label: t("settingsHome.appearanceMode.warm") },
+              { value: "command", label: t("settingsHome.appearanceMode.command") },
             ]}
             className="w-44"
           />

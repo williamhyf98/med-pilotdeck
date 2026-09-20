@@ -334,12 +334,18 @@ export interface ChatInterfaceProps {
   composerFooterEnd?: ReactNode;
   composerChrome?: 'default' | 'medical';
   /**
+   * Runtime surfaces can hide the standard chat composer while still docking a
+   * domain-specific composer inside the same chat layout.
+   */
+  externalComposerSlot?: ReactNode;
+  /**
    * Trauma form submissions use the same optimistic message path as the
    * standard composer. The parent owns only this narrow imperative bridge;
    * message/session state remains inside ChatInterfaceV2.
    */
-  traumaOptimisticMessageRef?: MutableRefObject<((text: string, targetSessionId?: string | null, runId?: string) => void) | null>;
+  traumaOptimisticMessageRef?: MutableRefObject<((text: string, targetSessionId?: string | null, runId?: string, traumaAttachments?: Array<{ name: string; path?: string; previewUrl?: string }>) => void) | null>;
   navigateToChatMessageRef?: MutableRefObject<((runId: string) => void | Promise<void>) | null>;
+  traumaAbortUIRef?: MutableRefObject<(() => void) | null>;
   /**
    * Runtime signal for workspace surfaces that need to mirror trauma runner
    * milestones outside the chat transcript (for example, a temporary

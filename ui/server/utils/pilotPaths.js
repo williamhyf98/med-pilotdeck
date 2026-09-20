@@ -180,6 +180,13 @@ export function resolveProjectStorageId(projectRoot, pilotHome = resolvePilotHom
     if (isGeneralProjectKey(projectRoot, pilotHome)) {
         return createProjectId(resolve(pilotHome));
     }
+    const relativeId = parseWorkspacePathId(pilotHome, projectRoot);
+    if (relativeId) {
+        if (isGeneralWorkspaceId(relativeId)) {
+            return createProjectId(resolve(pilotHome));
+        }
+        return relativeId;
+    }
     return findStoredProjectId(projectRoot, pilotHome) ?? createProjectId(projectRoot);
 }
 
@@ -200,6 +207,39 @@ export function resolveProjectStorageId(projectRoot, pilotHome = resolvePilotHom
 export function sanitizeSessionIdForPath(sessionId) {
     const illegal = process.platform === 'win32' ? /[\\/:<>"|?*]+/g : /[\\/]+/g;
     return sessionId.replace(illegal, '-').replace(/^-+|-+$/g, '') || 'session';
+}
+
+/**
+ * Alias of `sanitizeSessionIdForPath` under the canonical name used by
+ * `src/pilot/paths.ts`. Lets `memoryIdentity.js` import a consistent pair.
+ *
+ * Keep in sync with `sanitizeSessionIdForTranscript` in `src/pilot/paths.ts`.
+ */
+export const sanitizeSessionIdForTranscript = sanitizeSessionIdForPath;
+
+/**
+ * Sanitize a sessionId for safe use as a **Case State directory name**.
+ *
+ * Stricter than the transcript variant: replaces every character outside
+ * `[A-Za-z0-9._-]` with `_`, then hash-escapes the dangerous dot-only names
+ * (`.`, `..`) and the empty result to prevent directory traversal above the
+ * `cases/` parent.
+ *
+ * The two sanitizers are intentionally incompatible — see `src/pilot/paths.ts`
+ * for the full explanation. Never unify them; both produce on-disk paths that
+ * already exist for real users.
+ *
+ * Keep in sync with `sanitizeSessionIdForCaseDir` in `src/pilot/paths.ts`.
+ *
+ * @param {string} sessionId Raw session key.
+ * @returns {string} Directory-name-safe session identifier.
+ */
+export function sanitizeSessionIdForCaseDir(sessionId) {
+    const sanitized = sessionId.replace(/[^A-Za-z0-9._-]/gu, '_');
+    if (sanitized === '.' || sanitized === '..' || sanitized.length === 0) {
+        return createHash('sha256').update(sessionId).digest('hex').slice(0, 24);
+    }
+    return sanitized;
 }
 
 function createLegacyProjectId(projectRoot) {
@@ -388,6 +428,30 @@ export function resolveAssociatedProjectPath(workspaceId, pilotHome = resolvePil
     return null;
 }
 
+/**
+ * If `projectPath` is already a canonical `<pilotHome>/workspaces/[<typeKey>/]<id>`
+ * path, parse the bare `<id>` back out structurally. Returns `null` when the path
+ * doesn't fall under the workspaces root at all.
+ *
+ * Shared by `resolveGatewayProjectKey` and `resolveProjectStorageId` so both agree
+ * on the same project id for an already-resolved workspace path, regardless of
+ * whether a `.cwd` marker file has been written for it yet.
+ */
+function parseWorkspacePathId(pilotHome, projectPath) {
+    const resolvedPath = resolve(projectPath);
+    const workspacesRoot = resolve(pilotHome, 'workspaces');
+    const prefix = workspacesRoot.endsWith('/') ? workspacesRoot : `${workspacesRoot}/`;
+    if (resolvedPath !== workspacesRoot && !resolvedPath.startsWith(prefix)) {
+        return null;
+    }
+    const parts = resolvedPath.slice(prefix.length).split('/').filter(Boolean);
+    let relativeId = parts[0] ?? '';
+    if (parts.length >= 2 && PROJECT_TYPE_KEY_SET.has(parts[0])) {
+        relativeId = parts[1] ?? '';
+    }
+    return relativeId || null;
+}
+
 export function resolveGatewayProjectKey(projectPath, pilotHome = resolvePilotHome()) {
     if (!projectPath) {
         return resolve(pilotHome);
@@ -401,22 +465,14 @@ export function resolveGatewayProjectKey(projectPath, pilotHome = resolvePilotHo
         }
         return projectPath;
     }
-    const resolvedPath = resolve(projectPath);
-    const workspacesRoot = resolve(pilotHome, 'workspaces');
-    const prefix = workspacesRoot.endsWith('/') ? workspacesRoot : `${workspacesRoot}/`;
-    if (resolvedPath === workspacesRoot || resolvedPath.startsWith(prefix)) {
-        const parts = resolvedPath.slice(prefix.length).split('/').filter(Boolean);
-        let relativeId = parts[0] ?? '';
-        if (parts.length >= 2 && PROJECT_TYPE_KEY_SET.has(parts[0])) {
-            relativeId = parts[1] ?? '';
-        }
-        if (relativeId && isGeneralWorkspaceId(relativeId)) {
+    const relativeId = parseWorkspacePathId(pilotHome, projectPath);
+    if (relativeId) {
+        if (isGeneralWorkspaceId(relativeId)) {
             return resolve(pilotHome);
         }
-        if (relativeId) {
-            return relativeId;
-        }
+        return relativeId;
     }
+    const resolvedPath = resolve(projectPath);
     const stored = findStoredProjectId(resolvedPath, pilotHome);
     if (stored) {
         return stored;

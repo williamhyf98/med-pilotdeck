@@ -112,35 +112,47 @@ const isTemporarySessionId = (id: unknown): boolean =>
 const normalizeSessionId = (id: string): string => id.replace(/^web:s_/, 'web-s_');
 const sessionTranscriptFilename = (id: string): string => `${normalizeSessionId(id)}.jsonl`;
 
-export const preserveLoadedSessions = (prevProjects: Project[], nextProjects: Project[]): Project[] =>
+export const preserveLoadedSessions = (
+  prevProjects: Project[],
+  nextProjects: Project[],
+  activeSessionIds?: ReadonlySet<string>,
+): Project[] =>
   nextProjects.map((updated) => {
     const prev = prevProjects.find((p) => p.name === updated.name);
     if (!prev) return updated;
     const prevSessions = prev.sessions ?? [];
     const updatedSessions = updated.sessions ?? [];
     const updatedIds = new Set(updatedSessions.map((s) => normalizeSessionId(s.id)));
-    // Carry forward any in-flight optimistic placeholders (`new-session-*`)
-    // that the server payload doesn't yet know about. They're explicitly
-    // dropped by `replaceOptimisticInProjects` / `dropOptimisticInProjects`
-    // once the real session id arrives. Without this we'd flicker the
-    // placeholder away on the first `projects_updated` that happens to fire
-    // before the new file shows up in the server's session list (~300ms
-    // chokidar debounce vs unbounded agent start latency).
-    const optimisticToKeep = prevSessions.filter(
-      (s) => isTemporarySessionId(s.id) && !updatedIds.has(normalizeSessionId(s.id)),
-    );
+    // Carry forward sessions the server payload doesn't yet know about:
+    // — `new-session-*` optimistic placeholders (dropped by replaceOptimisticInProjects
+    //   / dropOptimisticInProjects once the real id arrives)
+    // — real-ID sessions that are still actively generating; their transcript
+    //   file may not have been indexed by chokidar yet when a fetchProjects or
+    //   projects_updated fires mid-stream (e.g. page refresh, deleting another
+    //   conversation)
+    const sessionsToKeep = prevSessions.filter((s) => {
+      if (updatedIds.has(normalizeSessionId(s.id))) return false;
+      if (isTemporarySessionId(s.id)) return true;
+      const norm = normalizeSessionId(s.id);
+      return Boolean(activeSessionIds?.has(s.id) || activeSessionIds?.has(norm));
+    });
     const prevRealSessions = prevSessions.filter((s) => !isTemporarySessionId(s.id));
     if (prevRealSessions.length <= updatedSessions.length) {
-      if (optimisticToKeep.length === 0) return updated;
+      if (sessionsToKeep.length === 0) return updated;
       return {
         ...updated,
-        sessions: [...optimisticToKeep, ...updatedSessions],
+        sessions: [...sessionsToKeep, ...updatedSessions],
       };
     }
+    const sessionsToKeepIds = new Set(sessionsToKeep.map((s) => normalizeSessionId(s.id)));
     const merged = [
-      ...optimisticToKeep,
+      ...sessionsToKeep,
       ...updatedSessions,
-      ...prevRealSessions.filter((s) => !updatedIds.has(normalizeSessionId(s.id))),
+      ...prevRealSessions.filter(
+        (s) =>
+          !updatedIds.has(normalizeSessionId(s.id)) &&
+          !sessionsToKeepIds.has(normalizeSessionId(s.id)),
+      ),
     ];
     return {
       ...updated,
@@ -161,11 +173,12 @@ export const preserveLoadedSessions = (prevProjects: Project[], nextProjects: Pr
 export function applyProjectsSocketUpdate(
   prevProjects: Project[],
   updatedProjects: Project[],
+  activeSessionIds?: ReadonlySet<string>,
 ): Project[] {
   if (prevProjects.length === 0) {
     return updatedProjects;
   }
-  const merged = preserveLoadedSessions(prevProjects, updatedProjects);
+  const merged = preserveLoadedSessions(prevProjects, updatedProjects, activeSessionIds);
   if (!projectsHaveChanges(prevProjects, merged, true)) {
     return prevProjects;
   }
@@ -308,6 +321,14 @@ export function useProjectsState({
     projectsRef.current = projects;
   }, [projects]);
 
+  // Mirror `activeSessions` into a ref so stale-closure callbacks (fetchProjects,
+  // handleSidebarRefresh) can read the current set without re-creating themselves
+  // on every render.
+  const activeSessionsRef = useRef<Set<string>>(activeSessions);
+  useEffect(() => {
+    activeSessionsRef.current = activeSessions;
+  }, [activeSessions]);
+
   const fetchProjects = useCallback(async ({ showLoadingState = true }: FetchProjectsOptions = {}) => {
     try {
       if (showLoadingState) {
@@ -330,7 +351,7 @@ export function useProjectsState({
           return prevProjects;
         }
 
-        return preserveLoadedSessions(prevProjects, projectData);
+        return preserveLoadedSessions(prevProjects, projectData, activeSessionsRef.current);
       });
     } catch (error) {
       console.error('Error fetching projects:', error);
@@ -436,7 +457,7 @@ export function useProjectsState({
         selectedSession,
       );
 
-    setProjects((prevProjects) => applyProjectsSocketUpdate(prevProjects, updatedProjects));
+    setProjects((prevProjects) => applyProjectsSocketUpdate(prevProjects, updatedProjects, activeSessions));
 
     if (skipSelectedReplacement) {
       // Still sync display-only fields (title, summary) so the header
@@ -699,7 +720,7 @@ export function useProjectsState({
 
       setProjects((prevProjects) => {
         if (!projectsHaveChanges(prevProjects, freshProjects, true)) return prevProjects;
-        return preserveLoadedSessions(prevProjects, freshProjects);
+        return preserveLoadedSessions(prevProjects, freshProjects, activeSessionsRef.current);
       });
 
       if (!selectedProject) {

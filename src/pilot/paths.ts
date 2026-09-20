@@ -86,6 +86,48 @@ export function resolveTypedProjectMemoryDir(projectId: string, pilotHome: strin
   return resolve(pilotHome, "memory", typeKey, projectId);
 }
 
+/**
+ * 一个 sessionId 会被清洗成**两个不同的**路径组件，规则不兼容且都不能改：
+ *
+ *   transcript 文件名  `<transcriptSlug>.jsonl`        —— 只替换路径分隔符，空格等原样保留
+ *   Case State 目录    `cases/<caseDirSlug>/`          —— 替换所有非 `[A-Za-z0-9._-]` 字符
+ *
+ * 例：`2026-09-16 case A` → transcript `2026-09-16 case A.jsonl`，case 目录
+ * `2026-09-16_case_A/`。任何「定位 / 删除某个 session 的全部数据」的操作都必须
+ * 同时消费这两个 slug，只用一套会把另一套路径下的数据留成孤儿。
+ *
+ * 两套算法都已有存量数据，统一其中任何一套都会让现有目录全部失配，所以这里
+ * 只做显式建模，不做合并。
+ */
+
+/**
+ * transcript 文件名用的 slug。
+ *
+ * 只替换路径分隔符（`/` `\`），因为 TUI/CLI 的 sessionKey 内嵌绝对路径
+ * （如 `tui:project=/Users/foo/work/repo:default`），不清洗会被 `path.resolve()`
+ * 当成多级目录，transcript 被埋进目录树里，扁平扫描的 `listProjectSessions` 就找不到。
+ * 像 `web:s_<uuid>` 这种合法使用 `:` 的 key 必须保持原样，否则存量文件名全部失配。
+ */
+export function sanitizeSessionIdForTranscript(sessionId: string): string {
+  // Windows 上 `:` 是保留字符（盘符 / ADS），连同路径分隔符一起替换。
+  const illegal = process.platform === "win32" ? /[\\/:<>"|?*]+/gu : /[\\/]+/gu;
+  return sessionId.replace(illegal, "-").replace(/^-+|-+$/gu, "") || "session";
+}
+
+/**
+ * Case State 目录名用的 slug。
+ *
+ * 比 transcript 严格得多：目录名会参与 `resolve()` 拼接，`.` / `..` / 空串都会
+ * 让路径逃逸出 `cases/`，所以这三种退化输入回落到 sessionId 的 sha256 前缀。
+ */
+export function sanitizeSessionIdForCaseDir(sessionId: string): string {
+  const sanitized = sessionId.replace(/[^A-Za-z0-9._-]/gu, "_");
+  if (sanitized === "." || sanitized === ".." || sanitized.length === 0) {
+    return createHash("sha256").update(sessionId).digest("hex").slice(0, 24);
+  }
+  return sanitized;
+}
+
 /** Per-session war-trauma Case State directory under typed project memory. */
 export function resolveTraumaCaseDir(
   projectId: string,
@@ -95,14 +137,10 @@ export function resolveTraumaCaseDir(
   if (projectTypeKeyFromProjectId(projectId) !== PROJECT_TYPE_KEYS.war_trauma) {
     throw new Error(`Expected a war_trauma project id: ${projectId}`);
   }
-  const sanitized = sessionId.replace(/[^A-Za-z0-9._-]/g, "_");
-  const safeSessionId = sanitized === "." || sanitized === ".." || sanitized.length === 0
-    ? createHash("sha256").update(sessionId).digest("hex").slice(0, 24)
-    : sanitized;
   return resolve(
     resolveTypedProjectMemoryDir(projectId, pilotHome),
     "cases",
-    safeSessionId,
+    sanitizeSessionIdForCaseDir(sessionId),
   );
 }
 

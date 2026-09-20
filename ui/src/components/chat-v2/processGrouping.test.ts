@@ -656,6 +656,44 @@ describe('processGrouping', () => {
     expect(steps[2].resultDetail).toBe('生成 3 条处置建议，提示 2 项缺失信息');
   });
 
+  it('shows only the stop notice after the user input when a trauma turn is stopped', () => {
+    const messages = [
+      user('u1', '本轮信息：胸部爆震伤'),
+      traumaStep(
+        'trauma-step-1',
+        1,
+        '读取病例状态',
+        '正在读取病例状态',
+        'trauma',
+        100,
+        { content: '{"traumaRunnerStep":true,"stepNumber":1,"phase":"trauma","title":"读取病例状态","runningTitle":"正在读取病例状态","expectedTotalSteps":11}' },
+      ),
+      assistant('partial-answer', '正在生成处置建议。', 200),
+      {
+        id: 'stopped-notice',
+        type: 'system',
+        content: '本轮推演已停止。',
+        timestamp: timestamp(300),
+        isInterruptedNotice: true,
+      },
+      {
+        id: 'summary-1',
+        type: 'system',
+        content: 'Process summary',
+        timestamp: timestamp(300),
+        isAgentActivitySummary: true,
+        durationMs: 300,
+        state: 'cancelled',
+      },
+    ];
+
+    const items = buildRenderableMessageItems(messages);
+
+    expect(items.map((item) => item.message.id)).toEqual(['u1', 'stopped-notice']);
+    expect(items[0].afterRunAttachment).toBeNull();
+    expect(items[0].afterProcessAttachments).toHaveLength(0);
+  });
+
   it('replays persisted trauma runner steps with turn identity after refresh', () => {
     const persistedMessages = normalizedToChatMessages([
       {

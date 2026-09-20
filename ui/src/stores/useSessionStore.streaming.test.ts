@@ -194,6 +194,38 @@ describe('computeMerged', () => {
     ]);
   });
 
+  it('drops a still-streaming trauma answer once the same attachment turn is persisted', () => {
+    const server = [
+      textMessage('persisted-user', '请解读这份检查报告', '2026-05-28T00:00:00.000Z', {
+        role: 'user',
+        runId: 'run-attachment',
+        turnId: 'run-attachment',
+        attachments: [{ name: '检查报告.pdf', path: '/tmp/检查报告.pdf' }],
+      }),
+      textMessage('persisted-answer', '结构化病例报告', '2026-05-28T00:01:30.000Z', {
+        runId: 'run-attachment',
+        turnId: 'run-attachment',
+      }),
+    ];
+    const realtime: NormalizedMessage[] = [{
+      id: '__streaming_web:s_test_run-attachment',
+      sessionId: 'web:s_test',
+      timestamp: '2026-05-28T00:00:10.000Z',
+      provider: PROVIDER,
+      kind: 'stream_delta',
+      role: 'assistant',
+      content: '结构化病例报告',
+      runId: 'run-attachment',
+      serverTailIdAtStart: 'previous-turn-tail',
+    }];
+
+    expect(shouldKeepRealtimeAfterServerRefresh(realtime[0], server)).toBe(false);
+    expect(computeMerged(server, realtime).map((message) => message.id)).toEqual([
+      'persisted-user',
+      'persisted-answer',
+    ]);
+  });
+
   it('keeps later finalized realtime assistant text when only an earlier same-turn text is persisted', () => {
     const server = [
       textMessage('tail-before-turn', 'Previous answer', '2026-05-28T00:00:00.000Z'),

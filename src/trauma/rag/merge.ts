@@ -1,13 +1,13 @@
 import type { EvidenceChunk, RagQueryKind, RetrievalTrace } from "../types.js";
 import type { TraumaRagHit } from "./client.js";
-import type { PlannedRagQuery } from "./queryPlan.js";
+import type { RetrievalQuery } from "./queryPlan.js";
 
 const MAX_PROMPT_CHUNKS = 15;
 
 export type MergeRetrievalInput = {
-  queries: PlannedRagQuery[];
+  queries: RetrievalQuery[];
   results: Array<{
-    query: PlannedRagQuery;
+    query: RetrievalQuery;
     chunks: TraumaRagHit[];
     backend: "remote" | "local";
   }>;

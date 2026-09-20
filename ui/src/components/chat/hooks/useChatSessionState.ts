@@ -153,6 +153,17 @@ function chatMessageToNormalized(
       summary: msg.content || '',
     } as NormalizedMessage;
   }
+  if (msg.isInterruptedNotice) {
+    return {
+      // Use the local_interrupt_ prefix so the dedup logic in useSessionStore
+      // recognises and drops this entry once the real interrupted message
+      // arrives from the server.
+      ...base,
+      id: `local_interrupt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      kind: 'interrupted',
+      content: msg.content || '',
+    } as NormalizedMessage;
+  }
   if (msg.type === 'error') {
     return {
       ...base,
@@ -163,8 +174,8 @@ function chatMessageToNormalized(
   }
   // Carry user-attached image data URLs through the normalize round-trip
   // so the optimistic message render and any re-derivation from the
-  // session store both show the thumbnails. NormalizedMessage.images is
-  // `string[]` of data URLs; we only attach it on user-side text frames.
+  // session store both show the thumbnails. Local optimistic images are
+  // stored as data URLs; persisted history may restore richer image objects.
   const images = msg.type === 'user' && Array.isArray(msg.images)
     ? msg.images
         .filter((img) => img && typeof img.data === 'string')

@@ -33,7 +33,7 @@ export default function StageOverrideDialog({
   );
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="stage-override-title" className="rounded-lg border border-neutral-200 bg-white p-4 shadow-lg dark:border-neutral-800 dark:bg-neutral-950">
+    <div role="dialog" aria-modal="true" aria-labelledby="stage-override-title" className="rounded-lg border border-border bg-card p-4 shadow-lg">
       <h2 id="stage-override-title" className="text-sm font-semibold">调整救治阶段</h2>
       <p className="mt-1 text-[10px] text-neutral-500">人工覆盖只允许选择当前子级之后的救治阶段，并会写入审计记录。</p>
 

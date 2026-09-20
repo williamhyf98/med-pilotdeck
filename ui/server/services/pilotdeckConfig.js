@@ -80,6 +80,9 @@ export function buildDefaultPilotDeckConfig() {
       includeAssistant: true,
       maxMessageChars: 6000,
       heartbeatBatchSize: 30,
+      // 战创伤长期记忆写入策略（Task 7）。'off' | 'feedback_only'。
+      // 'eligible_turns' 本期未实现，写入后端会直接报错。
+      traumaCapture: 'feedback_only',
     },
     webui: {
       runtime: {
@@ -496,6 +499,7 @@ export function buildMemoryDefaults(config) {
     includeAssistant: memory.includeAssistant,
     maxMessageChars: memory.maxMessageChars,
     heartbeatBatchSize: memory.heartbeatBatchSize,
+    traumaCapture: memory.traumaCapture,
   };
 }
 

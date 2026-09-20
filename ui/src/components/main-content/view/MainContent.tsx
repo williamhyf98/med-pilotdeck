@@ -2,7 +2,6 @@ import React, { Suspense, useCallback, useEffect, useRef, useState } from 'react
 import { useTranslation } from 'react-i18next';
 import {
   BarChart3,
-  Database,
   FileText,
   FolderOpen,
   MessageSquare,
@@ -10,7 +9,6 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Radio,
-  Sparkles,
   type LucideIcon,
 } from 'lucide-react';
 import { resolveProjectType } from '../../app-shell/appShellSelection';
@@ -92,13 +90,11 @@ const TOOL_PANEL_MIN_WIDTH = 360;
 const TOOL_PANEL_MAX_WIDTH = 720;
 const TOOL_PANEL_MAX_LAYOUT_RATIO = 0.48;
 
-type DashboardPanelTab = Extract<AppTab, 'skills' | 'dashboard' | 'memory' | 'always-on'>;
+type DashboardPanelTab = Extract<AppTab, 'dashboard' | 'always-on'>;
 
-const DASHBOARD_PANEL_TABS = new Set<AppTab>(['skills', 'dashboard', 'memory', 'always-on']);
+const DASHBOARD_PANEL_TABS = new Set<AppTab>(['dashboard', 'always-on']);
 const DASHBOARD_PANEL_META: Record<DashboardPanelTab, { labelKey: string; icon: LucideIcon }> = {
-  skills: { labelKey: 'tabs.skills', icon: Sparkles },
   dashboard: { labelKey: 'tabs.dashboard', icon: BarChart3 },
-  memory: { labelKey: 'tabs.memory', icon: Database },
   'always-on': { labelKey: 'tabs.alwaysOn', icon: Radio },
 };
 
@@ -202,6 +198,10 @@ function MainContent({
   const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings() as TasksSettingsContextValue;
   const [toast, setToast] = useState<MainContentToast>(null);
   const [traumaSubmitting, setTraumaSubmitting] = useState(false);
+  // Set to true the moment the user clicks stop so submitting=false fires
+  // immediately, without waiting for external state (processingSessions,
+  // traumaSubmitting) to propagate through parent re-renders.
+  const [traumaLocallyAborted, setTraumaLocallyAborted] = useState(false);
   const [pendingTraumaRun, setPendingTraumaRun] = useState<{
     runId: string;
     mainStage?: string;
@@ -209,22 +209,31 @@ function MainContent({
     round?: number;
   } | null>(null);
   const navigateToChatMessageRef = useRef<((runId: string) => void | Promise<void>) | null>(null);
+  const traumaAbortUIRef = useRef<(() => void) | null>(null);
   const traumaOptimisticMessageRef = useRef<(
-    (text: string, targetSessionId?: string | null, runId?: string) => void
+    (text: string, targetSessionId?: string | null, runId?: string, traumaAttachments?: Array<{ name: string; path?: string; previewUrl?: string }>) => void
   ) | null>(null);
 
-  const submitTraumaForm = useCallback((form: TurnFormInput, rawInput = '', traumaExtract = false) => {
+  const submitTraumaForm = useCallback((
+    form: TurnFormInput,
+    rawInput = '',
+    traumaExtract = false,
+    traumaAttachments: Array<{ path: string; name: string }> = [],
+    preferredSessionId?: string,
+  ) => {
     if (!selectedProject || traumaSubmitting) return;
     const selectedSessionId = selectedSession?.id;
-    const concreteSessionId = selectedSessionId && !isTemporarySessionId(selectedSessionId)
-      ? selectedSessionId
-      : undefined;
+    const concreteSessionId = preferredSessionId
+      ?? (selectedSessionId && !isTemporarySessionId(selectedSessionId)
+        ? selectedSessionId
+        : undefined);
     const temporarySessionId = concreteSessionId
       ? undefined
       : selectedSessionId || createTemporarySessionId();
     const summary = summarizeTraumaForm(form);
     const runId = createClientRunId();
     const visibleInput = traumaExtract && rawInput.trim() ? rawInput.trim() : summary;
+    setTraumaLocallyAborted(false);
     setTraumaSubmitting(true);
     try {
       // Keep the sidebar in sync with the generic chat flow: create/bump the
@@ -241,7 +250,7 @@ function MainContent({
           visibleInput,
         );
       }
-      traumaOptimisticMessageRef.current?.(visibleInput, concreteSessionId, runId);
+      traumaOptimisticMessageRef.current?.(visibleInput, concreteSessionId, runId, traumaAttachments);
       const activatedSessionId = startSessionCommand({
         sendMessage,
         selectedProject,
@@ -254,9 +263,13 @@ function MainContent({
         traumaForm: form,
         traumaRawInput: rawInput,
         traumaExtract,
+        ...(traumaAttachments.length > 0 ? { traumaAttachments } : {}),
       });
       onSessionActive?.(activatedSessionId);
       if (concreteSessionId) onSessionProcessing?.(concreteSessionId);
+      if (activatedSessionId && !isTemporarySessionId(activatedSessionId)) {
+        onNavigateToSession?.(activatedSessionId);
+      }
     } catch (error) {
       setTraumaSubmitting(false);
       throw error;
@@ -267,6 +280,7 @@ function MainContent({
     selectedProject,
     selectedSession?.id,
     onSessionActivityBump,
+    onNavigateToSession,
     sendMessage,
     traumaSubmitting,
   ]);
@@ -278,12 +292,18 @@ function MainContent({
     const sessionId = [selectedSession?.id, pendingSessionId]
       .find((value) => Boolean(value) && !isTemporarySessionId(value));
     if (!sessionId) return;
+    // Set the local abort flag first — this short-circuits the submitting prop
+    // calculation immediately, before any external state (traumaSubmitting,
+    // processingSessions) propagates through parent re-renders.
+    setTraumaLocallyAborted(true);
+    setTraumaSubmitting(false);
+    setPendingTraumaRun(null);
+    traumaAbortUIRef.current?.();
     sendMessage({
       type: 'abort-session',
       sessionId,
       provider: 'pilotdeck',
     });
-    setPendingTraumaRun(null);
   }, [selectedSession?.id, sendMessage]);
 
   const handleTraumaProcessStateChange = useCallback((state: {
@@ -555,6 +575,7 @@ function MainContent({
     !selectedProject
     && activeTab !== 'dashboard'
     && activeTab !== 'cron'
+    && activeTab !== 'skills'
     && activeTab !== 'storage'
   ) {
     return (
@@ -568,10 +589,9 @@ function MainContent({
   }
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+    <div className="workspace-content-surface relative flex h-full min-h-0 flex-col text-neutral-900 dark:text-neutral-100">
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <SplitBody
-          projects={projects}
           selectedProject={selectedProject}
           selectedSession={selectedSession}
           activeTab={activeTab}
@@ -595,7 +615,9 @@ function MainContent({
           abortTraumaTurn={abortTraumaTurn}
           traumaOptimisticMessageRef={traumaOptimisticMessageRef}
           navigateToChatMessageRef={navigateToChatMessageRef}
+          traumaAbortUIRef={traumaAbortUIRef}
           traumaSubmitting={traumaSubmitting}
+          traumaLocallyAborted={traumaLocallyAborted}
           pendingTraumaRun={pendingTraumaRun}
           onTraumaProcessStateChange={handleTraumaProcessStateChange}
           unreadSessionIds={unreadSessionIds}
@@ -656,9 +678,8 @@ function MainContent({
 }
 
 // V2 split body: chat is the persistent primary surface, Files is a dedicated
-// workbench, and the management dashboards open in a resizable side panel.
+// workbench, and auxiliary dashboards open in a resizable side panel.
 type SplitBodyProps = {
-  projects: Project[];
   selectedProject: Project | null;
   selectedSession: ProjectSession | null;
   activeTab: AppTab;
@@ -682,11 +703,19 @@ type SplitBodyProps = {
     optimisticTitle?: string,
   ) => void;
   processingSessions: Set<string>;
-  submitTraumaForm: (form: TurnFormInput, rawInput?: string, traumaExtract?: boolean) => void;
+  submitTraumaForm: (
+    form: TurnFormInput,
+    rawInput?: string,
+    traumaExtract?: boolean,
+    traumaAttachments?: Array<{ path: string; name: string; previewUrl?: string }>,
+    sessionId?: string,
+  ) => void;
   abortTraumaTurn: () => void;
-  traumaOptimisticMessageRef: React.MutableRefObject<((text: string, targetSessionId?: string | null, runId?: string) => void) | null>;
+  traumaOptimisticMessageRef: React.MutableRefObject<((text: string, targetSessionId?: string | null, runId?: string, traumaAttachments?: Array<{ name: string; path?: string; previewUrl?: string }>) => void) | null>;
   navigateToChatMessageRef: React.MutableRefObject<((runId: string) => void | Promise<void>) | null>;
+  traumaAbortUIRef: React.MutableRefObject<(() => void) | null>;
   traumaSubmitting: boolean;
+  traumaLocallyAborted: boolean;
   pendingTraumaRun: {
     runId: string;
     mainStage?: string;
@@ -728,7 +757,6 @@ type SplitBodyProps = {
 function SplitBody(props: SplitBodyProps) {
   const { t } = useTranslation();
   const {
-    projects,
     selectedProject,
     selectedSession,
     activeTab,
@@ -752,7 +780,9 @@ function SplitBody(props: SplitBodyProps) {
     abortTraumaTurn,
     traumaOptimisticMessageRef,
     navigateToChatMessageRef,
+    traumaAbortUIRef,
     traumaSubmitting,
+    traumaLocallyAborted,
     pendingTraumaRun,
     onTraumaProcessStateChange,
     unreadSessionIds,
@@ -780,14 +810,16 @@ function SplitBody(props: SplitBodyProps) {
     editorSidebarProps,
   } = props;
 
-  // Shell, Git, Tasks, and plugin tabs retain their full-screen mode.
-  // Skills, Routing, Memory, and Always-On are auxiliary dashboards paired
-  // with chat. Files stays a separate explorer + artifact + assistant mode.
+  // Shell, Git, Memory, Skills, Storage, Tasks, and plugin tabs use the full workspace.
+  // Dashboard and Always-On remain auxiliary panels paired with chat.
+  // Files stays a separate explorer + artifact + assistant mode.
   const isPlugin = typeof activeTab === 'string' && activeTab.startsWith('plugin:');
   const fullScreenToolTabs = new Set([
     'shell',
     'git',
     'cron',
+    'memory',
+    'skills',
     'storage',
     'tasks',
   ]);
@@ -986,8 +1018,8 @@ function SplitBody(props: SplitBodyProps) {
     }
     if (activeTab === 'cron') return <CronV2 />;
     if (activeTab === 'dashboard') return <DashboardV2 projectFilter={selectedProject?.name} projectFullPath={selectedProject?.fullPath} onSelectProject={onSelectProjectByName} compact />;
-    if (activeTab === 'memory') return <MemoryPanel selectedProject={selectedProject} />;
-    if (activeTab === 'skills') return <SkillsV2 selectedProject={selectedProject} projects={projects} compact />;
+    if (activeTab === 'memory') return <MemoryPanel selectedProject={selectedProject} selectedSession={selectedSession} />;
+    if (activeTab === 'skills') return <SkillsV2 selectedProject={selectedProject} />;
     if (activeTab === 'storage') return <StorageV2 />;
     if (renderTasksAsTool) return <TasksV2 isVisible />;
     if (isPlugin) {
@@ -1051,6 +1083,7 @@ function SplitBody(props: SplitBodyProps) {
       hideComposer={isWarTraumaProject}
       traumaOptimisticMessageRef={traumaOptimisticMessageRef}
       navigateToChatMessageRef={navigateToChatMessageRef}
+      traumaAbortUIRef={traumaAbortUIRef}
       onTraumaProcessStateChange={onTraumaProcessStateChange}
       hiddenComposerNotice={isWarTraumaProject && isFiles
         ? '战创伤病例请切换到对话工作区，通过结构化表单提交本轮信息。'
@@ -1144,7 +1177,7 @@ function SplitBody(props: SplitBodyProps) {
       <div
         key="agent-surface"
         className={cn(
-          'flex min-h-0 min-w-0 flex-col bg-white dark:bg-neutral-950',
+          'workspace-chat-surface flex min-h-0 min-w-0 flex-col',
           !showChat && 'invisible absolute h-0 w-0 overflow-hidden',
           showChat && !isFiles && 'flex-1',
           assistantVisible && !assistantIsOverlay && 'flex-shrink-0 border-l border-neutral-200 dark:border-neutral-800',
@@ -1201,9 +1234,9 @@ function SplitBody(props: SplitBodyProps) {
               pendingRun={pendingTraumaRun}
               onNavigateToChatMessage={(runId) => navigateToChatMessageRef.current?.(runId)}
               runtimePanel={chatInterface}
-              submitting={traumaSubmitting || Boolean(
+              submitting={!traumaLocallyAborted && (traumaSubmitting || Boolean(
                 selectedSession?.id && processingSessions.has(selectedSession.id)
-              )}
+              ))}
             />
           ) : chatInterface}
           </ErrorBoundary>

@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync as mkdirSyncFs, renameSync } from "node:fs";
-import { dirname, resolve, join as joinPath, isAbsolute } from "node:path";
+import { readFile, stat } from "node:fs/promises";
+import { dirname, extname, relative, resolve, join as joinPath, isAbsolute } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { EdgeClawMemoryService } from "edgeclaw-memory-core";
@@ -29,6 +30,15 @@ import {
   ToolResultBudget,
   createEdgeClawMemoryProviderFromConfig,
 } from "../context/index.js";
+import { MemoryDomainFacade } from "../context/memory/MemoryDomainFacade.js";
+import { resolveMemoryScopeIdentity } from "../context/memory/MemoryScopeIdentity.js";
+import type { TraumaPresentationMemoryProvider } from "../trauma/memory/TraumaMemoryContext.js";
+import {
+  createTraumaMemoryCaptureSink,
+  resolveTraumaMemoryCaptureMode,
+  type TraumaMemoryCaptureMode,
+  type TraumaMemoryCaptureSink,
+} from "../trauma/memory/TraumaMemoryCapturePolicy.js";
 import { FileHistoryStore } from "../session/filesystem/FileHistoryStore.js";
 import { SessionMetadataStore } from "../session/index.js";
 import type { AgentSubagentTranscriptHooks } from "../agent/runtime/AgentRuntimeDependencies.js";
@@ -60,7 +70,7 @@ import {
   loadMcpServerConfig,
   parsePluginMcpServers,
 } from "../mcp/index.js";
-import { createModelRuntime, type ModelRuntime } from "../model/index.js";
+import { createModelRuntime, type CanonicalMessage, type ModelRuntime } from "../model/index.js";
 import { createDefaultPermissionContext, type PermissionRule } from "../permission/index.js";
 import { loadPilotConfig, resolvePilotHome, type PilotProxyConfig } from "../pilot/index.js";
 import {
@@ -68,10 +78,12 @@ import {
   isGeneralProjectKey,
   projectMetaTypeFromProjectPath,
   projectTypeKeyFromProjectId,
+  PROJECT_TYPE_KEYS,
   resolveAgentAdditionalWorkingDirectories,
   resolveAgentCwd,
   resolveGatewayProjectKey,
   resolveTraumaCaseDir,
+  resolveWorkspaceId,
 } from "../pilot/paths.js";
 import { filterSkillsForProjectType } from "../pilot/projectTypePolicy.js";
 import { createPilotConfigStoreSync, type PilotConfigStore } from "../pilot/config/PilotConfigStore.js";
@@ -102,11 +114,16 @@ import { createTelemetryCollector, type TelemetryClient } from "../telemetry/ind
 import {
   createTraumaAuditLogger,
   createExtractionStation,
+  createInterpretationStation,
+  createMcpTraumaParseClient,
   createMcpTraumaRagClient,
   createStructuredModelClient,
+  createKnowledgeQaStation,
+  createKnowledgeQueryRewriter,
   createTraumaCaseStore,
   createTraumaTurnRunner,
   type TraumaAuditLogger,
+  type TraumaImageInput,
   type TraumaTurnRunner,
 } from "../trauma/index.js";
 
@@ -327,10 +344,18 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
     setSessionCwd: (sessionKey, cwd) => registry.setSessionCwd(sessionKey, cwd),
     traumaRunnerFactory: ({ projectKey, sessionKey }) =>
       registry.createTraumaRunner(projectKey, sessionKey),
+    traumaKnowledgeQaFactory: ({ projectKey, sessionKey }) =>
+      registry.createTraumaKnowledgeQa(projectKey, sessionKey),
     traumaExtractorFactory: ({ projectKey, sessionKey }) =>
       registry.createExtractionStation(projectKey, sessionKey),
+    traumaPreferenceProvider: ({ projectKey, sessionKey }) =>
+      registry.createTraumaMemoryProvider(projectKey, sessionKey)?.() ?? null,
     traumaCaseReader: ({ projectKey, sessionKey }) =>
       registry.readTraumaCase(projectKey, sessionKey),
+    // 战创伤长期记忆写入（Task 7）。sink 按项目构建，未启用时为 undefined。
+    captureTraumaMemory: ({ projectKey, ...turn }) => {
+      registry.createTraumaMemoryCaptureSink(projectKey)?.(turn);
+    },
     async recordTraumaTurn(input) {
       const storage = createAgentProjectSessionStorage({
         projectRoot: input.projectKey,
@@ -346,12 +371,18 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
         });
         await metadataStore.saveAiTitle(input.aiTitle.trim(), input.runId);
       }
+      const userContent = await buildTraumaUserTranscriptContent(
+        input.userText,
+        input.attachments,
+        resolveAgentCwd(input.projectKey, pilotHome),
+      );
       await storage.transcript.recordDurableMessage(
         input.sessionKey,
         input.runId,
         {
           role: "user",
-          content: [{ type: "text", text: input.userText }],
+          content: userContent,
+          metadata: { purpose: "trauma_user_input" },
         },
       );
       for (const processMessage of input.processMessages ?? []) {
@@ -587,6 +618,124 @@ type ProjectRuntime = {
 const DEFAULT_BROWSER_ACTION_TIMEOUT_MS = 30_000;
 const DEFAULT_BROWSER_NAVIGATION_TIMEOUT_MS = 90_000;
 
+/**
+ * 工位 I 的 `readImage` 依赖：读取预览 PNG 并转成 base64；读不到时返回 null
+ * （契约见 `InterpretationStationDeps.readImage`）。`data` 必须是裸 base64，
+ * 不带 `data:` 前缀。
+ *
+ * Exported (like `sanitizeTraumaAttachments` in the bridge) purely so it
+ * can be unit tested directly.
+ */
+export async function readTraumaAttachmentPreviewImage(
+  path: string,
+): Promise<TraumaImageInput | null> {
+  const data = await readFile(path).catch(() => null);
+  if (!data) return null;
+  return { data: data.toString("base64"), mimeType: "image/png" };
+}
+
+type TranscriptAttachmentRef = {
+  name: string;
+  path: string;
+  size?: number;
+  mimeType?: string;
+  relativePath?: string;
+};
+
+const TRAUMA_ATTACHMENT_NOTE_MARKER = "[Files attached by user and available for reading in the project:]";
+const TRAUMA_ATTACHMENT_NOTE_END_MARKER = "[End files attached by user]";
+const TRAUMA_HISTORY_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+
+const TRAUMA_HISTORY_IMAGE_MIME_BY_EXT: Record<string, string> = {
+  ".apng": "image/apng",
+  ".avif": "image/avif",
+  ".gif": "image/gif",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".webp": "image/webp",
+};
+
+function sanitizeTranscriptAttachments(value: unknown): TranscriptAttachmentRef[] {
+  if (!Array.isArray(value)) return [];
+  const sanitized: TranscriptAttachmentRef[] = [];
+  const seenPaths = new Set<string>();
+  for (const item of value) {
+    if (sanitized.length >= 20) break;
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const path = typeof record.path === "string" ? record.path.trim() : "";
+    const name = typeof record.name === "string" ? record.name.trim() : "";
+    if (!path || !name || seenPaths.has(path)) continue;
+    seenPaths.add(path);
+    sanitized.push({
+      name,
+      path,
+      ...(typeof record.size === "number" && Number.isFinite(record.size) ? { size: record.size } : {}),
+      ...(typeof record.mimeType === "string" && record.mimeType.trim() ? { mimeType: record.mimeType.trim() } : {}),
+      ...(typeof record.relativePath === "string" && record.relativePath.trim() ? { relativePath: record.relativePath.trim() } : {}),
+    });
+  }
+  return sanitized;
+}
+
+function traumaAttachmentMimeType(attachment: TranscriptAttachmentRef): string | undefined {
+  if (attachment.mimeType) return attachment.mimeType;
+  const ext = extname(attachment.name || attachment.path).toLowerCase();
+  return TRAUMA_HISTORY_IMAGE_MIME_BY_EXT[ext];
+}
+
+function isSafeProjectFile(path: string, projectRoot: string): boolean {
+  if (!isAbsolute(path)) return false;
+  const normalizedPath = resolve(path);
+  const normalizedRoot = resolve(projectRoot);
+  const rel = relative(normalizedRoot, normalizedPath);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function buildTraumaAttachmentPathNote(attachments: TranscriptAttachmentRef[]): string {
+  if (attachments.length === 0) return "";
+  const lines = attachments.map((attachment) => {
+    if (attachment.relativePath && attachment.relativePath !== attachment.name) {
+      return `- ${attachment.name} (${attachment.relativePath}): ${attachment.path}`;
+    }
+    return `- ${attachment.name}: ${attachment.path}`;
+  });
+  return `\n\n${TRAUMA_ATTACHMENT_NOTE_MARKER}\n${lines.join("\n")}\n${TRAUMA_ATTACHMENT_NOTE_END_MARKER}\n`;
+}
+
+export async function buildTraumaUserTranscriptContent(
+  userText: string,
+  rawAttachments: unknown,
+  attachmentRoot: string,
+): Promise<CanonicalMessage["content"]> {
+  const attachments = sanitizeTranscriptAttachments(rawAttachments)
+    .filter((attachment) => isSafeProjectFile(attachment.path, attachmentRoot));
+  const content: CanonicalMessage["content"] = [];
+  const pathNote = buildTraumaAttachmentPathNote(attachments);
+  content.push({ type: "text", text: `${userText}${pathNote}` });
+  for (const attachment of attachments) {
+    const mimeType = traumaAttachmentMimeType(attachment);
+    if (!mimeType || !mimeType.startsWith("image/")) continue;
+    try {
+      const fileStat = await stat(attachment.path);
+      if (!fileStat.isFile() || fileStat.size > TRAUMA_HISTORY_IMAGE_MAX_BYTES) continue;
+      const data = await readFile(attachment.path);
+      content.push({
+        type: "image",
+        source: "base64",
+        data: data.toString("base64"),
+        mimeType,
+        bytes: fileStat.size,
+      });
+    } catch {
+      // Keep the path note. Missing/unreadable files simply won't render as inline images.
+    }
+  }
+  return content;
+}
+
 class ProjectRuntimeRegistry {
   private readonly runtimes = new Map<string, ProjectRuntime>();
   private gateway?: InProcessGateway;
@@ -645,12 +794,78 @@ class ProjectRuntimeRegistry {
     this.gateway = gateway;
   }
 
+  /**
+   * 构建战创伤的只读记忆 provider（Task 6）。
+   *
+   * 记忆未启用时返回 undefined——战创伤按无记忆运行，与改造前行为一致。
+   * facade 绑定的是**本项目**的 service 实例，跨项目召回在结构上不可能发生。
+   */
+  createTraumaMemoryProvider(
+    projectKey: string,
+    sessionKey: string,
+  ): TraumaPresentationMemoryProvider | undefined {
+    const runtime = this.resolve(projectKey);
+    const service = runtime.memoryService;
+    if (!service) return undefined;
+
+    const facade = new MemoryDomainFacade({
+      service,
+      identity: resolveMemoryScopeIdentity({
+        projectKey,
+        pilotHome: this.options.pilotHome,
+        sessionId: sessionKey,
+      }),
+      logger: console,
+    });
+
+    return () => facade.readPresentationMemory();
+  }
+
+  /**
+   * 构建战创伤的长期记忆写入 sink（Task 7，`feedback_only`）。
+   *
+   * 记忆未启用、或策略为 `off` 时返回 undefined，战创伤按不写入运行。
+   * 策略非法（例如配置里写了未实现的 `eligible_turns`）时同样返回 undefined
+   * 并记 warning——配置层已经会在启动时报错，这里只是兜底，不能让它拖垮回合。
+   */
+  createTraumaMemoryCaptureSink(
+    projectKey: string,
+  ): TraumaMemoryCaptureSink | undefined {
+    const runtime = this.resolve(projectKey);
+    const service = runtime.memoryService;
+    if (!service) return undefined;
+
+    let mode: TraumaMemoryCaptureMode;
+    try {
+      mode = resolveTraumaMemoryCaptureMode(runtime.snapshot.config.memory?.traumaCapture);
+    } catch (error) {
+      console.warn(
+        "[memory] 战创伤写入策略配置无效，本项目不写入长期记忆：",
+        error instanceof Error ? error.message : String(error),
+      );
+      return undefined;
+    }
+    if (mode === "off") return undefined;
+
+    const identity = resolveMemoryScopeIdentity({
+      projectKey,
+      pilotHome: this.options.pilotHome,
+    });
+    const facade = new MemoryDomainFacade({ service, identity, logger: console });
+
+    return createTraumaMemoryCaptureSink({
+      writer: facade,
+      mode,
+      scope: identity.projectId,
+      logger: console,
+    });
+  }
+
   async createTraumaRunner(projectKey: string, sessionKey: string): Promise<TraumaTurnRunner> {
     const runtime = this.resolve(projectKey);
     await runtime.pluginRuntime.refresh();
     await this.ensureMcpReady(runtime);
-    const projectId = projectKey.replace(/\\/gu, "/").split("/").filter(Boolean).at(-1)
-      ?? projectKey;
+    const projectId = resolveWorkspaceId(projectKey, this.options.pilotHome);
     const caseDirectory = resolveTraumaCaseDir(
       projectId,
       sessionKey,
@@ -683,10 +898,70 @@ class ProjectRuntimeRegistry {
       });
       return output.data ?? output.content;
     });
+
+    const callTraumaTool = async (name: string, toolInput: unknown, signal?: AbortSignal) => {
+      const tool = runtime.tools.get(name);
+      if (!tool) {
+        throw new Error(`Trauma tool is unavailable: ${name}`);
+      }
+      const output = await tool.execute(toolInput, {
+        sessionId: sessionKey,
+        turnId: `trauma-parse:${this.options.now().getTime()}`,
+        abortSignal: signal,
+        cwd: runtime.projectRoot,
+        permissionMode: "bypassPermissions",
+        permissionContext: createDefaultPermissionContext({
+          cwd: runtime.projectRoot,
+          mode: "bypassPermissions",
+          bypassAvailable: true,
+        }),
+        now: this.options.now,
+      });
+      return output.data ?? output.content;
+    };
+
+    // 影像判读交给医学微调 VLM；它正是 med_parse_medical 背后的同一个模型，
+    // 但 prompt 与输出长度由我们控制，避开那份冗长的通用报告。
+    const INTERPRETATION_PROVIDER = "local";
+    const INTERPRETATION_MODEL = "G9-V-Med";
+    let interpretationSelection = {
+      provider: INTERPRETATION_PROVIDER,
+      model: INTERPRETATION_MODEL,
+    };
+    let supportsImages = false;
+    try {
+      supportsImages = runtime.model
+        .getMultimodal(INTERPRETATION_PROVIDER, INTERPRETATION_MODEL)
+        .input.includes("image");
+    } catch {
+      // 配置里没有这个 provider/model，退回主 agent 模型。
+      interpretationSelection = modelSelection;
+      try {
+        supportsImages = runtime.model
+          .getMultimodal(modelSelection.provider, modelSelection.model)
+          .input.includes("image");
+      } catch {
+        supportsImages = false;
+      }
+    }
+
+    const interpreter = createInterpretationStation({
+      model: createStructuredModelClient({
+        complete: runtime.model.complete.bind(runtime.model),
+        stream: runtime.model.stream.bind(runtime.model),
+        provider: interpretationSelection.provider,
+        model: interpretationSelection.model,
+      }),
+      parse: createMcpTraumaParseClient(callTraumaTool),
+      readImage: readTraumaAttachmentPreviewImage,
+      supportsImages,
+    });
+
     return createTraumaTurnRunner({
       store: createTraumaCaseStore(caseDirectory),
       model,
       rag,
+      interpreter,
       audit: this.traumaAudit,
       now: () => this.options.now().toISOString(),
     });
@@ -705,10 +980,44 @@ class ProjectRuntimeRegistry {
     return createExtractionStation(model);
   }
 
+  async createTraumaKnowledgeQa(projectKey: string, sessionKey: string) {
+    const runtime = this.resolve(projectKey);
+    await runtime.pluginRuntime.refresh();
+    const modelSelection = runtime.snapshot.config.agent.model;
+    const model = createStructuredModelClient({
+      complete: runtime.model.complete.bind(runtime.model),
+      stream: runtime.model.stream.bind(runtime.model),
+      provider: modelSelection.provider,
+      model: modelSelection.model,
+    });
+    const rag = createMcpTraumaRagClient(async (name, input, signal) => {
+      const tool = runtime.tools.get(name);
+      if (!tool) throw new Error(`Trauma RAG tool is unavailable: ${name}`);
+      const output = await tool.execute(input, {
+        sessionId: sessionKey,
+        turnId: `trauma-knowledge-rag:${this.options.now().getTime()}`,
+        abortSignal: signal,
+        cwd: runtime.projectRoot,
+        permissionMode: "bypassPermissions",
+        permissionContext: createDefaultPermissionContext({
+          cwd: runtime.projectRoot,
+          mode: "bypassPermissions",
+          bypassAvailable: true,
+        }),
+        now: this.options.now,
+      });
+      return output.data ?? output.content;
+    });
+    return {
+      rewriter: createKnowledgeQueryRewriter(model),
+      rag,
+      qa: createKnowledgeQaStation(model),
+    };
+  }
+
   async readTraumaCase(projectKey: string, sessionKey: string) {
-    const projectId = projectKey.replace(/\\/gu, "/").split("/").filter(Boolean).at(-1)
-      ?? projectKey;
-    if (projectTypeKeyFromProjectId(projectId) !== "trauma_med") {
+    const projectId = resolveWorkspaceId(projectKey, this.options.pilotHome);
+    if (projectTypeKeyFromProjectId(projectId) !== PROJECT_TYPE_KEYS.war_trauma) {
       return { current: null, snapshots: [] };
     }
     const store = createTraumaCaseStore(resolveTraumaCaseDir(
@@ -932,6 +1241,12 @@ class ProjectRuntimeRegistry {
       pilotHome: this.options.pilotHome,
       now: this.options.now,
       telemetry: this.options.telemetry,
+      // 选中提示词档案（Task 5）。不传的话战创伤项目会退回通用医学档案，
+      // allowedTypes 硬闸也就形同虚设。
+      projectType: resolveMemoryScopeIdentity({
+        projectKey: identityKey,
+        pilotHome: this.options.pilotHome,
+      }).projectType,
     });
 
     const runtime: ProjectRuntime = {

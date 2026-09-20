@@ -700,21 +700,14 @@ async function readSkillMeta(
     readonly: scope === "builtin" || scope === "medical",
     mtime,
     availability,
-    availabilityMutable: scope === "user",
+    availabilityMutable: false,
   };
 }
 
 function resolveSummaryAvailability(
-  scope: SkillScope,
-  frontmatterAvailability: unknown,
+  _scope: SkillScope,
+  _frontmatterAvailability: unknown,
 ): SkillAvailability[] {
-  if (scope === "medical") {
-    return [...GLOBAL_SKILL_AVAILABILITY];
-  }
-  if (scope === "user") {
-    const normalized = normalizeSkillAvailability(frontmatterAvailability);
-    return normalized.length > 0 ? normalized : [...GLOBAL_SKILL_AVAILABILITY];
-  }
   return [...GLOBAL_SKILL_AVAILABILITY];
 }
 

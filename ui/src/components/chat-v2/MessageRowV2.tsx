@@ -25,6 +25,7 @@ import ImageLightbox, { type LightboxImage } from '../chat/view/subcomponents/Im
 import { Markdown } from '../chat/view/subcomponents/Markdown';
 import CitationSourceList from './CitationSourceList';
 import { formatUsageLimitText } from '../chat/utils/chatFormatting';
+import { extractCitationsFromContent, stripCitationDetailsBlocks } from '../chat/utils/citationDetails';
 import { ProcessTrace } from './ProcessTrace';
 import {
   buildProcessToolSteps,
@@ -145,6 +146,22 @@ function MessageRowV2({
   // message is still growing.
   const thinkingDisplayText = formattedContent;
   const contentDisplayText = formattedContent;
+  const assistantCitations = useMemo(
+    () => (
+      Array.isArray(message.citations) && message.citations.length > 0
+        ? message.citations
+        : extractCitationsFromContent(contentDisplayText)
+    ),
+    [message.citations, contentDisplayText],
+  );
+  const assistantMarkdownText = useMemo(
+    () => (
+      assistantCitations.length > 0
+        ? stripCitationDetailsBlocks(contentDisplayText)
+        : contentDisplayText
+    ),
+    [assistantCitations, contentDisplayText],
+  );
   const assistantArtifacts = useMemo(
     () => (Array.isArray(message.artifacts) ? message.artifacts : []),
     [message.artifacts],
@@ -287,7 +304,7 @@ function MessageRowV2({
             t={t}
           />
         ) : null}
-        <div className="min-w-0 max-w-[78%] overflow-hidden rounded-[22px] bg-neutral-100 px-4 py-2.5 text-[14px] leading-relaxed text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100">
+        <div className="pd-user-message-bubble min-w-0 max-w-[78%] overflow-hidden rounded-[22px] bg-neutral-100 px-4 py-2.5 text-[14px] leading-relaxed text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100">
           {message.isStreaming && !formattedContent ? (
             <span className="inline-block h-4 w-2 animate-pulse bg-neutral-400 dark:bg-neutral-500" />
           ) : (
@@ -381,7 +398,7 @@ function MessageRowV2({
     if (inlineThinking) {
       // Inline mode: unified <details> with typewriter animation + blue theme
       return withProcessRows(
-        <div className="min-w-0 text-[14px] leading-relaxed">
+        <div className="pd-thinking-message min-w-0 text-[14px] leading-relaxed">
           <details className="group" open={(isThinkingStreaming ? thinkingDisplayText.length > 12 : false) || undefined}>
             <summary className="flex cursor-pointer select-none items-center gap-1.5 text-[13px] font-medium text-blue-600/70 hover:text-blue-700 dark:text-blue-400/70 dark:hover:text-blue-300">
               {isThinkingStreaming
@@ -393,7 +410,7 @@ function MessageRowV2({
                   : t('thinking.completed', { defaultValue: 'Thought process' })}
               </span>
             </summary>
-            <div className={`mt-1.5 max-h-64 overflow-y-auto border-l-2 pl-3 text-[13px] ${
+            <div className={`pd-thinking-body mt-1.5 max-h-64 overflow-y-auto border-l-2 pl-3 text-[13px] ${
               isThinkingStreaming
                 ? 'border-blue-400/50 text-neutral-600 dark:border-blue-500/40 dark:text-neutral-300'
                 : 'border-blue-400/30 text-neutral-600 dark:border-blue-500/30 dark:text-neutral-400'
@@ -410,13 +427,13 @@ function MessageRowV2({
 
     // Default (status-bar preview mode): simple collapsible accordion
     return withProcessRows(
-      <div className="min-w-0 text-[14px] leading-relaxed">
+      <div className="pd-thinking-message min-w-0 text-[14px] leading-relaxed">
         <details className="group">
           <summary className="flex cursor-pointer select-none items-center gap-1.5 text-[13px] font-medium text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200">
             <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" strokeWidth={2} />
             <span>{t('thinking.completed', { defaultValue: 'Thought process' })}</span>
           </summary>
-          <div className="mt-1.5 max-h-64 overflow-y-auto border-l-2 border-neutral-300 pl-3 text-[13px] text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
+          <div className="pd-thinking-body mt-1.5 max-h-64 overflow-y-auto border-l-2 border-neutral-300 pl-3 text-[13px] text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
             <Markdown projectName={selectedProject?.name}
           onFileOpen={onFileOpen}>{formattedContent}</Markdown>
           </div>
@@ -436,15 +453,15 @@ function MessageRowV2({
     forkDisabled || isSessionRunning || message.isStreaming || !message.entryId,
   );
   const assistantBody = (hasAssistantProse || showStreamingCursor || assistantArtifacts.length > 0) ? (
-    <div className="min-w-0 text-[14px] leading-relaxed text-neutral-900 dark:text-neutral-100">
+    <div className="pd-assistant-message min-w-0 text-[14px] leading-relaxed text-neutral-900 dark:text-neutral-100">
       {showStreamingCursor ? (
         <span className="inline-block h-4 w-2 animate-pulse bg-neutral-400 dark:bg-neutral-500" />
       ) : (
         <Markdown className="prose prose-sm prose-neutral max-w-none dark:prose-invert prose-headings:mb-2 prose-headings:mt-4 prose-h2:text-lg prose-h3:text-base prose-p:my-2 prose-pre:my-3 prose-ol:my-2 prose-ul:my-2 prose-table:my-0 prose-hr:my-4" projectName={selectedProject?.name}
         onFileOpen={onFileOpen} isStreaming={message.isStreaming} artifactFiles={assistantArtifacts}
-        citations={message.citations}>{contentDisplayText}</Markdown>
+        citations={assistantCitations}>{assistantMarkdownText}</Markdown>
       )}
-      <CitationSourceList citations={message.citations} isStreaming={message.isStreaming} />
+      <CitationSourceList citations={assistantCitations} isStreaming={message.isStreaming} />
       {assistantArtifacts.length > 0 ? (
         <AgentFileArtifactGroup
           artifacts={assistantArtifacts}

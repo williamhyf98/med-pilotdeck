@@ -1,4 +1,4 @@
-import { Check, Circle, Loader2, LockKeyhole, MoveRight, Settings2 } from 'lucide-react';
+import { Check, Circle, Loader2, LockKeyhole, MoveRight } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { MainStageId, RoundMemo, StageDefinition, WorkflowStatus } from './types';
 
@@ -31,8 +31,6 @@ type TreatmentTreeProps = {
   } | null;
   selectedMemoId: string | null;
   onSelectMemo: (memoId: string) => void;
-  onRequestStageOverride?: () => void;
-  canOverrideStage?: boolean;
 };
 
 function statusLabel(status: WorkflowStatus): string {
@@ -50,7 +48,7 @@ type CurrentTone = 'teal' | 'blue';
 
 function nodeClasses(status: WorkflowStatus, currentTone: CurrentTone = 'teal'): string {
   return cn(
-    'border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950',
+    'workspace-card-surface border-border',
     status === 'future' && 'opacity-45',
     status === 'current' && (currentTone === 'blue'
       ? 'border-blue-300 bg-blue-50/70 dark:border-blue-800 dark:bg-blue-950/30'
@@ -129,8 +127,6 @@ export default function TreatmentTree({
   pendingRound = null,
   selectedMemoId,
   onSelectMemo,
-  onRequestStageOverride,
-  canOverrideStage = true,
 }: TreatmentTreeProps) {
   const visibleRounds = rounds.slice(0, currentRoundIndex + 1);
   // Before the first snapshot is persisted, the real case position is still
@@ -154,18 +150,6 @@ export default function TreatmentTree({
           等待首轮推演生成轮次纪要
         </p>
       ) : null}
-      {onRequestStageOverride && canOverrideStage ? (
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={onRequestStageOverride}
-            className="inline-flex items-center gap-1.5 rounded-md border border-neutral-200 px-2 py-1.5 text-[10px] font-medium text-neutral-600 hover:bg-neutral-50 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-900"
-          >
-            <Settings2 className="h-3 w-3" />
-            调整救治阶段
-          </button>
-        </div>
-      ) : null}
       {stages.map((stage) => {
         const mainStatus = getMainStatus(stages, stage.id, displayPosition);
         return (
@@ -180,13 +164,13 @@ export default function TreatmentTree({
                     <span className="mr-1.5 text-[10px] text-neutral-400">{stage.index}</span>
                     {stage.name}
                   </div>
-                  <p className="truncate text-[9px] text-neutral-500 dark:text-neutral-400">{stage.note}</p>
+                  <p className="truncate text-[9px] text-muted-foreground">{stage.note}</p>
                 </div>
                 <StatusBadge status={mainStatus} />
               </div>
             </div>
 
-            <div className="ml-3 border-l border-neutral-200 pl-3 pt-1.5 dark:border-neutral-800">
+            <div className="ml-3 border-l border-border pl-3 pt-1.5">
               {stage.substeps.map((substep, substepIndex) => {
                 const subStatus = getSubStatus(mainStatus, substepIndex, displayPosition);
                 const memos = subStatus === 'future'
@@ -203,7 +187,7 @@ export default function TreatmentTree({
                 const showPending = Boolean(pendingForSubstep);
                 return (
                   <div className="relative mb-1.5" key={`${stage.id}-${substep.name}`}>
-                    <span className="absolute -left-3 top-4 w-3 border-t border-neutral-200 dark:border-neutral-800" />
+                    <span className="absolute -left-3 top-4 w-3 border-t border-border" />
                     <div
                       aria-disabled="true"
                       className={cn('rounded-md border px-2.5 py-1.5', nodeClasses(subStatus))}
@@ -211,7 +195,7 @@ export default function TreatmentTree({
                       <div className="flex items-center justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate text-[11px] font-medium">{substep.name}</p>
-                          <p className="truncate text-[9px] text-neutral-500 dark:text-neutral-400">{substep.note}</p>
+                          <p className="truncate text-[9px] text-muted-foreground">{substep.note}</p>
                         </div>
                         <StatusBadge status={subStatus} />
                       </div>
@@ -223,19 +207,21 @@ export default function TreatmentTree({
                           const selected = selectedMemoId === memo.id;
                           const memoStatus = getMemoStatus(memo, displayPosition);
                           const isCurrentMemo = memo.round === displayPosition.round;
+                          const highlighted = selected || (!selectedMemoId && isCurrentMemo);
                           return (
                             <div className="relative mb-1.5" key={memo.id}>
                               <span className="absolute -left-3 top-4 w-3 border-t border-dashed border-neutral-300 dark:border-neutral-700" />
                               <button
                                 type="button"
                                 aria-expanded={selected}
+                                aria-current={isCurrentMemo ? 'step' : undefined}
                                 onClick={() => onSelectMemo(memo.id)}
                                 className={cn(
                                   'w-full rounded-md border px-2.5 py-2 text-left transition',
                                   nodeClasses(memoStatus, 'blue'),
                                   'hover:border-neutral-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400',
                                   'dark:hover:border-neutral-600',
-                                  selected && 'ring-1 ring-neutral-400 dark:ring-neutral-500',
+                                  highlighted && 'trauma-tree-memo-selected ring-1 ring-neutral-400 dark:ring-neutral-500',
                                 )}
                               >
                                 <div className="flex items-center justify-between gap-2">
@@ -249,7 +235,7 @@ export default function TreatmentTree({
                                     <span className="shrink-0 text-[9px] text-neutral-400">{memo.time}</span>
                                   )}
                                 </div>
-                                <p className="mt-1 line-clamp-2 text-[9px] leading-4 text-neutral-500 dark:text-neutral-400">
+                                <p className="mt-1 line-clamp-2 text-[9px] leading-4 text-muted-foreground">
                                   {memo.inputPoints[0]} · {memo.conclusion}
                                 </p>
                               </button>

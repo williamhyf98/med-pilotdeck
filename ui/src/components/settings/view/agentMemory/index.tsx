@@ -168,6 +168,54 @@ function MemorySection({
               />
             </FormRow>
 
+            <FormRow
+              label={t("pilotDeckConfig.panels.memory.traumaCapture.label")}
+              description={t("pilotDeckConfig.panels.memory.traumaCapture.description")}
+            >
+              <Select
+                value={m.traumaCapture ?? "feedback_only"}
+                options={[
+                  {
+                    value: "feedback_only",
+                    label: t("pilotDeckConfig.panels.memory.traumaCapture.feedbackOnly"),
+                  },
+                  {
+                    value: "off",
+                    label: t("pilotDeckConfig.panels.memory.traumaCapture.off"),
+                  },
+                ]}
+                onChange={(v) => {
+                  onChange(patch(config, ["memory", "traumaCapture"], v));
+                }}
+              />
+            </FormRow>
+
+            <FormRow
+              label={t("pilotDeckConfig.panels.memory.maintenanceMode.label")}
+              description={t("pilotDeckConfig.panels.memory.maintenanceMode.description")}
+            >
+              <Select
+                value={m.maintenanceMode ?? "interval"}
+                options={[
+                  {
+                    value: "immediate",
+                    label: t("pilotDeckConfig.panels.memory.maintenanceMode.immediate"),
+                  },
+                  {
+                    value: "interval",
+                    label: t("pilotDeckConfig.panels.memory.maintenanceMode.interval"),
+                  },
+                  {
+                    value: "manual",
+                    label: t("pilotDeckConfig.panels.memory.maintenanceMode.manual"),
+                  },
+                ]}
+                onChange={(v) => {
+                  onChange(patch(config, ["memory", "maintenanceMode"], v));
+                }}
+              />
+            </FormRow>
+
             <div className="grid grid-cols-1 items-start gap-2 px-4 py-2.5 sm:grid-cols-[minmax(360px,1fr)_420px] sm:gap-4">
               <div className="min-w-0">
                 <div className="text-[13px] font-medium leading-5 text-foreground">

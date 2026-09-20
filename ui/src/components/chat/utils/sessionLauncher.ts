@@ -36,6 +36,7 @@ export type StartSessionOptions = {
   traumaForm?: TurnFormInput;
   traumaRawInput?: string;
   traumaExtract?: boolean;
+  traumaAttachments?: Array<{ path: string; name: string }>;
 };
 
 const VALID_PERMISSION_MODES = new Set<PermissionMode>([
@@ -49,6 +50,13 @@ export const isTemporarySessionId = (sessionId: string | null | undefined) =>
 
 export function createTemporarySessionId(): string {
   return `new-session-${Date.now()}`;
+}
+
+export function createPilotDeckSessionId(): string {
+  const randomId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `web:s_${randomId}`;
 }
 
 export function getNotificationSessionSummary(
@@ -90,7 +98,7 @@ export function getStoredPermissionMode(
 }
 
 export function getSelectedProjectPath(selectedProject: Project): string {
-  return selectedProject.fullPath || selectedProject.path || '';
+  return selectedProject.fullPath || selectedProject.path || selectedProject.name || '';
 }
 
 export function startSessionCommand({
@@ -120,6 +128,7 @@ export function startSessionCommand({
   traumaForm,
   traumaRawInput,
   traumaExtract,
+  traumaAttachments,
 }: StartSessionOptions): string {
   const sessionToActivate =
     sessionId || temporarySessionId || createTemporarySessionId();
@@ -155,6 +164,9 @@ export function startSessionCommand({
       ...(traumaForm ? { traumaForm } : {}),
       ...(traumaRawInput ? { traumaRawInput } : {}),
       ...(traumaExtract ? { traumaExtract: true } : {}),
+      ...(Array.isArray(traumaAttachments) && traumaAttachments.length > 0
+        ? { traumaAttachments }
+        : {}),
     },
   });
 

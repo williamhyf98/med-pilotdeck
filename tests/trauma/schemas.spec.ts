@@ -2,11 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  EXTRACTOR_OUTPUT_SCHEMA,
+  INTERPRETATION_OUTPUT_SCHEMA,
   PLACEMENT_OUTPUT_SCHEMA,
   REASONER_OUTPUT_SCHEMA,
+  validateAttachmentInterpretation,
+  validateExtractedTurnForm,
   validatePlacementAssessment,
   validateReasonerOutput,
 } from "../../src/trauma/schemas.js";
+import { EXTRACTOR_SYSTEM_PROMPT } from "../../src/trauma/stations/extractorPrompt.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -47,8 +52,53 @@ function assertStrictCompatible(node: unknown, path: string): void {
 }
 
 test("trauma structured-output schemas satisfy OpenAI strict mode", () => {
+  assertStrictCompatible(EXTRACTOR_OUTPUT_SCHEMA, "extract");
   assertStrictCompatible(PLACEMENT_OUTPUT_SCHEMA, "place");
   assertStrictCompatible(REASONER_OUTPUT_SCHEMA, "reason");
+});
+
+test("extractor schema accepts preference side intents", () => {
+  assert.equal(validateExtractedTurnForm({
+    inputIntent: "case_update",
+    scopeReason: "同时包含病例更新和输出偏好",
+    preferences: [{
+      sourceSpan: "以后先给结论",
+      directive: "回答时先给结论",
+      category: "format",
+    }],
+    injuryNarratives: [{ text: "患者右腿持续出血", sourceSpan: "患者右腿持续出血" }],
+    treatmentNarratives: [],
+    evacuationNarratives: [],
+    notes: [],
+    vitals: [],
+  }), true);
+});
+
+test("extractor schema rejects malformed preference side intents", () => {
+  const base = {
+    inputIntent: "out_of_scope",
+    scopeReason: "只包含偏好",
+    injuryNarratives: [],
+    treatmentNarratives: [],
+    evacuationNarratives: [],
+    notes: [],
+    vitals: [],
+  };
+  assert.equal(validateExtractedTurnForm({
+    ...base,
+    preferences: [{ sourceSpan: "以后用表格", directive: "使用表格", category: "medical" }],
+  }), false);
+  assert.equal(validateExtractedTurnForm({
+    ...base,
+    preferences: [{ sourceSpan: "以后用表格", directive: 3, category: "format" }],
+  }), false);
+});
+
+test("extractor prompt treats preferences as side intents for every primary intent", () => {
+  assert.match(EXTRACTOR_SYSTEM_PROMPT, /偏好更新与主意图相互独立/u);
+  assert.match(EXTRACTOR_SYSTEM_PROMPT, /preferences/u);
+  assert.match(EXTRACTOR_SYSTEM_PROMPT, /sourceSpan/u);
+  assert.match(EXTRACTOR_SYSTEM_PROMPT, /不得把病例事实.*写成偏好/u);
 });
 
 test("model placement schema rejects user_stated and contains no timing guidance", () => {
@@ -106,4 +156,43 @@ test("reasoner validator accepts over-long memo fields (length is a soft hint, n
     validateReasonerOutput({ ...base, memo: { ...base.memo, inputPoints: "不是数组" } }),
     false,
   );
+});
+
+test("interpretation schema satisfies OpenAI strict mode", () => {
+  const schema = INTERPRETATION_OUTPUT_SCHEMA as any;
+  assert.equal(schema.type, "object");
+  assert.equal(schema.additionalProperties, false);
+  assert.deepEqual(schema.required, ["attachments", "overall"]);
+  const item = schema.properties.attachments.items;
+  assert.equal(item.additionalProperties, false);
+  assert.deepEqual(item.required, ["fileName", "keyFindings", "traumaRelevance"]);
+});
+
+test("interpretation schema requests complete user-visible findings without legacy short limits", () => {
+  const schema = INTERPRETATION_OUTPUT_SCHEMA as any;
+  const keyFindingsDescription = schema.properties.attachments.items.properties.keyFindings.description;
+  const overallDescription = schema.properties.overall.description;
+
+  assert.match(keyFindingsDescription, /完整/u);
+  assert.match(keyFindingsDescription, /用户/u);
+  assert.doesNotMatch(keyFindingsDescription, /一到三句话/u);
+  assert.doesNotMatch(overallDescription, /不超过 200 字/u);
+});
+
+test("validateAttachmentInterpretation accepts a well-formed output", () => {
+  assert.equal(validateAttachmentInterpretation({
+    attachments: [{ fileName: "ct.dcm", keyFindings: "右侧血气胸", traumaRelevance: "与胸部穿透伤一致" }],
+    overall: "提示张力性血气胸风险。",
+  }), true);
+});
+
+test("validateAttachmentInterpretation accepts an empty attachment list", () => {
+  assert.equal(validateAttachmentInterpretation({ attachments: [], overall: "" }), true);
+});
+
+test("validateAttachmentInterpretation rejects malformed items", () => {
+  assert.equal(validateAttachmentInterpretation({ attachments: [{ fileName: "a" }], overall: "x" }), false);
+  assert.equal(validateAttachmentInterpretation({ attachments: "nope", overall: "x" }), false);
+  assert.equal(validateAttachmentInterpretation({ attachments: [], overall: 1 }), false);
+  assert.equal(validateAttachmentInterpretation(null), false);
 });

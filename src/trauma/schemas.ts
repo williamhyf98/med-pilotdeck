@@ -6,6 +6,8 @@
  * 下面的构造器负责统一满足这些约束。
  */
 
+import { TRAUMA_DEFAULT_REASONER_ANSWER_LENGTH_RULE } from "./presentationDefaults.js";
+
 type Schema = Record<string, unknown>;
 
 const STRING: Schema = { type: "string" };
@@ -86,6 +88,44 @@ export function validatePlacementAssessment(
   return true;
 }
 
+export const INTERPRETATION_OUTPUT_SCHEMA: Record<string, unknown> = described(
+  object({
+    attachments: described(
+      arrayOf(object({
+        fileName: described(STRING, "附件文件名，必须与输入中给出的文件名一致。"),
+        keyFindings: described(
+          STRING,
+          "该附件完整、可供用户阅读的关键发现。根据材料能力说明资料类型、检查部位、伤类或伤型、严重程度，以及适用时的侧别、方位、体位或视角；保留重要阴性发现、不确定性和判读限制。只描述材料支持的内容，不要推测或罗列检查技术参数。",
+        ),
+        traumaRelevance: described(
+          STRING,
+          "该发现与本轮战创伤救治决策的相关性；无相关性时写「与本轮救治决策无直接关联」。",
+        ),
+      })),
+      "按输入附件逐条给出的判读；解析为空的附件也要出现在列表中并说明原因。",
+    ),
+    overall: described(
+      STRING,
+      "跨附件的综合判读，汇总共同发现、相互印证或冲突之处、重要不确定性及其对本轮救治的整体意义；没有可综合的内容时为空串。",
+    ),
+  }),
+  "工位 I 的战创伤影像判读输出，供检索与推理消费，也可由 Reasoner 整理为用户可见的影像或附件判读；不是正式影像报告。",
+);
+
+export function validateAttachmentInterpretation(
+  value: unknown,
+): value is import("./types.js").AttachmentInterpretationOutput {
+  if (!isRecord(value)) return false;
+  if (typeof value.overall !== "string") return false;
+  if (!Array.isArray(value.attachments)) return false;
+  return value.attachments.every((item: unknown) => (
+    isRecord(item)
+    && typeof item.fileName === "string"
+    && typeof item.keyFindings === "string"
+    && typeof item.traumaRelevance === "string"
+  ));
+}
+
 const GATE_STATUSES = new Set(["ASSESSING", "STAY", "BLOCKED", "READY"]);
 
 
@@ -93,7 +133,7 @@ export const REASONER_OUTPUT_SCHEMA: Record<string, unknown> = described(
   object({
     naturalLanguageAnswer: described(
       STRING,
-      "给用户看的主文。按系统提示词的板块组织；依据通过句末 [N] 角标引用，不要另写参考依据板块。",
+      `给用户看的主文。${TRAUMA_DEFAULT_REASONER_ANSWER_LENGTH_RULE}按系统提示词的临床内容要求组织；依据通过句末 [N] 角标引用，不要另写参考依据板块。`,
     ),
     classification: described(
       object({
@@ -306,8 +346,33 @@ const EXTRACTED_VITAL_ITEM = object({
   sourceSpan: STRING,
 });
 
+const TRAUMA_INPUT_INTENT = enumOf(
+  "case_update",
+  "out_of_scope",
+  "domain_question_no_case",
+  "system_help",
+);
+
+const EXTRACTED_PREFERENCE = object({
+  sourceSpan: described({ type: "string", maxLength: 500 }, "用户原文中连续存在的偏好片段。"),
+  directive: described({ type: "string", maxLength: 300 }, "归一化后的表达或协作偏好。"),
+  category: enumOf("format", "detail", "language", "workflow"),
+});
+
 export const EXTRACTOR_OUTPUT_SCHEMA: Record<string, unknown> = described(
   object({
+    inputIntent: described(
+      TRAUMA_INPUT_INTENT,
+      "用户本轮输入意图。只有 case_update 表示包含具体伤员信息、可进入推演。",
+    ),
+    scopeReason: described(
+      STRING,
+      "一句话说明 inputIntent 的判断依据；不要输出推理过程。",
+    ),
+    preferences: described(
+      { type: "array", items: EXTRACTED_PREFERENCE, maxItems: 8 },
+      "与主意图独立的表达、详略、语言或工作流偏好；没有则输出空数组。",
+    ),
     injuryNarratives: arrayOf(EXTRACTED_NARRATIVE_ITEM),
     treatmentNarratives: arrayOf(EXTRACTED_NARRATIVE_ITEM),
     evacuationNarratives: arrayOf(EXTRACTED_NARRATIVE_ITEM),
@@ -316,6 +381,50 @@ export const EXTRACTOR_OUTPUT_SCHEMA: Record<string, unknown> = described(
   }),
   "工位 F 从用户自由文本中抽取的结构化表单草稿。",
 );
+
+export const KNOWLEDGE_QUERY_REWRITE_SCHEMA: Record<string, unknown> = described(
+  object({
+    rewrittenQueries: arrayOf(object({
+      query: STRING,
+      reason: STRING,
+    })),
+    unresolvedReferences: STRING_ARRAY,
+    needsClarification: BOOLEAN,
+  }),
+  "战创伤知识问题的检索查询改写结果。",
+);
+
+export function validateKnowledgeQueryRewrite(
+  value: unknown,
+): value is import("./types.js").KnowledgeQueryRewrite {
+  if (!isRecord(value)) return false;
+  if (!Array.isArray(value.rewrittenQueries)) return false;
+  if (!value.rewrittenQueries.every((item: unknown) => (
+    isRecord(item)
+    && typeof item.query === "string"
+    && typeof item.reason === "string"
+  ))) return false;
+  if (!Array.isArray(value.unresolvedReferences)
+    || !value.unresolvedReferences.every((item: unknown) => typeof item === "string")) return false;
+  return typeof value.needsClarification === "boolean";
+}
+
+export const KNOWLEDGE_QA_OUTPUT_SCHEMA: Record<string, unknown> = described(
+  object({
+    naturalLanguageAnswer: STRING,
+    citationChunkIds: STRING_ARRAY,
+  }),
+  "战创伤知识问答答案及其引用的知识块 ID。",
+);
+
+export function validateKnowledgeQaOutput(
+  value: unknown,
+): value is import("./types.js").KnowledgeQaOutput {
+  if (!isRecord(value)) return false;
+  return typeof value.naturalLanguageAnswer === "string"
+    && Array.isArray(value.citationChunkIds)
+    && value.citationChunkIds.every((item: unknown) => typeof item === "string");
+}
 
 function isExtractedNarrativeItem(value: unknown): value is import("./types.js").ExtractedNarrativeItem {
   if (!isRecord(value)) return false;
@@ -336,10 +445,30 @@ function isExtractedVitalItem(value: unknown): value is import("./types.js").Ext
   );
 }
 
+function isExtractedPreference(value: unknown): value is import("./types.js").ExtractedTraumaPreference {
+  if (!isRecord(value)) return false;
+  return typeof value.sourceSpan === "string"
+    && value.sourceSpan.length <= 500
+    && typeof value.directive === "string"
+    && value.directive.length <= 300
+    && ["format", "detail", "language", "workflow"].includes(String(value.category));
+}
+
 export function validateExtractedTurnForm(
   value: unknown,
 ): value is import("./types.js").ExtractedTurnForm {
   if (!isRecord(value)) return false;
+  if (
+    value.inputIntent !== undefined
+    && !["case_update", "out_of_scope", "domain_question_no_case", "system_help"].includes(String(value.inputIntent))
+  ) {
+    return false;
+  }
+  if (value.scopeReason !== undefined && typeof value.scopeReason !== "string") return false;
+  if (value.preferences !== undefined) {
+    if (!Array.isArray(value.preferences) || value.preferences.length > 8) return false;
+    if (!(value.preferences as unknown[]).every(isExtractedPreference)) return false;
+  }
   const arrFields = ["injuryNarratives", "treatmentNarratives", "evacuationNarratives", "notes"] as const;
   for (const field of arrFields) {
     if (!Array.isArray(value[field])) return false;

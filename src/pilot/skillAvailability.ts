@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 
 import type { ProjectMetaType } from "./paths.js";
 
-export type SkillAvailability = "global" | ProjectMetaType;
+export type SkillAvailability = "global";
 
 export const GLOBAL_SKILL_AVAILABILITY: readonly SkillAvailability[] = ["global"];
 export const MED_MEDICAL_SKILL = "med-medical";
@@ -14,41 +14,25 @@ type AvailabilityFile = Record<string, SkillAvailability[]>;
 
 export function normalizeSkillAvailability(value: unknown): SkillAvailability[] {
   const values = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
-  const unique = new Set<SkillAvailability>();
-  for (const entry of values) {
-    if (
-      entry === "global"
-      || entry === "general_medicine"
-      || entry === "war_trauma"
-    ) {
-      unique.add(entry);
-    }
-  }
-  if (
-    unique.has("global")
-    || (unique.has("general_medicine") && unique.has("war_trauma"))
-  ) {
-    return ["global"];
-  }
-  return [...unique];
+  const hasValidValue = values.some((entry) =>
+    entry === "global"
+    || entry === "general_medicine"
+    || entry === "war_trauma"
+  );
+  return hasValidValue ? ["global"] : [];
 }
 
 export function isValidSkillAvailabilityInput(value: unknown): value is SkillAvailability[] {
   return Array.isArray(value)
     && value.length > 0
-    && value.every((entry) =>
-      entry === "global"
-      || entry === "general_medicine"
-      || entry === "war_trauma"
-    );
+    && value.every((entry) => entry === "global");
 }
 
 export function availabilityIncludesProjectType(
-  availability: readonly SkillAvailability[] | undefined,
-  projectType: ProjectMetaType,
+  _availability: readonly SkillAvailability[] | undefined,
+  _projectType: ProjectMetaType,
 ): boolean {
-  if (!availability || availability.length === 0) return true;
-  return availability.includes("global") || availability.includes(projectType);
+  return true;
 }
 
 export function skillAvailabilityFile(pilotHome = resolvePilotHome()): string {

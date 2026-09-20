@@ -1,4 +1,5 @@
 import { isRecord } from "../../model/config/schema.js";
+import { resolveTraumaMemoryCaptureMode } from "../../trauma/memory/TraumaMemoryCapturePolicy.js";
 import type { ModelConfig } from "../../model/protocol/canonical.js";
 import {
   PilotConfigError,
@@ -50,7 +51,7 @@ export function parseMemoryConfig(
   const KNOWN_FIELDS = new Set([
     "enabled", "provider", "rootDir", "captureStrategy", "includeAssistant",
     "maxMessageChars", "retrievalTimeoutMs", "model", "apiType", "schedule",
-    "heartbeatBatchSize",
+    "heartbeatBatchSize", "traumaCapture",
     "reasoningMode", "autoIndexIntervalMinutes", "autoDreamIntervalMinutes",
   ]);
   for (const key of Object.keys(rawMemory)) {
@@ -80,7 +81,25 @@ export function parseMemoryConfig(
     apiType: readMemoryApiType(rawMemory.apiType),
     schedule,
     heartbeatBatchSize: readOptionalPositiveInteger(rawMemory.heartbeatBatchSize, "memory.heartbeatBatchSize"),
+    traumaCapture: readTraumaCapture(rawMemory.traumaCapture),
   };
+}
+
+/**
+ * 战创伤写入策略。缺省 `feedback_only`；`eligible_turns` 本期显式拒绝。
+ *
+ * 复用 `TraumaMemoryCapturePolicy` 的归一化函数，保证配置层与策略层
+ * 对「哪些值合法」只有一份定义。
+ */
+function readTraumaCapture(value: unknown): PilotMemoryConfig["traumaCapture"] {
+  try {
+    return resolveTraumaMemoryCaptureMode(value);
+  } catch (error) {
+    throw new PilotConfigError(
+      "CONFIG_MEMORY_VALUE_INVALID",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 }
 
 function parseMemorySchedule(
@@ -110,8 +129,25 @@ function parseMemorySchedule(
   if (autoDreamIntervalMinutes !== undefined) {
     schedule.autoDreamIntervalMinutes = autoDreamIntervalMinutes;
   }
+  // Task 10 —— maintenanceMode 解析
+  if (typeof value.maintenanceMode === "string") {
+    const mode = value.maintenanceMode;
+    if (mode === "immediate" || mode === "interval" || mode === "manual") {
+      schedule.maintenanceMode = mode;
+    } else {
+      throw new PilotConfigError(
+        "CONFIG_MEMORY_VALUE_INVALID",
+        `memory.schedule.maintenanceMode must be one of "immediate", "interval", or "manual", got "${mode}".`,
+      );
+    }
+  }
   for (const key of Object.keys(value)) {
-    if (key !== "reasoningMode" && key !== "autoIndexIntervalMinutes" && key !== "autoDreamIntervalMinutes") {
+    if (
+      key !== "reasoningMode"
+      && key !== "autoIndexIntervalMinutes"
+      && key !== "autoDreamIntervalMinutes"
+      && key !== "maintenanceMode"
+    ) {
       diagnostics.push({
         code: "CONFIG_MEMORY_UNKNOWN_FIELD",
         severity: "warning",

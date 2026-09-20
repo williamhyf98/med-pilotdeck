@@ -352,7 +352,9 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, o
         <div className="my-1 flex w-full items-center justify-center gap-2 px-3 sm:px-0">
           <span className="h-px flex-1 bg-border/60" />
           <span className="rounded-full border border-border/60 bg-muted/40 px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            {t('interrupted.label')}
+            {message.content?.trim() === '本轮推演已停止。'
+              ? message.content.trim()
+              : t('interrupted.label')}
           </span>
           <span className="text-[11px] tabular-nums text-muted-foreground">{formattedTime}</span>
           <span className="h-px flex-1 bg-border/60" />

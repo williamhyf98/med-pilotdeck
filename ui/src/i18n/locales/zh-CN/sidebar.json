@@ -129,6 +129,7 @@
     "deleteSuccess": "删除成功",
     "errorOccurred": "发生错误",
     "deleteSessionConfirm": "确定要删除此会话吗？此操作无法撤销。",
+    "deleteSessionTraumaCaseWarning": "此操作同时永久删除该会话的战创伤病案数据。",
     "deleteProjectConfirm": "确定要删除此项目吗？对话与项目记忆将永久删除；已生成文件会归档保留。",
     "enterProjectPath": "请输入项目路径",
     "deleteSessionFailed": "删除会话失败，请重试。",

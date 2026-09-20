@@ -448,8 +448,8 @@
     "nextTaskPrompt": "Start the next task"
   },
   "composer": {
-    "placeholder": "Tell PilotDeck what you want to get done…",
-    "welcomePlaceholder": "Tell PilotDeck what you want to get done…"
+    "placeholder": "Tell MedPD what you want to get done…",
+    "welcomePlaceholder": "Tell MedPD what you want to get done…"
   },
   "subagent": {
     "detailTitle": "Subagent Detail",

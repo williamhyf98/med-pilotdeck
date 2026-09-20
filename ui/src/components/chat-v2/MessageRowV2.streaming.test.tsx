@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage } from '../chat/types/types';
 import MessageRowV2 from './MessageRowV2';
@@ -99,4 +99,40 @@ describe('streaming assistant presentation', () => {
     expect(screen.getByText('参考来源 · 1 条')).toBeTruthy();
   });
 
+  it('renders extracted details citations as the trauma-style source list', () => {
+    const message: ChatMessage = {
+      id: 'assistant_with_details_citations',
+      type: 'assistant',
+      content: [
+        '建议先评估气道和循环状态[1]。',
+        '',
+        '<details>',
+        '<summary>参考来源</summary>',
+        '',
+        '- [1] 战伤救治规则 > 第二章 分类救治｜短引文：先救命后治伤',
+        '</details>',
+      ].join('\n'),
+      timestamp: '2026-09-09T00:00:00.000Z',
+      isStreaming: false,
+    };
+
+    const { container } = render(
+      <MessageRowV2
+        message={message}
+        prevMessage={null}
+        provider="pilotdeck"
+        selectedProject={null}
+        createDiff={() => []}
+        showAssistantActions={false}
+      />,
+    );
+
+    expect(container.querySelector('details')).toBeNull();
+    expect(screen.getByText('参考来源 · 1 条')).toBeTruthy();
+
+    fireEvent.click(screen.getByText('参考来源 · 1 条'));
+    expect(screen.getByText('战伤救治规则')).toBeTruthy();
+    expect(screen.getByText(/第二章 分类救治/)).toBeTruthy();
+    expect(screen.getAllByText('[1]').some((node) => node.closest('sup'))).toBe(true);
+  });
 });

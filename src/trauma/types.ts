@@ -42,7 +42,40 @@ export type ExtractedVitalItem = {
   sourceSpan: string;
 };
 
+export type TraumaInputIntent =
+  | "case_update"
+  | "out_of_scope"
+  | "domain_question_no_case"
+  | "system_help";
+
+export type TraumaPrimaryIntent =
+  | "case_update"
+  | "knowledge_question"
+  | "out_of_scope"
+  | "system_help";
+
+export type TraumaPreferenceCategory =
+  | "format"
+  | "detail"
+  | "language"
+  | "workflow";
+
+export type ExtractedTraumaPreference = {
+  sourceSpan: string;
+  directive: string;
+  category: TraumaPreferenceCategory;
+};
+
 export type ExtractedTurnForm = {
+  /**
+   * 本轮输入意图。缺省只用于兼容旧测试/历史数据；新 extractor schema 要求必须输出。
+   * 只有 case_update 会继续进入 runner，其余类型由网关固定话术直接结束本轮。
+   */
+  inputIntent?: TraumaInputIntent;
+  /** 一句话说明意图判断依据，主要用于日志/调试，不展示给用户。 */
+  scopeReason?: string;
+  /** 与主意图正交的表达或协作偏好；旧输出缺省时按空数组处理。 */
+  preferences?: ExtractedTraumaPreference[];
   injuryNarratives: ExtractedNarrativeItem[];
   treatmentNarratives: ExtractedNarrativeItem[];
   evacuationNarratives: ExtractedNarrativeItem[];
@@ -57,6 +90,39 @@ export type TurnFormInput = {
   evacuationNarrative: string;
   note: string;
   vitals: Partial<Record<VitalItemKey, number>>;
+};
+
+export type TraumaIntentPlan = {
+  primaryIntent: TraumaPrimaryIntent;
+  scopeReason: string;
+  preferences: ExtractedTraumaPreference[];
+  caseForm: TurnFormInput;
+  knowledgeQuestion?: string;
+};
+
+/** 用户本轮上传的医学附件引用；path 为服务端绝对路径。 */
+export type TraumaAttachmentRef = {
+  path: string;
+  name: string;
+};
+
+/** 工位 I 一轮产出的影像判读，随快照持久化并跨轮累积。 */
+export type InterpretationEntry = {
+  id: string;
+  round: number;
+  createdAt: string;
+  fileNames: string[];
+  text: string;
+};
+
+/** 工位 I 的结构化模型输出，由 station 渲染成 InterpretationEntry.text。 */
+export type AttachmentInterpretationOutput = {
+  attachments: Array<{
+    fileName: string;
+    keyFindings: string;
+    traumaRelevance: string;
+  }>;
+  overall: string;
 };
 
 export type NarrativeEntry = {
@@ -139,7 +205,22 @@ export type CitationMetadata = {
 export type RagQueryKind =
   | "stage"
   | "classification_transport"
-  | "primary_injury";
+  | "primary_injury"
+  | "knowledge";
+
+export type KnowledgeQueryRewrite = {
+  rewrittenQueries: Array<{
+    query: string;
+    reason: string;
+  }>;
+  unresolvedReferences: string[];
+  needsClarification: boolean;
+};
+
+export type KnowledgeQaOutput = {
+  naturalLanguageAnswer: string;
+  citationChunkIds: string[];
+};
 
 export type RetrievalTrace = {
   queries: Array<{
@@ -276,6 +357,8 @@ export type CaseState = {
   evidence: EvidenceChunk[];
   memos: RoundMemo[];
   missingInformation: string[];
+  /** 历轮影像判读；没有附件的轮次不产生条目。 */
+  attachmentInterpretations?: InterpretationEntry[];
 };
 
 export type AgentTurnResponse = {

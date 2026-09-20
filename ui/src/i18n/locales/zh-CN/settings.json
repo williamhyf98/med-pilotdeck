@@ -196,10 +196,12 @@
     },
     "appearanceMode": {
       "title": "主题模式",
-      "detail": "跟随系统外观，或固定为浅色 / 深色主题。",
+      "detail": "选择系统外观，或使用暖诊 / 指挥台主题。",
       "system": "系统跟随",
       "light": "浅色",
-      "dark": "深色"
+      "dark": "深色",
+      "warm": "暖诊",
+      "command": "指挥台"
     },
     "chatInput": {
       "title": "聊天与输入",
@@ -961,6 +963,19 @@
           "label": "记忆模型",
           "description": "记忆管线使用的提供商/模型。",
           "inherit": "继承（使用主智能体模型）"
+        },
+        "traumaCapture": {
+          "label": "战创伤记忆写入",
+          "description": "战创伤项目只把协作规则写入长期记忆：汇报格式、表达偏好、工作流规则、明确纠错。生命体征、伤情分级、救治阶段、患者标识只留在病例状态里，不进任何长期记忆；留存内容写盘前还会再过一遍脱敏。",
+          "feedbackOnly": "仅协作规则（推荐）",
+          "off": "不写入"
+        },
+        "maintenanceMode": {
+          "label": "维护模式",
+          "description": "immediate = 对话后立即索引和整理，适合高频使用场景；interval = 定时执行（默认）；manual = 仅手动触发。",
+          "immediate": "立即执行",
+          "interval": "定时执行",
+          "manual": "仅手动"
         },
         "automation": {
           "autoIndex": {

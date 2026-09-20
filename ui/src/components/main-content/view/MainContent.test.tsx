@@ -85,6 +85,7 @@ vi.mock('../../chat-v2/ChatInterfaceV2', () => ({
     onFileOpen: (filePath: string) => void;
     hideComposer?: boolean;
     hiddenComposerNotice?: string;
+    externalComposerSlot?: React.ReactNode;
   }) => {
     mocks.chatProps.push(props);
     return (
@@ -93,6 +94,7 @@ vi.mock('../../chat-v2/ChatInterfaceV2', () => ({
         <button type="button" onClick={() => props.onFileOpen('/workspace/PilotDeck/generated.pptx')}>
           Open workspace file
         </button>
+        {props.externalComposerSlot}
       </div>
     );
   },
@@ -152,7 +154,7 @@ function propsFor(activeTab: AppTab, setActiveTab = vi.fn()) {
 
 beforeEach(() => {
   vi.stubGlobal('ResizeObserver', ResizeObserverMock);
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
     // Trauma case polling (useCaseStore) returns an empty case payload.
     if (url.includes('/api/trauma/cases/') && !url.includes('/extract')) {
@@ -331,6 +333,45 @@ describe('MainContent project-type workspace routing', () => {
     await waitFor(() => {
       expect(screen.queryByRole('region', { name: '推演实时进度' })).toBeNull();
     });
+  });
+
+  it('navigates immediately when a new trauma turn already has a concrete session id', async () => {
+    const traumaProject: Project = {
+      ...project,
+      name: 'trauma_med-demo',
+      displayName: '战创伤演练',
+    };
+    const props = propsFor('chat');
+    const { container } = render(
+      <MainContent
+        {...props}
+        projects={[traumaProject]}
+        selectedProject={traumaProject}
+      />,
+    );
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    expect(fileInput).not.toBeNull();
+    fireEvent.change(fileInput!, {
+      target: {
+        files: [new File(['image-bytes'], '伤情照片.png', { type: 'image/png' })],
+      },
+    });
+    fireEvent.change(screen.getByLabelText('本轮伤情自由输入'), {
+      target: { value: '左大腿爆炸伤，上传影像' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '整理' }));
+
+    await waitFor(() => expect(props.sendMessage).toHaveBeenCalled());
+    expect(props.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'pilotdeck-command',
+      options: expect.objectContaining({
+        sessionId: expect.stringMatching(/^web:s_/),
+        resume: true,
+        traumaRawInput: '左大腿爆炸伤，上传影像',
+      }),
+    }));
+    expect(props.onNavigateToSession).toHaveBeenCalledWith(expect.stringMatching(/^web:s_/));
   });
 
   it('keeps general-medicine chat on the standard surface', () => {

@@ -3,6 +3,23 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const nativeFetch = globalThis.fetch;
 
+/**
+ * `routes/memory.js` imports the memory core for `MemoryBundleValidationError`
+ * alone, and that module graph reaches `node:sqlite`, which Vite refuses to
+ * bundle. The route only ever uses the error class, so stub the module rather
+ * than dragging the storage layer into a route test.
+ */
+function mockMemoryCoreLib() {
+  vi.doMock('../../../src/context/memory/edgeclaw-memory-core/lib/index.js', () => ({
+    MemoryBundleValidationError: class MemoryBundleValidationError extends Error {
+      constructor(message) {
+        super(message);
+        this.name = 'MemoryBundleValidationError';
+      }
+    },
+  }));
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.resetModules();
@@ -63,6 +80,98 @@ describe('memory clear route', () => {
         dreamTraces: [],
       },
     });
+  });
+});
+
+describe('memory scope identity (Task 8)', () => {
+  it('addresses the service by stable projectId', async () => {
+    const { request, getMemoryServiceForRequest } = await createMemoryApp();
+
+    const result = await request('/api/memory/identity?projectId=trauma_med-abc123');
+
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({
+      projectId: 'trauma_med-abc123',
+      projectType: 'war_trauma',
+      dataDir: '/tmp/pilotdeck-data',
+      readOnly: false,
+    });
+    expect(getMemoryServiceForRequest).toHaveBeenCalledOnce();
+  });
+
+  it('refuses a request whose projectId and projectPath disagree', async () => {
+    const { request } = await createMemoryApp();
+
+    const result = await request(
+      '/api/memory/project-meta?projectId=trauma_med-abc123&projectPath=/tmp/other-project',
+      {
+        method: 'POST',
+        body: JSON.stringify({ description: 'edited from the wrong panel' }),
+      },
+    );
+
+    // 409, not 400: the request is well-formed but ambiguous about which
+    // project it means, and guessing is the exact bug Task 8 removes.
+    expect(result.status).toBe(409);
+    expect(result.body).toMatchObject({
+      code: 'MEMORY_SCOPE_MISMATCH',
+      projectId: 'trauma_med-abc123',
+      projectPath: '/tmp/other-project',
+    });
+  });
+
+  it('accepts a projectPath that agrees with the projectId', async () => {
+    const { request } = await createMemoryApp();
+
+    const result = await request('/api/memory/identity?projectId=abc&projectPath=/tmp/abc');
+
+    expect(result.status).toBe(200);
+    expect(result.body.projectId).toBe('abc');
+  });
+});
+
+describe('index case trace routes (Task 8 rename)', () => {
+  it('serves recall traces at /index-case-traces without a deprecation header', async () => {
+    const { request, service } = await createMemoryApp();
+
+    const result = await request('/api/memory/index-case-traces?projectId=abc&limit=5');
+
+    expect(result.status).toBe(200);
+    expect(service.listCaseTraces).toHaveBeenCalledWith(5);
+    expect(result.headers.get('deprecation')).toBeNull();
+  });
+
+  it('keeps /cases working but marks it deprecated', async () => {
+    const { request, service } = await createMemoryApp();
+
+    const result = await request('/api/memory/cases?projectId=abc&limit=5');
+
+    expect(result.status).toBe(200);
+    expect(service.listCaseTraces).toHaveBeenCalledWith(5);
+    expect(result.headers.get('deprecation')).toBe('true');
+    expect(result.headers.get('link')).toContain('/api/memory/index-case-traces');
+  });
+
+  it('keeps /cases/:caseId working but marks it deprecated', async () => {
+    const { request, service } = await createMemoryApp();
+    service.getCaseTrace = vi.fn(() => ({ caseId: 'c1' }));
+
+    const result = await request('/api/memory/cases/c1?projectId=abc');
+
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ caseId: 'c1' });
+    expect(result.headers.get('deprecation')).toBe('true');
+  });
+
+  it('serves a single trace at /index-case-traces/:caseId', async () => {
+    const { request, service } = await createMemoryApp();
+    service.getCaseTrace = vi.fn(() => ({ caseId: 'c1' }));
+
+    const result = await request('/api/memory/index-case-traces/c1?projectId=abc');
+
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ caseId: 'c1' });
+    expect(result.headers.get('deprecation')).toBeNull();
   });
 });
 
@@ -160,11 +269,29 @@ async function createMemoryApp() {
     listIndexTraces: vi.fn(() => []),
     listDreamTraces: vi.fn(() => []),
   };
-  const getMemoryServiceForRequest = vi.fn(async () => ({
-    projectPath: '/tmp/pilotdeck-project',
-    dataDir: '/tmp/pilotdeck-data',
-    service,
-  }));
+  const getMemoryServiceForRequest = vi.fn(async (req) => {
+    const projectId = req.query?.projectId || req.body?.projectId || '';
+    const projectPath = req.query?.projectPath || req.body?.projectPath || '';
+    if (projectId && projectPath && projectPath !== `/tmp/${projectId}`) {
+      const error = new Error(`projectId "${projectId}" does not match projectPath "${projectPath}"`);
+      error.code = 'MEMORY_SCOPE_MISMATCH';
+      error.projectId = projectId;
+      error.projectPath = projectPath;
+      throw error;
+    }
+    return {
+      projectPath: '/tmp/pilotdeck-project',
+      dataDir: '/tmp/pilotdeck-data',
+      service,
+      identity: {
+        projectId: projectId || 'trauma_med-abc123',
+        projectType: 'war_trauma',
+        projectTypeKey: 'trauma_med',
+        dataDir: '/tmp/pilotdeck-data',
+        readOnly: false,
+      },
+    };
+  });
 
   vi.doMock('../services/memoryService.js', () => ({
     clearAllMemoryData,
@@ -190,6 +317,7 @@ async function createMemoryApp() {
   vi.doMock('../services/pilotdeckConfigWatcher.js', () => ({
     suppressNextWatchEvent: vi.fn(),
   }));
+  mockMemoryCoreLib();
 
   const { default: memoryRoutes } = await import('./memory.js');
   const app = express();
@@ -199,6 +327,7 @@ async function createMemoryApp() {
   return {
     clearAllMemoryData,
     getMemoryServiceForRequest,
+    service,
     request: (path, init) => requestJson(app, path, init),
   };
 }
@@ -238,6 +367,7 @@ async function createMemorySettingsApp(initialConfig) {
   vi.doMock('../services/pilotdeckConfigWatcher.js', () => ({
     suppressNextWatchEvent: vi.fn(),
   }));
+  mockMemoryCoreLib();
 
   const { default: memoryRoutes } = await import('./memory.js');
   const app = express();
@@ -258,7 +388,7 @@ async function requestJson(app, path, init = {}) {
       headers: { 'Content-Type': 'application/json', ...(init.headers || {}) },
       ...init,
     });
-    return { status: response.status, body: await response.json() };
+    return { status: response.status, headers: response.headers, body: await response.json() };
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

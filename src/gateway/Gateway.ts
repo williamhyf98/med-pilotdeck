@@ -27,6 +27,7 @@ export type CreateGatewayOptions = {
   serverInfo?: Partial<GatewayServerInfo>;
   cron?: GatewayCronController;
   traumaRunnerFactory?: InProcessGatewayOptions["traumaRunnerFactory"];
+  traumaKnowledgeQaFactory?: InProcessGatewayOptions["traumaKnowledgeQaFactory"];
   recordTraumaTurn?: InProcessGatewayOptions["recordTraumaTurn"];
   traumaCaseReader?: InProcessGatewayOptions["traumaCaseReader"];
 };
@@ -53,6 +54,7 @@ export function createGateway(options: CreateGatewayOptions): Gateway {
     },
     cron: options.cron,
     traumaRunnerFactory: options.traumaRunnerFactory,
+    traumaKnowledgeQaFactory: options.traumaKnowledgeQaFactory,
     recordTraumaTurn: options.recordTraumaTurn,
     traumaCaseReader: options.traumaCaseReader,
   });

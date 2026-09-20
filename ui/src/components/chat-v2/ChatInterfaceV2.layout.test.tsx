@@ -60,4 +60,27 @@ describe('ChatInterfaceLayout', () => {
     fireEvent.click(screen.getByRole('button', { name: '确认救治级别' }));
     expect(decide).toHaveBeenCalledWith('placement-request', { allow: true });
   });
+
+  it('docks an external composer below the runtime message pane', () => {
+    render(
+      <ChatInterfaceLayout
+        hideComposer
+        isWelcomeMode={false}
+        compact={false}
+        messagePane={<div data-testid="message-pane">runtime messages</div>}
+        composerSlot={(
+          <form>
+            <textarea aria-label="ordinary chat input" />
+          </form>
+        )}
+        externalComposerSlot={<div data-testid="external-composer">trauma composer</div>}
+        welcome={<div>welcome shortcut</div>}
+      />,
+    );
+
+    const shell = screen.getByTestId('message-pane').parentElement;
+    expect(shell?.className).toContain('grid-rows-[minmax(0,1fr)_auto]');
+    expect(screen.getByTestId('message-pane').nextElementSibling).toBe(screen.getByTestId('external-composer'));
+    expect(screen.queryByRole('textbox', { name: 'ordinary chat input' })).toBeNull();
+  });
 });

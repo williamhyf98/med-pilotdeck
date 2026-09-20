@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { FindShortcutProvider } from '../../contexts/FindShortcutContext';
 import type { ChatMessage, ChatRunMode } from '../chat/types/types';
+import type { Project } from '../../types/app';
 import MessagesPaneV2 from './MessagesPaneV2';
 import { getContextStatus } from './ComposerV2';
 
@@ -59,14 +60,18 @@ function createPaneElement({
   isAssistantWorking = false,
   runMode = 'agent',
   planModeActive = false,
+  showThinking,
   navigateToChatMessageRef,
+  selectedProject = null,
 }: {
   messages: ChatMessage[];
   activityMessages?: ChatMessage[];
   isAssistantWorking?: boolean;
   runMode?: ChatRunMode;
   planModeActive?: boolean;
+  showThinking?: boolean;
   navigateToChatMessageRef?: React.MutableRefObject<((runId: string) => void | Promise<void>) | null>;
+  selectedProject?: Project | null;
 }) {
   const scrollContainerRef = React.createRef<HTMLDivElement>();
 
@@ -90,13 +95,14 @@ function createPaneElement({
         allMessagesLoaded
         isLoadingAllMessages={false}
         provider="pilotdeck"
-        selectedProject={null}
+        selectedProject={selectedProject}
         selectedSession={null}
         createDiff={() => []}
         setInput={() => {}}
         isAssistantWorking={isAssistantWorking}
         runMode={runMode}
         planModeActive={planModeActive}
+        showThinking={showThinking}
       />
     </FindShortcutProvider>
   );
@@ -108,7 +114,9 @@ function renderPane(options: {
   isAssistantWorking?: boolean;
   runMode?: ChatRunMode;
   planModeActive?: boolean;
+  showThinking?: boolean;
   navigateToChatMessageRef?: React.MutableRefObject<((runId: string) => void | Promise<void>) | null>;
+  selectedProject?: Project | null;
 }) {
   return render(createPaneElement(options));
 }
@@ -149,6 +157,144 @@ function SessionPaneHarness({
 }
 
 describe('MessagesPaneV2 render behavior', () => {
+  it('places the completed thinking summary and answer in one assistant turn panel', () => {
+    renderPane({
+      showThinking: true,
+      messages: [
+        {
+          id: 'u-1',
+          type: 'user',
+          content: '头痛伴发热两天',
+          timestamp: '2026-09-18T08:00:00.000Z',
+        },
+        {
+          id: 'thinking-1',
+          type: 'assistant',
+          content: '正在分析症状和危险信号。',
+          timestamp: '2026-09-18T08:00:01.000Z',
+          isThinking: true,
+        },
+        {
+          id: 'a-1',
+          type: 'assistant',
+          content: '建议首先测量体温并评估伴随症状。',
+          timestamp: '2026-09-18T08:00:02.000Z',
+        },
+      ],
+    });
+
+    const processSummary = screen.getByText('Thought through next step');
+    const runSummary = screen.getByText(/^Processed /);
+    const answer = screen.getByText('建议首先测量体温并评估伴随症状。');
+    const panel = answer.closest('.pd-assistant-turn-surface-single');
+
+    expect(panel).toBeTruthy();
+    expect(panel?.contains(processSummary)).toBe(true);
+    expect(panel?.contains(runSummary)).toBe(true);
+  });
+
+  it('shows the trauma-specific empty state for a new war-trauma conversation', () => {
+    renderPane({
+      messages: [],
+      selectedProject: {
+        name: 'trauma_med-field',
+        displayName: '战创伤项目',
+        fullPath: '/ws/trauma_med-field',
+        projectType: 'war_trauma',
+      },
+    });
+
+    expect(screen.getByText('战创伤救治推演助手')).toBeTruthy();
+    expect(screen.getByText(/输入伤员的自由描述/)).toBeTruthy();
+    expect(screen.queryByText('开始新对话')).toBeNull();
+    expect(screen.queryByText('Start a new conversation')).toBeNull();
+    const logo = screen.getByAltText('Trauma Agent');
+    expect(screen.queryByText(/^Trauma Agent$/i)).toBeNull();
+    expect(logo.className).toContain('h-auto');
+    expect(logo.className).toContain('w-52');
+    expect(logo.className).toContain('mb-3');
+    expect(logo.className).not.toContain('h-64');
+    expect(logo.parentElement?.className).not.toContain('border');
+  });
+
+  it('removes the trauma empty state once the first message is visible', () => {
+    renderPane({
+      messages: [{
+        id: 'u-1',
+        type: 'user',
+        content: '爆炸伤，右大腿活动性出血',
+        timestamp: '2026-09-09T00:00:00.000Z',
+      }],
+      selectedProject: {
+        name: 'trauma_med-field',
+        displayName: '战创伤项目',
+        fullPath: '/ws/trauma_med-field',
+        projectType: 'war_trauma',
+      },
+    });
+
+    expect(screen.queryByText('战创伤救治推演助手')).toBeNull();
+    expect(screen.getByText('爆炸伤，右大腿活动性出血')).toBeTruthy();
+  });
+
+  it('renders the trauma stop copy without processed status or process steps', () => {
+    renderPane({
+      messages: [
+        {
+          id: 'u-1',
+          type: 'user',
+          content: '胸部爆震伤，呼吸困难',
+          timestamp: '2026-09-16T08:00:00.000Z',
+        },
+        {
+          id: 'trauma-step-1',
+          type: 'assistant',
+          content: '',
+          timestamp: '2026-09-16T08:00:01.000Z',
+          isToolUse: true,
+          toolName: '读取病例状态',
+          toolId: 'trauma-step-1',
+          toolInput: {
+            traumaRunnerStep: true,
+            stepNumber: 1,
+            phase: 'trauma',
+            title: '读取病例状态',
+            runningTitle: '正在读取病例状态',
+            expectedTotalSteps: 11,
+          },
+        },
+        {
+          id: 'stopped-notice',
+          type: 'system',
+          content: '本轮推演已停止。',
+          timestamp: '2026-09-16T08:00:02.000Z',
+          isInterruptedNotice: true,
+        },
+        {
+          id: 'summary-1',
+          type: 'system',
+          content: 'Process summary',
+          timestamp: '2026-09-16T08:00:02.000Z',
+          isAgentActivitySummary: true,
+          durationMs: 2000,
+          state: 'cancelled',
+        },
+      ],
+      isAssistantWorking: true,
+      selectedProject: {
+        name: 'trauma_med-field',
+        displayName: '战创伤项目',
+        fullPath: '/ws/trauma_med-field',
+        projectType: 'war_trauma',
+      },
+    });
+
+    expect(screen.getByText('本轮推演已停止。')).toBeTruthy();
+    expect(screen.queryByText(/已处理|Processed/)).toBeNull();
+    expect(screen.queryByText('读取病例状态')).toBeNull();
+    expect(screen.queryByText('已被用户暂停')).toBeNull();
+  });
+
   it('renders the default 100-message window without virtualization', () => {
     const messages = Array.from({ length: 100 }, (_, index) => makeMessage(index));
 
@@ -201,6 +347,50 @@ describe('MessagesPaneV2 render behavior', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Session B message 0')).toBeTruthy();
+    });
+  });
+
+  it('resets completed process expansion when switching conversations', async () => {
+    const processMessages: ChatMessage[] = [
+      {
+        id: 'u-1',
+        type: 'user',
+        content: '检查文件',
+        timestamp: '2026-09-18T08:00:00.000Z',
+      },
+      {
+        id: 'tool-read-1',
+        type: 'assistant',
+        content: '',
+        timestamp: '2026-09-18T08:00:01.000Z',
+        isToolUse: true,
+        toolName: 'Read',
+        toolId: 'tool-read-1',
+        toolInput: '{"file_path":"src/ReadHidden.tsx"}',
+        toolResult: { content: 'ok', isError: false },
+      },
+      {
+        id: 'a-1',
+        type: 'assistant',
+        content: 'Done.',
+        timestamp: '2026-09-18T08:00:02.000Z',
+      },
+    ];
+    const view = render(
+      <SessionPaneHarness sessionId="session-a" messages={processMessages} />,
+    );
+
+    const firstButton = screen.getByText('Explored 1 file').closest('button');
+    fireEvent.click(firstButton as HTMLButtonElement);
+    expect(firstButton?.getAttribute('aria-expanded')).toBe('true');
+
+    view.rerender(
+      <SessionPaneHarness sessionId="session-b" messages={processMessages} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Explored 1 file').closest('button')?.getAttribute('aria-expanded'))
+        .toBe('false');
     });
   });
 
@@ -484,7 +674,7 @@ describe('MessagesPaneV2 render behavior', () => {
     expect(screen.getByText('ReadHidden.tsx')).toBeTruthy();
   });
 
-  it('preserves process row expansion when a live turn completes', () => {
+  it('collapses a process row when a live turn completes', () => {
     const now = new Date().toISOString();
     const baseMessages: ChatMessage[] = [
       {
@@ -542,8 +732,8 @@ describe('MessagesPaneV2 render behavior', () => {
 
     const summary = screen.getByText('Explored 1 file');
     const completedButton = summary.closest('button');
-    expect(completedButton?.getAttribute('aria-expanded')).toBe('true');
-    expect(screen.getByText('ReadHidden.tsx')).toBeTruthy();
+    expect(completedButton?.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('ReadHidden.tsx')).toBeNull();
   });
 
   it('does not search hidden completed process detail content', async () => {
@@ -1066,7 +1256,12 @@ describe('MessagesPaneV2 render behavior', () => {
 
     renderPane({ messages });
 
-    expect(screen.getByText('First assistant line.').closest('.chat-message')?.className).toContain('pb-4');
-    expect(screen.getByText('First assistant line.').closest('.chat-message')?.className).not.toContain('pb-8');
+    const firstAssistant = screen.getByText('First assistant line.').closest('.chat-message');
+    const secondAssistant = screen.getByText('Second assistant line.').closest('.chat-message');
+
+    expect(firstAssistant?.className).toContain('pb-4');
+    expect(firstAssistant?.className).not.toContain('pb-8');
+    expect(firstAssistant?.className).toContain('pd-assistant-turn-start');
+    expect(secondAssistant?.className).toContain('pd-assistant-turn-end');
   });
 });

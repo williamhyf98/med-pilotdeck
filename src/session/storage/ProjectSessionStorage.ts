@@ -1,5 +1,9 @@
 import { resolve } from "node:path";
-import { getPilotProjectChatDir, resolveAgentCwd } from "../../pilot/index.js";
+import {
+  getPilotProjectChatDir,
+  resolveAgentCwd,
+  sanitizeSessionIdForTranscript,
+} from "../../pilot/index.js";
 import { JsonlTranscriptWriter } from "../transcript/JsonlTranscriptWriter.js";
 
 export type AgentProjectSessionStorageOptions = {
@@ -32,25 +36,11 @@ export type AgentProjectSessionStorage = {
 /**
  * Sanitize a sessionId for safe use as a single filename component.
  *
- * sessionKeys for non-Web channels (TUI/CLI) embed the absolute project path,
- * e.g. `tui:project=/Users/foo/work/repo:default`. Without sanitization the
- * raw `/` characters make `path.resolve()` treat the sessionId as multiple
- * path segments, burying the transcript under
- * `chats/tui:project=/Users/foo/work/repo:default.jsonl` (a deep dir tree)
- * instead of a flat file. `listProjectSessions` then can't find these
- * sessions in its flat `chats/` scan.
- *
- * We replace **only** path-separator characters (`/` and `\`) so existing
- * keys like `web:s_<uuid>` (which legitimately use `:`) keep their
- * on-disk filenames unchanged and stay backward compatible.
+ * 实现已上移到 `src/pilot/paths.ts` 的 `sanitizeSessionIdForTranscript`，
+ * 与 Case State 目录的另一套清洗规则并排放在一起（两套规则不兼容且都不能改，
+ * 那里有完整说明）。这里保留原名转发，是因为已有 8 处导入点用的是这个名字。
  */
-export function sanitizeSessionIdForPath(sessionId: string): string {
-  // On Windows, `:` is reserved (drive letters / ADS) and cannot appear in
-  // filenames.  Strip it alongside path separators so that TUI-style session
-  // keys like `tui:project=/Users/foo:default` produce a single flat file.
-  const illegal = process.platform === "win32" ? /[\\/:<>"|?*]+/g : /[\\/]+/g;
-  return sessionId.replace(illegal, "-").replace(/^-+|-+$/g, "") || "session";
-}
+export const sanitizeSessionIdForPath = sanitizeSessionIdForTranscript;
 
 export function createAgentProjectSessionStorage(
   options: AgentProjectSessionStorageOptions,

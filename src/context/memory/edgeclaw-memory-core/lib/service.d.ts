@@ -1,4 +1,4 @@
-import { type CaseTraceRecord, type ClearMemoryScope, type ClearMemoryResult, type DreamRunResult, type DreamRollbackResult, type HeartbeatStats, HeartbeatIndexer, type IndexingSettings, LlmMemoryExtractor, type MemoryActionRequest, type MemoryActionResult, type MemoryExportBundle, type MemoryImportResult, type MemoryImportableBundle, type MemoryMessage, type MemoryRecordType, type MemoryUiSnapshot, MemoryRepository, type RetrievalResult, ReasoningRetriever } from "./core/index.js";
+import { type CaseTraceRecord, type ClearMemoryScope, type ClearMemoryResult, type DreamRunResult, type DreamRollbackResult, type HeartbeatStats, HeartbeatIndexer, type IndexingSettings, LlmMemoryExtractor, type MemoryActionRequest, type MemoryActionResult, type MemoryExportBundle, type MemoryImportResult, type MemoryImportableBundle, type MemoryMessage, type MemoryRecordType, type PresentationMemorySnapshot, type MemoryUiSnapshot, MemoryRepository, type RetrievalResult, ReasoningRetriever } from "./core/index.js";
 import { type TranscriptMessageInfo } from "./message-utils.js";
 type LoggerLike = {
     info?: (...args: unknown[]) => void;
@@ -29,6 +29,8 @@ export interface EdgeClawMemoryServiceOptions {
     llm?: EdgeClawMemoryLlmOptions;
     runtime?: Record<string, unknown>;
     logger?: LoggerLike;
+    /** Selects the prompt archive: "general_medicine" | "war_trauma". Defaults to "general_medicine". */
+    projectType?: string;
 }
 export interface CaptureTurnResult {
     captured: boolean;
@@ -61,6 +63,7 @@ export declare class EdgeClawMemoryService {
     readonly extractor: LlmMemoryExtractor;
     readonly indexer: HeartbeatIndexer;
     readonly retriever: ReasoningRetriever;
+    private readonly globalProfileLock;
     private readonly logger?;
     private readonly captureStrategy;
     private readonly includeAssistant;
@@ -87,6 +90,7 @@ export declare class EdgeClawMemoryService {
         reason?: string;
     }): Promise<HeartbeatStats>;
     dream(trigger?: "manual" | "scheduled"): Promise<DreamRunResult>;
+    private incrementDreamFailureCount;
     rollbackLastDream(): DreamRollbackResult;
     retrieve(query: string, options?: {
         recentMessages?: MemoryMessage[];
@@ -111,6 +115,9 @@ export declare class EdgeClawMemoryService {
     list(options?: MemoryListOptions): import("./core/types.js").MemoryManifestEntry[];
     get(ids: string[], maxLines?: number): import("./core/types.js").MemoryFileRecord[];
     getUserSummary(): import("./core/types.js").MemoryUserSummary;
+    readPresentationMemory(options?: {
+        feedbackLimit?: number;
+    }): PresentationMemorySnapshot;
     getProjectMeta(): import("./core/types.js").ProjectMetaRecord | undefined;
     getWorkspaceMode(): import("./core/types.js").WorkspaceMemoryMode;
     listReadableProjectCatalog(): import("./core/types.js").ReadableProjectCatalogEntry[];

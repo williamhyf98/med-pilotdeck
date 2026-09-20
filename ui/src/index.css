@@ -12,6 +12,27 @@
   }
 }
 
+@keyframes skill-detail-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.skill-detail-drawer {
+  animation: skill-detail-slide-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skill-detail-drawer {
+    animation: none;
+  }
+}
+
 @-webkit-keyframes spin {
   0% {
     -webkit-transform: rotate(0deg);
@@ -56,6 +77,22 @@
     --nav-divider-color: 0 0% 90% / 0.6;
     --nav-input-bg: 0 0% 96% / 0.6;
     --nav-input-focus-ring: 0 0% 30% / 0.18;
+    --workspace-overlay-start: 0 0% 100% / 0.56;
+    --workspace-overlay-end: 0 0% 100% / 0.7;
+    --workspace-panel-opacity: 0.84;
+    --workspace-detail-opacity: 0.83;
+    --workspace-card-opacity: 0.88;
+    --workspace-dock-opacity: 0.9;
+    --workspace-background-filter: blur(2px) saturate(0.84) contrast(0.98);
+    --workspace-background-scale: 1.008;
+    --workspace-header-opacity: 0.88;
+    --workspace-header-filter: blur(12px) saturate(1.01);
+    --workspace-chat-opacity: 0.56;
+    --workspace-chat-filter: blur(4px) saturate(0.97);
+    --workspace-panel-filter: blur(12px) saturate(0.96);
+    --workspace-detail-filter: blur(14px) saturate(0.95);
+    --workspace-sidebar-opacity: 0.9;
+    --workspace-sidebar-filter: blur(17px) saturate(0.94);
 
     /* File search — light fill preserves the source document's text color. */
     --file-search-highlight-bg: rgb(253 224 71 / 0.12);
@@ -126,11 +163,106 @@
     --nav-divider-color: 0 0% 15% / 0.7;
     --nav-input-bg: 0 0% 15% / 0.5;
     --nav-input-focus-ring: 0 0% 96% / 0.12;
+    --workspace-overlay-start: 222 32% 7% / 0.59;
+    --workspace-overlay-end: 222 32% 5% / 0.73;
+    --workspace-panel-opacity: 0.82;
+    --workspace-detail-opacity: 0.81;
+    --workspace-card-opacity: 0.86;
+    --workspace-dock-opacity: 0.9;
+    --workspace-background-filter: blur(1.5px) saturate(0.84) contrast(1.02) brightness(0.86);
+    --workspace-header-opacity: 0.87;
+    --workspace-header-filter: blur(11px) saturate(1.02);
+    --workspace-chat-opacity: 0.53;
+    --workspace-chat-filter: blur(3px) saturate(0.98);
+    --workspace-panel-filter: blur(10px) saturate(0.98);
+    --workspace-detail-filter: blur(12px) saturate(0.97);
+    --workspace-sidebar-opacity: 0.89;
+    --workspace-sidebar-filter: blur(15px) saturate(0.97);
     --file-search-highlight-bg: rgb(253 224 71 / 0.1);
     --file-search-highlight-border: rgb(253 224 71 / 0.68);
     --file-search-highlight-active-bg: rgb(251 191 36 / 0.16);
     --file-search-highlight-active-border: rgb(251 191 36 / 0.92);
     --file-search-highlight-active-ring: rgb(253 224 71 / 0.22);
+    color-scheme: dark;
+  }
+
+  :root[data-theme="warm"] {
+    --background: 31 44% 96%;
+    --foreground: 24 25% 14%;
+    --card: 35 54% 98%;
+    --card-foreground: 24 25% 14%;
+    --popover: 35 54% 98%;
+    --popover-foreground: 24 25% 14%;
+    --primary: 8 49% 44%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 176 23% 91%;
+    --secondary-foreground: 177 45% 25%;
+    --muted: 30 34% 92%;
+    --muted-foreground: 26 17% 34%;
+    --accent: 174 29% 91%;
+    --accent-foreground: 177 47% 24%;
+    --destructive: 2 67% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 29 24% 74%;
+    --input: 29 24% 70%;
+    --ring: 8 49% 44%;
+
+    --nav-glass-bg: 34 52% 97% / 0.86;
+    --nav-glass-blur: 20px;
+    --nav-glass-saturate: 1.15;
+    --nav-tab-glow: 10 64% 57% / 0.08;
+    --nav-tab-ring: 10 64% 57% / 0.14;
+    --nav-float-shadow: 25 38% 25% / 0.1;
+    --nav-float-ring: 32 25% 82% / 0.8;
+    --nav-divider-color: 32 25% 84% / 0.82;
+    --nav-input-bg: 29 42% 92% / 0.78;
+    --nav-input-focus-ring: 10 64% 57% / 0.2;
+    --workspace-overlay-start: 31 44% 96% / 0.56;
+    --workspace-overlay-end: 31 44% 96% / 0.7;
+    --workspace-panel-opacity: 0.84;
+    --workspace-detail-opacity: 0.83;
+    --workspace-card-opacity: 0.88;
+    --workspace-dock-opacity: 0.9;
+    color-scheme: light;
+  }
+
+  :root[data-theme="command"] {
+    --background: 212 68% 7%;
+    --foreground: 198 42% 93%;
+    --card: 211 58% 11%;
+    --card-foreground: 198 42% 93%;
+    --popover: 210 53% 13%;
+    --popover-foreground: 198 42% 93%;
+    --primary: 190 100% 52%;
+    --primary-foreground: 212 68% 7%;
+    --secondary: 207 62% 16%;
+    --secondary-foreground: 198 38% 90%;
+    --muted: 211 47% 15%;
+    --muted-foreground: 199 24% 68%;
+    --accent: 188 57% 17%;
+    --accent-foreground: 184 82% 75%;
+    --destructive: 1 62% 49%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 195 55% 27%;
+    --input: 195 54% 32%;
+    --ring: 187 100% 50%;
+
+    --nav-glass-bg: 212 68% 7% / 0.88;
+    --nav-glass-blur: 14px;
+    --nav-glass-saturate: 1.08;
+    --nav-tab-glow: 187 100% 50% / 0.16;
+    --nav-tab-ring: 190 100% 52% / 0.22;
+    --nav-float-shadow: 220 80% 2% / 0.52;
+    --nav-float-ring: 213 35% 25% / 0.72;
+    --nav-divider-color: 195 55% 27% / 0.72;
+    --nav-input-bg: 211 47% 15% / 0.76;
+    --nav-input-focus-ring: 187 100% 50% / 0.3;
+    --workspace-overlay-start: 212 72% 7% / 0.59;
+    --workspace-overlay-end: 212 72% 6% / 0.73;
+    --workspace-panel-opacity: 0.82;
+    --workspace-detail-opacity: 0.81;
+    --workspace-card-opacity: 0.86;
+    --workspace-dock-opacity: 0.9;
     color-scheme: dark;
   }
 }
@@ -147,6 +279,679 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     margin: 0;
     padding: 0;
+  }
+
+  .workspace-canvas {
+    --workspace-background-image: none;
+    --workspace-background-position: center;
+    isolation: isolate;
+    background-color: transparent;
+  }
+
+  .workspace-canvas::before,
+  .workspace-canvas::after {
+    position: fixed;
+    inset: 0;
+    z-index: -2;
+    pointer-events: none;
+    content: '';
+  }
+
+  .workspace-canvas::before {
+    background-color: hsl(var(--background));
+    background-image: var(--workspace-background-image);
+    background-position: var(--workspace-background-position);
+    background-repeat: no-repeat;
+    background-size: cover;
+    filter: var(--workspace-background-filter);
+    transform: scale(var(--workspace-background-scale));
+    transform-origin: center;
+  }
+
+  .workspace-canvas::after {
+    z-index: -1;
+    background-image:
+      linear-gradient(
+        180deg,
+        hsl(var(--workspace-overlay-start)),
+        hsl(var(--workspace-overlay-end))
+      );
+  }
+
+  .workspace-canvas[data-workspace-type="general_medicine"] {
+    --workspace-background-image: url('/workspace-backgrounds/general-medicine.png');
+    --workspace-background-position: center center;
+  }
+
+  .workspace-canvas[data-workspace-type="war_trauma"] {
+    --workspace-background-image: url('/workspace-backgrounds/war-trauma.jpg');
+    --workspace-background-position: center 42%;
+  }
+
+  .workspace-main-surface {
+    background-color: hsl(var(--background) / 0.14);
+  }
+
+  .workspace-header-surface {
+    background-color: hsl(var(--background) / var(--workspace-header-opacity));
+    backdrop-filter: var(--workspace-header-filter);
+  }
+
+  .workspace-content-surface {
+    background-color: transparent;
+  }
+
+  .workspace-chat-surface {
+    background-color: hsl(var(--background) / var(--workspace-chat-opacity));
+    backdrop-filter: var(--workspace-chat-filter);
+  }
+
+  .workspace-panel-surface {
+    background-color: hsl(var(--card) / var(--workspace-panel-opacity));
+    box-shadow:
+      inset 0 1px 0 hsl(var(--foreground) / 0.04),
+      0 10px 28px hsl(0 0% 0% / 0.055);
+    backdrop-filter: var(--workspace-panel-filter);
+  }
+
+  .workspace-detail-surface {
+    background-color: hsl(var(--background) / var(--workspace-detail-opacity));
+    backdrop-filter: var(--workspace-detail-filter);
+  }
+
+  .workspace-card-surface {
+    background-color: hsl(var(--card) / var(--workspace-card-opacity));
+  }
+
+  .workspace-dock-surface {
+    background-color: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  .workspace-composer-surface {
+    background-color: hsl(var(--card) / 0.38);
+    box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.035);
+    backdrop-filter: blur(6px) saturate(0.96);
+  }
+
+  .workspace-sidebar-surface {
+    background-color: hsl(var(--muted) / var(--workspace-sidebar-opacity));
+    backdrop-filter: var(--workspace-sidebar-filter);
+  }
+
+  :root.dark:not([data-theme="command"]) .workspace-canvas::before {
+    filter: var(--workspace-background-filter);
+    transform: scale(var(--workspace-background-scale));
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .pd-user-message-bubble {
+    border: 1px solid hsl(20 48% 73% / 0.76);
+    background-color: hsl(25 72% 90% / 0.94);
+    background-image: none;
+    color: hsl(22 32% 22%);
+    box-shadow:
+      inset 0 1px 0 hsl(38 74% 99% / 0.78),
+      0 5px 16px hsl(24 34% 18% / 0.08);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .pd-user-message-bubble .prose {
+    --tw-prose-body: hsl(22 32% 22%);
+    --tw-prose-headings: hsl(20 34% 17%);
+    --tw-prose-lead: hsl(23 24% 30%);
+    --tw-prose-links: hsl(8 49% 35%);
+    --tw-prose-bold: hsl(20 34% 17%);
+    --tw-prose-counters: hsl(8 49% 38%);
+    --tw-prose-bullets: hsl(8 49% 42%);
+    --tw-prose-code: hsl(177 47% 24%);
+    color: inherit;
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .pd-assistant-message,
+  :root[data-theme="warm"] .workspace-canvas .pd-assistant-message .prose {
+    color: hsl(24 25% 14%);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .pd-assistant-message .prose {
+    --tw-prose-body: hsl(24 25% 14%);
+    --tw-prose-headings: hsl(22 28% 11%);
+    --tw-prose-lead: hsl(26 19% 28%);
+    --tw-prose-links: hsl(177 47% 24%);
+    --tw-prose-bold: hsl(22 28% 11%);
+    --tw-prose-counters: hsl(8 49% 40%);
+    --tw-prose-bullets: hsl(8 49% 44%);
+    --tw-prose-code: hsl(177 47% 24%);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .pd-assistant-message .prose :where(h1, h2, h3, h4, strong) {
+    color: hsl(22 28% 11%);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .pd-assistant-message .prose :where(a, code) {
+    color: hsl(177 47% 24%);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .pd-thinking-message summary,
+  :root[data-theme="warm"] .workspace-canvas .process-trace > button,
+  :root[data-theme="warm"] .workspace-canvas .process-live-status,
+  :root[data-theme="warm"] .workspace-canvas .agent-timeline .pd-process-group {
+    color: hsl(177 47% 25%);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .pd-thinking-message summary:hover,
+  :root[data-theme="warm"] .workspace-canvas .process-trace > button:hover,
+  :root[data-theme="warm"] .workspace-canvas .process-live-status button:hover,
+  :root[data-theme="warm"] .workspace-canvas .agent-timeline .pd-process-group:hover {
+    color: hsl(8 49% 38%);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .pd-thinking-body,
+  :root[data-theme="warm"] .workspace-canvas .process-live-status .pd-process-detail,
+  :root[data-theme="warm"] .workspace-canvas .process-trace .pd-process-detail,
+  :root[data-theme="warm"] .workspace-canvas .agent-timeline .pd-process-step {
+    border-color: hsl(8 49% 44% / 0.38);
+    color: hsl(26 17% 30%);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .pd-thinking-body .prose {
+    --tw-prose-body: hsl(26 17% 30%);
+    --tw-prose-headings: hsl(22 28% 15%);
+    --tw-prose-links: hsl(177 47% 24%);
+    --tw-prose-bold: hsl(22 28% 15%);
+    --tw-prose-code: hsl(177 47% 24%);
+    color: hsl(26 17% 30%);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .agent-timeline .pd-process-step-title {
+    color: hsl(24 24% 19%);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .agent-timeline .pd-process-step-detail {
+    color: hsl(26 16% 38%);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .pd-brand-logo-default {
+    filter: contrast(1.12) drop-shadow(0 1px 5px hsl(0 0% 100% / 0.72));
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .pd-section-tabs {
+    border: 0;
+    background-color: hsl(36 30% 91% / 0.82);
+    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.5);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .pd-section-tabs [aria-selected="true"] {
+    background-color: hsl(174 24% 86% / 0.92);
+    color: hsl(177 47% 22%);
+    box-shadow:
+      inset 0 1px 0 hsl(0 0% 100% / 0.54),
+      0 3px 10px hsl(177 34% 22% / 0.1);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .pd-new-project-action {
+    border: 1px solid hsl(8 49% 44% / 0.24);
+    background-color: hsl(8 49% 88% / 0.3);
+    color: hsl(8 49% 36%);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .pd-new-project-action:hover {
+    border-color: hsl(8 49% 44% / 0.46);
+    background-color: hsl(8 49% 86% / 0.5);
+    color: hsl(8 52% 30%);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .pd-project-row-active {
+    border-color: transparent;
+    background-color: hsl(0 0% 90% / 0.7);
+    color: hsl(22 30% 18%);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .pd-session-row-active {
+    border-color: hsl(20 55% 63% / 0.56);
+    background-color: hsl(24 68% 92% / 0.88);
+    background-image: none;
+    box-shadow:
+      inset 3px 0 0 hsl(8 55% 56% / 0.92),
+      0 4px 14px hsl(24 28% 20% / 0.07);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .pd-session-row-active .pd-session-title {
+    color: hsl(22 30% 17%);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .pd-session-row-active .pd-session-meta {
+    color: hsl(26 17% 36%);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .pd-session-row:not(.pd-session-row-active):hover {
+    border-color: hsl(177 35% 36% / 0.2);
+    background-color: hsl(174 24% 84% / 0.3);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas * {
+    scrollbar-color: hsl(8 35% 45% / 0.55) hsl(38 38% 96% / 0.2);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas *::-webkit-scrollbar-thumb {
+    background-color: hsl(8 35% 45% / 0.46);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas *::-webkit-scrollbar-track {
+    background-color: hsl(38 38% 96% / 0.18);
+  }
+
+  :root[data-theme="command"] .workspace-canvas::before {
+    filter: var(--workspace-background-filter);
+    transform: scale(var(--workspace-background-scale));
+  }
+
+  :root[data-theme="command"] .workspace-canvas::after {
+    background-image:
+      linear-gradient(hsl(190 100% 52% / 0.018) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(190 100% 52% / 0.014) 1px, transparent 1px),
+      linear-gradient(
+        180deg,
+        hsl(var(--workspace-overlay-start)),
+        hsl(var(--workspace-overlay-end))
+      );
+    background-size: 48px 48px, 48px 48px, auto;
+  }
+
+  :root[data-theme="command"] .workspace-main-surface {
+    background-color: hsl(212 72% 6% / 0.12);
+  }
+
+  :root[data-theme="command"] .workspace-header-surface {
+    border-color: hsl(190 100% 52% / 0.24);
+    background-color: hsl(var(--background) / var(--workspace-header-opacity));
+    box-shadow: 0 1px 0 hsl(190 100% 52% / 0.12);
+    backdrop-filter: var(--workspace-header-filter);
+  }
+
+  :root[data-theme="command"] .workspace-chat-surface {
+    background-color: hsl(var(--background) / var(--workspace-chat-opacity));
+    backdrop-filter: var(--workspace-chat-filter);
+  }
+
+  :root[data-theme="command"] .workspace-panel-surface {
+    border-color: hsl(190 100% 52% / 0.26);
+    background-color: hsl(var(--card) / var(--workspace-panel-opacity));
+    box-shadow:
+      inset 0 1px 0 hsl(190 100% 70% / 0.08),
+      0 12px 32px hsl(215 90% 2% / 0.3);
+    backdrop-filter: var(--workspace-panel-filter);
+  }
+
+  :root[data-theme="command"] .workspace-detail-surface {
+    background-color: hsl(var(--background) / var(--workspace-detail-opacity));
+    backdrop-filter: var(--workspace-detail-filter);
+  }
+
+  :root[data-theme="command"] .workspace-card-surface {
+    border-color: hsl(195 55% 30% / 0.72);
+    background-color: hsl(var(--card) / var(--workspace-card-opacity));
+  }
+
+  :root[data-theme="command"] .workspace-sidebar-surface {
+    border-color: hsl(190 100% 52% / 0.25);
+    background-color: hsl(var(--muted) / var(--workspace-sidebar-opacity));
+    box-shadow: 1px 0 0 hsl(190 100% 52% / 0.1);
+    backdrop-filter: var(--workspace-sidebar-filter);
+  }
+
+  :root[data-theme="command"] .workspace-composer-surface {
+    border-color: hsl(190 100% 52% / 0.52);
+    background-color: hsl(209 68% 13% / 0.82);
+    box-shadow:
+      inset 0 1px 0 hsl(190 100% 75% / 0.08),
+      0 0 0 1px hsl(190 100% 52% / 0.06),
+      0 12px 34px hsl(215 90% 2% / 0.32);
+    backdrop-filter: blur(5px) saturate(1.05);
+  }
+
+  :root[data-theme="command"] .workspace-composer-surface:focus-within {
+    border-color: hsl(187 100% 56% / 0.82);
+    box-shadow:
+      inset 0 1px 0 hsl(190 100% 75% / 0.1),
+      0 0 0 2px hsl(187 100% 50% / 0.1),
+      0 14px 38px hsl(215 90% 2% / 0.36);
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-user-message-bubble {
+    border: 1px solid hsl(190 100% 60% / 0.48);
+    background-color: hsl(211 72% 12% / 0.94);
+    background-image: none;
+    color: hsl(195 100% 97%);
+    box-shadow:
+      inset 0 1px 0 hsl(185 100% 88% / 0.16),
+      0 6px 22px hsl(215 90% 2% / 0.32);
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-user-message-bubble .prose {
+    --tw-prose-body: hsl(195 100% 97%);
+    --tw-prose-headings: hsl(195 100% 98%);
+    --tw-prose-lead: hsl(193 70% 90%);
+    --tw-prose-links: hsl(184 100% 83%);
+    --tw-prose-bold: hsl(195 100% 98%);
+    --tw-prose-counters: hsl(190 80% 82%);
+    --tw-prose-bullets: hsl(185 100% 70%);
+    --tw-prose-code: hsl(184 100% 86%);
+    color: inherit;
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-assistant-message,
+  :root[data-theme="command"] .workspace-canvas .pd-assistant-message .prose {
+    color: hsl(198 42% 94%);
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-assistant-message .prose {
+    --tw-prose-body: hsl(198 42% 94%);
+    --tw-prose-headings: hsl(190 70% 96%);
+    --tw-prose-lead: hsl(198 30% 80%);
+    --tw-prose-links: hsl(187 92% 72%);
+    --tw-prose-bold: hsl(190 70% 96%);
+    --tw-prose-counters: hsl(193 42% 72%);
+    --tw-prose-bullets: hsl(187 92% 65%);
+    --tw-prose-code: hsl(187 92% 76%);
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-assistant-message .prose :where(h1, h2, h3, h4, strong) {
+    color: hsl(190 70% 96%);
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-assistant-message .prose :where(a, code) {
+    color: hsl(187 92% 72%);
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-thinking-message summary,
+  :root[data-theme="command"] .workspace-canvas .process-trace > button,
+  :root[data-theme="command"] .workspace-canvas .process-live-status,
+  :root[data-theme="command"] .workspace-canvas .agent-timeline .pd-process-group {
+    color: hsl(190 78% 78%);
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-thinking-message summary:hover,
+  :root[data-theme="command"] .workspace-canvas .process-trace > button:hover,
+  :root[data-theme="command"] .workspace-canvas .process-live-status button:hover,
+  :root[data-theme="command"] .workspace-canvas .agent-timeline .pd-process-group:hover {
+    color: hsl(185 100% 86%);
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-thinking-body,
+  :root[data-theme="command"] .workspace-canvas .process-live-status .pd-process-detail,
+  :root[data-theme="command"] .workspace-canvas .process-trace .pd-process-detail,
+  :root[data-theme="command"] .workspace-canvas .agent-timeline .pd-process-step {
+    border-color: hsl(190 100% 52% / 0.38);
+    color: hsl(198 32% 78%);
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-thinking-body .prose {
+    --tw-prose-body: hsl(198 32% 78%);
+    --tw-prose-headings: hsl(190 64% 92%);
+    --tw-prose-links: hsl(187 92% 72%);
+    --tw-prose-bold: hsl(190 64% 92%);
+    --tw-prose-code: hsl(187 92% 76%);
+    color: hsl(198 32% 78%);
+  }
+
+  :root[data-theme="command"] .workspace-canvas .agent-timeline .pd-process-step-title {
+    color: hsl(193 58% 88%);
+  }
+
+  :root[data-theme="command"] .workspace-canvas .agent-timeline .pd-process-step-detail {
+    color: hsl(198 28% 70%);
+  }
+
+  .pd-brand-logo-command {
+    display: none;
+  }
+
+  :root.dark:not([data-theme="command"]) .workspace-canvas .pd-brand-logo-default {
+    display: none;
+  }
+
+  :root.dark:not([data-theme="command"]) .workspace-canvas .pd-brand-logo-command {
+    display: block;
+    filter: drop-shadow(0 0 8px hsl(188 100% 60% / 0.2));
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-brand-logo-default {
+    display: none;
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-brand-logo-command {
+    display: block;
+    filter: drop-shadow(0 0 8px hsl(188 100% 60% / 0.2));
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-section-tabs {
+    border: 0;
+    background-color: hsl(212 68% 7% / 0.68);
+    box-shadow: inset 0 1px 0 hsl(190 100% 72% / 0.05);
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-section-tabs [aria-selected="true"] {
+    background-image: linear-gradient(
+      110deg,
+      hsl(207 86% 30% / 0.96),
+      hsl(190 95% 38% / 0.88)
+    );
+    color: hsl(190 100% 96%);
+    box-shadow:
+      inset 0 1px 0 hsl(185 100% 88% / 0.12),
+      0 0 16px hsl(190 100% 48% / 0.12);
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-new-project-action {
+    border: 1px solid hsl(190 100% 52% / 0.22);
+    background-color: hsl(195 82% 30% / 0.12);
+    color: hsl(187 88% 72%);
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-new-project-action:hover {
+    border-color: hsl(190 100% 58% / 0.46);
+    background-color: hsl(195 88% 35% / 0.22);
+    color: hsl(185 100% 88%);
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-project-row-active {
+    border-color: hsl(190 100% 52% / 0.2);
+    background-color: hsl(195 82% 31% / 0.13);
+    color: hsl(190 70% 92%);
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-session-row-active {
+    border-color: hsl(190 100% 54% / 0.34);
+    background-image: linear-gradient(
+      90deg,
+      hsl(194 92% 36% / 0.34),
+      hsl(201 76% 27% / 0.2)
+    );
+    box-shadow:
+      inset 3px 0 0 hsl(185 100% 58% / 0.9),
+      0 0 18px hsl(190 100% 45% / 0.08);
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-session-row-active .pd-session-title {
+    color: hsl(185 100% 86%);
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-session-row-active .pd-session-meta {
+    color: hsl(194 46% 70%);
+  }
+
+  :root[data-theme="command"] .workspace-canvas .pd-session-row:not(.pd-session-row-active):hover {
+    border-color: hsl(195 65% 32% / 0.3);
+    background-color: hsl(195 70% 28% / 0.13);
+  }
+
+  :root[data-theme="command"] .workspace-canvas * {
+    scrollbar-color: hsl(190 72% 45% / 0.55) hsl(212 68% 7% / 0.28);
+  }
+
+  :root[data-theme="command"] .workspace-canvas *::-webkit-scrollbar-thumb {
+    background-color: hsl(190 72% 45% / 0.46);
+  }
+
+  :root[data-theme="command"] .workspace-canvas *::-webkit-scrollbar-track {
+    background-color: hsl(212 68% 7% / 0.22);
+  }
+
+  .workspace-canvas .trauma-workspace .workspace-panel-surface,
+  .workspace-canvas .trauma-workspace .workspace-detail-surface,
+  .workspace-canvas .trauma-workspace .workspace-card-surface {
+    background-color: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  :root:not(.dark):not([data-theme="warm"]):not([data-theme="command"])
+    .workspace-canvas
+    .trauma-workspace
+    .trauma-status-panel {
+    background-color: hsl(0 0% 100%);
+    box-shadow: 0 1px 3px hsl(0 0% 0% / 0.06);
+  }
+
+  :root:not(.dark):not([data-theme="warm"]):not([data-theme="command"])
+    .workspace-canvas
+    .trauma-workspace
+    :is(.trauma-workflow-panel, .trauma-detail-panel) {
+    background-color: hsl(0 0% 100%);
+    box-shadow: 0 4px 14px hsl(0 0% 0% / 0.06);
+    backdrop-filter: none;
+  }
+
+  :root:not(.dark):not([data-theme="warm"]):not([data-theme="command"])
+    .workspace-canvas
+    .trauma-workspace
+    .workspace-card-surface {
+    background-color: hsl(0 0% 100%) !important;
+    box-shadow: 0 1px 3px hsl(0 0% 0% / 0.06);
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .trauma-workspace .workspace-panel-surface {
+    border-color: hsl(29 24% 58% / 0.44);
+    background-color: hsl(var(--card) / 0.94);
+    box-shadow: 0 4px 14px hsl(24 28% 20% / 0.06);
+    backdrop-filter: none;
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .trauma-workspace .workspace-detail-surface {
+    border-color: hsl(29 24% 58% / 0.4);
+    background-color: hsl(var(--card) / 0.94);
+    box-shadow: 0 4px 14px hsl(24 28% 20% / 0.06);
+    backdrop-filter: none;
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .trauma-workspace .workspace-card-surface {
+    border-color: hsl(29 24% 62% / 0.42);
+    background-color: hsl(var(--card) / 0.96);
+    box-shadow: 0 1px 3px hsl(24 28% 20% / 0.06);
+    backdrop-filter: none;
+  }
+
+  :root[data-theme="warm"]
+    .workspace-canvas
+    .trauma-workspace
+    .trauma-conversation-panel {
+    border-color: transparent;
+    background-color: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  :root:not(.dark):not([data-theme="warm"]):not([data-theme="command"])
+    .workspace-canvas
+    .pd-session-row-active,
+  :root:not(.dark):not([data-theme="warm"]):not([data-theme="command"])
+    .workspace-canvas
+    .trauma-workspace
+    .trauma-tree-memo-selected {
+    border-color: hsl(174 42% 55% / 0.7);
+    background-color: hsl(172 46% 91% / 0.9) !important;
+    background-image: none;
+    box-shadow:
+      inset 3px 0 0 hsl(174 55% 37% / 0.9),
+      0 4px 14px hsl(174 35% 28% / 0.08);
+  }
+
+  :root:not(.dark):not([data-theme="warm"]):not([data-theme="command"])
+    .workspace-canvas
+    .pd-session-row-active .pd-session-title {
+    color: hsl(174 44% 22%);
+  }
+
+  :root:not(.dark):not([data-theme="warm"]):not([data-theme="command"])
+    .workspace-canvas
+    .pd-session-row-active .pd-session-meta {
+    color: hsl(174 20% 39%);
+  }
+
+  :root.dark:not([data-theme="command"])
+    .workspace-canvas
+    .pd-session-row-active,
+  :root.dark:not([data-theme="command"])
+    .workspace-canvas
+    .trauma-workspace
+    .trauma-tree-memo-selected {
+    border-color: hsl(205 78% 54% / 0.55);
+    background-color: hsl(211 52% 18% / 0.94) !important;
+    background-image: none;
+    box-shadow:
+      inset 3px 0 0 hsl(199 92% 62% / 0.92),
+      0 5px 18px hsl(210 90% 3% / 0.24);
+  }
+
+  :root.dark:not([data-theme="command"])
+    .workspace-canvas
+    .pd-session-row-active .pd-session-title {
+    color: hsl(198 82% 88%);
+  }
+
+  :root.dark:not([data-theme="command"])
+    .workspace-canvas
+    .pd-session-row-active .pd-session-meta {
+    color: hsl(205 36% 70%);
+  }
+
+  :root[data-theme="warm"]
+    .workspace-canvas
+    .trauma-workspace
+    .trauma-tree-memo-selected {
+    border-color: hsl(20 55% 63% / 0.56);
+    background-color: hsl(24 68% 92% / 0.88) !important;
+    background-image: none;
+    box-shadow:
+      inset 3px 0 0 hsl(8 55% 56% / 0.92),
+      0 4px 14px hsl(24 28% 20% / 0.07);
+  }
+
+  :root[data-theme="command"]
+    .workspace-canvas
+    .trauma-workspace
+    .trauma-tree-memo-selected {
+    border-color: hsl(190 100% 54% / 0.34);
+    background-color: hsl(201 76% 27% / 0.2) !important;
+    background-image: linear-gradient(
+      90deg,
+      hsl(194 92% 36% / 0.34),
+      hsl(201 76% 27% / 0.2)
+    );
+    box-shadow:
+      inset 3px 0 0 hsl(185 100% 58% / 0.9),
+      0 0 18px hsl(190 100% 45% / 0.08);
+  }
+
+  :root[data-theme="warm"] body {
+    background-image: linear-gradient(180deg, hsl(36 42% 99%), hsl(var(--background)) 30%);
+  }
+
+  :root[data-theme="command"] body {
+    background-image:
+      linear-gradient(hsl(202 100% 65% / 0.025) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(171 66% 50% / 0.02) 1px, transparent 1px);
+    background-size: 40px 40px;
   }
 
   html, body {
@@ -1111,6 +1916,57 @@
     overflow-y: auto;
     overscroll-behavior: contain;
     scrollbar-gutter: stable;
+  }
+
+  @keyframes trauma-panel-enter-right {
+    from {
+      opacity: 0;
+      transform: translateX(1.5rem) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0) scale(1);
+    }
+  }
+
+  @keyframes trauma-panel-enter-left {
+    from {
+      opacity: 0;
+      transform: translateX(-1.5rem) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0) scale(1);
+    }
+  }
+
+  @keyframes trauma-panel-exit-left {
+    from {
+      opacity: 1;
+      transform: translateX(0) scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: translateX(-1.5rem) scale(0.985);
+    }
+  }
+
+  @keyframes trauma-panel-exit-right {
+    from {
+      opacity: 1;
+      transform: translateX(0) scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: translateX(1.5rem) scale(0.985);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pd-composer-container [class*='trauma-panel-enter'],
+    .pd-composer-container [class*='trauma-panel-exit'] {
+      animation-duration: 1ms !important;
+    }
   }
 
   /*

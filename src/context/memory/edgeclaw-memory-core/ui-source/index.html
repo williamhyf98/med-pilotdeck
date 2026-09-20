@@ -24,43 +24,57 @@
     <div id="appScrim" class="app-scrim hidden"></div>
 
     <div class="app-shell">
-      <header class="topbar">
-        <div class="topbar-left">
-          <nav id="boardNavTabs" class="nav-tabs">
-            <button class="nav-tab active" data-page="project" type="button">
-              <span class="nav-tab-label" data-i18n="nav.project"></span>
-            </button>
-            <button class="nav-tab" data-page="user" type="button">
-              <span class="nav-tab-label" data-i18n="nav.user"></span>
-            </button>
-            <button class="nav-tab" data-page="trace" type="button">
-              <span class="nav-tab-label" data-i18n="nav.trace"></span>
-            </button>
-          </nav>
-        </div>
-        <div class="topbar-right">
-          <div id="listSearchRow" class="search-row">
-            <input id="workspaceSearch" type="search" autocomplete="off" data-i18n-placeholder="search.placeholder" />
-            <button id="workspaceSearchBtn" class="action-btn" type="button" data-i18n="actions.search"></button>
+      <header class="memory-header">
+        <div class="memory-header-main">
+          <div class="memory-heading">
+            <p class="memory-eyebrow" data-i18n="page.eyebrow"></p>
+            <h1 data-i18n="page.title"></h1>
+            <p class="memory-subtitle" data-i18n="page.subtitle"></p>
           </div>
-          <span class="topbar-sep"></span>
           <div class="toolbar">
             <button id="refreshBtn" class="action-btn" type="button" data-i18n="actions.refresh"></button>
             <button id="indexBtn" class="action-btn action-btn--primary" type="button" data-i18n="actions.index"></button>
             <button id="dreamBtn" class="action-btn action-btn--primary" type="button" data-i18n="actions.dream"></button>
             <button id="rollbackLastDreamBtn" class="action-btn" type="button" data-i18n="actions.rollbackLastDream"></button>
           </div>
-          <span class="topbar-sep"></span>
-          <div class="topbar-meta">
-            <span id="activityText" class="activity-text"></span>
-            <span class="topbar-dot">·</span>
-            <span id="memoryAutoStatus" class="topbar-auto-status"></span>
-            <span class="topbar-dot">·</span>
-            <span class="topbar-index-label" data-i18n="topbar.lastIndexed"></span>
-            <span id="navLastIndexed" class="topbar-index-time"></span>
+        </div>
+        <div class="memory-header-nav">
+          <nav id="boardNavTabs" class="nav-tabs" aria-label="Memory views">
+            <button class="nav-tab active" data-page="project" type="button">
+              <span class="nav-tab-label" data-i18n="nav.project"></span>
+            </button>
+            <button class="nav-tab" data-page="feedback" type="button">
+              <span class="nav-tab-label" data-i18n="nav.feedback"></span>
+            </button>
+            <button class="nav-tab" data-page="user" type="button">
+              <span class="nav-tab-label" data-i18n="nav.user"></span>
+            </button>
+            <button class="nav-tab hidden" id="navCaseTab" data-page="case" type="button">
+              <span class="nav-tab-label" data-i18n="nav.case"></span>
+            </button>
+            <button class="nav-tab" data-page="trace" type="button">
+              <span class="nav-tab-label" data-i18n="nav.trace"></span>
+            </button>
+          </nav>
+          <div class="memory-header-tools">
+            <div id="listSearchRow" class="search-row">
+              <input id="workspaceSearch" type="search" autocomplete="off" data-i18n-placeholder="search.placeholder" />
+              <button id="workspaceSearchBtn" class="action-btn" type="button" data-i18n="actions.search"></button>
+            </div>
+            <div class="topbar-meta">
+              <span id="activityText" class="activity-text"></span>
+              <span class="topbar-dot">·</span>
+              <span id="memoryAutoStatus" class="topbar-auto-status"></span>
+              <span class="topbar-dot">·</span>
+              <span class="topbar-index-label" data-i18n="topbar.lastIndexed"></span>
+              <span id="navLastIndexed" class="topbar-index-time"></span>
+            </div>
           </div>
         </div>
       </header>
+
+      <!-- 仅展示维护状态；项目与会话标识继续用于寻址，但不暴露在界面中。 -->
+      <div id="scopeBar" class="scope-bar"></div>
 
       <div id="statusBar" class="status-bar hidden"></div>
 
@@ -76,17 +90,21 @@
               </div>
               <div id="projectEntries" class="board-card-grid"></div>
             </section>
-            <section id="feedbackEntriesSection" class="board-group">
-              <div class="board-group-header">
-                <div><h4 data-i18n="feedback.section.title"></h4><p class="board-group-subtitle" data-i18n="feedback.section.subtitle"></p></div>
-              </div>
-              <div id="feedbackEntries" class="board-card-grid"></div>
-            </section>
             <section id="deprecatedEntriesSection" class="board-group hidden">
               <div class="board-group-header">
                 <div><h4 data-i18n="deprecated.section.title"></h4><p class="board-group-subtitle" data-i18n="deprecated.section.subtitle"></p></div>
               </div>
               <div id="deprecatedEntries" class="board-card-grid"></div>
+            </section>
+          </div>
+
+          <!-- ═══ FEEDBACK BOARD ═══ -->
+          <div id="feedbackBoard" class="board-content">
+            <section id="feedbackEntriesSection" class="board-group">
+              <div class="board-group-header">
+                <div><h4 data-i18n="feedback.section.title"></h4><p class="board-group-subtitle" data-i18n="feedback.section.subtitle"></p></div>
+              </div>
+              <div id="feedbackEntries" class="board-card-grid"></div>
             </section>
           </div>
 
@@ -97,6 +115,25 @@
                 <div><h4 data-i18n="user.section.title"></h4><p class="board-group-subtitle" data-i18n="user.section.subtitle"></p></div>
               </div>
               <div id="userSummary" class="stack"></div>
+            </section>
+          </div>
+
+          <!-- ═══ CASE STATE BOARD（战创伤专属，只读）═══
+               这里展示的是病例流程的权威数据，不是 Markdown memory：没有编辑、
+               删除、废弃按钮，修改一律走推演/阶段确认等 Trauma 业务接口。 -->
+          <div id="caseBoard" class="board-content">
+            <section class="board-group">
+              <div class="board-group-header">
+                <div><h4 data-i18n="case.summary.title"></h4><p class="board-group-subtitle" data-i18n="case.summary.subtitle"></p></div>
+                <span class="entry-badge" data-kind="readonly" data-i18n="case.readOnlyBadge"></span>
+              </div>
+              <div id="caseSummary" class="stack"></div>
+            </section>
+            <section class="board-group">
+              <div class="board-group-header">
+                <div><h4 data-i18n="case.timeline.title"></h4><p class="board-group-subtitle" data-i18n="case.timeline.subtitle"></p></div>
+              </div>
+              <div id="caseTimeline" class="timeline"></div>
             </section>
           </div>
 

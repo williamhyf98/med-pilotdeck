@@ -2,6 +2,7 @@ import type { GatewayEvent } from "../gateway/protocol/types.js";
 import type {
   PlacementConfirmationDecision,
   PlacementConfirmationRequest,
+  TraumaTurnPhase,
   TraumaTurnProgress,
 } from "./runner.js";
 import type { AgentTurnResponse, SubStage } from "./types.js";
@@ -12,7 +13,7 @@ import {
   typicalFacilityForSubStage,
 } from "./stageConfig.js";
 
-const PHASE_LABELS: Record<TraumaTurnProgress["phase"], string> = {
+const PHASE_LABELS: Record<TraumaTurnPhase, string> = {
   validate: "校验并合并表单",
   place: "判断救治级别",
   retrieve: "检索战伤救治规则",
@@ -119,6 +120,34 @@ export function traumaProgressEvents(input: {
   runId: string;
 }): GatewayEvent[] {
   const { progress, runId } = input;
+  if ("kind" in progress && progress.kind === "attachment_interpretation") {
+    // 工位 I 与主线并行，占用主线编号会让进度条跳跃甚至回退；
+    // 复用抽取工位已在用的 countInTotal:false 通道，单独显示一行。
+    const payload = runnerStepPayload({
+      phase: "interpret",
+      title: "附件影像判读",
+      runningTitle: "正在判读上传附件",
+      countInTotal: false,
+    });
+    const toolCallId = `trauma-interpretation:${runId}`;
+    if (progress.status === "started") {
+      return [{
+        type: "tool_call_started",
+        toolCallId,
+        name: payload.title,
+        argsPreview: previewPayload(payload),
+        runId,
+      }];
+    }
+    return [{
+      type: "tool_call_finished",
+      toolCallId,
+      toolName: payload.title,
+      ok: progress.ok,
+      resultPreview: previewPayload(payload),
+      runId,
+    }];
+  }
   if ("kind" in progress && progress.kind === "runner_step") {
     const label = runnerStepLabel(progress.step, progress.phase);
     const payload = runnerStepPayload({

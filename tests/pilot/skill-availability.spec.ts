@@ -1,18 +1,26 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import { isToolAvailableForProjectType } from "../../src/pilot/projectTypePolicy.js";
-import { writeSkillAvailabilityOverride } from "../../src/pilot/skillAvailability.js";
+import {
+  normalizeSkillAvailability,
+  writeSkillAvailabilityOverride,
+} from "../../src/pilot/skillAvailability.js";
 
-test("medical tools stay global despite legacy med-medical overrides", async () => {
+test("legacy skill availability overrides are normalized to global", async () => {
   const pilotHome = await mkdtemp(join(tmpdir(), "pilotdeck-skill-availability-"));
   const previousPilotHome = process.env.PILOT_HOME;
   try {
     process.env.PILOT_HOME = pilotHome;
-    await writeSkillAvailabilityOverride("med-medical", ["general_medicine"], pilotHome);
+    assert.deepEqual(normalizeSkillAvailability(["general_medicine"]), ["global"]);
+    await writeSkillAvailabilityOverride("med-medical", ["global"], pilotHome);
+    assert.deepEqual(
+      JSON.parse(await readFile(join(pilotHome, "skill-availability.json"), "utf8")),
+      { "med-medical": ["global"] },
+    );
     assert.equal(
       isToolAvailableForProjectType(
         "mcp__med-tools__med_parse_medical",

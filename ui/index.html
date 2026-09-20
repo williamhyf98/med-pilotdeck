@@ -5,7 +5,7 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=pd1" />
     <link rel="icon" type="image/png" href="/favicon.png?v=pd1" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <title>PilotDeck</title>
+    <title>MedPD</title>
     
     <!-- PWA Manifest -->
     <link rel="manifest" href="/manifest.json" crossorigin="use-credentials"  />
@@ -13,7 +13,7 @@
     <!-- iOS Safari PWA Meta Tags -->
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="PilotDeck" />
+    <meta name="apple-mobile-web-app-title" content="MedPD" />
     
     <!-- iOS Safari Icons -->
     <link rel="apple-touch-icon" sizes="152x152" href="/icons/icon-152x152.png?v=pd1" />
@@ -22,6 +22,22 @@
     <!-- Theme Color -->
     <meta name="theme-color" content="#ffffff" />
     <meta name="msapplication-TileColor" content="#ffffff" />
+
+    <script>
+      (() => {
+        try {
+          const theme = localStorage.getItem('themeMode') || localStorage.getItem('theme') || 'system';
+          const prefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+          const isDark = theme === 'dark' || theme === 'command' || (theme === 'system' && prefersDark);
+          if (theme === 'warm' || theme === 'command') {
+            document.documentElement.dataset.theme = theme;
+          }
+          document.documentElement.classList.toggle('dark', Boolean(isDark));
+        } catch {
+          // ThemeProvider applies the fallback once the application mounts.
+        }
+      })();
+    </script>
     
     <!-- Prevent zoom on iOS -->
     <meta name="format-detection" content="telephone=no" />

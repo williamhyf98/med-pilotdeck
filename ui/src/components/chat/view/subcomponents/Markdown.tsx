@@ -15,6 +15,7 @@ import { createRemarkCitationPlugin } from '../../utils/remarkCitationPlugin';
 import { remarkGroupImageParagraphs } from '../../utils/remarkGroupImages';
 import { collectMarkdownImages } from '../../utils/markdownImages';
 import { CitationPopover } from '../../utils/CitationPopover';
+import { extractCitationsFromContent, stripCitationDetailsBlocks } from '../../utils/citationDetails';
 import type { CitationMetadata } from '../../types/types';
 import ImageLightbox, { type LightboxImage } from './ImageLightbox';
 
@@ -63,34 +64,6 @@ const isImageOnlyParagraph = (node: unknown): boolean => {
   const meaningful = children.filter((child) => !isBlankHastText(child));
   return meaningful.length > 0 && meaningful.every(isHastImage);
 };
-
-/** 从回答文本中提取 <details> 内的引用信息：- [N] title > section｜短引文：quote */
-const CITATION_LINE_RE = /^\s*-\s*\[(\d+)\]\s+(.+?)\s*>\s*(.+?)\s*$/;
-const QUOTE_SPLIT_RE = /\s*[|｜]\s*短引文[:：]\s*/u;
-const CHUNK_COMMENT_RE = /<!--[\s\S]*?-->/g;
-
-function extractCitationsFromContent(text: string): CitationMetadata[] {
-  // 找到 <details> ... </details> 块
-  const detailsMatch = text.match(/<details>[\s\S]*?<\/details>/i);
-  if (!detailsMatch) return [];
-  const detailsBlock = detailsMatch[0];
-
-  const citations: CitationMetadata[] = [];
-  const lines = detailsBlock.split('\n');
-  for (const line of lines) {
-    const m = line.match(CITATION_LINE_RE);
-    if (m) {
-      const [section, quote] = m[3].replace(CHUNK_COMMENT_RE, '').trim().split(QUOTE_SPLIT_RE);
-      citations.push({
-        index: parseInt(m[1], 10),
-        title: m[2].trim(),
-        section: section.trim(),
-        ...(quote?.trim() ? { quote: quote.trim() } : {}),
-      });
-    }
-  }
-  return citations;
-}
 
 function createMarkdownComponents(
   onImageZoom: (src: string) => void,
@@ -173,14 +146,18 @@ export function Markdown({
   artifactFiles,
   citations,
 }: MarkdownProps) {
-  const content = useMemo(
+  const rawContent = useMemo(
     () => normalizeInlineCodeFences(String(children ?? '')),
     [children],
   );
   // 优先用外部传入的 citations，否则从 content 自动提取
   const resolvedCitations = useMemo(
-    () => citations && citations.length > 0 ? citations : extractCitationsFromContent(content),
-    [citations, content],
+    () => citations && citations.length > 0 ? citations : extractCitationsFromContent(rawContent),
+    [citations, rawContent],
+  );
+  const content = useMemo(
+    () => resolvedCitations.length > 0 ? stripCitationDetailsBlocks(rawContent) : rawContent,
+    [rawContent, resolvedCitations],
   );
 
   const [zoomedSrc, setZoomedSrc] = useState<string | null>(null);

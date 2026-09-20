@@ -1,11 +1,14 @@
 export type IntervalUnit = "minutes" | "hours";
+export type MaintenanceMode = "immediate" | "interval" | "manual";
 
 export const DEFAULT_INDEX_MINUTES = 30;
 export const DEFAULT_DREAM_MINUTES = 60;
+export const DEFAULT_MAINTENANCE_MODE: MaintenanceMode = "interval";
 
 type MemoryIntervals = {
   autoIndexIntervalMinutes?: number;
   autoDreamIntervalMinutes?: number;
+  maintenanceMode?: MaintenanceMode;
 };
 
 export function toDisplayUnit(
@@ -38,5 +41,7 @@ export function resolveEnabledMemoryIntervals(
       memory?.autoIndexIntervalMinutes ?? DEFAULT_INDEX_MINUTES,
     autoDreamIntervalMinutes:
       memory?.autoDreamIntervalMinutes ?? DEFAULT_DREAM_MINUTES,
+    maintenanceMode:
+      memory?.maintenanceMode ?? DEFAULT_MAINTENANCE_MODE,
   };
 }

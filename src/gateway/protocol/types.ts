@@ -96,6 +96,8 @@ export type GatewaySubmitTurnInput = {
   traumaRawInput?: string;
   /** Whether the raw trauma input should be parsed by station F before the runner starts. */
   traumaExtract?: boolean;
+  /** 战创伤本轮上传的医学附件；独立于通用路径的 attachments。 */
+  traumaAttachments?: Array<{ path: string; name: string }>;
   projectKey?: string;
   /** Override the agent session's working directory for this session. */
   workspaceCwd?: string;

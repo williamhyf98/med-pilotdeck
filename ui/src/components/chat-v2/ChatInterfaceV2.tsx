@@ -4,7 +4,7 @@ import { MessageSquare } from 'lucide-react';
 import { useTasksSettings } from '../../contexts/TasksSettingsContext';
 import { useToast } from '../../contexts/ToastContext';
 import { api } from '../../utils/api';
-import type { ChatInterfaceProps, ChatMessage, ChatRunMode, Provider } from '../chat/types/types';
+import type { ChatAttachment, ChatInterfaceProps, ChatMessage, ChatRunMode, Provider } from '../chat/types/types';
 import {
   getSessionRequestParams,
   isReadOnlySession,
@@ -19,6 +19,7 @@ import { getDraftInputStorageKey, safeLocalStorage } from '../chat/utils/chatSto
 import { useSessionWatch } from '../../hooks/useSessionWatch';
 import MessagesPaneV2 from './MessagesPaneV2';
 import ComposerV2, { PermissionRequestsSlot } from './ComposerV2';
+import ChatWelcomeV2 from './ChatWelcomeV2';
 import { buildReconnectStatusMessage, refreshSessionAfterReconnect, shouldRefreshSessionOnReconnect } from './reconnectRecovery';
 
 type PendingViewSession = {
@@ -32,6 +33,7 @@ export function ChatInterfaceLayout({
   compact: _compact,
   messagePane,
   composerSlot,
+  externalComposerSlot,
   permissionSlot,
   hiddenComposerNotice,
   welcome,
@@ -41,16 +43,18 @@ export function ChatInterfaceLayout({
   compact: boolean;
   messagePane: React.ReactNode;
   composerSlot: React.ReactNode;
+  externalComposerSlot?: React.ReactNode;
   permissionSlot?: React.ReactNode;
   hiddenComposerNotice?: string;
   welcome: React.ReactNode;
 }) {
   if (hideComposer) {
     return (
-      <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-white dark:bg-neutral-950">
+      <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-transparent">
         {messagePane}
+        {externalComposerSlot}
         {permissionSlot || hiddenComposerNotice ? (
-          <div className="shrink-0 border-t border-neutral-200 bg-white px-3 pt-3 dark:border-neutral-800 dark:bg-neutral-950">
+          <div className="workspace-dock-surface shrink-0 border-t border-neutral-200 px-3 pt-3 dark:border-neutral-800">
             {hiddenComposerNotice ? (
               <p role="note" className="mb-3 text-[10px] leading-4 text-neutral-500 dark:text-neutral-400">
                 {hiddenComposerNotice}
@@ -64,7 +68,7 @@ export function ChatInterfaceLayout({
   }
   if (isWelcomeMode) return <>{welcome}</>;
   return (
-    <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-white dark:bg-neutral-950">
+    <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-transparent">
       {messagePane}
       {composerSlot}
     </div>
@@ -124,8 +128,10 @@ function ChatInterfaceV2({
   composerFooterStart,
   composerFooterEnd,
   composerChrome = 'default',
+  externalComposerSlot,
   traumaOptimisticMessageRef,
   navigateToChatMessageRef,
+  traumaAbortUIRef,
   onTraumaProcessStateChange,
 }: ChatInterfaceProps) {
   const { t } = useTranslation('chat');
@@ -250,19 +256,37 @@ function ChatInterfaceV2({
     sessionStore,
   });
 
-  const addOptimisticTraumaMessage = useCallback((text: string, targetSessionId?: string | null, runId?: string) => {
-    const content = text.trim();
-    if (!content) return;
+  const addOptimisticTraumaMessage = useCallback((
+    text: string,
+    targetSessionId?: string | null,
+    runId?: string,
+    traumaAttachments?: Array<{ name: string; path?: string; previewUrl?: string }>,
+  ) => {
+    const hasAttachments = Boolean(traumaAttachments?.length);
+    const content = text.trim() || (hasAttachments ? '已上传医学附件' : '');
+    if (!content && !hasAttachments) return;
     // A null target deliberately uses the hook's pending-message handoff so
     // the bubble remains visible while a new session is being created.
     if (!targetSessionId) {
       pendingViewSessionRef.current = { sessionId: null, startedAt: Date.now() };
     }
+    // Split: image files (have a previewUrl blob) go into message.images so the
+    // bubble renders actual thumbnails; everything else stays as file cards.
+    const imageEntries = traumaAttachments?.filter((a) => Boolean(a.previewUrl)) ?? [];
+    const fileEntries = traumaAttachments?.filter((a) => !a.previewUrl) ?? [];
+    const images = imageEntries.length
+      ? imageEntries.map((a) => ({ data: a.previewUrl!, name: a.name, path: a.path }))
+      : undefined;
+    const attachments: ChatAttachment[] | undefined = fileEntries.length
+      ? fileEntries.map((a) => ({ kind: 'file' as const, name: a.name, path: a.path }))
+      : undefined;
     addMessage({
       type: 'user',
       content,
       timestamp: new Date(),
       ...(runId ? { runId, turnId: runId } : {}),
+      ...(images ? { images } : {}),
+      ...(attachments ? { attachments } : {}),
     }, targetSessionId ?? null);
     setIsUserScrolledUp(false);
     setTimeout(() => scrollToBottom(), 100);
@@ -277,6 +301,25 @@ function ChatInterfaceV2({
       }
     };
   }, [addOptimisticTraumaMessage, traumaOptimisticMessageRef]);
+
+  useEffect(() => {
+    if (!traumaAbortUIRef) return undefined;
+    const abortUI = () => {
+      setIsLoading(false);
+      addMessage({
+        type: 'assistant',
+        content: '本轮推演已停止。',
+        isInterruptedNotice: true,
+        timestamp: Date.now(),
+      });
+    };
+    traumaAbortUIRef.current = abortUI;
+    return () => {
+      if (traumaAbortUIRef.current === abortUI) {
+        traumaAbortUIRef.current = null;
+      }
+    };
+  }, [addMessage, setIsLoading, traumaAbortUIRef]);
 
   const watchedSessionId = selectedSession?.id || currentSessionId || null;
   useSessionWatch({ sessionId: watchedSessionId, ws, sendMessage });
@@ -468,7 +511,16 @@ function ChatInterfaceV2({
     if (!isLoading || !canAbortSession || isAbortPending) return;
     handleAbortSession();
     setIsAbortPending(true);
-  }, [canAbortSession, handleAbortSession, isAbortPending, isLoading]);
+    // Immediately reflect the stop in the UI: clear the loading state and
+    // inject a local interrupted divider so the conversation list responds
+    // at once rather than waiting for the backend's WebSocket message.
+    setIsLoading(false);
+    addMessage({
+      type: 'assistant',
+      isInterruptedNotice: true,
+      timestamp: Date.now(),
+    });
+  }, [addMessage, canAbortSession, handleAbortSession, isAbortPending, isLoading, setIsLoading]);
 
   const handleFork = useCallback(async (message: ChatMessage, _carriedPreview: number) => {
     if (isForkPending || isLoading || sessionIsReadOnly) return;
@@ -614,7 +666,7 @@ function ChatInterfaceV2({
     <ComposerV2
       input={input}
       placeholder={composerPlaceholder || t('composer.placeholder', {
-        defaultValue: 'Tell PilotDeck what you want to get done…',
+        defaultValue: 'Tell MedPD what you want to get done…',
       }) as string}
       textareaRef={textareaRef}
       inputHighlightRef={inputHighlightRef}
@@ -752,6 +804,7 @@ function ChatInterfaceV2({
         compact={compact}
         messagePane={messagePane}
         composerSlot={composerSlot}
+        externalComposerSlot={externalComposerSlot}
         permissionSlot={pendingPermissionRequests.length > 0 ? permissionSlot : null}
         hiddenComposerNotice={hiddenComposerNotice}
         welcome={null}
@@ -760,7 +813,6 @@ function ChatInterfaceV2({
   }
 
   if (isWelcomeMode) {
-    const projectName = selectedProject?.displayName || selectedProject?.name || '';
     if (compact) {
       return (
         <div className="flex h-full min-w-0 flex-col bg-white dark:bg-neutral-950">
@@ -782,28 +834,12 @@ function ChatInterfaceV2({
       );
     }
     return (
-      <div className="pd-chat-welcome flex h-full flex-col bg-white dark:bg-neutral-950">
-        <div className="pd-chat-welcome-body flex min-h-0 flex-1 flex-col items-center justify-center px-6">
-          <div className="pd-chat-welcome-column w-full max-w-[720px]">
-            <h1 className="pd-chat-welcome-title mb-8 text-center text-[26px] font-medium tracking-tight text-neutral-900 dark:text-neutral-100">
-              {welcomeTitle || (selectedProject
-                ? t('welcome.greetingWithProject', {
-                    project: projectName,
-                    defaultValue: `What's on the plan today?`,
-                  })
-                : t('welcome.noProject', {
-                    defaultValue: 'Pick a project from the sidebar to get started',
-                  }))}
-            </h1>
-            {welcomeDescription ? (
-              <p className="pd-chat-welcome-description text-center text-[13px] leading-6 text-neutral-500 dark:text-neutral-400">
-                {welcomeDescription}
-              </p>
-            ) : null}
-            {composerSlot}
-          </div>
-        </div>
-      </div>
+      <ChatWelcomeV2
+        selectedProject={selectedProject}
+        welcomeTitle={welcomeTitle}
+        welcomeDescription={welcomeDescription}
+        composerSlot={composerSlot}
+      />
     );
   }
 
@@ -814,6 +850,7 @@ function ChatInterfaceV2({
       compact={compact}
       messagePane={messagePane}
       composerSlot={composerSlot}
+      externalComposerSlot={undefined}
       permissionSlot={null}
       hiddenComposerNotice={undefined}
       welcome={null}
