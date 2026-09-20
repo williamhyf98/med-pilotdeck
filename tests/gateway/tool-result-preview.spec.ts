@@ -77,3 +77,37 @@ test("mapAgentEvent bounds subagent tool result content and preview", () => {
     assert.match(detail.content, /Gateway preview truncated/);
     assert.equal(detail.resultBytes, Buffer.byteLength(largeOutput, "utf8"));
 });
+function ragToolResultEvent() {
+    const base = textToolResultEvent();
+    return {
+        ...base,
+        result: {
+            ...base.result,
+            toolName: "med_trauma_rag_query",
+            content: [{ type: "text", text: `{"status":"ok","chunks":[${largeOutput}]}` }],
+        },
+    };
+}
+test("mapAgentEvent keeps RAG retrieval previews intact so citation chunks survive", () => {
+    const frames = mapAgentEvent(ragToolResultEvent(), "run-1");
+    const frame = frames.find((event) => event.type === "tool_call_finished");
+    assert.ok(frame);
+    assert.equal(frame.resultPreview, `{"status":"ok","chunks":[${largeOutput}]}`);
+    assert.doesNotMatch(frame.resultPreview, /Gateway preview truncated/);
+});
+test("mapAgentEvent keeps subagent RAG retrieval content intact", () => {
+    const ragEvent = ragToolResultEvent();
+    const frames = mapAgentEvent({
+        type: "subagent_tool_result",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        subagentId: "sub-1",
+        subagentType: "explore",
+        result: ragEvent.result,
+    }, "run-1");
+    const frame = frames.find((event) => event.type === "agent_status" && event.event === "subagent_tool_result");
+    assert.ok(frame);
+    const detail = frame.detail;
+    assert.equal(detail.content, `{"status":"ok","chunks":[${largeOutput}]}`);
+    assert.doesNotMatch(detail.content, /Gateway preview truncated/);
+});

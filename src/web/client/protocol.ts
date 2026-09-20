@@ -59,6 +59,8 @@ export type WebGatewayEvent = WebGatewayEventMetadata & (
   | {
       type: "tool_call_finished";
       toolCallId: string;
+      /** Mirrors `GatewayEvent.tool_call_finished.toolName`; lets the reducer exempt citation payloads from preview truncation. */
+      toolName?: string;
       ok: boolean;
       resultPreview?: string;
       /** Mirrors `GatewayEvent.tool_call_finished.errorCode`. */

@@ -202,6 +202,23 @@ describe('gatewayEventToFrames agent status errors', () => {
         expect(frames[0].content).toContain('tail');
     });
 
+    it('keeps RAG retrieval results intact so citation chunks survive to the popover', () => {
+        const chunkTail = JSON.stringify({ citation_index: 8, text: '止血带原文'.repeat(10) });
+        const ragPayload = `{"status":"ok","chunks":[${'x'.repeat(50000)},${chunkTail}]}`;
+        const frames = gatewayEventToFrames({
+            type: 'tool_call_finished',
+            toolCallId: 'call-rag',
+            toolName: 'med_trauma_rag_query',
+            ok: true,
+            resultPreview: ragPayload,
+        }, 'web:s_test', 'pilotdeck');
+
+        expect(frames).toHaveLength(1);
+        expect(frames[0].kind).toBe('tool_result');
+        expect(frames[0].content).toBe(ragPayload);
+        expect(frames[0].content).not.toContain('UI preview truncated');
+    });
+
     it('uses detail.userHint for model_empty_response_exhausted', () => {
         const frames = gatewayEventToFrames({
             type: 'agent_status',

@@ -120,6 +120,23 @@ const PLAN_COMMAND_USAGE = "用法：/plan <任务>\n例如：/plan 设计一个
 const MAX_GATEWAY_TOOL_RESULT_PREVIEW_CHARS = 20_000;
 const MAX_GATEWAY_TOOL_DATA_STRING_CHARS = 4_000;
 
+/**
+ * RAG evidence payloads (med-tools rag_query / stage_plan) must reach hosts
+ * untruncated: citation popovers parse `chunks[]` out of this text, and the
+ * head+tail preview silently drops the tail chunks — their citations then have
+ * no 原文 to show. Bounded by the retrieval tool itself (top_k ≤ 8, capped
+ * chunk length); the ceiling only guards against a misbehaving server.
+ */
+const CITATION_TOOL_NAME_RE = /rag_query|rag_search|stage_plan/i;
+const MAX_CITATION_RESULT_CHARS = 400_000;
+
+function previewGatewayToolResultText(toolName: string | undefined, fullText: string): string {
+  if (toolName && CITATION_TOOL_NAME_RE.test(toolName) && fullText.length <= MAX_CITATION_RESULT_CHARS) {
+    return fullText;
+  }
+  return limitGatewayToolResultPreview(fullText);
+}
+
 function isTraumaProject(projectKey: string | undefined): projectKey is string {
   return projectTypeKeyFromProjectId(projectKey) === "trauma_med"
     || projectMetaTypeFromProjectPath(projectKey) === "war_trauma";
@@ -1730,7 +1747,7 @@ function mapAgentEventForTurn(event: AgentEvent, runId: string): GatewayEvent[] 
       }));
     case "tool_result": {
       const fullText = event.result.content.map(contentToText).join("\n");
-      const resultPreview = limitGatewayToolResultPreview(fullText);
+      const resultPreview = previewGatewayToolResultText(event.result.toolName, fullText);
       const lines = fullText.split("\n");
       const lineCount = lines.length;
       const totalBytes = Buffer.byteLength(fullText, "utf-8");
@@ -1999,7 +2016,7 @@ function mapAgentEventForTurn(event: AgentEvent, runId: string): GatewayEvent[] 
       }));
     case "subagent_tool_result": {
       const fullText = event.result.content.map(contentToText).join("\n");
-      const resultPreview = limitGatewayToolResultPreview(fullText);
+      const resultPreview = previewGatewayToolResultText(event.result.toolName, fullText);
       const lines = fullText.split("\n");
       return [{
         type: "agent_status",
