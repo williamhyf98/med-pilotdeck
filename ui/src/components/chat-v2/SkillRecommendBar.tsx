@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { authenticatedFetch } from '../../utils/api';
+import { skillDisplayName } from '../../utils/skillDisplayName';
 import { cn } from '../../lib/utils.js';
 
 /**
@@ -154,7 +155,7 @@ export default function SkillRecommendBar({
             'dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-300 dark:hover:bg-sky-950/70',
           )}
         >
-          <span className="truncate font-medium">{recommendation.name}</span>
+          <span className="truncate font-medium">{skillDisplayName(recommendation)}</span>
           {recommendation.department ? (
             <span className="shrink-0 text-[10px] text-sky-500/80 dark:text-sky-400/70">
               {departmentLabel(recommendation.department)}
