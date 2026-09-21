@@ -168,7 +168,7 @@ async function buildPlan(pilotHome) {
           meta.type = 'general_medicine';
           updated = `${JSON.stringify(meta, null, 2)}\n`;
         } else if (sourceFile === join(pilotHome, 'projects', SOURCE_TYPE_KEY, mapping.oldId, '.cwd')) {
-          updated = join(pilotHome, 'workspaces', TARGET_TYPE_KEY, mapping.newId);
+          updated = join('workspaces', TARGET_TYPE_KEY, mapping.newId);
         }
         if (updated !== original) {
           changes.push({

@@ -1,6 +1,6 @@
 // @ts-nocheck
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -11,6 +11,19 @@ async function writeSkill(root, slug, description) {
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "SKILL.md"), `---\nname: ${slug}\ndescription: ${description}\n---\n\n# ${slug}\n`, "utf8");
 }
+test("linked skills remain readable when the deployment directory moves", async () => {
+    const root = await mkdtemp(join(tmpdir(), "portable-skill-"));
+    try {
+        const before = join(root, "before");
+        await writeSkill(join(before, "source"), "portable", "Portable skill");
+        const manager = new SkillManager({ pilotHome: join(before, "data") });
+        await manager.import({ scope: "user", sourcePath: join(before, "source/portable"), mode: "symlink" });
+        const after = join(root, "after");
+        await rename(before, after);
+        const moved = new SkillManager({ pilotHome: join(after, "data") });
+        assert.match((await moved.read({ scope: "user", slug: "portable" })).content, /Portable skill/);
+    } finally { await rm(root, { recursive: true, force: true }); }
+});
 test("SkillManager lists built-ins separately and describes override relationships", async () => {
     const root = await mkdtemp(join(tmpdir(), "pilotdeck-skill-manager-builtin-"));
     try {

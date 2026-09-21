@@ -1,9 +1,10 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
     buildDefaultPilotDeckConfig,
+    buildRuntimeEnv,
     normalizePilotDeckConfig,
     readPilotDeckConfigFile,
     sanitizeProviderCredentials,
@@ -11,6 +12,13 @@ import {
 } from './pilotdeckConfig.js';
 
 const tempDirs = [];
+
+it('anchors relative runtime paths to pilot home', () => {
+    const env = buildRuntimeEnv({ webui: { runtime: { databasePath: 'auth.db', workspacesRoot: 'workspaces' } } });
+    const home = process.env.PILOT_HOME || join(homedir(), '.pilotdeck');
+    expect(env.DATABASE_PATH).toBe(join(home, 'auth.db'));
+    expect(env.WORKSPACES_ROOT).toBe(join(home, 'workspaces'));
+});
 
 it('uses flat UI fields first and falls back to each legacy schedule field', () => {
     expect(normalizePilotDeckConfig({ memory: {

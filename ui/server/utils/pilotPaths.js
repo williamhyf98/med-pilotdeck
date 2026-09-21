@@ -286,7 +286,8 @@ function findStoredProjectId(projectRoot, pilotHome) {
         for (const { projectId, markerPath } of listProjectMarkerCandidates(projectsDir)) {
             let marker;
             try {
-                marker = readFileSync(markerPath, 'utf8').trim();
+                const raw = readFileSync(markerPath, 'utf8').trim();
+                marker = raw ? resolve(pilotHome, raw) : '';
             } catch {
                 continue;
             }
@@ -326,6 +327,7 @@ export function isGeneralProjectKey(projectKey, pilotHome = resolvePilotHome()) 
 }
 
 export function resolveWorkspaceId(projectKey, pilotHome = resolvePilotHome()) {
+    projectKey = resolveGatewayProjectKey(projectKey, pilotHome);
     if (isGeneralProjectKey(projectKey, pilotHome)) {
         return GENERAL_WORKSPACE_ID;
     }
@@ -418,7 +420,8 @@ export function resolveAssociatedProjectPath(workspaceId, pilotHome = resolvePil
     }
     const markerPath = resolve(resolveTypedProjectDir(workspaceId, pilotHome), '.cwd');
     try {
-        const marker = readFileSync(markerPath, 'utf8').trim();
+        const raw = readFileSync(markerPath, 'utf8').trim();
+        const marker = raw ? resolve(pilotHome, raw) : '';
         if (marker && statSync(marker).isDirectory()) {
             return resolve(marker);
         }

@@ -22,7 +22,7 @@ import {
 } from 'node:fs';
 import { cp } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 
 const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
@@ -101,7 +101,7 @@ function symlinkIfMissing(linkPath, targetPath, report) {
     return;
   }
   ensureDir(join(linkPath, '..'));
-  symlinkSync(targetPath, linkPath, 'dir');
+  symlinkSync(relative(dirname(linkPath), targetPath), linkPath, 'dir');
   report.symlinks.push({ linkPath, targetPath });
 }
 
@@ -117,7 +117,7 @@ function replaceDirWithSymlink(linkPath, targetPath, report) {
   const backupPath = `${linkPath}.pre-symlink-${Date.now()}`;
   renameSync(linkPath, backupPath);
   try {
-    symlinkSync(targetPath, linkPath, 'dir');
+    symlinkSync(relative(dirname(linkPath), targetPath), linkPath, 'dir');
     rmSync(backupPath, { recursive: true, force: true });
     report.symlinks.push({ linkPath, targetPath, replaced: true });
   } catch (error) {

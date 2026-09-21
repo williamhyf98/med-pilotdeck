@@ -18,7 +18,46 @@ import {
   resolveWorkspaceDataRoot,
   resolveWorkspaceDirectoryForProjectName,
   resolveWorkspaceId,
+  resolveAssociatedProjectPath,
 } from "../../src/pilot/paths.js";
+
+test("relative project markers remain valid after moving the data directory", async () => {
+  const { mkdir, writeFile, rename } = await import("node:fs/promises");
+  const root = await mkdtemp(join(tmpdir(), "portable-project-"));
+  try {
+    const oldHome = join(root, "before");
+    const newHome = join(root, "after");
+    const id = "trauma_med-portable";
+    await mkdir(join(oldHome, "projects/trauma_med", id), { recursive: true });
+    await mkdir(join(oldHome, "workspaces/trauma_med", id), { recursive: true });
+    await writeFile(join(oldHome, "projects/trauma_med", id, ".cwd"), `workspaces/trauma_med/${id}`);
+    await rename(oldHome, newHome);
+    assert.equal(resolveAssociatedProjectPath(id, newHome), join(newHome, "workspaces/trauma_med", id));
+    const { listWebProjects } = await import("../../src/web/server/listProjects.js");
+    const result = await listWebProjects({ pilotHome: newHome });
+    assert.ok(result.projects.some(p => p.fullPath === join(newHome, "workspaces/trauma_med", id)));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("migrated workspace paths retain their project identity without relying on old cwd markers", async () => {
+  const pilotHome = await mkdtemp(join(tmpdir(), "pilotdeck-migrated-"));
+  const { mkdir, writeFile } = await import("node:fs/promises");
+  try {
+    for (const [type, id] of [["trauma_med", "trauma_med-demo"], ["general_med", "general_med-demo"]]) {
+      const workspace = join(pilotHome, "workspaces", type, id);
+      const project = join(pilotHome, "projects", type, id);
+      await mkdir(workspace, { recursive: true });
+      await mkdir(project, { recursive: true });
+      await writeFile(join(project, ".cwd"), `/old-machine/workspaces/${type}/${id}`);
+      assert.equal(resolveWorkspaceId(workspace, pilotHome), id);
+      assert.equal(resolveAgentCwd(workspace, pilotHome), workspace);
+    }
+  } finally {
+    await rm(pilotHome, { recursive: true, force: true });
+  }
+});
 
 test("general chat resolves to workspaces/general", async () => {
   const pilotHome = await mkdtemp(join(tmpdir(), "pilotdeck-ws-paths-"));

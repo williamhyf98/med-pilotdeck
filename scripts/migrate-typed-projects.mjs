@@ -18,7 +18,7 @@ import {
 } from 'node:fs';
 import { cp } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 const META_TYPE_TO_KEY = {
@@ -171,7 +171,7 @@ async function migrateSysOrTypedFlat(pilotHome, report, usedIds) {
       if (existsSync(destProject) || dryRun) {
         report.updated.push({ file: cwdPath, to: destWorkspace });
         if (!dryRun && existsSync(destProject)) {
-          writeFileSync(cwdPath, destWorkspace, 'utf8');
+          writeFileSync(cwdPath, relative(pilotHome, destWorkspace), 'utf8');
           if (meta) {
             writeJson(join(destProject, 'meta.json'), { ...meta, id: oldId });
           }
@@ -221,7 +221,7 @@ async function migrateSysOrTypedFlat(pilotHome, report, usedIds) {
     report.updated.push({ file: join(destProject, '.cwd'), to: destWorkspace });
     if (!dryRun) {
       writeJson(join(destProject, 'meta.json'), nextMeta);
-      writeFileSync(join(destProject, '.cwd'), destWorkspace, 'utf8');
+      writeFileSync(join(destProject, '.cwd'), relative(pilotHome, destWorkspace), 'utf8');
       ensureDir(join(destProject, 'chats'));
       ensureWorkspaceLayout(destWorkspace);
     }
@@ -262,7 +262,8 @@ async function migratePathResiduals(pilotHome, report, usedIds) {
     const oldWs = join(workspacesRoot, oldId);
     let markerCwd = null;
     try {
-      markerCwd = readFileSync(join(oldProjectDir, '.cwd'), 'utf8').trim();
+      const raw = readFileSync(join(oldProjectDir, '.cwd'), 'utf8').trim();
+      markerCwd = raw ? resolve(pilotHome, raw) : null;
     } catch {
       markerCwd = null;
     }
@@ -288,7 +289,7 @@ async function migratePathResiduals(pilotHome, report, usedIds) {
     report.updated.push({ file: join(destProject, 'meta.json'), id: newId });
     if (!dryRun) {
       writeJson(join(destProject, 'meta.json'), nextMeta);
-      writeFileSync(join(destProject, '.cwd'), destWorkspace, 'utf8');
+      writeFileSync(join(destProject, '.cwd'), relative(pilotHome, destWorkspace), 'utf8');
       ensureDir(join(destProject, 'chats'));
       ensureWorkspaceLayout(destWorkspace);
     }
@@ -389,7 +390,7 @@ async function migrateLegacyGeneral(pilotHome, report, usedIds) {
     migratedFrom: 'general',
   };
   if (!dryRun) {
-    writeFileSync(join(destProject, '.cwd'), destWorkspace, 'utf8');
+    writeFileSync(join(destProject, '.cwd'), relative(pilotHome, destWorkspace), 'utf8');
     ensureWorkspaceLayout(destWorkspace);
     if (!already) {
       writeJson(join(destProject, 'meta.json'), meta);

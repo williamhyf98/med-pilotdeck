@@ -11,10 +11,39 @@ import {
     createCollisionResistantProjectId,
     createProjectId,
     resolveProjectStorageId,
+    resolveWorkspaceId,
+    resolveAssociatedProjectPath,
 } from './pilotPaths.js';
 import { getAlwaysOnRoot } from '../services/always-on-paths.js';
 
 describe('UI project storage ID resolution', () => {
+    it('resolves portable markers relative to pilot home, not process cwd', () => {
+        const root = mkdtempSync(join(tmpdir(), 'portable-ui-'));
+        try {
+            const id = 'trauma_med-portable';
+            const workspace = join(root, 'workspaces', 'trauma_med', id);
+            const project = join(root, 'projects', 'trauma_med', id);
+            mkdirSync(workspace, { recursive: true });
+            mkdirSync(project, { recursive: true });
+            writeFileSync(join(project, '.cwd'), `workspaces/trauma_med/${id}`);
+            expect(resolveAssociatedProjectPath(id, root)).toBe(workspace);
+            expect(resolveProjectStorageId(workspace, root)).toBe(id);
+        } finally { rmSync(root, { recursive: true, force: true }); }
+    });
+    it('retains a migrated trauma workspace identity despite a stale cwd marker', () => {
+        const root = mkdtempSync(join(tmpdir(), 'pilotdeck-migrated-ui-'));
+        try {
+            const id = 'trauma_med-demo';
+            const workspace = join(root, 'workspaces', 'trauma_med', id);
+            const project = join(root, 'projects', 'trauma_med', id);
+            mkdirSync(workspace, { recursive: true });
+            mkdirSync(project, { recursive: true });
+            writeFileSync(join(project, '.cwd'), '/old-machine/workspaces/trauma_med/trauma_med-demo');
+            expect(resolveWorkspaceId(workspace, root)).toBe(id);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
     it('matches the core resolver for colliding non-ASCII workspaces', () => {
         const root = mkdtempSync(join(tmpdir(), 'pilotdeck-ui-project-id-'));
         try {

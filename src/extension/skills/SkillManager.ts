@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, posix, resolve } from "node:path";
+import { basename, isAbsolute, join, posix, relative, resolve } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import {
@@ -437,7 +437,7 @@ export class SkillManager {
     await fs.mkdir(root, { recursive: true });
 
     if (importMode === "symlink") {
-      await fs.symlink(resolvedSource, targetDir, "dir");
+      await fs.symlink(relative(root, resolvedSource), targetDir, "dir");
     } else {
       await fs.cp(resolvedSource, targetDir, {
         recursive: true,

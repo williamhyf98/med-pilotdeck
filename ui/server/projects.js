@@ -155,7 +155,7 @@ async function createSystemProject({ displayName, type }) {
     await writeProjectMeta(pilotHome, id, meta);
 
     // Marker so listWebProjects / findStoredProjectId can resolve this id.
-    await fs.writeFile(path.join(projectDir, '.cwd'), workspacePath, 'utf8');
+    await fs.writeFile(path.join(projectDir, '.cwd'), path.relative(pilotHome, workspacePath), 'utf8');
     await fs.mkdir(path.join(projectDir, 'chats'), { recursive: true });
 
     rememberProjectDirectory(id, workspacePath);
@@ -292,7 +292,7 @@ async function readMarkedProjectPaths() {
         const cwdFile = path.join(projectDir, '.cwd');
         try {
             const raw = await fs.readFile(cwdFile, 'utf8');
-            const cwd = raw.trim();
+            const cwd = raw.trim() ? path.resolve(pilotHome, raw.trim()) : '';
             if (cwd) result.set(projectId, cwd);
         } catch {
             // No marker — listProjects can still surface this project via
@@ -494,7 +494,7 @@ async function addProjectManually(projectPath, _displayName = null) {
     rememberProjectDirectory(name, absolute);
 
     // Materialize a PilotDeck project directory and drop a `.cwd` marker
-    // recording the real absolute path. We need the marker because
+    // recording a path relative to PILOT_HOME. We need the marker because
     // createProjectId() encodes both '/' and literal '-' to '-', so the
     // PilotDeck's listWebProjects() heuristically tries each `-` as a
     // path separator and drops the project when no decode matches an
@@ -504,7 +504,7 @@ async function addProjectManually(projectPath, _displayName = null) {
     const projectDir = path.join(pilotHome, 'projects', name);
     try {
         await fs.mkdir(projectDir, { recursive: true });
-        await fs.writeFile(path.join(projectDir, '.cwd'), absolute, 'utf8');
+        await fs.writeFile(path.join(projectDir, '.cwd'), path.relative(pilotHome, absolute) || '.', 'utf8');
     } catch (error) {
         console.warn(
             `[projects] failed to materialize PilotDeck project dir for ${name}:`,
@@ -539,7 +539,7 @@ async function allocateProjectIdForPath(absolutePath, pilotHome) {
     const markerPath = path.join(legacyDir, '.cwd');
     try {
         const marker = (await fs.readFile(markerPath, 'utf8')).trim();
-        if (marker && path.resolve(marker) === absolutePath) {
+        if (marker && path.resolve(pilotHome, marker) === absolutePath) {
             return legacyId;
         }
     } catch (error) {

@@ -55,7 +55,7 @@ test('retypes trauma projects, references, and skill availability into general m
     const meta = JSON.parse(await readFile(join(pilotHome, 'projects', 'general_med', newId, 'meta.json'), 'utf8'));
     assert.equal(meta.id, newId);
     assert.equal(meta.type, 'general_medicine');
-    assert.equal(await readFile(join(pilotHome, 'projects', 'general_med', newId, '.cwd'), 'utf8'), newWorkspace);
+    assert.equal(await readFile(join(pilotHome, 'projects', 'general_med', newId, '.cwd'), 'utf8'), join('workspaces', 'general_med', newId));
     assert.match(
       await readFile(join(pilotHome, 'projects', 'general_med', newId, 'chats', 'session.jsonl'), 'utf8'),
       new RegExp(newId, 'u'),

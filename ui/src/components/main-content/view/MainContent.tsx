@@ -992,7 +992,7 @@ function SplitBody(props: SplitBodyProps) {
           {isWarTraumaProject ? (
             <TraumaWorkspace
               resetKey={`${selectedProject?.name ?? ''}:${selectedSession?.id ?? ''}`}
-              projectKey={selectedProject?.fullPath || selectedProject?.path || selectedProject?.name}
+              projectKey={selectedProject?.name || selectedProject?.fullPath || selectedProject?.path}
               sessionId={selectedSession?.id}
               onSubmitForm={submitTraumaForm}
               onAbortTurn={abortTraumaTurn}

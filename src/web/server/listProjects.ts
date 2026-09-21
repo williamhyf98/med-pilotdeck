@@ -65,7 +65,7 @@ export async function listWebProjects(
       isDir = false;
     }
     if (!isDir) continue;
-    const fullPath = await resolveProjectPathFromDir(dir, id);
+    const fullPath = await resolveProjectPathFromDir(dir, id, options.pilotHome);
     if (!fullPath) {
       // Encoded id no longer maps to an existing absolute path on disk
       // (typical for stale dirs created by older runs that resolve()'d a
@@ -117,16 +117,17 @@ async function summarizeProject(
   };
 }
 
-async function resolveProjectPathFromDir(projectDir: string, projectId: string): Promise<string | null> {
+async function resolveProjectPathFromDir(projectDir: string, projectId: string, pilotHome: string): Promise<string | null> {
   const markerPath = resolve(projectDir, ".cwd");
   try {
     const marker = (await readFile(markerPath, "utf8")).trim();
     if (!marker) {
       return null;
     }
-    const markerStat = await stat(marker);
+    const resolvedMarker = resolve(pilotHome, marker);
+    const markerStat = await stat(resolvedMarker);
     if (markerStat.isDirectory()) {
-      return marker;
+      return resolvedMarker;
     }
   } catch {
     // No marker (or stale marker) — fall back to legacy id decoding.

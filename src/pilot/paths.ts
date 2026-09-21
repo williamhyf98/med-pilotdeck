@@ -327,7 +327,8 @@ function findStoredProjectId(projectRoot: string, pilotHome: string): string | n
     for (const { projectId, markerPath } of listProjectMarkerCandidates(projectsDir)) {
       let marker: string;
       try {
-        marker = readFileSync(markerPath, "utf8").trim();
+        const raw = readFileSync(markerPath, "utf8").trim();
+        marker = raw ? resolve(pilotHome, raw) : "";
       } catch {
         continue;
       }
@@ -401,6 +402,8 @@ export function isGeneralProjectKey(projectKey: string | null | undefined, pilot
  * `$PILOT_HOME/workspaces/[<typeKey>/]<id>/`.
  */
 export function resolveWorkspaceId(projectKey: string | null | undefined, pilotHome: string): string {
+  // Workspace paths carry their stable ID even after moving between machines.
+  projectKey = resolveGatewayProjectKey(projectKey, pilotHome);
   if (isGeneralProjectKey(projectKey, pilotHome)) {
     return GENERAL_WORKSPACE_ID;
   }
@@ -491,7 +494,8 @@ export function ensureWorkspaceLayout(workspaceDataRoot: string): void {
 }
 
 /**
- * Read the real linked repository path from `$PILOT_HOME/projects/<id>/.cwd`.
+ * Read the linked repository path from `$PILOT_HOME/projects/<id>/.cwd`.
+ * Relative markers are anchored to PILOT_HOME; legacy absolute markers still work.
  * Returns null for general workspace or when no marker exists.
  */
 export function resolveAssociatedProjectPath(workspaceId: string, pilotHome: string): string | null {
@@ -500,7 +504,8 @@ export function resolveAssociatedProjectPath(workspaceId: string, pilotHome: str
   }
   const markerPath = resolve(resolveTypedProjectDir(workspaceId, pilotHome), ".cwd");
   try {
-    const marker = readFileSync(markerPath, "utf8").trim();
+    const raw = readFileSync(markerPath, "utf8").trim();
+    const marker = raw ? resolve(pilotHome, raw) : "";
     if (marker && statSync(marker).isDirectory()) {
       return resolve(marker);
     }

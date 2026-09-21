@@ -136,7 +136,9 @@ ensure_project_pilot_home() {
         fi
         ;;
       *)
-        ln -sfn "$med_src" "$med_link"
+        local med_relative
+        med_relative="$(node -e 'process.stdout.write(require("node:path").relative(process.argv[1], process.argv[2]))' "${PILOT_HOME_DIR}/plugins" "$med_src")"
+        ln -sfn "$med_relative" "$med_link"
         ;;
     esac
   fi

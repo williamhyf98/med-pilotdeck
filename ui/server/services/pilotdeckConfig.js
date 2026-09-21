@@ -91,8 +91,8 @@ export function buildDefaultPilotDeckConfig() {
         serverPort: 3001,
         vitePort: 5173,
         apiTimeoutMs: 120000,
-        databasePath: path.join(PILOT_HOME_DIR, 'auth.db'),
-        workspacesRoot: os.homedir(),
+        databasePath: 'auth.db',
+        workspacesRoot: '~',
       },
       officePreview: {
         service: 'builtin',
@@ -410,8 +410,9 @@ export function buildRuntimeEnv(config) {
     PILOTDECK_MEMORY_ENABLED: normalized.memory?.enabled ? '1' : '0',
   };
 
-  if (runtime.databasePath) env.DATABASE_PATH = expandTilde(runtime.databasePath);
-  if (runtime.workspacesRoot) env.WORKSPACES_ROOT = expandTilde(runtime.workspacesRoot);
+  // Persist portable values; resolve them only at the process boundary.
+  if (runtime.databasePath) env.DATABASE_PATH = path.resolve(PILOT_HOME_DIR, expandTilde(runtime.databasePath));
+  if (runtime.workspacesRoot) env.WORKSPACES_ROOT = path.resolve(PILOT_HOME_DIR, expandTilde(runtime.workspacesRoot));
   const proxyUrl = normalized.proxy?.url
     || (typeof normalized.proxy === 'string' ? normalized.proxy : '')
     || runtime.httpsProxy || '';

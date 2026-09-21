@@ -1730,7 +1730,7 @@ function _buildSessionProjectIndex() {
             const cwdFile = path.join(projectDir, '.cwd');
             try {
                 const realPath = fs.readFileSync(cwdFile, 'utf-8').trim();
-                if (realPath) dirToPath.set(projectId, realPath);
+                if (realPath) dirToPath.set(projectId, path.resolve(GENERAL_HOME, realPath));
             } catch { /* no .cwd — will use fallback below */ }
 
             const chatsDir = path.join(projectDir, 'chats');
