@@ -40,7 +40,7 @@ function MemorySection({
   onChange: (next: PilotDeckConfig) => void;
 }) {
   const { t } = useTranslation("settings");
-  const m = config.memory ?? {};
+  const m = { ...config.memory, ...resolveEnabledMemoryIntervals(config.memory) };
   const options = [
     { value: "inherit", label: t("pilotDeckConfig.panels.memory.model.inherit") },
     ...buildModelRefOptions(config),
@@ -195,7 +195,7 @@ function MemorySection({
               description={t("pilotDeckConfig.panels.memory.maintenanceMode.description")}
             >
               <Select
-                value={m.maintenanceMode ?? "interval"}
+                value={resolveEnabledMemoryIntervals(m).maintenanceMode}
                 options={[
                   {
                     value: "immediate",

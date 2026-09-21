@@ -30,6 +30,7 @@ import type { TFunction } from 'i18next';
 import type { AppTab, Project, ProjectSession, ProjectType } from '../../types/app';
 import { cn } from '../../lib/utils.js';
 import { isImeEnterEvent } from '../../utils/ime';
+import { readProjectSortPreference } from '../../utils/projectSortPreference';
 import {
   projectDisplayName,
   sessionDisplayTitle,
@@ -58,15 +59,7 @@ type ProjectSortOrder = 'name' | 'date';
 // changed nothing. We read it here and re-render whenever the Settings
 // tab broadcasts a `pilotdeck-settings-changed` event.
 const readProjectSortOrder = (): ProjectSortOrder => {
-  if (typeof window === 'undefined') return 'name';
-  const raw = window.localStorage.getItem('pilotdeck-settings');
-  if (!raw) return 'name';
-  try {
-    const parsed = JSON.parse(raw) as { projectSortOrder?: unknown };
-    return parsed.projectSortOrder === 'date' ? 'date' : 'name';
-  } catch {
-    return 'name';
-  }
+  return readProjectSortPreference();
 };
 
 const useProjectSortOrder = (): ProjectSortOrder => {

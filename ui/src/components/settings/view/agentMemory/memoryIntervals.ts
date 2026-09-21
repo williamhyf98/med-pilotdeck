@@ -3,7 +3,7 @@ export type MaintenanceMode = "immediate" | "interval" | "manual";
 
 export const DEFAULT_INDEX_MINUTES = 30;
 export const DEFAULT_DREAM_MINUTES = 60;
-export const DEFAULT_MAINTENANCE_MODE: MaintenanceMode = "interval";
+export const DEFAULT_MAINTENANCE_MODE: MaintenanceMode = "immediate";
 
 type MemoryIntervals = {
   autoIndexIntervalMinutes?: number;
@@ -34,14 +34,18 @@ export function toMinutes(
 }
 
 export function resolveEnabledMemoryIntervals(
-  memory: MemoryIntervals | undefined,
+  input: (MemoryIntervals & { schedule?: MemoryIntervals }) | undefined,
 ): Required<MemoryIntervals> {
+  const memory = { ...input?.schedule, ...input };
   return {
     autoIndexIntervalMinutes:
       memory?.autoIndexIntervalMinutes ?? DEFAULT_INDEX_MINUTES,
     autoDreamIntervalMinutes:
       memory?.autoDreamIntervalMinutes ?? DEFAULT_DREAM_MINUTES,
     maintenanceMode:
-      memory?.maintenanceMode ?? DEFAULT_MAINTENANCE_MODE,
+      memory?.maintenanceMode ?? (
+        memory?.autoIndexIntervalMinutes !== undefined || memory?.autoDreamIntervalMinutes !== undefined
+          ? "interval" : DEFAULT_MAINTENANCE_MODE
+      ),
   };
 }

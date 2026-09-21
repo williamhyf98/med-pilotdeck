@@ -86,7 +86,7 @@ export default function GeneralSettingsSection({
     (language) => language.value === i18n.language,
   )
     ? i18n.language
-    : "en";
+    : "zh-CN";
 
   return (
     <section className="space-y-2.5">

@@ -1,5 +1,6 @@
 import type { PilotDeckSettings } from '../types/types';
 import { authenticatedFetch } from '../../../utils/api.js';
+import { readProjectSortPreference } from '../../../utils/projectSortPreference';
 
 export const PILOTDECK_SETTINGS_KEY = 'pilotdeck-settings';
 
@@ -56,13 +57,14 @@ export const safeLocalStorage = {
 // problem where a browser cache clear silently re-enabled bypass mode.
 
 export function getPilotDeckSettings(): PilotDeckSettings {
+  const projectSortOrder = readProjectSortPreference();
   const raw = safeLocalStorage.getItem(PILOTDECK_SETTINGS_KEY);
   if (!raw) {
     return {
       allowedTools: [],
       disallowedTools: [],
       skipPermissions: false,
-      projectSortOrder: 'name',
+      projectSortOrder,
     };
   }
 
@@ -76,14 +78,14 @@ export function getPilotDeckSettings(): PilotDeckSettings {
         typeof parsed.skipPermissions === 'boolean'
           ? parsed.skipPermissions
           : false,
-      projectSortOrder: parsed.projectSortOrder || 'name',
+      projectSortOrder,
     };
   } catch {
     return {
       allowedTools: [],
       disallowedTools: [],
       skipPermissions: false,
-      projectSortOrder: 'name',
+      projectSortOrder,
     };
   }
 }
@@ -134,6 +136,6 @@ function mergePermissionSettings(value: unknown): PilotDeckSettings {
     allowedTools: unionStringArrays(current.allowedTools, backendAllowed),
     disallowedTools: unionStringArrays(current.disallowedTools, backendDisallowed),
     skipPermissions: typeof parsed.skipPermissions === 'boolean' ? parsed.skipPermissions : current.skipPermissions,
-    projectSortOrder: current.projectSortOrder || 'name',
+    projectSortOrder: current.projectSortOrder || 'date',
   };
 }

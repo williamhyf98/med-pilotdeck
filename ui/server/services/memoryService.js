@@ -57,10 +57,13 @@ function buildServiceForDataDir(dataDir, workspaceDir = dataDir) {
     memoryDir: path.join(dataDir, 'memory'),
     source: 'pilotdeck',
     ...memoryDefaults,
+    settingsSource: 'global',
+    projectType: resolveMemoryScopeIdentity({
+      projectKey: /^(general_med|trauma_med)-/.test(path.basename(dataDir)) ? path.basename(dataDir) : workspaceDir,
+      pilotHome: resolvePilotHome(process.env),
+    }).projectType,
   });
-  if (memoryDefaults.defaultIndexingSettings) {
-    service.saveSettings(memoryDefaults.defaultIndexingSettings);
-  }
+  // Global settings are authoritative; legacy database settings remain untouched.
   return service;
 }
 
@@ -600,7 +603,7 @@ export function closeMemoryServices() {
     }
   }
   servicesByDataDir.clear();
-  workspaceTaskChains.clear();
+  // Keep existing queues until in-flight maintenance completes after a reload.
 }
 
 export async function clearAllMemoryData() {

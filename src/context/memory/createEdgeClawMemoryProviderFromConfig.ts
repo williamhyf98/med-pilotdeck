@@ -74,6 +74,7 @@ export function createEdgeClawMemoryProviderFromConfig(
     maxMessageChars: cfg.maxMessageChars,
     heartbeatBatchSize: cfg.heartbeatBatchSize,
     defaultIndexingSettings: cfg.schedule,
+    settingsSource: "global",
     source: "pilotdeck",
     logger: options.logger,
     llm,

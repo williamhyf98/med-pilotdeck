@@ -176,6 +176,23 @@ describe('index case trace routes (Task 8 rename)', () => {
 });
 
 describe('memory settings route', () => {
+  it('persists explicit immediate mode and rejects an invalid maintenance mode', async () => {
+    const { request, writePilotDeckConfig } = await createMemorySettingsApp({
+      memory: { maintenanceMode: 'interval', autoIndexIntervalMinutes: 30, autoDreamIntervalMinutes: 60 },
+    });
+    const result = await request('/api/memory/settings?projectPath=/tmp/pilotdeck-project', {
+      method: 'POST', body: JSON.stringify({ maintenanceMode: 'immediate' }),
+    });
+    expect(result.status).toBe(200);
+    expect(result.body.maintenanceMode).toBe('immediate');
+    expect(writePilotDeckConfig).toHaveBeenCalledWith(expect.objectContaining({
+      memory: expect.objectContaining({ maintenanceMode: 'immediate' }),
+    }));
+    const invalid = await request('/api/memory/settings?projectPath=/tmp/pilotdeck-project', {
+      method: 'POST', body: JSON.stringify({ maintenanceMode: 'unknown' }),
+    });
+    expect(invalid.status).toBe(400);
+  });
   it('saves answer_first reasoning mode', async () => {
     const { request, writePilotDeckConfig } = await createMemorySettingsApp({
       memory: {

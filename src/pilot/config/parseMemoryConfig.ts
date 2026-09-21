@@ -45,14 +45,16 @@ export function parseMemoryConfig(
   }
 
   const memoryModel = parseMemoryModelRef(rawMemory.model, diagnostics, modelConfig);
-  const schedule = parseMemorySchedule(rawMemory.schedule, diagnostics)
-    ?? buildScheduleFromFlatFields(rawMemory);
+  const legacySchedule = parseMemorySchedule(rawMemory.schedule, diagnostics);
+  const flatSchedule = buildScheduleFromFlatFields(rawMemory);
+  const schedule = legacySchedule || flatSchedule
+    ? { ...legacySchedule, ...flatSchedule } : undefined;
 
   const KNOWN_FIELDS = new Set([
     "enabled", "provider", "rootDir", "captureStrategy", "includeAssistant",
     "maxMessageChars", "retrievalTimeoutMs", "model", "apiType", "schedule",
     "heartbeatBatchSize", "traumaCapture",
-    "reasoningMode", "autoIndexIntervalMinutes", "autoDreamIntervalMinutes",
+    "reasoningMode", "autoIndexIntervalMinutes", "autoDreamIntervalMinutes", "maintenanceMode",
   ]);
   for (const key of Object.keys(rawMemory)) {
     if (!KNOWN_FIELDS.has(key)) {
@@ -162,6 +164,12 @@ function parseMemorySchedule(
 
 function buildScheduleFromFlatFields(rawMemory: Record<string, unknown>): PilotMemoryScheduleConfig | undefined {
   const schedule: PilotMemoryScheduleConfig = {};
+  const mode = rawMemory.maintenanceMode;
+  if (mode === "immediate" || mode === "interval" || mode === "manual") {
+    schedule.maintenanceMode = mode;
+  } else if (mode !== undefined) {
+    throw new Error("memory.maintenanceMode must be immediate, interval or manual");
+  }
   const reasoningMode = readOptionalMemoryReasoningMode(rawMemory.reasoningMode);
   if (reasoningMode !== undefined) schedule.reasoningMode = reasoningMode;
   if (typeof rawMemory.autoIndexIntervalMinutes === "number" && rawMemory.autoIndexIntervalMinutes >= 0) {

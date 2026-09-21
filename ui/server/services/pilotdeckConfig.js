@@ -73,6 +73,7 @@ export function buildDefaultPilotDeckConfig() {
     },
     memory: {
       enabled: true,
+      maintenanceMode: 'immediate',
       reasoningMode: 'answer_first',
       autoIndexIntervalMinutes: 30,
       autoDreamIntervalMinutes: 60,
@@ -109,6 +110,19 @@ export function buildDefaultPilotDeckConfig() {
 export function normalizePilotDeckConfig(input) {
   const source = isRecord(input) ? input : {};
   const normalized = deepMerge(buildDefaultPilotDeckConfig(), source);
+  // The settings UI owns flat fields; nested fields are legacy fallbacks only.
+  for (const key of ['maintenanceMode', 'reasoningMode', 'autoIndexIntervalMinutes', 'autoDreamIntervalMinutes']) {
+    const value = source.memory?.[key] ?? source.memory?.schedule?.[key];
+    if (value !== undefined) normalized.memory[key] = value;
+  }
+  // Old files do not identify whether their timing values were user-chosen.
+  // Preserve their interval semantics instead of inheriting the new default.
+  if (isRecord(source.memory) && source.memory.maintenanceMode === undefined) {
+    normalized.memory.maintenanceMode = source.memory.schedule?.maintenanceMode
+      ?? ((source.memory.autoIndexIntervalMinutes !== undefined || source.memory.autoDreamIntervalMinutes !== undefined
+        || source.memory.schedule?.autoIndexIntervalMinutes !== undefined || source.memory.schedule?.autoDreamIntervalMinutes !== undefined)
+        ? 'interval' : 'immediate');
+  }
   const sourceOfficePreview = isRecord(source.webui?.officePreview)
     ? source.webui.officePreview
     : {};
@@ -494,6 +508,7 @@ export function buildMemoryDefaults(config) {
       reasoningMode: memory.reasoningMode,
       autoIndexIntervalMinutes: memory.autoIndexIntervalMinutes,
       autoDreamIntervalMinutes: memory.autoDreamIntervalMinutes,
+      maintenanceMode: memory.maintenanceMode,
     },
     captureStrategy: memory.captureStrategy,
     includeAssistant: memory.includeAssistant,

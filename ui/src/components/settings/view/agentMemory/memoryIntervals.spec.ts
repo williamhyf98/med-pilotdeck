@@ -8,6 +8,17 @@ import {
 } from "./memoryIntervals";
 
 describe("memory interval helpers", () => {
+  it("displays legacy nested settings but gives flat UI edits priority", () => {
+    expect(resolveEnabledMemoryIntervals({ schedule: { maintenanceMode: "manual", autoDreamIntervalMinutes: 120 } }))
+      .toEqual({ maintenanceMode: "manual", autoIndexIntervalMinutes: 30, autoDreamIntervalMinutes: 120 });
+    expect(resolveEnabledMemoryIntervals({ maintenanceMode: "immediate", schedule: { maintenanceMode: "manual" } }).maintenanceMode)
+      .toBe("immediate");
+  });
+  it("defaults new settings to immediate but preserves explicit modes", () => {
+    expect(resolveEnabledMemoryIntervals(undefined).maintenanceMode).toBe("immediate");
+    expect(resolveEnabledMemoryIntervals({ maintenanceMode: "manual" }).maintenanceMode).toBe("manual");
+    expect(resolveEnabledMemoryIntervals({ maintenanceMode: "immediate", autoIndexIntervalMinutes: 0 }).maintenanceMode).toBe("immediate");
+  });
   it("preserves zero as the disabled interval", () => {
     expect(toDisplayUnit(0, DEFAULT_INDEX_MINUTES)).toEqual({
       value: 0,
@@ -26,6 +37,7 @@ describe("memory interval helpers", () => {
     ).toEqual({
       autoIndexIntervalMinutes: 0,
       autoDreamIntervalMinutes: 0,
+      maintenanceMode: "interval",
     });
   });
 
@@ -37,6 +49,7 @@ describe("memory interval helpers", () => {
     ).toEqual({
       autoIndexIntervalMinutes: 15,
       autoDreamIntervalMinutes: DEFAULT_DREAM_MINUTES,
+      maintenanceMode: "interval",
     });
   });
 });
