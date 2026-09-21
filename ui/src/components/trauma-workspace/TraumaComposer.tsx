@@ -392,8 +392,14 @@ export default function TraumaComposer({
           setRawText(e.target.value);
         }}
         onInput={(event) => resizeFreeTextarea(event.currentTarget)}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' || event.shiftKey
+            || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+          event.preventDefault();
+          if (!busy && !event.repeat) void handleExtract();
+        }}
         disabled={isExtracting}
-        placeholder="用自然语言描述本轮伤情、处置与后送情况，点「整理」后自动抽取并开始本轮推演。"
+        placeholder="描述本轮伤情、处置与后送情况，Enter 发送，Shift+Enter 换行。"
         rows={2}
         className="block max-h-[40vh] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-2 pt-1.5 text-[14px] leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 disabled:opacity-60 dark:text-neutral-100 dark:placeholder:text-neutral-500"
         aria-label="本轮伤情自由输入"

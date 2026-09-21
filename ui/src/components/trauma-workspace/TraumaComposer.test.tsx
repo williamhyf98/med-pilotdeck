@@ -27,6 +27,29 @@ afterEach(() => {
 });
 
 describe('TraumaComposer', () => {
+  it('submits with Enter but preserves Shift+Enter and IME confirmation', async () => {
+    const onSubmit = vi.fn(async () => undefined);
+    render(<TraumaComposer projectKey="trauma_med-demo" sessionId="web:s_1" onSubmit={onSubmit} />);
+    const input = screen.getByLabelText('本轮伤情自由输入');
+    fireEvent.change(input, { target: { value: '右小腿开放伤' } });
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+    fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 });
+    expect(onSubmit).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit).toHaveBeenCalledWith(expect.any(Object), '右小腿开放伤', true);
+  });
+
+  it('does not submit Enter while a turn is running or input is empty', () => {
+    const onSubmit = vi.fn();
+    const { rerender } = render(<TraumaComposer onSubmit={onSubmit} />);
+    fireEvent.keyDown(screen.getByLabelText('本轮伤情自由输入'), { key: 'Enter' });
+    rerender(<TraumaComposer onSubmit={onSubmit} submitting />);
+    fireEvent.change(screen.getByLabelText('本轮伤情自由输入'), { target: { value: '伤情更新' } });
+    fireEvent.keyDown(screen.getByLabelText('本轮伤情自由输入'), { key: 'Enter' });
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
   it('auto-grows the free text area while retaining a max-height scroll cap', () => {
     const originalDescriptor = Object.getOwnPropertyDescriptor(
       HTMLTextAreaElement.prototype,

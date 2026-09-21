@@ -431,6 +431,19 @@
     color: hsl(177 47% 24%);
   }
 
+  /* Fenced templates need their own foreground/background pair, not inline-code colors. */
+  :root[data-theme="warm"] .workspace-canvas .prose pre {
+    color: #403126;
+    background-color: #fff5e8;
+    border: 1px solid #ddc4a8;
+  }
+
+  :root[data-theme="warm"] .workspace-canvas .prose pre code,
+  :root[data-theme="warm"] .workspace-canvas .pd-assistant-message .prose pre code {
+    color: #403126;
+    background: transparent;
+  }
+
   :root[data-theme="warm"] .workspace-canvas .pd-thinking-message summary,
   :root[data-theme="warm"] .workspace-canvas .process-trace > button,
   :root[data-theme="warm"] .workspace-canvas .process-live-status,
@@ -865,8 +878,8 @@
     .workspace-canvas
     .trauma-workspace
     .trauma-tree-memo-clickable {
-    border-color: hsl(174 26% 72% / 0.62);
-    background-color: hsl(172 34% 96% / 0.72) !important;
+    border-color: hsl(174 30% 65% / 0.7);
+    background-color: hsl(172 38% 93% / 0.82) !important;
     background-image: none;
     box-shadow: inset 2px 0 0 hsl(174 38% 54% / 0.42);
   }
@@ -902,8 +915,8 @@
     .workspace-canvas
     .trauma-workspace
     .trauma-tree-memo-clickable {
-    border-color: hsl(205 34% 39% / 0.52);
-    background-color: hsl(211 35% 15% / 0.62) !important;
+    border-color: hsl(205 42% 44% / 0.58);
+    background-color: hsl(211 43% 17% / 0.78) !important;
     background-image: none;
     box-shadow: inset 2px 0 0 hsl(199 60% 48% / 0.38);
   }
@@ -939,8 +952,8 @@
     .workspace-canvas
     .trauma-workspace
     .trauma-tree-memo-clickable {
-    border-color: hsl(26 35% 72% / 0.58);
-    background-color: hsl(30 55% 96% / 0.74) !important;
+    border-color: hsl(26 40% 67% / 0.65);
+    background-color: hsl(28 60% 94% / 0.84) !important;
     background-image: none;
     box-shadow: inset 2px 0 0 hsl(20 42% 61% / 0.4);
   }
@@ -961,8 +974,8 @@
     .workspace-canvas
     .trauma-workspace
     .trauma-tree-memo-clickable {
-    border-color: hsl(190 60% 42% / 0.24);
-    background-color: hsl(201 54% 22% / 0.13) !important;
+    border-color: hsl(190 66% 46% / 0.3);
+    background-color: hsl(201 60% 25% / 0.25) !important;
     background-image: none;
     box-shadow: inset 2px 0 0 hsl(185 72% 48% / 0.3);
   }
