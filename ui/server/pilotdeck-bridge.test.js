@@ -216,6 +216,32 @@ describe('gatewayEventToFrames agent status errors', () => {
         expect(frames[0].citations).toBeUndefined();
     });
 
+    it('maps medical tool activity to an upsertable agent activity without raw data', () => {
+        const frames = gatewayEventToFrames({
+            type: 'tool_activity',
+            activityId: 'medical:call-radar',
+            toolCallId: 'call-radar',
+            toolName: 'mcp__med-tools__med_radar_analyze_ct',
+            title: '正在执行 RADAR 推理',
+            detail: '远程模型正在分析三维 CT',
+            state: 'running',
+            phase: 'medical',
+            createdAt: '2026-09-21T08:00:00.000Z',
+        }, 'web:s_test', 'pilotdeck');
+
+        expect(frames).toHaveLength(1);
+        expect(frames[0]).toMatchObject({
+            id: 'tool_activity_web:s_test_medical:call-radar',
+            kind: 'agent_activity',
+            activityId: 'medical:call-radar',
+            phase: 'medical',
+            state: 'running',
+            title: '正在执行 RADAR 推理',
+            detail: '远程模型正在分析三维 CT',
+        });
+        expect(JSON.stringify(frames[0])).not.toContain('/private/');
+    });
+
     it('maps tool result detail availability to a mergeable tool_result frame', () => {
         const frames = gatewayEventToFrames({
             type: 'tool_result_detail_available',

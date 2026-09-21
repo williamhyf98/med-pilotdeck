@@ -113,7 +113,7 @@ test("SkillManager lists all medical skills for management with fixed availabili
     try {
         const pilotHome = join(root, "pilot-home");
         const medicalSkillsRoot = join(root, "plugins", "med-tools", "skills");
-        for (const slug of ["med-medical", "med-case-report", "med-trauma-assist", "med-trauma-stage-plan"]) {
+        for (const slug of ["med-medical", "med-case-report", "med-trauma-assist", "med-trauma-stage-plan", "med-deepchest-3dmedagent", "med-dicom-router"]) {
             await writeSkill(medicalSkillsRoot, slug, slug);
         }
         const manager = new SkillManager({ pilotHome, medicalSkillsRoot });
@@ -123,7 +123,7 @@ test("SkillManager lists all medical skills for management with fixed availabili
         const general = await manager.list({ projectKey: generalProject });
         assert.deepEqual(
             general.medical.map((skill) => skill.slug),
-            ["med-case-report", "med-medical", "med-trauma-assist", "med-trauma-stage-plan"],
+            ["med-case-report", "med-deepchest-3dmedagent", "med-dicom-router", "med-medical", "med-trauma-assist", "med-trauma-stage-plan"],
         );
         assert.equal(
             general.medical.every((skill) => skill.availability?.[0] === "global"),
@@ -133,7 +133,7 @@ test("SkillManager lists all medical skills for management with fixed availabili
         const trauma = await manager.list({ projectKey: traumaProject });
         assert.deepEqual(
             trauma.medical.map((skill) => skill.slug),
-            ["med-case-report", "med-medical", "med-trauma-assist", "med-trauma-stage-plan"],
+            ["med-case-report", "med-deepchest-3dmedagent", "med-dicom-router", "med-medical", "med-trauma-assist", "med-trauma-stage-plan"],
         );
 
         const managementRead = await manager.read({

@@ -10,6 +10,9 @@ const ANY_MEDICAL_SKILL = [
   "med-trauma-assist",
   "med-trauma-stage-plan",
   "med-case-report",
+  "med-radar-ct",
+  "med-deepchest-3dmedagent",
+  "med-dicom-router",
 ] as const;
 
 const DEFAULT_MED_TOOLS_REQUIREMENT: MedToolsSkillRequirement = {
@@ -20,6 +23,13 @@ const DEFAULT_MED_TOOLS_REQUIREMENT: MedToolsSkillRequirement = {
 const MED_TOOLS_SKILL_REQUIREMENTS: Readonly<
   Record<string, MedToolsSkillRequirement>
 > = {
+  "mcp__med-tools__med_deepchest_status": { loadSkill: "med-deepchest-3dmedagent", acceptedSkills: ["med-deepchest-3dmedagent"] },
+  "mcp__med-tools__med_deepchest_submit": { loadSkill: "med-deepchest-3dmedagent", acceptedSkills: ["med-deepchest-3dmedagent"] },
+  "mcp__med-tools__med_deepchest_job": { loadSkill: "med-deepchest-3dmedagent", acceptedSkills: ["med-deepchest-3dmedagent"] },
+  "mcp__med-tools__med_dicom_route": {
+    loadSkill: "med-dicom-router",
+    acceptedSkills: ["med-dicom-router", "med-medical"],
+  },
   "mcp__med-tools__med_parse_medical": {
     loadSkill: "med-medical",
     acceptedSkills: ["med-medical", "med-trauma-stage-plan", "med-case-report"],
@@ -35,6 +45,14 @@ const MED_TOOLS_SKILL_REQUIREMENTS: Readonly<
   "mcp__med-tools__med_trauma_stage_plan": {
     loadSkill: "med-trauma-stage-plan",
     acceptedSkills: ["med-trauma-stage-plan"],
+  },
+  "mcp__med-tools__med_radar_analyze_ct": {
+    loadSkill: "med-radar-ct",
+    acceptedSkills: ["med-radar-ct"],
+  },
+  "mcp__med-tools__med_radar_status": {
+    loadSkill: "med-radar-ct",
+    acceptedSkills: ["med-radar-ct"],
   },
   "mcp__med-tools__med_tools_health": {
     loadSkill: "med-medical",

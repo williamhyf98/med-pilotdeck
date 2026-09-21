@@ -72,6 +72,7 @@ function formatBytes(bytes: number | undefined): string | null {
 }
 
 function resolveRelativePath(filePath: string, project: Project | null): string | null {
+  if (!filePath) return null;
   const root = project?.fullPath || project?.path || '';
   if (!root) return filePath.replace(/^\.\//, '') || null;
   return getWorkspaceRelativePath(filePath, root);
@@ -291,13 +292,13 @@ export function UserAttachmentCards({
           file={{
             id: `${attachment.path || attachment.name}-${index}`,
             name: attachment.name,
-            path: attachment.path || attachment.filePath || attachment.name,
+            path: attachment.path || attachment.filePath || '',
             mimeType: attachment.mimeType,
             size: attachment.size,
           }}
           project={project}
           source="user"
-          onBrowse={onBrowse}
+          onBrowse={attachment.path || attachment.filePath ? onBrowse : undefined}
           compact
         />
       ))}

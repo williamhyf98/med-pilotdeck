@@ -53,7 +53,7 @@ export function buildMedicalFolderPathNote(folder: MedicalFolderPathNote): strin
     }
   }
   lines.push(
-    '- instruction: Call mcp__med-tools__med_parse_medical with path set to the folder above (not individual files). Do not use read_file on DICOM/PDF/CDA/ECG binaries. For pure interpretation use continuation_mode="terminal" (default) and do not rewrite a non-empty report. If this parse is only one step of a larger planned task (case report / HTML / care plan), use continuation_mode="material" and continue unfinished steps after the streamed report.',
+    '- instruction: For DICOM, first load med-dicom-router and await med_dicom_route, then follow its selected workflow. For general medical parsing, call mcp__med-tools__med_parse_medical with path set to the folder above (not individual files). Do not use read_file on DICOM/PDF/CDA/ECG binaries. Pure interpretation uses continuation_mode="terminal": the runtime displays and saves the original report, then ends the turn. Composite tasks use continuation_mode="material": preserve the original interpretation in the final deliverable and complete the requested analysis/files without repeating a summary of the report.',
   );
   return `\n\n${MEDICAL_FOLDER_NOTE_MARKER}\n${lines.join('\n')}\n${MEDICAL_FOLDER_NOTE_END_MARKER}\n`;
 }
@@ -156,8 +156,11 @@ export function parseUserAttachmentNote(content: unknown): {
     const separator = line.indexOf(': ');
     if (separator < 0) continue;
 
-    const name = line.slice(2, separator).trim();
+    const rawName = line.slice(2, separator).trim();
     const filePath = line.slice(separator + 2).trim();
+    const relativePathMatch = rawName.match(/^(.*?)\s+\(([^()]*)\)$/);
+    const name = relativePathMatch?.[1]?.trim() || rawName;
+    const relativePath = relativePathMatch?.[2]?.trim();
     if (!name || !filePath) continue;
     const mimeType = inferAttachmentMimeType(name, filePath);
     if (isImageAttachmentMime(mimeType)) continue;
@@ -166,6 +169,7 @@ export function parseUserAttachmentNote(content: unknown): {
       name,
       path: filePath,
       mimeType,
+      ...(relativePath ? { relativePath } : {}),
     });
   }
 
@@ -202,12 +206,34 @@ export function mergeUserAttachments(
   fallback: ChatAttachment[],
 ): ChatAttachment[] {
   const merged: ChatAttachment[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, number>();
+  const all = [...preferred, ...fallback];
+  const claimedPaths = new Set<string>();
 
-  for (const attachment of [...preferred, ...fallback]) {
+  for (const original of all) {
+    let attachment = original;
+    // Optimistic upload chips have no path yet. Reconcile them with the
+    // server's file, without collapsing distinct files that share a name.
+    if ((!original.kind || original.kind === 'file') && !original.path && !original.filePath) {
+      const resolved = all.find((candidate) => (
+        (candidate.kind || 'file') === (original.kind || 'file')
+        && candidate.name === original.name
+        && Boolean(candidate.path || candidate.filePath)
+        && !claimedPaths.has(attachmentIdentity(candidate))
+        && (!original.relativePath || candidate.relativePath === original.relativePath)
+      ));
+      if (resolved) {
+        claimedPaths.add(attachmentIdentity(resolved));
+        attachment = { ...original, ...resolved };
+      }
+    }
     const identity = attachmentIdentity(attachment);
-    if (seen.has(identity)) continue;
-    seen.add(identity);
+    const existingIndex = seen.get(identity);
+    if (existingIndex !== undefined) {
+      merged[existingIndex] = { ...attachment, ...merged[existingIndex] };
+      continue;
+    }
+    seen.set(identity, merged.length);
     merged.push(attachment);
   }
 

@@ -11,10 +11,16 @@ import type { PilotDeckToolRuntimeContext } from "../../src/tool/protocol/types.
 import { ToolRegistry } from "../../src/tool/registry/ToolRegistry.js";
 
 const MEDICAL_TOOLS = [
+  "mcp__med-tools__med_deepchest_status",
+  "mcp__med-tools__med_deepchest_submit",
+  "mcp__med-tools__med_deepchest_job",
   "mcp__med-tools__med_parse_medical",
+  "mcp__med-tools__med_dicom_route",
   "mcp__med-tools__med_trauma_rag_query",
   "mcp__med-tools__med_trauma_rag_status",
   "mcp__med-tools__med_trauma_stage_plan",
+  "mcp__med-tools__med_radar_analyze_ct",
+  "mcp__med-tools__med_radar_status",
   "mcp__med-tools__med_tools_health",
 ] as const;
 
@@ -56,6 +62,9 @@ function createRuntime(toolName: string): {
     "med-trauma-assist",
     "med-trauma-stage-plan",
     "med-case-report",
+    "med-radar-ct",
+    "med-deepchest-3dmedagent",
+    "med-dicom-router",
   ].map((name) => ({
     name: `med-tools:${name}`,
     path: `/plugins/med-tools/skills/${name}/SKILL.md`,
@@ -104,6 +113,70 @@ test("every med-tools MCP tool has a skill-gate mapping", () => {
     "future med-tools MCP tools must fail closed behind the default medical skill gate",
   );
   assert.equal(getMedToolsSkillRequirement("mcp__other__tool"), undefined);
+});
+
+test("RADAR tools require the med-radar-ct skill", () => {
+  for (const toolName of [
+    "mcp__med-tools__med_radar_analyze_ct",
+    "mcp__med-tools__med_radar_status",
+  ]) {
+    assert.deepEqual(getMedToolsSkillRequirement(toolName), {
+      loadSkill: "med-radar-ct",
+      acceptedSkills: ["med-radar-ct"],
+    });
+  }
+});
+
+test("DICOM route accepts the router or general medical skill but does not unlock RADAR", () => {
+  assert.deepEqual(getMedToolsSkillRequirement("mcp__med-tools__med_dicom_route"), {
+    loadSkill: "med-dicom-router",
+    acceptedSkills: ["med-dicom-router", "med-medical"],
+  });
+  assert.deepEqual(
+    getMedToolsSkillRequirement("mcp__med-tools__med_radar_analyze_ct")?.acceptedSkills,
+    ["med-radar-ct"],
+  );
+});
+
+test("DeepChest is accepted for generic medical health checks but not RADAR", async () => {
+  const health = createRuntime("mcp__med-tools__med_tools_health");
+  const loadedHealth = await health.runtime.execute(
+    {
+      id: "read-deepchest-health",
+      name: "read_skill",
+      input: { skillName: "med-tools:med-deepchest-3dmedagent" },
+    },
+    context(),
+  );
+  assert.equal(loadedHealth.type, "success");
+  const healthResult = await health.runtime.execute(
+    { id: "health", name: "mcp__med-tools__med_tools_health", input: {} },
+    context(),
+  );
+  assert.equal(healthResult.type, "success");
+  assert.equal(health.executions.count, 1);
+
+  const radar = createRuntime("mcp__med-tools__med_radar_status");
+  const loadedRadar = await radar.runtime.execute(
+    {
+      id: "read-deepchest-radar",
+      name: "read_skill",
+      input: { skillName: "med-deepchest-3dmedagent" },
+    },
+    context(),
+  );
+  assert.equal(loadedRadar.type, "success");
+  const radarResult = await radar.runtime.execute(
+    { id: "radar", name: "mcp__med-tools__med_radar_status", input: {} },
+    context(),
+  );
+  assert.equal(radarResult.type, "success");
+  assert.equal(radar.executions.count, 0);
+  assert.equal(
+    (radarResult.metadata?.medToolsSkillGate as { retryRequired?: boolean } | undefined)
+      ?.retryRequired,
+    true,
+  );
 });
 
 test("general-medicine projects can load the trauma RAG skill gate", async () => {

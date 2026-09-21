@@ -317,6 +317,11 @@ export function applyWebGatewayEvent(
       return { ...state, messages: [...state.messages, message] };
     }
 
+    // The React Web UI receives medical activity through its dedicated
+    // transient activity channel. Do not persist it as a chat message here.
+    case "tool_activity":
+      return state;
+
     case "tool_call_started": {
       const id = newId();
       const message: WebMessage = {

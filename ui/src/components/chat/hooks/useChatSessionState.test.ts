@@ -1,12 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatMessage } from '../types/types';
+import { upsertRealtimeMessages } from '../../../stores/useSessionStore';
 import {
   BOTTOM_FOLLOW_THRESHOLD_PX,
+  chatMessageToNormalized,
   didLoadedSessionChange,
   getStreamContentKey,
   isScrollNearBottom,
   shouldRenderPendingBubble,
 } from './useChatSessionState';
+
+it('updates an uploading bubble in place when its persisted attachments arrive', () => {
+  const message: ChatMessage = { id: 'local_upload_123', type: 'user', content: '分析附件', timestamp: new Date(), attachments: [{ name: 'scan.dcm' }] };
+  const pending = chatMessageToNormalized(message, 'session', 'pilotdeck')!;
+  const uploaded = chatMessageToNormalized({ ...message, attachments: [{ name: 'scan.dcm', path: '/project/inbox/run/scan.dcm' }] }, 'session', 'pilotdeck')!;
+  const result = upsertRealtimeMessages([pending], [uploaded]);
+  expect(result).toHaveLength(1);
+  expect(result[0].attachments).toEqual([{ name: 'scan.dcm', path: '/project/inbox/run/scan.dcm' }]);
+});
 
 describe('useChatSessionState scroll helpers', () => {
   it('uses a wider bottom threshold for streaming follow mode', () => {

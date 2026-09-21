@@ -55,6 +55,29 @@
     "title": "Binary File",
     "message": "The file \"{{fileName}}\" cannot be displayed in the text editor because it is a binary file."
   },
+  "dicomPreview": {
+    "loading": "Loading DICOM viewer...",
+    "failed": "Could not render this DICOM",
+    "retry": "Retry",
+    "projectUnavailable": "The project is not available.",
+    "noPixelData": "This DICOM does not contain renderable pixel data.",
+    "initializeFailed": "The DICOM viewer could not be initialized.",
+    "invalidMetadataResponse": "The DICOM preview service returned an invalid response. Refresh and retry.",
+    "requestTimedOut": "Reading the DICOM file timed out. Please retry.",
+    "initializeTimedOut": "Initializing the DICOM viewer timed out. Please retry.",
+    "renderTimedOut": "DICOM pixel decoding timed out. Retry or download the original file.",
+    "unknown": "Unknown",
+    "frameCount_one": "{{count}} frame",
+    "frameCount_other": "{{count}} frames",
+    "windowLevel": "Window / level",
+    "pan": "Pan",
+    "zoom": "Zoom",
+    "reset": "Reset view",
+    "refresh": "Refresh DICOM",
+    "previousFrame": "Previous frame",
+    "nextFrame": "Next frame",
+    "frameSlider": "DICOM frame"
+  },
   "officePreview": {
     "checkingService": "Checking Office preview service...",
     "converting": "Loading...",
@@ -134,6 +157,7 @@
     "powerpoint": "PowerPoint presentation",
     "pdf": "PDF file",
     "image": "Image file",
+    "dicom": "DICOM image",
     "file": "File"
   },
   "selection": {

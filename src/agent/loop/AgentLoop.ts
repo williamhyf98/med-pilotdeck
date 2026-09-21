@@ -1560,8 +1560,18 @@ export class AgentLoop {
       }
 
       let results: PilotDeckToolResult[];
+      // Parallel reports must not interleave prose or finish before sibling
+      // results arrive. Publish the complete ordered text once the batch succeeds.
+      const deferMedicalText = toolCalls.length > 1 && toolCalls.some(call => call.name.endsWith("med_parse_medical"));
       try {
         const toolContext = this.createToolContext(input, messages);
+        if (deferMedicalText) {
+          const progress = toolContext.progress;
+          toolContext.progress = event => {
+            if (event.toolName?.endsWith("med_parse_medical") && event.metadata?.channel === "assistant_text_delta") return;
+            progress?.(event);
+          };
+        }
         if (assembled.finishReason === "length" || assembled.hasRepairedToolCalls) {
           toolContext.outputTruncated = true;
         }
@@ -1673,15 +1683,23 @@ export class AgentLoop {
         yield { type: "tool_results_projected", sessionId: input.sessionId, turnId: input.turnId, message: appended };
         await input.onDurableMessage?.(appended);
       }
-      const directFinalResult = pairedResults.length === 1
-        ? pairedResults.find((result) =>
-            result.type === "success"
-            && typeof result.metadata?.directFinalAssistantText === "string"
-            && result.metadata.directFinalAssistantText.trim().length > 0
-          )
+      const directFinalResults = pairedResults.filter((result) =>
+        result.type === "success"
+        && typeof result.metadata?.directFinalAssistantText === "string"
+        && result.metadata.directFinalAssistantText.trim().length > 0
+      );
+      const directFinalResult = directFinalResults.length > 0 && pairedResults.every(result =>
+        result.type === "success" && (!result.toolName.endsWith("med_parse_medical") || directFinalResults.includes(result)))
+        ? directFinalResults[0]
         : undefined;
       if (directFinalResult?.type === "success") {
-        const directText = String(directFinalResult.metadata?.directFinalAssistantText ?? "");
+        const directText = directFinalResults.map(result => String(result.metadata?.directFinalAssistantText ?? "")).join("\n\n---\n\n");
+        if (deferMedicalText) yield {
+          type: "tool_progress", sessionId: input.sessionId, turnId: input.turnId,
+          toolCallId: directFinalResult.toolCallId, toolName: directFinalResult.toolName,
+          message: "医学报告已完成", createdAt: this.now().toISOString(),
+          metadata: { channel: "assistant_text_delta", text: directText, modelOwner: "plugin-vlm" },
+        };
         const directMessage: CanonicalMessage = {
           role: "assistant",
           content: [{ type: "text", text: directText }],

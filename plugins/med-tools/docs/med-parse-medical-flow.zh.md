@@ -1,5 +1,7 @@
 # `med_parse_medical` 文档解析与报告流程
 
+> **2026-09-21 合并规则：** 纯解读用 `terminal`，G9 报告直接展示并保存为正式答案，不经主模型改写；复合任务用 `material`，只显示处理进度，报告保存在工具结果中，主模型保留判读原文并完成后续交付。前端不再从普通工具 `report` 中自行恢复或替换最终答案。G9 提示词不变。
+
 > 对应 Skill：`med-medical`  
 > 对应 MCP 工具：`mcp__med-tools__med_parse_medical`  
 > 主要代码：`plugins/med-tools/server/app.py`、`parsers.py`、`dicom_parse.py`、`vlm_client.py`
@@ -47,7 +49,7 @@ Skill 本身不解析文件，只规定何时调工具、传什么 `continuation
 Agent 展示规则（摘要）：
 
 - `continuation_mode=terminal` 且 `report` 非空：已流式展示并由 runtime 保存为最终答案，**不要再粘贴或改写**
-- `continuation_mode=material` 且 `report` 非空：报告是后续步骤的材料，**不要复述全文**，继续未完成的计划项
+- `continuation_mode=material` 且 `report` 非空：报告是尚未展示的材料；最终交付中的判读保留原文，继续未完成的计划项，不重复总结整份报告
 - `report` 空且 `agent_continue=true`：主 Agent 用 `summary` / `png_paths` 继续写结构化报告，并说明 G9 不可用
 
 ---

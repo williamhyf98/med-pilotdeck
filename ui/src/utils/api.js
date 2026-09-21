@@ -290,8 +290,25 @@ export const api = {
     }
     return appendAuthToken(`/api/projects/${encodeURIComponent(projectName)}/files/content?${params.toString()}`);
   },
-  readFileBlob: (projectName, filePath) =>
-    authenticatedFetch(api.fileContentUrl(projectName, filePath)),
+  readFileBlob: (projectName, filePath, options = {}) =>
+    authenticatedFetch(api.fileContentUrl(projectName, filePath, options), {
+      cache: 'no-store',
+      signal: options.signal,
+    }),
+  dicomPreviewMetadata: (projectName, filePath, options = {}) => {
+    const params = new URLSearchParams({
+      path: filePath,
+      metadataOnly: '1',
+      maxFrames: String(options.maxFrames || 12),
+    });
+    if (options.cacheKey !== undefined && options.cacheKey !== null) {
+      params.set('_', String(options.cacheKey));
+    }
+    return authenticatedFetch(
+      `/api/projects/${encodeURIComponent(projectName)}/files/preview/dicom?${params.toString()}`,
+      { cache: 'no-store', signal: options.signal },
+    );
+  },
   fileContentSha256: (projectName, filePath) => {
     const params = new URLSearchParams({ path: filePath, sha256: '1' });
     return authenticatedFetch(

@@ -11,6 +11,7 @@ type CodeEditorHeaderProps = {
   htmlPreview?: boolean;
   saving: boolean;
   saveSuccess: boolean;
+  showSave?: boolean;
   canGoBack?: boolean;
   parentFileName?: string | null;
   onGoBack?: (() => void) | null;
@@ -59,6 +60,7 @@ export default function CodeEditorHeader({
   htmlPreview = false,
   saving,
   saveSuccess,
+  showSave = true,
   isExpanded = false,
   onToggleExpand = null,
   canGoBack = false,
@@ -164,7 +166,7 @@ export default function CodeEditorHeader({
           <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
         </button>
 
-        <button
+        {showSave && <button
           type="button"
           onClick={onSave}
           disabled={saving}
@@ -181,7 +183,7 @@ export default function CodeEditorHeader({
           ) : (
             <Save className="h-3.5 w-3.5" strokeWidth={1.75} />
           )}
-        </button>
+        </button>}
 
         {!isSidebar && (
           <button

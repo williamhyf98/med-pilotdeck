@@ -53,3 +53,53 @@ test("mapAgentEvent projects direct tool text progress into assistant deltas", (
         runId: "run-1",
     }]);
 });
+
+test("mapAgentEvent projects allow-listed medical progress into tool activity", () => {
+    const events = mapAgentEvent({
+        type: "tool_progress",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        toolCallId: "call-radar",
+        toolName: "mcp__med-tools__med_radar_analyze_ct",
+        message: "正在执行 RADAR 推理",
+        metadata: {
+            channel: "medical_activity",
+            activityId: "medical:call-radar",
+            title: "正在执行 RADAR 推理",
+            detail: "远程模型正在分析三维 CT",
+            state: "running",
+        },
+        createdAt: "2026-09-21T08:00:00.000Z",
+    }, "run-medical");
+
+    assert.deepEqual(events, [{
+        type: "tool_activity",
+        activityId: "medical:call-radar",
+        toolCallId: "call-radar",
+        toolName: "mcp__med-tools__med_radar_analyze_ct",
+        title: "正在执行 RADAR 推理",
+        detail: "远程模型正在分析三维 CT",
+        state: "running",
+        phase: "medical",
+        createdAt: "2026-09-21T08:00:00.000Z",
+        runId: "run-medical",
+    }]);
+});
+
+test("mapAgentEvent drops arbitrary tool progress instead of exposing stdout", () => {
+    const events = mapAgentEvent({
+        type: "tool_progress",
+        sessionId: "session-1",
+        turnId: "turn-1",
+        toolCallId: "call-bash",
+        toolName: "bash",
+        message: "stdout: 24 bytes",
+        metadata: {
+            stream: "stdout",
+            chunk: "/private/patient/path\n",
+        },
+        createdAt: "2026-09-21T08:00:00.000Z",
+    }, "run-medical");
+
+    assert.deepEqual(events, []);
+});

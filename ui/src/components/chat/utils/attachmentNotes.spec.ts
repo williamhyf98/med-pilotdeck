@@ -127,9 +127,41 @@ describe('attachment path notes', () => {
       },
     ]);
   });
+
+  it('separates the display name from an uploaded DICOM relative path', () => {
+    const parsed = parseUserAttachmentNote([
+      '分析这个 DICOM',
+      '',
+      marker,
+      '- scan.dcm (1-scan.dcm): /workspace/inbox/run/1-scan.dcm',
+      '[End files attached by user]',
+    ].join('\n'));
+
+    expect(parsed.attachments).toEqual([{
+      name: 'scan.dcm',
+      path: '/workspace/inbox/run/1-scan.dcm',
+      relativePath: '1-scan.dcm',
+      mimeType: 'application/dicom',
+    }]);
+  });
 });
 
 describe('mergeUserAttachments', () => {
+  it.each(['MR_多帧_10帧.dcm', '报告.pdf', '记录.docx', '数据.json'])('reconciles an optimistic placeholder with the persisted path: %s', (name) => {
+    const placeholder = { name, size: 123 };
+    const persisted = { name, path: `/project/inbox/upload/${name}` };
+    expect(mergeUserAttachments([placeholder], [persisted])).toEqual([{ ...placeholder, ...persisted }]);
+    expect(mergeUserAttachments([persisted], [placeholder])).toEqual([{ ...placeholder, ...persisted }]);
+  });
+
+  it('keeps same-name files at distinct paths when reconciling placeholders', () => {
+    const files = [
+      { name: 'scan.dcm', path: '/project/inbox/a/scan.dcm' },
+      { name: 'scan.dcm', path: '/project/inbox/b/scan.dcm' },
+    ];
+    expect(mergeUserAttachments([{ name: 'scan.dcm' }, { name: 'scan.dcm' }], files)).toEqual(files);
+  });
+
   it('prefers structured attachment metadata over the text fallback', () => {
     const structured: ChatAttachment = {
       name: 'report.xlsx',

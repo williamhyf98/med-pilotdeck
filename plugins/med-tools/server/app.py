@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 
+from .dicom_router import route_dicom
 from .parsers import SUPPORTED_SUFFIXES, collect_medical_files, parse_medical_file
 from .vlm_client import analyze_medical_with_vlm, get_vlm_config
 
@@ -63,10 +65,27 @@ mcp = FastMCP(
         "continues after the streamed report. "
         "If report is empty and agent_continue=true, continue the medical "
         "interpretation yourself using summary/png_paths. "
+        "For a DICOM file or directory that needs automatic modality/body-part "
+        "routing, call med_dicom_route first. It is local read-only metadata "
+        "triage; wait for its result before calling another medical tool. "
+        "For a complete abdominal/pelvic CT route, load med-radar-ct, call "
+        "med_radar_analyze_ct, and then answer the user's original question from "
+        "the returned scores and domain warnings. Do not substitute med_parse_medical. "
+        "For any other complete CT with a known body region, load "
+        "med-deepchest-3dmedagent and perform its 3DMedAgent workflow or explicit "
+        "compatibility downgrade before using general medical parsing. "
+        "For chest CT use med_deepchest_status, med_deepchest_submit and "
+        "med_deepchest_job; poll the same job until success/failure. Never run "
+        "smoke20 examples to answer an uploaded case. The production service "
+        "provides CT-CLIP evidence analysis, not direct image observations. "
         "For war-trauma knowledge Q&A: call med_trauma_rag_query, then the main "
         "model answers from chunks (brief tips OK; not the formal five-section plan). "
         "For a formal six-stage graded care plan: call med_trauma_stage_plan "
-        "(G9 inside the plugin; show care_plan verbatim)."
+        "(G9 inside the plugin; show care_plan verbatim). "
+        "For DAMO RADAR analysis of a 3D abdominal CT volume on the node12 "
+        "GPU service: call "
+        "med_radar_analyze_ct, then interpret its uncalibrated scores with the "
+        "domain warnings from the med-radar-ct skill."
     ),
 )
 
@@ -444,6 +463,28 @@ async def med_parse_medical(
 
 
 @mcp.tool()
+def med_dicom_route(path: str, max_files: int = 512) -> str:
+    """Route a DICOM file/series to an existing medical Skill.
+
+    This is a local metadata-only preflight. It reports modality, anatomical
+        region, contrast hint, series completeness, warnings, recommended skill,
+        and recommended tool. It never sends DICOM data to node12 or invokes a
+        model. Complete abdominal/pelvic CT routes require RADAR; other complete
+        CT studies with a known region require the 3DMedAgent skill as the next step.
+
+    Args:
+        path: Absolute or relative path to one DICOM file or a DICOM directory.
+        max_files: Maximum directory files to inspect (1-2048, default 512).
+    """
+    bounded_max_files = max(1, min(int(max_files or 512), 2048))
+    return json.dumps(
+        route_dicom(path, max_files=bounded_max_files),
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@mcp.tool()
 def med_tools_health() -> str:
     """Check med-tools dependencies and medical VLM / fallback reachability."""
     from .vlm_client import get_fallback_vlm_config
@@ -539,7 +580,122 @@ def med_tools_health() -> str:
     except Exception as exc:  # noqa: BLE001
         info["rag"] = {"ready": False, "reason": f"{type(exc).__name__}: {exc}"}
 
+    try:
+        from .radar import radar_status
+
+        info["radar"] = radar_status(validate_runtime=False)
+    except Exception as exc:  # noqa: BLE001
+        info["radar"] = {"ready": False, "reason": f"{type(exc).__name__}: {exc}"}
+
     return json.dumps(info, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def med_radar_status(validate_runtime: bool = False) -> str:
+    """Check the persistent node12 DAMO RADAR service and resident model.
+
+    Args:
+        validate_runtime: Allow a longer health-probe timeout. The remote response
+            always reports model-load and CUDA readiness.
+    """
+    from .radar import radar_status
+
+    return json.dumps(
+        radar_status(validate_runtime=bool(validate_runtime)),
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@mcp.tool()
+async def med_radar_analyze_ct(
+    path: str,
+    ctx: Context,
+    top_k: int = 15,
+    threshold: float = 0.5,
+    max_cases: int = 4,
+    study_context: str = "",
+) -> str:
+    """Upload 3D CT volumes to node12 RADAR and return structured scores.
+
+    Accepts a .nii/.nii.gz file, a single multi-frame 3D CT DICOM, a directory
+    containing NIfTI volumes, or a DICOM CT series directory. Single-frame
+    DICOM images are rejected. RADAR is primarily trained on contrast-enhanced
+    abdominal CT. Its scores are not calibrated clinical probabilities and do
+    not establish either presence or absence of disease.
+
+    Args:
+        path: Absolute or relative path to a 3D CT volume, multi-frame CT DICOM,
+            or DICOM series folder.
+        top_k: Maximum ranked scores returned per case (1-50, default 15).
+        threshold: Display threshold for highlighted scores (0-1, default 0.5).
+        max_cases: Maximum studies processed from a directory (1-8, default 4).
+        study_context: Known region/contrast context, e.g. "contrast-enhanced
+            abdominal CT". Leave empty when unknown; never guess metadata.
+    """
+    from .radar import run_radar_analysis
+
+    await ctx.report_progress(
+        progress=1,
+        total=3,
+        message="__PILOTDECK_MEDICAL_STAGE__:inference",
+    )
+    payload = await asyncio.to_thread(
+        run_radar_analysis,
+        path=path,
+        top_k=top_k,
+        threshold=threshold,
+        max_cases=max_cases,
+        study_context=study_context,
+    )
+    await ctx.report_progress(
+        progress=2,
+        total=3,
+        message="__PILOTDECK_MEDICAL_STAGE__:artifacts",
+    )
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def med_deepchest_status() -> str:
+    """Check configured DeepChest HTTP service, file/configuration readiness and queue."""
+    from .deepchest import call_deepchest
+    return json.dumps(await asyncio.to_thread(call_deepchest, 'health'), ensure_ascii=False)
+
+
+@mcp.tool()
+async def med_deepchest_submit(path: str, question: str, body_region: str,
+                              modality: str, intensity_units: str) -> str:
+    """Submit ONE complete chest CT (NIfTI, DICOM series folder, or DICOM ZIP).
+
+    Confirm body_region='chest', modality='CT', intensity_units='HU' from user or
+    metadata; never infer these from a random filename. NIfTI lacks modality metadata.
+    Returns job_id; use med_deepchest_job until succeeded/failed. Do not resubmit.
+    Include the original question and current presentation preferences in question.
+    """
+    from .deepchest import call_deepchest
+    result = await asyncio.to_thread(call_deepchest, 'submit', path=path, question=question,
+                                    body_region=body_region, modality=modality, intensity_units=intensity_units)
+    return json.dumps(result, ensure_ascii=False)
+
+
+@mcp.tool()
+async def med_deepchest_job(job_id: str, wait_seconds: int = 30, continuation_mode: str = "terminal") -> str:
+    """Wait up to 30 seconds for a DeepChest job, return stage or saved report/artifacts.
+
+    Repeat this tool with the same job_id while waiting/running; do not start a new
+    job and do not answer from demo data. terminal presents/persists the report and
+    ends the turn. Use material if further clinical integration or export is needed.
+    """
+    from .deepchest import call_deepchest
+    deadline = asyncio.get_running_loop().time() + min(30, max(0, wait_seconds))
+    while True:
+        result = await asyncio.to_thread(call_deepchest, 'inspect', job_id=job_id)
+        if result.get('status') not in ('waiting', 'running', 'uploading') or asyncio.get_running_loop().time() >= deadline:
+            result['ok'] = result.get('status') == 'succeeded'
+            result['continuation_mode'] = _normalize_continuation_mode(continuation_mode)
+            return json.dumps(result, ensure_ascii=False)
+        await asyncio.sleep(min(3, max(0, deadline - asyncio.get_running_loop().time())))
 
 
 @mcp.tool()

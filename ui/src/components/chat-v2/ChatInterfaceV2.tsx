@@ -103,6 +103,7 @@ function ChatInterfaceV2({
   onReplaceTemporarySession,
   onNavigateToSession,
   onShowSettings,
+  showProcessTrace,
   autoExpandTools,
   showRawParameters,
   showThinking,
@@ -364,6 +365,7 @@ function ChatInterfaceV2({
     documentReferences,
     removeDocumentReference,
     uploadingImages,
+    isSubmitPending,
     imageErrors,
     getRootProps,
     getInputProps,
@@ -891,6 +893,7 @@ function ChatInterfaceV2({
       onRemoveMedicalFolder={clearAttachedMedicalFolder}
         onOpenDocumentReference={onFileOpen ? (filePath) => onFileOpen(filePath) : undefined}
       uploadingImages={uploadingImages}
+      isSubmitPending={isSubmitPending}
       imageErrors={imageErrors}
       showFileDropdown={showFileDropdown}
       filteredFiles={filteredFiles}
@@ -988,6 +991,7 @@ function ChatInterfaceV2({
       onFileOpen={onFileOpen}
       onShowSettings={onShowSettings}
       onGrantSessionToolPermission={handleGrantSessionToolPermission}
+      showProcessTrace={showProcessTrace}
       autoExpandTools={autoExpandTools}
       showRawParameters={showRawParameters}
       showThinking={showThinking}

@@ -117,10 +117,51 @@ export function createBashTool(options?: CreateBashToolOptions): PilotDeckToolDe
       }
       const timeoutMs = Math.max(1, input.timeout ?? defaultTimeoutMs);
       const progress = context.progress;
-      const toolCallId = ""; // ToolRuntime fills this via metadata; we pull from context if available.
+      const toolCallId = context.currentToolCallId ?? "";
+      const isDeepChestCommand = /(?:^|[/\\])run_deepchest_agent_qwen\.sh(?:\s|$)/u.test(command);
+      const deepChestActivityId = `medical:${toolCallId || "deepchest"}`;
+      const emitDeepChestActivity = (
+        title: string,
+        detail: string,
+        state: "running" | "completed" | "failed",
+      ) => {
+        if (!progress || !isDeepChestCommand) return;
+        progress({
+          type: "tool_progress",
+          sessionId: context.sessionId,
+          turnId: context.turnId,
+          toolCallId,
+          toolName: "bash",
+          message: title,
+          metadata: {
+            channel: "medical_activity",
+            activityId: deepChestActivityId,
+            phase: "medical",
+            title,
+            detail,
+            state,
+            ...(state === "failed" ? { severity: "error" } : {}),
+          },
+          createdAt: (context.now?.() ?? new Date()).toISOString(),
+        });
+      };
+      emitDeepChestActivity(
+        "正在检查 DeepChest 产物",
+        "核对 DeepChestVQA、CT-CLIP 和分割结果",
+        "running",
+      );
+      let deepChestExecutionReported = false;
       const emitProgress = progress
         ? (stream: "stdout" | "stderr") => (chunk: string) => {
             try {
+              if (isDeepChestCommand && !deepChestExecutionReported && chunk.trim()) {
+                deepChestExecutionReported = true;
+                emitDeepChestActivity(
+                  command.includes("--dry-run") ? "正在执行 DeepChest 预检" : "正在执行胸部 CT 流程",
+                  command.includes("--dry-run") ? "验证数据、mask 和 CT-CLIP 产物" : "3DMedAgent 正在处理胸部 CT 证据",
+                  "running",
+                );
+              }
               progress({
                 type: "tool_progress",
                 sessionId: context.sessionId,
@@ -146,10 +187,12 @@ export function createBashTool(options?: CreateBashToolOptions): PilotDeckToolDe
       });
 
       if (result.timedOut) {
+        emitDeepChestActivity("DeepChest 流程超时", "流程未完成，请检查最终错误提示", "failed");
         throw new PilotDeckToolRuntimeError("tool_timeout", `Command timed out after ${timeoutMs}ms.`);
       }
 
       if (result.exitCode !== 0) {
+        emitDeepChestActivity("DeepChest 流程失败", "流程未完成，请检查最终错误提示", "failed");
         const summary = formatShellFailure(command, result);
         const diagnostic = formatShellFailureDiagnostic(result);
         throw new PilotDeckToolRuntimeError("tool_execution_failed", summary, {
@@ -165,6 +208,11 @@ export function createBashTool(options?: CreateBashToolOptions): PilotDeckToolDe
 
       const assertions = buildBashOutputAssertions(result.stdout, result.stderr, result.exitCode);
       const outputState = classifyBashOutput(assertions);
+      emitDeepChestActivity(
+        command.includes("--dry-run") ? "DeepChest 预检完成" : "DeepChest 分析完成",
+        command.includes("--dry-run") ? "数据与中间产物检查已完成" : "胸部 CT 结果已生成并可供整理",
+        "completed",
+      );
 
       return {
         content: [

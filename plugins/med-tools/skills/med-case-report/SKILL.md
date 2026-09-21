@@ -70,7 +70,7 @@ description: 固定模版病例报告生成。当用户要求为常规临床病�
 
 | 意图 | Skill |
 |------|------|
-| 「这张 CT / 这份 PDF 是什么」 | `med-medical`（`continuation_mode: "terminal"`；先解读；解读后如需正式病例报告，再回到本 Skill） |
+| 「这张 CT / 这份 PDF 是什么」 | DICOM 先路由；`med-medical` 纯解读用 `terminal` 直接回答；同轮还需正式病例报告则用 `material` |
 | 「四级救治是哪四级」「怎么止血」 | `med-trauma-assist` + RAG |
 | 「按伤员发生地/手术组出六阶段救治方案」 | `med-trauma-stage-plan` |
 | 「按模版出病例报告 / 诊断与治疗方案」 | **本 Skill**（附件解析必须用 `material`） |
