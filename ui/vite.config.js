@@ -80,6 +80,9 @@ export default defineConfig(({ mode }) => {
       // Pre-bundle them so Vite supplies the CommonJS/UMD interop wrapper while
       // still transforming the loader's worker URL from source.
       include: [
+        // The excluded loader imports this UMD dependency; pre-bundle it so
+        // native ESM does not evaluate its top-level `this.zlib` branch.
+        '@cornerstonejs/dicom-image-loader > dicom-parser',
         '@cornerstonejs/codec-libjpeg-turbo-8bit/decodewasmjs',
         '@cornerstonejs/codec-charls/decodewasmjs',
         '@cornerstonejs/codec-openjpeg/decodewasmjs',
