@@ -130,6 +130,9 @@ async function withTraumaRunnerGateway(
   const projectBase = await mkdtemp(join(tmpdir(), "trauma-fallback-proj-"));
   const projectRoot = join(projectBase, `trauma_med-${label}`);
   await mkdir(projectRoot, { recursive: true });
+  const projectMarker = join(pilotHome, 'projects', 'trauma_med', `trauma_med-${label}`);
+  await mkdir(projectMarker, { recursive: true });
+  await writeFile(join(projectMarker, '.cwd'), projectRoot, 'utf8');
   await writeFile(join(pilotHome, "pilotdeck.yaml"), configYaml, "utf8");
 
   const calls: GetMultimodalCall[] = [];

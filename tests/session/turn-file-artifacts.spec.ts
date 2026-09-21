@@ -23,9 +23,10 @@ test("TurnRunner emits and persists file artifacts before completing the turn", 
         };
         const fakeLoop = {
             async *run(input) {
-                await mkdir(join(projectRoot, "app"), { recursive: true });
-                await writeFile(join(projectRoot, "app", "page.tsx"), "export default function Page() {}\n");
-                await writeFile(join(projectRoot, "app", "globals.css"), "body { margin: 0; }\n");
+                await mkdir(join(projectRoot, "exports"), { recursive: true });
+                await writeFile(join(projectRoot, "exports", "report.md"), "# Clinical report\n");
+                await writeFile(join(projectRoot, "exports", "summary.txt"), "Clinical summary\n");
+                await writeFile(join(projectRoot, "scratch.txt"), "not a deliverable\n");
                 await mkdir(join(projectRoot, ".pilotdeck", "work", input.sessionId, input.turnId), { recursive: true });
                 await writeFile(join(projectRoot, ".pilotdeck", "work", input.sessionId, input.turnId, "builder.mjs"), "// internal\n");
                 yield {
@@ -66,7 +67,7 @@ test("TurnRunner emits and persists file artifacts before completing the turn", 
         const artifactEntry = transcript.entries[artifactEntryIndex];
         assert.deepEqual(artifactEntry.type === "file_artifacts"
             ? artifactEntry.artifacts.map((artifact) => artifact.path)
-            : undefined, ["app/globals.css", "app/page.tsx"]);
+            : undefined, ["exports/report.md", "exports/summary.txt"]);
     }
     finally {
         await rm(projectRoot, { recursive: true, force: true });
@@ -219,7 +220,8 @@ test("TurnRunner unregisters its artifact collector when the event stream closes
         assert.equal(accepted.value.type, "input_accepted");
         await run.return({ result, messages: [] });
         const nextCollector = await FileArtifactCollector.start({ cwd: projectRoot });
-        await writeFile(join(projectRoot, "detected-after-close.txt"), "workspace diff remains enabled");
+        await mkdir(join(projectRoot, "exports"), { recursive: true });
+        await writeFile(join(projectRoot, "exports", "detected-after-close.txt"), "workspace diff remains enabled");
         nextCollector.observeToolResult({
             type: "success",
             toolCallId: "bash-cleanup",
@@ -229,7 +231,7 @@ test("TurnRunner unregisters its artifact collector when the event stream closes
             completedAt: "2026-07-22T10:00:01.100Z",
         });
         const artifacts = await nextCollector.finish("complete");
-        assert.deepEqual(artifacts.map((artifact) => artifact.path), ["detected-after-close.txt"]);
+        assert.deepEqual(artifacts.map((artifact) => artifact.path), ["exports/detected-after-close.txt"]);
         assert.equal(artifacts[0]?.source, "workspace_diff");
     }
     finally {

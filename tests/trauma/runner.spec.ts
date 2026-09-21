@@ -12,6 +12,37 @@ import type { TurnFormInput } from "../../src/trauma/types.js";
 
 const now = "2026-09-03T15:09:00+08:00";
 
+test("runner persists matching continuous citation numbers in evidence and final citation metadata", async () => {
+  const root = await mkdtemp(join(tmpdir(), "trauma-numbering-"));
+  try {
+    const store = createTraumaCaseStore(root);
+    let finalCitations: import('../../src/trauma/types.js').CitationMetadata[] = [];
+    const runner = createTraumaTurnRunner({ store,
+      model: { async completeJson<T>(input: CompleteJsonInput<T>): Promise<T> {
+        const payload = { ...reasonPayload(), naturalLanguageAnswer: '先引用第三条[3]，再引用第一条[1]，重复第三条[3]。' };
+        payload.treatmentPlan[0].evidenceChunkIds = ['chunk-1'];
+        payload.gateAssessment.evidenceChunkIds = ['chunk-1'];
+        if (!input.validate(payload)) throw new Error('invalid fixture');
+        return payload as T;
+      } },
+      rag: { async query() { return { retrieval_backend: 'remote', chunks: [1, 2, 3].map(i => ({
+        chunk_id: `chunk-${i}`, text: `证据原文${i}`, score: 1 - i / 10, title: `文献${i}`, retrieval_backend: 'remote' as const,
+      })) }; } },
+    });
+    const response = await runner.runTurn({ projectId: 'trauma_med-demo', sessionId: 'web:s', messageId: 'm1', now,
+      form: form({ statedSubStage: 'primary_first_aid' }), onAssistantCitations: citations => { finalCitations = citations; },
+    });
+    assert.deepEqual(finalCitations.map(c => [c.index, c.displayIndex]), [[3, 1], [1, 2]]);
+    assert.ok(finalCitations.every(c => c.text && c.chunkId));
+    for (const c of finalCitations) {
+      assert.equal(response.evidence.find(e => e.id === c.chunkId)?.citationIndex, c.displayIndex);
+      assert.equal((await store.loadSnapshots())[0].state.evidence.find(e => e.id === c.chunkId)?.citationIndex, c.displayIndex);
+    }
+    assert.equal(response.evidence.filter(e => e.usedInAnswer).length, 2);
+    assert.equal(response.evidence.find(e => !e.usedInAnswer)?.citationIndex, undefined);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 function form(overrides: Partial<TurnFormInput> = {}): TurnFormInput {
   return {
     statedSubStage: null,

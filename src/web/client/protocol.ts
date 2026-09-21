@@ -45,6 +45,9 @@ type WebGatewayEventMetadata = {
 };
 
 export type WebCitationMetadata = {
+  displayIndex?: number;
+  chunkId?: string;
+  text?: string;
   index: number;
   title: string;
   section: string;
@@ -68,6 +71,8 @@ export type WebGatewayEvent = WebGatewayEventMetadata & (
   | {
       type: "tool_call_finished";
       toolCallId: string;
+      /** Mirrors `GatewayEvent.tool_call_finished.toolName`; lets the reducer exempt citation payloads from preview truncation. */
+      toolName?: string;
       ok: boolean;
       resultPreview?: string;
       /** Mirrors `GatewayEvent.tool_call_finished.errorCode`. */
@@ -147,6 +152,7 @@ export type WebGatewayMethod =
   | "read_session_messages"
   | "read_subagent_messages"
   | "fork_session"
+  | "rewind_session"
   | "rename_session"
   | "delete_session"
   | "list_projects"
@@ -320,6 +326,26 @@ export type WebForkSessionResult = {
   carriedMessageCount: number;
   runMode?: WebAgentRunMode;
   mode?: WebGatewayMode;
+};
+
+export type WebRewindSessionInput = {
+  sessionKey: string;
+  projectKey?: string;
+  /** Transcript entry id of the LAST user turn to remove (accepted_input entryId). */
+  fromEntryId: string;
+};
+
+export type WebRewindSessionResult = {
+  /** Turn id of the removed user turn. */
+  removedTurnId: string;
+  /** Sequence of the removed accepted_input; entries at or after it were dropped. */
+  removedFromSequence: number;
+  /** ISO timestamp when the rewind was applied. */
+  removedAtIso: string;
+  /** Plain text of the removed user question (for resend/prefill). */
+  removedText: string;
+  /** How many transcript entries were dropped. */
+  removedEntryCount: number;
 };
 
 export type WebActiveTurnSnapshotInput = {

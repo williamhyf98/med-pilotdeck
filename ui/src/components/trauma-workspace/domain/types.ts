@@ -142,6 +142,7 @@ export type AgentTurnResponse = {
 };
 
 export type CaseSnapshot = {
+  retrieval?: { promptChunkIds: string[] };
   eventType: 'agent_turn' | 'transition_confirmation' | 'manual_stage_override';
   round: number;
   createdAt: string;

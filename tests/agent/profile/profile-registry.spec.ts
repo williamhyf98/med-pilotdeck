@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ProfileRegistry, resolveAgentTurnExecution } from "../../../src/agent/index.js";
@@ -53,7 +53,7 @@ test("plugin manifest agents load trusted Markdown profiles", async () => {
       source: {
         pluginName: "medical",
         pluginSource: "project",
-        path: join(root, "profiles", "triage.md"),
+        path: await realpath(join(root, "profiles", "triage.md")),
       },
     });
   } finally {

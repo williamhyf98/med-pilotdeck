@@ -94,6 +94,7 @@ import { sanitizeSessionIdForPath } from "../session/storage/ProjectSessionStora
 import { createSessionTitleGenerator } from "../session/title/SessionTitleGenerator.js";
 import { readWebSessionMessages, readSubagentWebMessages } from "../web/server/readSessionMessages.js";
 import { forkWebSession } from "../web/server/forkSession.js";
+import { rewindWebSession } from "../web/server/rewindSession.js";
 import { describeWebProject, listWebProjects } from "../web/server/listProjects.js";
 import { BackgroundTaskRuntime, type BackgroundTaskCompletionEvent } from "../task/runtime/BackgroundTaskRuntime.js";
 import { createBuiltinRegistry, createPlanFileManager, filterAvailableTools } from "../tool/index.js";
@@ -108,7 +109,7 @@ import { SessionRouterStore } from "../router/session/SessionRouterStore.js";
 import type { RouterEventBus, RouterEvent } from "../router/protocol/events.js";
 import type { EdgeClawMemoryProvider } from "../context/index.js";
 import { loadBuiltinPlugins } from "../extension/plugins/builtin/loadBuiltinPlugins.js";
-import { SkillManager, migrateLegacyBundledSkillCopies } from "../extension/skills/index.js";
+import { SkillManager, createSkillDraftStation, migrateLegacyBundledSkillCopies } from "../extension/skills/index.js";
 import { ExtensionWatchManager, type ExtensionWatchEvent } from "./ExtensionWatchManager.js";
 import { createTelemetryCollector, type TelemetryClient } from "../telemetry/index.js";
 import {
@@ -350,6 +351,8 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
       registry.createExtractionStation(projectKey, sessionKey),
     traumaPreferenceProvider: ({ projectKey, sessionKey }) =>
       registry.createTraumaMemoryProvider(projectKey, sessionKey)?.() ?? null,
+    skillDraftFactory: ({ projectKey }) =>
+      registry.createSkillDraftStation(projectKey),
     traumaCaseReader: ({ projectKey, sessionKey }) =>
       registry.readTraumaCase(projectKey, sessionKey),
     // 战创伤长期记忆写入（Task 7）。sink 按项目构建，未启用时为 undefined。
@@ -421,6 +424,12 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
       }),
     forkSession: (input) =>
       forkWebSession(input, {
+        projectRoot: input.projectKey ? input.projectKey : fallbackProjectRoot,
+        pilotHome,
+        now,
+      }),
+    rewindSession: (input) =>
+      rewindWebSession(input, {
         projectRoot: input.projectKey ? input.projectKey : fallbackProjectRoot,
         pilotHome,
         now,
@@ -978,6 +987,18 @@ class ProjectRuntimeRegistry {
       model: modelSelection.model,
     });
     return createExtractionStation(model);
+  }
+
+  async createSkillDraftStation(projectKey: string) {
+    const runtime = this.resolve(projectKey);
+    await runtime.pluginRuntime.refresh();
+    const selection = runtime.snapshot.config.agent.model;
+    return createSkillDraftStation(createStructuredModelClient({
+      complete: runtime.model.complete.bind(runtime.model),
+      stream: runtime.model.stream.bind(runtime.model),
+      provider: selection.provider,
+      model: selection.model,
+    }));
   }
 
   async createTraumaKnowledgeQa(projectKey: string, sessionKey: string) {

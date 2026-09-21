@@ -7,13 +7,18 @@ import { Markdown } from '../chat/view/subcomponents/Markdown';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, options?: { defaultValue?: string }) => options?.defaultValue || key,
+    t: (key: string, options?: { defaultValue?: string; total?: number }) => (options?.defaultValue || key).replace('{{total}}', String(options?.total ?? '')),
   }),
 }));
 
 afterEach(cleanup);
 
 describe('streaming assistant presentation', () => {
+  it('opens the correct original passage from a continuously numbered citation', () => {
+    render(<Markdown citations={[{ index: 5, displayIndex: 1, title: '原文文献', section: '急救', text: '用于验证弹窗的完整知识块原文。' }]} showSourcesBar>{'依据[5]。'}</Markdown>);
+    fireEvent.click(screen.getByRole('button', { name: '查看引用 1 的原文' }));
+    expect(screen.getByRole('dialog').textContent).toContain('用于验证弹窗的完整知识块原文。');
+  });
   it('shows received assistant text immediately without a typewriter delay', () => {
     const message: ChatMessage = {
       id: '__streaming_session_run',
@@ -60,7 +65,7 @@ describe('streaming assistant presentation', () => {
     );
 
     expect(screen.getByText('[1]')).toBeTruthy();
-    expect(screen.getByText('[1]').tagName.toLowerCase()).toBe('span');
+    expect(screen.getByRole('button', { name: '查看引用 1 的原文' })).toBeTruthy();
   });
 
   it('renders inline citation badges while streaming even before metadata arrives', () => {
@@ -96,7 +101,7 @@ describe('streaming assistant presentation', () => {
     expect(screen.queryByText(/参考来源/)).toBeNull();
 
     rerender(<MessageRowV2 message={{ ...streaming, isStreaming: false }} {...rowProps} />);
-    expect(screen.getByText('参考来源 · 1 条')).toBeTruthy();
+    expect(screen.getByText('参考来源 · 1')).toBeTruthy();
   });
 
   it('renders extracted details citations as the trauma-style source list', () => {
@@ -127,10 +132,10 @@ describe('streaming assistant presentation', () => {
       />,
     );
 
-    expect(container.querySelector('details')).toBeNull();
-    expect(screen.getByText('参考来源 · 1 条')).toBeTruthy();
+    expect(container.querySelectorAll('details')).toHaveLength(1);
+    expect(screen.getByText('参考来源 · 1')).toBeTruthy();
 
-    fireEvent.click(screen.getByText('参考来源 · 1 条'));
+    fireEvent.click(screen.getByText('参考来源 · 1'));
     expect(screen.getByText('战伤救治规则')).toBeTruthy();
     expect(screen.getByText(/第二章 分类救治/)).toBeTruthy();
     expect(screen.getAllByText('[1]').some((node) => node.closest('sup'))).toBe(true);

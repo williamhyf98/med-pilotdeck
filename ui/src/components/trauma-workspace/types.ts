@@ -89,6 +89,7 @@ export type RoundMemo = {
   evidence: Array<{
     id: string;
     title: string;
+    section?: string;
     score: string;
     source: '远程知识库' | '本地语料';
     used: boolean;

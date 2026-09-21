@@ -25,6 +25,7 @@ import {
 } from "../../model/index.js";
 import { listProjectSessions, readTranscript, type SessionInfo } from "../../session/index.js";
 import type { AgentTranscriptEntry } from "../../session/transcript/TranscriptEntry.js";
+import { readFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { getPilotProjectChatDir, resolveGatewayProjectKey } from "../../pilot/index.js";
 import { sanitizeSessionIdForPath } from "../../session/storage/ProjectSessionStorage.js";
@@ -117,6 +118,7 @@ export async function readWebSessionMessages(
   const limit = input.limit ?? allMessages.length;
   const sliceEnd = limit === 0 ? allMessages.length : offset + limit;
   const slice = allMessages.slice(offset, sliceEnd);
+  await inlineCitationChunkBodies(allMessages, slice);
 
   return {
     messages: slice,
@@ -394,6 +396,7 @@ export async function readSubagentWebMessages(
     `${input.sessionKey}::sub::${input.subagentId}`,
     input.projectKey,
   );
+  await inlineCitationChunkBodies(allMessages);
 
   return { messages: allMessages, total: allMessages.length };
 }
@@ -500,6 +503,58 @@ function parseCursor(cursor?: string): number {
   if (!cursor) return 0;
   const parsed = Number.parseInt(cursor, 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+/**
+ * RAG payloads that exceeded ToolResultBudget survive in the transcript only
+ * as tool_result_reference blocks (12KB head+tail preview + full body on
+ * disk). The preview cannot be parsed back into chunks, so citation popovers
+ * degrade to "no chunk text". Read the persisted body back for citation-
+ * bearing tools so history reloads keep the 原文.
+ */
+const CITATION_TOOL_NAME_RE = /rag_query|rag_search|stage_plan/i;
+const MAX_INLINE_CITATION_RESULT_BYTES = 2 * 1024 * 1024;
+
+async function inlineCitationChunkBodies(
+  allMessages: WebMessage[],
+  targets: WebMessage[] = allMessages,
+): Promise<void> {
+  const toolNameByCallId = new Map<string, string>();
+  for (const message of allMessages) {
+    if (message.kind === "tool_use" && message.toolCallId && typeof message.toolName === "string") {
+      toolNameByCallId.set(message.toolCallId, message.toolName);
+    }
+  }
+  await Promise.all(targets.map(async (message) => {
+    if (message.kind !== "tool_result" || !message.resultPath) return;
+    const toolName = message.toolName
+      ?? (message.toolCallId ? toolNameByCallId.get(message.toolCallId) : undefined);
+    if (!toolName) return;
+    if (!message.toolName) message.toolName = toolName; // reference blocks drop the name; restore it
+    if (!CITATION_TOOL_NAME_RE.test(toolName)) return;
+    if (!isPersistedToolResultPath(message.resultPath)) return;
+    try {
+      const info = await stat(message.resultPath);
+      if (!info.isFile() || info.size === 0 || info.size > MAX_INLINE_CITATION_RESULT_BYTES) return;
+      message.text = await readFile(message.resultPath, "utf8");
+      if (isRecord(message.payload)) {
+        message.payload = { ...message.payload, hasMore: false, inlinedFullResult: true };
+      }
+    } catch {
+      // persisted body may have been cleaned up; keep the preview so UI salvage still runs
+    }
+  }));
+}
+
+/** Only read back files we persisted ourselves; a doctored transcript must not leak arbitrary files to the UI. */
+function isPersistedToolResultPath(path: string): boolean {
+  if (!isAbsolute(path) || !/\.(json|txt)$/i.test(path)) return false;
+  const segments = path.split(/[\\/]+/);
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    if (segments[index] === ".pilotdeck" && segments[index + 1] === "tool-results") return true;
+    if (segments[index] === "pilotdeck-tool-output") return true;
+  }
+  return false;
 }
 
 type ProjectionContext = {

@@ -4,9 +4,10 @@
  */
 
 import type { NormalizedMessage } from '../../../stores/useSessionStore';
-import type { ChatMessage, SubagentChildTool } from '../types/types';
-import { decodeHtmlEntities, unescapeWithMathProtection, formatUsageLimitText } from '../utils/chatFormatting';
+import type { ChatMessage, CitationMetadata, SubagentChildTool } from '../types/types';
+import { decodeHtmlEntities, unescapeWithMathProtection, formatUsageLimitText, stripReferenceDetails } from '../utils/chatFormatting';
 import { mergeUserAttachments, parseUserAttachmentNote } from '../utils/attachmentNotes';
+import { extractCitationsFromToolResult, mergeCitationsStable, buildCitationDisplayMap } from '../utils/ragCitations';
 
 // Per-message conversion cache keyed by NormalizedMessage reference.
 // When patchMergedStreamingMessage creates a new object for the streaming
@@ -474,15 +475,109 @@ function convertNormalizedMessages(
     ]);
   });
 
+  // RAG 引用：把同一轮里每次检索返回的 chunks 收拢，挂到该轮的助手正文上。
+  // 编号由 med-tools 全局分配（见 rag/query.py 的 `_apply_citations`），所以多次
+  // 检索的结果可以直接合并而不会撞号。
+  //
+  // 分段按 user 消息切，**不用 turnId/runId**。实时帧上这两个字段根本没有：
+  // `pilotdeck-bridge.js` 的 `gatewayEventToFrames` 只在 `event.runId` 存在时才写，
+  // 而网关协议里只有 `turn_started` 带 runId，`tool_call_finished` 不带。按 turn 归
+  // 属的话，实时看到的回答永远挂不上结构化引用，只能退回刮 <details> —— 那条路没有
+  // chunk 原文，点开弹窗只有一句「没有对应的 chunk 原文」。刷新页面走历史接口才正常，
+  // 这个差异本身就是 bug。user 消息是两条路径都有的天然边界。
+  //
+  // 也不拿 turn 标识去**补切**分段。`agent_activity` 的 runId 在子代理下是
+  // `subagent:<id>`（pilotdeck-bridge.js:977），拿它当换轮信号会在一轮中间切开，
+  // 正文和它的检索结果被分到两段 —— 又变回引用丢失。而多切一刀有害、少切一刀无害：
+  // 编号是全局唯一的，串进来的旧引用只有在正文里正好写了那个编号时才会渲染，
+  // 而那种情况本来就说明它属于这一轮。所以宁可合并过头。
+  const segmentOf: number[] = new Array(converted.length).fill(-1);
+  const segmentKeys: string[] = [];
+  const segmentGroups: CitationMetadata[][][] = [];
+  let segment = -1;
+  converted.forEach((message, index) => {
+    if (segment < 0 || message.type === 'user') {
+      segment += 1;
+      segmentKeys[segment] = turnKey(message) || message.id || `segment-${segment}`;
+      segmentGroups[segment] = [];
+    }
+    segmentOf[index] = segment;
+    if (!message.isToolUse) return;
+    const found = extractCitationsFromToolResult(message.toolName, message.toolResult?.content);
+    if (found.length > 0) segmentGroups[segment].push(found);
+  });
+
+  // One display map per user turn, including multi-part answers. Never renumber each bubble independently.
+  const numberedBySegment = segmentGroups.map((groups, bucket) => {
+    if (groups.length === 0) return undefined;
+    const merged = mergeCitationsStable(segmentKeys[bucket], groups);
+    const text = converted.filter((message, index) => segmentOf[index] === bucket && isArtifactAnchor(message))
+      .map(message => stripReferenceDetails(message.content ?? '')).join('\n');
+    const displayMap = buildCitationDisplayMap(text, merged);
+    return mergeCitationsStable(`${segmentKeys[bucket]}:display`, [merged.map(c => ({ ...c, displayIndex: displayMap.get(c.index) }))]);
+  });
+  const citationsFor = (message: ChatMessage, index: number): CitationMetadata[] | undefined => {
+    if (!isArtifactAnchor(message)) return undefined;
+    const bucket = segmentOf[index];
+    const groups = bucket >= 0 ? segmentGroups[bucket] : undefined;
+    if (!groups || groups.length === 0) return message.citations;
+    return numberedBySegment[bucket];
+  };
+
+  // 「参考来源」折叠条每段只画一次：挂了引用的正文可能有多条（引用挂到段内全部
+  // 正文），把段内最后一条标成页脚，折叠条只跟着它走。
+  const footerIndexBySegment = new Map<number, number>();
+  converted.forEach((message, index) => {
+    if (!isArtifactAnchor(message)) return;
+    const bucket = segmentOf[index];
+    if (bucket < 0 || ((segmentGroups[bucket]?.length ?? 0) === 0 && !message.citations?.length)) return;
+    footerIndexBySegment.set(bucket, index);
+  });
+  const citationFooterIndexes = new Set(footerIndexBySegment.values());
+
   return converted.flatMap((message, index) => {
     if (anchoredArtifactIndexes.has(index)) return [];
     const attachedArtifacts = artifactsByAnchor.get(index);
-    if (!attachedArtifacts) return [message];
+    const citations = citationsFor(message, index);
+    const citationsFooter = citations !== undefined && citationFooterIndexes.has(index);
+    if (!attachedArtifacts && !citations) return [message];
+    if (!attachedArtifacts) {
+      return [enrichWithCitations(message, citations as CitationMetadata[], citationsFooter)];
+    }
     return [{
       ...message,
+      ...(citations ? { citations } : {}),
+      citationsFooter,
       artifacts: [...(message.artifacts ?? []), ...attachedArtifacts],
     }];
   });
+}
+
+// Attaching citations would otherwise hand `memo(MessageRowV2)` a brand-new
+// object on every conversion, and `Markdown` would re-parse the whole answer
+// with it. The base message reference is already stable via `msgConversionCache`,
+// so keying on it keeps the enriched object stable too.
+const citationEnrichCache = new WeakMap<
+  ChatMessage,
+  { citations: CitationMetadata[]; citationsFooter: boolean; value: ChatMessage }
+>();
+
+function enrichWithCitations(
+  message: ChatMessage,
+  citations: CitationMetadata[],
+  citationsFooter: boolean,
+): ChatMessage {
+  const cached = citationEnrichCache.get(message);
+  if (cached && cached.citations === citations && cached.citationsFooter === citationsFooter) {
+    return cached.value;
+  }
+  const value: ChatMessage = {
+    ...message,
+    citations,
+    citationsFooter,
+  };
+  citationEnrichCache.set(message, { citations, citationsFooter, value });
+  return value;
 }
 
 /**

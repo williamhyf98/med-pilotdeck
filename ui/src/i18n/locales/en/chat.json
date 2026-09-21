@@ -4,6 +4,23 @@
     "copied": "Copied",
     "copyCode": "Copy code"
   },
+  "lastTurnEdit": {
+    "editTitle": "Edit this question",
+    "regenerateTitle": "Regenerate the answer (rewinds this turn and resends)",
+    "placeholder": "Edit your question…",
+    "editHint": "Esc to cancel · Ctrl+Enter to save",
+    "cancel": "Cancel",
+    "save": "Save",
+    "savedHint": "Edited — takes effect after regenerating",
+    "discard": "Revert",
+    "regenerate": "Regenerate",
+    "sessionRunning": "Unavailable while a response is being generated",
+    "unsupportedAttachments": "Questions with attachments or images cannot be edited and regenerated yet",
+    "missingTarget": "Cannot locate this question, so it cannot be regenerated right now.",
+    "emptyQuestion": "The question is empty, so it cannot be regenerated.",
+    "resendFailed": "The previous turn was rewound, but the automatic resend failed. The question was placed in the composer — please send it manually.",
+    "failed": "Regenerate failed."
+  },
   "workspace": {
     "emptyTitle": "Ask PilotDeck about this project",
     "emptyDescription": "Reference a workspace file with @ when you want it included."
@@ -160,6 +177,9 @@
     "completed": "Thought process",
     "emoji": "💭 Thinking..."
   },
+  "citations": {
+    "summary": "Sources · {{total}}"
+  },
   "json": {
     "response": "JSON Response"
   },
@@ -238,6 +258,28 @@
       }
     }
   },
+  "skillDraft": {
+    "title": "Generate skill from conversation",
+    "generating": "Reading the conversation and drafting a skill…",
+    "regenerate": "Regenerate",
+    "cancel": "Cancel",
+    "create": "Create skill",
+    "creating": "Creating…",
+    "name": "Name",
+    "slug": "Directory name (slug)",
+    "slugHint": "Starts with a letter or digit; may contain . _ -; cannot be changed later",
+    "slugInvalid": "Slug may only use letters, digits, dots, underscores and hyphens, and must start with a letter or digit",
+    "description": "Description",
+    "descriptionHint": "Say when this skill should be used — the model decides to load it based on this line",
+    "body": "Body",
+    "scope": "Scope",
+    "scopeUser": "Personal (all projects)",
+    "scopeProject": "This project",
+    "noSession": "Start a conversation first, then generate a skill",
+    "created": "Skill \"{{name}}\" created",
+    "tooShort": "The conversation is too short to generate a skill",
+    "flowTooSimple": "The flowchart is too sparse to generate a skill: fill in at least two nodes"
+  },
   "input": {
     "placeholder": "Type / for commands, @ for files, or ask {{provider}} anything...",
     "placeholderDefault": "Type your message...",
@@ -245,6 +287,7 @@
     "attachFiles": "Attach files",
     "attachImages": "Attach images",
     "mentionFile": "Mention a file",
+    "generateSkill": "Generate skill from conversation",
     "slashCommand": "Run a slash command",
     "send": "Send",
     "stop": "Stop",
@@ -516,5 +559,9 @@
       "message": "{{message}}",
       "hint": "Retry with a shorter prompt, ask the agent to split large tool inputs into smaller steps, or switch to a model with stronger tool-calling support in Settings → Model Provider."
     }
+  },
+  "skillRecommend": {
+    "label": "Suggested skills",
+    "insertTemplate": " (use the \"{{name}}\" skill)"
   }
 }

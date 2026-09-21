@@ -88,6 +88,7 @@ export default defineConfig(({ mode }) => {
       }
     },
     test: {
+      include: ['src/**/*.{test,spec}.{ts,tsx,js,jsx}', 'server/**/*.{test,spec}.{js,ts}', 'shared/**/*.{test,spec}.{js,ts}'],
       environment: 'jsdom',
       server: {
         deps: {

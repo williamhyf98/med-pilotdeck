@@ -25,6 +25,7 @@ import {
   FolderOpen,
   X,
   ShieldAlert,
+  Sparkles,
   Square,
   type LucideIcon,
 } from 'lucide-react';
@@ -39,6 +40,7 @@ import CommandMenu from '../chat/view/subcomponents/CommandMenu';
 import { cn } from '../../lib/utils.js';
 import type { ContentReference } from '../../types/contentReference';
 import DocumentReferenceChip from './DocumentReferenceChip';
+import SkillRecommendBar from './SkillRecommendBar';
 
 interface MentionableFile {
   name: string;
@@ -143,6 +145,21 @@ export type ComposerV2Props = {
   footerStartSlot?: ReactNode;
   footerEndSlot?: ReactNode;
   chromeMode?: 'default' | 'medical';
+
+  /**
+   * Optional query→skill suggestions. Absent everywhere except the live chat
+   * composer, so tests and the welcome-mode variants keep rendering without it.
+   */
+  skillRecommendProjectPath?: string | null;
+  skillRecommendProjectType?: string | null;
+  onInsertSkillHint?: (text: string) => void;
+
+  /**
+   * Turns the current conversation into a skill draft. Only the live chat
+   * composer passes this, so the button stays hidden in welcome mode/tests.
+   */
+  onGenerateSkill?: () => void;
+  generateSkillDisabled?: boolean;
 };
 
 export function PermissionRequestsSlot({
@@ -394,6 +411,11 @@ export default function ComposerV2({
   footerStartSlot,
   footerEndSlot,
   chromeMode = 'default',
+  skillRecommendProjectPath = null,
+  skillRecommendProjectType = null,
+  onInsertSkillHint,
+  onGenerateSkill,
+  generateSkillDisabled = false,
 }: ComposerV2Props) {
   const { t } = useTranslation('chat');
   const [isContextPopoverOpen, setIsContextPopoverOpen] = useState(false);
@@ -649,6 +671,19 @@ export default function ComposerV2({
                 })()}
               />
 
+              {onInsertSkillHint ? (
+                <SkillRecommendBar
+                  input={input}
+                  projectPath={skillRecommendProjectPath}
+                  projectType={skillRecommendProjectType}
+                  onUseSkill={onInsertSkillHint}
+                  disabled={isCommandMenuOpen || showFileDropdown || isLoading}
+                />
+              ) : null}
+
+              {/* Keep this the immediate wrapper of the textarea: the highlight
+                  overlay below is `absolute inset-0` and only lines up while
+                  nothing else shares this box. */}
               <div className="relative">
                 <div
                   ref={inputHighlightRef}
@@ -834,6 +869,19 @@ export default function ComposerV2({
                   >
                     <AtSign className="h-4 w-4" strokeWidth={1.75} />
                   </button>
+                  {onGenerateSkill ? (
+                    <button
+                      type="button"
+                      onClick={onGenerateSkill}
+                      disabled={generateSkillDisabled}
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-neutral-500 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100 dark:disabled:hover:bg-transparent dark:disabled:hover:text-neutral-400"
+                      title={t('input.generateSkill', {
+                        defaultValue: 'Generate skill from conversation',
+                      }) as string}
+                    >
+                      <Sparkles className="h-4 w-4" strokeWidth={1.75} />
+                    </button>
+                  ) : null}
                     <div
                       className="relative"
                     onBlur={(event) => {

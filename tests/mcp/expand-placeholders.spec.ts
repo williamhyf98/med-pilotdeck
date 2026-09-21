@@ -26,6 +26,32 @@ test("expandMcpString leaves unknown env vars as empty string", () => {
     delete process.env.__PILOTDECK_NONEXISTENT_VAR__;
     assert.equal(expandMcpString("${env:__PILOTDECK_NONEXISTENT_VAR__}"), "");
 });
+test("expandMcpString falls back to ${env:NAME:-default} when unset", () => {
+    delete process.env.__PILOTDECK_NONEXISTENT_VAR__;
+    assert.equal(expandMcpString("${env:__PILOTDECK_NONEXISTENT_VAR__:-http://127.0.0.1:8030/v1}"), "http://127.0.0.1:8030/v1");
+});
+test("expandMcpString prefers the env var over the :- default", () => {
+    process.env.PILOTDECK_TEST_BASE = "http://model-host:8030/v1";
+    try {
+        assert.equal(expandMcpString("${env:PILOTDECK_TEST_BASE:-http://127.0.0.1:8030/v1}"), "http://model-host:8030/v1");
+    }
+    finally {
+        delete process.env.PILOTDECK_TEST_BASE;
+    }
+});
+test("expandMcpString treats an empty env var as unset for :- defaults", () => {
+    process.env.PILOTDECK_TEST_BASE = "";
+    try {
+        assert.equal(expandMcpString("${env:PILOTDECK_TEST_BASE:-fallback}"), "fallback");
+    }
+    finally {
+        delete process.env.PILOTDECK_TEST_BASE;
+    }
+});
+test("expandMcpString supports an empty :- default", () => {
+    delete process.env.__PILOTDECK_NONEXISTENT_VAR__;
+    assert.equal(expandMcpString("${env:__PILOTDECK_NONEXISTENT_VAR__:-}"), "");
+});
 test("expandMcpString handles combined placeholders", () => {
     process.env.PILOTDECK_TEST_PORT = "8080";
     try {

@@ -25,6 +25,30 @@ function merge(base, override) {
   return result;
 }
 
+export const DEFAULT_THEME = 'clinical';
+
+/**
+ * Named color themes are a third axis alongside typography profile + density.
+ * A theme only overrides `colors` (and optionally `canvas`) through data —
+ * `assets/layout-library/layouts/*.mjs` stays untouched, as SKILL.md requires.
+ *
+ * Constraint worth knowing before authoring a new theme: `colors.white` doubles
+ * as a light slide background AND as the title text drawn on top of
+ * `colors.navy`, and a few on-navy captions in core.mjs are hardcoded light
+ * blue-grey. So every theme must keep `white`/`paper` light and `navy` dark;
+ * a fully dark deck is not expressible without editing the layout builders.
+ */
+export async function listThemes() {
+  const base = await tokens();
+  return Object.entries(base.themes ?? {}).map(([name, theme]) => ({
+    name,
+    label: theme.label ?? name,
+    description: theme.description ?? '',
+    default: name === (base.theme ?? DEFAULT_THEME),
+    colors: merge(base.colors, theme.colors),
+  }));
+}
+
 export async function resolveDesignTokens(options = {}) {
   const base = await tokens();
   const language = options.lang ?? 'zh-CN';
@@ -39,7 +63,19 @@ export async function resolveDesignTokens(options = {}) {
   typography.profile = profileName;
   typography.density = densityName;
   typography.lang = options.lang ?? profile.lang ?? language;
-  return { ...base, typography };
+  const themeName = options.theme ?? base.theme ?? DEFAULT_THEME;
+  const theme = base.themes?.[themeName];
+  if (!theme) {
+    const available = Object.keys(base.themes ?? {}).join(', ') || '(none)';
+    throw new Error(`Unknown color theme: ${themeName} (available: ${available})`);
+  }
+  return {
+    ...base,
+    theme: themeName,
+    colors: merge(base.colors, theme.colors),
+    canvas: merge(base.canvas, theme.canvas),
+    typography,
+  };
 }
 
 async function layouts() {
@@ -86,6 +122,7 @@ export async function createDeck(options = {}) {
     lang: options.lang,
     profile: options.typographyProfile,
     density: options.density,
+    theme: options.theme,
   });
   const pptx = new PptxGenJS();
   pptx.layout = options.layout ?? deckTokens.canvas.layout;
@@ -102,13 +139,26 @@ export async function createDeck(options = {}) {
   return pptx;
 }
 
-export async function buildToolkit() {
+/**
+ * @param {{ theme?: string }} [options] Pin a color theme for this build. Bound
+ * as the default for `resolveDesignTokens` / `createDeck` so existing builders
+ * (which call `resolveDesignTokens({ lang, profile })` with no theme) follow
+ * `--theme` without being rewritten; an explicit `theme` in the builder wins.
+ */
+export async function buildToolkit(options = {}) {
   const deps = loadDependencies();
+  const base = await tokens();
+  const themeName = options.theme;
+  const deckTokens = themeName ? await resolveDesignTokens({ theme: themeName }) : base;
   return {
-    createDeck,
-    resolveDesignTokens,
+    createDeck: themeName ? (opts = {}) => createDeck({ theme: themeName, ...opts }) : createDeck,
+    resolveDesignTokens: themeName
+      ? (opts = {}) => resolveDesignTokens({ theme: themeName, ...opts })
+      : resolveDesignTokens,
+    listThemes,
+    theme: themeName ?? base.theme ?? DEFAULT_THEME,
     layouts: await layouts(),
-    tokens: await tokens(),
+    tokens: deckTokens,
     pptxgenjs: deps.PptxGenJS,
     imageSizingCrop,
     imageSizingContain,

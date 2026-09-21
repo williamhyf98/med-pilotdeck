@@ -153,13 +153,20 @@ export class GatewayWsConnection {
         );
         return;
       }
+      // Other gateway errors (ForkSessionError, RewindSessionError, fs
+      // errors) also carry a string `code`; preserve it so HTTP bridges can
+      // map stable codes to status codes instead of parsing messages.
+      const errorCode =
+        error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string"
+          ? (error as { code: string }).code
+          : "gateway_request_failed";
       this.ws.sendText(
         JSON.stringify({
           type: "response",
           id: frame.id,
           ok: false,
           error: {
-            code: "gateway_request_failed",
+            code: errorCode,
             message: error instanceof Error ? error.message : String(error),
           },
         }),
@@ -237,6 +244,8 @@ export class GatewayWsConnection {
         return this.options.gateway.readSubagentMessages(frame.params as never);
       case "fork_session":
         return this.options.gateway.forkSession(frame.params as never);
+      case "rewind_session":
+        return this.options.gateway.rewindSession(frame.params as never);
       case "list_projects":
         return this.options.gateway.listProjects();
       case "describe_project":
@@ -281,6 +290,11 @@ export class GatewayWsConnection {
         return requireSkillMethod(this.options.gateway.skillValidate, this.options.gateway)(frame.params as never);
       case "skill_scan":
         return requireSkillMethod(this.options.gateway.skillScan, this.options.gateway)(frame.params as never);
+      case "skill_generate_draft":
+        return requireSkillMethod(
+          this.options.gateway.skillGenerateDraft,
+          this.options.gateway,
+        )(frame.params as never);
       case "always_on_apply":
         if (this.options.gateway.alwaysOnApply) {
           return this.options.gateway.alwaysOnApply(frame.params as never);

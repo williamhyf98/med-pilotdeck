@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { numberAnswerCitations } from "./citations.js";
 
 import type { TraumaAuditLogger, TraumaAuditRecord } from "./auditLog.js";
 import { mergeFormInput, validateTurnFormInput } from "./factMerge.js";
@@ -188,9 +189,7 @@ function citationSection(chunk: { section?: string; article?: string }): string 
 }
 
 /**
- * 引用编号的唯一真相源：chunk 在 promptChunks 中的序号 + 1。工位 B 的提示词
- * 已经把同一个 citationIndex 发给模型，正文角标、参考来源列表和「知识块依据」
- * 三处都复用它，运行期不再重排编号。
+ * index 对应模型输入顺序；displayIndex 在回答后按首次引用顺序计算并持久化。
  */
 function buildCitationMetadata(chunks: Array<{
   id?: string;
@@ -198,9 +197,17 @@ function buildCitationMetadata(chunks: Array<{
   section?: string;
   article?: string;
   text: string;
+  retrievalScore?: number;
+  rerankScore?: number;
+  retrievalBackend?: string;
 }>): CitationMetadata[] {
   return chunks.map((chunk, index) => ({
     index: index + 1,
+    chunkId: chunk.id,
+    text: chunk.text,
+    score: chunk.retrievalScore,
+    rerankScore: chunk.rerankScore,
+    retrievalMode: chunk.retrievalBackend,
     title: normalizeChineseDisplayText(chunk.documentTitle),
     section: normalizeChineseDisplayText(citationSection(chunk)),
   }));
@@ -221,16 +228,8 @@ function stripDetailsBlocks(text: string): string {
 
 /** 正文中按首次出现顺序排列的合法角标编号（合法 = 能落在本轮 promptChunks 内）。 */
 function inlineCitationOrder(answerBody: string, chunkCount: number): number[] {
-  const order: number[] = [];
-  const seen = new Set<number>();
-  for (const match of answerBody.matchAll(INLINE_CITATION_RE)) {
-    const index = Number.parseInt(match[1] ?? "", 10);
-    if (!Number.isFinite(index) || index < 1 || index > chunkCount) continue;
-    if (seen.has(index)) continue;
-    seen.add(index);
-    order.push(index);
-  }
-  return order;
+  return numberAnswerCitations(answerBody, Array.from({ length: chunkCount }, (_, i) => ({ index: i + 1, title: "", section: "" })))
+    .map(c => c.index);
 }
 
 /**
@@ -238,7 +237,7 @@ function inlineCitationOrder(answerBody: string, chunkCount: number): number[] {
  * 1. 删掉模型可能仍然写出的 <details> 溯源块（参考来源改由前端组件渲染）；
  * 2. 摘掉无法对应到 promptChunks 的非法角标，保证正文、参考来源列表和
  *    知识块依据三者严格同集合；
- * 3. 不重排编号，直接沿用 promptChunks 顺序。
+ * 3. 保留原始角标关联，并生成连续展示编号。
  */
 function normalizeAnswerCitations(
   answer: string,
@@ -257,9 +256,9 @@ function normalizeAnswerCitations(
   const citationByIndex = new Map(promptCitations.map((citation) => [citation.index, citation]));
   const citations: CitationMetadata[] = [];
   const usedChunkIds = new Set<string>();
-  for (const index of usedIndexes.slice().sort((left, right) => left - right)) {
+  for (const index of usedIndexes) {
     const citation = citationByIndex.get(index);
-    if (citation) citations.push(citation);
+    if (citation) citations.push({ ...citation, displayIndex: citations.length + 1 });
     const chunk = promptChunks[index - 1];
     if (chunk) usedChunkIds.add(chunk.id);
   }
@@ -702,7 +701,7 @@ export function createTraumaTurnRunner(deps: {
         // 都能显示出与参考来源列表一致的编号。
         const displayedCitationChunkIds = normalizedAnswerCitations.usedChunkIds;
         const citationIndexByChunkId = new Map(
-          merged.promptChunks.map((chunk, index) => [chunk.id, index + 1]),
+          normalizedAnswerCitations.citations.map(citation => [merged.promptChunks[citation.index - 1].id, citation.displayIndex!]),
         );
         const evidence = merged.evidence.map((chunk) => {
           const citationIndex = citationIndexByChunkId.get(chunk.id);

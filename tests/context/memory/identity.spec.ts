@@ -12,7 +12,7 @@ import {
   isWarTraumaScope,
 } from "../../../src/context/memory/MemoryScopeIdentity.js";
 
-const fixtureDir = join(import.meta.dirname ?? __dirname, "../../fixtures");
+const fixtureDir = join(process.cwd(), "tests/fixtures");
 const golden = JSON.parse(
   readFileSync(join(fixtureDir, "memory-identity.golden.json"), "utf8"),
 );

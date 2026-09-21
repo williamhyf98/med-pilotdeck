@@ -1,4 +1,6 @@
 import { ChevronDown, X } from 'lucide-react';
+import { useState } from 'react';
+import { CitationChunkModal } from '../chat/utils/CitationPopover';
 import { cn } from '../../lib/utils';
 import { TRAUMA_STAGES } from './demoCase';
 import { gateStatusLabel } from './domain/displayLabels';
@@ -76,6 +78,9 @@ function GateBadge({ status }: { status: GateStatus }) {
 }
 
 export default function MemoDetailPanel({ memo, isLatest, onClose }: MemoDetailPanelProps) {
+  const [openEvidence, setOpenEvidence] = useState<RoundMemo['evidence'][number] | null>(null);
+  const [showUnused, setShowUnused] = useState(false);
+  const unusedEvidence = memo.evidence.filter(item => !item.used);
   const stage = TRAUMA_STAGES.find((item) => item.id === memo.stageId);
   const substep = memo.substepIndex === null ? undefined : stage?.substeps[memo.substepIndex];
   const usedEvidence = memo.evidence
@@ -199,6 +204,7 @@ export default function MemoDetailPanel({ memo, isLatest, onClose }: MemoDetailP
           {usedEvidence.length > 0 ? (
             usedEvidence.map((evidence) => (
               <article key={evidence.id} className="rounded-md border border-border bg-transparent p-2">
+                <button type="button" className="mb-1 text-xs text-blue-700 underline dark:text-blue-300" onClick={() => setOpenEvidence(evidence)}>查看原文</button>
                 <div className="flex flex-wrap items-center justify-between gap-1.5">
                   <p className="flex min-w-0 items-center gap-1 text-[9px] font-semibold">
                     {evidence.citationIndex !== undefined ? (
@@ -221,6 +227,15 @@ export default function MemoDetailPanel({ memo, isLatest, onClose }: MemoDetailP
           )}
         </div>
       </details>
+      {unusedEvidence.length > 0 && <details className="workspace-card-surface rounded-lg border border-border p-3" onToggle={event => setShowUnused(event.currentTarget.open)}>
+        <summary className="cursor-pointer text-xs text-muted-foreground">未引用知识块 · {unusedEvidence.length} 条</summary>
+        {showUnused && <div className="mt-2 space-y-2">{unusedEvidence.map(evidence => (
+          <button key={evidence.id} type="button" className="block w-full rounded border border-border p-2 text-left text-xs" onClick={() => setOpenEvidence(evidence)}>
+            <span className="mr-2 text-muted-foreground">未引用</span>{evidence.title} · 查看原文
+          </button>
+        ))}</div>}
+      </details>}
+      {openEvidence && <CitationChunkModal cite={{ index: openEvidence.citationIndex ?? 0, chunkId: openEvidence.id, title: openEvidence.title, section: openEvidence.section ?? '', text: openEvidence.text }} displayIndex={openEvidence.citationIndex ?? 0} onClose={() => setOpenEvidence(null)} />}
     </div>
   );
 }

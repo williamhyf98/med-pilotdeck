@@ -1694,6 +1694,47 @@ export function useSessionStore() {
   }, [notify]);
 
   /**
+   * Drop the rewound (last) turn from every slot array after a successful
+   * `rewind_session`. Not `refreshFromServer`: its empty-response and
+   * keep-realtime race guards would resurrect the removed messages.
+   */
+  const dropTurnForRewind = useCallback((
+    sessionId: string,
+    opts: { turnId?: string; fromSequence?: number; fromTimestamp?: string },
+  ) => {
+    const slot = storeRef.current.get(sessionId);
+    if (!slot) return;
+    const fromMs = opts.fromTimestamp ? Date.parse(opts.fromTimestamp) : Number.NaN;
+    const matchesRemovedTurn = (m: NormalizedMessage): boolean => {
+      if (opts.turnId && (m.turnId === opts.turnId || m.runId === opts.turnId)) return true;
+      if (
+        typeof opts.fromSequence === 'number'
+        && typeof m.sequence === 'number'
+        && m.sequence >= opts.fromSequence
+      ) {
+        return true;
+      }
+      return false;
+    };
+    // Realtime/activity rows often lack transcript identity; since rewind only
+    // targets the LAST turn of an idle session, anything timestamped at or
+    // after the removed user message belongs to that turn.
+    const isAtOrAfterRemovedTurn = (m: NormalizedMessage): boolean => {
+      if (matchesRemovedTurn(m)) return true;
+      if (!Number.isNaN(fromMs)) {
+        const ts = Date.parse(m.timestamp);
+        if (!Number.isNaN(ts) && ts >= fromMs) return true;
+      }
+      return false;
+    };
+    slot.serverMessages = slot.serverMessages.filter((m) => !isAtOrAfterRemovedTurn(m));
+    slot.realtimeMessages = slot.realtimeMessages.filter((m) => !isAtOrAfterRemovedTurn(m));
+    slot.activityMessages = slot.activityMessages.filter((m) => !isAtOrAfterRemovedTurn(m));
+    forceRecomputeMerged(slot);
+    notify(sessionId);
+  }, [notify]);
+
+  /**
    * Get merged messages for a session (for rendering).
    */
   const getMessages = useCallback((sessionId: string): NormalizedMessage[] => {
@@ -1731,6 +1772,7 @@ export function useSessionStore() {
     clearRealtime,
     clearAssistantRealtime,
     markTurnInterrupted,
+    dropTurnForRewind,
     getMessages,
     getActivityMessages,
     getSubagentDetailMessages,
@@ -1746,7 +1788,7 @@ export function useSessionStore() {
     appendRealtime, upsertActivity, setActivities, appendRealtimeBatch, refreshFromServer,
     setActiveSession, setStatus, isStale, updateStreaming, finalizeStreaming,
     updateStreamingThinking, finalizeStreamingThinking,
-    clearRealtime, clearAssistantRealtime, markTurnInterrupted, getMessages, getActivityMessages, getSubagentDetailMessages, getSessionSlot,
+    clearRealtime, clearAssistantRealtime, markTurnInterrupted, dropTurnForRewind, getMessages, getActivityMessages, getSubagentDetailMessages, getSessionSlot,
     recordSubagentLink, appendSubagentDetailMessage, updateSubagentDetailStreaming,
     finalizeSubagentDetailStreaming, updateSubagentDetailThinking, finalizeSubagentDetailThinking,
   ]);

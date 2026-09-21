@@ -31,6 +31,8 @@ import type {
   WebReadSubagentMessagesResult as WebUiReadSubagentMessagesResult,
   WebForkSessionInput as WebUiForkSessionInput,
   WebForkSessionResult as WebUiForkSessionResult,
+  WebRewindSessionInput as WebUiRewindSessionInput,
+  WebRewindSessionResult as WebUiRewindSessionResult,
 } from "../../web/client/protocol.js";
 import type {
   SkillCreateInput,
@@ -311,6 +313,23 @@ export type GatewayExtractTraumaFormOutput = {
   extracted: import("../../trauma/types.js").ExtractedTurnForm;
 };
 
+/** 从会话对话文本生成技能草稿 RPC 的输入。无副作用，不落盘。 */
+export type GatewaySkillGenerateDraftInput = {
+  projectKey: string;
+  sessionKey: string;
+  /** 已格式化为纯文本的完整对话（含必要截断）。 */
+  conversation: string;
+  /** 已存在的技能 slug，用于生成时避让重名。 */
+  existingSlugs?: string[];
+  /** 素材来源：聊天会话（默认）或流程图画布的文字化描述。 */
+  source?: import("../../extension/skills/draftStation.js").SkillDraftSource;
+};
+
+/** 从会话对话文本生成技能草稿 RPC 的输出。 */
+export type GatewaySkillGenerateDraftOutput = {
+  draft: import("../../extension/skills/draftStation.js").SkillDraft;
+};
+
 /**
  * Web-facing permission decision input. Mirrors the elicitation
  * round-trip pattern: the agent (via `GatewayPermissionBus`) emits a
@@ -342,6 +361,8 @@ export type WebReadSubagentMessagesInput = WebUiReadSubagentMessagesInput;
 export type WebReadSubagentMessagesResult = WebUiReadSubagentMessagesResult;
 export type WebForkSessionInput = WebUiForkSessionInput;
 export type WebForkSessionResult = WebUiForkSessionResult;
+export type WebRewindSessionInput = WebUiRewindSessionInput;
+export type WebRewindSessionResult = WebUiRewindSessionResult;
 export type WebProjectSummary = WebUiProjectSummary;
 export type WebListProjectsResult = WebUiListProjectsResult;
 export type WebDescribeProjectInput = { projectKey: string };
@@ -494,6 +515,12 @@ export interface Gateway {
    */
   forkSession(input: WebForkSessionInput): Promise<WebForkSessionResult>;
   /**
+   * Rewind a session in place by removing its last user turn (and everything
+   * after it) from the transcript, then evicting the in-memory session so the
+   * next resume replays the truncated history.
+   */
+  rewindSession(input: WebRewindSessionInput): Promise<WebRewindSessionResult>;
+  /**
    * Read a subagent's sidechain transcript and return its messages in WebMessage format.
    */
   readSubagentMessages(input: WebReadSubagentMessagesInput): Promise<WebReadSubagentMessagesResult>;
@@ -563,4 +590,7 @@ export interface Gateway {
   skillImport?(input: SkillImportInput): Promise<SkillImportResult>;
   skillValidate?(input: SkillValidateInput): Promise<SkillValidationResult>;
   skillScan?(input: SkillScanInput): Promise<SkillScanResult>;
+  skillGenerateDraft?(
+    input: GatewaySkillGenerateDraftInput,
+  ): Promise<GatewaySkillGenerateDraftOutput>;
 }

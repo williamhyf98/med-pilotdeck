@@ -55,6 +55,7 @@ export interface ChatAttachment {
 }
 
 export interface CitationMetadata {
+  displayIndex?: number;
   /** 引用编号，对应正文中的 [N] */
   index: number;
   /** 文献名 */
@@ -67,6 +68,28 @@ export interface CitationMetadata {
   evidenceGrade?: string;
   /** 证据质量 */
   evidenceQuality?: string;
+  /**
+   * 语料侧的 chunk 主键。只作身份用（跨调用去重、React key、排查时回溯语料），
+   * 从不进正文或引用列表 —— 正文里露出 `chunk-00001847` 这种串可读性极差。
+   * 同文献同章节的多个片段靠 `label` 里的正文首句后缀区分，不靠这个 id。
+   */
+  chunkId?: string;
+  /** chunk 原文，角标 hover 出摘要、点击看全文 */
+  text?: string;
+  /** 工具下发的成品标签（已含区分后缀与证据等级），优先于 title/section 拼接 */
+  label?: string;
+  /** 命中这条 chunk 的检索式，用来判断「为什么会引到它」 */
+  query?: string;
+  /**
+   * 原始检索得分。量纲随检索路径变：远程 hybrid_w 是 RRF 融合值（≤0.04，只是
+   * 名次的函数）、本地向量是余弦（0–1）、词法回退是 BM25（无上界）。因此它
+   * **不直接展示**，用户可见的数字统一走 `relevanceOf`。
+   */
+  score?: number;
+  /** 重排模型给的相关度（0–1 sigmoid）。远程服务开重排时每条都带，是首选展示值 */
+  rerankScore?: number;
+  /** 本次检索模式（remote / vector / lexical / lexical-fallback），决定 score 的量纲 */
+  retrievalMode?: string;
 }
 
 export interface ChatFileArtifact {
@@ -165,6 +188,8 @@ export interface ChatMessage {
   ragSearchCount?: number;
   /** 行内引用元数据（从 RAG 工具返回的 chunks 中提取），供 Markdown 渲染 [N] 角标时使用 */
   citations?: CitationMetadata[];
+  /** 本段的「参考来源」折叠条挂在这条消息上（每段只标最后一条挂了引用的正文，防重复渲染） */
+  citationsFooter?: boolean;
   editedFileCount?: number;
   exploredFileCount?: number;
   commandCount?: number;

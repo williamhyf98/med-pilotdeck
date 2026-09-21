@@ -65,6 +65,7 @@ bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" make \
 - `--spec`
 - `--locale`（默认 `zh-CN`）
 - `--footer`
+- `--theme`（默认 `clinical`，见下节）
 - `--out`
 - `--force`（只有用户明确要求替换已有输出时）
 
@@ -73,6 +74,39 @@ OOXML 检查和结构审计。成功 JSON 的 `output` 是用户交付文件。
 
 页面 PNG 不是离线现场硬依赖。没有 LibreOffice 时 `preview` 为空并带
 warning，但 PPTX 仍可交付；不要为此安装任何软件。
+
+## 配色主题
+
+`--theme` 只换配色，版式、字体、密度都不变，因此任何主题都能安全套到已有
+内容上。可选值先用 `themes` 查，不要凭印象猜：
+
+```bash
+bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" themes
+```
+
+| 主题 | 适用 |
+|------|------|
+| `clinical` | 默认。浅灰纸面 + 深墨蓝 + 橙色强调，与历史产出完全一致 |
+| `academic` | 学术汇报、文献与 meta 分析 |
+| `trauma` | 战创伤救治方案与阶段处置 |
+| `vital` | 影像与检验数据对比 |
+| `mono` | 灰阶，黑白打印或低色准投影 |
+
+```bash
+bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" make \
+  --title "战创伤四级救治" \
+  --markdown "$PWD/scratch/qa/slides.md" \
+  --theme trauma \
+  --out "$PWD/exports/战创伤四级救治.pptx"
+```
+
+`--spec` 里也可以写 `"theme": "trauma"`；命令行 `--theme` 优先。用户没提
+配色时不要自作主张换主题，保持默认 `clinical`。返回 JSON 的 `theme` 字段
+是本次实际生效的主题。
+
+新增主题只改 `assets/layout-library/design-tokens.json` 的 `themes` 段，
+不要改 `layouts/`。受布局库约束，`white` / `paper` 必须保持浅色、`navy`
+必须保持深色，否则封面标题会看不见。
 
 ## Markdown 约定
 
@@ -164,6 +198,7 @@ bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" audit --input "$INPUT_PPTX" --out "$PWD/
 
 - `inspect`：读取页数、文本、对象、字体和 OOXML 信息
 - `audit`：检查边界、重叠、文本适配、占位符和字体
+- `themes`：列出 `--theme` 可选主题
 - `render`：仅环境本来就有渲染后端时可选使用
 - `validate-map` / `prepare-starter` / `apply-template` / `fidelity`：
   模板继承

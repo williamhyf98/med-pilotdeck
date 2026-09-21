@@ -4,7 +4,7 @@ import { resolvePilotHome, resolveProjectStorageId, resolveGatewayProjectKey } f
 export function getAlwaysOnRoot(projectRoot) {
   const pilotHome = resolvePilotHome();
   const gatewayKey = resolveGatewayProjectKey(projectRoot, pilotHome);
-  const projectId = resolveProjectStorageId(path.resolve(gatewayKey), pilotHome);
+  const projectId = resolveProjectStorageId(gatewayKey, pilotHome);
   return path.join(pilotHome, 'always-on', 'projects', projectId);
 }
 

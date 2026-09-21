@@ -143,16 +143,19 @@ def remote_result_to_item(result: Mapping[str, Any], index: int) -> dict[str, An
     """
 
     text = str(result.get("text") or "")[:20_000]
-    preamble_volume, preamble_section = _split_preamble(text)
+    preamble_volume, preamble_section, preamble_book = _split_preamble(text)
     # The remote corpus ships an empty `section_title` and puts the chapter
     # path in the body preamble instead; recover it so citations keep context.
+    # The military-medicine corpus likewise ships an empty `title` and leads
+    # with a `书名：` line — same recovery.
     section = str(result.get("section_title") or "").strip() or preamble_section
+    title = str(result.get("title") or "").strip() or preamble_book
     item: dict[str, Any] = {
         "rank": None,  # filled by the caller, same as the local path
         "score": _safe_score(result.get("score")),
         "chunk_id": str(result.get("chunk_id") or f"remote-{index:08d}"),
         "doc_id": str(result.get("doc_id") or "")[:500],
-        "title": str(result.get("title") or "")[:500],
+        "title": title[:500],
         "volume": preamble_volume[:200],
         "section": section[:1000],
         "source": "",  # remote corpus has no source_file field
@@ -180,19 +183,24 @@ def remote_result_to_item(result: Mapping[str, Any], index: int) -> dict[str, An
 
 _VOLUME_PREFIX = "卷："
 _SECTION_PREFIX = "章节："
+_BOOK_PREFIX = "书名："
 
 
-def _split_preamble(text: str) -> tuple[str, str]:
-    """Read the leading ``卷：`` / ``章节：`` header lines of a remote chunk.
+def _split_preamble(text: str) -> tuple[str, str, str]:
+    """Read the leading ``书名：`` / ``卷：`` / ``章节：`` header lines of a remote chunk.
 
     Only the header block is scanned: the body repeats chapter paths as
     ``【章节：...】`` markers, which must not be mistaken for the preamble.
-    The text itself is left untouched — this only recovers metadata.
+    The text itself is left untouched — this only recovers metadata. A leading
+    ``书名：`` line (military-medicine corpus) used to hit the ``else: break``
+    below and lose the section recovery entirely; it is now recognised and the
+    book name returned so the caller can back-fill an empty ``title``.
     """
 
     volume = ""
     section = ""
-    for raw in text.split("\n")[:4]:
+    book = ""
+    for raw in text.split("\n")[:5]:
         line = raw.strip()
         if not line:
             continue  # blank separator between preamble and body
@@ -200,9 +208,11 @@ def _split_preamble(text: str) -> tuple[str, str]:
             volume = line[len(_VOLUME_PREFIX) :].strip()
         elif line.startswith(_SECTION_PREFIX):
             section = line[len(_SECTION_PREFIX) :].strip()
+        elif line.startswith(_BOOK_PREFIX):
+            book = line[len(_BOOK_PREFIX) :].strip()
         else:
             break  # body has started
-    return volume, section
+    return volume, section, book
 
 
 def remote_health(*, timeout: float = 5.0) -> dict[str, Any]:
