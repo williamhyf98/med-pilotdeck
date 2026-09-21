@@ -57,6 +57,8 @@
   "working": {
     "default": "Working",
     "processing": "Processing",
+    "completedCalls": "Completed: {{latest}}",
+    "uploadingAttachments": "Uploading files...",
     "thinking": "thinking",
     "callingModel": "Calling model...",
     "executingTool": "Running tool...",

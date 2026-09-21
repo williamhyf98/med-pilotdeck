@@ -1,6 +1,6 @@
 ---
 name: med-medical
-description: 解析多种格式医疗附件（DICOM、PDF 报告、报告截图、CDA/XML、检验文本、JSON、心电图/WFDB）。优先使用本地 G9-V-Med 报告；若不可用，则以已配置的主 Agent 模型作为回退报告，或继续由主 Agent 解读。只要用户上传或指向医学影像、报告、文书、检验或心电图文件——包括混合格式的整个文件夹——就使用本技能。
+description: 解析通用医学附件（非 CT DICOM、非完整三维 CT、部位未知的 CT、PDF、报告截图、CDA/XML、检验文本、JSON、心电图/WFDB）。DICOM 必须先路由；完整腹部/盆腔 CT 用 RADAR，其他已识别部位的完整 CT 先过 3DMedAgent。
 ---
 
 # 医疗多源解析（med-tools）
@@ -20,6 +20,8 @@ description: 解析多种格式医疗附件（DICOM、PDF 报告、报告截图�
 4. 工具返回 JSON 之后：
    - 若 `report` 非空：报告已由运行时**实时流式写入对话并保存为最终回答**。**不要**再粘贴或改写一遍。调用工具前不要写任何前言——前导文字会混入流式报告。（兼容行为：若流式不可用，仍应原样展示。）
    - 若 `report` 为空且 `agent_continue` 为 true：**不要停止**。使用 `summary`、`png_paths`、`warnings` 和 `vlm_error`，用**主 Agent 模型**继续医学解读，并遵循 med-tools 所要求的同一套中文结构化报告章节。须明确说明 G9 不可用，本次为主 Agent 回退解读。
+
+对 DICOM 文件或目录，先单独调用轻量的 `mcp__med-tools__med_dicom_route`，等待其完成后再规划；不得把路由和解析并行执行。若结果是完整腹部/盆腔 CT，加载 `med-radar-ct` 并调用 RADAR；其他已识别部位的完整 CT 先加载 `med-deepchest-3dmedagent`。只有非 CT、单张/不完整 CT、混合目录、部位不确定，或 3DMedAgent 明确报告兼容性降级时，才继续使用本 Skill。
 
 边界：战创伤**知识点问答** → `med-trauma-assist`（RAG）；**规定格式六阶段救治方案** → `med-trauma-stage-plan`（G9，原样展示 `care_plan`）；本 Skill 专注附件解析与结构化报告。若后续还要写正式 9 段病例报告 / HTML，应改走 `med-case-report`，并对 `med_parse_medical` 使用 `continuation_mode: "material"`。
 

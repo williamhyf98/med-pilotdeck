@@ -127,6 +127,23 @@ describe('attachment path notes', () => {
       },
     ]);
   });
+
+  it('separates the display name from an uploaded DICOM relative path', () => {
+    const parsed = parseUserAttachmentNote([
+      '分析这个 DICOM',
+      '',
+      marker,
+      '- scan.dcm (1-scan.dcm): /workspace/inbox/run/1-scan.dcm',
+      '[End files attached by user]',
+    ].join('\n'));
+
+    expect(parsed.attachments).toEqual([{
+      name: 'scan.dcm',
+      path: '/workspace/inbox/run/1-scan.dcm',
+      relativePath: '1-scan.dcm',
+      mimeType: 'application/dicom',
+    }]);
+  });
 });
 
 describe('mergeUserAttachments', () => {

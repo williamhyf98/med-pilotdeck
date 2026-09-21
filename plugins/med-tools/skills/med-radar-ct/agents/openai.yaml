@@ -1,0 +1,4 @@
+interface:
+  display_name: "RADAR CT Analysis"
+  short_description: "使用 node12 RADAR 分析完整腹部 CT 并回答用户问题"
+  default_prompt: "使用 $med-radar-ct 分析这份腹部 CT，并结合 RADAR 结果回答我的原始问题。"

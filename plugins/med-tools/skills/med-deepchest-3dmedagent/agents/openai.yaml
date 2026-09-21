@@ -1,0 +1,4 @@
+interface:
+  display_name: "DeepChest 3DMedAgent"
+  short_description: "非腹部完整 CT 的 3DMedAgent 与兼容性检查流程"
+  default_prompt: "使用 $med-deepchest-3dmedagent 处理这份非腹部完整 CT；胸部执行完整流程，其他部位先检查兼容性。"

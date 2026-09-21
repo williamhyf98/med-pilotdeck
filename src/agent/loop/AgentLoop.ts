@@ -1661,12 +1661,13 @@ export class AgentLoop {
         yield { type: "tool_results_projected", sessionId: input.sessionId, turnId: input.turnId, message: appended };
         await input.onDurableMessage?.(appended);
       }
-      const directFinalResult = pairedResults.length === 1
-        ? pairedResults.find((result) =>
-            result.type === "success"
-            && typeof result.metadata?.directFinalAssistantText === "string"
-            && result.metadata.directFinalAssistantText.trim().length > 0
-          )
+      const directFinalResults = pairedResults.filter((result) =>
+        result.type === "success"
+        && typeof result.metadata?.directFinalAssistantText === "string"
+        && result.metadata.directFinalAssistantText.trim().length > 0
+      );
+      const directFinalResult = directFinalResults.length === 1
+        ? directFinalResults[0]
         : undefined;
       if (directFinalResult?.type === "success") {
         const directText = String(directFinalResult.metadata?.directFinalAssistantText ?? "");

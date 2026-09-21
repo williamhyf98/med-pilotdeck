@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { isBinaryFile, isImageFile, isOfficeFile, isSpreadsheetFile } from './binaryFile';
+import { isBinaryFile, isDicomFile, isImageFile, isOfficeFile, isSpreadsheetFile } from './binaryFile';
+
+describe('DICOM file recognition', () => {
+  it.each(['scan.dcm', 'scan.DICOM', 'slice.ima'])(
+    'treats %s as a DICOM binary preview',
+    (fileName) => {
+      expect(isDicomFile(fileName)).toBe(true);
+      expect(isBinaryFile(fileName)).toBe(true);
+    },
+  );
+
+  it('does not treat ordinary images as DICOM', () => {
+    expect(isDicomFile('scan.png')).toBe(false);
+  });
+});
 
 describe('WPS Office file recognition', () => {
   it.each(['proposal.wps', 'budget.et', 'briefing.dps'])(

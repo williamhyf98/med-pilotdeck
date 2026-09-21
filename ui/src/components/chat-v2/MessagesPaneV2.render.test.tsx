@@ -61,6 +61,7 @@ function createPaneElement({
   runMode = 'agent',
   planModeActive = false,
   showThinking,
+  showProcessTrace,
   navigateToChatMessageRef,
   selectedProject = null,
 }: {
@@ -70,6 +71,7 @@ function createPaneElement({
   runMode?: ChatRunMode;
   planModeActive?: boolean;
   showThinking?: boolean;
+  showProcessTrace?: boolean;
   navigateToChatMessageRef?: React.MutableRefObject<((runId: string) => void | Promise<void>) | null>;
   selectedProject?: Project | null;
 }) {
@@ -103,6 +105,7 @@ function createPaneElement({
         runMode={runMode}
         planModeActive={planModeActive}
         showThinking={showThinking}
+        showProcessTrace={showProcessTrace}
       />
     </FindShortcutProvider>
   );
@@ -115,6 +118,7 @@ function renderPane(options: {
   runMode?: ChatRunMode;
   planModeActive?: boolean;
   showThinking?: boolean;
+  showProcessTrace?: boolean;
   navigateToChatMessageRef?: React.MutableRefObject<((runId: string) => void | Promise<void>) | null>;
   selectedProject?: Project | null;
 }) {
@@ -157,6 +161,226 @@ function SessionPaneHarness({
 }
 
 describe('MessagesPaneV2 render behavior', () => {
+  it('hides thinking, narration, and successful tool trace while keeping the final answer', () => {
+    renderPane({
+      showProcessTrace: false,
+      showThinking: true,
+      messages: [
+        {
+          id: 'u-final-only',
+          type: 'user',
+          content: '分析这份 CT',
+          timestamp: '2026-09-20T08:00:00.000Z',
+        },
+        {
+          id: 'thinking-final-only',
+          type: 'assistant',
+          content: 'The user wants me to inspect the scan and call RADAR.',
+          timestamp: '2026-09-20T08:00:01.000Z',
+          isThinking: true,
+        },
+        {
+          id: 'narration-final-only',
+          type: 'assistant',
+          content: 'I will invoke the RADAR tool now.',
+          timestamp: '2026-09-20T08:00:02.000Z',
+        },
+        {
+          id: 'tool-final-only',
+          type: 'assistant',
+          content: '',
+          timestamp: '2026-09-20T08:00:03.000Z',
+          isToolUse: true,
+          toolName: 'med_radar_analyze_ct',
+          toolResult: { content: 'RADAR completed', isError: false },
+        },
+        {
+          id: 'answer-final-only',
+          type: 'assistant',
+          content: 'The artifact exists and the CSV is in the correct format.\n\nRADAR 分析已完成。以下按技能规定结构报告：\n\n最终结果：未发现明确异常。',
+          timestamp: '2026-09-20T08:00:04.000Z',
+        },
+      ],
+    });
+
+    expect(screen.queryByText(/The user wants me/)).toBeNull();
+    expect(screen.queryByText(/invoke the RADAR tool/)).toBeNull();
+    expect(screen.queryByText('med_radar_analyze_ct')).toBeNull();
+    expect(screen.queryByText(/^Processed /)).toBeNull();
+    expect(screen.getByText('最终结果：未发现明确异常。')).toBeTruthy();
+    expect(screen.queryByText(/The artifact exists/)).toBeNull();
+  });
+
+  it('shows only a generic processing status while a final-only turn is running', () => {
+    renderPane({
+      showProcessTrace: false,
+      showThinking: true,
+      isAssistantWorking: true,
+      messages: [
+        {
+          id: 'u-running-final-only',
+          type: 'user',
+          content: '继续分析',
+          timestamp: '2026-09-20T08:01:00.000Z',
+        },
+        {
+          id: '__streaming_thinking_final_only',
+          type: 'assistant',
+          content: 'I need to inspect the RADAR output.',
+          timestamp: '2026-09-20T08:01:01.000Z',
+          isThinking: true,
+          isStreaming: true,
+        },
+        {
+          id: 'tool-completed-final-only',
+          type: 'assistant',
+          content: '',
+          timestamp: '2026-09-20T08:01:01.500Z',
+          isToolUse: true,
+          toolName: 'med_radar_analyze_ct',
+          toolResult: { content: 'completed', isError: false },
+        },
+        {
+          id: 'partial-final-only',
+          type: 'assistant',
+          content: '正在读取中间结果',
+          timestamp: '2026-09-20T08:01:02.000Z',
+          isStreaming: true,
+        },
+      ],
+    });
+
+    expect(screen.getByText(/Completed: RADAR CT/)).toBeTruthy();
+    expect(screen.queryByText(/inspect the RADAR output/)).toBeNull();
+    expect(screen.queryByText('正在读取中间结果')).toBeNull();
+    fireEvent.click(screen.getByText(/Completed: RADAR CT/));
+    expect(screen.getByText('RADAR CT 分析')).toBeTruthy();
+  });
+
+  it('shows sanitized medical activity while the raw process trace is hidden', () => {
+    renderPane({
+      showProcessTrace: false,
+      isAssistantWorking: true,
+      messages: [{
+        id: 'u-medical-status',
+        type: 'user',
+        content: '分析这个 DICOM',
+        timestamp: '2026-09-21T08:00:00.000Z',
+      }],
+      activityMessages: [{
+        id: 'medical-call-route',
+        type: 'system',
+        content: '正在读取 DICOM 元数据',
+        timestamp: '2026-09-21T08:00:01.000Z',
+        isAgentActivity: true,
+        activityId: 'medical:call-route',
+        phase: 'medical',
+        state: 'running',
+        title: '正在读取 DICOM 元数据',
+        detail: '本地识别模态、部位和序列完整性',
+        toolName: 'mcp__med-tools__med_dicom_route',
+      }],
+    });
+
+    expect(screen.getByText('正在读取 DICOM 元数据')).toBeTruthy();
+    expect(screen.queryByText('mcp__med-tools__med_dicom_route')).toBeNull();
+  });
+
+  it('keeps errors and interactive prompts visible in final-only mode', () => {
+    renderPane({
+      showProcessTrace: false,
+      messages: [
+        {
+          id: 'u-safety-final-only',
+          type: 'user',
+          content: '执行检查',
+          timestamp: '2026-09-20T08:02:00.000Z',
+        },
+        {
+          id: 'error-final-only',
+          type: 'error',
+          content: 'RADAR 服务暂时不可用',
+          timestamp: '2026-09-20T08:02:01.000Z',
+        },
+        {
+          id: 'prompt-final-only',
+          type: 'assistant',
+          content: '请选择要分析的序列',
+          timestamp: '2026-09-20T08:02:02.000Z',
+          isInteractivePrompt: true,
+        },
+      ],
+    });
+
+    expect(screen.getByText('RADAR 服务暂时不可用')).toBeTruthy();
+    expect(screen.getByText('请选择要分析的序列')).toBeTruthy();
+  });
+
+  it('prefers a persisted direct medical report over later agent narration', () => {
+    renderPane({
+      showProcessTrace: false,
+      messages: [
+        {
+          id: 'u-direct-report',
+          type: 'user',
+          content: '分析这个 DICOM',
+          timestamp: '2026-09-21T08:03:00.000Z',
+        },
+        {
+          id: 'direct-report',
+          type: 'assistant',
+          content: '## 资料概况\n\n完整医学报告。',
+          timestamp: '2026-09-21T08:03:01.000Z',
+          metadata: { directToolOutput: true },
+        },
+        {
+          id: 'later-narration',
+          type: 'assistant',
+          content: 'The report was generated and the task is complete.',
+          timestamp: '2026-09-21T08:03:02.000Z',
+        },
+      ],
+    });
+
+    expect(screen.getByText('完整医学报告。')).toBeTruthy();
+    expect(screen.queryByText(/report was generated/)).toBeNull();
+  });
+
+  it('recovers an older direct medical report from its completed tool result', () => {
+    renderPane({
+      showProcessTrace: false,
+      messages: [
+        {
+          id: 'u-recovered-report',
+          type: 'user',
+          content: '分析这个 DICOM',
+          timestamp: '2026-09-21T08:04:00.000Z',
+        },
+        {
+          id: 'tool-recovered-report',
+          type: 'assistant',
+          content: '',
+          timestamp: '2026-09-21T08:04:01.000Z',
+          isToolUse: true,
+          toolName: 'mcp__med-tools__med_parse_medical',
+          toolResult: {
+            isError: false,
+            content: JSON.stringify({ ok: true, report: '## 资料概况\n\n从旧会话恢复的完整医学报告。' }),
+          },
+        },
+        {
+          id: 'old-agent-narration',
+          type: 'assistant',
+          content: 'The tool report is available above.',
+          timestamp: '2026-09-21T08:04:02.000Z',
+        },
+      ],
+    });
+
+    expect(screen.getByText('从旧会话恢复的完整医学报告。')).toBeTruthy();
+    expect(screen.queryByText(/tool report is available/)).toBeNull();
+  });
+
   it('places the completed thinking summary and answer in one assistant turn panel', () => {
     renderPane({
       showThinking: true,

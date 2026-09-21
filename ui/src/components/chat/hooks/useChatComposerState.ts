@@ -141,6 +141,33 @@ const MAX_ATTACHMENTS = MEDICAL_FOLDER_MAX_FILES;
 export const MAX_ATTACHMENTS_ERROR_KEY = '__max_attachments__';
 export const MEDICAL_FOLDER_WARNING_KEY = '__medical_folder__';
 
+const activeAttachmentSubmissions = new Map<string, symbol>();
+
+export function attachmentSubmissionKey(
+  projectName: string,
+  input: string,
+  files: readonly Pick<File, 'name' | 'size' | 'lastModified'>[],
+): string {
+  const normalizedInput = input.trim().replace(/\s+/g, ' ');
+  const fileIdentity = files
+    .map((file) => `${file.name}\u0000${file.size}\u0000${file.lastModified}`)
+    .join('\u0001');
+  return `${projectName}\u0002${normalizedInput}\u0002${fileIdentity}`;
+}
+
+export function acquireAttachmentSubmission(
+  key: string,
+): (() => void) | null {
+  if (activeAttachmentSubmissions.has(key)) return null;
+  const owner = Symbol(key);
+  activeAttachmentSubmissions.set(key, owner);
+  return () => {
+    if (activeAttachmentSubmissions.get(key) === owner) {
+      activeAttachmentSubmissions.delete(key);
+    }
+  };
+}
+
 type UploadedAttachmentFile = {
   name: string;
   path: string;
@@ -262,6 +289,7 @@ export function useChatComposerState({
   const [documentReferences, setDocumentReferences] = useState<ContentReference[]>([]);
   const [uploadingImages, setUploadingImages] = useState<Map<string, number>>(new Map());
   const [imageErrors, setImageErrors] = useState<Map<string, string>>(new Map());
+  const [isSubmitPending, setIsSubmitPending] = useState(false);
   const [isTextareaExpanded, setIsTextareaExpanded] = useState(false);
   const [isBusySendQueued, setIsBusySendQueued] = useState(false);
   const [isBusySendConfirmed, setIsBusySendConfirmed] = useState(false);
@@ -278,6 +306,7 @@ export function useChatComposerState({
   const activeDraftStorageKeyRef = useRef(draftStorageKey);
   const queuedBusySendRef = useRef(false);
   const queuedBusySendConfirmedRef = useRef(false);
+  const submitPendingRef = useRef(false);
   const consumedAttachmentFilesRef = useRef<File[] | undefined>(undefined);
   const queuedBusySendSnapshotRef = useRef<QueuedBusySendSnapshot | null>(null);
   const pendingSessionGrantResolversRef = useRef(new Map<string, (result: PermissionGrantResult) => void>());
@@ -860,6 +889,8 @@ export function useChatComposerState({
         return;
       }
 
+      if (submitPendingRef.current) return;
+
       if (isLoading && !isBusySendQueued) {
         queuedBusySendRef.current = true;
         queuedBusySendConfirmedRef.current = false;
@@ -974,24 +1005,76 @@ export function useChatComposerState({
       // arrives with the real id).
       const optimisticSessionId =
         submitTargetSessionId || createTemporarySessionId();
-      if (selectedProject?.name) {
-        onSessionActivityBump?.(
-          selectedProject.name,
-          optimisticSessionId,
-          userVisibleInput,
-        );
-      }
 
       let uploadedImages: unknown[] = [];
       let uploadedFiles: UploadedAttachmentFile[] = [];
       let uploadedImagePathFiles: UploadedAttachmentFile[] = [];
       const filesToUpload: File[] = [...submitAttachedImages];
-      // If this send includes any folder-picked file, force the whole attachment
-      // batch to path-only (no content/image inline) — same diagnostics path as .dcm.
-      const hasFolderOrigin = filesToUpload.some((file) => folderOriginFilesRef.current.has(file));
-      const pathOnlyIndexes = hasFolderOrigin
-        ? filesToUpload.map((_, index) => index)
-        : [];
+      const releaseAttachmentSubmission = filesToUpload.length > 0
+        ? acquireAttachmentSubmission(attachmentSubmissionKey(
+            selectedProject.name,
+            currentInput,
+            filesToUpload,
+          ))
+        : () => undefined;
+      if (!releaseAttachmentSubmission) return;
+
+      try {
+        onSessionActivityBump?.(
+          selectedProject.name,
+          optimisticSessionId,
+          userVisibleInput,
+        );
+
+        // If this send includes any folder-picked file, force the whole attachment
+        // batch to path-only (no content/image inline) — same diagnostics path as .dcm.
+        const hasFolderOrigin = filesToUpload.some((file) => folderOriginFilesRef.current.has(file));
+        const pathOnlyIndexes = hasFolderOrigin
+          ? filesToUpload.map((_, index) => index)
+          : [];
+        const effectiveSessionId = submitTargetSessionId;
+        const sessionToActivate = effectiveSessionId || optimisticSessionId;
+        const showOptimisticUploadMessage = filesToUpload.length > 0
+          && filesToUpload.every((file) => !file.type.toLowerCase().startsWith('image/'));
+
+      submitPendingRef.current = filesToUpload.length > 0;
+      setIsSubmitPending(filesToUpload.length > 0);
+
+      if (filesToUpload.length > 0) {
+        if (!effectiveSessionId && !submitSelectedSession?.id) {
+          if (typeof window !== 'undefined') {
+            sessionStorage.removeItem('pendingSessionId');
+          }
+          pendingViewSessionRef.current = { sessionId: null, startedAt: Date.now() };
+        }
+        if (showOptimisticUploadMessage) {
+          addMessage({
+            type: 'user',
+            content: userVisibleInput,
+            attachments: filesToUpload.map((file) => ({
+              name: file.name,
+              size: file.size,
+              mimeType: file.type || undefined,
+            })),
+            timestamp: new Date(),
+          }, submitTargetSessionId);
+        }
+        setIsLoading(true);
+        setCanAbortSession(false);
+        setClaudeStatus({
+          text: 'uploading_attachments',
+          tokens: 0,
+          can_interrupt: false,
+        });
+        setPilotDeckStatus({
+          text: 'uploading_attachments',
+          tokens: 0,
+          can_interrupt: false,
+        });
+        onSessionActive?.(sessionToActivate);
+        setIsUserScrolledUp(false);
+        setTimeout(() => scrollToBottom(), 100);
+      }
 
       if (filesToUpload.length > 0) {
         const formData = new FormData();
@@ -1051,6 +1134,12 @@ export function useChatComposerState({
         } catch (error) {
           const message = error instanceof Error ? error.message : '未知错误';
           console.error('Attachment upload failed:', error);
+          submitPendingRef.current = false;
+          setIsSubmitPending(false);
+          setIsLoading(false);
+          setCanAbortSession(false);
+          setClaudeStatus(null);
+          setPilotDeckStatus(null);
           addMessage({
             type: 'error',
             content: ensureUploadFailedMessage(message),
@@ -1085,9 +1174,6 @@ export function useChatComposerState({
         ...documentReferenceAttachments,
       ];
 
-      const effectiveSessionId = submitTargetSessionId;
-      const sessionToActivate = effectiveSessionId || optimisticSessionId;
-
       const userMessage: ChatMessage = {
         type: 'user',
         content: userVisibleInput,
@@ -1096,10 +1182,19 @@ export function useChatComposerState({
         timestamp: new Date(),
       };
 
-      addMessage(userMessage, submitTargetSessionId);
+      if (!showOptimisticUploadMessage) {
+        addMessage(userMessage, submitTargetSessionId);
+      }
+      submitPendingRef.current = false;
+      setIsSubmitPending(false);
       setIsLoading(true); // Processing banner starts
       setCanAbortSession(true);
       setClaudeStatus({
+        text: 'Processing',
+        tokens: 0,
+        can_interrupt: true,
+      });
+      setPilotDeckStatus({
         text: 'Processing',
         tokens: 0,
         can_interrupt: true,
@@ -1182,6 +1277,9 @@ export function useChatComposerState({
 
       if (activeDraftStorageKeyRef.current) {
         safeLocalStorage.removeItem(activeDraftStorageKeyRef.current);
+      }
+      } finally {
+        releaseAttachmentSubmission();
       }
     },
     [
@@ -1678,6 +1776,7 @@ export function useChatComposerState({
       });
     },
     uploadingImages,
+    isSubmitPending,
     imageErrors,
     getRootProps,
     getInputProps,

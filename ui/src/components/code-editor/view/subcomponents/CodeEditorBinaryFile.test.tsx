@@ -73,6 +73,12 @@ vi.mock('./PptxBuiltinPreview', () => ({
   default: () => <div>Built-in PPTX preview</div>,
 }));
 
+vi.mock('./DicomPreview', () => ({
+  default: ({ file }: { file: { name: string } }) => (
+    <div data-testid="dicom-preview">Cornerstone preview: {file.name}</div>
+  ),
+}));
+
 const baseProps = {
   file: {
     name: 'archive.bin',
@@ -146,6 +152,23 @@ describe('CodeEditorBinaryFile', () => {
     preview.click();
     expect(onToggleExpand).toHaveBeenCalledOnce();
     expect(readOfficePreviewStatusMock).not.toHaveBeenCalled();
+  });
+
+  it('opens DICOM files in the Cornerstone preview instead of binary fallback', async () => {
+    render(
+      <CodeEditorBinaryFile
+        {...baseProps}
+        file={{
+          name: 'chest-ct.dcm',
+          path: '/workspace/hundouluo/chest-ct.dcm',
+          diffInfo: null,
+        }}
+      />,
+    );
+
+    expect(await screen.findByTestId('dicom-preview')).not.toBeNull();
+    expect(screen.getByText('Cornerstone preview: chest-ct.dcm')).not.toBeNull();
+    expect(screen.queryByText('Preview unavailable')).toBeNull();
   });
 
   it('keeps the fullscreen action available for image previews outside the sidebar', () => {

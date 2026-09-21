@@ -65,6 +65,27 @@ export default defineConfig(({ mode }) => {
         }
       }
     },
+    worker: {
+      // Cornerstone's DICOM codecs are split into worker chunks. Rollup cannot
+      // code-split the default IIFE worker format, so emit module workers.
+      format: 'es',
+    },
+    optimizeDeps: {
+      // Pre-bundling rewrites the loader's decode worker to a non-existent
+      // /node_modules/.vite/deps/decodeImageFrameWorker.js URL in development.
+      // Let Vite transform the package source so new URL(..., import.meta.url)
+      // resolves to a real worker module.
+      exclude: ['@cornerstonejs/dicom-image-loader'],
+      // The loader imports these Emscripten UMD factories as default exports.
+      // Pre-bundle them so Vite supplies the CommonJS/UMD interop wrapper while
+      // still transforming the loader's worker URL from source.
+      include: [
+        '@cornerstonejs/codec-libjpeg-turbo-8bit/decodewasmjs',
+        '@cornerstonejs/codec-charls/decodewasmjs',
+        '@cornerstonejs/codec-openjpeg/decodewasmjs',
+        '@cornerstonejs/codec-openjph/wasmjs',
+      ],
+    },
     build: {
       outDir: 'dist',
       chunkSizeWarningLimit: 1000,
@@ -89,6 +110,7 @@ export default defineConfig(({ mode }) => {
     },
     test: {
       environment: 'jsdom',
+      setupFiles: ['./vitest.setup.ts'],
       server: {
         deps: {
           inline: ['react', 'react-dom']

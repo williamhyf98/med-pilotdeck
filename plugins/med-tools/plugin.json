@@ -1,14 +1,14 @@
 {
   "name": "med-tools",
-  "version": "0.5.0",
-  "description": "Medical MCP tools: parse + G9 reports + war-trauma RAG Q&A (remote med-rag service, local corpus fallback) + six-stage care plans; Skills drive routing (no registered agent profile)",
+  "version": "0.6.0",
+  "description": "Medical MCP tools: local DICOM routing, parse + G9 reports, remote RADAR abdominal CT analysis, DeepChest workflow, war-trauma RAG Q&A, and six-stage care plans; Skills drive routing (no registered agent profile)",
   "skills": "skills",
   "agents": [],
   "mcpServers": {
     "med-tools": {
       "command": "node",
       "args": ["${env:PILOT_HOME}/plugins/med-tools/run-mcp.cjs"],
-      "timeoutMs": 300000,
+      "timeoutMs": 900000,
       "env": {
         "MED_VLM_API_BASE": "http://10.31.112.13:8030/v1",
         "MED_VLM_MODEL": "G9-V-Med",
@@ -21,6 +21,12 @@
         "MED_EMBEDDING_MODEL": "qwen3-vl-embedding",
         "MED_EMBEDDING_API_KEY": "EMPTY",
         "MED_EMBEDDING_DIMENSION": "2048",
+        "MED_RADAR_API_BASE": "https://10.31.112.13:18120",
+        "MED_RADAR_API_KEY": "${env:MED_RADAR_API_KEY}",
+        "MED_RADAR_API_KEY_FILE": "${env:PILOT_HOME}/secrets/med-radar-api-key",
+        "MED_RADAR_CA_BUNDLE": "${env:PILOT_HOME}/certs/med-radar-ca.crt",
+        "MED_RADAR_TIMEOUT_SECONDS": "840",
+        "MED_RADAR_OUTPUT_DIR": "${env:PILOT_HOME}/artifacts/radar",
         "MED_RAG_SERVICE_ENABLED": "1",
         "MED_RAG_SERVICE_API_BASE": "http://127.0.0.1:18080",
         "MED_RAG_SERVICE_TIMEOUT_SECONDS": "60",

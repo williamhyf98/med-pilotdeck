@@ -136,6 +136,7 @@
       "inputSettings": "输入设置"
     },
     "darkMode": "深色模式",
+    "showProcessTrace": "显示调用过程",
     "autoExpandTools": "自动展开工具",
     "showRawParameters": "显示原始参数",
     "showThinking": "显示思考过程",

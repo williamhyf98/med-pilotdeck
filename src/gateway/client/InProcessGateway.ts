@@ -2110,10 +2110,34 @@ function mapAgentEventForTurn(event: AgentEvent, runId: string): GatewayEvent[] 
     case "model_event":
       return mapModelEvent(event.event, runId);
     case "tool_progress":
-      return event.metadata?.channel === "assistant_text_delta"
+      if (
+        event.metadata?.channel === "assistant_text_delta"
         && typeof event.metadata.text === "string"
-        ? [{ type: "assistant_text_delta", text: event.metadata.text }]
-        : [];
+      ) {
+        return [{ type: "assistant_text_delta", text: event.metadata.text }];
+      }
+      if (
+        event.metadata?.channel === "medical_activity"
+        && typeof event.metadata.activityId === "string"
+        && typeof event.metadata.title === "string"
+        && ["running", "completed", "failed"].includes(String(event.metadata.state))
+      ) {
+        return [{
+          type: "tool_activity",
+          activityId: event.metadata.activityId,
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          title: event.metadata.title,
+          ...(typeof event.metadata.detail === "string" ? { detail: event.metadata.detail } : {}),
+          state: event.metadata.state as "running" | "completed" | "failed",
+          phase: "medical",
+          ...(event.metadata.severity === "warning" || event.metadata.severity === "error"
+            ? { severity: event.metadata.severity }
+            : {}),
+          createdAt: event.createdAt,
+        }];
+      }
+      return [];
     case "tool_calls_detected":
       return event.calls.map((call) => ({
         type: "tool_call_started",

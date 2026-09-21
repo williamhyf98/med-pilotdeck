@@ -295,6 +295,7 @@ export interface ChatInterfaceProps {
   onReplaceTemporarySession?: (sessionId?: string | null) => void;
   onNavigateToSession?: (targetSessionId: string) => void;
   onShowSettings?: () => void;
+  showProcessTrace?: boolean;
   autoExpandTools?: boolean;
   showRawParameters?: boolean;
   showThinking?: boolean;

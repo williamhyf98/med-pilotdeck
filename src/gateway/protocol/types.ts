@@ -160,6 +160,18 @@ export type GatewayEvent = GatewayTurnScopedEventMetadata & (
   | { type: "assistant_attachment"; attachment: GatewayOutboundAttachment }
   | { type: "file_artifacts"; artifacts: import("../../session/artifacts/FileArtifact.js").FileArtifact[] }
   | { type: "assistant_thinking_delta"; text: string }
+  | {
+      type: "tool_activity";
+      activityId: string;
+      toolCallId: string;
+      toolName: string;
+      title: string;
+      detail?: string;
+      state: "running" | "completed" | "failed";
+      phase: "medical";
+      severity?: "warning" | "error";
+      createdAt?: string;
+    }
   | { type: "tool_call_started"; toolCallId: string; name: string; argsPreview?: string }
   | {
       type: "tool_call_finished";

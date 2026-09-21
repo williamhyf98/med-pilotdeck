@@ -156,8 +156,11 @@ export function parseUserAttachmentNote(content: unknown): {
     const separator = line.indexOf(': ');
     if (separator < 0) continue;
 
-    const name = line.slice(2, separator).trim();
+    const rawName = line.slice(2, separator).trim();
     const filePath = line.slice(separator + 2).trim();
+    const relativePathMatch = rawName.match(/^(.*?)\s+\(([^()]*)\)$/);
+    const name = relativePathMatch?.[1]?.trim() || rawName;
+    const relativePath = relativePathMatch?.[2]?.trim();
     if (!name || !filePath) continue;
     const mimeType = inferAttachmentMimeType(name, filePath);
     if (isImageAttachmentMime(mimeType)) continue;
@@ -166,6 +169,7 @@ export function parseUserAttachmentNote(content: unknown): {
       name,
       path: filePath,
       mimeType,
+      ...(relativePath ? { relativePath } : {}),
     });
   }
 

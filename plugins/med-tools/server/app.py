@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 
+from .dicom_router import route_dicom
 from .parsers import SUPPORTED_SUFFIXES, collect_medical_files, parse_medical_file
 from .vlm_client import analyze_medical_with_vlm, get_vlm_config
 
@@ -63,10 +65,23 @@ mcp = FastMCP(
         "continues after the streamed report. "
         "If report is empty and agent_continue=true, continue the medical "
         "interpretation yourself using summary/png_paths. "
+        "For a DICOM file or directory that needs automatic modality/body-part "
+        "routing, call med_dicom_route first. It is local read-only metadata "
+        "triage; wait for its result before calling another medical tool. "
+        "For a complete abdominal/pelvic CT route, load med-radar-ct, call "
+        "med_radar_analyze_ct, and then answer the user's original question from "
+        "the returned scores and domain warnings. Do not substitute med_parse_medical. "
+        "For any other complete CT with a known body region, load "
+        "med-deepchest-3dmedagent and perform its 3DMedAgent workflow or explicit "
+        "compatibility downgrade before using general medical parsing. "
         "For war-trauma knowledge Q&A: call med_trauma_rag_query, then the main "
         "model answers from chunks (brief tips OK; not the formal five-section plan). "
         "For a formal six-stage graded care plan: call med_trauma_stage_plan "
-        "(G9 inside the plugin; show care_plan verbatim)."
+        "(G9 inside the plugin; show care_plan verbatim). "
+        "For DAMO RADAR analysis of a 3D abdominal CT volume on the node12 "
+        "GPU service: call "
+        "med_radar_analyze_ct, then interpret its uncalibrated scores with the "
+        "domain warnings from the med-radar-ct skill."
     ),
 )
 
@@ -444,6 +459,28 @@ async def med_parse_medical(
 
 
 @mcp.tool()
+def med_dicom_route(path: str, max_files: int = 512) -> str:
+    """Route a DICOM file/series to an existing medical Skill.
+
+    This is a local metadata-only preflight. It reports modality, anatomical
+        region, contrast hint, series completeness, warnings, recommended skill,
+        and recommended tool. It never sends DICOM data to node12 or invokes a
+        model. Complete abdominal/pelvic CT routes require RADAR; other complete
+        CT studies with a known region require the 3DMedAgent skill as the next step.
+
+    Args:
+        path: Absolute or relative path to one DICOM file or a DICOM directory.
+        max_files: Maximum directory files to inspect (1-2048, default 512).
+    """
+    bounded_max_files = max(1, min(int(max_files or 512), 2048))
+    return json.dumps(
+        route_dicom(path, max_files=bounded_max_files),
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@mcp.tool()
 def med_tools_health() -> str:
     """Check med-tools dependencies and medical VLM / fallback reachability."""
     from .vlm_client import get_fallback_vlm_config
@@ -539,7 +576,80 @@ def med_tools_health() -> str:
     except Exception as exc:  # noqa: BLE001
         info["rag"] = {"ready": False, "reason": f"{type(exc).__name__}: {exc}"}
 
+    try:
+        from .radar import radar_status
+
+        info["radar"] = radar_status(validate_runtime=False)
+    except Exception as exc:  # noqa: BLE001
+        info["radar"] = {"ready": False, "reason": f"{type(exc).__name__}: {exc}"}
+
     return json.dumps(info, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def med_radar_status(validate_runtime: bool = False) -> str:
+    """Check the persistent node12 DAMO RADAR service and resident model.
+
+    Args:
+        validate_runtime: Allow a longer health-probe timeout. The remote response
+            always reports model-load and CUDA readiness.
+    """
+    from .radar import radar_status
+
+    return json.dumps(
+        radar_status(validate_runtime=bool(validate_runtime)),
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@mcp.tool()
+async def med_radar_analyze_ct(
+    path: str,
+    ctx: Context,
+    top_k: int = 15,
+    threshold: float = 0.5,
+    max_cases: int = 4,
+    study_context: str = "",
+) -> str:
+    """Upload 3D CT volumes to node12 RADAR and return structured scores.
+
+    Accepts a .nii/.nii.gz file, a single multi-frame 3D CT DICOM, a directory
+    containing NIfTI volumes, or a DICOM CT series directory. Single-frame
+    DICOM images are rejected. RADAR is primarily trained on contrast-enhanced
+    abdominal CT. Its scores are not calibrated clinical probabilities and do
+    not establish either presence or absence of disease.
+
+    Args:
+        path: Absolute or relative path to a 3D CT volume, multi-frame CT DICOM,
+            or DICOM series folder.
+        top_k: Maximum ranked scores returned per case (1-50, default 15).
+        threshold: Display threshold for highlighted scores (0-1, default 0.5).
+        max_cases: Maximum studies processed from a directory (1-8, default 4).
+        study_context: Known region/contrast context, e.g. "contrast-enhanced
+            abdominal CT". Leave empty when unknown; never guess metadata.
+    """
+    from .radar import run_radar_analysis
+
+    await ctx.report_progress(
+        progress=1,
+        total=3,
+        message="__PILOTDECK_MEDICAL_STAGE__:inference",
+    )
+    payload = await asyncio.to_thread(
+        run_radar_analysis,
+        path=path,
+        top_k=top_k,
+        threshold=threshold,
+        max_cases=max_cases,
+        study_context=study_context,
+    )
+    await ctx.report_progress(
+        progress=2,
+        total=3,
+        message="__PILOTDECK_MEDICAL_STAGE__:artifacts",
+    )
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 @mcp.tool()

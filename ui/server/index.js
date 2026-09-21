@@ -15,6 +15,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const installMode = fs.existsSync(path.join(__dirname, '..', '..', '.git')) ? 'git' : 'npm';
+const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 // ANSI color codes for terminal output
 const colors = {
@@ -1300,6 +1301,89 @@ const officePreviewPdfRateLimiter = createRouteRateLimiter({
     message: 'Too many Office preview conversion requests',
 });
 
+const dicomPreviewRateLimiter = createRouteRateLimiter({
+    windowMs: 60 * 1000,
+    maxRequests: 20,
+    keyPrefix: 'dicom-preview',
+    message: 'Too many DICOM preview requests',
+});
+
+function getDicomPreviewPython() {
+    const pluginRoot = path.join(REPO_ROOT, 'plugins', 'med-tools');
+    const candidates = [
+        path.join(pluginRoot, '.venv', 'bin', 'python'),
+        path.join(pluginRoot, '.venv', 'Scripts', 'python.exe'),
+        process.env.PILOTDECK_DICOM_PYTHON,
+        'python3',
+    ].filter(Boolean);
+    return candidates.find((candidate) => candidate === 'python3' || fs.existsSync(candidate));
+}
+
+function runDicomPreview(resolvedPath, maxFrames, { metadataOnly = false } = {}) {
+    const pluginRoot = path.join(REPO_ROOT, 'plugins', 'med-tools');
+    const scriptPath = path.join(pluginRoot, 'server', 'dicom_preview.py');
+    const python = getDicomPreviewPython();
+    if (!python || !fs.existsSync(scriptPath)) {
+        const error = new Error('DICOM preview runtime is unavailable');
+        error.code = 'DICOM_PREVIEW_UNAVAILABLE';
+        return Promise.reject(error);
+    }
+
+    return new Promise((resolve, reject) => {
+        const args = [scriptPath, '--path', resolvedPath, '--max-frames', String(maxFrames)];
+        if (metadataOnly) args.push('--metadata-only');
+        const child = spawn(python, args, {
+            cwd: pluginRoot,
+            env: process.env,
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let stdout = '';
+        let stderr = '';
+        let settled = false;
+        const finish = (callback, value) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            callback(value);
+        };
+        child.stdout.on('data', (chunk) => {
+            stdout += chunk.toString('utf8');
+            if (stdout.length > 32 * 1024 * 1024) {
+                child.kill('SIGKILL');
+                const error = new Error('DICOM preview response exceeded the size limit');
+                error.code = 'DICOM_PREVIEW_TOO_LARGE';
+                finish(reject, error);
+            }
+        });
+        child.stderr.on('data', (chunk) => {
+            stderr += chunk.toString('utf8').slice(-4000);
+        });
+        child.on('error', (error) => finish(reject, error));
+        child.on('close', (code) => {
+            const line = stdout.trim();
+            if (!line) {
+                const error = new Error(stderr.trim() || 'DICOM preview process returned no result');
+                error.code = code === 2 ? 'DICOM_PREVIEW_DECODE_FAILED' : 'DICOM_PREVIEW_UNAVAILABLE';
+                finish(reject, error);
+                return;
+            }
+            try {
+                finish(resolve, JSON.parse(line));
+            } catch {
+                const error = new Error('DICOM preview process returned invalid JSON');
+                error.code = 'DICOM_PREVIEW_INVALID_RESPONSE';
+                finish(reject, error);
+            }
+        });
+        const timer = setTimeout(() => {
+            child.kill('SIGKILL');
+            const error = new Error('DICOM preview timed out');
+            error.code = 'DICOM_PREVIEW_TIMEOUT';
+            finish(reject, error);
+        }, 30_000);
+    });
+}
+
 async function addDirectoryToZip(zip, directoryPath, rootPath) {
     const entries = await fsPromises.readdir(directoryPath, { withFileTypes: true });
 
@@ -1545,6 +1629,58 @@ app.get('/api/projects/:projectName/files/content', authenticateToken, async (re
         console.error('Error serving binary file:', error);
         if (!res.headersSent) {
             res.status(500).json({ error: error.message });
+        }
+    }
+});
+
+// Decode a bounded set of DICOM frames for the file viewer. The source file
+// never leaves the project directory and is never returned as raw text.
+app.get('/api/projects/:projectName/files/preview/dicom', authenticateToken, dicomPreviewRateLimiter, async (req, res) => {
+    try {
+        const { projectName } = req.params;
+        const { path: filePath } = req.query;
+        if (typeof filePath !== 'string' || !filePath.trim()) {
+            return res.status(400).json({ error: 'Invalid file path', code: 'INVALID_FILE_PATH' });
+        }
+
+        const projectRoot = await extractProjectDirectory(projectName).catch(() => null);
+        if (!projectRoot) {
+            return res.status(404).json({ error: 'Project not found', code: 'PROJECT_NOT_FOUND' });
+        }
+        const resolvedResult = resolvePathInProject(projectRoot, filePath);
+        if (!resolvedResult.valid) {
+            return res.status(403).json({ error: resolvedResult.error, code: 'PATH_OUTSIDE_PROJECT' });
+        }
+        const resolved = resolvedResult.resolved;
+        const stats = await fsPromises.stat(resolved).catch(() => null);
+        if (!stats?.isFile()) {
+            return res.status(404).json({ error: 'DICOM file not found', code: 'DICOM_FILE_NOT_FOUND' });
+        }
+        if (stats.size > 512 * 1024 * 1024) {
+            return res.status(413).json({ error: 'DICOM file is too large to preview', code: 'DICOM_PREVIEW_TOO_LARGE' });
+        }
+
+        const requestedFrames = Number.parseInt(String(req.query.maxFrames || '12'), 10);
+        const maxFrames = Number.isFinite(requestedFrames)
+            ? Math.max(1, Math.min(24, requestedFrames))
+            : 12;
+        const metadataOnly = req.query.metadataOnly === '1' || req.query.metadataOnly === 'true';
+        const payload = await runDicomPreview(resolved, maxFrames, { metadataOnly });
+        if (!payload || typeof payload !== 'object') {
+            return res.status(502).json({ error: 'Invalid DICOM preview response', code: 'DICOM_PREVIEW_INVALID_RESPONSE' });
+        }
+        if (payload.errorCode === 'DICOM_PREVIEW_UNAVAILABLE') {
+            return res.status(503).json(payload);
+        }
+        res.setHeader('Cache-Control', 'no-store');
+        return res.status(payload.ok ? 200 : 422).json(payload);
+    } catch (error) {
+        console.error('Error generating DICOM preview:', error);
+        if (!res.headersSent) {
+            return res.status(502).json({
+                error: error?.message || 'Failed to generate DICOM preview',
+                code: error?.code || 'DICOM_PREVIEW_FAILED',
+            });
         }
     }
 });

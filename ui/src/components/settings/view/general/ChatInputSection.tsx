@@ -18,6 +18,13 @@ export default function ChatInputSection() {
       <div className="space-y-6">
         <SettingsSection title={t("quickSettings.sections.toolDisplay")}>
           <SettingsCard divided>
+            <SettingsRow label={t("quickSettings.showProcessTrace")}>
+              <SettingsToggle
+                checked={preferences.showProcessTrace}
+                onChange={(value) => setPreference("showProcessTrace", value)}
+                ariaLabel={t("quickSettings.showProcessTrace")}
+              />
+            </SettingsRow>
             <SettingsRow label={t("quickSettings.autoExpandTools")}>
               <SettingsToggle
                 checked={preferences.autoExpandTools}

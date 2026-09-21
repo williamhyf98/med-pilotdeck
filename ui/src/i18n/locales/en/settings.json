@@ -136,6 +136,7 @@
       "inputSettings": "Input Settings"
     },
     "darkMode": "Dark Mode",
+    "showProcessTrace": "Show tool/process trace",
     "autoExpandTools": "Auto-expand tools",
     "showRawParameters": "Show raw parameters",
     "showThinking": "Show thinking",

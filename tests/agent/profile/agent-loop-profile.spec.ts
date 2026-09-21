@@ -383,6 +383,108 @@ test("direct-final tool output completes without a second agent model call", asy
   assert.equal(durable.at(-1)?.metadata?.directToolOutput, true);
 });
 
+test("one direct-final medical result completes a parallel tool batch", async () => {
+  const routeTool = "mcp__med-tools__med_dicom_route";
+  const parseTool = "mcp__med-tools__med_parse_medical";
+  const tools = new ToolRegistry();
+  tools.register(fakeTool(routeTool));
+  tools.register(fakeTool(parseTool));
+  let modelCalls = 0;
+  const router = {
+    invalidateSticky: () => ({ orchestrating: false }),
+    async decide(input: any) {
+      return {
+        provider: input.request.provider,
+        model: input.request.model,
+        scenarioType: "explicit",
+        isSubagent: false,
+        orchestrating: false,
+        resolvedFrom: "explicit",
+        mutations: {},
+      };
+    },
+    async *execute() {
+      modelCalls += 1;
+      yield { type: "message_start", role: "assistant" };
+      yield {
+        type: "tool_call_end",
+        toolCall: { id: "call-route", name: routeTool, input: { path: "scan.dcm" } },
+      };
+      yield {
+        type: "tool_call_end",
+        toolCall: { id: "call-parse", name: parseTool, input: { path: "scan.dcm" } },
+      };
+      yield { type: "message_end", finishReason: "tool_call" };
+    },
+    async *stream() {
+      yield { type: "message_end", finishReason: "stop" };
+    },
+  };
+  const config: AgentRuntimeConfig = {
+    provider: "openai",
+    model: "default-model",
+    cwd: process.cwd(),
+    permissionMode: "bypassPermissions",
+    permissionContext: createDefaultPermissionContext({
+      cwd: process.cwd(),
+      mode: "bypassPermissions",
+      bypassAvailable: true,
+      canPrompt: false,
+    }),
+  };
+  const directText = "## 资料概况\n\n完整医学报告。";
+  const loop = new AgentLoop(config, {
+    router,
+    tools: {
+      registry: tools,
+      scheduler: {
+        async executeAll(calls: any[]) {
+          const now = new Date().toISOString();
+          return calls.map((call) => call.name === parseTool
+            ? {
+                type: "success" as const,
+                toolCallId: call.id,
+                toolName: call.name,
+                content: [{ type: "text", text: directText }],
+                data: { ok: true, report: directText },
+                metadata: {
+                  directFinalAssistantText: directText,
+                  generationOwner: "plugin-vlm",
+                },
+                startedAt: now,
+                completedAt: now,
+              }
+            : {
+                type: "success" as const,
+                toolCallId: call.id,
+                toolName: call.name,
+                content: [{ type: "text", text: "route complete" }],
+                data: { status: "ready" },
+                metadata: {},
+                startedAt: now,
+                completedAt: now,
+              });
+        },
+      },
+    },
+  } as any);
+
+  const events = [];
+  for await (const event of loop.run({
+    sessionId: "session-parallel-direct",
+    turnId: "turn-parallel-direct",
+    messages: [{ role: "user", content: [{ type: "text", text: "分析 DICOM" }] }],
+  })) {
+    events.push(event);
+  }
+
+  assert.equal(modelCalls, 1);
+  const finalAssistant = events.filter((event) => event.type === "assistant_message").at(-1);
+  const finalBlock = finalAssistant?.message.content[0];
+  assert.equal(finalBlock?.type === "text" ? finalBlock.text : undefined, directText);
+  assert.equal(events.at(-1)?.type, "turn_completed");
+});
+
 test("material continuation keeps the agent loop open after streamed report", async () => {
   const toolName = "mcp__med-tools__med_parse_medical";
   const tools = new ToolRegistry();

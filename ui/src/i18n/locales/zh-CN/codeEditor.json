@@ -55,6 +55,28 @@
     "title": "二进制文件",
     "message": "文件 \"{{fileName}}\" 无法在文本编辑器中显示，因为它是二进制文件。"
   },
+  "dicomPreview": {
+    "loading": "正在加载 DICOM 查看器...",
+    "failed": "无法渲染此 DICOM",
+    "retry": "重试",
+    "projectUnavailable": "当前项目不可用。",
+    "noPixelData": "该 DICOM 不包含可渲染的像素数据。",
+    "initializeFailed": "DICOM 查看器初始化失败。",
+    "invalidMetadataResponse": "DICOM 预览服务返回了无效响应，请刷新后重试。",
+    "requestTimedOut": "读取 DICOM 文件超时，请重试。",
+    "initializeTimedOut": "初始化 DICOM 查看器超时，请重试。",
+    "renderTimedOut": "DICOM 像素解码超时，请重试或下载原文件查看。",
+    "unknown": "未知",
+    "frameCount": "{{count}} 帧",
+    "windowLevel": "窗宽 / 窗位",
+    "pan": "平移",
+    "zoom": "缩放",
+    "reset": "重置视图",
+    "refresh": "刷新 DICOM",
+    "previousFrame": "上一帧",
+    "nextFrame": "下一帧",
+    "frameSlider": "DICOM 帧"
+  },
   "officePreview": {
     "checkingService": "正在检查 Office 预览服务...",
     "converting": "正在加载...",
@@ -134,6 +156,7 @@
     "powerpoint": "PowerPoint 演示文稿",
     "pdf": "PDF 文件",
     "image": "图片文件",
+    "dicom": "DICOM 影像",
     "file": "文件"
   },
   "selection": {
