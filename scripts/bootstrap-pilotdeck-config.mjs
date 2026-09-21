@@ -107,6 +107,7 @@ model:
               - image/webp
 memory:
   enabled: true
+  maintenanceMode: immediate
   reasoningMode: answer_first
   autoIndexIntervalMinutes: 30
   autoDreamIntervalMinutes: 60

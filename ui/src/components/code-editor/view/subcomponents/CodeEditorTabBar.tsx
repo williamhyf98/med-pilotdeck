@@ -259,8 +259,8 @@ export default function CodeEditorTabBar({
           role="tablist"
           aria-label={labels.tabList}
           className={cn(
-            'scrollbar-hide flex h-10 min-w-0 items-end gap-0.5 overflow-x-auto border-b border-neutral-200 bg-neutral-50 px-2 pt-1 dark:border-neutral-800 dark:bg-neutral-900/70',
-            reserveToolbarSpace && 'pr-32',
+            'scrollbar-hide flex h-10 min-w-0 scroll-pr-4 items-end gap-0.5 overflow-x-auto border-b border-neutral-200 bg-neutral-50 pl-2 pt-1 dark:border-neutral-800 dark:bg-neutral-900/70',
+            reserveToolbarSpace ? 'pr-32' : 'pr-4',
           )}
         >
           {tabs.map((tab, index) => {
@@ -332,6 +332,7 @@ export default function CodeEditorTabBar({
               </div>
             );
           })}
+          <span aria-hidden="true" className="h-px w-2 shrink-0" />
         </div>
       </div>
       {menuContent}

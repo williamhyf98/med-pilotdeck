@@ -176,8 +176,6 @@
   "mainContent": {
     "loading": "Loading PilotDeck",
     "settingUpWorkspace": "Setting up your workspace...",
-    "chooseProject": "Create a project to start",
-    "selectProjectDescription": "Chat requires a project. Create one with a name and type, or pick an existing project from the sidebar.",
     "tip": "Tip",
     "createProject": "Create project",
     "createProjectMobile": "Tap the menu button above to access projects",

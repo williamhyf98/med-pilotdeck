@@ -23,6 +23,110 @@ const MINUTE_MS = 60_000;
 /** `AUTO_INDEX_PENDING_DIALOGUE_TURN_THRESHOLD`，service.ts 内为模块私有，此处镜像一份 */
 const BACKLOG_THRESHOLD = 20;
 
+test("全局模式下 Dream 失败只延迟重试，不改维护模式；关闭等待维护完成", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ec-global-retry-"));
+  const service = new EdgeClawMemoryService({ workspaceDir: dir, rootDir: dir, settingsSource: "global",
+    defaultIndexingSettings: { maintenanceMode: "immediate" } });
+  try {
+    service.flush = async () => { throw new Error("index unavailable"); };
+    for (let i = 0; i < 3; i++) await assert.rejects(service.dream(), /index unavailable/);
+    assert.equal(service.getSettings().maintenanceMode, "immediate");
+    assert.equal(service.repository.getPipelineState("maintenanceDowngrade"), undefined);
+    assert.ok(Date.parse(service.repository.getPipelineState<string>("dreamRetryAfter")!) > Date.now());
+    service.repository.getFileMemoryStore().upsertCandidate({ type: "feedback", scope: "project",
+      name: "输出格式", description: "格式", body: "使用中文表格" });
+    assert.equal((await service.runDueScheduledMaintenance()).dreamRan, false);
+    let release!: () => void;
+    service.flush = async () => { await new Promise<void>(resolve => { release = resolve; }); throw new Error("finished"); };
+    const pending = service.dream();
+    service.close();
+    release();
+    await assert.rejects(pending, /finished/);
+  } finally { service.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("全局维护设置覆盖旧项目设置，新建和重开项目都跟随全局", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ec-shared-settings-"));
+  const options = { workspaceDir: dir, rootDir: dir, settingsSource: "global" as const };
+  let service = new EdgeClawMemoryService({ ...options, defaultIndexingSettings: { maintenanceMode: "manual" } });
+  try {
+    service.repository.setPipelineState("indexingSettings", {
+      maintenanceMode: "immediate", autoIndexIntervalMinutes: 1, autoDreamIntervalMinutes: 2,
+    });
+    captureTurns(service, 1, 0);
+    assert.equal((await service.runDueScheduledMaintenance()).indexRan, false);
+    assert.equal(service.getSettings().maintenanceMode, "manual");
+    assert.equal(service.getSettings().autoIndexIntervalMinutes, 30);
+    service.close();
+    service = new EdgeClawMemoryService({ ...options, defaultIndexingSettings: {
+      maintenanceMode: "interval", autoIndexIntervalMinutes: 90, autoDreamIntervalMinutes: 120,
+    } });
+    assert.equal(service.getSettings().maintenanceMode, "interval");
+    assert.equal(service.getSettings().autoIndexIntervalMinutes, 90);
+    assert.equal(service.getSettings().autoDreamIntervalMinutes, 120);
+    assert.throws(() => service.saveSettings({ maintenanceMode: "manual" }), /global/i);
+  } finally { service.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("通用医学默认即时模式保留内容门：空库不维护，单轮立即 Index，有新笔记立即 Dream", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ec-general-immediate-"));
+  const service = new EdgeClawMemoryService({ workspaceDir: dir, rootDir: dir, projectType: "general_medicine" });
+  try {
+    const empty = await service.runDueScheduledMaintenance();
+    assert.equal(empty.indexRan, false);
+    assert.equal(empty.dreamRan, false);
+    captureTurns(service, 1, 0);
+    const indexed = await service.runDueScheduledMaintenance();
+    assert.equal(indexed.indexRan, true);
+    service.repository.getFileMemoryStore().upsertCandidate({
+      type: "project", scope: "project", name: "研究范围", description: "研究纳排标准",
+      body: "本研究排除青霉素过敏者；不是某位患者的病史。",
+    });
+    // Stop at the expensive model-backed Dream boundary; assert scheduling, not model quality.
+    const dreamBoundary = new Error("reached scheduled Dream");
+    service.dream = async (trigger) => {
+      assert.equal(trigger, "scheduled");
+      throw dreamBoundary;
+    };
+    await assert.rejects(service.runDueScheduledMaintenance(), error => error === dreamBoundary);
+  } finally { service.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("通用医学新项目默认即时维护，已有显式模式与旧间隔设置不被覆盖", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ec-general-settings-"));
+  const service = new EdgeClawMemoryService({ workspaceDir: dir, rootDir: dir, projectType: "general_medicine" });
+  try {
+    assert.equal(service.getSettings().maintenanceMode, "immediate");
+    assert.equal(service.overview().maintenanceMode, "immediate");
+    for (const mode of ["manual", "interval", "immediate"] as const) {
+      service.saveSettings({ maintenanceMode: mode });
+      assert.equal(service.getSettings().maintenanceMode, mode);
+    }
+    service.repository.setPipelineState("indexingSettings", {
+      autoIndexIntervalMinutes: 0, autoDreamIntervalMinutes: 120,
+    });
+    assert.equal(service.getSettings().maintenanceMode, "interval");
+    assert.equal(service.getSettings().autoIndexIntervalMinutes, 0);
+    assert.equal(service.getSettings().autoDreamIntervalMinutes, 120);
+  } finally {
+    service.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("通用医学旧配置中的定时间隔保留原语义，显式 immediate 仍可覆盖", () => {
+  for (const explicit of [false, true]) {
+    const dir = mkdtempSync(join(tmpdir(), "ec-general-config-"));
+    const service = new EdgeClawMemoryService({
+      workspaceDir: dir, rootDir: dir, projectType: "general_medicine",
+      defaultIndexingSettings: { autoIndexIntervalMinutes: 0, ...(explicit ? { maintenanceMode: "immediate" as const } : {}) },
+    });
+    try {
+      assert.equal(service.getSettings().maintenanceMode, explicit ? "immediate" : "interval");
+    } finally { service.close(); rmSync(dir, { recursive: true, force: true }); }
+  }
+});
+
 interface Harness {
   readonly service: EdgeClawMemoryService;
   /** flush 被调用的次数；调用即视为「索引跑了」 */

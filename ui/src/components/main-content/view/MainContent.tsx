@@ -2,12 +2,6 @@ import React, { Suspense, useCallback, useEffect, useRef, useState } from 'react
 import { useTranslation } from 'react-i18next';
 import {
   BarChart3,
-  FileText,
-  FolderOpen,
-  MessageSquare,
-  PanelLeftOpen,
-  PanelRightClose,
-  PanelRightOpen,
   Radio,
   type LucideIcon,
 } from 'lucide-react';
@@ -36,10 +30,8 @@ import type {
   Project,
   ProjectSession,
 } from '../../../types/app';
-import { isReadOnlySession } from '../../../types/app';
 import { api } from '../../../utils/api';
 import MainContentStateView from './subcomponents/MainContentStateView';
-import ConversationSwitcher from './subcomponents/ConversationSwitcher';
 import ErrorBoundary from './ErrorBoundary';
 import ToolSidePanel from './subcomponents/ToolSidePanel';
 
@@ -75,15 +67,8 @@ type TasksSettingsContextValue = {
 
 type MainContentToast = { kind: 'error' | 'info'; text: string } | null;
 
-const FILES_EXPLORER_DEFAULT_WIDTH = 300;
-const FILES_EXPLORER_MIN_WIDTH = 240;
-const FILES_EXPLORER_MAX_WIDTH = 420;
-const FILES_ASSISTANT_DEFAULT_WIDTH = 380;
-const FILES_ASSISTANT_MIN_WIDTH = 320;
-const FILES_ASSISTANT_MAX_WIDTH = 480;
-const FILES_ARTIFACT_MIN_WIDTH = 480;
-const FILES_NARROW_BREAKPOINT = 1040;
-const FILES_ASSISTANT_STORAGE_KEY = 'pilotdeck:files-assistant-width';
+const FILES_PANEL_WIDTH = 320;
+const FILE_PREVIEW_WIDTH = 560;
 const TOOL_PANEL_STORAGE_KEY = 'pilotdeck:dashboard-panel-width';
 const TOOL_PANEL_DEFAULT_WIDTH = 480;
 const TOOL_PANEL_MIN_WIDTH = 360;
@@ -122,17 +107,6 @@ function summarizeTraumaForm(form: TurnFormInput): string {
       : null,
   ].filter((part): part is string => Boolean(part));
   return parts.map((part) => `- ${part}`).join('\n');
-}
-
-function readStoredFilesAssistantWidth(): number {
-  try {
-    const stored = Number(localStorage.getItem(FILES_ASSISTANT_STORAGE_KEY));
-    return Number.isFinite(stored) && stored > 0
-      ? Math.min(Math.max(stored, FILES_ASSISTANT_MIN_WIDTH), FILES_ASSISTANT_MAX_WIDTH)
-      : FILES_ASSISTANT_DEFAULT_WIDTH;
-  } catch {
-    return FILES_ASSISTANT_DEFAULT_WIDTH;
-  }
 }
 
 function readStoredToolPanelWidth(): number {
@@ -831,22 +805,18 @@ function SplitBody(props: SplitBodyProps) {
   const renderTasksAsTool = activeTab === 'tasks' && shouldShowTasksTab;
   const isFiles = activeTab === 'files';
   const filesSplitContainerRef = useRef<HTMLDivElement | null>(null);
-  const [filesExplorerWidth, setFilesExplorerWidth] = useState(FILES_EXPLORER_DEFAULT_WIDTH);
-  const [filesAssistantWidth, setFilesAssistantWidth] = useState(readStoredFilesAssistantWidth);
-  const [filesResizeTarget, setFilesResizeTarget] = useState<'explorer' | 'assistant' | null>(null);
-  const [explorerCollapsed, setExplorerCollapsed] = useState(false);
-  const [assistantCollapsed, setAssistantCollapsed] = useState(false);
-  const [assistantOverlayOpen, setAssistantOverlayOpen] = useState(false);
   const [workbenchWidth, setWorkbenchWidth] = useState(0);
   const [toolPanelWidth, setToolPanelWidth] = useState(readStoredToolPanelWidth);
   const [toolPanelResizing, setToolPanelResizing] = useState(false);
-  const isNarrowWorkbench = workbenchWidth > 0 && workbenchWidth < FILES_NARROW_BREAKPOINT;
   const toolPanelMaxWidth = workbenchWidth > 0
     ? Math.max(
         TOOL_PANEL_MIN_WIDTH,
         Math.min(TOOL_PANEL_MAX_WIDTH, workbenchWidth * TOOL_PANEL_MAX_LAYOUT_RATIO),
       )
     : TOOL_PANEL_MAX_WIDTH;
+  const filePreviewWidth = workbenchWidth > 0
+    ? Math.min(FILE_PREVIEW_WIDTH, Math.max(380, workbenchWidth - FILES_PANEL_WIDTH - 420))
+    : FILE_PREVIEW_WIDTH;
 
   useEffect(() => {
     const container = filesSplitContainerRef.current;
@@ -870,88 +840,6 @@ function SplitBody(props: SplitBodyProps) {
       // The panel remains usable when localStorage is unavailable.
     }
   }, [toolPanelWidth]);
-
-  useEffect(() => {
-    if (!isNarrowWorkbench) setAssistantOverlayOpen(false);
-  }, [isNarrowWorkbench]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(FILES_ASSISTANT_STORAGE_KEY, String(Math.round(filesAssistantWidth)));
-    } catch {
-      // Resizing remains available when persistent storage is unavailable.
-    }
-  }, [filesAssistantWidth]);
-
-  const clampFilesAssistantWidth = useCallback((width: number) => {
-    const explorerWidth = explorerCollapsed ? 44 : filesExplorerWidth;
-    const availableWidth = workbenchWidth > 0
-      ? workbenchWidth - explorerWidth - FILES_ARTIFACT_MIN_WIDTH
-      : FILES_ASSISTANT_MAX_WIDTH;
-    const maxWidth = Math.max(
-      FILES_ASSISTANT_MIN_WIDTH,
-      Math.min(FILES_ASSISTANT_MAX_WIDTH, availableWidth),
-    );
-    return Math.min(Math.max(width, FILES_ASSISTANT_MIN_WIDTH), maxWidth);
-  }, [explorerCollapsed, filesExplorerWidth, workbenchWidth]);
-
-  const handleFilesAssistantResizeBy = useCallback((delta: number) => {
-    setFilesAssistantWidth((width) => clampFilesAssistantWidth(width + delta));
-  }, [clampFilesAssistantWidth]);
-
-  useEffect(() => {
-    setFilesAssistantWidth((width) => clampFilesAssistantWidth(width));
-  }, [clampFilesAssistantWidth]);
-
-  const handleFilesResizeStart = useCallback((
-    target: 'explorer' | 'assistant',
-    event: React.MouseEvent<HTMLDivElement>,
-  ) => {
-    if (!isFiles) return;
-    setFilesResizeTarget(target);
-    event.preventDefault();
-  }, [isFiles]);
-
-  useEffect(() => {
-    if (!filesResizeTarget) return undefined;
-
-    const handleMouseMove = (event: globalThis.MouseEvent) => {
-      const container = filesSplitContainerRef.current;
-      if (!container) return;
-
-      const rect = container.getBoundingClientRect();
-      if (filesResizeTarget === 'explorer') {
-        const available = rect.width - filesAssistantWidth - FILES_ARTIFACT_MIN_WIDTH;
-        const maxWidth = Math.max(
-          FILES_EXPLORER_MIN_WIDTH,
-          Math.min(FILES_EXPLORER_MAX_WIDTH, available),
-        );
-        setFilesExplorerWidth(Math.min(
-          Math.max(event.clientX - rect.left, FILES_EXPLORER_MIN_WIDTH),
-          maxWidth,
-        ));
-        return;
-      }
-
-      setFilesAssistantWidth(clampFilesAssistantWidth(rect.right - event.clientX));
-    };
-
-    const handleMouseUp = () => {
-      setFilesResizeTarget(null);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-  }, [clampFilesAssistantWidth, filesAssistantWidth, filesExplorerWidth, filesResizeTarget]);
 
   const clampToolPanelWidth = useCallback((width: number) => (
     Math.min(Math.max(width, TOOL_PANEL_MIN_WIDTH), toolPanelMaxWidth)
@@ -1036,18 +924,7 @@ function SplitBody(props: SplitBodyProps) {
 
   const showFullScreenTool = isFullScreenTool && (activeTab !== 'tasks' || shouldShowTasksTab);
   const showChat = !showFullScreenTool;
-  const assistantVisible = isFiles
-    && showChat
-    && !editorExpanded
-    && !isMobile
-    && !assistantCollapsed
-    && (!isNarrowWorkbench || assistantOverlayOpen);
-  const assistantIsOverlay = assistantVisible && isNarrowWorkbench;
-  const showAssistantRail = isFiles
-    && showChat
-    && !editorExpanded
-    && !isMobile
-    && !assistantVisible;
+  const filePreviewExpanded = isFiles && showChat && hasEditor && editorExpanded;
   const isWarTraumaProject = selectedProject
     ? resolveProjectType(selectedProject) === 'war_trauma'
     : false;
@@ -1085,9 +962,6 @@ function SplitBody(props: SplitBodyProps) {
       navigateToChatMessageRef={navigateToChatMessageRef}
       traumaAbortUIRef={traumaAbortUIRef}
       onTraumaProcessStateChange={onTraumaProcessStateChange}
-      hiddenComposerNotice={isWarTraumaProject && isFiles
-        ? '战创伤病例请切换到对话工作区，通过结构化表单提交本轮信息。'
-        : undefined}
     />
   );
   return (
@@ -1104,127 +978,18 @@ function SplitBody(props: SplitBodyProps) {
         </div>
       )}
 
-      {/* Files workbench explorer. On mobile it yields to the opened artifact. */}
-      {isFiles && showChat && !editorExpanded && (!isMobile || !hasEditor) ? (
-        explorerCollapsed && !isMobile ? (
-          <div className="flex h-full w-11 flex-shrink-0 flex-col items-center border-r border-neutral-200 bg-neutral-50/60 py-2 dark:border-neutral-800 dark:bg-neutral-900/40">
-            <button
-              type="button"
-              onClick={() => setExplorerCollapsed(false)}
-              className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-200/70 hover:text-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
-              title={t('filesWorkbench.openExplorer')}
-              aria-label={t('filesWorkbench.openExplorer')}
-            >
-              <PanelLeftOpen className="h-4 w-4" strokeWidth={1.8} />
-            </button>
-            <FolderOpen className="mt-3 h-4 w-4 text-neutral-400 dark:text-neutral-500" strokeWidth={1.7} />
-          </div>
-        ) : (
-          <>
-            <div
-              className="flex h-full min-w-0 flex-shrink-0 flex-col overflow-hidden border-r border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950"
-              style={isMobile ? { width: '100%' } : { width: filesExplorerWidth }}
-            >
-              <Suspense fallback={<TabSkeleton />}>
-                <FilesV2
-                  key={selectedProject?.name ?? ''}
-                  selectedProject={selectedProject}
-                  onFileOpen={handleFileOpen}
-                  activeFilePath={activeFilePath}
-                  onFileRename={onFileRename}
-                  onFileDelete={onFileDelete}
-                  onClose={isMobile ? () => setActiveTab('chat') : () => setExplorerCollapsed(true)}
-                  canAddToChat={!isReadOnlySession(selectedSession)}
-                />
-              </Suspense>
-            </div>
-            {!isMobile ? (
-              <div
-                onMouseDown={(event) => handleFilesResizeStart('explorer', event)}
-                className="group relative z-20 w-px flex-shrink-0 cursor-col-resize bg-neutral-200 transition-colors hover:bg-neutral-400 dark:bg-neutral-800 dark:hover:bg-neutral-600"
-                title={t('filesWorkbench.resizeExplorer')}
-              >
-                <div className="absolute inset-y-0 left-1/2 w-3 -translate-x-1/2" />
-                <div className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-neutral-400 opacity-0 transition-opacity group-hover:opacity-100 dark:bg-neutral-600" />
-              </div>
-            ) : null}
-          </>
-        )
-      ) : null}
-
-      {/* Artifact canvas — the visual center and primary surface in Files. */}
-      {isFiles && showChat && (hasEditor || !isMobile) ? (
-        <div className="flex min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-hidden bg-neutral-50/40 dark:bg-neutral-950">
-          {hasEditor && selectedProject ? (
-            <EditorSidebar {...editorSidebarProps} workspaceMode />
-          ) : (
-            <div className="flex h-full flex-col items-center justify-center px-8 text-center">
-              <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl border border-neutral-200 bg-white text-neutral-400 shadow-sm dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-500">
-                <FileText className="h-5 w-5" strokeWidth={1.6} />
-              </div>
-              <p className="text-[14px] font-medium text-neutral-700 dark:text-neutral-300">
-                {t('filesWorkbench.openFileTitle')}
-              </p>
-              <p className="mt-1 max-w-64 text-[12px] leading-5 text-neutral-400 dark:text-neutral-500">
-                {t('filesWorkbench.openFileDescription')}
-              </p>
-            </div>
-          )}
-        </div>
-      ) : null}
-
-      {/* Agent surface stays mounted so streaming state survives tab switches. */}
+      {/* Conversation stays mounted while project files open beside it. */}
       <div
         key="agent-surface"
         className={cn(
-          'workspace-chat-surface flex min-h-0 min-w-0 flex-col',
+          'workspace-chat-surface flex min-h-0 min-w-0 flex-1 flex-col',
           !showChat && 'invisible absolute h-0 w-0 overflow-hidden',
-          showChat && !isFiles && 'flex-1',
-          assistantVisible && !assistantIsOverlay && 'flex-shrink-0 border-l border-neutral-200 dark:border-neutral-800',
-          assistantIsOverlay && 'absolute inset-y-0 right-0 z-40 border-l border-neutral-200 shadow-2xl dark:border-neutral-800',
-          isFiles && !assistantVisible && 'invisible absolute h-0 w-0 overflow-hidden',
+          filePreviewExpanded && 'invisible absolute h-0 w-0 overflow-hidden',
         )}
-        style={assistantVisible ? { width: filesAssistantWidth } : undefined}
-        aria-hidden={!showChat || (isFiles && !assistantVisible)}
+        aria-hidden={!showChat || filePreviewExpanded}
       >
-        {isFiles ? (
-          <div className="relative z-50 flex h-12 flex-shrink-0 items-center gap-1 border-b border-neutral-200 px-2 dark:border-neutral-800">
-            {selectedProject ? (
-              <ConversationSwitcher
-                project={selectedProject}
-                selectedSession={selectedSession}
-                processingSessions={processingSessions}
-                unreadSessionIds={unreadSessionIds}
-                onSelectSession={(session) => {
-                  if (onSelectSession) {
-                    onSelectSession(selectedProject, session.id, session, {
-                      preserveActiveTab: true,
-                    });
-                    return;
-                  }
-                  onNavigateToSession(session.id);
-                }}
-                onNewSession={() => onStartNewSession(selectedProject, {
-                  preserveActiveTab: true,
-                })}
-              />
-            ) : null}
-            <button
-              type="button"
-              onClick={() => {
-                if (isNarrowWorkbench) setAssistantOverlayOpen(false);
-                else setAssistantCollapsed(true);
-              }}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-700 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
-              title={t('filesWorkbench.collapseAssistant')}
-              aria-label={t('filesWorkbench.collapseAssistant')}
-            >
-              <PanelRightClose className="h-4 w-4" strokeWidth={1.8} />
-            </button>
-          </div>
-        ) : null}
         <ErrorBoundary showDetails>
-          {isWarTraumaProject && !isFiles ? (
+          {isWarTraumaProject ? (
             <TraumaWorkspace
               resetKey={`${selectedProject?.name ?? ''}:${selectedSession?.id ?? ''}`}
               projectKey={selectedProject?.fullPath || selectedProject?.path || selectedProject?.name}
@@ -1234,13 +999,49 @@ function SplitBody(props: SplitBodyProps) {
               pendingRun={pendingTraumaRun}
               onNavigateToChatMessage={(runId) => navigateToChatMessageRef.current?.(runId)}
               runtimePanel={chatInterface}
+              conversationOnly={isFiles}
               submitting={!traumaLocallyAborted && (traumaSubmitting || Boolean(
                 selectedSession?.id && processingSessions.has(selectedSession.id)
               ))}
             />
           ) : chatInterface}
-          </ErrorBoundary>
+        </ErrorBoundary>
       </div>
+
+      {isFiles && showChat && hasEditor && selectedProject ? (
+        <aside
+          className={cn(
+            'animate-in slide-in-from-right z-20 h-full min-h-0 overflow-hidden border-l border-border bg-background pr-3 shadow-[-12px_0_32px_rgba(15,23,42,0.12)] duration-200',
+            filePreviewExpanded ? 'min-w-0 flex-1' : 'shrink-0',
+            isMobile && 'absolute inset-y-0 right-0 z-40 w-full',
+          )}
+          style={isMobile || filePreviewExpanded ? undefined : { width: filePreviewWidth }}
+          aria-label="文件预览"
+        >
+          <EditorSidebar {...editorSidebarProps} workspaceMode />
+        </aside>
+      ) : null}
+
+      {isFiles && showChat ? (
+        <aside
+          className={cn(
+            'z-30 h-full min-h-0 shrink-0 overflow-hidden border-l border-border shadow-[-8px_0_24px_rgba(15,23,42,0.06)]',
+            isMobile && 'absolute inset-y-0 right-0 w-full',
+          )}
+          style={isMobile ? undefined : { width: FILES_PANEL_WIDTH }}
+          aria-label="项目文件"
+        >
+          <Suspense fallback={<TabSkeleton />}>
+            <FilesV2
+              key={selectedProject?.name ?? ''}
+              selectedProject={selectedProject}
+              onFileOpen={handleFileOpen}
+              activeFilePath={activeFilePath}
+              onClose={() => setActiveTab('chat')}
+            />
+          </Suspense>
+        </aside>
+      ) : null}
 
       {dashboardPanelTab ? (
         <ToolSidePanel
@@ -1266,61 +1067,6 @@ function SplitBody(props: SplitBodyProps) {
             {renderTool()}
           </Suspense>
         </ToolSidePanel>
-      ) : null}
-
-      {assistantVisible && !assistantIsOverlay ? (
-        <div
-          onMouseDown={(event) => handleFilesResizeStart('assistant', event)}
-          onKeyDown={(event) => {
-            if (event.key === 'ArrowLeft') {
-              event.preventDefault();
-              handleFilesAssistantResizeBy(16);
-            } else if (event.key === 'ArrowRight') {
-              event.preventDefault();
-              handleFilesAssistantResizeBy(-16);
-            } else if (event.key === 'Home') {
-              event.preventDefault();
-              setFilesAssistantWidth(clampFilesAssistantWidth(FILES_ASSISTANT_MIN_WIDTH));
-            } else if (event.key === 'End') {
-              event.preventDefault();
-              setFilesAssistantWidth(clampFilesAssistantWidth(FILES_ASSISTANT_MAX_WIDTH));
-            }
-          }}
-          className="group absolute inset-y-0 z-30 w-px cursor-col-resize bg-neutral-200 outline-none transition-colors hover:bg-neutral-400 focus:bg-blue-500 dark:bg-neutral-800 dark:hover:bg-neutral-600 dark:focus:bg-blue-400"
-          style={{ right: filesAssistantWidth }}
-          title={t('filesWorkbench.resizeAssistant')}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={t('filesWorkbench.resizeAssistant')}
-          aria-valuemin={FILES_ASSISTANT_MIN_WIDTH}
-          aria-valuemax={FILES_ASSISTANT_MAX_WIDTH}
-          aria-valuenow={Math.round(filesAssistantWidth)}
-          tabIndex={0}
-        >
-          <div className="absolute inset-y-0 left-1/2 w-3 -translate-x-1/2" />
-          <div className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-neutral-400 opacity-0 transition-opacity group-hover:opacity-100 dark:bg-neutral-600" />
-        </div>
-      ) : null}
-
-      {showAssistantRail ? (
-        <div className="flex h-full w-11 flex-shrink-0 flex-col items-center border-l border-neutral-200 bg-neutral-50/60 py-2 dark:border-neutral-800 dark:bg-neutral-900/40">
-          <div
-            className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-200/70 hover:text-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
-          >
-            <button
-              type="button"
-              onClick={() => {
-                if (isNarrowWorkbench) setAssistantOverlayOpen(true);
-                else setAssistantCollapsed(false);
-              }}
-              title={t('filesWorkbench.openAssistant')}
-              aria-label={t('filesWorkbench.openAssistant')}
-            >
-              <PanelRightOpen className="h-4 w-4" strokeWidth={1.8} />
-            </button>
-          </div>
-          <MessageSquare className="mt-3 h-4 w-4 text-neutral-400 dark:text-neutral-500" strokeWidth={1.7} />
-        </div>
       ) : null}
 
     </div>

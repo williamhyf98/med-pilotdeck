@@ -68,8 +68,11 @@ function getGlobalMemorySettingsFromConfig(config) {
   const reasoningMode = memory.reasoningMode === 'accuracy_first' ? 'accuracy_first' : 'answer_first';
   return {
     reasoningMode,
-    autoIndexIntervalMinutes: normalizeMemoryInterval(memory.autoIndexIntervalMinutes, 30),
-    autoDreamIntervalMinutes: normalizeMemoryInterval(memory.autoDreamIntervalMinutes, 60),
+    maintenanceMode: memory.maintenanceMode ?? memory.schedule?.maintenanceMode
+      ?? ((memory.autoIndexIntervalMinutes !== undefined || memory.autoDreamIntervalMinutes !== undefined
+        || memory.schedule?.autoIndexIntervalMinutes !== undefined || memory.schedule?.autoDreamIntervalMinutes !== undefined) ? 'interval' : 'immediate'),
+    autoIndexIntervalMinutes: normalizeMemoryInterval(memory.autoIndexIntervalMinutes ?? memory.schedule?.autoIndexIntervalMinutes, 30),
+    autoDreamIntervalMinutes: normalizeMemoryInterval(memory.autoDreamIntervalMinutes ?? memory.schedule?.autoDreamIntervalMinutes, 60),
   };
 }
 
@@ -90,8 +93,13 @@ async function saveGlobalMemorySettings(partial = {}) {
   }
   const { config } = record;
   const current = getGlobalMemorySettingsFromConfig(config);
+  if (partial.maintenanceMode !== undefined
+      && !['immediate', 'interval', 'manual'].includes(partial.maintenanceMode)) {
+    throw new Error('maintenanceMode must be immediate, interval or manual');
+  }
   const reasoningMode = validateReasoningMode(partial.reasoningMode);
   const next = {
+    maintenanceMode: partial.maintenanceMode ?? current.maintenanceMode,
     reasoningMode: reasoningMode ?? current.reasoningMode,
     autoIndexIntervalMinutes: normalizeMemoryInterval(
       partial.autoIndexIntervalMinutes,
@@ -107,6 +115,7 @@ async function saveGlobalMemorySettings(partial = {}) {
     memory: {
       ...(config.memory ?? {}),
       ...next,
+      ...(config.memory?.schedule ? { schedule: { ...config.memory.schedule, ...next } } : {}),
     },
   };
   suppressNextWatchEvent();
@@ -299,7 +308,7 @@ function buildDashboardSnapshot(service, repository, { query = '', selectedProje
       ...service.overview(),
       scheduler: getMemorySchedulerStatus(),
     },
-    settings: getGlobalMemorySettings(),
+    settings: service.getSettings?.() ?? getGlobalMemorySettings(),
     workspace: buildWorkspaceSnapshot(repository, {
       query,
       limit: 200,
@@ -404,12 +413,13 @@ router.get('/overview', async (req, res) =>
 
 router.route('/settings')
   .get(async (req, res) =>
-    withMemoryService(req, res, async () => {
-      res.json(getGlobalMemorySettings());
+    withMemoryService(req, res, async ({ service }) => {
+      res.json(service.getSettings?.() ?? getGlobalMemorySettings());
     }))
   .post(async (req, res) =>
-    withMemoryService(req, res, async () => {
-      res.json(await saveGlobalMemorySettings(req.body ?? {}));
+    withMemoryService(req, res, async ({ service }) => {
+      const settings = await saveGlobalMemorySettings(req.body ?? {});
+      res.json(settings);
     }));
 
 router.post('/index/run', async (req, res) =>

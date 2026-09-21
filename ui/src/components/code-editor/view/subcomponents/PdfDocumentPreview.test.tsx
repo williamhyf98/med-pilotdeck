@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PdfDocumentPreview from './PdfDocumentPreview';
+import { useState } from 'react';
 
 const pdfMocks = vi.hoisted(() => ({
   getDocument: vi.fn(),
@@ -45,6 +46,19 @@ afterEach(() => {
 });
 
 describe('PdfDocumentPreview search', () => {
+  it('toggles the workspace fullscreen state from the actual PDF toolbar', () => {
+    pdfMocks.getDocument.mockReturnValue({ promise: new Promise(() => {}), destroy: vi.fn() });
+    function Preview() {
+      const [expanded, setExpanded] = useState(false);
+      return <PdfDocumentPreview url="/report.pdf" fileName="report.pdf" filePath="report.pdf" source="pdf"
+        isFullscreen={expanded} onToggleFullscreen={() => setExpanded((value) => !value)} />;
+    }
+    render(<Preview />);
+    fireEvent.click(screen.getByRole('button', { name: 'actions.fullscreen' }));
+    fireEvent.click(screen.getByRole('button', { name: 'actions.exitFullscreen' }));
+    expect(screen.getByRole('button', { name: 'actions.fullscreen' })).not.toBeNull();
+  });
+
   it('does not restore stale results after the query changes during a search', async () => {
     let resolveTextContent!: (value: { items: Array<{ str: string }> }) => void;
     const pendingTextContent = new Promise<{ items: Array<{ str: string }> }>((resolve) => {

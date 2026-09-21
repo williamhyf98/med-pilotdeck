@@ -4,12 +4,28 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
     buildDefaultPilotDeckConfig,
+    normalizePilotDeckConfig,
     readPilotDeckConfigFile,
     sanitizeProviderCredentials,
     validatePilotDeckConfig,
 } from './pilotdeckConfig.js';
 
 const tempDirs = [];
+
+it('uses flat UI fields first and falls back to each legacy schedule field', () => {
+    expect(normalizePilotDeckConfig({ memory: {
+        maintenanceMode: 'immediate', autoIndexIntervalMinutes: 0,
+        schedule: { maintenanceMode: 'manual', autoIndexIntervalMinutes: 90, autoDreamIntervalMinutes: 120 },
+    } }).memory).toMatchObject({ maintenanceMode: 'immediate', autoIndexIntervalMinutes: 0, autoDreamIntervalMinutes: 120 });
+    expect(normalizePilotDeckConfig({ memory: { schedule: { autoDreamIntervalMinutes: 120 } } }).memory)
+        .toMatchObject({ maintenanceMode: 'interval', autoDreamIntervalMinutes: 120 });
+});
+
+it('preserves legacy intervals while defaulting new memory configuration to immediate', () => {
+    expect(buildDefaultPilotDeckConfig().memory.maintenanceMode).toBe('immediate');
+    expect(normalizePilotDeckConfig({ memory: { autoIndexIntervalMinutes: 0 } }).memory.maintenanceMode).toBe('interval');
+    expect(normalizePilotDeckConfig({ memory: { maintenanceMode: 'manual' } }).memory.maintenanceMode).toBe('manual');
+});
 
 afterEach(() => {
     delete process.env.PILOTDECK_CONFIG_PATH;

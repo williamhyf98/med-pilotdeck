@@ -196,8 +196,7 @@
     },
     "appearanceMode": {
       "title": "主题模式",
-      "detail": "选择系统外观，或使用暖诊 / 指挥台主题。",
-      "system": "系统跟随",
+      "detail": "选择浅色、深色、暖诊或指挥台主题。",
       "light": "浅色",
       "dark": "深色",
       "warm": "暖诊",
@@ -972,7 +971,7 @@
         },
         "maintenanceMode": {
           "label": "维护模式",
-          "description": "immediate = 对话后立即索引和整理，适合高频使用场景；interval = 定时执行（默认）；manual = 仅手动触发。",
+          "description": "统一应用于通用医学和战创伤医学的所有已有及新建项目。立即：回答后有新内容就索引，有记忆变化才整理；定时：按下方间隔执行；手动：仅手动触发。",
           "immediate": "立即执行",
           "interval": "定时执行",
           "manual": "仅手动"
@@ -989,11 +988,11 @@
         },
         "autoIndexInterval": {
           "label": "自动索引间隔",
-          "description": "自动扫描文件的时间周期，“0”表示关闭自动任务。"
+          "description": "所有项目共用，仅定时模式使用。0 关闭按时间触发；积压达到 20 轮或 Dream 前置索引仍可能处理待办内容。"
         },
         "autoDreamInterval": {
           "label": "自动 Dream 间隔",
-          "description": "自动整理记忆的时间周期。只有自上次 Dream 以来有记忆文件更新时，自动 Dream 才会真正执行。"
+          "description": "所有项目共用，仅定时模式使用；0 关闭定时 Dream。只有记忆文件发生变化才整理，失败后会延迟重试，不改变维护模式。"
         },
         "intervalUnits": {
           "minutes": "分钟",

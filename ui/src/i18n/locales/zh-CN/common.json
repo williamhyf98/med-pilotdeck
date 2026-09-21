@@ -174,8 +174,6 @@
   "mainContent": {
     "loading": "正在加载 PilotDeck",
     "settingUpWorkspace": "正在设置您的工作空间...",
-    "chooseProject": "创建项目后开始聊天",
-    "selectProjectDescription": "聊天需要先有项目。请创建项目（名称 + 类型），或从侧栏选择已有项目。",
     "tip": "提示",
     "createProject": "创建项目",
     "createProjectMobile": "点击上方的菜单按钮以访问项目",

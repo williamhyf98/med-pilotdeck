@@ -12,7 +12,7 @@ import { cn } from "../../../../lib/utils";
 import { PageSectionHeader, SettingsCard } from "../../shared/view";
 import type { ProjectSortOrder } from "../../shared/types";
 
-type ThemeMode = "system" | "light" | "dark" | "warm" | "command";
+type ThemeMode = "light" | "dark" | "warm" | "command";
 
 type GeneralSettingsSectionProps = {
   projectSortOrder: ProjectSortOrder;
@@ -77,7 +77,7 @@ export default function GeneralSettingsSection({
   onProjectSortOrderChange,
 }: GeneralSettingsSectionProps) {
   const { t, i18n } = useTranslation("settings");
-  const { themeMode = "system", setThemeMode } = useTheme() as {
+  const { themeMode = "warm", setThemeMode } = useTheme() as {
     themeMode?: ThemeMode;
     setThemeMode?: (mode: ThemeMode) => void;
   };
@@ -86,7 +86,7 @@ export default function GeneralSettingsSection({
     (language) => language.value === i18n.language,
   )
     ? i18n.language
-    : "en";
+    : "zh-CN";
 
   return (
     <section className="space-y-2.5">
@@ -101,7 +101,6 @@ export default function GeneralSettingsSection({
             value={themeMode}
             onChange={(value) => setThemeMode?.(value as ThemeMode)}
             options={[
-              { value: "system", label: t("settingsHome.appearanceMode.system") },
               { value: "light", label: t("settingsHome.appearanceMode.light") },
               { value: "dark", label: t("settingsHome.appearanceMode.dark") },
               { value: "warm", label: t("settingsHome.appearanceMode.warm") },

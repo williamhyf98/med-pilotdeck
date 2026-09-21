@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import {
   ChevronRight,
@@ -29,6 +30,7 @@ import type { TFunction } from 'i18next';
 import type { AppTab, Project, ProjectSession, ProjectType } from '../../types/app';
 import { cn } from '../../lib/utils.js';
 import { isImeEnterEvent } from '../../utils/ime';
+import { readProjectSortPreference } from '../../utils/projectSortPreference';
 import {
   projectDisplayName,
   sessionDisplayTitle,
@@ -57,15 +59,7 @@ type ProjectSortOrder = 'name' | 'date';
 // changed nothing. We read it here and re-render whenever the Settings
 // tab broadcasts a `pilotdeck-settings-changed` event.
 const readProjectSortOrder = (): ProjectSortOrder => {
-  if (typeof window === 'undefined') return 'name';
-  const raw = window.localStorage.getItem('pilotdeck-settings');
-  if (!raw) return 'name';
-  try {
-    const parsed = JSON.parse(raw) as { projectSortOrder?: unknown };
-    return parsed.projectSortOrder === 'date' ? 'date' : 'name';
-  } catch {
-    return 'name';
-  }
+  return readProjectSortPreference();
 };
 
 const useProjectSortOrder = (): ProjectSortOrder => {
@@ -1174,14 +1168,14 @@ export default function SidebarV2({
         </button>
       </div>
 
-      {contextMenu ? (
+      {contextMenu ? createPortal(
         <div
           role="menu"
           aria-label={t('sidebar:contextMenu.label', { defaultValue: 'Context menu' }) as string}
           onClick={(event) => event.stopPropagation()}
           onContextMenu={(event) => event.preventDefault()}
           className={cn(
-            'fixed z-50 w-44 rounded-lg border border-neutral-200 bg-white p-1 shadow-lg',
+            'fixed z-[100] w-44 rounded-lg border border-neutral-200 bg-white p-1 shadow-lg',
             'dark:border-neutral-700 dark:bg-neutral-900',
           )}
           style={{ left: contextMenu.x, top: contextMenu.y }}
@@ -1210,7 +1204,7 @@ export default function SidebarV2({
             <Trash2 className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
             <span>{t('sidebar:actions.delete', { defaultValue: 'Delete' })}</span>
           </button>
-        </div>
+        </div>, document.body
       ) : null}
 
       {/* Drag handle for resizing the sidebar. Sits flush against the right

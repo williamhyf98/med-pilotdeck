@@ -146,7 +146,9 @@ function sanitizeIndexingSettings(input, defaults) {
     const rawMode = typeof record.maintenanceMode === "string" ? record.maintenanceMode : "";
     const mode = rawMode === "immediate" || rawMode === "interval" || rawMode === "manual"
         ? rawMode
-        : defaults.maintenanceMode;
+        : record.autoIndexIntervalMinutes !== undefined || record.autoDreamIntervalMinutes !== undefined
+            ? "interval"
+            : defaults.maintenanceMode;
     return {
         reasoningMode: record.reasoningMode === "accuracy_first" ? "accuracy_first" : defaults.reasoningMode,
         autoIndexIntervalMinutes: clampInt(record.autoIndexIntervalMinutes, defaults.autoIndexIntervalMinutes, 0, 10_080),

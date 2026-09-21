@@ -21,57 +21,13 @@ const EXIT_PLAN_MODE_CONTINUE = "continue_planning";
 const EXIT_PLAN_MODE_EXECUTE = "execute_plan";
 
 const ENTER_PLAN_MODE_DESCRIPTION =
-  "复杂的医学工作区任务先进入只读计划模式。适用于需要组合多个步骤的请求，例如：" +
-  "读取多份附件、调用医学解析或战创伤 RAG、形成救治方案，再生成 HTML、PPT、PDF 或表格。" +
-  "进入后先查看工作区材料与可用 skill，写出结构化 markdown 计划，用户确认前不得修改业务文件。" +
-  "简单问答、单文件读取或单一明确产物不要使用。已经处于 plan mode 时不要重复调用。";
+  "计划模式只能由用户通过界面或 /plan 主动开启，不允许模型调用此工具切换模式。" +
+  "智能体模式下直接组织并执行医学工作区任务，可用 todo_write 跟踪多个步骤，无需进入计划审批。";
 
 const EXIT_PLAN_MODE_DESCRIPTION =
   "提交已经写好的工作区任务计划供用户审核。" +
   "plan_file_path 必须指向当前项目 `.pilotdeck/plans` 下的 markdown 文件。" +
   "不要再用 ask_user_question 询问是否批准计划；本工具会展示计划并提供继续规划、开始执行和取消。";
-
-function buildEnterPlanModeResult(planDirectoryPath: string | undefined): string {
-  const planDirectorySection = planDirectoryPath
-    ? `## 计划目录\n把计划写成 markdown 文件并保存到：${planDirectoryPath}\n文件名可自定，但必须位于这个目录中。\n`
-    : "";
-
-  return [
-    "计划模式已启用。现在只查看材料并规划，用户批准前不要执行任务或修改业务文件。",
-    "",
-    planDirectorySection,
-    "## 现在该做什么",
-    "1. 用 read_file、grep、glob 查看当前工作区的附件、已有解析结果与 exports；不要探索或修改 PilotDeck 源码",
-    "2. 查看系统列出的可用 skill，判断哪些步骤应使用医学 MCP、RAG 或 PDF/Word/PPT/表格/HTML skill",
-    "3. 写清输入材料、执行顺序、每一步的产物路径、事实缺项与需要用户确认的选择；不要在计划里编造医学结论",
-    ...(planDirectoryPath
-      ? [
-          "4. 在上面的计划目录中创建并完善 markdown 计划文件",
-          "5. 计划完成后，用 exit_plan_mode 提交该 plan_file_path 供用户审核",
-        ]
-      : ["4. 计划完成后，调用 exit_plan_mode 交给用户审核"]),
-    "",
-    "## 规则",
-    `- 禁止用 bash 写文件${planDirectoryPath ? "；write_file/edit_file 只能修改指定计划目录中的 markdown 计划" : ""}`,
-    "- 可以用 ask_user_question 一次性澄清会改变计划的关键选择",
-    "- 先读材料，再写计划；不要在用户批准前调用医学处理、转换或其它会产生业务结果的工具",
-  ].join("\n");
-}
-
-function buildAlreadyInPlanModeResult(planDirectoryPath: string | undefined): string {
-  return [
-    "计划模式已经启用。",
-    "",
-    ...(planDirectoryPath
-      ? [
-          `计划目录：${planDirectoryPath}`,
-          "继续完善该目录中的 markdown 计划，然后用 exit_plan_mode(plan_file_path) 明确提交其中一份。",
-          "",
-        ]
-      : []),
-    "调用 exit_plan_mode 前保持只读规划，不要执行任务。",
-  ].join("\n");
-}
 
 function buildApprovedPlanResult(plan: string, planFilePath: string | undefined): string {
   const locationSection = planFilePath
@@ -148,18 +104,11 @@ export function createEnterPlanModeTool(): PilotDeckToolDefinition<Record<string
     },
     isReadOnly: () => true,
     isConcurrencySafe: () => true,
-    execute: async (_input, context) => {
-      if (context?.permissionMode === "plan") {
-        throw new PilotDeckToolRuntimeError(
-          "tool_execution_failed",
-          buildAlreadyInPlanModeResult(context?.planDirectory?.path),
-        );
-      }
-      const text = buildEnterPlanModeResult(context?.planDirectory?.path);
-      return {
-        content: [{ type: "text", text }],
-        data: { requestedMode: "plan" },
-      };
+    execute: async () => {
+      throw new PilotDeckToolRuntimeError(
+        "permission_denied",
+        "计划模式只能由用户通过界面或 /plan 主动开启，不能通过工具自动切换。",
+      );
     },
   };
 }

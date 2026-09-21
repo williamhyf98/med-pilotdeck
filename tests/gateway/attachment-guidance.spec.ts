@@ -92,6 +92,25 @@ test("inline web images retain their staged path in agent guidance", async () =>
     assert.match(text, /trauma\.jpg/);
     assert.match(text, new RegExp(imagePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
+test("gateway only enables plan submission for explicit user plan mode, including /plan", async () => {
+    for (const [input, expected] of [
+        [{ message: "review", runMode: "agent", mode: "default", allowPlanModeTools: true }, false],
+        [{ message: "review", runMode: "ask", mode: "default", allowPlanModeTools: true }, false],
+        [{ message: "review", runMode: "plan", mode: "plan" }, true],
+        [{ message: "review", runMode: "plan", mode: "plan", allowPlanModeTools: false }, false],
+        [{ message: "/plan review", runMode: "agent", mode: "default", allowPlanModeTools: false }, true],
+    ]) {
+        let received;
+        const gateway = createGateway((_input, options) => { received = options; });
+        for await (const _event of gateway.submitTurn({
+            sessionKey: "plan-policy", channelKey: "web", ...input,
+        })) { /* Drain the request. */ }
+        assert.ok(received);
+        assert.equal(received.allowPlanModeTools, expected);
+        if (expected) assert.equal(received.runMode, "plan");
+    }
+});
+
 function createGateway(onInput) {
     const router = new SessionRouter({
         idleSweepIntervalMs: 0,
@@ -106,7 +125,7 @@ function createFakeSession(onInput) {
     return {
         async *submit(input, options = {}) {
             const turnId = options.turnId ?? "turn-1";
-            onInput(input);
+            onInput(input, options);
             yield { type: "turn_started", sessionId: "session-1", turnId };
             yield {
                 type: "turn_completed",

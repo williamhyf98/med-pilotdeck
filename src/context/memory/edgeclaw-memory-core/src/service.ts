@@ -73,6 +73,8 @@ export interface EdgeClawMemoryServiceOptions {
   maxMessageChars?: number;
   heartbeatBatchSize?: number;
   defaultIndexingSettings?: Partial<IndexingSettings>;
+  /** PilotDeck uses one global configuration; standalone consumers may retain project settings. */
+  settingsSource?: "global" | "project";
   source?: string;
   llm?: EdgeClawMemoryLlmOptions;
   runtime?: Record<string, unknown>;
@@ -338,10 +340,11 @@ function mergeIndexingSettings(
   partial: Partial<IndexingSettings> | undefined,
   projectType: string | undefined,
 ): IndexingSettings {
-  // Task 10 —— 按项目类型分别默认维护模式。
-  // 战创伤：immediate（去掉时间门，对话即索引、有改动即Dream）
-  // 通用医学：interval（保持现有定时行为），到 Task 11 才切换。
-  const defaultMode: MemoryMaintenanceMode = projectType === "war_trauma" ? "immediate" : "interval";
+  // Legacy interval-only config may be intentional, including zero = disabled.
+  const hasLegacyIntervals = partial?.autoIndexIntervalMinutes !== undefined
+    || partial?.autoDreamIntervalMinutes !== undefined;
+  const defaultMode: MemoryMaintenanceMode = projectType === "war_trauma"
+    || !hasLegacyIntervals ? "immediate" : "interval";
   const rawMode = partial?.maintenanceMode;
   const mode: MemoryMaintenanceMode =
     rawMode === "immediate" || rawMode === "interval" || rawMode === "manual" ? rawMode : defaultMode;
@@ -624,6 +627,10 @@ export class EdgeClawMemoryService {
   readonly indexer: HeartbeatIndexer;
   readonly retriever: ReasoningRetriever;
   private readonly globalProfileLock: GlobalProfileLock;
+  private readonly settingsSource: "global" | "project";
+  private activeMaintenance = 0;
+  private closeRequested = false;
+  private closed = false;
 
   private readonly logger?: LoggerLike;
   private readonly captureStrategy: "last_turn" | "full_session";
@@ -640,7 +647,9 @@ export class EdgeClawMemoryService {
     );
     this.dbPath = resolve(options.dbPath ?? join(this.dataDir, "control.sqlite"));
     this.memoryDir = resolve(options.memoryDir ?? join(this.dataDir, "memory"));
-    this.defaultIndexingSettings = mergeIndexingSettings(options.defaultIndexingSettings, options.projectType);
+    this.settingsSource = options.settingsSource ?? "project";
+    this.defaultIndexingSettings = mergeIndexingSettings(options.defaultIndexingSettings,
+      this.settingsSource === "global" ? undefined : options.projectType);
     this.logger = options.logger;
     this.captureStrategy = options.captureStrategy ?? "last_turn";
     this.includeAssistant = options.includeAssistant ?? true;
@@ -662,7 +671,7 @@ export class EdgeClawMemoryService {
       resolveMemoryPromptProfile(options.projectType),
     );
     this.indexer = new HeartbeatIndexer(this.repository, this.extractor, {
-      settings: this.repository.getIndexingSettings(this.defaultIndexingSettings),
+      settings: this.getSettings(),
       batchSize: options.heartbeatBatchSize ?? 30,
       source: this.source,
       logger: this.logger,
@@ -673,14 +682,30 @@ export class EdgeClawMemoryService {
   }
 
   close(): void {
-    this.repository.close();
+    this.closeRequested = true;
+    if (!this.closed && this.activeMaintenance === 0) {
+      this.repository.close();
+      this.closed = true;
+    }
+  }
+
+  private async withMaintenance<T>(run: () => Promise<T>): Promise<T> {
+    if (this.closed) throw new Error("Memory service is closed");
+    this.activeMaintenance++;
+    try { return await run(); }
+    finally {
+      this.activeMaintenance--;
+      if (this.closeRequested) this.close();
+    }
   }
 
   getSettings(): IndexingSettings {
+    if (this.settingsSource === "global") return { ...this.defaultIndexingSettings };
     return this.repository.getIndexingSettings(this.defaultIndexingSettings);
   }
 
   saveSettings(partial: Partial<IndexingSettings>): IndexingSettings {
+    if (this.settingsSource === "global") throw new Error("Update global memory settings through the configuration page");
     const settings = this.repository.saveIndexingSettings(partial, this.defaultIndexingSettings);
     this.indexer.setSettings(settings);
     this.retriever.resetTransientState();
@@ -688,7 +713,7 @@ export class EdgeClawMemoryService {
   }
 
   overview() {
-    return this.repository.getOverview();
+    return { ...this.repository.getOverview(), maintenanceMode: this.getSettings().maintenanceMode };
   }
 
   private getPipelineTimestamp(key: string): string | undefined {
@@ -755,7 +780,8 @@ export class EdgeClawMemoryService {
   }
 
   snapshot(limit = 50): MemoryUiSnapshot {
-    return this.repository.getUiSnapshot(limit);
+    const snapshot = this.repository.getUiSnapshot(limit);
+    return { ...snapshot, overview: this.overview(), settings: this.getSettings() };
   }
 
   captureTurn(
@@ -798,6 +824,10 @@ export class EdgeClawMemoryService {
     sessionKeys?: string[];
     reason?: string;
   } = {}): Promise<HeartbeatStats> {
+    return this.withMaintenance(() => this.flushInternal(options));
+  }
+
+  private async flushInternal(options: { batchSize?: number; sessionKeys?: string[]; reason?: string }): Promise<HeartbeatStats> {
     const manualResetAt = options.reason === "manual" ? nowIso() : undefined;
     if (manualResetAt) {
       this.reconcileAutoIndexAnchor({
@@ -817,6 +847,10 @@ export class EdgeClawMemoryService {
   }
 
   async dream(trigger: "manual" | "scheduled" = "manual"): Promise<DreamRunResult> {
+    return this.withMaintenance(() => this.dreamInternal(trigger));
+  }
+
+  private async dreamInternal(trigger: "manual" | "scheduled"): Promise<DreamRunResult> {
     if (trigger === "manual") {
       this.reconcileAutoDreamAnchor({ manualResetAt: nowIso() });
     }
@@ -826,7 +860,6 @@ export class EdgeClawMemoryService {
     if (!lockAcquired) {
       const reason = "global_profile_locked";
       this.repository.setPipelineState("lastDreamFailureReason", reason);
-      this.incrementDreamFailureCount();
       return {
         prepFlush: {
           capturedSessions: 0,
@@ -913,6 +946,7 @@ export class EdgeClawMemoryService {
       this.repository.setPipelineState("lastDreamSummary", outcome.summary);
       this.repository.deletePipelineState("lastDreamFailureReason");
       this.repository.setPipelineState("dreamConsecutiveFailures", 0);
+      this.repository.setPipelineState("dreamRetryAfter", null);
       this.repository.saveDreamTrace(outcome.trace);
       this.reconcileAutoDreamAnchor();
       this.repository.getFileMemoryStore().repairManifests();
@@ -944,6 +978,13 @@ export class EdgeClawMemoryService {
     const current = Number(this.repository.getPipelineState<number>("dreamConsecutiveFailures") ?? 0);
     const next = current + 1;
     this.repository.setPipelineState("dreamConsecutiveFailures", next);
+
+    if (this.settingsSource === "global") {
+      // Back off failed maintenance without changing the user's selected mode.
+      const delayMinutes = Math.min(60, 2 ** Math.min(next - 1, 6));
+      this.repository.setPipelineState("dreamRetryAfter", new Date(Date.now() + delayMinutes * 60_000).toISOString());
+      return;
+    }
 
     // Task 10 —— 成本护栏：连续失败 3 次后自动降级为 interval
     const FAILURE_THRESHOLD = 3;
@@ -1002,6 +1043,12 @@ export class EdgeClawMemoryService {
     indexStats?: HeartbeatStats;
     dreamResult?: DreamRunResult;
   }> {
+    return this.withMaintenance(() => this.runDueMaintenanceInternal(reason));
+  }
+
+  private async runDueMaintenanceInternal(reason: string): Promise<{
+    indexRan: boolean; dreamRan: boolean; indexStats?: HeartbeatStats; dreamResult?: DreamRunResult;
+  }> {
     const settings = this.getSettings();
     // Task 10 —— manual 模式完全跳过 scheduled 路径。
     if (settings.maintenanceMode === "manual") {
@@ -1053,7 +1100,8 @@ export class EdgeClawMemoryService {
           nowMs,
         );
 
-    if (shouldDream) {
+    const retryAfter = this.repository.getPipelineState<string>("dreamRetryAfter");
+    if (shouldDream && (!retryAfter || Date.parse(retryAfter) <= nowMs)) {
       dreamResult = await this.dream("scheduled");
     }
 

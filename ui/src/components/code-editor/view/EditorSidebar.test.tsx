@@ -43,11 +43,11 @@ const editorTabs: CodeEditorTab[] = [{
   dirty: false,
 }];
 
-function renderSidebar(workspaceMode: boolean) {
+function renderSidebar(workspaceMode: boolean, tabs = editorTabs) {
   return render(
     <EditorSidebar
-      editorTabs={editorTabs}
-      activeEditorTabId="editor-tab-0"
+      editorTabs={tabs}
+      activeEditorTabId={tabs[0]?.id ?? null}
       isMobile
       editorExpanded={false}
       editorWidth={600}
@@ -76,7 +76,22 @@ describe('EditorSidebar workspace embedding', () => {
 
     expect(mocks.codeEditorProps.at(-1)?.isSidebar).toBe(true);
     expect(mocks.codeEditorProps.at(-1)?.compactHeader).toBe(true);
-    expect(mocks.tabBarProps.at(-1)?.reserveToolbarSpace).toBe(true);
+    expect(mocks.tabBarProps.at(-1)?.reserveToolbarSpace).toBe(false);
+  });
+
+  it('keeps the full tab row available when text actions use a separate toolbar', () => {
+    renderSidebar(true, [{
+      id: 'editor-tab-text',
+      fileStack: [{
+        name: 'notes.md',
+        path: '/workspace/PilotDeck/notes.md',
+        projectName: 'pilotdeck',
+        diffInfo: null,
+      }],
+      dirty: false,
+    }]);
+
+    expect(mocks.tabBarProps.at(-1)?.reserveToolbarSpace).toBe(false);
   });
 
   it('retains the legacy full-screen mobile editor outside workspace mode', () => {

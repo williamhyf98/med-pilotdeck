@@ -50,6 +50,52 @@ type ToastState = { kind: 'success' | 'error' | 'info'; text: string } | null;
 
 // ---------------------------------------------------------------------------
 
+const SKILL_DISPLAY_NAMES: Record<string, string> = {
+  '1password': '密码与密钥管理',
+  'apple-notes': '苹果备忘录管理',
+  'apple-reminders': '苹果提醒事项管理',
+  'bear-notes': 'Bear 笔记管理',
+  blogwatcher: '博客与订阅监控',
+  'diagram-maker': '图示制作',
+  docx: 'Word 文档处理',
+  'find-skills': '技能发现与安装',
+  'frontend-design': '前端界面设计',
+  'frontend-slides': '网页演示制作',
+  github: 'GitHub 协作管理',
+  gog: 'Google 工作区管理',
+  himalaya: '邮件收发与管理',
+  'karpathy-guidelines': '稳健编码指南',
+  'med-case-report': '结构化病例报告',
+  'med-medical': '医疗附件解析',
+  'med-trauma-assist': '战创伤知识问答',
+  'med-trauma-stage-plan': '战创伤分阶段救治方案',
+  'meeting-recorder-assistant': '会议录音与纪要',
+  'minimax-pdf': '精美 PDF 制作',
+  notion: 'Notion 内容管理',
+  obsidian: 'Obsidian 知识库管理',
+  pdf: 'PDF 文档处理',
+  'pilotdeck-skills-migration': '技能迁移',
+  pptx: 'PowerPoint 演示文稿处理',
+  'react-next-best-practices': 'React 与 Next.js 开发实践',
+  'skill-creator': '技能创建与优化',
+  spreadsheets: '电子表格处理',
+  spike: '可行性快速验证',
+  summarize: '内容总结与转录',
+  tmux: '终端会话管理',
+  trello: 'Trello 任务管理',
+  weather: '天气查询',
+  'web-design-guidelines': '网页界面质量审查',
+};
+
+function skillDisplayName(skill: Pick<Skill, 'slug' | 'name'>): string {
+  const mapped = SKILL_DISPLAY_NAMES[skill.slug.toLowerCase()];
+  if (mapped) return mapped;
+  if (/\p{Script=Han}/u.test(skill.name)) return skill.name;
+  return `自定义技能：${skill.name}`;
+}
+
+// ---------------------------------------------------------------------------
+
 function projectCwd(p: Project | null): string | null {
   if (!p) return null;
   return p.fullPath || p.path || null;
@@ -327,7 +373,7 @@ export default function SkillsV2({ selectedProject }: SkillsV2Props) {
           <aside
             role="dialog"
             aria-modal="true"
-            aria-label={`${activeSkill.name} ${t('skillsTab.promptContent', { defaultValue: '提示词内容' })}`}
+            aria-label={`${skillDisplayName(activeSkill)} ${t('skillsTab.promptContent', { defaultValue: '提示词内容' })}`}
             className="skill-detail-drawer relative z-10 flex h-full w-full max-w-[760px] flex-col border-l border-neutral-200 bg-white shadow-2xl dark:border-neutral-800 dark:bg-neutral-950"
           >
             <SkillDetail
@@ -531,7 +577,7 @@ function SkillsGrid({
                     : 'border-neutral-200 text-neutral-800 hover:-translate-y-px hover:border-neutral-300 hover:shadow-md dark:border-neutral-800 dark:text-neutral-200 dark:hover:border-neutral-700',
                 )}
               >
-                <span className="line-clamp-2 text-sm font-semibold leading-5">{s.name}</span>
+                <span className="line-clamp-2 text-sm font-semibold leading-5">{skillDisplayName(s)}</span>
                 <span className="mt-2 line-clamp-3 text-xs leading-5 text-neutral-500 dark:text-neutral-400">
                   {s.description || t('skillsTab.noDescription', { defaultValue: '暂无技能介绍' })}
                 </span>
@@ -597,7 +643,7 @@ function SkillDetail({
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
-                {skill.name}
+                {skillDisplayName(skill)}
               </h2>
               {skill.version ? (
                 <span className="text-xxs text-neutral-500 dark:text-neutral-400">v{skill.version}</span>

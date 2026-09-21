@@ -5,6 +5,7 @@ import { toolError } from "../protocol/errors.js";
 import type { PilotDeckToolErrorCode } from "../protocol/errors.js";
 import {
   PLAN_MODE_ALLOWED_TOOLS,
+  isPlanToolAvailable,
   buildPlanModeBashViolationMessage,
   buildPlanModeViolationMessage,
 } from "../planModeConstraints.js";
@@ -63,6 +64,9 @@ export class ToolRuntime {
                 writeSnapshots: runtimeContext.writeSnapshots,
                 executeTool: runtimeContext.executeTool,
                 toolPolicy: runtimeContext.toolPolicy,
+                allowPlanModeTools: runtimeContext.allowPlanModeTools,
+                permissionMode: runtimeContext.permissionMode,
+                runMode: runtimeContext.runMode,
               });
             },
         };
@@ -117,6 +121,14 @@ export class ToolRuntime {
         `Tool ${tool.name} is not allowed by the active agent profile.`,
         startedAt,
         runtimeContext,
+      );
+    }
+
+    if (!isPlanToolAvailable(tool.name, runtimeContext)) {
+      return this.errorResult(
+        call.id, tool.name, "permission_denied",
+        "计划模式只能由用户主动开启。当前模式不允许调用此计划工具；智能体可使用待办清单继续执行任务。",
+        startedAt, runtimeContext,
       );
     }
 

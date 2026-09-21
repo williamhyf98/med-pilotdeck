@@ -39,6 +39,7 @@ import { agentError } from "../protocol/errors.js";
 import type { AgentEvent } from "../protocol/events.js";
 import type { AgentPermissionDenial, AgentTurnResult } from "../protocol/result.js";
 import type { AgentRuntimeConfig } from "../runtime/AgentRuntimeConfig.js";
+import { isPlanToolAvailable } from "../../tool/planModeConstraints.js";
 import type { AgentRuntimeDependencies } from "../runtime/AgentRuntimeDependencies.js";
 import type { LifecycleDispatchResult } from "../../lifecycle/index.js";
 import type { PilotDeckHookEvent } from "../../extension/hooks/protocol/events.js";
@@ -1626,6 +1627,9 @@ export class AgentLoop {
 
           this.config.permissionMode = effectiveMode;
           this.config.permissionContext.mode = effectiveMode;
+          if (effectiveMode !== "plan" && this.config.runMode === "plan") {
+            this.config.runMode = "agent";
+          }
           yield { type: "mode_change_requested", sessionId: input.sessionId, turnId: input.turnId, mode: effectiveMode };
         }
         yield { type: "tool_result", sessionId: input.sessionId, turnId: input.turnId, result };
@@ -2055,11 +2059,11 @@ export class AgentLoop {
       (allowedTools === undefined || allowedTools.has(tool.name))
       && !deniedTools.has(tool.name)
     );
-    if (input.allowPlanModeTools !== true) {
-      toolDefinitions = toolDefinitions.filter(
-        (tool) => tool.name !== "enter_plan_mode" && tool.name !== "exit_plan_mode",
-      );
-    }
+    toolDefinitions = toolDefinitions.filter((tool) => isPlanToolAvailable(tool.name, {
+      permissionMode: this.config.permissionMode,
+      runMode: this.config.runMode,
+      allowPlanModeTools: input.allowPlanModeTools,
+    }));
     const requestMessages = normalizeMessagesForModelRequest(messages);
     let tools = toolDefinitions.map(toolToCanonicalSchema);
     if (this.config.runMode === "ask") {
@@ -2382,6 +2386,7 @@ export class AgentLoop {
         : {}),
       runMode: this.config.runMode ?? "agent",
       permissionMode: this.config.permissionMode,
+      allowPlanModeTools: input.allowPlanModeTools,
       permissionContext,
       auditRecorder: this.dependencies.auditRecorder,
       now: this.now,
@@ -2802,8 +2807,14 @@ export class AgentLoop {
     basePermissionMode?: PermissionMode,
   ): void {
     if (permissionMode) {
-      if (permissionMode === "plan" && this.config.permissionMode !== "plan") {
-        this.config.permissionModeBeforePlan = basePermissionMode ?? this.config.permissionMode;
+      if (permissionMode === "plan") {
+        if (basePermissionMode && basePermissionMode !== "plan") {
+          this.config.permissionModeBeforePlan = basePermissionMode;
+        } else if (this.config.permissionMode !== "plan") {
+          this.config.permissionModeBeforePlan = this.config.permissionMode;
+        }
+      } else {
+        this.config.permissionModeBeforePlan = undefined;
       }
       this.config.permissionMode = permissionMode;
       this.config.permissionContext.mode = permissionMode;

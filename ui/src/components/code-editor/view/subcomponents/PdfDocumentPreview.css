@@ -1,0 +1,35 @@
+.pdf-preview-surface {
+  container: pdf-preview / inline-size;
+}
+
+.pdf-preview-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 8px 16px;
+}
+
+.pdf-preview-toolbar-group {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.pdf-preview-toolbar-group button,
+.pdf-preview-toolbar-group a {
+  flex-shrink: 0;
+}
+
+@container pdf-preview (max-width: 760px) {
+  .pdf-preview-toolbar-group {
+    width: 100%;
+  }
+
+  .pdf-preview-toolbar-actions {
+    padding-top: 6px;
+    border-top: 1px solid hsl(var(--border));
+  }
+}

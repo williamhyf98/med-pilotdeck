@@ -46,6 +46,21 @@ describe('ThemeProvider product themes', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(false);
   });
 
+  it('uses warm by default and migrates the removed system mode', () => {
+    const { unmount } = render(<ThemeProvider><ThemeProbe /></ThemeProvider>);
+
+    expect(screen.getByTestId('theme').textContent).toBe('warm');
+    expect(document.documentElement.getAttribute('data-theme')).toBe('warm');
+    expect(localStorage.getItem('themeMode')).toBe('warm');
+
+    unmount();
+    localStorage.setItem('themeMode', 'system');
+    render(<ThemeProvider><ThemeProbe /></ThemeProvider>);
+
+    expect(screen.getByTestId('theme').textContent).toBe('warm');
+    expect(document.documentElement.getAttribute('data-theme')).toBe('warm');
+  });
+
   it('maps the command theme to dark compatibility and persists it', () => {
     render(<ThemeProvider><ThemeProbe /></ThemeProvider>);
 

@@ -34,6 +34,14 @@ const skill = {
   availabilityMutable: false,
 };
 
+const englishSkill = {
+  ...skill,
+  slug: 'weather',
+  name: 'weather',
+  description: 'Current weather and forecasts.',
+  scope: 'user',
+};
+
 function jsonResponse(body: unknown): Response {
   return {
     ok: true,
@@ -87,5 +95,28 @@ describe('SkillsV2', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: '关闭技能详情' }).at(-1)!);
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('shows a functional Chinese display name without changing the skill identity', async () => {
+    authenticatedFetch.mockImplementation(async (url: string, options?: RequestInit) => {
+      if (url === '/api/skills/read') return jsonResponse({ content: '# Weather' });
+      const request = JSON.parse(String(options?.body ?? '{}')) as { projectPath?: string };
+      expect(request.projectPath).toBe(project.fullPath);
+      return jsonResponse({
+        builtin: [],
+        user: [englishSkill],
+        medical: [],
+        project: [],
+        projectPath: project.fullPath,
+        isGeneralCwd: false,
+      });
+    });
+
+    render(<SkillsV2 selectedProject={project} />);
+
+    const card = await screen.findByRole('button', { name: /天气查询/ });
+    expect(screen.queryByText(/^weather$/)).toBeNull();
+    fireEvent.click(card);
+    expect(await screen.findByRole('dialog', { name: /天气查询.*提示词内容/ })).toBeTruthy();
   });
 });

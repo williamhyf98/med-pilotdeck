@@ -245,6 +245,82 @@ describe('GET /cases/snapshots', () => {
     expect(body.snapshots[0].stage).toEqual({ main: 'role2', sub: 'triage' });
   });
 
+  it('按轮次返回 Runner 病例上下文、本轮输入和本轮结果', async () => {
+    const state = {
+      ...fullCaseState(),
+      round: 3,
+      currentStage: 'early_treatment',
+      currentSubStage: 'emergency_treatment',
+      notes: [{ round: 3, createdAt: '2026-09-16T10:00:00.000Z', text: '意识清楚' }],
+      requiredCapabilities: ['抗休克治疗'],
+      attachmentInterpretations: [{ round: 3, text: '胸片提示左侧气胸' }],
+    };
+    seedCase(TRAUMA_PROJECT, 'web_s1', {
+      snapshots: [{
+        eventType: 'agent_turn',
+        round: 3,
+        createdAt: '2026-09-16T10:00:00.000Z',
+        triggerMessageId: 'msg-3',
+        state,
+        rawInput: '伤员胸痛加重，心率 128',
+        form: {
+          statedSubStage: null,
+          injuryNarrative: '胸痛加重',
+          treatmentNarrative: '',
+          evacuationNarrative: '',
+          note: '意识清楚',
+          vitals: { heartRate: 128 },
+        },
+        response: {
+          classification: {
+            severity: 'severe',
+            treatmentPriority: 'urgent',
+            transportPriority: 'urgent',
+            rationale: ['循环不稳定'],
+          },
+          treatmentPlan: [{ title: '持续监测', description: '复测生命体征', scope: 'current_stage' }],
+          transition: { status: 'READY', targetSubStage: 'surgical_resuscitation', reason: '需要手术能力' },
+          memo: { title: '循环恶化', inputPoints: ['胸痛加重'], actionPoints: ['持续监测'], conclusion: '建议后送' },
+          missingInformation: ['受伤时间'],
+        },
+      }, {
+        eventType: 'manual_stage_override',
+        round: 3,
+        createdAt: '2026-09-16T10:05:00.000Z',
+        triggerMessageId: 'override-3',
+        state: { ...state, version: 4 },
+      }],
+    });
+
+    const { body } = await request(
+      `/cases/snapshots?projectId=${TRAUMA_PROJECT}&sessionId=web:s1`,
+    );
+
+    expect(body.rounds).toHaveLength(1);
+    expect(body.rounds[0]).toMatchObject({
+      round: 3,
+      context: {
+        currentStage: 'early_treatment',
+        currentSubStage: 'emergency_treatment',
+        note: { text: '意识清楚' },
+        vitals: { measuredThisRound: true, latestByField: { hr: { value: 128, round: 3, stale: false } } },
+      },
+      input: {
+        rawInput: '伤员胸痛加重，心率 128',
+        injuryNarrative: '胸痛加重',
+        attachmentInterpretation: '胸片提示左侧气胸',
+      },
+      result: {
+        classification: { severity: 'severe', treatmentPriority: 'urgent' },
+        transition: { status: 'READY', targetSubStage: 'surgical_resuscitation' },
+        requiredCapabilities: ['抗休克治疗'],
+      },
+    });
+    expect(body.rounds[0].events).toEqual([
+      expect.objectContaining({ eventType: 'manual_stage_override', round: 3, version: 4 }),
+    ]);
+  });
+
   it('limit 截断，但 total 仍报全量', async () => {
     seedCase(TRAUMA_PROJECT, 'web_s1', {
       snapshots: [snapshot(1, 'round'), snapshot(2, 'round'), snapshot(3, 'round')],

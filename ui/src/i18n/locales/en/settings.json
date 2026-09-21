@@ -196,8 +196,7 @@
     },
     "appearanceMode": {
       "title": "Theme Mode",
-      "detail": "Choose the system appearance or a clinical workspace theme.",
-      "system": "Follow System",
+      "detail": "Choose Light, Dark, Warm Clinic, or Command Center.",
       "light": "Light",
       "dark": "Dark",
       "warm": "Warm Clinic",
@@ -972,7 +971,7 @@
         },
         "maintenanceMode": {
           "label": "Maintenance Mode",
-          "description": "immediate = index and consolidate right after conversations, best for active use; interval = run on schedule (default); manual = only when triggered manually.",
+          "description": "Applies to all existing and new general medicine and trauma projects. Immediate: index pending content after replies and consolidate changed memories. Scheduled: use the intervals below. Manual: only when requested.",
           "immediate": "Immediate",
           "interval": "Scheduled",
           "manual": "Manual only"
@@ -989,11 +988,11 @@
         },
         "autoIndexInterval": {
           "label": "Auto index interval",
-          "description": "Interval for automatic file scanning. \"0\" disables the automatic task."
+          "description": "Shared by all projects in scheduled mode. 0 disables time-based indexing; a backlog of 20 turns or Dream preparation can still trigger indexing."
         },
         "autoDreamInterval": {
           "label": "Auto Dream interval",
-          "description": "Interval for automatic memory consolidation. Auto Dream runs only when memory files changed since the last Dream."
+          "description": "Shared by all projects in scheduled mode; 0 disables scheduled Dream. Only changed memories are consolidated. Failures delay retries without changing the maintenance mode."
         },
         "intervalUnits": {
           "minutes": "Minutes",

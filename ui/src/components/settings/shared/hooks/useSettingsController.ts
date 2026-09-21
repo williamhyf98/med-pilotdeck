@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { DEFAULT_CODE_EDITOR_SETTINGS } from "../constants";
+import { readProjectSortPreference } from "../../../../utils/projectSortPreference";
 import type {
   CodeEditorSettingsState,
   ProjectSortOrder,
@@ -9,10 +10,6 @@ import type {
 type UseSettingsControllerArgs = {
   isOpen: boolean;
   initialTab: string;
-};
-
-type PilotDeckSettingsStorage = {
-  projectSortOrder?: ProjectSortOrder;
 };
 
 const KNOWN_MAIN_TABS: SettingsMainTab[] = ["appearance", "permissions", "config"];
@@ -51,7 +48,7 @@ export function useSettingsController({
   );
   const [saveStatus, setSaveStatus] = useState<"success" | "error" | null>(null);
   const [projectSortOrder, setProjectSortOrderState] =
-    useState<ProjectSortOrder>("name");
+    useState<ProjectSortOrder>(() => readProjectSortPreference());
   const [codeEditorSettings, setCodeEditorSettings] =
     useState<CodeEditorSettingsState>(() => readCodeEditorSettings());
 
@@ -59,11 +56,7 @@ export function useSettingsController({
     if (!isOpen) return;
     setActiveTab(normalizeMainTab(initialTab));
 
-    const stored = parseJson<PilotDeckSettingsStorage>(
-      localStorage.getItem("pilotdeck-settings"),
-      {},
-    );
-    setProjectSortOrderState(stored.projectSortOrder === "date" ? "date" : "name");
+    setProjectSortOrderState(readProjectSortPreference());
   }, [isOpen, initialTab]);
 
   useEffect(() => {

@@ -182,6 +182,80 @@ describe('TraumaWorkspace', () => {
     expect(memoButton.getAttribute('aria-expanded')).toBe('false');
   });
 
+  it('visually distinguishes clickable historical leaves from the selected current leaf', () => {
+    const current = initialUiCaseState();
+    current.round = 2;
+    current.version = 2;
+    const historical = {
+      ...initialUiCaseState(),
+      version: 1,
+      round: 1,
+      memos: [{
+        id: 'memo-history',
+        round: 1,
+        createdAt: current.updatedAt,
+        mainStage: 'battlefield_first_aid' as const,
+        subStage: 'primary_first_aid' as const,
+        title: '历史病例',
+        inputPoints: ['既往伤情'],
+        actionPoints: [],
+        conclusion: '继续观察',
+        snapshotVersion: 1,
+      }],
+    };
+    current.memos = [
+      ...historical.memos,
+      {
+        id: 'memo-current',
+        round: 2,
+        createdAt: current.updatedAt,
+        mainStage: 'battlefield_first_aid',
+        subStage: 'primary_first_aid',
+        title: '当前病例',
+        inputPoints: ['当前伤情'],
+        actionPoints: [],
+        conclusion: '继续处置',
+        snapshotVersion: 2,
+      },
+    ];
+    caseStoreMock.current = current;
+    caseStoreMock.snapshots = [
+      {
+        eventType: 'agent_turn',
+        round: 1,
+        createdAt: current.updatedAt,
+        triggerMessageId: 'message-1',
+        state: historical,
+        response: { naturalLanguageAnswer: '', treatmentPlan: [], transition: { status: 'STAY', reason: '' } },
+      },
+      {
+        eventType: 'agent_turn',
+        round: 2,
+        createdAt: current.updatedAt,
+        triggerMessageId: 'message-2',
+        state: current,
+        response: { naturalLanguageAnswer: '', treatmentPlan: [], transition: { status: 'STAY', reason: '' } },
+      },
+    ];
+
+    render(
+      <TraumaWorkspace
+        resetKey="trauma:leaf-states"
+        projectKey="trauma_med-demo"
+        sessionId="web:s_leaf_states"
+        onSubmitForm={vi.fn()}
+        runtimePanel={<div>runtime chat surface</div>}
+      />,
+    );
+
+    const historicalLeaf = screen.getByRole('button', { name: /R1历史病例/ });
+    const currentLeaf = screen.getByRole('button', { name: /R2当前病例/ });
+    expect(historicalLeaf.classList.contains('trauma-tree-memo-clickable')).toBe(true);
+    expect(historicalLeaf.classList.contains('trauma-tree-memo-selected')).toBe(false);
+    expect(currentLeaf.classList.contains('trauma-tree-memo-selected')).toBe(true);
+    expect(currentLeaf.classList.contains('trauma-tree-memo-clickable')).toBe(false);
+  });
+
   it('navigates the chat to the matching input bubble when selecting a round memo', () => {
     const state = initialUiCaseState();
     state.round = 2;

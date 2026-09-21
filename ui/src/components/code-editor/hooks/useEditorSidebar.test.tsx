@@ -84,6 +84,19 @@ describe('useEditorSidebar file tabs', () => {
     expect(result.current.activeFilePath).toBeNull();
   });
 
+  it('returns to split view after the last expanded file closes', () => {
+    const { result } = renderHook(() => useEditorSidebar({ selectedProject: project, isMobile: false }));
+
+    act(() => result.current.handleFileOpen('one.txt'));
+    act(() => result.current.handleToggleEditorExpand());
+    expect(result.current.editorExpanded).toBe(true);
+
+    act(() => result.current.handleTabClose(result.current.editorTabs[0].id));
+
+    expect(result.current.activeFilePath).toBeNull();
+    expect(result.current.editorExpanded).toBe(false);
+  });
+
   it('updates open paths after rename and closes tabs deleted with a directory', () => {
     const { result } = renderHook(() => useEditorSidebar({ selectedProject: project, isMobile: false }));
 

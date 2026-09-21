@@ -5,16 +5,9 @@ const THEME_MODE_KEY = 'themeMode';
 const LEGACY_THEME_KEY = 'theme';
 const PRODUCT_THEMES = new Set(['warm', 'command']);
 
-const getSystemDarkMode = () => (
-  typeof window !== 'undefined' &&
-  window.matchMedia &&
-  window.matchMedia('(prefers-color-scheme: dark)').matches
-);
-
 const normalizeThemeMode = (value) => (
   value === 'light'
   || value === 'dark'
-  || value === 'system'
   || value === 'warm'
   || value === 'command'
     ? value
@@ -22,17 +15,19 @@ const normalizeThemeMode = (value) => (
 );
 
 const readInitialThemeMode = () => {
-  const savedMode = normalizeThemeMode(localStorage.getItem(THEME_MODE_KEY));
+  const storedMode = localStorage.getItem(THEME_MODE_KEY);
+  const savedMode = normalizeThemeMode(storedMode);
   if (savedMode) return savedMode;
+  if (storedMode === 'system') return 'warm';
 
   const legacyTheme = normalizeThemeMode(localStorage.getItem(LEGACY_THEME_KEY));
-  if (legacyTheme === 'light' || legacyTheme === 'dark') return legacyTheme;
+  if (legacyTheme) return legacyTheme;
 
-  return 'system';
+  return 'warm';
 };
 
 const resolveThemeMode = (mode) => (
-  mode === 'system' ? getSystemDarkMode() : mode === 'dark' || mode === 'command'
+  mode === 'dark' || mode === 'command'
 );
 
 // eslint-disable-next-line react-refresh/only-export-components
@@ -88,26 +83,7 @@ export const ThemeProvider = ({ children }) => {
     }
 
     localStorage.setItem(THEME_MODE_KEY, themeMode);
-    if (themeMode === 'system') {
-      localStorage.removeItem(LEGACY_THEME_KEY);
-    } else {
-      localStorage.setItem(LEGACY_THEME_KEY, themeMode);
-    }
-  }, [isDarkMode, themeMode]);
-
-  // Listen for system theme changes
-  useEffect(() => {
-    if (!window.matchMedia) return;
-
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const handleChange = (e) => {
-      if (themeMode === 'system') {
-        setIsDarkMode(e.matches);
-      }
-    };
-
-    mediaQuery.addEventListener('change', handleChange);
-    return () => mediaQuery.removeEventListener('change', handleChange);
+    localStorage.setItem(LEGACY_THEME_KEY, themeMode);
   }, [themeMode]);
 
   const toggleDarkMode = () => {

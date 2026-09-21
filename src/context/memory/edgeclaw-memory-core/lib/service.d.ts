@@ -1,4 +1,4 @@
-import { type CaseTraceRecord, type ClearMemoryScope, type ClearMemoryResult, type DreamRunResult, type DreamRollbackResult, type HeartbeatStats, HeartbeatIndexer, type IndexingSettings, LlmMemoryExtractor, type MemoryActionRequest, type MemoryActionResult, type MemoryExportBundle, type MemoryImportResult, type MemoryImportableBundle, type MemoryMessage, type MemoryRecordType, type PresentationMemorySnapshot, type MemoryUiSnapshot, MemoryRepository, type RetrievalResult, ReasoningRetriever } from "./core/index.js";
+import { type CaseTraceRecord, type ClearMemoryScope, type ClearMemoryResult, type DreamRunResult, type DreamRollbackResult, type HeartbeatStats, HeartbeatIndexer, type IndexingSettings, LlmMemoryExtractor, type MemoryActionRequest, type MemoryActionResult, type MemoryExportBundle, type MemoryImportResult, type MemoryImportableBundle, type MemoryMaintenanceMode, type MemoryMessage, type MemoryRecordType, type PresentationMemorySnapshot, type MemoryUiSnapshot, MemoryRepository, type RetrievalResult, ReasoningRetriever } from "./core/index.js";
 import { type TranscriptMessageInfo } from "./message-utils.js";
 type LoggerLike = {
     info?: (...args: unknown[]) => void;
@@ -25,6 +25,8 @@ export interface EdgeClawMemoryServiceOptions {
     maxMessageChars?: number;
     heartbeatBatchSize?: number;
     defaultIndexingSettings?: Partial<IndexingSettings>;
+    /** PilotDeck uses one global configuration; standalone consumers may retain project settings. */
+    settingsSource?: "global" | "project";
     source?: string;
     llm?: EdgeClawMemoryLlmOptions;
     runtime?: Record<string, unknown>;
@@ -64,6 +66,10 @@ export declare class EdgeClawMemoryService {
     readonly indexer: HeartbeatIndexer;
     readonly retriever: ReasoningRetriever;
     private readonly globalProfileLock;
+    private readonly settingsSource;
+    private activeMaintenance;
+    private closeRequested;
+    private closed;
     private readonly logger?;
     private readonly captureStrategy;
     private readonly includeAssistant;
@@ -71,9 +77,40 @@ export declare class EdgeClawMemoryService {
     private readonly source;
     constructor(options: EdgeClawMemoryServiceOptions);
     close(): void;
+    private withMaintenance;
     getSettings(): IndexingSettings;
     saveSettings(partial: Partial<IndexingSettings>): IndexingSettings;
-    overview(): import("./core/types.js").DashboardOverview;
+    overview(): {
+        maintenanceMode: MemoryMaintenanceMode;
+        pendingSessions: number;
+        workspaceMode?: import("./core/types.js").WorkspaceMemoryMode;
+        projectMetaPresent?: boolean;
+        projectMemoryCount?: number;
+        feedbackMemoryCount?: number;
+        currentProjectCount?: number;
+        userProfileCount?: number;
+        recentRecallTraceCount?: number;
+        recentIndexTraceCount?: number;
+        recentDreamTraceCount?: number;
+        lastIndexedAt?: string;
+        lastDreamAt?: string;
+        lastDreamStatus?: import("./core/types.js").DreamPipelineStatus;
+        lastDreamSummary?: string;
+        lastDreamSnapshot?: import("./core/types.js").LastDreamSnapshotOverview;
+        dashboardStatus?: import("./core/types.js").DashboardStatus;
+        dashboardWarning?: string | null;
+        dashboardDiagnostics?: import("./core/types.js").DashboardDiagnostics | null;
+        changedFilesSinceLastDream?: number;
+        lastCapturedAt?: string;
+        lastDreamFailureReason?: string;
+        dreamConsecutiveFailures?: number;
+        maintenanceDowngrade?: {
+            from: MemoryMaintenanceMode;
+            to: MemoryMaintenanceMode;
+            at: string;
+            reason: string;
+        } | null;
+    };
     private getPipelineTimestamp;
     private setPipelineTimestamp;
     private reconcileAutoIndexAnchor;
@@ -89,7 +126,9 @@ export declare class EdgeClawMemoryService {
         sessionKeys?: string[];
         reason?: string;
     }): Promise<HeartbeatStats>;
+    private flushInternal;
     dream(trigger?: "manual" | "scheduled"): Promise<DreamRunResult>;
+    private dreamInternal;
     private incrementDreamFailureCount;
     rollbackLastDream(): DreamRollbackResult;
     retrieve(query: string, options?: {
@@ -108,6 +147,7 @@ export declare class EdgeClawMemoryService {
         indexStats?: HeartbeatStats;
         dreamResult?: DreamRunResult;
     }>;
+    private runDueMaintenanceInternal;
     search(query: string, options?: {
         recentMessages?: MemoryMessage[];
         workspaceHint?: string;
