@@ -55,6 +55,8 @@ import type {
   WebReadSubagentMessagesResult,
   WebForkSessionInput,
   WebForkSessionResult,
+  WebRewindSessionInput,
+  WebRewindSessionResult,
 } from "../protocol/types.js";
 import {
   createChineseDisplayStreamNormalizer,
@@ -195,6 +197,7 @@ export type InProcessGatewayOptions = {
   readSessionMessages?: (input: WebReadSessionMessagesInput) => Promise<WebReadSessionMessagesResult>;
   readSubagentMessages?: (input: WebReadSubagentMessagesInput) => Promise<WebReadSubagentMessagesResult>;
   forkSession?: (input: WebForkSessionInput) => Promise<WebForkSessionResult>;
+  rewindSession?: (input: WebRewindSessionInput) => Promise<WebRewindSessionResult>;
   recordAgentStatusMessage?: (input: GatewayRecordAgentStatusMessageInput) => Promise<{ recorded: boolean }>;
   /**
    * Web Phase 3 — pluggable project enumerator + describer.
@@ -1117,6 +1120,25 @@ export class InProcessGateway implements Gateway {
       );
     }
     return this.options.forkSession(input);
+  }
+
+  async rewindSession(input: WebRewindSessionInput): Promise<WebRewindSessionResult> {
+    if (!this.options.rewindSession) {
+      throw new Error(
+        "rewind_session is not configured. Wire `rewindSession` via createLocalGateway.",
+      );
+    }
+    if (this.router.isTurnInFlight(input.sessionKey)) {
+      const error = new Error("Cannot rewind while a turn is running for this session.");
+      (error as Error & { code?: string }).code = "rewind_turn_in_flight";
+      throw error;
+    }
+    const result = await this.options.rewindSession(input);
+    // Evict the cached session so the next turn resumes from the truncated
+    // transcript instead of the stale in-memory history.
+    await this.router.close(input.sessionKey);
+    this.sessionPermissionGrants.delete(input.sessionKey);
+    return result;
   }
 
   async listProjects(): Promise<WebListProjectsResult> {

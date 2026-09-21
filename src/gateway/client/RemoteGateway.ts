@@ -32,6 +32,8 @@ import type {
   WebReadSubagentMessagesResult,
   WebForkSessionInput,
   WebForkSessionResult,
+  WebRewindSessionInput,
+  WebRewindSessionResult,
 } from "../protocol/types.js";
 import type {
   SkillAddressInput,
@@ -194,6 +196,10 @@ export class RemoteGateway implements Gateway {
 
   async forkSession(input: WebForkSessionInput): Promise<WebForkSessionResult> {
     return (await this.client.request("fork_session", input)) as WebForkSessionResult;
+  }
+
+  async rewindSession(input: WebRewindSessionInput): Promise<WebRewindSessionResult> {
+    return (await this.client.request("rewind_session", input)) as WebRewindSessionResult;
   }
 
   async listProjects(): Promise<WebListProjectsResult> {

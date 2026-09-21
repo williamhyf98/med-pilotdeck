@@ -4,6 +4,23 @@
     "copied": "已复制",
     "copyCode": "复制代码"
   },
+  "lastTurnEdit": {
+    "editTitle": "编辑这条提问",
+    "regenerateTitle": "重新生成回答（撤回本轮问答后重发）",
+    "placeholder": "编辑你的提问…",
+    "editHint": "Esc 取消 · Ctrl+Enter 保存",
+    "cancel": "取消",
+    "save": "保存",
+    "savedHint": "已编辑，重新生成后生效",
+    "discard": "还原",
+    "regenerate": "重新生成",
+    "sessionRunning": "回答生成中，暂不可用",
+    "unsupportedAttachments": "带附件或图片的提问暂不支持编辑重答",
+    "missingTarget": "无法定位这条提问，暂时不能重新生成。",
+    "emptyQuestion": "问题内容为空，无法重新生成。",
+    "resendFailed": "已撤回上一轮问答，但自动重发失败，问题已填入输入框，请手动发送。",
+    "failed": "重新生成失败。"
+  },
   "workspace": {
     "emptyTitle": "就这个项目询问 PilotDeck",
     "emptyDescription": "需要把文件加入上下文时，请用 @ 引用工作区文件。"

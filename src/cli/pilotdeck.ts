@@ -804,6 +804,9 @@ function createFallbackGateway(): Gateway {
     forkSession: async () => {
       throw new Error("fork_session is not configured.");
     },
+    rewindSession: async () => {
+      throw new Error("rewind_session is not configured.");
+    },
     listProjects: async () => ({ projects: [] }),
     describeProject: async (input) => ({
       projectKey: input.projectKey,

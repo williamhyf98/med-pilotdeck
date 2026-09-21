@@ -81,6 +81,7 @@ import { sanitizeSessionIdForPath } from "../session/storage/ProjectSessionStora
 import { createSessionTitleGenerator } from "../session/title/SessionTitleGenerator.js";
 import { readWebSessionMessages, readSubagentWebMessages } from "../web/server/readSessionMessages.js";
 import { forkWebSession } from "../web/server/forkSession.js";
+import { rewindWebSession } from "../web/server/rewindSession.js";
 import { describeWebProject, listWebProjects } from "../web/server/listProjects.js";
 import { BackgroundTaskRuntime, type BackgroundTaskCompletionEvent } from "../task/runtime/BackgroundTaskRuntime.js";
 import { createBuiltinRegistry, createPlanFileManager, filterAvailableTools } from "../tool/index.js";
@@ -380,6 +381,12 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
       }),
     forkSession: (input) =>
       forkWebSession(input, {
+        projectRoot: input.projectKey ? input.projectKey : fallbackProjectRoot,
+        pilotHome,
+        now,
+      }),
+    rewindSession: (input) =>
+      rewindWebSession(input, {
         projectRoot: input.projectKey ? input.projectKey : fallbackProjectRoot,
         pilotHome,
         now,

@@ -99,6 +99,7 @@ class MockGateway implements Gateway {
   readSessionMessages = stub({ messages: [], hasMore: false, session: {} as any }) as unknown as Gateway["readSessionMessages"];
   readSubagentMessages = stub({ messages: [], total: 0 }) as unknown as Gateway["readSubagentMessages"];
   forkSession = stub({ newSessionKey: "web:s_fork", prefillText: "", carriedMessageCount: 0 }) as unknown as Gateway["forkSession"];
+  rewindSession = stub({ removedTurnId: "t", removedFromSequence: 0, removedAtIso: "", removedText: "", removedEntryCount: 0 }) as unknown as Gateway["rewindSession"];
   listProjects = stub({ projects: [] }) as Gateway["listProjects"];
   describeProject = stub({ projectKey: "", name: "", root: "", fullPath: "", sessionCount: 0 }) as unknown as Gateway["describeProject"];
 }

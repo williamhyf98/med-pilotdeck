@@ -31,6 +31,8 @@ import type {
   WebReadSubagentMessagesResult as WebUiReadSubagentMessagesResult,
   WebForkSessionInput as WebUiForkSessionInput,
   WebForkSessionResult as WebUiForkSessionResult,
+  WebRewindSessionInput as WebUiRewindSessionInput,
+  WebRewindSessionResult as WebUiRewindSessionResult,
 } from "../../web/client/protocol.js";
 import type {
   SkillCreateInput,
@@ -355,6 +357,8 @@ export type WebReadSubagentMessagesInput = WebUiReadSubagentMessagesInput;
 export type WebReadSubagentMessagesResult = WebUiReadSubagentMessagesResult;
 export type WebForkSessionInput = WebUiForkSessionInput;
 export type WebForkSessionResult = WebUiForkSessionResult;
+export type WebRewindSessionInput = WebUiRewindSessionInput;
+export type WebRewindSessionResult = WebUiRewindSessionResult;
 export type WebProjectSummary = WebUiProjectSummary;
 export type WebListProjectsResult = WebUiListProjectsResult;
 export type WebDescribeProjectInput = { projectKey: string };
@@ -506,6 +510,12 @@ export interface Gateway {
    * Fork a session transcript at a prior user turn into a new session file.
    */
   forkSession(input: WebForkSessionInput): Promise<WebForkSessionResult>;
+  /**
+   * Rewind a session in place by removing its last user turn (and everything
+   * after it) from the transcript, then evicting the in-memory session so the
+   * next resume replays the truncated history.
+   */
+  rewindSession(input: WebRewindSessionInput): Promise<WebRewindSessionResult>;
   /**
    * Read a subagent's sidechain transcript and return its messages in WebMessage format.
    */

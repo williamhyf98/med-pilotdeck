@@ -13,7 +13,7 @@ import type {
 import type { SessionStore } from '../../stores/useSessionStore';
 import { getSessionRequestParams, isReadOnlySession, type Project, type ProjectSession, type SessionProvider } from '../../types/app';
 import { getIntrinsicMessageKey } from '../chat/utils/messageKeys';
-import MessageRowV2 from './MessageRowV2';
+import MessageRowV2, { type LastTurnEditController } from './MessageRowV2';
 import SubagentDetailModal from './SubagentDetailModal';
 import ChatHistorySearchBar from './ChatHistorySearchBar';
 import { useRegisterChatHistorySearchControls } from './ChatHistorySearchController';
@@ -78,6 +78,7 @@ type MessagesPaneV2Props = {
   onFork?: (message: ChatMessage, carriedMessageCount: number) => void;
   forkDisabled?: boolean;
   forkParentSessionTitle?: string | null;
+  lastTurnEdit?: LastTurnEditController;
 };
 
 type KeyedRenderableMessageItem = RenderableMessageItem & {
@@ -341,6 +342,7 @@ function MessagesPaneV2({
   onFork,
   forkDisabled = false,
   forkParentSessionTitle = null,
+  lastTurnEdit,
 }: MessagesPaneV2Props) {
   const resolvedPlanModeActive = planModeActive || runMode === 'plan';
   const { t } = useTranslation('chat');
@@ -954,6 +956,9 @@ function MessagesPaneV2({
             forkCarriedMessageCount={forkCarriedMessageCount}
             forkDisabled={forkDisabled}
             showAssistantActions={showAssistantActions}
+            lastTurnEdit={item.renderIndex === lastUserRenderIndex && item.message.type === 'user'
+              ? lastTurnEdit
+              : undefined}
           />
           {rendersLiveHeaderAfterItem ? (
             <LiveProcessHeader
@@ -995,6 +1000,7 @@ function MessagesPaneV2({
     onFileOpen,
     onFork,
     forkDisabled,
+    lastTurnEdit,
     onGrantSessionToolPermission,
     onShowSettings,
     provider,

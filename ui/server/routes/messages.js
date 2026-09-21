@@ -117,6 +117,46 @@ router.post('/:sessionId/fork', async (req, res) => {
   }
 });
 
+router.post('/:sessionId/rewind', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const projectKey = resolveMessagesProjectKey(
+      req.body?.projectPath || req.body?.projectName || req.query.projectPath || req.query.projectName,
+    );
+    const fromEntryId = String(req.body?.fromEntryId || '');
+    if (!fromEntryId) {
+      return res.status(400).json({ error: 'fromEntryId is required' });
+    }
+
+    const gateway = await getPilotDeckGateway();
+    const result = await gateway.rewindSession({
+      sessionKey: sessionId,
+      projectKey,
+      fromEntryId,
+    });
+
+    return res.json({
+      removedTurnId: result.removedTurnId,
+      removedFromSequence: result.removedFromSequence,
+      removedAtIso: result.removedAtIso,
+      removedText: result.removedText,
+      removedEntryCount: result.removedEntryCount,
+    });
+  } catch (error) {
+    console.error('[messages] rewind_session failed:', error);
+    const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
+    if (code.startsWith('rewind_')) {
+      return res.status(400).json({
+        error: error instanceof Error ? error.message : 'Rewind failed',
+        code,
+      });
+    }
+    return res.status(500).json({
+      error: error instanceof Error ? error.message : 'Rewind failed',
+    });
+  }
+});
+
 router.get('/:sessionId/subagent/:subagentId/messages', async (req, res) => {
   try {
     const { sessionId, subagentId } = req.params;

@@ -4,6 +4,23 @@
     "copied": "Copied",
     "copyCode": "Copy code"
   },
+  "lastTurnEdit": {
+    "editTitle": "Edit this question",
+    "regenerateTitle": "Regenerate the answer (rewinds this turn and resends)",
+    "placeholder": "Edit your question…",
+    "editHint": "Esc to cancel · Ctrl+Enter to save",
+    "cancel": "Cancel",
+    "save": "Save",
+    "savedHint": "Edited — takes effect after regenerating",
+    "discard": "Revert",
+    "regenerate": "Regenerate",
+    "sessionRunning": "Unavailable while a response is being generated",
+    "unsupportedAttachments": "Questions with attachments or images cannot be edited and regenerated yet",
+    "missingTarget": "Cannot locate this question, so it cannot be regenerated right now.",
+    "emptyQuestion": "The question is empty, so it cannot be regenerated.",
+    "resendFailed": "The previous turn was rewound, but the automatic resend failed. The question was placed in the composer — please send it manually.",
+    "failed": "Regenerate failed."
+  },
   "workspace": {
     "emptyTitle": "Ask PilotDeck about this project",
     "emptyDescription": "Reference a workspace file with @ when you want it included."

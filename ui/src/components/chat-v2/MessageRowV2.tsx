@@ -1,7 +1,7 @@
-import { memo, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { AlertTriangle, Check, ChevronRight, Copy, GitBranch, Loader2 } from 'lucide-react';
+import { AlertTriangle, Check, ChevronRight, Copy, GitBranch, Loader2, Pencil, RefreshCw } from 'lucide-react';
 import { copyTextToClipboard } from '../../utils/clipboard';
 import { cn } from '../../lib/utils.js';
 import type { Project, SessionProvider } from '../../types/app';
@@ -88,6 +88,25 @@ type MessageRowV2Props = {
   forkCarriedMessageCount?: number;
   forkDisabled?: boolean;
   showAssistantActions?: boolean;
+  lastTurnEdit?: LastTurnEditController;
+};
+
+/**
+ * Edit-and-regenerate controller for the LAST user question. Owned by
+ * ChatInterfaceV2 (rows are virtualized, so row-local state would be lost on
+ * scroll) and threaded down only to the last user message row.
+ */
+export type LastTurnEditController = {
+  editingEntryId: string | null;
+  editDraft: string;
+  savedEdit: { entryId: string; text: string } | null;
+  isRegenerating: boolean;
+  onStartEdit: (message: ChatMessage) => void;
+  onDraftChange: (value: string) => void;
+  onCancelEdit: () => void;
+  onSaveEdit: () => void;
+  onDiscardSavedEdit: () => void;
+  onRegenerate: (message: ChatMessage) => void;
 };
 
 // Fall back to the heavy legacy renderer for anything that isn't a vanilla
@@ -130,6 +149,7 @@ function MessageRowV2({
   forkCarriedMessageCount = 0,
   forkDisabled = false,
   showAssistantActions,
+  lastTurnEdit,
 }: MessageRowV2Props) {
   const { t } = useTranslation('chat');
   const delegate = useMemo(() => shouldDelegate(message), [message]);
@@ -269,84 +289,176 @@ function MessageRowV2({
       name: image.name,
       mimeType: image.mimeType,
     }));
+    const editControllerActive = Boolean(lastTurnEdit && message.entryId);
+    const rewindDisabled = Boolean(
+      !editControllerActive ||
+      isSessionRunning ||
+      lastTurnEdit?.isRegenerating ||
+      hasForkUnsupportedContent,
+    );
+    const rewindDisabledReason = hasForkUnsupportedContent
+      ? t('lastTurnEdit.unsupportedAttachments', {
+          defaultValue: '带附件或图片的提问暂不支持编辑重答',
+        })
+      : isSessionRunning
+        ? t('lastTurnEdit.sessionRunning', { defaultValue: '回答生成中，暂不可用' })
+        : undefined;
+    const isEditingThis = Boolean(
+      lastTurnEdit && message.entryId && lastTurnEdit.editingEntryId === message.entryId,
+    );
+    const savedEditText =
+      lastTurnEdit && message.entryId && lastTurnEdit.savedEdit?.entryId === message.entryId
+        ? lastTurnEdit.savedEdit.text
+        : null;
+
+    if (isEditingThis && lastTurnEdit) {
+      return withProcessRows(<LastTurnEditPanel controller={lastTurnEdit} t={t} />);
+    }
+
     return withProcessRows(
-      <div className="group/user-msg flex w-full items-end justify-end gap-1.5">
-        {onFork ? (
-          <ForkMessageButton
-            carriedMessageCount={forkCarriedMessageCount}
-            disabled={forkDisabled || isSessionRunning || !message.entryId || hasForkUnsupportedContent}
-            disabledReason={hasForkUnsupportedContent
-              ? String(message.forkUnsupportedReason || t('fork.unsupportedAttachments', {
-                  defaultValue: 'Forking messages with attachments or media is not supported yet',
-                }))
-              : undefined}
-            onFork={() => {
-              if (message.entryId && !hasForkUnsupportedContent) onFork(message, forkCarriedMessageCount);
-            }}
-            t={t}
-          />
-        ) : null}
-        <div className="min-w-0 max-w-[78%] overflow-hidden rounded-[22px] bg-neutral-100 px-4 py-2.5 text-[14px] leading-relaxed text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100">
-          {message.isStreaming && !formattedContent ? (
-            <span className="inline-block h-4 w-2 animate-pulse bg-neutral-400 dark:bg-neutral-500" />
-          ) : (
+      <div className="flex w-full flex-col items-end gap-1.5">
+        <div className="group/user-msg flex w-full items-end justify-end gap-1.5">
+          {onFork ? (
+            <ForkMessageButton
+              carriedMessageCount={forkCarriedMessageCount}
+              disabled={forkDisabled || isSessionRunning || !message.entryId || hasForkUnsupportedContent}
+              disabledReason={hasForkUnsupportedContent
+                ? String(message.forkUnsupportedReason || t('fork.unsupportedAttachments', {
+                    defaultValue: 'Forking messages with attachments or media is not supported yet',
+                  }))
+                : undefined}
+              onFork={() => {
+                if (message.entryId && !hasForkUnsupportedContent) onFork(message, forkCarriedMessageCount);
+              }}
+              t={t}
+            />
+          ) : null}
+          {lastTurnEdit ? (
             <>
-              {documentReferenceAttachments.length > 0 ? (
-                <div className={formattedContent || fileAttachments.length > 0 ? 'mb-2 flex flex-wrap gap-2' : 'flex flex-wrap gap-2'}>
-                  {documentReferenceAttachments.map((reference) => (
-                    <DocumentReferenceChip
-                      key={reference.id}
-                      reference={reference}
-                      summaryLength={100}
-                      className="bg-white/80 dark:bg-neutral-900/55"
-                      onOpen={onFileOpen
-                        ? () => onFileOpen(reference.source.relativePath)
-                        : undefined}
-                    />
-                  ))}
-                </div>
-              ) : null}
-              {fileAttachments.length > 0 ? (
-                <div className={cn('pd-message-attachment-scroll', formattedContent && 'mb-2')}>
-                  <UserAttachmentCards
-                    attachments={fileAttachments}
-                    project={selectedProject}
-                    onBrowse={onFileOpen}
-                  />
-                </div>
-              ) : null}
-              {messageImages.length > 0 ? (
-                <div
-                  className={cn(
-                    'pd-message-attachment-scroll grid grid-cols-1 gap-2',
-                    formattedContent && 'mb-2',
-                  )}
-                >
-                  {messageImages.map((image, index) => (
-                    <button
-                      type="button"
-                      key={`${image.name || 'image'}-${index}`}
-                      onClick={() => setUserImageLightbox(index)}
-                      className="block w-72 max-w-full overflow-hidden rounded-xl border border-neutral-200 bg-white/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-900/40"
-                      aria-label={image.name ? `Preview ${image.name}` : 'Preview image'}
-                    >
-                      <img
-                        src={image.data}
-                        alt={image.name || 'Uploaded image'}
-                        className="block h-auto max-h-64 w-full cursor-zoom-in object-contain transition-opacity hover:opacity-90"
-                        loading="lazy"
-                      />
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-              {formattedContent ? (
-                <Markdown className="prose prose-sm prose-neutral min-w-0 max-w-none break-words [overflow-wrap:anywhere] dark:prose-invert prose-p:my-1 prose-ol:my-1 prose-ul:my-1 prose-li:my-0" projectName={selectedProject?.name}
-          onFileOpen={onFileOpen}>{formattedContent}</Markdown>
-              ) : null}
+              <UserHoverIconButton
+                icon={lastTurnEdit.isRegenerating
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+                  : <RefreshCw className="h-3.5 w-3.5" strokeWidth={2} />}
+                title={rewindDisabledReason ?? String(t('lastTurnEdit.regenerateTitle', {
+                  defaultValue: '重新生成回答（撤回本轮问答后重发）',
+                }))}
+                disabled={rewindDisabled}
+                onClick={() => {
+                  if (!rewindDisabled) lastTurnEdit.onRegenerate(message);
+                }}
+              />
+              <UserHoverIconButton
+                icon={<Pencil className="h-3.5 w-3.5" strokeWidth={2} />}
+                title={rewindDisabledReason ?? String(t('lastTurnEdit.editTitle', {
+                  defaultValue: '编辑这条提问',
+                }))}
+                disabled={rewindDisabled}
+                onClick={() => {
+                  if (!rewindDisabled) lastTurnEdit.onStartEdit(message);
+                }}
+              />
             </>
-          )}
+          ) : null}
+          <div
+            className={cn(
+              'min-w-0 max-w-[78%] overflow-hidden rounded-[22px] bg-neutral-100 px-4 py-2.5 text-[14px] leading-relaxed text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100',
+              savedEditText !== null && 'ring-1 ring-amber-400/70 dark:ring-amber-500/50',
+            )}
+          >
+            {message.isStreaming && !formattedContent ? (
+              <span className="inline-block h-4 w-2 animate-pulse bg-neutral-400 dark:bg-neutral-500" />
+            ) : (
+              <>
+                {documentReferenceAttachments.length > 0 ? (
+                  <div className={formattedContent || fileAttachments.length > 0 ? 'mb-2 flex flex-wrap gap-2' : 'flex flex-wrap gap-2'}>
+                    {documentReferenceAttachments.map((reference) => (
+                      <DocumentReferenceChip
+                        key={reference.id}
+                        reference={reference}
+                        summaryLength={100}
+                        className="bg-white/80 dark:bg-neutral-900/55"
+                        onOpen={onFileOpen
+                          ? () => onFileOpen(reference.source.relativePath)
+                          : undefined}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+                {fileAttachments.length > 0 ? (
+                  <div className={cn('pd-message-attachment-scroll', formattedContent && 'mb-2')}>
+                    <UserAttachmentCards
+                      attachments={fileAttachments}
+                      project={selectedProject}
+                      onBrowse={onFileOpen}
+                    />
+                  </div>
+                ) : null}
+                {messageImages.length > 0 ? (
+                  <div
+                    className={cn(
+                      'pd-message-attachment-scroll grid grid-cols-1 gap-2',
+                      formattedContent && 'mb-2',
+                    )}
+                  >
+                    {messageImages.map((image, index) => (
+                      <button
+                        type="button"
+                        key={`${image.name || 'image'}-${index}`}
+                        onClick={() => setUserImageLightbox(index)}
+                        className="block w-72 max-w-full overflow-hidden rounded-xl border border-neutral-200 bg-white/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-900/40"
+                        aria-label={image.name ? `Preview ${image.name}` : 'Preview image'}
+                      >
+                        <img
+                          src={image.data}
+                          alt={image.name || 'Uploaded image'}
+                          className="block h-auto max-h-64 w-full cursor-zoom-in object-contain transition-opacity hover:opacity-90"
+                          loading="lazy"
+                        />
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                {(savedEditText ?? formattedContent) ? (
+                  <Markdown className="prose prose-sm prose-neutral min-w-0 max-w-none break-words [overflow-wrap:anywhere] dark:prose-invert prose-p:my-1 prose-ol:my-1 prose-ul:my-1 prose-li:my-0" projectName={selectedProject?.name}
+            onFileOpen={onFileOpen}>{savedEditText ?? formattedContent}</Markdown>
+                ) : null}
+              </>
+            )}
+          </div>
         </div>
+        {savedEditText !== null && lastTurnEdit ? (
+          <div className="flex flex-wrap items-center justify-end gap-2 pr-1">
+            <span className="text-[12px] text-amber-600 dark:text-amber-400">
+              {t('lastTurnEdit.savedHint', { defaultValue: '已编辑，重新生成后生效' })}
+            </span>
+            <button
+              type="button"
+              onClick={lastTurnEdit.onDiscardSavedEdit}
+              className="text-[12px] text-neutral-400 underline-offset-2 transition-colors hover:text-neutral-600 hover:underline dark:text-neutral-500 dark:hover:text-neutral-300"
+            >
+              {t('lastTurnEdit.discard', { defaultValue: '还原' })}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (!rewindDisabled) lastTurnEdit.onRegenerate(message);
+              }}
+              disabled={rewindDisabled}
+              title={rewindDisabledReason}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-medium transition-colors',
+                rewindDisabled
+                  ? 'cursor-not-allowed bg-neutral-200 text-neutral-400 dark:bg-neutral-700 dark:text-neutral-500'
+                  : 'bg-blue-600 text-white hover:bg-blue-500',
+              )}
+            >
+              {lastTurnEdit.isRegenerating
+                ? <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
+                : <RefreshCw className="h-3 w-3" strokeWidth={2} />}
+              {t('lastTurnEdit.regenerate', { defaultValue: '重新生成' })}
+            </button>
+          </div>
+        ) : null}
         {userImageLightbox !== null && lightboxImages.length > 0 ? (
           <ImageLightbox
             images={lightboxImages}
@@ -541,6 +653,101 @@ function ForkMessageButton({
     >
       <GitBranch className="h-3.5 w-3.5" strokeWidth={2} />
     </button>
+  );
+}
+
+function UserHoverIconButton({
+  icon,
+  title,
+  disabled,
+  onClick,
+}: {
+  icon: ReactNode;
+  title: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        'mb-1 rounded-md p-1.5 text-neutral-400 opacity-0 transition-all group-hover/user-msg:opacity-100 focus-visible:opacity-100',
+        disabled
+          ? 'cursor-not-allowed opacity-30'
+          : 'hover:bg-neutral-200/80 hover:text-neutral-700 dark:hover:bg-neutral-700 dark:hover:text-neutral-200',
+      )}
+      aria-label={title}
+      title={title}
+    >
+      {icon}
+    </button>
+  );
+}
+
+function LastTurnEditPanel({
+  controller,
+  t,
+}: {
+  controller: LastTurnEditController;
+  t: TFunction<'chat'>;
+}) {
+  const draftIsEmpty = !controller.editDraft.trim();
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      controller.onCancelEdit();
+      return;
+    }
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !draftIsEmpty) {
+      event.preventDefault();
+      controller.onSaveEdit();
+    }
+  };
+
+  const draftLineCount = controller.editDraft.split('\n').length;
+
+  return (
+    <div className="flex w-full justify-end">
+      <div className="w-full max-w-[78%] rounded-[22px] border border-blue-300/70 bg-neutral-100 px-4 py-3 dark:border-blue-500/40 dark:bg-neutral-800">
+        <textarea
+          autoFocus
+          value={controller.editDraft}
+          onChange={(event) => controller.onDraftChange(event.target.value)}
+          onKeyDown={handleKeyDown}
+          rows={Math.min(10, Math.max(2, draftLineCount))}
+          className="w-full resize-y border-0 bg-transparent text-[14px] leading-relaxed text-neutral-900 outline-none placeholder:text-neutral-400 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+          placeholder={String(t('lastTurnEdit.placeholder', { defaultValue: '编辑你的提问…' }))}
+        />
+        <div className="mt-2 flex items-center justify-end gap-2">
+          <span className="mr-auto text-[11px] text-neutral-400 dark:text-neutral-500">
+            {t('lastTurnEdit.editHint', { defaultValue: 'Esc 取消 · Ctrl+Enter 保存' })}
+          </span>
+          <button
+            type="button"
+            onClick={controller.onCancelEdit}
+            className="rounded-full px-3 py-1 text-[12px] text-neutral-500 transition-colors hover:bg-neutral-200/70 hover:text-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-700 dark:hover:text-neutral-200"
+          >
+            {t('lastTurnEdit.cancel', { defaultValue: '取消' })}
+          </button>
+          <button
+            type="button"
+            onClick={controller.onSaveEdit}
+            disabled={draftIsEmpty}
+            className={cn(
+              'rounded-full px-3 py-1 text-[12px] font-medium transition-colors',
+              draftIsEmpty
+                ? 'cursor-not-allowed bg-neutral-200 text-neutral-400 dark:bg-neutral-700 dark:text-neutral-500'
+                : 'bg-neutral-900 text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-white',
+            )}
+          >
+            {t('lastTurnEdit.save', { defaultValue: '保存' })}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
