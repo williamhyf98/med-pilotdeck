@@ -39,6 +39,35 @@ function context(events: unknown[]) {
   };
 }
 
+test("DeepChest pending jobs show stage, not completion, and results expose files without duplicate deltas", async () => {
+  for (const status of ["running", "succeeded", "failed"]) {
+    const events: any[] = [];
+    const runtime = runtimeFor("med_deepchest_job", async () => ({content:[{type:"text",text:JSON.stringify({
+      status, phase:"segment", report: status === "succeeded" ? "中文报告" : undefined,
+      artifacts: status === "succeeded" ? [{path:"/workspace/report.md",label:"报告"}] : [],
+    })}]}));
+    const [definition] = await createMcpToolDefinitionsFromRuntime(runtime as any);
+    const result = await definition.execute({job_id:"a".repeat(32), continuation_mode:"material"},context(events));
+    const activity = events.filter(e=>e.metadata?.channel==="medical_activity").at(-1);
+    assert.equal(activity?.metadata.state,status === "succeeded" ? "completed" : status);
+    assert.equal(events.some(e=>e.metadata?.channel==="assistant_text_delta"),false);
+    if(status === "succeeded") assert.ok(result.content.some(x=>x.type==="file" && x.path==="/workspace/report.md"));
+  }
+});
+
+test("DeepChest terminal report becomes the official final answer without a rewrite", async () => {
+  const events: any[] = [];
+  const runtime = runtimeFor("med_deepchest_job", async () => ({content:[{type:"text",text:JSON.stringify({
+    ok:true, status:"succeeded", report:"完整中文证据分析", continuation_mode:"terminal",
+  })}]}));
+  const [definition] = await createMcpToolDefinitionsFromRuntime(runtime as any);
+  const result = await definition.execute({job_id:"a".repeat(32)},context(events));
+  assert.equal(result.metadata.directFinalAssistantText,"完整中文证据分析");
+  const deltas=events.filter(e=>e.metadata?.channel==="assistant_text_delta");
+  assert.equal(deltas.length,1);
+  assert.equal(deltas[0].metadata.text,"完整中文证据分析");
+});
+
 test("DICOM routing emits only sanitized medical activity", async () => {
   const events: any[] = [];
   const runtime = runtimeFor("med_dicom_route", async () => ({

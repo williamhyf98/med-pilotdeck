@@ -74,6 +74,10 @@ mcp = FastMCP(
         "For any other complete CT with a known body region, load "
         "med-deepchest-3dmedagent and perform its 3DMedAgent workflow or explicit "
         "compatibility downgrade before using general medical parsing. "
+        "For chest CT use med_deepchest_status, med_deepchest_submit and "
+        "med_deepchest_job; poll the same job until success/failure. Never run "
+        "smoke20 examples to answer an uploaded case. The production service "
+        "provides CT-CLIP evidence analysis, not direct image observations. "
         "For war-trauma knowledge Q&A: call med_trauma_rag_query, then the main "
         "model answers from chunks (brief tips OK; not the formal five-section plan). "
         "For a formal six-stage graded care plan: call med_trauma_stage_plan "
@@ -650,6 +654,48 @@ async def med_radar_analyze_ct(
         message="__PILOTDECK_MEDICAL_STAGE__:artifacts",
     )
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def med_deepchest_status() -> str:
+    """Check configured DeepChest HTTP service, file/configuration readiness and queue."""
+    from .deepchest import call_deepchest
+    return json.dumps(await asyncio.to_thread(call_deepchest, 'health'), ensure_ascii=False)
+
+
+@mcp.tool()
+async def med_deepchest_submit(path: str, question: str, body_region: str,
+                              modality: str, intensity_units: str) -> str:
+    """Submit ONE complete chest CT (NIfTI, DICOM series folder, or DICOM ZIP).
+
+    Confirm body_region='chest', modality='CT', intensity_units='HU' from user or
+    metadata; never infer these from a random filename. NIfTI lacks modality metadata.
+    Returns job_id; use med_deepchest_job until succeeded/failed. Do not resubmit.
+    Include the original question and current presentation preferences in question.
+    """
+    from .deepchest import call_deepchest
+    result = await asyncio.to_thread(call_deepchest, 'submit', path=path, question=question,
+                                    body_region=body_region, modality=modality, intensity_units=intensity_units)
+    return json.dumps(result, ensure_ascii=False)
+
+
+@mcp.tool()
+async def med_deepchest_job(job_id: str, wait_seconds: int = 30, continuation_mode: str = "terminal") -> str:
+    """Wait up to 30 seconds for a DeepChest job, return stage or saved report/artifacts.
+
+    Repeat this tool with the same job_id while waiting/running; do not start a new
+    job and do not answer from demo data. terminal presents/persists the report and
+    ends the turn. Use material if further clinical integration or export is needed.
+    """
+    from .deepchest import call_deepchest
+    deadline = asyncio.get_running_loop().time() + min(30, max(0, wait_seconds))
+    while True:
+        result = await asyncio.to_thread(call_deepchest, 'inspect', job_id=job_id)
+        if result.get('status') not in ('waiting', 'running', 'uploading') or asyncio.get_running_loop().time() >= deadline:
+            result['ok'] = result.get('status') == 'succeeded'
+            result['continuation_mode'] = _normalize_continuation_mode(continuation_mode)
+            return json.dumps(result, ensure_ascii=False)
+        await asyncio.sleep(min(3, max(0, deadline - asyncio.get_running_loop().time())))
 
 
 @mcp.tool()

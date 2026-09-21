@@ -427,7 +427,7 @@ def route_dicom(path: str | Path, *, max_files: int = 512) -> Dict[str, Any]:
         elif region not in {"unknown", "mixed"}:
             payload["candidate_skills"] = ["med-deepchest-3dmedagent", "med-medical"]
             payload["recommended_skill"] = "med-deepchest-3dmedagent"
-            payload["recommended_tool"] = None
+            payload["recommended_tool"] = "mcp__med-tools__med_deepchest_submit" if region == "chest" else None
             payload["requires_main_agent_synthesis"] = True
             payload["route_mode"] = "3dmedagent"
             payload["specialized_support"] = "full" if region == "chest" else "compatibility-check"

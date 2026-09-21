@@ -11,6 +11,9 @@ import type { PilotDeckToolRuntimeContext } from "../../src/tool/protocol/types.
 import { ToolRegistry } from "../../src/tool/registry/ToolRegistry.js";
 
 const MEDICAL_TOOLS = [
+  "mcp__med-tools__med_deepchest_status",
+  "mcp__med-tools__med_deepchest_submit",
+  "mcp__med-tools__med_deepchest_job",
   "mcp__med-tools__med_parse_medical",
   "mcp__med-tools__med_dicom_route",
   "mcp__med-tools__med_trauma_rag_query",

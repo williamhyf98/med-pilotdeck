@@ -50,7 +50,7 @@ Wire names in chat: `mcp__med-tools__<tool>`.
   │                  └─ med_radar_analyze_ct → 结构化异常评分 + CSV
   │
   ├─【DeepChest 胸部 CT / 3DMedAgent】── Skill med-deepchest-3dmedagent
-  │                  └─ 本地 shell workflow → dry-run / CT-CLIP / Agent 产物
+  │                  └─ med_deepchest_submit → med_deepchest_job → 中文模型证据分析 / 产物
   │
   ├─【按模版生成病例报告 / HTML】── Skill med-case-report
   │                  ├─ med_parse_medical(continuation_mode=material) 并入附件解读
@@ -66,7 +66,7 @@ Skills:
 - `med-trauma-stage-plan` — 六阶段正式方案；先 parse 时用 `material`；`care_plan` 流式展示后本轮可继续
 - `med-case-report` — 固定 9 段模版病例报告；附件解析必须用 `material`，解析后继续写报告/HTML
 - `med-radar-ct` — node12 RADAR 三维 CT 推理；只把分数当作需复核的模型信号
-- `med-deepchest-3dmedagent` — `MED_DEEPCHEST_ROOT` 配置的外部 DeepChestVQA / CT-CLIP / 3DMedAgent 工作区；这是 shell workflow，不是新的 MCP 工具，须核对上传病例与推理输入的绑定
+- `med-deepchest-3dmedagent` — 上传病例使用 HTTPS 任务服务，配置 `MED_DEEPCHEST_API_BASE`、密钥及 CA；服务端使用 `MED_DEEPCHEST_ROOT` 工作区生成本次病例证据和中文分析。shell/smoke20 仅用于明确要求的实验验证。
 - `med-dicom-router` — 本地只读 DICOM 预检和 Skill 路由；不会解码像素、调用模型或上传 node12
 
 3DMedAgent 与 RADAR 是两个独立医学流程。完整腹部/盆腔 CT 自动调用 RADAR；其他部位明确的完整 CT 先进入 3DMedAgent。胸部具备完整 DeepChest/CT-CLIP 支持；头颈、脊柱、四肢等当前不在器官词表内时必须明确兼容性降级。两套证据、分数、产物和限制分别保留，不把 RADAR 分数写入 3DMedAgent `facts_memory`。

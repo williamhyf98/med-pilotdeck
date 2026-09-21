@@ -23,6 +23,9 @@ const DEFAULT_MED_TOOLS_REQUIREMENT: MedToolsSkillRequirement = {
 const MED_TOOLS_SKILL_REQUIREMENTS: Readonly<
   Record<string, MedToolsSkillRequirement>
 > = {
+  "mcp__med-tools__med_deepchest_status": { loadSkill: "med-deepchest-3dmedagent", acceptedSkills: ["med-deepchest-3dmedagent"] },
+  "mcp__med-tools__med_deepchest_submit": { loadSkill: "med-deepchest-3dmedagent", acceptedSkills: ["med-deepchest-3dmedagent"] },
+  "mcp__med-tools__med_deepchest_job": { loadSkill: "med-deepchest-3dmedagent", acceptedSkills: ["med-deepchest-3dmedagent"] },
   "mcp__med-tools__med_dicom_route": {
     loadSkill: "med-dicom-router",
     acceptedSkills: ["med-dicom-router", "med-medical"],

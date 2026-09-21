@@ -5,7 +5,19 @@ description: "处理 DICOM 路由判定的非腹部完整 CT：胸部运行 Deep
 
 # DeepChest 3DMedAgent
 
-## 适用范围
+## 系统上传病例：远程服务入口（优先）
+
+系统对话中的真实上传病例必须使用以下工具，不运行后文 smoke20 命令：
+
+1. `med_deepchest_status` 检查配置和服务。不可用时明确说明，不改用示例答案。
+2. 确认本轮附件是完整胸部 CT、强度单位为 HU。DICOM 可读取元数据；NIfTI 无法自行确认模态和部位，缺少用户说明时先询问。不得因文件名包含 CT 就自动确认。
+3. 调用 `med_deepchest_submit(path, question, body_region="chest", modality="CT", intensity_units="HU")`。path 是本次上传 NIfTI、单序列 DICOM 目录或 ZIP；question 包含原始问题和本轮表达偏好。非胸部不提交本服务，明确兼容性降级。
+4. 保存返回的 job_id，重复调用 `med_deepchest_job(job_id, wait_seconds=30)` 直到 succeeded/failed。等待中不重复提交，不把阶段进度当作结果；如果本轮执行预算耗尽，保留 job_id 并明确仍在运行，下次继续查询。
+5. 纯判读使用 `med_deepchest_job(..., continuation_mode="terminal")`（默认），成功报告由运行时直接展示、保存并结束本轮，不再让主 Agent 改写。复合任务使用 `continuation_mode="material"`，报告不直接展示，主 Agent 保留报告并完成后续要求。下载产物由工具提供。
+
+该生产适配复用分割和 CT-CLIP，但采用开放式中文证据分析，区别于下面的 3DMedAgent 选择题实验。没有 T1S 直接看图能力，不得声称模型直接看到了原始 CT 或完成完整临床影像报告。体积输入会校验、重新定向至 LPS；斜切、混合序列和不完整输入会失败，不拼接凑成病例。
+
+## 外部实验验证的适用范围（仅明确要求复现实验时）
 
 用户要求胸部 CT、气道、胸膜、DeepChestVQA、CT-CLIP、3DMedAgent 流程、dry-run、数据质检或结果分析时使用本 Skill。DICOM 路由将其他已识别部位的完整非腹部 CT 也交给本 Skill 做兼容性检查。使用部署环境变量 `MED_DEEPCHEST_ROOT` 指向已有代码、模型和产物的外部工作区；未配置或目录不可用时，明确报告不可用并降级，不猜测固定机器路径。
 
@@ -82,8 +94,8 @@ description: "处理 DICOM 路由判定的非腹部完整 CT：胸部运行 Deep
 检查每个结果 JSON：
 
 - `facts_memory.lesion_memory.clip_global.available == true`
-- `facts_memory.lesion_memory.clip_detail.available == true`
-- `facts_memory.lesion_memory.clip_detail_slice.available == true`
+- `facts_memory.lesion_memory.clip_detail_by_target` 中目标条目的 `available == true`
+- `facts_memory.lesion_memory.clip_detail_slice_by_target` 中目标条目的 `available == true`
 - `memory_schema_warnings` 为空或逐项解释
 - `GPT_summarized_result` 或对应最终答案字段可解析
 

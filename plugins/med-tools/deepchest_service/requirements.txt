@@ -1,0 +1,10 @@
+fastapi>=0.116,<1
+uvicorn>=0.30,<1
+python-multipart>=0.0.20
+httpx>=0.27,<1
+openai>=1,<3
+nibabel>=5.2
+SimpleITK>=2.3
+pydicom>=2.4
+numpy>=1.24
+# GPU 模型依赖由 MED_DEEPCHEST_ROOT 内已验证的环境提供。

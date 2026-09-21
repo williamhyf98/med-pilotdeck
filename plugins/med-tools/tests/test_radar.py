@@ -104,14 +104,13 @@ class RadarClientTests(unittest.TestCase):
         self.assertEqual(payload["status"], "error")
         client.assert_not_called()
 
-    def test_status_requires_credentials(self) -> None:
+    def test_status_allows_server_without_credentials(self) -> None:
         with patch.object(radar, "get_radar_config", return_value=config(api_key="")), patch(
-            "httpx.get"
+            "httpx.get", return_value=FakeResponse({"ready": True})
         ) as get:
             payload = radar.radar_status()
-        self.assertFalse(payload["ready"])
-        self.assertIn("credentials", payload["error"])
-        get.assert_not_called()
+        self.assertTrue(payload["ready"])
+        self.assertEqual(get.call_args.kwargs["headers"], {})
 
     def test_status_reports_resident_remote_model(self) -> None:
         response = FakeResponse({"ready": True, "device": "cuda:0", "busy": False})
@@ -140,7 +139,7 @@ class RadarClientTests(unittest.TestCase):
                 }
             )
             client = FakeClient(response, FakeResponse(content=b"file,score\nstudy,0.5\n"))
-            with patch.object(radar, "get_radar_config", return_value=config()), patch(
+            with patch.object(radar, "get_radar_config", return_value=config(api_key="")), patch(
                 "httpx.Client", return_value=client
             ):
                 payload = radar.run_radar_analysis(
@@ -148,6 +147,7 @@ class RadarClientTests(unittest.TestCase):
                 )
 
             self.assertTrue(payload["ok"])
+            self.assertEqual(client.post_calls[0][1]["headers"], {})
             self.assertEqual(payload["tool"], "med_radar_analyze_ct")
             self.assertTrue(payload["agent_continue"])
             self.assertEqual(payload["generation_owner"], "pilotdeck")

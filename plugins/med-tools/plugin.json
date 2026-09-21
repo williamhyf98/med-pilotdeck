@@ -10,6 +10,11 @@
       "args": ["${env:PILOT_HOME}/plugins/med-tools/run-mcp.cjs"],
       "timeoutMs": 900000,
       "env": {
+        "MED_DEEPCHEST_API_BASE": "${env:MED_DEEPCHEST_API_BASE}",
+        "MED_DEEPCHEST_API_KEY": "${env:MED_DEEPCHEST_API_KEY}",
+        "MED_DEEPCHEST_API_KEY_FILE": "${env:MED_DEEPCHEST_API_KEY_FILE}",
+        "MED_DEEPCHEST_CA_BUNDLE": "${env:MED_DEEPCHEST_CA_BUNDLE}",
+        "MED_DEEPCHEST_OUTPUT_DIR": "${env:MED_DEEPCHEST_OUTPUT_DIR}",
         "MED_RADAR_API_BASE": "${env:MED_RADAR_API_BASE:-https://127.0.0.1:18120}",
         "MED_RADAR_API_KEY": "${env:MED_RADAR_API_KEY}",
         "MED_RADAR_API_KEY_FILE": "${env:MED_RADAR_API_KEY_FILE}",

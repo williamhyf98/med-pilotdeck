@@ -121,7 +121,8 @@ function buildToolDefinition(
           context.cwd,
         );
         const streamSpec = directStreamSpec(spec.serverId, spec.toolName);
-        const medicalMaterial = medicalParser && readContinuationMode(normalizedInput) === "material";
+        const medicalMaterial = (medicalParser || (spec.serverId === "med-tools" && spec.toolName === "med_deepchest_job"))
+          && readContinuationMode(normalizedInput) === "material";
         const directStream = streamSpec !== undefined;
         const directFinalField = streamSpec?.field;
         let streamedText = "";
@@ -271,6 +272,7 @@ function buildToolDefinition(
 }
 
 const PROJECT_PATH_MEDICAL_TOOLS = new Set([
+  "med_deepchest_submit",
   "med_dicom_route",
   "med_parse_medical",
 ]);
@@ -394,6 +396,15 @@ const MEDICAL_ACTIVITY_DEFINITIONS: Record<string, MedicalActivityDefinition> = 
     startDetail: "确认模型和 CUDA 运行状态",
     failedTitle: "RADAR 服务检查失败",
   },
+  med_deepchest_status: {
+    startTitle: "正在检查 DeepChest 服务", startDetail: "检查运行环境和任务队列", failedTitle: "DeepChest 服务检查失败",
+  },
+  med_deepchest_submit: {
+    startTitle: "正在提交胸部 CT", startDetail: "为本次影像创建独立分析任务", failedTitle: "DeepChest 提交失败",
+  },
+  med_deepchest_job: {
+    startTitle: "正在查询胸部 CT 分析进度", startDetail: "等待分割、特征提取和中文分析", failedTitle: "DeepChest 查询失败",
+  },
   med_radar_analyze_ct: {
     startTitle: "正在准备 RADAR CT 输入",
     startDetail: "检查三维影像并准备推理",
@@ -437,8 +448,20 @@ function arrayLength(value: unknown): number {
 function medicalCompletion(
   toolName: string,
   payload: Record<string, unknown> | undefined,
-): { title: string; detail?: string; state: "completed" | "failed"; severity?: "warning" | "error" } {
+): { title: string; detail?: string; state: "running" | "completed" | "failed"; severity?: "warning" | "error" } {
   const data = payload ?? {};
+  if (toolName.startsWith("med_deepchest_")) {
+    const failed = data.status === "failed" || data.status === "error"
+      || (toolName === "med_deepchest_status" && data.ready !== true);
+    const pending = ["waiting", "running", "uploading"].includes(String(data.status));
+    const phases: Record<string, string> = { prepare: "校验本次影像", segment: "生成器官分割", ctclip: "提取影像证据", answer: "生成中文分析" };
+    return {
+      title: failed ? "DeepChest 任务未完成" : pending ? "胸部 CT 分析进行中" : toolName === "med_deepchest_status" ? "DeepChest 服务可用" : "胸部 CT 分析完成",
+      detail: pending ? phases[String(data.phase)] ?? "任务已提交，正在等待处理" : undefined,
+      state: failed ? "failed" : pending ? "running" : "completed",
+      ...(failed ? { severity: "error" as const } : {}),
+    };
+  }
   if (toolName === "med_dicom_route") {
     const modality = safeActivityValue(data.modality, "未知模态");
     const region = safeActivityValue(data.body_region, "未知部位");
@@ -501,6 +524,7 @@ const DIRECT_STREAM_FIELDS: Record<string, Record<string, { field: string; endTu
   "med-tools": {
     med_trauma_stage_plan: { field: "care_plan", endTurn: false },
     med_parse_medical: { field: "report", endTurn: true },
+    med_deepchest_job: { field: "report", endTurn: true },
   },
 };
 
@@ -522,7 +546,7 @@ function resolveDirectStreamEndTurn(
   toolName: string,
 ): boolean {
   if (!streamSpec) return false;
-  if (toolName === "med_parse_medical" && readContinuationMode(input) === "material") {
+  if (["med_parse_medical", "med_deepchest_job"].includes(toolName) && readContinuationMode(input) === "material") {
     return false;
   }
   return streamSpec.endTurn === true;
@@ -576,6 +600,16 @@ function extractMedicalArtifactFiles(
   toolName: string,
   payload: Record<string, unknown> | undefined,
 ): PilotDeckToolResultContent[] {
+  if (serverId === "med-tools" && toolName === "med_deepchest_job" && payload?.status === "succeeded" && Array.isArray(payload.artifacts)) {
+    return payload.artifacts.flatMap((item: unknown) => {
+      if (!item || typeof item !== "object") return [];
+      const artifact = item as Record<string, unknown>;
+      if (typeof artifact.path !== "string" || !isAbsolute(artifact.path)) return [];
+      return [{ type: "file" as const, path: artifact.path,
+        mimeType: artifact.path.endsWith(".json") ? "application/json" : "text/markdown",
+        description: typeof artifact.label === "string" ? artifact.label : "DeepChest 分析产物" }];
+    });
+  }
   if (serverId !== "med-tools" || toolName !== "med_radar_analyze_ct" || !payload) return [];
   const artifacts = payload.artifacts;
   if (!artifacts || typeof artifacts !== "object" || Array.isArray(artifacts)) return [];

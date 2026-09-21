@@ -72,7 +72,7 @@ def get_radar_config() -> Dict[str, Any]:
 
 
 def _headers(cfg: Dict[str, Any]) -> Dict[str, str]:
-    return {"Authorization": f"Bearer {cfg['api_key']}"}
+    return {"Authorization": f"Bearer {cfg['api_key']}"} if cfg.get("api_key") else {}
 
 
 def _tls_verification(cfg: Dict[str, Any]) -> ssl.SSLContext | bool:
@@ -92,18 +92,6 @@ def radar_status(validate_runtime: bool = False) -> Dict[str, Any]:
     import httpx
 
     cfg = get_radar_config()
-    if not cfg["api_key"]:
-        return {
-            "tool": "med_radar_status",
-            "ready": False,
-            "api_base": cfg["api_base"],
-            "remote": None,
-            "error": (
-                "RADAR credentials are not configured. Set MED_RADAR_API_KEY or "
-                "MED_RADAR_API_KEY_FILE."
-            ),
-            "scope": "RADAR is trained primarily for contrast-enhanced abdominal CT.",
-        }
     try:
         verify = _tls_verification(cfg)
         response = httpx.get(
@@ -337,12 +325,6 @@ def run_radar_analysis(
         return _error_payload("error", f"Path does not exist: {input_path}")
 
     cfg = get_radar_config()
-    if not cfg["api_key"]:
-        return _error_payload(
-            "config_error",
-            "RADAR credentials are not configured. Set MED_RADAR_API_KEY or MED_RADAR_API_KEY_FILE.",
-            api_base=cfg["api_base"],
-        )
 
     top_k = max(1, min(int(top_k or 15), 50))
     threshold = max(0.0, min(float(threshold), 1.0))
