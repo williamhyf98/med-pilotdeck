@@ -24,6 +24,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
+    "pretest": "npm --prefix ../src/context/memory/edgeclaw-memory-core run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "start": "npm run build && npm run start:built",

@@ -129,16 +129,15 @@ describe('MainAreaV2 dashboard switcher', () => {
     expect(localStorage.getItem('pilotdeck:customSessionTitles')).toBeNull();
   });
 
-  it('places an available chat search button before Files and keeps its state in sync', async () => {
+  it('keeps the header search state in sync and returns from Files to chat', async () => {
     render(<Harness initialTab="files" withSession />);
 
     const tools = screen.getByLabelText('Tools');
     const searchButton = within(tools).getByRole('button', { name: 'Search current conversation' });
-    const filesButton = within(tools).getByRole('button', { name: 'tabs.files' });
     const toolButtons = within(tools).getAllByRole('button');
 
     expect(toolButtons[0]).toBe(searchButton);
-    expect(toolButtons[1]).toBe(filesButton);
+    expect(toolButtons).toHaveLength(1);
     expect(searchButton.getAttribute('aria-pressed')).toBe('false');
 
     fireEvent.click(searchButton);
@@ -157,11 +156,6 @@ describe('MainAreaV2 dashboard switcher', () => {
     fireEvent.click(searchButton);
     await waitFor(() => expect(searchButton.getAttribute('aria-pressed')).toBe('false'));
 
-    fireEvent.click(searchButton);
-    fireEvent.click(filesButton);
-    expect(screen.getByTestId('main-content').getAttribute('data-active-tab')).toBe('files');
-    expect(screen.getByTestId('main-content').getAttribute('data-search-open')).toBe('false');
-    expect(searchButton.getAttribute('aria-pressed')).toBe('false');
   });
 
   it('disables chat search while no conversation is mounted', () => {
@@ -209,50 +203,6 @@ describe('MainAreaV2 dashboard switcher', () => {
     expect(screen.getByTestId('main-content').getAttribute('data-search-index')).toBe('1');
   });
 
-  it('keeps chat implicit and toggles the Files workbench from its button', () => {
-    render(<Harness />);
-
-    expect(screen.queryByText('tabs.chat')).toBeNull();
-    const filesButton = screen.getByRole('button', { name: 'tabs.files' });
-    expect(filesButton.getAttribute('aria-pressed')).toBe('false');
-
-    fireEvent.click(filesButton);
-    expect(screen.getByTestId('main-content').getAttribute('data-active-tab')).toBe('files');
-    expect(filesButton.getAttribute('aria-pressed')).toBe('true');
-    expect(filesButton.className).toContain('bg-blue-100');
-    expect(filesButton.className).toContain('text-blue-700');
-    expect(filesButton.className).not.toContain('shadow');
-
-    fireEvent.click(filesButton);
-    expect(screen.getByTestId('main-content').getAttribute('data-active-tab')).toBe('chat');
-    expect(filesButton.getAttribute('aria-pressed')).toBe('false');
-  });
-
-  it('replaces the overflow button with the selected dashboard and restores it when closed', async () => {
-    render(<Harness />);
-
-    const overflowButton = screen.getByRole('button', { name: 'Open dashboards menu' });
-    fireEvent.click(overflowButton);
-    const menu = screen.getByRole('menu', { name: 'Dashboards' });
-    expect(menu.className).toContain('z-[90]');
-    expect(menu.className).toContain('w-32');
-    expect(screen.getByRole('menuitem', { name: 'tabs.memory' }).className).toContain('justify-center');
-    expect(screen.getByRole('menuitem', { name: 'tabs.storage' })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('menuitem', { name: 'tabs.memory' }));
-    expect(screen.getByTestId('main-content').getAttribute('data-active-tab')).toBe('memory');
-    expect(screen.queryByRole('button', { name: 'Open dashboards menu' })).toBeNull();
-
-    const memoryButton = screen.getByRole('button', { name: 'tabs.memory' });
-    expect(memoryButton.getAttribute('aria-pressed')).toBe('true');
-    expect(memoryButton.className).toContain('bg-blue-100');
-    expect(memoryButton.className).toContain('text-blue-700');
-    expect(memoryButton.className).not.toContain('shadow');
-    fireEvent.click(memoryButton);
-
-    expect(screen.getByTestId('main-content').getAttribute('data-active-tab')).toBe('chat');
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Open dashboards menu' })).not.toBeNull();
-    });
-  });
+  // File navigation and management dashboard toggles live in SidebarV2.
+  // Their interactions are covered in SidebarV2.test.tsx.
 });

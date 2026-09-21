@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { ToolResultBudget } from "../../src/context/budget/ToolResultBudget.js";
 import { createAgentProjectSessionStorage } from "../../src/session/storage/ProjectSessionStorage.js";
 import { createReadFileTool } from "../../src/tool/builtin/readFile.js";
+import { resolveAgentCwd } from "../../src/pilot/paths.js";
 function context(cwd) {
     return {
         sessionId: "s1",
@@ -27,6 +28,7 @@ function context(cwd) {
 test("large tool results are persisted under workspace .pilotdeck and readable by read_file", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "pilotdeck-readable-tool-result-"));
     const pilotHome = await mkdtemp(join(tmpdir(), "pilotdeck-home-"));
+    const agentCwd = resolveAgentCwd(projectRoot, pilotHome);
     try {
         const storage = createAgentProjectSessionStorage({
             projectRoot,
@@ -34,7 +36,7 @@ test("large tool results are persisted under workspace .pilotdeck and readable b
             sessionId: "web:s_test",
             now: () => new Date("2026-07-09T00:00:00.000Z"),
         });
-        assert.match(relative(projectRoot, storage.toolResultsDir), /^\.pilotdeck[\/\\]tool-results[\/\\]/);
+        assert.match(relative(agentCwd, storage.toolResultsDir), /^\.pilotdeck[\/\\]tool-results[\/\\]/);
         const budget = new ToolResultBudget({
             toolResultsDir: storage.toolResultsDir,
             maxResultSizeChars: 64,
@@ -51,10 +53,10 @@ test("large tool results are persisted under workspace .pilotdeck and readable b
         }, { turnId: "turn-1" });
         const ref = message.content.find((block) => block.type === "tool_result_reference");
         assert.ok(ref, "expected a persisted tool_result_reference");
-        assert.match(relative(projectRoot, ref.path), /^\.pilotdeck[\/\\]tool-results[\/\\]/);
+        assert.match(relative(agentCwd, ref.path), /^\.pilotdeck[\/\\]tool-results[\/\\]/);
         assert.equal(ref.readFilePath, ".pilotdeck/tool-results/refs/result-0001.txt");
-        assert.equal(await readFile(join(projectRoot, ref.readFilePath), "utf8"), `alpha\n${"x".repeat(200)}\nomega`);
-        const read = await createReadFileTool().execute({ file_path: ref.readFilePath, offset: 1, limit: 2 }, context(projectRoot));
+        assert.equal(await readFile(join(agentCwd, ref.readFilePath), "utf8"), `alpha\n${"x".repeat(200)}\nomega`);
+        const read = await createReadFileTool().execute({ file_path: ref.readFilePath, offset: 1, limit: 2 }, context(agentCwd));
         const text = read.content[0]?.type === "text" ? read.content[0].text : "";
         assert.match(text, /alpha/);
         assert.match(text, /2\|x+/);
