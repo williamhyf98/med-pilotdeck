@@ -81,3 +81,7 @@ CUDA_VISIBLE_DEVICES='' PYTHONNOUSERSITE=1 \
 日志及证据：`segmentation.log`、`ctclip.log`、`ctclip/流水线汇总.json`、`agent.log`、`agent/train_4827_a_2.json`、`weight-audit.log` 均位于该 full-inference 目录。
 
 本检查点完成后，剩余工作是实际上传病例绑定、开放式中文回答适配以及 HTTP 服务和系统集成。现有评测 CSV 包含标签；现有程序按 leak-safe memory 生成提示词，后续生产适配应直接去除标签字段，不使用评测 CSV 作为上传病例模板。
+
+## 第三检查点：服务与项目集成（2026-09-22）
+
+上述剩余适配已完成：独立上传病例索引不含评测标签，HTTPS 服务提供异步推理与中文报告，med-pilotdeck 通过 MCP 客户端调用。代码已推送至 feat/trauma，并在 node12 项目同步、构建、重启。新上传任务完整跑通约 185 秒；RADAR 无鉴权服务的请求头遗漏修复后也完成真实推理及 CSV 下载。详细任务记录、限制和部署方式见 [deepchest-service.md](deepchest-service.md)。
