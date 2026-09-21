@@ -579,6 +579,11 @@ function buildIndexPromptWindow(input) {
             role: input.focusUserTurn.role,
             content: truncateForPrompt(input.focusUserTurn.content, 400),
         },
+        // Independent source budget, already bounded at capture/normalization.
+        // Do not serialize neighboring turns' attachments into this focus turn.
+        ...(input.includeAttachmentEvidence ? {
+            focus_attachment_evidence: input.focusUserTurn.attachmentEvidence ?? [],
+        } : {}),
         focus_turn_with_neighbor_assistant_context: serializeTurnsForPrompt([focusTurn])[0],
         previous_turns: serializeTurnsForPrompt(previousTurns),
         next_turns: serializeTurnsForPrompt(nextTurns),
@@ -1962,6 +1967,7 @@ export class LlmMemoryExtractor {
                     batchContextMessages: input.batchContextMessages,
                     focusUserTurn: input.focusUserTurn,
                     currentProjectMeta: input.currentProjectMeta,
+                    includeAttachmentEvidence: this.prompts.allowedTypes.includes("project"),
                 }),
                 requestLabel: "Memory turn classification",
                 timeoutMs: input.timeoutMs ?? DEFAULT_FILE_MEMORY_EXTRACTION_TIMEOUT_MS,
@@ -2004,6 +2010,7 @@ export class LlmMemoryExtractor {
                 batchContextMessages: input.batchContextMessages,
                 focusUserTurn: input.focusUserTurn,
                 currentProjectMeta: input.currentProjectMeta,
+                includeAttachmentEvidence: input.kind === "project",
             })),
         }, null, 2);
         let rawResponse = "";

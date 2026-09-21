@@ -270,6 +270,7 @@
     "attachFiles": "附加文件",
     "attachImages": "附加图片",
     "mentionFile": "引用文件",
+    "removeMention": "移除引用文件",
     "generateSkill": "从对话生成技能",
     "slashCommand": "运行斜杠命令",
     "send": "发送",

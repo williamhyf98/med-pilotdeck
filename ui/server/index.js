@@ -2330,11 +2330,21 @@ const uploadFilesHandler = async (req, res) => {
 
             // Move uploaded files from temp to target directory
             const uploadedFiles = [];
+            // Same-named files anywhere in the project are indistinguishable in
+            // the UI (names are shown without paths), so new uploads claim a
+            // "name(N).ext" suffix against every file already visible in the
+            // project instead of silently overwriting the destination.
+            const usedFileNames = await collectProjectFileNames(projectRoot);
             console.log('[DEBUG] Processing files:', req.files.map(f => ({ originalname: f.originalname, path: f.path })));
             for (let i = 0; i < req.files.length; i++) {
                 const file = req.files[i];
                 // Use relative path if provided (for folder uploads), otherwise use originalname
-                const fileName = (filePaths && filePaths[i]) ? filePaths[i] : file.originalname;
+                const rawName = (filePaths && filePaths[i])
+                    ? filePaths[i]
+                    : normalizeUploadedFilename(file.originalname);
+                const pathSegments = String(rawName).replace(/\\/g, '/').split('/');
+                const baseName = claimUniqueProjectFileName(usedFileNames, pathSegments.pop());
+                const fileName = [...pathSegments, baseName].join('/');
                 console.log('[DEBUG] Processing file:', fileName, '(originalname:', file.originalname + ')');
                 const destPath = path.join(resolvedTargetDir, fileName);
 
@@ -3166,33 +3176,24 @@ function normalizeUploadedFilename(name, fallback = 'attachment') {
     return original;
 }
 
-async function moveUploadedAttachment(file, attachmentDir, index) {
+async function moveUploadedAttachment(file, attachmentDir, index, usedProjectFileNames) {
     const originalName = normalizeUploadedFilename(file.originalname, `attachment-${index + 1}`);
     file.originalname = originalName;
     const safeName = sanitizeAttachmentFilename(originalName, `attachment-${index + 1}`);
-    const ext = path.extname(safeName);
-    const stem = ext ? safeName.slice(0, -ext.length) : safeName;
-    let candidate = `${index + 1}-${safeName}`;
-    let destination = path.join(attachmentDir, candidate);
-    let suffix = 1;
-    while (true) {
-        try {
-            await fsPromises.access(destination);
-            candidate = `${index + 1}-${stem}-${suffix}${ext}`;
-            destination = path.join(attachmentDir, candidate);
-            suffix += 1;
-        } catch {
-            break;
-        }
-    }
+    // Claim a project-wide unique basename ("name(N).ext") instead of the old
+    // per-batch "N-" prefix: the stored name is what the UI shows and what the
+    // @-mention list offers, so it must be distinguishable across the whole
+    // project, not merely unique inside this batch directory.
+    const storedName = claimUniqueProjectFileName(usedProjectFileNames, safeName);
+    const destination = path.join(attachmentDir, storedName);
 
     await fsPromises.copyFile(file.path, destination);
     await fsPromises.unlink(file.path);
     return {
-        name: originalName,
+        name: storedName,
         path: destination,
         size: file.size,
-        mimeType: file.mimetype || mime.lookup(originalName) || 'application/octet-stream',
+        mimeType: file.mimetype || mime.lookup(storedName) || 'application/octet-stream',
     };
 }
 
@@ -3204,30 +3205,34 @@ function normalizeAttachmentRelativePath(value, fallbackName) {
     return parts.join('/') || sanitizeAttachmentFilename(fallbackName, 'attachment');
 }
 
-async function moveUploadedAttachmentWithRelativePath(file, attachmentDir, relativePath, index) {
+async function moveUploadedAttachmentWithRelativePath(file, attachmentDir, relativePath, index, usedProjectFileNames) {
     const normalizedRel = normalizeAttachmentRelativePath(
         relativePath,
         normalizeUploadedFilename(file.originalname, `attachment-${index + 1}`),
     );
-    const destination = path.join(attachmentDir, ...normalizedRel.split('/'));
+    // Only the basename is suffixed for uniqueness; the folder structure of the
+    // uploaded tree is preserved as-is.
+    const relSegments = normalizedRel.split('/');
+    const storedName = claimUniqueProjectFileName(usedProjectFileNames, relSegments.pop());
+    const storedRel = [...relSegments, storedName].join('/');
+    const destination = path.join(attachmentDir, ...storedRel.split('/'));
     const validationRoot = path.resolve(attachmentDir);
     const resolvedDestination = path.resolve(destination);
     if (
         resolvedDestination !== validationRoot
         && !resolvedDestination.startsWith(validationRoot + path.sep)
     ) {
-        throw new Error(`Invalid relative path: ${normalizedRel}`);
+        throw new Error(`Invalid relative path: ${storedRel}`);
     }
     await fsPromises.mkdir(path.dirname(resolvedDestination), { recursive: true });
     await fsPromises.copyFile(file.path, resolvedDestination);
     await fsPromises.unlink(file.path).catch(() => { });
-    const originalName = normalizeUploadedFilename(file.originalname, path.basename(normalizedRel));
     return {
-        name: originalName,
+        name: storedName,
         path: resolvedDestination,
-        relativePath: normalizedRel,
+        relativePath: storedRel,
         size: file.size,
-        mimeType: file.mimetype || mime.lookup(originalName) || 'application/octet-stream',
+        mimeType: file.mimetype || mime.lookup(storedName) || 'application/octet-stream',
     };
 }
 
@@ -3338,6 +3343,10 @@ app.post('/api/projects/:projectName/upload-attachments', authenticateToken, asy
             const images = [];
             const files = [];
             await fsPromises.mkdir(attachmentDir, { recursive: true });
+            // One registry per request: it seeds from every file already
+            // visible in the project, then accumulates the names claimed by
+            // this batch so in-batch duplicates also get distinct suffixes.
+            const usedProjectFileNames = await collectProjectFileNames(projectRoot);
 
             for (const [index, file] of req.files.entries()) {
                 const relativePath = relativePaths[index] || '';
@@ -3348,9 +3357,10 @@ app.post('/api/projects/:projectName/upload-attachments', authenticateToken, asy
                         attachmentDir,
                         relativePath || file.originalname,
                         index,
+                        usedProjectFileNames,
                     );
                 } else {
-                    storedFile = await moveUploadedAttachment(file, attachmentDir, index);
+                    storedFile = await moveUploadedAttachment(file, attachmentDir, index, usedProjectFileNames);
                     storedFile.relativePath = path.basename(storedFile.path);
                 }
 
@@ -3692,6 +3702,64 @@ function permToRwx(perm) {
     return r + w + x;
 }
 
+// Entries hidden from the project file tree (heavy build output, VCS
+// internals, PilotDeck runtime files). The upload endpoints reuse this so
+// their duplicate-name registry sees exactly the files the @-mention list
+// and Files tab show.
+function isIgnoredProjectEntryName(name) {
+    return name === 'node_modules' ||
+        name === 'dist' ||
+        name === 'build' ||
+        name.startsWith('.pilotdeck') ||
+        name === '.tmp' ||
+        name === 'scratch' ||
+        /^\.pilotdeck_build\.(?:c|m)?js$/i.test(name) ||
+        name === '.git' ||
+        name === '.svn' ||
+        name === '.hg';
+}
+
+// Collect every visible file basename under rootDir (lowercased — project
+// files live on case-insensitive filesystems on Windows/macOS). Used to give
+// same-named uploads a "name(N).ext" suffix so they stay distinguishable in
+// the UI, which shows names without paths.
+async function collectProjectFileNames(rootDir, maxDepth = 10, currentDepth = 0, usedNames = new Set()) {
+    let entries;
+    try {
+        entries = await fsPromises.readdir(rootDir, { withFileTypes: true });
+    } catch {
+        return usedNames;
+    }
+    for (const entry of entries) {
+        if (isIgnoredProjectEntryName(entry.name)) continue;
+        if (entry.isDirectory()) {
+            if (currentDepth < maxDepth) {
+                await collectProjectFileNames(path.join(rootDir, entry.name), maxDepth, currentDepth + 1, usedNames);
+            }
+        } else {
+            usedNames.add(entry.name.toLowerCase());
+        }
+    }
+    return usedNames;
+}
+
+// Return desiredName unchanged when free, otherwise "stem(1).ext",
+// "stem(2).ext", ... The claimed name is registered in usedNames so
+// same-batch uploads also get distinct suffixes.
+function claimUniqueProjectFileName(usedNames, desiredName) {
+    const extIndex = desiredName.lastIndexOf('.');
+    const stem = extIndex > 0 ? desiredName.slice(0, extIndex) : desiredName;
+    const ext = extIndex > 0 ? desiredName.slice(extIndex) : '';
+    let candidate = desiredName;
+    let counter = 1;
+    while (usedNames.has(candidate.toLowerCase())) {
+        candidate = `${stem}(${counter})${ext}`;
+        counter += 1;
+    }
+    usedNames.add(candidate.toLowerCase());
+    return candidate;
+}
+
 async function getFileTree(dirPath, maxDepth = 3, currentDepth = 0, showHidden = true) {
     // Using fsPromises from import
     const items = [];
@@ -3704,16 +3772,7 @@ async function getFileTree(dirPath, maxDepth = 3, currentDepth = 0, showHidden =
 
 
             // Skip heavy build directories and VCS directories
-            if (entry.name === 'node_modules' ||
-                entry.name === 'dist' ||
-                entry.name === 'build' ||
-                entry.name.startsWith('.pilotdeck') ||
-                entry.name === '.tmp' ||
-                entry.name === 'scratch' ||
-                /^\.pilotdeck_build\.(?:c|m)?js$/i.test(entry.name) ||
-                entry.name === '.git' ||
-                entry.name === '.svn' ||
-                entry.name === '.hg') continue;
+            if (isIgnoredProjectEntryName(entry.name)) continue;
 
             const itemPath = path.join(dirPath, entry.name);
             const item = {

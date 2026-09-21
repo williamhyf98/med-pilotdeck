@@ -340,7 +340,6 @@ function ChatInterfaceV2({
     input,
     setInput,
     textareaRef,
-    inputHighlightRef,
     isTextareaExpanded: _isTextareaExpanded,
     thinkingMode,
     setThinkingMode,
@@ -357,8 +356,9 @@ function ChatInterfaceV2({
     showFileDropdown,
     filteredFiles,
     selectedFileIndex,
-    renderInputWithMentions,
     selectFile,
+    mentionedFiles,
+    removeMentionedFile,
     attachedImages,
     setAttachedImages,
     documentReferences,
@@ -377,7 +377,6 @@ function ChatInterfaceV2({
     handlePaste,
     handleTextareaClick,
     handleTextareaInput,
-    syncInputOverlayScroll,
     handleAbortSession,
     handlePermissionDecision,
     handleGrantToolPermission,
@@ -866,13 +865,10 @@ function ChatInterfaceV2({
         defaultValue: 'Tell MedPD what you want to get done…',
       }) as string}
       textareaRef={textareaRef}
-      inputHighlightRef={inputHighlightRef}
-      renderInputWithMentions={renderInputWithMentions}
       onInputChange={handleInputChange}
       onTextareaClick={handleTextareaClick}
       onTextareaKeyDown={handleKeyDown}
       onTextareaPaste={handlePaste}
-      onTextareaScrollSync={syncInputOverlayScroll}
       onTextareaInput={handleTextareaInput}
       onInputFocusChange={handleInputFocusChange}
       onSubmit={wrappedSubmit as typeof handleSubmit}
@@ -889,6 +885,8 @@ function ChatInterfaceV2({
       }
       documentReferences={documentReferences}
       onRemoveDocumentReference={removeDocumentReference}
+      mentionedFiles={mentionedFiles}
+      onRemoveMentionedFile={removeMentionedFile}
       attachedMedicalFolder={attachedMedicalFolder}
       onRemoveMedicalFolder={clearAttachedMedicalFolder}
         onOpenDocumentReference={onFileOpen ? (filePath) => onFileOpen(filePath) : undefined}

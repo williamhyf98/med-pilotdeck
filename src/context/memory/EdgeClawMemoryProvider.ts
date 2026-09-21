@@ -165,6 +165,7 @@ export class EdgeClawMemoryProvider implements MemoryResolver {
   async captureTurn(input: MemoryCaptureTurnInput): Promise<void> {
     const normalizedMessages = canonicalMessagesToMemoryMessages(input.messages, {
       includeForkCarryover: false,
+      attachmentContext: input.attachmentContext,
     });
     this.options.telemetry?.trackFeatureLoopStage({
       module: "memory",
