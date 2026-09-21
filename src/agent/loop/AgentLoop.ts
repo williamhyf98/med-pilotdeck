@@ -214,6 +214,9 @@ export class AgentLoop {
     }
     const startedAt = this.now().toISOString();
     let messages = [...input.messages];
+    // Keep this turn's original tool results for memory before context budgeting
+    // replaces them with references/previews. Never use the accumulated allowlist.
+    const attachmentCaptureMessages = input.allowedReadFiles?.length ? [...input.messages] : undefined;
     let turnCount = 1;
     let usage: CanonicalUsage = {};
     let lastModelUsage: CanonicalUsage | undefined;
@@ -245,7 +248,10 @@ export class AgentLoop {
         await hook.call(this.dependencies.context, {
           sessionId: input.sessionId,
           turnId: input.turnId,
-          messages,
+          messages: attachmentCaptureMessages ?? messages,
+          ...(attachmentCaptureMessages ? { attachmentContext: {
+            allowedReadFiles: input.allowedReadFiles!, cwd: this.config.cwd,
+          } } : {}),
           errored,
         });
       } catch {
@@ -1009,6 +1015,7 @@ export class AgentLoop {
       }
 
       messages.push(assistantMessage);
+      attachmentCaptureMessages?.push(assistantMessage);
       yield { type: "assistant_message", sessionId: input.sessionId, turnId: input.turnId, message: assistantMessage };
       await input.onDurableMessage?.(assistantMessage);
 
@@ -1641,6 +1648,7 @@ export class AgentLoop {
       // the runtime doesn't implement `applyToolResults` (e.g. NullContext),
       // we simply append the raw projection (legacy behaviour).
       const [toolResultMsg, ...supplementalMsgs] = projected;
+      if (toolResultMsg) attachmentCaptureMessages?.push(toolResultMsg);
       const supplementalInputs = bindSupplementalMessagesToToolCalls(pairedResults, supplementalMsgs);
       let appendedMessages: CanonicalMessage[] = projected;
       const ctxApply = this.dependencies.context?.applyToolResults;
@@ -1685,6 +1693,7 @@ export class AgentLoop {
           },
         };
         messages.push(directMessage);
+        attachmentCaptureMessages?.push(directMessage);
         finalMessage = directMessage;
         yield {
           type: "assistant_message",

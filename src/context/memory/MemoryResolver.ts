@@ -1,9 +1,12 @@
 import type { CanonicalMessage } from "../../model/index.js";
+import { collectAttachmentEvidence, type AttachmentCaptureContext } from "./attachmentEvidence.js";
+import type { MemoryAttachmentEvidence } from "./edgeclaw-memory-core/src/core/types.js";
 
 export type ContextMemoryMessage = {
   msgId?: string;
   role: string;
   content: string;
+  attachmentEvidence?: MemoryAttachmentEvidence[];
 };
 
 export type MemoryRetrieveInput = {
@@ -21,6 +24,7 @@ export type MemoryRetrieveResult = {
 };
 
 export type MemoryCaptureTurnInput = {
+  attachmentContext?: AttachmentCaptureContext;
   sessionId: string;
   projectRoot: string;
   messages: CanonicalMessage[];
@@ -40,13 +44,23 @@ export type MemoryResolver = {
 
 export type CanonicalMessagesToMemoryMessagesOptions = {
   includeForkCarryover?: boolean;
+  attachmentContext?: AttachmentCaptureContext;
 };
 
 export function canonicalMessagesToMemoryMessages(
   messages: CanonicalMessage[],
   options: CanonicalMessagesToMemoryMessagesOptions = {},
 ): ContextMemoryMessage[] {
+  let userIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]!;
+    if (message.role === "user" && !message.metadata?.synthetic && !message.metadata?.forkCarryover
+      && message.content.some((block) => block.type === "text")) { userIndex = i; break; }
+  }
+  const evidence = options.attachmentContext && userIndex >= 0
+    ? collectAttachmentEvidence(messages.slice(userIndex + 1), options.attachmentContext) : [];
   return messages.flatMap((message, index) => {
+    if (message.metadata?.synthetic) return [];
     if (options.includeForkCarryover === false && message.metadata?.forkCarryover) {
       return [];
     }
@@ -82,6 +96,7 @@ export function canonicalMessagesToMemoryMessages(
       msgId: entries.length === 1 ? `message-${index}` : `message-${index}:${entryIndex}`,
       role: entry.role,
       content: entry.content,
+      ...(index === userIndex && entry.role === "user" && evidence.length ? { attachmentEvidence: evidence } : {}),
     }));
   });
 }

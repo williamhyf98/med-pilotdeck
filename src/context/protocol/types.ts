@@ -108,6 +108,7 @@ export type ContextRecoveryDecision =
  * advisory — context implementations without memory simply no-op.
  */
 export type ContextCaptureTurnInput = {
+  attachmentContext?: { allowedReadFiles: readonly string[]; cwd: string };
   sessionId: string;
   turnId: string;
   /** Whole turn-end message history (not the in-flight projection). */

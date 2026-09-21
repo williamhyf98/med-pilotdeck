@@ -300,6 +300,7 @@ export class DefaultContextRuntime implements ContextRuntime {
         sessionId: input.sessionId,
         projectRoot: this.projectRoot ?? "",
         messages: input.messages.filter((message) => !message.metadata?.forkCarryover),
+        attachmentContext: input.attachmentContext,
         errored: input.errored,
       });
     } catch {

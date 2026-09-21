@@ -6,6 +6,17 @@ export interface MemoryMessage {
     msgId?: string;
     role: ChatRole;
     content: string;
+    attachmentEvidence?: MemoryAttachmentEvidence[];
+}
+/** Source material, never instructions or assistant conclusions. */
+export interface MemoryAttachmentEvidence {
+    sourceId: string;
+    sourceKind: "read_text" | "medical_parser_summary";
+    chunks: string[];
+    originalChars: number;
+    omittedChars: number;
+    /** Tool output may already be partial even when omittedChars is zero. */
+    possiblyPartial: boolean;
 }
 export type MemoryRoute = "none" | "user" | "project" | "mix";
 export type MemoryRecordType = "user" | "feedback" | "project" | "general_project_meta";

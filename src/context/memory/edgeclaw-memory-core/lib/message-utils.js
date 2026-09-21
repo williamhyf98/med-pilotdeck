@@ -1,3 +1,4 @@
+import { normalizeAttachmentEvidence } from "./core/utils/attachment-evidence.js";
 import { decodeEscapedUnicodeText } from "./core/utils/text.js";
 const MEMORY_CONTEXT_HEADER = "You are using retrieved ClawXMemory file memories for this turn.";
 const LEGACY_MEMORY_CONTEXT_HEADER = "You are using multi-level memory indexes for this turn.";
@@ -566,6 +567,9 @@ function normalizeSingleMessage(raw, options) {
         role,
         content: truncate(content, options.maxMessageChars),
     };
+    if (role === "user" && Array.isArray(msg.attachmentEvidence)) {
+        normalized.attachmentEvidence = normalizeAttachmentEvidence(msg.attachmentEvidence);
+    }
     const rawId = typeof msg.id === "string"
         ? msg.id
         : typeof nestedMessage?.id === "string"

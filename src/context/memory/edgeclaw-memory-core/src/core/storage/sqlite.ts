@@ -1,5 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { normalizeAttachmentEvidence } from "../utils/attachment-evidence.js";
 import {
   type CaseTraceRecord,
   type ClearMemoryScope,
@@ -151,6 +152,8 @@ function normalizeMessages(value: unknown): MemoryMessage[] {
       ...(typeof item.msgId === "string" && item.msgId.trim() ? { msgId: item.msgId } : {}),
       role: typeof item.role === "string" && item.role.trim() ? item.role : "user",
       content: typeof item.content === "string" ? item.content : "",
+      ...(item.role === "user" && Array.isArray(item.attachmentEvidence)
+        ? { attachmentEvidence: normalizeAttachmentEvidence(item.attachmentEvidence) } : {}),
     }));
 }
 
