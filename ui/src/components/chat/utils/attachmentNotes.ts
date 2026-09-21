@@ -206,12 +206,34 @@ export function mergeUserAttachments(
   fallback: ChatAttachment[],
 ): ChatAttachment[] {
   const merged: ChatAttachment[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, number>();
+  const all = [...preferred, ...fallback];
+  const claimedPaths = new Set<string>();
 
-  for (const attachment of [...preferred, ...fallback]) {
+  for (const original of all) {
+    let attachment = original;
+    // Optimistic upload chips have no path yet. Reconcile them with the
+    // server's file, without collapsing distinct files that share a name.
+    if ((!original.kind || original.kind === 'file') && !original.path && !original.filePath) {
+      const resolved = all.find((candidate) => (
+        (candidate.kind || 'file') === (original.kind || 'file')
+        && candidate.name === original.name
+        && Boolean(candidate.path || candidate.filePath)
+        && !claimedPaths.has(attachmentIdentity(candidate))
+        && (!original.relativePath || candidate.relativePath === original.relativePath)
+      ));
+      if (resolved) {
+        claimedPaths.add(attachmentIdentity(resolved));
+        attachment = { ...original, ...resolved };
+      }
+    }
     const identity = attachmentIdentity(attachment);
-    if (seen.has(identity)) continue;
-    seen.add(identity);
+    const existingIndex = seen.get(identity);
+    if (existingIndex !== undefined) {
+      merged[existingIndex] = { ...attachment, ...merged[existingIndex] };
+      continue;
+    }
+    seen.set(identity, merged.length);
     merged.push(attachment);
   }
 

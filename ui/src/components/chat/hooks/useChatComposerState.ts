@@ -1042,6 +1042,10 @@ export function useChatComposerState({
         const sessionToActivate = effectiveSessionId || optimisticSessionId;
         const showOptimisticUploadMessage = filesToUpload.length > 0
           && filesToUpload.every((file) => !file.type.toLowerCase().startsWith('image/'));
+        const uploadMessageId = showOptimisticUploadMessage
+          ? `local_upload_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+          : undefined;
+        const userMessageTimestamp = new Date();
 
       submitPendingRef.current = filesToUpload.length > 0;
       setIsSubmitPending(filesToUpload.length > 0);
@@ -1055,6 +1059,7 @@ export function useChatComposerState({
         }
         if (showOptimisticUploadMessage) {
           addMessage({
+            id: uploadMessageId,
             type: 'user',
             content: userVisibleInput,
             attachments: filesToUpload.map((file) => ({
@@ -1062,7 +1067,7 @@ export function useChatComposerState({
               size: file.size,
               mimeType: file.type || undefined,
             })),
-            timestamp: new Date(),
+            timestamp: userMessageTimestamp,
           }, submitTargetSessionId);
         }
         setIsLoading(true);
@@ -1199,16 +1204,17 @@ export function useChatComposerState({
       ];
 
       const userMessage: ChatMessage = {
+        id: uploadMessageId,
         type: 'user',
         content: userVisibleInput,
         images: uploadedImages as any,
         attachments: [...uploadedFiles, ...documentReferenceAttachments, ...mentionAttachments] as any,
-        timestamp: new Date(),
+        timestamp: userMessageTimestamp,
       };
 
-      if (!showOptimisticUploadMessage) {
-        addMessage(userMessage, submitTargetSessionId);
-      }
+      // The stable local id replaces the upload placeholder in its original
+      // session; new-session pending messages are replaced by addMessage too.
+      addMessage(userMessage, submitTargetSessionId);
       submitPendingRef.current = false;
       setIsSubmitPending(false);
       setIsLoading(true); // Processing banner starts

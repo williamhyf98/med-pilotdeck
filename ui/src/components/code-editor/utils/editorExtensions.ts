@@ -2,6 +2,7 @@ import { css } from '@codemirror/lang-css';
 import { html } from '@codemirror/lang-html';
 import { javascript } from '@codemirror/lang-javascript';
 import { json } from '@codemirror/lang-json';
+import { xml } from '@codemirror/lang-xml';
 import { StreamLanguage } from '@codemirror/language';
 import { markdown } from '@codemirror/lang-markdown';
 import { python } from '@codemirror/lang-python';
@@ -35,6 +36,9 @@ export const getLanguageExtensions = (filename: string) => {
 
   const ext = filename.split('.').pop()?.toLowerCase();
   switch (ext) {
+    case 'xml':
+    case 'cda':
+      return [xml()];
     case 'js':
     case 'jsx':
     case 'ts':

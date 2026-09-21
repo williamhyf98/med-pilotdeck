@@ -29,6 +29,8 @@ import CodeEditorLoadError from './subcomponents/CodeEditorLoadError';
 import CodeEditorLoadingState from './subcomponents/CodeEditorLoadingState';
 import CodeEditorSurface from './subcomponents/CodeEditorSurface';
 import FloatingFileSearchControls from './subcomponents/FloatingFileSearchControls';
+import XmlDocumentPreview from './subcomponents/XmlDocumentPreview';
+import { formatXml } from '../utils/xmlPreview';
 
 type CodeEditorProps = {
   file: CodeEditorFile;
@@ -70,6 +72,10 @@ export default function CodeEditor({
   const [showDiff, setShowDiff] = useState(Boolean(file.diffInfo));
   const [markdownPreview, setMarkdownPreview] = useState(false);
   const [htmlPreview, setHtmlPreview] = useState(false);
+  const [xmlMode, setXmlMode] = useState<'content' | 'structure' | 'source'>(file.diffInfo ? 'source' : 'content');
+  const [xmlFormatError, setXmlFormatError] = useState('');
+  const isXmlFile = /\.(xml|cda)$/i.test(file.name);
+  const xmlPreviewActive = isXmlFile && xmlMode !== 'source';
   const [editorView, setEditorView] = useState<EditorView | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQueryState] = useState('');
@@ -125,6 +131,8 @@ export default function CodeEditor({
   useEffect(() => {
     setMarkdownPreview(false);
     setHtmlPreview(false);
+    setXmlMode(file.diffInfo ? 'source' : 'content');
+    setXmlFormatError('');
     setSearchOpen(false);
     setSearchQueryState('');
     setSearchMatchIndex(0);
@@ -172,11 +180,13 @@ export default function CodeEditor({
   }, []);
 
   const openSearch = useCallback(() => {
+    // Source search includes collapsed fields, attributes and waveform data.
+    if (isXmlFile) setXmlMode('source');
     if (htmlPreview) {
       setHtmlPreview(false);
     }
     setSearchOpen(true);
-  }, [htmlPreview]);
+  }, [htmlPreview, isXmlFile]);
 
   const toggleSearch = useCallback(() => {
     if (searchOpen) {
@@ -204,20 +214,21 @@ export default function CodeEditor({
   });
 
   useEffect(() => {
-    if (!editorView || markdownPreview || htmlPreview) return;
+    if (!editorView || markdownPreview || htmlPreview || xmlPreviewActive) return;
     editorView.dispatch({
       effects: setSearchQuery.of(new SearchQuery({
         search: searchQuery.trim(),
         literal: true,
       })),
     });
-  }, [editorView, htmlPreview, markdownPreview, searchQuery]);
+  }, [editorView, htmlPreview, markdownPreview, searchQuery, xmlPreviewActive]);
 
   useEffect(() => {
     if (
       !editorView
       || markdownPreview
       || htmlPreview
+      || xmlPreviewActive
       || !searchQuery.trim()
       || textSearchMatches.length === 0
     ) {
@@ -235,6 +246,7 @@ export default function CodeEditor({
     searchMatchIndex,
     searchQuery,
     textSearchMatches,
+    xmlPreviewActive,
   ]);
 
   const minimapExtension = useMemo(
@@ -299,7 +311,7 @@ export default function CodeEditor({
 
     allExtensions.push(...minimapExtension);
 
-    if (wordWrap) {
+    if (wordWrap || isXmlFile) {
       allExtensions.push(EditorView.lineWrapping);
     }
 
@@ -312,6 +324,7 @@ export default function CodeEditor({
     showDiff,
     toolbarPanelExtension,
     wordWrap,
+    isXmlFile,
   ]);
 
   useEditorKeyboardShortcuts({
@@ -320,7 +333,7 @@ export default function CodeEditor({
     onGoBack,
     canGoBack,
     dependency: content,
-    enabled: isActive && !isBinary,
+    enabled: isActive && !isBinary && !xmlPreviewActive,
   });
 
   if (loading) {
@@ -408,6 +421,7 @@ export default function CodeEditor({
               htmlPreview={htmlPreview}
               saving={saving}
               saveSuccess={saveSuccess}
+              showSave={!xmlPreviewActive}
               isExpanded={isExpanded}
               onToggleExpand={onToggleExpand}
               canGoBack={canGoBack}
@@ -469,14 +483,26 @@ export default function CodeEditor({
             ) : null}
           </div>
 
+          {isXmlFile && <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-background px-4 py-2 text-foreground">
+            <div className="flex gap-1 rounded-lg bg-muted/60 p-1" role="group" aria-label="XML 视图">
+              {(['content', 'structure', 'source'] as const).map(mode => <button key={mode} type="button" aria-pressed={xmlMode === mode} onClick={() => { closeSearch(); setXmlMode(mode); }} className={`rounded-md px-3 py-1.5 text-xs transition-colors ${xmlMode === mode ? 'bg-background font-semibold text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>{({ content: '内容', structure: '结构', source: '源码' })[mode]}</button>)}
+            </div>
+            {xmlMode === 'source' ? <button type="button" className="rounded-md px-2 py-1.5 text-xs text-primary hover:bg-muted" onClick={() => {
+              try { setContent(formatXml(content)); setXmlFormatError(''); }
+              catch (error) { setXmlFormatError(error instanceof Error ? error.message : '格式化失败'); }
+            }}>格式化缩进</button> : <span className="text-[11px] text-muted-foreground">只读预览 · 搜索查看完整源码</span>}
+            {isDirty && <span className="text-[11px] text-muted-foreground">有未保存的源码修改</span>}
+          </div>}
+          {isXmlFile && xmlFormatError && <p role="alert" className="bg-background px-4 py-2 text-xs text-destructive">{xmlFormatError}</p>}
+
           {saveError && (
             <div className="border-b border-red-200/60 bg-red-50 px-4 py-1.5 text-xxs text-red-700 dark:border-red-900/40 dark:bg-red-900/10 dark:text-red-300">
               {saveError}
             </div>
           )}
 
-          <div className="flex-1 overflow-hidden">
-            <CodeEditorSurface
+          <div className="min-h-0 flex-1 overflow-hidden">
+            {xmlPreviewActive ? <XmlDocumentPreview content={content} mode={xmlMode as 'content' | 'structure'} onSource={() => setXmlMode('source')} /> : <CodeEditorSurface
               content={content}
               onChange={setContent}
               markdownPreview={markdownPreview}
@@ -493,7 +519,7 @@ export default function CodeEditor({
               onFileOpen={onPreviewFileOpen}
               previewRootRef={markdownPreviewRootRef}
               onEditorViewChange={handleEditorViewChange}
-            />
+            />}
           </div>
 
           <CodeEditorFooter

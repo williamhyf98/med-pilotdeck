@@ -113,12 +113,12 @@ export function getStreamContentKey(messages: ChatMessage[]): string {
 /*  Helper: Convert a ChatMessage to a NormalizedMessage for the store */
 /* ------------------------------------------------------------------ */
 
-function chatMessageToNormalized(
+export function chatMessageToNormalized(
   msg: ChatMessage,
   sessionId: string,
   provider: SessionProvider,
 ): NormalizedMessage | null {
-  const id = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const id = msg.id || `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const ts = msg.timestamp instanceof Date
     ? msg.timestamp.toISOString()
     : typeof msg.timestamp === 'number'
