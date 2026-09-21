@@ -116,6 +116,9 @@ export type WebMessage = {
   ok?: boolean;
   text?: string;
   citations?: Array<{
+    displayIndex?: number;
+    chunkId?: string;
+    text?: string;
     index: number;
     title: string;
     section: string;
@@ -180,8 +183,18 @@ export function createWebMessageReducerState(): WebMessageReducerState {
 
 const MAX_WEB_TOOL_RESULT_PREVIEW_CHARS = 20_000;
 
-function limitToolResultPreview(value: string | undefined): string | undefined {
+// RAG evidence payloads must stay intact: citation popovers parse `chunks[]`
+// out of this text, and the head+tail preview drops the tail chunks' bodies.
+// Bounded by the retrieval tool (top_k ≤ 8, capped chunk length); the ceiling
+// only guards against a misbehaving server.
+const CITATION_TOOL_NAME_RE = /rag_query|rag_search|stage_plan/i;
+const MAX_CITATION_RESULT_CHARS = 400_000;
+
+function limitToolResultPreview(value: string | undefined, toolName?: string): string | undefined {
   if (value === undefined || value.length <= MAX_WEB_TOOL_RESULT_PREVIEW_CHARS) {
+    return value;
+  }
+  if (toolName && CITATION_TOOL_NAME_RE.test(toolName) && value.length <= MAX_CITATION_RESULT_CHARS) {
     return value;
   }
   const headLength = Math.floor(MAX_WEB_TOOL_RESULT_PREVIEW_CHARS / 2);
@@ -362,7 +375,7 @@ export function applyWebGatewayEvent(
                   ...m,
                   kind: "tool_result",
                   ok: event.ok,
-                  text: limitToolResultPreview(event.resultPreview) ?? m.text,
+                  text: limitToolResultPreview(event.resultPreview, event.toolName) ?? m.text,
                   ...(eventImages ? { images: eventImages } : {}),
                   ...(normalizedErrorCode && { errorCode: normalizedErrorCode }),
                 }
@@ -381,7 +394,7 @@ export function applyWebGatewayEvent(
         kind: "tool_result",
         toolCallId: event.toolCallId,
         ok: event.ok,
-        text: limitToolResultPreview(event.resultPreview),
+        text: limitToolResultPreview(event.resultPreview, event.toolName),
         ...(eventImages ? { images: eventImages } : {}),
         ...(normalizedErrorCode && { errorCode: normalizedErrorCode }),
         source: "live",

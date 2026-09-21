@@ -46,6 +46,18 @@ export type SkillSummary = {
   availability: SkillAvailability[];
   /** Compatibility field. Always false because skills are global. */
   availabilityMutable: boolean;
+  /**
+   * Optional `department:` frontmatter value — the clinical specialty a
+   * role-style skill belongs to (`cardiology`, `orthopedics`, …). Free-form
+   * on purpose: departments differ per hospital, so this is a display /
+   * grouping hint, never a gate. Null when the skill doesn't declare one.
+   */
+  department: string | null;
+  /**
+   * Optional `category:` frontmatter value — a coarse kind ("role",
+   * "document", "workflow", …) used for grouping alongside `department`.
+   */
+  category: string | null;
 };
 
 export type SkillsListInput = {

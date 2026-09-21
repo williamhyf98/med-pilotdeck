@@ -249,7 +249,7 @@ test("domain_question_no_case uses independent knowledge QA with shared RAG and 
   assert.equal(counter.trauma, 0);
   assert.match(events.filter((event) => event.type === "assistant_text_delta").map((event) => event.text).join(""), /战现场急救/);
   assert.deepEqual(events.find((event) => event.type === "assistant_text_end")?.citations, [
-    { index: 1, title: "战伤救治规则", section: "第二章" },
+    { index: 1, displayIndex: 1, chunkId: 'knowledge-1', text: '战现场急救原则', score: 0.9, rerankScore: undefined, retrievalMode: 'remote', title: "战伤救治规则", section: "第二章" },
   ]);
 });
 
@@ -407,7 +407,7 @@ test("streams citation metadata with the body and closes with the used subset", 
   const streamEndIndex = events.findIndex((event) => event.type === "assistant_text_end");
   assert.ok(streamEndIndex >= 0);
   assert.deepEqual(events[streamEndIndex].citations, [
-    { index: 1, title: "战伤救治规则", section: "第二章 分类救治" },
+    { index: 1, displayIndex: 1, title: "战伤救治规则", section: "第二章 分类救治" },
   ]);
 
   const postAnswerIndex = events.findIndex((event) =>

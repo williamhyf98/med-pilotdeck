@@ -184,14 +184,20 @@ export type EvidenceChunk = {
   selectedForPrompt: boolean;
   usedInAnswer: boolean;
   /**
-   * 该知识块在本轮 promptChunks 中的序号 + 1，与正文角标 [N] 和参考来源列表
-   * 使用同一个编号。未进入 promptChunks 的知识块没有编号。
+   * 本轮正文、来源列表和右侧知识块共用的连续展示编号。未引用的知识块没有编号。
    */
   citationIndex?: number;
   retrievalBackend: "remote" | "local";
 };
 
 export type CitationMetadata = {
+  /** 连续展示编号；index 保留模型原始引用编号。 */
+  displayIndex?: number;
+  chunkId?: string;
+  text?: string;
+  score?: number;
+  rerankScore?: number;
+  retrievalMode?: string;
   /** 引用编号，对应正文中的 [N] */
   index: number;
   /** 文献名或知识块标题 */

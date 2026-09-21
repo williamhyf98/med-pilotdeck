@@ -248,16 +248,52 @@ class RemoteRagServiceTests(unittest.TestCase):
         # Evidence text itself is never mutated.
         self.assertTrue(chunk["text"].startswith("卷：第2卷"))
 
+    def test_remote_recovers_title_from_book_preamble(self) -> None:
+        """Military-medicine chunks ship title="" and lead with a 书名： line."""
+        from server.rag import query_rag
+
+        raw = _remote_result(
+            0,
+            title="",
+            section_title="",
+            chunk_id="mm_book_0000001",
+            text=(
+                "书名：军事医学丛书 美军战地医务人员（6）\n"
+                "章节：使用标准止血带\n"
+                "\n"
+                "相关图示：②在需要受压的动脉上放置一个垫子并绑紧固定"
+            ),
+        )
+        with mock.patch("server.rag.query.retrieve_remote", return_value={"results": [raw]}):
+            result = query_rag(query="止血带 图示", top_k=1)
+
+        chunk = result["chunks"][0]
+        self.assertEqual(chunk["title"], "军事医学丛书 美军战地医务人员（6）")
+        self.assertEqual(chunk["section"], "使用标准止血带")
+        self.assertTrue(
+            chunk["display_label"].startswith(
+                "军事医学丛书 美军战地医务人员（6） > 使用标准止血带"
+            ),
+            chunk["display_label"],
+        )
+        # Evidence text itself is never mutated.
+        self.assertTrue(chunk["text"].startswith("书名："))
+
     def test_preamble_parser_edge_cases(self) -> None:
         from server.rag.rag_service_client import _split_preamble
 
         self.assertEqual(_split_preamble("卷：第7卷\n章节：第一篇 概论 > 第六章\n\n正文"),
-                         ("第7卷", "第一篇 概论 > 第六章"))
-        # No preamble at all -> both empty, body untouched.
-        self.assertEqual(_split_preamble("直接是正文内容\n第二行"), ("", ""))
+                         ("第7卷", "第一篇 概论 > 第六章", ""))
+        # A leading 书名： line must not stop the scan before 章节： is seen.
+        self.assertEqual(
+            _split_preamble("书名：军事医学丛书 美军战地医务人员（6）\n章节：使用标准止血带\n\n正文"),
+            ("", "使用标准止血带", "军事医学丛书 美军战地医务人员（6）"),
+        )
+        # No preamble at all -> all empty, body untouched.
+        self.assertEqual(_split_preamble("直接是正文内容\n第二行"), ("", "", ""))
         # Body-embedded 【章节：...】 markers must not be picked up.
-        self.assertEqual(_split_preamble("【章节：正文标记】\n更多正文"), ("", ""))
-        self.assertEqual(_split_preamble(""), ("", ""))
+        self.assertEqual(_split_preamble("【章节：正文标记】\n更多正文"), ("", "", ""))
+        self.assertEqual(_split_preamble(""), ("", "", ""))
 
     def test_remote_failure_falls_back_to_local_vector(self) -> None:
         from server.rag import query_rag
@@ -396,6 +432,76 @@ class RemoteRagServiceTests(unittest.TestCase):
 
         self.assertFalse(status["rag_service"]["reachable"])
         self.assertEqual(status["active_backend"], "local")
+
+
+def _reset_citation_state() -> None:
+    from server.rag import query as query_mod
+
+    with query_mod._citation_lock:
+        query_mod._citation_seq = 0
+        query_mod._citation_touched_at = 0.0
+        query_mod._citation_assigned.clear()
+        query_mod._citation_labels.clear()
+        query_mod._citation_bases.clear()
+
+
+class CitationLabelTests(unittest.TestCase):
+    """display_label / snippet hygiene for the military-medicine corpus."""
+
+    def setUp(self) -> None:
+        _reset_citation_state()
+
+    def tearDown(self) -> None:
+        _reset_citation_state()
+
+    def test_body_snippet_skips_book_header_and_figure_marker(self) -> None:
+        from server.rag.query import _body_snippet
+
+        text = (
+            "书名：军事医学丛书 美军战地医务人员（6）\n"
+            "章节：使用标准止血带\n"
+            "\n"
+            "相关图示：②在需要受压的动脉上放置一个垫子并绑紧固定"
+        )
+        snippet = _body_snippet(text)
+        self.assertNotIn("书名", snippet)
+        self.assertNotIn("相关图示：", snippet)
+        self.assertTrue(snippet.startswith("②在需要受压的动脉上"), snippet)
+
+    def test_collision_snippet_does_not_repeat_title(self) -> None:
+        from server.rag.query import _apply_citations
+
+        items = [
+            {
+                "chunk_id": "mm-collide-1",
+                "title": "军事医学丛书",
+                "section": "使用标准止血带",
+                "text": "书名：军事医学丛书\n\n第一步：将止血带置于伤口近心端。",
+            },
+            {
+                "chunk_id": "mm-collide-2",
+                "title": "军事医学丛书",
+                "section": "使用标准止血带",
+                "text": "书名：军事医学丛书\n\n相关图示：②在受压动脉上放置垫子并绑紧。",
+            },
+        ]
+        _apply_citations(items)
+        labels = [item["display_label"] for item in items]
+        for label in labels:
+            self.assertIn("·「", label, label)
+            suffix = label.split("·「", 1)[1]
+            self.assertNotIn("书名", suffix, label)
+        self.assertNotEqual(labels[0], labels[1])
+
+    def test_presentation_no_longer_mandates_source_list(self) -> None:
+        from server.rag.query import PRESENTATION
+
+        # The model must keep inline [N] markers but stop writing the
+        # trailing source list — the UI draws the sources bar itself.
+        self.assertIn("citation_index", PRESENTATION)
+        self.assertIn("[N]", PRESENTATION)
+        self.assertIn("不要在回答末尾输出「参考来源」清单", PRESENTATION)
+        self.assertNotIn("display_label", PRESENTATION)
 
 
 class RagServiceClientTests(unittest.TestCase):

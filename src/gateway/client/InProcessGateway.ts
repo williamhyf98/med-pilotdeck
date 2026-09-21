@@ -26,6 +26,8 @@ import type {
   GatewayElicitationResponseInput,
   GatewayExtractTraumaFormInput,
   GatewayExtractTraumaFormOutput,
+  GatewaySkillGenerateDraftInput,
+  GatewaySkillGenerateDraftOutput,
   GatewayTraumaCaseInput,
   GatewayTraumaConfirmTransitionInput,
   GatewayTraumaOverrideStageInput,
@@ -53,6 +55,8 @@ import type {
   WebReadSubagentMessagesResult,
   WebForkSessionInput,
   WebForkSessionResult,
+  WebRewindSessionInput,
+  WebRewindSessionResult,
 } from "../protocol/types.js";
 import {
   createChineseDisplayStreamNormalizer,
@@ -133,6 +137,7 @@ import {
   type TraumaTurnRunner,
 } from "../../trauma/index.js";
 import { normalizeTraumaIntentPlan, traumaScopeReply } from "../../trauma/formDraft.js";
+import { numberAnswerCitations } from "../../trauma/citations.js";
 import { extractRecentConversationMessages, renderRecentConversation } from "../../trauma/conversationHistory.js";
 
 const PLAN_COMMAND_USAGE = "用法：/plan <任务>\n例如：/plan 设计一个新功能";
@@ -149,23 +154,38 @@ function resolveStreamedCitations(
   citations: CitationMetadata[] | undefined,
 ): CitationMetadata[] | undefined {
   if (!citations || citations.length === 0) return undefined;
-  const indexes = new Set<number>();
-  for (const match of answer.matchAll(/\[(\d{1,2})\]/g)) {
-    const index = Number.parseInt(match[1] ?? "", 10);
-    if (Number.isFinite(index)) indexes.add(index);
-  }
-  const used = citations
-    .filter((citation) => indexes.has(citation.index))
-    .sort((left, right) => left.index - right.index);
+  const used = numberAnswerCitations(answer, citations);
   return used.length > 0 ? used : undefined;
 }
 
 function traumaCitationMetadata(chunks: EvidenceChunk[]): CitationMetadata[] {
   return chunks.map((chunk, index) => ({
     index: index + 1,
+    chunkId: chunk.id,
+    text: chunk.text,
+    score: chunk.retrievalScore,
+    rerankScore: chunk.rerankScore,
+    retrievalMode: chunk.retrievalBackend,
     title: normalizeChineseDisplayText(chunk.documentTitle),
     section: normalizeChineseDisplayText(chunk.section || chunk.chapter || chunk.heading || "未标注章节"),
   }));
+}
+
+/**
+ * RAG evidence payloads (med-tools rag_query / stage_plan) must reach hosts
+ * untruncated: citation popovers parse `chunks[]` out of this text, and the
+ * head+tail preview silently drops the tail chunks — their citations then have
+ * no 原文 to show. Bounded by the retrieval tool itself (top_k ≤ 8, capped
+ * chunk length); the ceiling only guards against a misbehaving server.
+ */
+const CITATION_TOOL_NAME_RE = /rag_query|rag_search|stage_plan/i;
+const MAX_CITATION_RESULT_CHARS = 400_000;
+
+function previewGatewayToolResultText(toolName: string | undefined, fullText: string): string {
+  if (toolName && CITATION_TOOL_NAME_RE.test(toolName) && fullText.length <= MAX_CITATION_RESULT_CHARS) {
+    return fullText;
+  }
+  return limitGatewayToolResultPreview(fullText);
 }
 
 function isTraumaProject(projectKey: string | undefined): projectKey is string {
@@ -243,6 +263,7 @@ export type InProcessGatewayOptions = {
   readSessionMessages?: (input: WebReadSessionMessagesInput) => Promise<WebReadSessionMessagesResult>;
   readSubagentMessages?: (input: WebReadSubagentMessagesInput) => Promise<WebReadSubagentMessagesResult>;
   forkSession?: (input: WebForkSessionInput) => Promise<WebForkSessionResult>;
+  rewindSession?: (input: WebRewindSessionInput) => Promise<WebRewindSessionResult>;
   recordAgentStatusMessage?: (input: GatewayRecordAgentStatusMessageInput) => Promise<{ recorded: boolean }>;
   /**
    * Web Phase 3 — pluggable project enumerator + describer.
@@ -349,6 +370,11 @@ export type InProcessGatewayOptions = {
     projectKey: string;
     sessionKey: string;
   }) => import("../../trauma/stations/extractor.js").ExtractionStation | Promise<import("../../trauma/stations/extractor.js").ExtractionStation>;
+  /** Builds the stateless draft station used by the skillGenerateDraft RPC. */
+  skillDraftFactory?: (input: {
+    projectKey: string;
+    sessionKey: string;
+  }) => import("../../extension/skills/draftStation.js").SkillDraftStation | Promise<import("../../extension/skills/draftStation.js").SkillDraftStation>;
 };
 
 const ACTIVE_TURN_EVENT_LIMIT = 500;
@@ -809,10 +835,7 @@ export class InProcessGateway implements Gateway {
                       ...(citations.length > 0 ? { citations } : {}),
                     });
                   }
-                  const citedIds = new Set(qaResponse.citationChunkIds);
-                  const usedCitations = resolveStreamedCitations(streamedText, citations)
-                    ?.filter((citation) => merged.promptChunks[citation.index - 1]
-                      && citedIds.has(merged.promptChunks[citation.index - 1].id));
+                  const usedCitations = resolveStreamedCitations(streamedText, citations);
                   const finalCitations = usedCitations && usedCitations.length > 0
                     ? usedCitations
                     : undefined;
@@ -1441,6 +1464,24 @@ export class InProcessGateway implements Gateway {
     return { extracted };
   }
 
+  async skillGenerateDraft(
+    input: GatewaySkillGenerateDraftInput,
+  ): Promise<GatewaySkillGenerateDraftOutput> {
+    if (!this.options.skillDraftFactory) {
+      throw new Error("skill draft generation is not configured");
+    }
+    const station = await this.options.skillDraftFactory({
+      projectKey: input.projectKey,
+      sessionKey: input.sessionKey,
+    });
+    const draft = await station.generate({
+      conversation: input.conversation,
+      existingSlugs: input.existingSlugs ?? [],
+      source: input.source,
+    });
+    return { draft };
+  }
+
   async permissionDecide(input: GatewayPermissionDecisionInput): Promise<{ delivered: boolean }> {
     const entry = this.permissionBus.consume(input.sessionKey, input.requestId);
     if (!entry) return { delivered: false };
@@ -1495,6 +1536,25 @@ export class InProcessGateway implements Gateway {
       );
     }
     return this.options.forkSession(input);
+  }
+
+  async rewindSession(input: WebRewindSessionInput): Promise<WebRewindSessionResult> {
+    if (!this.options.rewindSession) {
+      throw new Error(
+        "rewind_session is not configured. Wire `rewindSession` via createLocalGateway.",
+      );
+    }
+    if (this.router.isTurnInFlight(input.sessionKey)) {
+      const error = new Error("Cannot rewind while a turn is running for this session.");
+      (error as Error & { code?: string }).code = "rewind_turn_in_flight";
+      throw error;
+    }
+    const result = await this.options.rewindSession(input);
+    // Evict the cached session so the next turn resumes from the truncated
+    // transcript instead of the stale in-memory history.
+    await this.router.close(input.sessionKey);
+    this.sessionPermissionGrants.delete(input.sessionKey);
+    return result;
   }
 
   async listProjects(): Promise<WebListProjectsResult> {
@@ -2125,7 +2185,7 @@ function mapAgentEventForTurn(event: AgentEvent, runId: string): GatewayEvent[] 
       }));
     case "tool_result": {
       const fullText = event.result.content.map(contentToText).join("\n");
-      const resultPreview = limitGatewayToolResultPreview(fullText);
+      const resultPreview = previewGatewayToolResultText(event.result.toolName, fullText);
       const lines = fullText.split("\n");
       const lineCount = lines.length;
       const totalBytes = Buffer.byteLength(fullText, "utf-8");
@@ -2394,7 +2454,7 @@ function mapAgentEventForTurn(event: AgentEvent, runId: string): GatewayEvent[] 
       }));
     case "subagent_tool_result": {
       const fullText = event.result.content.map(contentToText).join("\n");
-      const resultPreview = limitGatewayToolResultPreview(fullText);
+      const resultPreview = previewGatewayToolResultText(event.result.toolName, fullText);
       const lines = fullText.split("\n");
       return [{
         type: "agent_status",

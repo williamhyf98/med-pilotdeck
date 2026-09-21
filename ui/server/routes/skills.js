@@ -29,8 +29,9 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
 import { getPilotDeckGateway } from '../pilotdeck-bridge.js';
-import { resolvePilotHome, isGeneralProjectKey, resolveLinkedRepoPath } from '../utils/pilotPaths.js';
+import { resolvePilotHome, isGeneralProjectKey, resolveLinkedRepoPath, resolveGatewayProjectKey } from '../utils/pilotPaths.js';
 import { moveDirectoryAcrossDevicesSafe } from '../utils/fileMoves.js';
+import { recommendSkills } from '../utils/skillRecommend.js';
 
 const router = express.Router();
 
@@ -242,6 +243,58 @@ router.post('/list', async (req, res) => {
   }
 });
 
+/**
+ * Query → skill chips for the composer.
+ *
+ * Sits next to the chat box and fires on every debounced keystroke, so it has
+ * to be cheap: `skillsList` is served from the gateway's in-memory registry,
+ * and scoring is pure string work. A short TTL cache absorbs the burst of
+ * calls a typing session produces without ever serving a stale-enough list to
+ * matter (skill edits go through `/create` etc. and are rare mid-sentence).
+ */
+const RECOMMEND_CACHE_TTL_MS = 5000;
+const recommendCache = new Map();
+
+async function listSkillsForRecommend(projectPath) {
+  const key = gatewayProjectKey(projectPath) || '';
+  const hit = recommendCache.get(key);
+  const now = Date.now();
+  if (hit && now - hit.at < RECOMMEND_CACHE_TTL_MS) return hit.skills;
+
+  const data = await callGateway('skillsList', { projectKey: gatewayProjectKey(projectPath) });
+  // Flattened in scope order; `recommendSkills` re-ranks by relevance, and
+  // `overriddenBy` entries are dropped there so a user copy replaces the
+  // builtin it shadows rather than showing both.
+  const skills = [
+    ...(data.builtin ?? []),
+    ...(data.user ?? []),
+    ...(data.project ?? []),
+    ...(data.medical ?? []),
+  ];
+  recommendCache.set(key, { at: now, skills });
+  return skills;
+}
+
+router.post('/recommend', async (req, res) => {
+  try {
+    const { query, projectType, limit } = req.body || {};
+    if (typeof query !== 'string' || !query.trim()) {
+      return res.json({ recommendations: [] });
+    }
+    const skills = await listSkillsForRecommend(req.body?.projectPath);
+    const recommendations = recommendSkills(query, skills, {
+      projectType: typeof projectType === 'string' ? projectType : null,
+      limit: Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 5) : 3,
+    });
+    res.json({ recommendations });
+  } catch (e) {
+    // A recommendation is an affordance, never a blocker — a broken scorer
+    // must not paint an error across the composer. Log and return empty.
+    console.error('[skills-recommend]', e);
+    res.json({ recommendations: [] });
+  }
+});
+
 router.post('/read', async (req, res) => {
   try {
     const { skillPath, projectPath } = req.body || {};
@@ -315,7 +368,236 @@ router.post('/create', async (req, res) => {
       body,
       content,
     });
+    // `skillCreate` only writes to disk. The extension watcher on
+    // `$PILOT_HOME/skills` normally notices and invalidates the plugin
+    // registry on its own, but it watches recursively and swallows watch
+    // failures silently — unreliable on network/overlay mounts. Reload
+    // explicitly (same as `/availability`) so a freshly created skill is
+    // guaranteed visible to the agent on the next turn.
+    if (resolved.scope === 'user') {
+      await callGateway('reloadExtensions', {});
+    }
     res.json(result);
+  } catch (e) {
+    sendGatewayError(res, e);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Generate a skill draft from a chat session's transcript.
+//
+// Reads the authoritative JSONL through the gateway (the browser store may
+// hold a paginated slice), flattens it to plain text, and asks the gateway's
+// `skillGenerateDraft` RPC (one structured LLM call, no side effects) for a
+// draft. Creation still goes through `/create` after the user confirms.
+// ---------------------------------------------------------------------------
+
+const DRAFT_MIN_CONVERSATION_CHARS = 40;
+const DRAFT_MIN_MESSAGES = 2;
+const DRAFT_MAX_CONVERSATION_CHARS = 48000;
+const DRAFT_HEAD_CHARS = 24000;
+const DRAFT_TAIL_CHARS = 24000;
+const DRAFT_MAX_TOOL_INPUT_CHARS = 200;
+
+function formatConversationForDraft(messages) {
+  const lines = [];
+  for (const m of messages) {
+    if (!m) continue;
+    if (m.kind === 'text' && (m.role === 'user' || m.role === 'assistant')) {
+      const text = String(m.text || '').trim();
+      if (!text) continue;
+      lines.push(`${m.role === 'user' ? '用户' : '助手'}：${text}`);
+    } else if (m.kind === 'tool_use') {
+      const name = m.toolName || 'tool';
+      const arg = String(m.toolInput || '')
+        .replace(/\s+/gu, ' ')
+        .trim()
+        .slice(0, DRAFT_MAX_TOOL_INPUT_CHARS);
+      lines.push(`[助手调用工具 ${name}${arg ? `：${arg}` : ''}]`);
+    }
+    // thinking / tool_result / status / permission / error: skipped — they
+    // are either internal or too bulky to help the draft.
+  }
+  let text = lines.join('\n\n').trim();
+  if (text.length > DRAFT_MAX_CONVERSATION_CHARS) {
+    const omitted = text.length - DRAFT_HEAD_CHARS - DRAFT_TAIL_CHARS;
+    text = `${text.slice(0, DRAFT_HEAD_CHARS)}\n\n……（中间省略约 ${omitted} 字）……\n\n${text.slice(text.length - DRAFT_TAIL_CHARS)}`;
+  }
+  return text;
+}
+
+router.post('/generate-from-session', async (req, res) => {
+  try {
+    const { sessionId, projectPath } = req.body || {};
+    if (!sessionId || typeof sessionId !== 'string') {
+      return res.status(400).json({ error: 'sessionId is required' });
+    }
+    // Same project-key resolution the chat pipeline and /api/sessions/:id/messages
+    // use — NOT gatewayProjectKey(), which resolves the linked-repo skills root.
+    const chatProjectKey = resolveGatewayProjectKey(
+      String(projectPath || process.cwd()),
+      PILOT_HOME,
+    );
+    const read = await callGateway('readSessionMessages', {
+      sessionKey: sessionId,
+      projectKey: chatProjectKey,
+    });
+    const messages = Array.isArray(read?.messages) ? read.messages : [];
+    const meaningful = messages.filter(
+      (m) => m && m.kind === 'text' && (m.role === 'user' || m.role === 'assistant')
+        && String(m.text || '').trim(),
+    );
+    const conversation = formatConversationForDraft(messages);
+    if (conversation.length < DRAFT_MIN_CONVERSATION_CHARS || meaningful.length < DRAFT_MIN_MESSAGES) {
+      // Same `{ error, code }` shape sendGatewayError produces, so the UI
+      // can branch on `code` and localise the message.
+      return res.status(422).json({
+        error: '当前对话内容太少，无法生成技能',
+        code: 'conversation_too_short',
+      });
+    }
+    let existingSlugs = [];
+    try {
+      const list = await callGateway('skillsList', { projectKey: gatewayProjectKey(projectPath) });
+      existingSlugs = [
+        ...(list.builtin ?? []),
+        ...(list.user ?? []),
+        ...(list.project ?? []),
+        ...(list.medical ?? []),
+      ].map((s) => s && s.slug).filter(Boolean);
+    } catch {
+      // Best-effort only: a failed list just weakens duplicate avoidance;
+      // /create still rejects real slug conflicts with 409.
+    }
+    const out = await callGateway('skillGenerateDraft', {
+      projectKey: chatProjectKey,
+      sessionKey: sessionId,
+      conversation,
+      existingSlugs,
+    });
+    res.json({ draft: out.draft });
+  } catch (e) {
+    sendGatewayError(res, e);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Generate a skill draft from a user-drawn flowchart.
+//
+// The flow editor sends its graph as plain JSON ({nodes, edges}); we render it
+// into a deterministic text description and reuse the same `skillGenerateDraft`
+// RPC with `source: 'flow'` (which swaps in a flowchart-specific prompt).
+// Creation still goes through `/create` after the user confirms.
+// ---------------------------------------------------------------------------
+
+const FLOW_MAX_NODES = 100;
+const FLOW_MAX_NODE_TEXT_CHARS = 2000;
+const FLOW_MIN_TEXT_NODES = 2;
+const FLOW_MIN_TOTAL_CHARS = 20;
+
+/**
+ * Render {nodes, edges} into the numbered-list text the draft station reads.
+ * Listing nodes and edges separately (instead of attempting a topological
+ * walk) keeps this robust against cycles and disconnected fragments — the
+ * LLM handles graph reasoning better than a lossy linearisation would.
+ */
+function serializeFlowForDraft(flow) {
+  const nodes = Array.isArray(flow?.nodes) ? flow.nodes : null;
+  const edges = Array.isArray(flow?.edges) ? flow.edges : [];
+  if (!nodes || nodes.length === 0) {
+    return { ok: false, error: 'flow.nodes must be a non-empty array' };
+  }
+  if (nodes.length > FLOW_MAX_NODES) {
+    return { ok: false, error: `flow.nodes exceeds ${FLOW_MAX_NODES} nodes` };
+  }
+
+  const numbering = new Map();
+  const nodeLines = [];
+  let meaningfulNodes = 0;
+  let totalChars = 0;
+  for (const [i, n] of nodes.entries()) {
+    const id = String(n?.id ?? '');
+    if (!id || numbering.has(id)) {
+      return { ok: false, error: 'every flow node needs a unique id' };
+    }
+    const label = `N${i + 1}`;
+    numbering.set(id, label);
+    const kind = n?.kind === 'decision' ? '判断' : '步骤';
+    const text = String(n?.text || '')
+      .replace(/\s+/gu, ' ')
+      .trim()
+      .slice(0, FLOW_MAX_NODE_TEXT_CHARS);
+    if (text) {
+      meaningfulNodes += 1;
+      totalChars += text.length;
+    }
+    nodeLines.push(`${label}（${kind}）：${text || '（未填写）'}`);
+  }
+
+  const edgeLines = [];
+  for (const e of edges) {
+    const from = numbering.get(String(e?.source ?? ''));
+    const to = numbering.get(String(e?.target ?? ''));
+    if (!from || !to) continue; // dangling edge — ignore
+    const branch = e?.sourceHandle === 'yes' ? '是' : e?.sourceHandle === 'no' ? '否' : null;
+    edgeLines.push(branch ? `${from} →（${branch}）→ ${to}` : `${from} → ${to}`);
+  }
+
+  const text = [
+    '【节点】',
+    ...nodeLines,
+    '',
+    '【连线】',
+    edgeLines.length > 0 ? edgeLines.join('\n') : '（无连线；请按节点顺序理解）',
+  ].join('\n');
+  return { ok: true, text, meaningfulNodes, totalChars };
+}
+
+router.post('/generate-from-flow', async (req, res) => {
+  try {
+    const { flow, projectPath } = req.body || {};
+    const serialized = serializeFlowForDraft(flow);
+    if (!serialized.ok) {
+      return res.status(400).json({ error: serialized.error, code: 'invalid_flow' });
+    }
+    if (
+      serialized.meaningfulNodes < FLOW_MIN_TEXT_NODES ||
+      serialized.totalChars < FLOW_MIN_TOTAL_CHARS
+    ) {
+      // Same `{ error, code }` shape sendGatewayError produces, so the UI
+      // can branch on `code` and localise the message.
+      return res.status(422).json({
+        error: '流程图内容太少，无法生成技能：至少需要两个填写了文字的节点',
+        code: 'flow_too_simple',
+      });
+    }
+    // Same model-resolution key the session-based route uses; the station
+    // factory only reads projectKey, so the sessionKey is a fixed marker.
+    const chatProjectKey = resolveGatewayProjectKey(
+      String(projectPath || process.cwd()),
+      PILOT_HOME,
+    );
+    let existingSlugs = [];
+    try {
+      const list = await callGateway('skillsList', { projectKey: gatewayProjectKey(projectPath) });
+      existingSlugs = [
+        ...(list.builtin ?? []),
+        ...(list.user ?? []),
+        ...(list.project ?? []),
+        ...(list.medical ?? []),
+      ].map((s) => s && s.slug).filter(Boolean);
+    } catch {
+      // Best-effort only: a failed list just weakens duplicate avoidance;
+      // /create still rejects real slug conflicts with 409.
+    }
+    const out = await callGateway('skillGenerateDraft', {
+      projectKey: chatProjectKey,
+      sessionKey: 'flow-draft',
+      conversation: serialized.text,
+      existingSlugs,
+      source: 'flow',
+    });
+    res.json({ draft: out.draft });
   } catch (e) {
     sendGatewayError(res, e);
   }

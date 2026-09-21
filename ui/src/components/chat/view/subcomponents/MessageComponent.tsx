@@ -841,7 +841,8 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, o
                   return message.type === 'assistant' ? (
                     <Markdown className="prose prose-sm prose-gray max-w-none dark:prose-invert" projectName={selectedProject?.name}
                       onFileOpen={onFileOpen}
-                      citations={message.citations as import('../../types/types').CitationMetadata[] | undefined}>
+                      citations={message.citations as import('../../types/types').CitationMetadata[] | undefined}
+                      showSourcesBar={Boolean((message as { citationsFooter?: boolean }).citationsFooter)}>
                       {content}
                     </Markdown>
                   ) : (

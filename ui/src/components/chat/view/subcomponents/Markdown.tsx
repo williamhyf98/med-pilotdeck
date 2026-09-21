@@ -5,7 +5,11 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
-import { normalizeInlineCodeFences } from '../../utils/chatFormatting';
+import {
+  normalizeDetailsBlocks,
+  normalizeInlineCodeFences,
+  stripReferenceDetails,
+} from '../../utils/chatFormatting';
 import { resolveMarkdownFileHref } from '../../utils/resolveMarkdownFileHref';
 import {
   createRemarkArtifactFileTextPlugin,
@@ -15,7 +19,8 @@ import { createRemarkCitationPlugin } from '../../utils/remarkCitationPlugin';
 import { remarkGroupImageParagraphs } from '../../utils/remarkGroupImages';
 import { collectMarkdownImages } from '../../utils/markdownImages';
 import { CitationPopover } from '../../utils/CitationPopover';
-import { extractCitationsFromContent, stripCitationDetailsBlocks } from '../../utils/citationDetails';
+import { CitationSourcesBar } from '../../utils/CitationSourcesBar';
+import { buildCitationDisplayMap, splitCitationLabel } from '../../utils/ragCitations';
 import type { CitationMetadata } from '../../types/types';
 import ImageLightbox, { type LightboxImage } from './ImageLightbox';
 
@@ -27,6 +32,8 @@ type MarkdownProps = {
   onFileOpen?: (filePath: string) => void;
   artifactFiles?: MarkdownArtifactFile[];
   citations?: CitationMetadata[];
+  /** 在正文之后渲染「参考来源」折叠条（每轮只有页脚消息为 true，防重复）。 */
+  showSourcesBar?: boolean;
 };
 
 const fullRehypePlugins = [rehypeKatex, rehypeRaw];
@@ -65,6 +72,38 @@ const isImageOnlyParagraph = (node: unknown): boolean => {
   return meaningful.length > 0 && meaningful.every(isHastImage);
 };
 
+/**
+ * 兜底路径：从 <details> 块里刮 `- [N] 文献名 > 章节` 这样的行。
+ *
+ * 只有在结构化 citations 缺席时才会走到这里（旧会话、或者不是 med-tools 检索），
+ * 刮出来的引用没有 chunk 原文，点开也只能看到文献名。
+ *
+ * section 必须可选：远程语料的 `section_title` 经常为空，而原来的正则强制要求
+ * `>` 分隔符，于是没有章节的那一条整行匹配不上、根本进不了引用表 —— 表现就是
+ * 「大部分角标有 hover，偶尔一个没有」。
+ */
+const CITATION_LINE_RE = /^\s*[-*]\s*\[(\d{1,3})\]\s+(.+?)\s*$/;
+const DETAILS_BLOCK_RE = /<details\b[^>]*>[\s\S]*?<\/details>/gi;
+
+function extractCitationsFromContent(text: string): CitationMetadata[] {
+  const citations: CitationMetadata[] = [];
+  const seen = new Set<number>();
+
+  DETAILS_BLOCK_RE.lastIndex = 0;
+  let block: RegExpExecArray | null;
+  while ((block = DETAILS_BLOCK_RE.exec(text)) !== null) {
+    for (const line of block[0].split('\n')) {
+      const matched = line.match(CITATION_LINE_RE);
+      if (!matched) continue;
+      const index = parseInt(matched[1], 10);
+      if (seen.has(index)) continue;
+      seen.add(index);
+      const label = matched[2].trim();
+      citations.push({ index, ...splitCitationLabel(label), label });
+    }
+  }
+  return citations;
+}
 function createMarkdownComponents(
   onImageZoom: (src: string) => void,
   onFileOpen?: (filePath: string) => void,
@@ -129,12 +168,20 @@ function createMarkdownComponents(
         </a>
       );
     },
-    cite: (props) => (
-      <CitationPopover
-        data-citation-index={(props as Record<string, unknown>)['data-citation-index'] as string}
-        citations={citations}
-      />
-    ),
+    // children 要透传：rehypeRaw 会放行模型自己写在正文里的字面 <cite> 标签，
+    // 那种节点没有 data-citation-index，对不上任何一条引用，原文得留着。
+    cite: ({ children, ...props }) => {
+      const attributes = props as Record<string, unknown>;
+      return (
+        <CitationPopover
+          data-citation-index={attributes['data-citation-index'] as string}
+          data-citation-display={attributes['data-citation-display'] as string}
+          citations={citations}
+        >
+          {children}
+        </CitationPopover>
+      );
+    },
   };
 }
 
@@ -145,19 +192,27 @@ export function Markdown({
   onFileOpen,
   artifactFiles,
   citations,
+  showSourcesBar,
 }: MarkdownProps) {
   const rawContent = useMemo(
-    () => normalizeInlineCodeFences(String(children ?? '')),
+    () => normalizeDetailsBlocks(normalizeInlineCodeFences(String(children ?? ''))),
     [children],
   );
-  // 优先用外部传入的 citations，否则从 content 自动提取
+
+  // 兜底抓取要在剥列表**之前**跑：老会话的引用数据只存在于那个被隐藏的列表里。
   const resolvedCitations = useMemo(
     () => citations && citations.length > 0 ? citations : extractCitationsFromContent(rawContent),
     [citations, rawContent],
   );
-  const content = useMemo(
-    () => resolvedCitations.length > 0 ? stripCitationDetailsBlocks(rawContent) : rawContent,
-    [rawContent, resolvedCitations],
+
+  // 可见正文 = 剥掉「参考来源」details 之后的文本。编号压缩、图片收集、最终渲染
+  // 都只看它 —— 隐藏列表里的 [N] 不占展示号，行内编号才不会出洞。
+  const content = useMemo(() => stripReferenceDetails(rawContent), [rawContent]);
+
+  // 编号压缩要拿最终正文算，所以放在 resolvedCitations 之后、插件构建之前。
+  const citationDisplayMap = useMemo(
+    () => buildCitationDisplayMap(content, resolvedCitations),
+    [content, resolvedCitations],
   );
 
   const [zoomedSrc, setZoomedSrc] = useState<string | null>(null);
@@ -190,14 +245,20 @@ export function Markdown({
       ? [remarkGfm, remarkGroupImageParagraphs]
       : [remarkGfm, remarkMath, remarkGroupImageParagraphs];
     if ((resolvedCitations && resolvedCitations.length > 0) || hasInlineCitationMarker) {
-      base.push(createRemarkCitationPlugin(resolvedCitations));
+      base.push(createRemarkCitationPlugin(resolvedCitations, citationDisplayMap, Boolean(isStreaming)));
     }
     if (isStreaming) return base;
     if (artifactFiles !== undefined) {
       base.push(createRemarkArtifactFileTextPlugin(artifactFiles));
     }
     return base;
-  }, [artifactFiles, resolvedCitations, isStreaming, hasInlineCitationMarker]);
+  }, [artifactFiles, resolvedCitations, citationDisplayMap, isStreaming]);
+
+  // scrape 兜底轮（citations prop 为空、引用是从本条正文尾部列表刮出来的）自带
+  // 展示资格：列表本来就长在这条消息里，天然每轮只有一条，无需 footer 标记。
+  const shouldShowSourcesBar = !isStreaming
+    && resolvedCitations.length > 0
+    && (Boolean(showSourcesBar) || !(citations && citations.length > 0));
 
   return (
     <div className={className}>
@@ -208,6 +269,9 @@ export function Markdown({
       >
         {content}
       </ReactMarkdown>
+      {shouldShowSourcesBar ? (
+        <CitationSourcesBar citations={resolvedCitations} displayMap={citationDisplayMap} />
+      ) : null}
       {activeLightboxImages.length > 0 ? (
         <ImageLightbox
           images={activeLightboxImages}

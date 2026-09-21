@@ -51,11 +51,13 @@ Compose **不能替代预下载依赖**；目标机还需要已安装 Docker Eng
 |------|------|------|
 | 1 | 删除新路径与专用医疗 UI | 已完成（2026-08-19） |
 | 2 | 裁剪 skill/工具、Skills 分栏、去掉联网入口 | 已完成（2026-08-19） |
-| 3 | 配置去硬编码，统一现场配置入口 | 未开始 |
+| 3 | 配置去硬编码，统一现场配置入口 | 已完成（2026-09-11） |
 | 4 | 生产启动脚本（预构建 dist，不起 Vite） | 未开始 |
 | 5 | 裸机离线依赖预置与打包脚本 | 未开始 |
 | 6 | Docker 离线镜像与 compose | 未开始 |
 | 7 | 离线文档与验收 | 未开始 |
+
+> 步骤 3–7 已纳入[下一轮优化计划](next-round-optimization.zh.md) §2.6，并在该轮把目标架构从 x86_64 扩展到国产 ARM64（麒麟/统信 + 鲲鹏/飞腾）。本文「明确不在范围内」一节里的「Windows / ARM 目标机」限制随之调整为 **ARM64 纳入范围、Windows 仍不在范围**。
 
 ---
 
@@ -302,6 +304,12 @@ Compose **不能替代预下载依赖**；目标机还需要已安装 Docker Eng
 - 默认 yaml：`telemetry.enabled: false`、`tools.webSearch.enabled: false`、IM adapter `enabled: false`；onboarding 默认 Custom，不再默认 OpenRouter。
 - 设置里已隐藏搜索配置与 IM 集成入口（源码仍保留，步骤 3 再删）。
 
+**补充（2026-09-11，B 岗能力层）**
+
+- 本地 **New 新建技能入口已恢复**（`SkillsV2.tsx`）。当初隐藏 New 是为了配合「医学技能只读」，但一刀切把用户自建技能也堵死了—— §2.5 要求恢复。现在按 `availabilityMutable` 分权：`builtin` / `medical` 只读，`user` / `project` 可新建、可编辑、可删除。
+- **ClawHub 保持移除**，恢复的只是本地目录写入——没有引入任何公网安装通道，离线约束不变。
+- 新增 `department` / `category` 两个可选 frontmatter 字段，Skills 页据此出科室筛选条与徽标；未标注的旧技能不受影响，取值未知时原样显示。
+
 ---
 
 ## 步骤 3：配置去硬编码（下一步，本步做完再做）
@@ -316,6 +324,19 @@ Compose **不能替代预下载依赖**；目标机还需要已安装 Docker Eng
 6. [`docker-entrypoint.sh`](../docker-entrypoint.sh) 禁止默认 `https://openrouter.ai/api/v1`。
 
 验收：全库搜索 `10.31.112.13` 仅允许出现在历史文档的「已废弃」说明中，或不出现。
+
+**实施记录（2026-09-11）**
+
+- `src/mcp/config/expandPlaceholders.ts` 增加 `${env:NAME:-default}`（shell `:-` 语义：变量未设置**或为空**都退回默认值）。原来的 `${env:NAME}` 在变量缺失时静默展开成空串，插件会拿到空 URL 再在运行时报错，所以去硬编码必须先补这个。
+- `plugins/med-tools/plugin.json` 的 16 个 env 全部改成 `${env:NAME:-<占位>}`；三处 `10.31.112.13` 换成 `127.0.0.1` 占位。现场只要导出同名变量即可覆盖，不必改仓库文件。
+- 新增 [`config/deploy.env.example`](../config/deploy.env.example)；真实的 `config/deploy.env` 已加进 `.gitignore`。
+- 新增 [`scripts/load-deploy-env.mjs`](../scripts/load-deploy-env.mjs)：解析 `config/deploy.env` 注入 `process.env`（**shell 已有的同名变量优先**），并从所有 `*_API_BASE` / `*_API_URL` / `*_ENDPOINT` / `*_BASE_URL` 的值里提取主机名。
+- [`scripts/dev-launcher.mjs`](../scripts/dev-launcher.mjs) 改为在启动前 load 该文件，`NO_PROXY` 由上面提取的主机名生成，不再写死济南 IP；文件缺失时打印提示。
+- [`scripts/start-local.sh`](../scripts/start-local.sh) 启动横幅增加 `site:` 一行，缺 `config/deploy.env` 时明确告警。
+- [`docker-entrypoint.sh`](../docker-entrypoint.sh) 去掉 `https://openrouter.ai/api/v1` 默认值：未挂载配置且未设 `PILOTDECK_API_URL` 时**直接报错退出**，不再默认连公网。
+- [`docs/jinan-model-config.zh.md`](jinan-model-config.zh.md) 头部标注为「历史记录 + 示例」。
+
+剩余项：`PILOT_HOME` 固定到仓库内 `.pilotdeck-home` 早已由 `scripts/lib-local-runtime.sh` + `dev-launcher.mjs` 完成；公网 provider 目录的 onboarding 收敛（原 §2.6）仍待办。
 
 ---
 

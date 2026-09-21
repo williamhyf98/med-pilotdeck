@@ -20,6 +20,74 @@
     "positive": "18794E",
     "negative": "B42318"
   },
+  "theme": "clinical",
+  "themes": {
+    "clinical": {
+      "label": "临床通用（默认）",
+      "description": "浅灰纸面 + 深墨蓝满版 + 橙色强调；与既有模板完全一致",
+      "colors": {}
+    },
+    "academic": {
+      "label": "学术循证",
+      "description": "冷调深蓝 + 学术蓝强调 + 墨绿次色；适合汇报、文献与 meta 分析",
+      "colors": {
+        "paper": "F4F6FA",
+        "ink": "111827",
+        "muted": "5B6472",
+        "navy": "0B2545",
+        "accent": "1F5FA9",
+        "cyan": "0E7C86",
+        "rule": "D3DAE3",
+        "positive": "15803D",
+        "negative": "B91C1C"
+      }
+    },
+    "trauma": {
+      "label": "战创伤",
+      "description": "军绿满版 + 琥珀强调；适合战创伤救治方案与阶段处置",
+      "colors": {
+        "paper": "F4F5F1",
+        "ink": "1A1F1A",
+        "muted": "5E6B5C",
+        "navy": "16321F",
+        "accent": "C77B23",
+        "cyan": "2F7D6B",
+        "rule": "CFD6C9",
+        "positive": "15803D",
+        "negative": "B42318"
+      }
+    },
+    "vital": {
+      "label": "影像检验",
+      "description": "深青满版 + 品红强调 + 亮青次色；数据与影像对比度高",
+      "colors": {
+        "paper": "F4F9F9",
+        "ink": "10242B",
+        "muted": "566C73",
+        "navy": "08333D",
+        "accent": "C2255C",
+        "cyan": "12A3A3",
+        "rule": "CBDCDE",
+        "positive": "0F8A5F",
+        "negative": "A61B2B"
+      }
+    },
+    "mono": {
+      "label": "灰阶打印",
+      "description": "三级灰阶主色，黑白打印与低色准投影仍可区分；仅 positive/negative 保留色相",
+      "colors": {
+        "paper": "F5F6F7",
+        "ink": "1A1D21",
+        "muted": "5B636B",
+        "navy": "22282E",
+        "accent": "6B7580",
+        "cyan": "99A3AD",
+        "rule": "D5D9DD",
+        "positive": "3F6B4F",
+        "negative": "8C3B36"
+      }
+    }
+  },
   "typography": {
     "profile": "cross-platform-en",
     "headFontFace": "Arial",

@@ -1,4 +1,5 @@
 import type { RoundMemo } from '../types';
+import { buildCitationDisplayMap } from '../../chat/utils/ragCitations';
 import {
   gateStatusLabel,
   priorityLabel,
@@ -34,6 +35,12 @@ export function snapshotsToRounds(
       const displayState = current?.memos.at(-1)?.id === memo.id ? current : snapshot.state;
       const classification = displayState.classificationHistory.at(-1);
       const gateStatus = displayState.transport.gateStatus;
+      // Older snapshots stored prompt indexes. Derive the same display mapping as the chat without rewriting history.
+      const promptIds = snapshot.retrieval?.promptChunkIds;
+      const displayNumbers = promptIds && snapshot.response?.naturalLanguageAnswer
+        ? buildCitationDisplayMap(snapshot.response.naturalLanguageAnswer,
+          promptIds.map((id, index) => ({ index: index + 1, chunkId: id, title: '', section: '' })))
+        : null;
       return [{
         id: memo.id,
         triggerMessageId: snapshot.triggerMessageId,
@@ -84,10 +91,11 @@ export function snapshotsToRounds(
         evidence: displayState.evidence.map((item) => ({
           id: item.id,
           title: item.documentTitle,
+          section: item.section,
           score: item.retrievalScore.toFixed(3),
           source: item.retrievalBackend === 'remote' ? '远程知识库' as const : '本地语料' as const,
           used: item.usedInAnswer,
-          ...(item.citationIndex !== undefined ? { citationIndex: item.citationIndex } : {}),
+          citationIndex: displayNumbers && promptIds ? displayNumbers.get(promptIds.indexOf(item.id) + 1) : item.citationIndex,
           text: item.text,
         })),
       }];

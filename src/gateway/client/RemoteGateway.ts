@@ -8,6 +8,8 @@ import type {
   GatewayEvent,
   GatewayExtractTraumaFormInput,
   GatewayExtractTraumaFormOutput,
+  GatewaySkillGenerateDraftInput,
+  GatewaySkillGenerateDraftOutput,
   GatewayPermissionDecisionInput,
   GatewayServerInfo,
   GatewaySubmitTurnInput,
@@ -30,6 +32,8 @@ import type {
   WebReadSubagentMessagesResult,
   WebForkSessionInput,
   WebForkSessionResult,
+  WebRewindSessionInput,
+  WebRewindSessionResult,
 } from "../protocol/types.js";
 import type {
   SkillAddressInput,
@@ -194,6 +198,10 @@ export class RemoteGateway implements Gateway {
     return (await this.client.request("fork_session", input)) as WebForkSessionResult;
   }
 
+  async rewindSession(input: WebRewindSessionInput): Promise<WebRewindSessionResult> {
+    return (await this.client.request("rewind_session", input)) as WebRewindSessionResult;
+  }
+
   async listProjects(): Promise<WebListProjectsResult> {
     return (await this.client.request("list_projects", {})) as WebListProjectsResult;
   }
@@ -250,6 +258,15 @@ export class RemoteGateway implements Gateway {
 
   async skillScan(input: SkillScanInput): Promise<SkillScanResult> {
     return (await this.client.request("skill_scan", input)) as SkillScanResult;
+  }
+
+  async skillGenerateDraft(
+    input: GatewaySkillGenerateDraftInput,
+  ): Promise<GatewaySkillGenerateDraftOutput> {
+    return (await this.client.request(
+      "skill_generate_draft",
+      input,
+    )) as GatewaySkillGenerateDraftOutput;
   }
 
   async alwaysOnApply(input: AlwaysOnApplyInput): Promise<AlwaysOnApplyResult> {

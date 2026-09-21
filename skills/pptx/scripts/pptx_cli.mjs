@@ -12,7 +12,7 @@ import { verifyFinalPptx } from './lib/delivery.mjs';
 import { inspectPptx, writeManifest } from './lib/ooxml.mjs';
 import { compareRenderedDirectories, renderPptx, renderingAvailability } from './lib/render.mjs';
 import { prepareStarter, validateFrameMap } from './lib/template.mjs';
-import { buildToolkit } from './lib/toolkit.mjs';
+import { buildToolkit, listThemes } from './lib/toolkit.mjs';
 import { makePptx } from './lib/make.mjs';
 import { skillRoot } from './lib/runtime.mjs';
 
@@ -62,9 +62,9 @@ async function loadBuilder(builderPath) {
   return { absolute, build };
 }
 
-async function buildDeck(builderPath, outputPath) {
+async function buildDeck(builderPath, outputPath, options = {}) {
   const { absolute, build } = await loadBuilder(builderPath);
-  const toolkit = await buildToolkit();
+  const toolkit = await buildToolkit({ theme: options.theme });
   const result = await build(toolkit);
   const pptx = result?.pptx ?? result;
   if (!pptx || typeof pptx.writeFile !== 'function') {
@@ -75,11 +75,21 @@ async function buildDeck(builderPath, outputPath) {
   await pptx.writeFile({ fileName: output });
   const exists = await fs.stat(output).then(() => true).catch(() => false);
   if (!exists) throw new Error(`Builder did not produce ${output}`);
-  return { builder: absolute, output };
+  return { builder: absolute, output, theme: toolkit.theme };
+}
+
+function themeArg(args) {
+  return args.theme === true ? null : args.theme;
+}
+
+async function themesCommand() {
+  return { status: 'ok', themes: await listThemes() };
 }
 
 async function buildCommand(args) {
-  const result = await buildDeck(required(args, 'builder'), required(args, 'out'));
+  const result = await buildDeck(required(args, 'builder'), required(args, 'out'), {
+    theme: themeArg(args),
+  });
   const response = { status: 'ok', ...result };
   if (args.verify) {
     const qaDir = path.resolve(args['qa-dir'] || `${result.output}.qa`);
@@ -116,6 +126,7 @@ async function makeCommand(args) {
     output: required(args, 'out'),
     locale: args.locale === true ? null : args.locale,
     footer: args.footer === true ? null : args.footer,
+    theme: themeArg(args),
     force: Boolean(args.force),
   });
 }
@@ -132,7 +143,7 @@ async function deliverCommand(args) {
   if (hasBuilder) {
     requestedOutput = path.resolve(required(args, 'out'));
     input = path.join(qaDir, 'candidate.pptx');
-    build = await buildDeck(args.builder, input);
+    build = await buildDeck(args.builder, input, { theme: themeArg(args) });
     input = build.output;
   } else {
     input = path.resolve(args.input);
@@ -593,11 +604,12 @@ function help() {
   return {
     usage: 'pptx.sh <command> [options]',
     commands: {
-      make: '--title TEXT [--body TEXT|--body-file FILE|--markdown FILE|--spec FILE] --out deck.pptx [--locale zh-CN --footer TEXT --force]',
+      make: '--title TEXT [--body TEXT|--body-file FILE|--markdown FILE|--spec FILE] --out deck.pptx [--locale zh-CN --footer TEXT --theme NAME --force]',
       scaffold: '--out deck.mjs [--force]',
       convert: '--input legacy.ppt --out converted.pptx --qa-dir DIR [--fidelity-threshold 0.01 --force]',
-      build: '--builder deck.mjs --out deck.pptx [--verify --qa-dir DIR --strict-overlap]',
-      deliver: '(--builder deck.mjs --out deck.pptx | --input candidate.pptx [--out deck.pptx]) [--qa-dir DIR --requirements FILE --require-coverage --dispositions FILE --target-platform cross-platform --require-render]',
+      build: '--builder deck.mjs --out deck.pptx [--theme NAME --verify --qa-dir DIR --strict-overlap]',
+      deliver: '(--builder deck.mjs --out deck.pptx | --input candidate.pptx [--out deck.pptx]) [--theme NAME --qa-dir DIR --requirements FILE --require-coverage --dispositions FILE --target-platform cross-platform --require-render]',
+      themes: '(no options) list the named color themes accepted by --theme',
       inspect: '--input deck.pptx [--out manifest.json]',
       render: '--input deck.pptx --out-dir DIR [--dpi 144 --montage montage.png --pdf deck.pdf]',
       audit: '--input deck.pptx [--out audit.json --strict-overlap]',
@@ -627,6 +639,7 @@ try {
   else if (command === 'prepare-starter') result = await prepareStarterCommand(args, false);
   else if (command === 'apply-template') result = await prepareStarterCommand(args, true);
   else if (command === 'fidelity') result = await fidelityCommand(args);
+  else if (command === 'themes') result = await themesCommand();
   else if (command === 'self-test') result = await selfTest(args);
   else if (['help', '-h', '--help'].includes(command)) result = help();
   else throw new Error(`Unknown command: ${command}`);

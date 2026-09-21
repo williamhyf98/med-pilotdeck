@@ -250,6 +250,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ projectPath, fromEntryId }),
     }),
+  rewindSession: (sessionId, { projectPath, fromEntryId }) =>
+    authenticatedFetch(`/api/sessions/${encodeURIComponent(sessionId)}/rewind`, {
+      method: 'POST',
+      body: JSON.stringify({ projectPath, fromEntryId }),
+    }),
   deleteProject: (projectName, force = false) =>
     authenticatedFetch(`/api/projects/${projectName}${force ? '?force=true' : ''}`, {
       method: 'DELETE',

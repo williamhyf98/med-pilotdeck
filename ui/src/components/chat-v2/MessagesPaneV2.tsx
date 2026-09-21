@@ -15,7 +15,7 @@ import { getSessionRequestParams, isReadOnlySession, type Project, type ProjectS
 import { resolveProjectType } from '../app-shell/appShellSelection';
 import medAssistantLogo from '../../assets/med-assistant-logo.png';
 import { getIntrinsicMessageKey } from '../chat/utils/messageKeys';
-import MessageRowV2 from './MessageRowV2';
+import MessageRowV2, { type LastTurnEditController } from './MessageRowV2';
 import SubagentDetailModal from './SubagentDetailModal';
 import ChatHistorySearchBar from './ChatHistorySearchBar';
 import { useRegisterChatHistorySearchControls } from './ChatHistorySearchController';
@@ -81,6 +81,7 @@ type MessagesPaneV2Props = {
   onFork?: (message: ChatMessage, carriedMessageCount: number) => void;
   forkDisabled?: boolean;
   forkParentSessionTitle?: string | null;
+  lastTurnEdit?: LastTurnEditController;
 };
 
 type KeyedRenderableMessageItem = RenderableMessageItem & {
@@ -431,6 +432,7 @@ function MessagesPaneV2({
   onFork,
   forkDisabled = false,
   forkParentSessionTitle = null,
+  lastTurnEdit,
 }: MessagesPaneV2Props) {
   const resolvedPlanModeActive = planModeActive || runMode === 'plan';
   const { t } = useTranslation('chat');
@@ -649,6 +651,7 @@ function MessagesPaneV2({
     void heightVersion;
     return keyedMessageItems.map((item) => measuredHeightsRef.current.get(item.itemKey) ?? item.estimatedHeight);
   }, [heightVersion, keyedMessageItems]);
+  const lastUserRenderIndex = keyedMessageItems.reduce((last, item) => item.message.type === 'user' ? item.renderIndex : last, -1);
   const shouldVirtualizeMessages = keyedMessageItems.length > MESSAGE_VIRTUALIZATION_THRESHOLD;
   const virtualWindow = useMemo(
     () => shouldVirtualizeMessages
@@ -1151,6 +1154,9 @@ function MessagesPaneV2({
             forkCarriedMessageCount={forkCarriedMessageCount}
             forkDisabled={forkDisabled}
             showAssistantActions={showAssistantActions}
+            lastTurnEdit={item.renderIndex === lastUserRenderIndex && item.message.type === 'user'
+              ? lastTurnEdit
+              : undefined}
           />
           {rendersLiveHeaderAfterItem ? (
             <LiveProcessHeader
@@ -1191,6 +1197,7 @@ function MessagesPaneV2({
     onFileOpen,
     onFork,
     forkDisabled,
+    lastTurnEdit, lastUserRenderIndex,
     onGrantSessionToolPermission,
     onShowSettings,
     provider,

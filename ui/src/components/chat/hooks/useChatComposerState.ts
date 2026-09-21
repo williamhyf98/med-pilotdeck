@@ -1226,6 +1226,115 @@ export function useChatComposerState({
     handleSubmitRef.current = handleSubmit;
   }, [handleSubmit]);
 
+  /**
+   * Resend an edited question through the normal send pipeline WITHOUT
+   * touching the composer (no draft consumption, no attachments, no slash
+   * detection, no busy queue). Used by last-turn rewind→regenerate; only
+   * valid while the session is idle. Returns false when the send was refused.
+   */
+  const regenerateWithText = useCallback(
+    (text: string, targetSessionId: string): boolean => {
+      const trimmed = text.trim();
+      if (!trimmed || !selectedProject || isLoading) return false;
+      if (!targetSessionId || isTemporarySessionId(targetSessionId)) return false;
+
+      const normalizedCommandPrefix = commandPrefix?.trim();
+      const syntheticMessages = normalizedCommandPrefix
+        ? [{ text: normalizedCommandPrefix, purpose: 'medical_task_context' }]
+        : undefined;
+
+      if (selectedProject.name) {
+        onSessionActivityBump?.(selectedProject.name, targetSessionId, trimmed);
+      }
+
+      addMessage({
+        type: 'user',
+        content: trimmed,
+        images: [],
+        attachments: [],
+        timestamp: new Date(),
+      }, targetSessionId);
+      setIsLoading(true);
+      setCanAbortSession(true);
+      setClaudeStatus({
+        text: 'Processing',
+        tokens: 0,
+        can_interrupt: true,
+      });
+      setIsUserScrolledUp(false);
+      setTimeout(() => scrollToBottom(), 100);
+      onSessionActive?.(targetSessionId);
+      onSessionProcessing?.(targetSessionId);
+
+      const getToolsSettings = () => {
+        try {
+          const savedSettings = safeLocalStorage.getItem('pilotdeck-settings');
+          if (savedSettings) {
+            return JSON.parse(savedSettings);
+          }
+        } catch (error) {
+          console.error('Error loading tools settings:', error);
+        }
+
+        return {
+          allowedTools: [],
+          disallowedTools: [],
+          skipPermissions: false,
+        };
+      };
+      const toolsSettings = getToolsSettings();
+
+      const sessionSummary = getNotificationSessionSummary(selectedSession, trimmed);
+      const effectiveThinkingMode = getEffectiveThinkingMode(thinkingMode, thinkingModeAvailability);
+
+      startSessionCommand({
+        sendMessage,
+        selectedProject,
+        command: trimmed,
+        userVisibleInput: trimmed,
+        sessionId: targetSessionId,
+        temporarySessionId: targetSessionId,
+        toolsSettings,
+        runMode,
+        permissionMode,
+        basePermissionMode,
+        model,
+        profile: profileOverride,
+        thinking: thinkingModeToConfig(effectiveThinkingMode),
+        turnOverrides,
+        syntheticMessages,
+        sessionSummary,
+        images: [],
+        attachments: [],
+      });
+      return true;
+    },
+    [
+      selectedProject,
+      selectedSession,
+      isLoading,
+      commandPrefix,
+      onSessionActive,
+      onSessionActivityBump,
+      onSessionProcessing,
+      addMessage,
+      setIsLoading,
+      setCanAbortSession,
+      setClaudeStatus,
+      setIsUserScrolledUp,
+      scrollToBottom,
+      sendMessage,
+      runMode,
+      permissionMode,
+      basePermissionMode,
+      model,
+      profileOverride,
+      thinkingMode,
+      thinkingModeAvailability,
+      turnOverrides,
+    ],
+  );
+
   useEffect(() => {
     inputValueRef.current = input;
   }, [input]);
@@ -1684,6 +1793,7 @@ export function useChatComposerState({
     isDragActive,
     openImagePicker: open,
     handleSubmit,
+    regenerateWithText,
     handleInputChange,
     insertAtCursor,
     handleKeyDown,

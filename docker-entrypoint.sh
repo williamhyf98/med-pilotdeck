@@ -19,10 +19,20 @@ fi
 
 # ── Generate config from env vars if no config file is mounted ────────
 if [ ! -f "$CONFIG_FILE" ]; then
-  MODEL="${PILOTDECK_MODEL:-openrouter/deepseek/deepseek-v4-flash}"
-  LIGHT_MODEL="${PILOTDECK_LIGHT_MODEL:-openrouter/qwen/qwen3-8b}"
-  API_KEY="${PILOTDECK_API_KEY:-PLACEHOLDER_RUN_ONBOARDING_TO_REPLACE}"
-  API_URL="${PILOTDECK_API_URL:-https://openrouter.ai/api/v1}"
+  # Offline delivery: never default to a public endpoint. The site must point
+  # PILOTDECK_API_URL at its own OpenAI-compatible server (see config/deploy.env).
+  API_URL="${PILOTDECK_API_URL:-}"
+  if [ -z "$API_URL" ]; then
+    echo "[pilotdeck-docker] ERROR: PILOTDECK_API_URL is not set and no config is mounted at $CONFIG_FILE." >&2
+    echo "[pilotdeck-docker] Set the on-site model endpoint, e.g.:" >&2
+    echo "[pilotdeck-docker]   PILOTDECK_API_URL=http://<model-host>:8030/v1" >&2
+    echo "[pilotdeck-docker]   PILOTDECK_MODEL=custom/G9-V-Med" >&2
+    echo "[pilotdeck-docker] Compose users: put them in config/deploy.env (see config/deploy.env.example)." >&2
+    exit 1
+  fi
+  MODEL="${PILOTDECK_MODEL:-custom/G9-V-Med}"
+  LIGHT_MODEL="${PILOTDECK_LIGHT_MODEL:-${MODEL}}"
+  API_KEY="${PILOTDECK_API_KEY:-EMPTY}"
 
   # Derive provider name from model string (e.g. "openrouter/deepseek/deepseek-v4-flash" -> "openrouter")
   PROVIDER="${MODEL%%/*}"

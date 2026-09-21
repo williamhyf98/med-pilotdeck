@@ -148,8 +148,17 @@ function normalizeToolErrorCode(errorCode, resultPreview) {
 
 const MAX_TOOL_RESULT_PREVIEW_CHARS = 20_000;
 
-function limitToolResultPreview(value) {
+// RAG 检索结果（med-tools rag_query / stage_plan）必须完整送达前端：引用弹窗要从
+// 这段 JSON 里解析 chunks[] 的原文，头尾截断会把中后段 chunk 连同它们的引用一起
+// 吞掉。payload 本身有界（top_k ≤ 8、单 chunk 限长），上限只防服务端异常。
+const CITATION_TOOL_NAME_RE = /rag_query|rag_search|stage_plan/i;
+const MAX_CITATION_RESULT_CHARS = 400_000;
+
+function limitToolResultPreview(value, toolName) {
     const text = typeof value === 'string' ? value : '';
+    if (toolName && CITATION_TOOL_NAME_RE.test(String(toolName)) && text.length <= MAX_CITATION_RESULT_CHARS) {
+        return text;
+    }
     if (text.length <= MAX_TOOL_RESULT_PREVIEW_CHARS) return text;
     const headLength = Math.floor(MAX_TOOL_RESULT_PREVIEW_CHARS / 2);
     const tailLength = MAX_TOOL_RESULT_PREVIEW_CHARS - headLength;
@@ -633,7 +642,7 @@ export function gatewayEventToFrames(event, sessionId, provider) {
                     ...base,
                     kind: 'tool_result',
                     toolId: event.toolCallId,
-                    content: limitToolResultPreview(event.resultPreview),
+                    content: limitToolResultPreview(event.resultPreview, event.toolName),
                     isError: !event.ok,
                     // errorCode lets the UI distinguish permission denials
                     // (`permission_denied` / `permission_required`) from

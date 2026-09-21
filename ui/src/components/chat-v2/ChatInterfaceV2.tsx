@@ -17,8 +17,10 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { getDraftInputStorageKey, safeLocalStorage } from '../chat/utils/chatStorage';
 import { useSessionWatch } from '../../hooks/useSessionWatch';
 import MessagesPaneV2 from './MessagesPaneV2';
+import type { LastTurnEditController } from './MessageRowV2';
 import ComposerV2, { PermissionRequestsSlot } from './ComposerV2';
 import ChatWelcomeV2 from './ChatWelcomeV2';
+import SkillDraftDialog from './SkillDraftDialog';
 import { buildReconnectStatusMessage, refreshSessionAfterReconnect, shouldRefreshSessionOnReconnect } from './reconnectRecovery';
 
 type PendingViewSession = {
@@ -150,6 +152,17 @@ function ChatInterfaceV2({
   const [isAbortPending, setIsAbortPending] = useState(false);
   const [runMode, setRunMode] = useState<ChatRunMode>('agent');
   const [isForkPending, setIsForkPending] = useState(false);
+  // Last-turn edit & regenerate: entry currently being edited in place, the
+  // in-progress draft, the saved (not yet resent) edit, and whether a rewind +
+  // resend round-trip is running.
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState('');
+  const [savedEdit, setSavedEdit] = useState<{ entryId: string; text: string } | null>(null);
+  const [isRewindPending, setIsRewindPending] = useState(false);
+  // Session captured when the composer's "generate skill" button was clicked,
+  // so the draft keeps pointing at that transcript even if the user switches
+  // sessions while the dialog is open. Null = dialog closed.
+  const [skillDraftSessionId, setSkillDraftSessionId] = useState<string | null>(null);
   const { addToast } = useToast();
 
   const resetStreamingState = useCallback(() => {
@@ -357,6 +370,7 @@ function ChatInterfaceV2({
     isDragActive,
     openImagePicker,
     handleSubmit,
+    regenerateWithText,
     handleInputChange,
     insertAtCursor,
     handleKeyDown,
@@ -430,6 +444,36 @@ function ChatInterfaceV2({
   const handlePlanExecutionApproved = useCallback(() => {
     setRunMode('agent');
   }, []);
+
+  /**
+   * Chip click. `insertAtCursor` drops the hint at the caret without stealing
+   * focus, so a doctor can keep typing around it — the skill name in the text
+   * is what the agent routes on, not a mode toggle.
+   */
+  const handleInsertSkillHint = useCallback(
+    (text: string) => {
+      insertAtCursor(text);
+    },
+    [insertAtCursor],
+  );
+
+  // Paths for the skill-draft dialog. The general project can't own
+  // project-scope skills, so its effective path collapses to null and the
+  // dialog only offers user scope (mirrors SkillsV2's general handling).
+  const chatProjectPath = selectedProject?.fullPath ?? selectedProject?.path ?? null;
+  const isGeneralChatProject =
+    selectedProject?.name === 'general' || selectedProject?.displayName === 'general';
+  const skillDraftProjectPath = isGeneralChatProject ? null : chatProjectPath;
+
+  const handleGenerateSkill = useCallback(() => {
+    if (skillDraftSessionId) return;
+    const sessionId = currentSessionId || selectedSession?.id;
+    if (!sessionId) {
+      addToast('error', t('skillDraft.noSession', { defaultValue: '先开始一段对话，再生成技能' }));
+      return;
+    }
+    setSkillDraftSessionId(sessionId);
+  }, [skillDraftSessionId, currentSessionId, selectedSession?.id, addToast, t]);
 
   const handleWebSocketReconnect = useCallback(async () => {
     if (!selectedProject || !selectedSession) return;
@@ -605,6 +649,160 @@ function ChatInterfaceV2({
     textareaRef,
   ]);
 
+  // Entry id of the LAST user message that is already persisted in the
+  // transcript (optimistic sends have no entryId yet). Only this turn is
+  // editable/regenerable — the backend rejects anything else.
+  const lastUserEntryId = React.useMemo(() => {
+    for (let index = chatMessages.length - 1; index >= 0; index -= 1) {
+      const candidate = chatMessages[index];
+      if (candidate.type === 'user' && candidate.entryId) return candidate.entryId;
+    }
+    return null;
+  }, [chatMessages]);
+
+  // Switching sessions drops any in-progress edit state.
+  useEffect(() => {
+    setEditingEntryId(null);
+    setEditDraft('');
+    setSavedEdit(null);
+  }, [watchedSessionId]);
+
+  // If the conversation moved on (a newer user turn exists), stale edit state
+  // for an older turn must not survive.
+  useEffect(() => {
+    if (editingEntryId && editingEntryId !== lastUserEntryId) {
+      setEditingEntryId(null);
+      setEditDraft('');
+    }
+    if (savedEdit && savedEdit.entryId !== lastUserEntryId) {
+      setSavedEdit(null);
+    }
+  }, [editingEntryId, savedEdit, lastUserEntryId]);
+
+  const handleRegenerate = useCallback(async (message: ChatMessage) => {
+    if (isRewindPending || isLoading || sessionIsReadOnly) return;
+    const sessionId = currentSessionId || selectedSession?.id;
+    const fromEntryId = message.entryId;
+    if (!sessionId || !fromEntryId || !selectedProject) {
+      addToast('error', t('lastTurnEdit.missingTarget', {
+        defaultValue: '无法定位这条提问，暂时不能重新生成。',
+      }));
+      return;
+    }
+    const savedText = savedEdit && savedEdit.entryId === fromEntryId ? savedEdit.text : null;
+    const textToSend = (savedText ?? String(message.content || '')).trim();
+    if (!textToSend) {
+      addToast('error', t('lastTurnEdit.emptyQuestion', {
+        defaultValue: '问题内容为空，无法重新生成。',
+      }));
+      return;
+    }
+
+    const projectPath = selectedProject.fullPath || selectedProject.path || '';
+    setIsRewindPending(true);
+    try {
+      const response = await api.rewindSession(sessionId, { projectPath, fromEntryId });
+      let result: {
+        removedTurnId?: string;
+        removedFromSequence?: number;
+        removedAtIso?: string;
+        error?: string;
+      } = {};
+      try {
+        result = await response.json();
+      } catch {
+        result = {};
+      }
+      if (!response.ok) {
+        throw new Error(result?.error || `Rewind failed (${response.status})`);
+      }
+
+      // Drop the removed turn from the local store. Realtime rows may lack
+      // transcript identity, so also pass the removed user message's own
+      // timestamp — everything at/after it belonged to the removed turn.
+      const rawTimestamp = message.timestamp;
+      const parsedTimestamp = rawTimestamp instanceof Date
+        ? rawTimestamp.getTime()
+        : typeof rawTimestamp === 'number'
+          ? rawTimestamp
+          : Date.parse(String(rawTimestamp));
+      sessionStore.dropTurnForRewind(sessionId, {
+        ...(result.removedTurnId ? { turnId: result.removedTurnId } : {}),
+        ...(typeof result.removedFromSequence === 'number'
+          ? { fromSequence: result.removedFromSequence }
+          : {}),
+        ...(Number.isFinite(parsedTimestamp)
+          ? { fromTimestamp: new Date(parsedTimestamp).toISOString() }
+          : {}),
+      });
+
+      setEditingEntryId(null);
+      setEditDraft('');
+      setSavedEdit(null);
+
+      const resent = regenerateWithText(textToSend, sessionId);
+      if (!resent) {
+        setInput(textToSend);
+        addToast('error', t('lastTurnEdit.resendFailed', {
+          defaultValue: '已撤回上一轮问答，但自动重发失败，问题已填入输入框，请手动发送。',
+        }));
+      }
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : String(error);
+      addToast('error', messageText || t('lastTurnEdit.failed', {
+        defaultValue: '重新生成失败。',
+      }));
+    } finally {
+      setIsRewindPending(false);
+    }
+  }, [
+    addToast,
+    currentSessionId,
+    isLoading,
+    isRewindPending,
+    regenerateWithText,
+    savedEdit,
+    selectedProject,
+    selectedSession?.id,
+    sessionIsReadOnly,
+    sessionStore,
+    setInput,
+    t,
+  ]);
+
+  const lastTurnEditController = React.useMemo<LastTurnEditController>(() => ({
+    editingEntryId,
+    editDraft,
+    savedEdit,
+    isRegenerating: isRewindPending,
+    onStartEdit: (message: ChatMessage) => {
+      if (!message.entryId) return;
+      setEditingEntryId(message.entryId);
+      setEditDraft(
+        savedEdit && savedEdit.entryId === message.entryId
+          ? savedEdit.text
+          : String(message.content || ''),
+      );
+    },
+    onDraftChange: setEditDraft,
+    onCancelEdit: () => {
+      setEditingEntryId(null);
+      setEditDraft('');
+    },
+    onSaveEdit: () => {
+      if (!editingEntryId) return;
+      const trimmed = editDraft.trim();
+      if (!trimmed) return;
+      setSavedEdit({ entryId: editingEntryId, text: trimmed });
+      setEditingEntryId(null);
+      setEditDraft('');
+    },
+    onDiscardSavedEdit: () => setSavedEdit(null),
+    onRegenerate: (message: ChatMessage) => {
+      void handleRegenerate(message);
+    },
+  }), [editingEntryId, editDraft, savedEdit, isRewindPending, handleRegenerate]);
+
   useEffect(() => {
     if (!isLoading || !canAbortSession) return;
     const handleGlobalEscape = (event: KeyboardEvent) => {
@@ -709,6 +907,11 @@ function ChatInterfaceV2({
       onToggleCommandMenu={handleToggleCommandMenu}
       onInsertMention={() => insertAtCursor('@')}
       onInsertSlash={() => insertAtCursor('/')}
+      skillRecommendProjectPath={selectedProject?.fullPath ?? selectedProject?.path ?? null}
+      skillRecommendProjectType={selectedProject?.projectType ?? selectedProject?.type ?? null}
+      onInsertSkillHint={handleInsertSkillHint}
+      onGenerateSkill={handleGenerateSkill}
+      generateSkillDisabled={(!currentSessionId && !selectedSession?.id) || Boolean(skillDraftSessionId)}
       getRootProps={getRootProps as (...args: unknown[]) => Record<string, unknown>}
       getInputProps={getInputProps as (...args: unknown[]) => Record<string, unknown>}
       isDragActive={isDragActive}
@@ -742,6 +945,21 @@ function ChatInterfaceV2({
   const composerSlot = (
     <div data-chat-composer-slot className="min-h-0 shrink-0">
       {composer}
+      {skillDraftSessionId ? (
+        <SkillDraftDialog
+          sessionId={skillDraftSessionId}
+          projectPath={chatProjectPath}
+          effectiveProjectPath={skillDraftProjectPath}
+          onClose={() => setSkillDraftSessionId(null)}
+          onCreated={({ name }) => {
+            setSkillDraftSessionId(null);
+            addToast(
+              'success',
+              t('skillDraft.created', { name, defaultValue: '技能「{{name}}」已创建' }),
+            );
+          }}
+        />
+      ) : null}
     </div>
   );
 
@@ -784,6 +1002,7 @@ function ChatInterfaceV2({
       sessionStore={sessionStore}
       onFork={sessionIsReadOnly ? undefined : handleFork}
       forkDisabled={isForkPending}
+      lastTurnEdit={sessionIsReadOnly ? undefined : lastTurnEditController}
     />
   );
   const permissionSlot = (

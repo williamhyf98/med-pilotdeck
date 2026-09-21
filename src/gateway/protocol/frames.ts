@@ -42,6 +42,7 @@ export type WsGatewayMethod =
   | "read_session_messages"
   | "read_subagent_messages"
   | "fork_session"
+  | "rewind_session"
   | "list_projects"
   | "describe_project"
   | "reload_config"
@@ -56,6 +57,7 @@ export type WsGatewayMethod =
   | "skill_import"
   | "skill_validate"
   | "skill_scan"
+  | "skill_generate_draft"
   | "always_on_apply"
   | "always_on_rerun_plan";
 

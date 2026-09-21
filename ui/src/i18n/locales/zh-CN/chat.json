@@ -4,6 +4,23 @@
     "copied": "已复制",
     "copyCode": "复制代码"
   },
+  "lastTurnEdit": {
+    "editTitle": "编辑这条提问",
+    "regenerateTitle": "重新生成回答（撤回本轮问答后重发）",
+    "placeholder": "编辑你的提问…",
+    "editHint": "Esc 取消 · Ctrl+Enter 保存",
+    "cancel": "取消",
+    "save": "保存",
+    "savedHint": "已编辑，重新生成后生效",
+    "discard": "还原",
+    "regenerate": "重新生成",
+    "sessionRunning": "回答生成中，暂不可用",
+    "unsupportedAttachments": "带附件或图片的提问暂不支持编辑重答",
+    "missingTarget": "无法定位这条提问，暂时不能重新生成。",
+    "emptyQuestion": "问题内容为空，无法重新生成。",
+    "resendFailed": "已撤回上一轮问答，但自动重发失败，问题已填入输入框，请手动发送。",
+    "failed": "重新生成失败。"
+  },
   "workspace": {
     "emptyTitle": "就这个项目询问 PilotDeck",
     "emptyDescription": "需要把文件加入上下文时，请用 @ 引用工作区文件。"
@@ -160,6 +177,9 @@
     "completed": "思考过程",
     "emoji": "💭 思考中..."
   },
+  "citations": {
+    "summary": "参考来源 · {{total}}"
+  },
   "json": {
     "response": "JSON 响应"
   },
@@ -220,6 +240,28 @@
     },
     "technicalDetails": "技术细节"
   },
+  "skillDraft": {
+    "title": "从对话生成技能",
+    "generating": "正在阅读对话并起草技能…",
+    "regenerate": "重新生成",
+    "cancel": "取消",
+    "create": "创建技能",
+    "creating": "创建中…",
+    "name": "名称",
+    "slug": "目录名（slug）",
+    "slugHint": "字母或数字开头，可含 . _ -；创建后不可改",
+    "slugInvalid": "slug 只能使用字母、数字、点、下划线和连字符，且须以字母或数字开头",
+    "description": "描述",
+    "descriptionHint": "写清「什么时候该用这个技能」；模型靠这句话决定是否加载",
+    "body": "正文",
+    "scope": "归属",
+    "scopeUser": "个人（所有项目可用）",
+    "scopeProject": "本项目",
+    "noSession": "先开始一段对话，再生成技能",
+    "created": "技能「{{name}}」已创建",
+    "tooShort": "当前对话内容太少，无法生成技能",
+    "flowTooSimple": "流程图内容太少，无法生成技能：至少需要两个填写了文字的节点"
+  },
   "input": {
     "placeholder": "输入 / 调用命令，@ 选择文件，或向 {{provider}} 提问...",
     "placeholderDefault": "输入您的消息...",
@@ -228,6 +270,7 @@
     "attachFiles": "附加文件",
     "attachImages": "附加图片",
     "mentionFile": "引用文件",
+    "generateSkill": "从对话生成技能",
     "slashCommand": "运行斜杠命令",
     "send": "发送",
     "stop": "停止",
@@ -504,5 +547,9 @@
       "message": "{{message}}",
       "hint": "请用更短 prompt 重试，让 agent 把大型工具输入拆成更小步骤，或在“设置 → 模型 Provider”中切换到工具调用能力更强的模型。"
     }
+  },
+  "skillRecommend": {
+    "label": "推荐技能",
+    "insertTemplate": "（使用「{{name}}」技能）"
   }
 }

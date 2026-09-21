@@ -38,6 +38,7 @@ bash "$PPTX_TOOL" make \
   "subtitle": "离线教学演示",
   "locale": "zh-CN",
   "footer": "内部培训",
+  "theme": "trauma",
   "slides": [
     {
       "type": "content",
@@ -57,7 +58,11 @@ bash "$PPTX_TOOL" make \
 }
 ```
 
+`theme` 可省略（默认 `clinical`）；`pptx.sh themes` 列出全部可选值，命令行
+`--theme` 覆盖 spec 里的值。
+
 支持的 `slides[].type`：
+
 
 - `title`
 - `section`
