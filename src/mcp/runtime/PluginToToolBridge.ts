@@ -58,10 +58,13 @@ function buildToolDefinition(
   const isOpenWorld = annotations.openWorldHint !== false;
 
   const inputSchema = normalizeSchema(spec.inputSchema);
+  const medicalMaterial = spec.serverId === "med-tools" && spec.toolName === "med_parse_medical";
 
   return {
     name: spec.wireName,
-    description: spec.description,
+    description: medicalMaterial
+      ? "解析医疗附件并返回影像分析材料。运行时统一使用 continuation_mode=material；报告不会作为聊天答案直接展示。调用后由主 Agent 结合用户问题和偏好输出完整答案。"
+      : spec.description,
     kind: "mcp",
     inputSchema,
     maxResultBytes: 200_000,
@@ -83,7 +86,7 @@ function buildToolDefinition(
         const directFinalField = streamSpec?.field;
         let streamedText = "";
         const emitDelta = (chunk: string): void => {
-          if (!chunk || !context.progress) return;
+          if (!chunk || !context.progress || medicalMaterial) return;
           streamedText += chunk;
           context.progress({
             type: "tool_progress",
@@ -100,10 +103,12 @@ function buildToolDefinition(
             createdAt: new Date().toISOString(),
           });
         };
-        const { content, isError } = await client.callTool(spec.toolName, input, {
+        const toolInput = medicalMaterial && input && typeof input === "object" && !Array.isArray(input)
+          ? { ...input, continuation_mode: "material" } : input;
+        const { content: rawContent, isError } = await client.callTool(spec.toolName, toolInput, {
           signal: context.abortSignal,
           timeoutMs: options.callTimeoutMs,
-          ...(directStream && context.progress
+          ...(directStream && !medicalMaterial && context.progress
             ? {
                 onProgress: (progress: { progress: number; total?: number; message?: string }) => {
                   if (typeof progress.message === "string") emitDelta(progress.message);
@@ -111,6 +116,16 @@ function buildToolDefinition(
               }
             : {}),
         });
+        // Adapt presentation metadata only. The plugin's G9 prompt/report is untouched.
+        const content = medicalMaterial && !isError && Array.isArray(rawContent) ? rawContent.map((block: McpContentBlock) => {
+          if (block.type !== "text" || typeof block.text !== "string") return block;
+          try {
+            const payload = JSON.parse(block.text);
+            if (!payload || typeof payload !== "object" || Array.isArray(payload)) return block;
+            return { ...block, text: JSON.stringify({ ...payload, continuation_mode: "material", agent_continue: true,
+              presentation: MEDICAL_MATERIAL_PRESENTATION }) };
+          } catch { return block; }
+        }) : rawContent;
         if (isError === true) {
           throw new PilotDeckToolRuntimeError(
             "tool_execution_failed",
@@ -187,16 +202,21 @@ function buildToolDefinition(
  * `endTurn` true: also set `directFinalAssistantText` and finish the turn
  * without a second main-model rewrite.
  *
- * For `med_parse_medical`, the default remains terminal (`endTurn: true`), but
- * callers may pass `continuation_mode: "material"` so the streamed report is
- * treated as material and the main agent continues unfinished planned steps.
+ * Medical parsing always supplies internal material: no answer deltas and no
+ * direct-final shortcut. Its report remains in the persisted tool result.
  */
 const DIRECT_STREAM_FIELDS: Record<string, Record<string, { field: string; endTurn: boolean }>> = {
   "med-tools": {
     med_trauma_stage_plan: { field: "care_plan", endTurn: false },
-    med_parse_medical: { field: "report", endTurn: true },
+    med_parse_medical: { field: "report", endTurn: false },
   },
 };
+
+const MEDICAL_MATERIAL_PRESENTATION = "本工具结果是内部分析材料，尚未作为最终答案展示。"
+  + "由主 Agent 结合 report、summary、用户问题、病例上下文和表达偏好，输出一份完整且不重复的最终回答。"
+  + "影像部分保留关键所见、部位、程度、重要阴性发现及不确定性，不要过度压缩为几句话；不补写材料中没有的征象。"
+  + "report 是模型判读，summary 是解析资料；不得把疑似诊断改成确诊。若 report 为空或解析失败，说明限制并基于实际可用资料继续。"
+  + "如用户还要求文件或其他交付，继续完成；不要仅回复报告已展示，也不要连续输出两份相同报告。";
 
 function readContinuationMode(input: unknown): string | undefined {
   if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;

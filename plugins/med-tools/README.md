@@ -43,7 +43,7 @@ Wire names in chat: `mcp__med-tools__<tool>`.
 
 Skills:
 
-- `med-medical` — 附件解读；`continuation_mode=terminal`；`report` 可作为本轮终局
+- `med-medical` — 附件解读；PilotDeck 统一使用 `continuation_mode=material`，主 Agent 根据 `report` 和解析资料输出最终答案
 - `med-trauma-assist` — RAG 知识点问答；非正式五段方案
 - `med-trauma-stage-plan` — 六阶段正式方案；先 parse 时用 `material`；`care_plan` 流式展示后本轮可继续
 - `med-case-report` — 固定 9 段模版病例报告；附件解析必须用 `material`，解析后继续写报告/HTML
@@ -73,8 +73,8 @@ Unified entry (aligned with offline-301 suffixes):
 2. Parse locally by type: DICOM, PDF, images, **structured CDA/XML** (CLUSTER labs, observation pairs), text/markdown, JSON, WFDB/ECG (some ECG types degraded).
 3. Call local **G9-V-Med** for one structured Chinese report.
 4. Choose continuation:
-   - `continuation_mode="terminal"` (default, `med-medical`): streamed `report` may end the turn.
-   - `continuation_mode="material"` (`med-case-report` / multi-step plans): streamed `report` is material; the main agent continues unfinished steps.
+   - PilotDeck always uses `continuation_mode="material"`, including pure interpretation. G9 output stays in the tool result; the main agent produces the only final chat answer.
+   - Legacy `terminal` requests are adapted by the PilotDeck bridge. Standalone MCP clients retain the server's original behavior.
 
 CDA notes:
 
@@ -115,7 +115,7 @@ Tool `med_trauma_stage_plan(stage, injury_text, image_paths?)`:
 1. One stage per call among 伤员发生地 / 野战分类场 / 收容处置组 / 重伤救治组 / 手术组 / 洗消组. If the user did not name a stage, Skill `med-trauma-stage-plan` must call `ask_user_question` first (do not guess).
 2. Plugin builds the fixed prompt (stage-specific 【任务要求】 + five sections + multi-image rules).
 3. Calls G9-V-Med; falls back to the configured main agent model inside the plugin when G9 fails.
-4. Agent shows `care_plan` **verbatim** (same rule as `report` on parse).
+4. Agent shows `care_plan` **verbatim**. This is separate from medical parsing, whose report is internal material.
 
 Ordinary injury photos go in `image_paths` for G9 to read. DICOM/PDF: prefer `med_parse_medical` first, fold report/summary into `injury_text`. RAG is **not** required.
 

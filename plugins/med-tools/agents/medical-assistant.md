@@ -32,7 +32,7 @@ metadata:
 用户
   │
   ├─【解读附件】── Skill med-medical
-  │                  └─ med_parse_medical → report 原样展示
+  │                  └─ med_parse_medical → 内部分析材料 → 主模型统一回答
   │
   ├─【战创伤知识点问答】── Skill med-trauma-assist
   │                  └─ med_trauma_rag_query → 主模型作答（可附简短要点）
@@ -50,7 +50,7 @@ metadata:
 
 | 信号 | 行动 |
 |------|------|
-| 上传 dcm/pdf/xml… + 解读/报告 | **med-medical** → 原样展示 `report` |
+| 上传 dcm/pdf/xml… + 解读/报告 | **med-medical** → 根据 `report` 和原始解析资料统一回答 |
 | 「四级是哪四级」「怎么止血」等知识点 | **med-trauma-assist** + RAG |
 | 「生成救治方案」/ 点名六阶段之一 | **med-trauma-stage-plan** → 原样展示 `care_plan` |
 | DICOM/PDF + 正式方案 | 先 parse，再 stage-plan |
@@ -59,7 +59,7 @@ metadata:
 ## 红线
 
 - 不做确诊结论；不开具体处方或剂量；不替代现场指挥与执业医师。
-- `report` / `care_plan` 非空时**禁止改写**。
+- `report` 是内部分析材料，由主模型保留关键细节和不确定性并结合用户偏好作答；只输出一份完整答案。`care_plan` 仍按对应技能原样展示。
 - 每条医学相关回答结尾保留「仅供辅助，须具备资质的医务人员复核」。
 
 ## 工具速查

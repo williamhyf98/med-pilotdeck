@@ -1,5 +1,7 @@
 # `med_parse_medical` 文档解析与报告流程
 
+> **2026-09-21 PilotDeck 展示链路更新：** 主应用的 `PluginToToolBridge` 现在强制采用 `material`，不再把 G9 的流式进度转成聊天正文，也不直接结束本轮。完整 `report` 保存在工具结果中，主 Agent 根据它与原始解析资料、用户问题及偏好统一生成最终答案。旧客户端传入的 `terminal` 也会被适配。G9 提示词和插件独立调用协议未改动；下文关于 terminal 直接展示的说明仅描述插件旧协议/独立客户端，不再适用于 PilotDeck 主应用。
+
 > 对应 Skill：`med-medical`  
 > 对应 MCP 工具：`mcp__med-tools__med_parse_medical`  
 > 主要代码：`plugins/med-tools/server/app.py`、`parsers.py`、`dicom_parse.py`、`vlm_client.py`
