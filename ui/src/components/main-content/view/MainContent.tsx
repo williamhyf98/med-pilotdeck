@@ -166,7 +166,7 @@ function MainContent({
 }: MainContentProps) {
   const { i18n } = useTranslation();
   const { preferences } = useUiPreferences();
-  const { autoExpandTools, showRawParameters, showThinking, inlineThinking, autoScrollToBottom, sendByCtrlEnter } = preferences;
+  const { showProcessTrace, autoExpandTools, showRawParameters, showThinking, inlineThinking, autoScrollToBottom, sendByCtrlEnter } = preferences;
 
   const { currentProject, setCurrentProject } = useTaskMaster() as TaskMasterContextValue;
   const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings() as TasksSettingsContextValue;
@@ -601,6 +601,7 @@ function MainContent({
           onSelectSession={onSelectSession}
           onShowSettings={onShowSettings}
           externalMessageUpdate={externalMessageUpdate}
+          showProcessTrace={showProcessTrace}
           autoExpandTools={autoExpandTools}
           showRawParameters={showRawParameters}
           showThinking={showThinking}
@@ -710,6 +711,7 @@ type SplitBodyProps = {
   onSelectSession: MainContentProps['onSelectSession'];
   onShowSettings: any;
   externalMessageUpdate: any;
+  showProcessTrace: any;
   autoExpandTools: any;
   showRawParameters: any;
   showThinking: any;
@@ -766,6 +768,7 @@ function SplitBody(props: SplitBodyProps) {
     onSelectSession,
     onShowSettings,
     externalMessageUpdate,
+    showProcessTrace,
     autoExpandTools,
     showRawParameters,
     showThinking,
@@ -946,6 +949,7 @@ function SplitBody(props: SplitBodyProps) {
       onReplaceTemporarySession={onReplaceTemporarySession}
       onNavigateToSession={onNavigateToSession}
       onShowSettings={onShowSettings}
+      showProcessTrace={showProcessTrace}
       autoExpandTools={autoExpandTools}
       showRawParameters={showRawParameters}
       showThinking={showThinking}

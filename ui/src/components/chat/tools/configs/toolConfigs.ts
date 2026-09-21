@@ -828,6 +828,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   agent: '任务',
   web_search: '网页搜索',
   web_fetch: '网页抓取',
+  med_radar_analyze_ct: 'RADAR CT 分析',
 };
 
 export function getToolDisplayName(toolName: string): string {

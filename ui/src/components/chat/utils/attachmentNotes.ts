@@ -53,7 +53,7 @@ export function buildMedicalFolderPathNote(folder: MedicalFolderPathNote): strin
     }
   }
   lines.push(
-    '- instruction: Call mcp__med-tools__med_parse_medical with path set to the folder above (not individual files), using continuation_mode="material". Do not use read_file on DICOM/PDF/CDA/ECG binaries. The report is internal analysis material, not an already displayed answer. Use it with the parsed sources and user preferences to produce one complete final answer, preserving important findings and uncertainty without repeating the report. Continue any additional requested deliverables.',
+    '- instruction: For DICOM, first load med-dicom-router and await med_dicom_route, then follow its selected workflow. For general medical parsing, call mcp__med-tools__med_parse_medical with path set to the folder above (not individual files). Do not use read_file on DICOM/PDF/CDA/ECG binaries. Pure interpretation uses continuation_mode="terminal": the runtime displays and saves the original report, then ends the turn. Composite tasks use continuation_mode="material": preserve the original interpretation in the final deliverable and complete the requested analysis/files without repeating a summary of the report.',
   );
   return `\n\n${MEDICAL_FOLDER_NOTE_MARKER}\n${lines.join('\n')}\n${MEDICAL_FOLDER_NOTE_END_MARKER}\n`;
 }
@@ -156,8 +156,11 @@ export function parseUserAttachmentNote(content: unknown): {
     const separator = line.indexOf(': ');
     if (separator < 0) continue;
 
-    const name = line.slice(2, separator).trim();
+    const rawName = line.slice(2, separator).trim();
     const filePath = line.slice(separator + 2).trim();
+    const relativePathMatch = rawName.match(/^(.*?)\s+\(([^()]*)\)$/);
+    const name = relativePathMatch?.[1]?.trim() || rawName;
+    const relativePath = relativePathMatch?.[2]?.trim();
     if (!name || !filePath) continue;
     const mimeType = inferAttachmentMimeType(name, filePath);
     if (isImageAttachmentMime(mimeType)) continue;
@@ -166,6 +169,7 @@ export function parseUserAttachmentNote(content: unknown): {
       name,
       path: filePath,
       mimeType,
+      ...(relativePath ? { relativePath } : {}),
     });
   }
 

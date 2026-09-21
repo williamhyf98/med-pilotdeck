@@ -1,14 +1,19 @@
 # med-tools (PilotDeck plugin)
 
 MCP plugin that adds **multi-source medical parsing**, local **G9-V-Med** reports,
-**war-trauma RAG Q&A**, and **six-stage formal care plans** to PilotDeck.
+remote **DAMO RADAR abdominal CT analysis**, **DeepChest 3DMedAgent chest CT
+workflow**, **war-trauma RAG Q&A**, and **six-stage formal care plans** to
+PilotDeck.
 
 ## Tools
 
 | Tool | Role |
 |------|------|
+| `med_dicom_route` | Local read-only DICOM modality/body-part/series preflight and Skill recommendation |
 | `med_parse_medical` | Parse medical file/folder + G9 report |
 | `med_tools_health` | VLM / deps / RAG summary |
+| `med_radar_status` | Check the node12 RADAR service, resident model, and CUDA |
+| `med_radar_analyze_ct` | Run RADAR on NIfTI or a DICOM CT series and return ranked scores |
 | `med_trauma_rag_status` | Corpus readiness (rows, dim, sha) |
 | `med_trauma_rag_query` | Retrieve war-trauma chunks for **knowledge Q&A** |
 | `med_trauma_stage_plan` | Formal **six-stage** care plan (G9 + main-agent fallback) |
@@ -23,6 +28,12 @@ Wire names in chat: `mcp__med-tools__<tool>`.
 ```text
 用户
   │
+  ├─【自动识别 DICOM 模态/部位】── Skill med-dicom-router
+  │                  └─ med_dicom_route（本地只读元数据）
+  │                     ├─ 非 CT / 不完整 / 不确定 → med-medical
+  │                     ├─ 非腹部且部位明确的完整 CT → med-deepchest-3dmedagent
+  │                     └─ 腹部/盆腔完整 CT → med-radar-ct → RADAR → 主智能体按用户问题回答
+  │
   ├─【解读附件】── Skill med-medical
   │                  └─ med_parse_medical(continuation_mode=terminal)
   │                     → report 流式展示并可作为本轮终局
@@ -34,6 +45,13 @@ Wire names in chat: `mcp__med-tools__<tool>`.
   │                  ├─ (可选) med_parse_medical(continuation_mode=material) 并入可见伤情
   │                  └─ med_trauma_stage_plan → care_plan 流式展示，本轮可继续导出
   │
+  ├─【RADAR 腹部 CT 分析】── Skill med-radar-ct
+  │                  ├─ med_radar_status（按需检查运行环境）
+  │                  └─ med_radar_analyze_ct → 结构化异常评分 + CSV
+  │
+  ├─【DeepChest 胸部 CT / 3DMedAgent】── Skill med-deepchest-3dmedagent
+  │                  └─ 本地 shell workflow → dry-run / CT-CLIP / Agent 产物
+  │
   ├─【按模版生成病例报告 / HTML】── Skill med-case-report
   │                  ├─ med_parse_medical(continuation_mode=material) 并入附件解读
   │                  └─ 主模型继续写固定 9 段模版 / 后续交付物
@@ -43,10 +61,15 @@ Wire names in chat: `mcp__med-tools__<tool>`.
 
 Skills:
 
-- `med-medical` — 附件解读；PilotDeck 统一使用 `continuation_mode=material`，主 Agent 根据 `report` 和解析资料输出最终答案
+- `med-medical` — 纯附件解读用 `terminal` 直接展示并保存 G9 原文；复合任务用 `material`，主 Agent 保留判读原文并完成后续交付
 - `med-trauma-assist` — RAG 知识点问答；非正式五段方案
 - `med-trauma-stage-plan` — 六阶段正式方案；先 parse 时用 `material`；`care_plan` 流式展示后本轮可继续
 - `med-case-report` — 固定 9 段模版病例报告；附件解析必须用 `material`，解析后继续写报告/HTML
+- `med-radar-ct` — node12 RADAR 三维 CT 推理；只把分数当作需复核的模型信号
+- `med-deepchest-3dmedagent` — `MED_DEEPCHEST_ROOT` 配置的外部 DeepChestVQA / CT-CLIP / 3DMedAgent 工作区；这是 shell workflow，不是新的 MCP 工具，须核对上传病例与推理输入的绑定
+- `med-dicom-router` — 本地只读 DICOM 预检和 Skill 路由；不会解码像素、调用模型或上传 node12
+
+3DMedAgent 与 RADAR 是两个独立医学流程。完整腹部/盆腔 CT 自动调用 RADAR；其他部位明确的完整 CT 先进入 3DMedAgent。胸部具备完整 DeepChest/CT-CLIP 支持；头颈、脊柱、四肢等当前不在器官词表内时必须明确兼容性降级。两套证据、分数、产物和限制分别保留，不把 RADAR 分数写入 3DMedAgent `facts_memory`。
 
 ### MCP 调用前的 Skill 门禁
 
@@ -58,9 +81,11 @@ Skills:
 
 映射关系：
 
+- `med_dicom_route` → `med-dicom-router`；已加载 `med-medical` 时也可使用。
 - `med_parse_medical` → `med-medical`；已加载 `med-case-report` 或 `med-trauma-stage-plan` 时也可使用。
 - `med_trauma_rag_query` / `med_trauma_rag_status` → `med-trauma-assist`。
 - `med_trauma_stage_plan` → `med-trauma-stage-plan`。
+- `med_radar_analyze_ct` / `med_radar_status` → `med-radar-ct`。
 - `med_tools_health` → 任一医学 Skill；未加载时默认补 `med-medical`。
 
 门禁只保证模型先读完整操作手册；阶段合法性、输入路径等不可省略的参数仍由 MCP 工具自身校验。
@@ -73,8 +98,8 @@ Unified entry (aligned with offline-301 suffixes):
 2. Parse locally by type: DICOM, PDF, images, **structured CDA/XML** (CLUSTER labs, observation pairs), text/markdown, JSON, WFDB/ECG (some ECG types degraded).
 3. Call local **G9-V-Med** for one structured Chinese report.
 4. Choose continuation:
-   - PilotDeck always uses `continuation_mode="material"`, including pure interpretation. G9 output stays in the tool result; the main agent produces the only final chat answer.
-   - Legacy `terminal` requests are adapted by the PilotDeck bridge. Standalone MCP clients retain the server's original behavior.
+   - Pure interpretation uses `continuation_mode="terminal"`: stream and persist the original G9 report as the final answer; no second main-model rewrite.
+   - Composite tasks use `continuation_mode="material"`: report stays in tool details; the main agent preserves the interpretation and completes the requested analysis/files.
 
 CDA notes:
 
@@ -107,6 +132,72 @@ Flow for **Skill `med-trauma-assist`**:
 4. Formal five-section plans use **`med_trauma_stage_plan`**, not this path.
 
 If the embedding service is down, the tool uses **lexical-fallback** and sets `mode` accordingly.
+
+## DAMO RADAR（腹部 CT）
+
+`med_radar_analyze_ct(path, top_k?, threshold?, max_cases?, study_context?)` reads
+data on node36 and uploads it to the persistent RADAR service on node12. It accepts:
+
+- one `.nii` / `.nii.gz` volume;
+- a directory containing NIfTI volumes; or
+- a DICOM CT series directory. Files are validated as CT by DICOM metadata before upload.
+
+Node12 keeps one FastAPI process and one loaded model on GPU 4. Requests are accepted
+one at a time. NIfTI data or a ZIP containing the validated DICOM series is uploaded
+over authenticated HTTPS on the private network; the raw upload and staged input are deleted after inference,
+and the remote result directory is deleted after node36 downloads the CSV (with a
+one-hour TTL as a fallback). Every request requires a bearer key.
+The service accepts NIfTI volumes, DICOM CT series directories, and single
+multi-frame CT DICOM files with at least three frames. DICOM inputs are converted to
+temporary NIfTI volumes on node12 before the existing RADAR preprocessing runs;
+single-frame DICOM and non-CT DICOM are rejected. The service enforces authentication,
+single-request admission, and actual streamed request size before multipart parsing.
+NIfTI headers are checked for a bounded 3D numeric volume, axis-aligned geometry, and
+both decoded and model-resampled memory budgets before voxel data reaches the model.
+The GPU budget includes RADAR's three peak 37-channel mask tensors rather than only
+the input image.
+
+```text
+node12 /local_data/radar-service/
+  app.py
+  radar_inference.py
+  radar.env                  # mode 600; not committed
+  venv/
+  damo-radar/
+  models/
+```
+
+The node36 key is read from `$PILOT_HOME/secrets/med-radar-api-key` by default.
+Raw scores and a JSON summary are kept in a unique directory under
+`derived/radar/<study>-<hash>/<request-uuid>/`; the MCP response contains only bounded
+ranked results. RADAR was trained primarily on contrast-enhanced abdominal CT. Scores
+are not calibrated probabilities or diagnoses, low scores do not exclude disease, and
+out-of-domain studies must be labeled as such.
+
+### Node12 service deployment
+
+The deployment unit and pinned service dependencies live in `radar-service/`. Create a
+`--system-site-packages` venv so the host CUDA build of PyTorch is reused, then install
+`radar-service/requirements.txt`. Copy the official RADAR source to `damo-radar/`, model
+files to `models/`, and `scripts/radar_inference.py` beside `app.py`. Create a dedicated
+`radar` system user, copy `radar.env.example` to `radar.env`, replace the API key, set
+mode `600`, install `radar.service`, and start it with systemd. The unit binds only
+`10.31.112.13:18120` with a certificate containing that IP as a SAN, sets
+`CUDA_VISIBLE_DEVICES=4`, and runs the service as `radar`. Place the trusted certificate
+on node36 at `$PILOT_HOME/certs/med-radar-ca.crt`.
+
+Before starting the unit, create its writable paths and TLS files:
+
+```bash
+install -d -o radar -g radar -m 0700 \
+  /local_data/radar-service/{work,tmp,cache,tls}
+openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 3650 \
+  -keyout /local_data/radar-service/tls/server.key \
+  -out /local_data/radar-service/tls/server.crt \
+  -subj '/CN=10.31.112.13' -addext 'subjectAltName=IP:10.31.112.13'
+chown radar:radar /local_data/radar-service/tls/server.{key,crt}
+chmod 0600 /local_data/radar-service/tls/server.key
+```
 
 ## Formal six-stage care plan
 
@@ -153,7 +244,7 @@ Windows notes:
 `plugin.json` MCP command is `node ${env:PILOT_HOME}/plugins/med-tools/run-mcp.cjs`
 (the node launcher locates the venv python itself; it deliberately avoids
 shell resolution because on Windows plain `bash` can resolve to WSL's bash).
-`run.sh` remains for manual use. `timeoutMs: 300000` (5 minutes) for this MCP only.
+`run.sh` remains for manual use. `timeoutMs: 900000` (15 minutes) for this MCP only.
 
 Restart PilotDeck (or reload plugins) after changing `plugin.json` env.
 
@@ -183,6 +274,13 @@ Restart PilotDeck (or reload plugins) after changing `plugin.json` env.
 | `MED_RAG_TOPIC` | `战创伤` | Default topic filter; empty string = whole library |
 | `MED_RAG_MANIFEST` | `<plugin>/data/rag/manifest.json` | Override manifest path (tests) |
 | `MED_DICOM_DERIVED_DIR` / `MED_DERIVED_DIR` | `<parent>/.med-tools-derived` | Preview/PNG output dir |
+| `MED_RADAR_API_BASE` | `https://127.0.0.1:18120` | Set the actual RADAR URL in `config/deploy.env` |
+| `MED_RADAR_API_KEY` | *(empty)* | Bearer key; takes precedence over the key file |
+| `MED_RADAR_API_KEY_FILE` | `$PILOT_HOME/secrets/med-radar-api-key` | Node36 key file; keep mode `600` |
+| `MED_RADAR_CA_BUNDLE` | `$PILOT_HOME/certs/med-radar-ca.crt` | Trusted node12 service certificate |
+| `MED_RADAR_TIMEOUT_SECONDS` | `840` | Upload + inference + download timeout (30-3600 seconds) |
+| `MED_RADAR_MAX_UPLOAD_BYTES` | `8589934592` | Maximum selected input bytes before upload |
+| `MED_RADAR_OUTPUT_DIR` | `$PILOT_HOME/artifacts/radar` in `plugin.json` | Central artifact root on node36; direct clients otherwise use `<input-parent>/derived/radar` |
 
 `med_trauma_rag_query` hits the remote med-rag service (`POST /retrieve`, evidence
 only — generation stays with the PilotDeck main model) and falls back to the
@@ -221,5 +319,10 @@ print(query_rag(query='战创伤现场大出血止血', top_k=3)['mode'],
 from server.trauma_stage_plan import build_user_prompt, normalize_stage
 assert normalize_stage('发生地') == '伤员发生地'
 print(build_user_prompt(stage='伤员发生地', injury_text='右大腿贯通伤', has_images=False)[:200])
+"
+
+.venv/bin/python -c "
+from server.radar import radar_status
+print(radar_status(validate_runtime=True))
 "
 ```

@@ -615,6 +615,27 @@ export function gatewayEventToFrames(event, sessionId, provider) {
                     content: event.text,
                 }),
             ];
+        case 'tool_activity': {
+            const safeActivityId = sanitizeMessageId(event.activityId || event.toolCallId || 'medical');
+            const terminal = event.state === 'completed' || event.state === 'failed';
+            return [
+                createNormalizedMessage({
+                    ...base,
+                    id: `tool_activity_${sanitizeMessageId(sessionId)}_${safeActivityId}`,
+                    kind: 'agent_activity',
+                    activityId: event.activityId,
+                    phase: 'medical',
+                    state: event.state,
+                    title: event.title,
+                    detail: event.detail || '',
+                    toolName: event.toolName,
+                    toolId: event.toolCallId,
+                    startedAt: event.createdAt || new Date().toISOString(),
+                    endedAt: terminal ? new Date().toISOString() : null,
+                    severity: event.severity,
+                }),
+            ];
+        }
         case 'file_artifacts':
             return [
                 createNormalizedMessage({

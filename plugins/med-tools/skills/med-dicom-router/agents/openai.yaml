@@ -1,0 +1,4 @@
+interface:
+  display_name: "DICOM Router"
+  short_description: "完整腹部 CT 路由 RADAR，其他完整 CT 路由 3DMedAgent"
+  default_prompt: "使用 $med-dicom-router 预检这个 DICOM；完整腹部或盆腔 CT 运行 RADAR，其他部位明确的完整 CT 进入 3DMedAgent。"

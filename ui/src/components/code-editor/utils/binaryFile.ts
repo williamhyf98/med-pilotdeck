@@ -3,6 +3,7 @@ const IMAGE_EXTENSIONS = [
 ];
 
 const PDF_EXTENSIONS = ['pdf'];
+const DICOM_EXTENSIONS = ['dcm', 'dicom', 'ima'];
 
 const OFFICE_EXTENSIONS = [
   'doc', 'docx', 'wps', 'xls', 'xlsx', 'et', 'ppt', 'pptx', 'dps', 'odt', 'ods', 'odp',
@@ -22,7 +23,7 @@ const BINARY_EXTENSIONS = [
   // Media
   'mp3', 'mp4', 'wav', 'avi', 'mov', 'mkv', 'flv', 'wmv', 'm4a', 'ogg',
   // Documents
-  ...PDF_EXTENSIONS, ...OFFICE_EXTENSIONS,
+  ...PDF_EXTENSIONS, ...OFFICE_EXTENSIONS, ...DICOM_EXTENSIONS,
   // Fonts
   'ttf', 'otf', 'woff', 'woff2', 'eot',
   // Database
@@ -42,6 +43,9 @@ export const isImageFile = (filename: string): boolean =>
 
 export const isPdfFile = (filename: string): boolean =>
   PDF_EXTENSIONS.includes(getExtension(filename));
+
+export const isDicomFile = (filename: string): boolean =>
+  DICOM_EXTENSIONS.includes(getExtension(filename));
 
 export const isOfficeFile = (filename: string): boolean =>
   OFFICE_EXTENSIONS.includes(getExtension(filename));
