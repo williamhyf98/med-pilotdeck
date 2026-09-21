@@ -39,13 +39,10 @@ import ImageAttachment from '../chat/view/subcomponents/ImageAttachment';
 import CommandMenu from '../chat/view/subcomponents/CommandMenu';
 import { cn } from '../../lib/utils.js';
 import type { ContentReference } from '../../types/contentReference';
+import type { MentionableFile, MentionedFile } from '../chat/hooks/useFileMentions';
 import DocumentReferenceChip from './DocumentReferenceChip';
+import MentionedFileChip from './MentionedFileChip';
 import SkillRecommendBar from './SkillRecommendBar';
-
-interface MentionableFile {
-  name: string;
-  path: string;
-}
 
 interface SlashCommand {
   name: string;
@@ -61,13 +58,10 @@ export type ComposerV2Props = {
   input: string;
   placeholder: string;
   textareaRef: RefObject<HTMLTextAreaElement>;
-  inputHighlightRef: RefObject<HTMLDivElement>;
-  renderInputWithMentions: (text: string) => ReactNode;
   onInputChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
   onTextareaClick: (event: MouseEvent<HTMLTextAreaElement>) => void;
   onTextareaKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onTextareaPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
-  onTextareaScrollSync: (target: HTMLTextAreaElement) => void;
   onTextareaInput: (event: FormEvent<HTMLTextAreaElement>) => void;
   onInputFocusChange?: (focused: boolean) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -83,6 +77,8 @@ export type ComposerV2Props = {
   documentReferences: ContentReference[];
   onRemoveDocumentReference: (id: string) => void;
   onOpenDocumentReference?: (filePath: string) => void;
+  mentionedFiles: MentionedFile[];
+  onRemoveMentionedFile: (relativePath: string) => void;
   uploadingImages: Map<string, number>;
   imageErrors: Map<string, string>;
 
@@ -347,13 +343,10 @@ export default function ComposerV2({
   input,
   placeholder,
   textareaRef,
-  inputHighlightRef,
-  renderInputWithMentions,
   onInputChange,
   onTextareaClick,
   onTextareaKeyDown,
   onTextareaPaste,
-  onTextareaScrollSync,
   onTextareaInput,
   onInputFocusChange,
   onSubmit,
@@ -369,6 +362,8 @@ export default function ComposerV2({
   documentReferences,
   onRemoveDocumentReference,
   onOpenDocumentReference,
+  mentionedFiles,
+  onRemoveMentionedFile,
   uploadingImages,
   imageErrors,
   showFileDropdown,
@@ -438,6 +433,7 @@ export default function ComposerV2({
   const hasDraftContent = input.trim().length > 0
     || attachedImages.length > 0
     || documentReferences.length > 0
+    || mentionedFiles.length > 0
     || Boolean(attachedMedicalFolder?.entries?.length);
   const hasUploadingImages = uploadingImages.size > 0;
   const attachmentLimitError = imageErrors.get(MAX_ATTACHMENTS_ERROR_KEY);
@@ -455,6 +451,7 @@ export default function ComposerV2({
   }, [
     attachedImages,
     documentReferences,
+    mentionedFiles,
     attachedMedicalFolder,
     attachmentLimitError,
     medicalFolderWarning,
@@ -547,7 +544,7 @@ export default function ComposerV2({
               chromeMode === 'medical' && 'pd-composer--medical',
             )}
           >
-            {attachedImages.length > 0 || documentReferences.length > 0 || attachedMedicalFolder || attachmentLimitError || medicalFolderWarning ? (
+            {attachedImages.length > 0 || documentReferences.length > 0 || mentionedFiles.length > 0 || attachedMedicalFolder || attachmentLimitError || medicalFolderWarning ? (
               <div
                 ref={attachmentPanelRef}
                 className="pd-composer-attachment-panel mb-2 rounded-lg border border-neutral-200 bg-neutral-50 p-2 dark:border-neutral-800 dark:bg-neutral-900"
@@ -587,6 +584,15 @@ export default function ComposerV2({
                         ? () => onOpenDocumentReference(reference.source.relativePath)
                         : undefined}
                       onRemove={() => onRemoveDocumentReference(reference.id)}
+                    />
+                  ))}
+                  {mentionedFiles.map((file) => (
+                    <MentionedFileChip
+                      key={file.relativePath}
+                      name={file.name}
+                      className="pd-composer-reference-chip sm:max-w-[520px]"
+                      removeLabel={t('input.removeMention', { defaultValue: 'Remove file' }) as string}
+                      onRemove={() => onRemoveMentionedFile(file.relativePath)}
                     />
                   ))}
                   {attachedImages.map((file, index) => (
@@ -634,9 +640,6 @@ export default function ComposerV2({
                     }}
                   >
                     <div className="font-medium">{file.name}</div>
-                    <div className="font-mono text-[11px] text-neutral-500 dark:text-neutral-400">
-                      {file.path}
-                    </div>
                   </div>
                 ))}
               </div>
@@ -681,37 +684,20 @@ export default function ComposerV2({
                 />
               ) : null}
 
-              {/* Keep this the immediate wrapper of the textarea: the highlight
-                  overlay below is `absolute inset-0` and only lines up while
-                  nothing else shares this box. */}
-              <div className="relative">
-                <div
-                  ref={inputHighlightRef}
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-0 overflow-hidden"
-                >
-                  <div className="block w-full whitespace-pre-wrap break-words px-2 pt-1.5 text-[14px] leading-6 text-transparent">
-                    {renderInputWithMentions(input)}
-                  </div>
-                </div>
-                <textarea
-                  ref={textareaRef}
-                  value={input}
-                  onChange={onInputChange}
-                  onClick={onTextareaClick}
-                  onKeyDown={onTextareaKeyDown}
-                  onPaste={onTextareaPaste}
-                  onScroll={(event) =>
-                    onTextareaScrollSync(event.target as HTMLTextAreaElement)
-                  }
-                  onFocus={() => onInputFocusChange?.(true)}
-                  onBlur={() => onInputFocusChange?.(false)}
-                  onInput={onTextareaInput}
-                  placeholder={placeholder}
-                  rows={2}
-                  className="relative z-10 block max-h-[40vh] min-h-[48px] w-full resize-none bg-transparent px-2 pt-1.5 text-[14px] leading-6 text-neutral-900 placeholder-neutral-400 outline-none dark:text-neutral-100 dark:placeholder-neutral-500"
-                />
-              </div>
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={onInputChange}
+                onClick={onTextareaClick}
+                onKeyDown={onTextareaKeyDown}
+                onPaste={onTextareaPaste}
+                onFocus={() => onInputFocusChange?.(true)}
+                onBlur={() => onInputFocusChange?.(false)}
+                onInput={onTextareaInput}
+                placeholder={placeholder}
+                rows={2}
+                className="block max-h-[40vh] min-h-[48px] w-full resize-none bg-transparent px-2 pt-1.5 text-[14px] leading-6 text-neutral-900 placeholder-neutral-400 outline-none dark:text-neutral-100 dark:placeholder-neutral-500"
+              />
 
                 <div className="pd-composer-control-row flex flex-wrap items-center gap-x-2 gap-y-1 px-1 pt-1">
                   <div className="pd-composer-toolbar-left flex min-w-0 flex-1 flex-wrap items-center gap-0.5">

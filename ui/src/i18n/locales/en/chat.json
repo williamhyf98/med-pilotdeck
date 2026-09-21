@@ -287,6 +287,7 @@
     "attachFiles": "Attach files",
     "attachImages": "Attach images",
     "mentionFile": "Mention a file",
+    "removeMention": "Remove mentioned file",
     "generateSkill": "Generate skill from conversation",
     "slashCommand": "Run a slash command",
     "send": "Send",

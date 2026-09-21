@@ -55,6 +55,7 @@ import type {
 } from '../../../types/app';
 import { isImeEnterEvent } from '../../../utils/ime';
 import { useFileMentions } from './useFileMentions';
+import type { MentionableFile, MentionedFile } from './useFileMentions';
 import { type SlashCommand, useSlashCommands } from './useSlashCommands';
 
 type PendingViewSession = {
@@ -109,11 +110,6 @@ interface UseChatComposerStateArgs {
   onAttachmentFilesConsumed?: () => void;
 }
 
-interface MentionableFile {
-  name: string;
-  path: string;
-}
-
 interface CommandExecutionResult {
   type: 'builtin' | 'custom';
   action?: string;
@@ -158,6 +154,7 @@ type QueuedBusySendSnapshot = {
   input: string;
   attachedImages: File[];
   documentReferences: ContentReference[];
+  mentionedFiles: MentionedFile[];
   forceStart?: boolean;
 };
 
@@ -268,13 +265,16 @@ export function useChatComposerState({
   const [thinkingMode, setThinkingModeState] = useState<ThinkingModeId>('default');
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const inputHighlightRef = useRef<HTMLDivElement>(null);
   const medicalFolderInputRef = useRef<HTMLInputElement | null>(null);
   const pendingNewSessionThinkingModeRef = useRef<ThinkingModeId | null>(null);
   const handleSubmitRef = useRef<
     ((event: FormEvent<HTMLFormElement> | MouseEvent | TouchEvent | KeyboardEvent<HTMLTextAreaElement>) => Promise<void>) | null
   >(null);
   const inputValueRef = useRef(input);
+  // Mentions come from useFileMentions, which runs after this callback is
+  // declared — the ref (kept in sync by an effect below the hook call) lets
+  // the snapshot read the latest chips without a declaration-order cycle.
+  const mentionedFilesRef = useRef<MentionedFile[]>([]);
   const activeDraftStorageKeyRef = useRef(draftStorageKey);
   const queuedBusySendRef = useRef(false);
   const queuedBusySendConfirmedRef = useRef(false);
@@ -297,6 +297,7 @@ export function useChatComposerState({
       input: updates.input ?? previous?.input ?? inputValueRef.current,
       attachedImages: updates.attachedImages ?? previous?.attachedImages ?? attachedImages,
       documentReferences: updates.documentReferences ?? previous?.documentReferences ?? documentReferences,
+      mentionedFiles: updates.mentionedFiles ?? previous?.mentionedFiles ?? mentionedFilesRef.current,
       ...(previous?.forceStart ? { forceStart: true } : {}),
       ...(updates.forceStart ? { forceStart: true } : {}),
     };
@@ -655,10 +656,12 @@ export function useChatComposerState({
     showFileDropdown,
     filteredFiles,
     selectedFileIndex,
-    renderInputWithMentions,
     selectFile,
     setCursorPosition,
     handleFileMentionsKeyDown,
+    mentionedFiles,
+    removeMentionedFile,
+    clearMentionedFiles,
   } = useFileMentions({
     selectedProject,
     mentionScopeKey: draftStorageKey,
@@ -667,13 +670,10 @@ export function useChatComposerState({
     textareaRef,
   });
 
-  const syncInputOverlayScroll = useCallback((target: HTMLTextAreaElement) => {
-    if (!inputHighlightRef.current || !target) {
-      return;
-    }
-    inputHighlightRef.current.scrollTop = target.scrollTop;
-    inputHighlightRef.current.scrollLeft = target.scrollLeft;
-  }, []);
+  useEffect(() => {
+    mentionedFilesRef.current = mentionedFiles;
+    syncQueuedBusySendSnapshot({ mentionedFiles });
+  }, [mentionedFiles, syncQueuedBusySendSnapshot]);
 
   const applyMedicalFolderCollection = useCallback((
     result: CollectMedicalFolderResult,
@@ -854,8 +854,11 @@ export function useChatComposerState({
       const currentInput = queuedSnapshot?.input ?? inputValueRef.current;
       const submitAttachedImages = queuedSnapshot?.attachedImages ?? attachedImages;
       const submitDocumentReferences = queuedSnapshot?.documentReferences ?? documentReferences;
+      const submitMentionedFiles = queuedSnapshot?.mentionedFiles ?? mentionedFiles;
       const hasDocumentReferences = submitDocumentReferences.length > 0;
-      const hasAttachments = submitAttachedImages.length > 0 || hasDocumentReferences;
+      const hasAttachments = submitAttachedImages.length > 0
+        || hasDocumentReferences
+        || submitMentionedFiles.length > 0;
       if ((!currentInput.trim() && !hasAttachments) || !selectedProject) {
         return;
       }
@@ -867,6 +870,7 @@ export function useChatComposerState({
           input: currentInput,
           attachedImages: [...attachedImages],
           documentReferences: [...documentReferences],
+          mentionedFiles: [...mentionedFiles],
         };
         setIsBusySendQueued(true);
         setIsBusySendConfirmed(false);
@@ -878,6 +882,7 @@ export function useChatComposerState({
           input: currentInput,
           attachedImages: submitAttachedImages,
           documentReferences: submitDocumentReferences,
+          mentionedFiles: submitMentionedFiles,
         };
 
         const pendingSessionId = typeof window !== 'undefined' ? sessionStorage.getItem('pendingSessionId') : null;
@@ -930,6 +935,7 @@ export function useChatComposerState({
           inputValueRef.current = '';
           setAttachedImages([]);
           setDocumentReferences([]);
+          clearMentionedFiles();
           setUploadingImages(new Map());
           setImageErrors(new Map());
           resetCommandMenuState();
@@ -1065,11 +1071,28 @@ export function useChatComposerState({
         .filter((image): image is NonNullable<typeof image> => Boolean(image));
       uploadedImages = [...uploadedImages, ...referenceImages];
       const documentReferenceAttachments = submitDocumentReferences.map(contentReferenceToAttachment);
+      // @-mentions are path references to files already inside the project.
+      // Their bytes must never be uploaded or inlined: the agent gets the path
+      // via the attachment note below, the bridge drops them from gateway
+      // attachments (see uiFilesToAttachments), and the structured attachment
+      // exists purely so history reloads render the same chip card. `path`
+      // must stay identical to the note line's path so the note-parsed copy
+      // dedupes away on reload.
+      const mentionNoteFiles = submitMentionedFiles.map((file) => ({
+        name: file.name,
+        path: file.absolutePath || file.relativePath,
+      }));
+      const mentionAttachments: ChatAttachment[] = submitMentionedFiles.map((file) => ({
+        name: file.name,
+        path: file.absolutePath || file.relativePath,
+        relativePath: file.relativePath,
+        metadata: { workspaceFileMention: true },
+      }));
       const agentVisibleUploadedFiles = [
         ...uploadedFiles,
         ...uploadedImagePathFiles,
       ];
-      messageContent = `${messageContent}${buildAttachmentPathNote(agentVisibleUploadedFiles)}${formatContentReferencePromptBlock(submitDocumentReferences)}`;
+      messageContent = `${messageContent}${buildAttachmentPathNote([...agentVisibleUploadedFiles, ...mentionNoteFiles])}${formatContentReferencePromptBlock(submitDocumentReferences)}`;
 
       const agentAttachments: ChatAttachment[] = [
         ...uploadedFiles.map((file) => ({
@@ -1083,6 +1106,7 @@ export function useChatComposerState({
             : {}),
         })),
         ...documentReferenceAttachments,
+        ...mentionAttachments,
       ];
 
       const effectiveSessionId = submitTargetSessionId;
@@ -1092,7 +1116,7 @@ export function useChatComposerState({
         type: 'user',
         content: userVisibleInput,
         images: uploadedImages as any,
-        attachments: [...uploadedFiles, ...documentReferenceAttachments] as any,
+        attachments: [...uploadedFiles, ...documentReferenceAttachments, ...mentionAttachments] as any,
         timestamp: new Date(),
       };
 
@@ -1172,6 +1196,7 @@ export function useChatComposerState({
       resetCommandMenuState();
       setAttachedImages([]);
       setDocumentReferences([]);
+      clearMentionedFiles();
       setUploadingImages(new Map());
       setImageErrors(new Map());
       setIsTextareaExpanded(false);
@@ -1188,6 +1213,8 @@ export function useChatComposerState({
       selectedSession,
       attachedImages,
       documentReferences,
+      mentionedFiles,
+      clearMentionedFiles,
       model,
       profileOverride,
       currentSessionId,
@@ -1516,18 +1543,18 @@ export function useChatComposerState({
       target.style.height = 'auto';
       target.style.height = `${target.scrollHeight}px`;
       setCursorPosition(target.selectionStart);
-      syncInputOverlayScroll(target);
 
       const lineHeight = parseInt(window.getComputedStyle(target).lineHeight);
       setIsTextareaExpanded(target.scrollHeight > lineHeight * 2);
     },
-    [setCursorPosition, syncInputOverlayScroll],
+    [setCursorPosition],
   );
 
   const handleClearInput = useCallback(() => {
     setInput('');
     inputValueRef.current = '';
     setDocumentReferences([]);
+    clearMentionedFiles();
     cancelBusySendQueue();
     resetCommandMenuState();
     if (textareaRef.current) {
@@ -1535,7 +1562,7 @@ export function useChatComposerState({
       textareaRef.current.focus();
     }
     setIsTextareaExpanded(false);
-  }, [cancelBusySendQueue, resetCommandMenuState]);
+  }, [cancelBusySendQueue, clearMentionedFiles, resetCommandMenuState]);
 
   const handleAbortSession = useCallback(() => {
     if (!canAbortSession) {
@@ -1749,7 +1776,6 @@ export function useChatComposerState({
     input,
     setInput,
     textareaRef,
-    inputHighlightRef,
     isTextareaExpanded,
     thinkingMode,
     setThinkingMode,
@@ -1766,8 +1792,9 @@ export function useChatComposerState({
     showFileDropdown,
     filteredFiles: filteredFiles as MentionableFile[],
     selectedFileIndex,
-    renderInputWithMentions,
     selectFile,
+    mentionedFiles,
+    removeMentionedFile,
     attachedImages,
     setAttachedImages: (value: SetStateAction<File[]>) => {
       setAttachedImages((previous) => {
@@ -1800,7 +1827,6 @@ export function useChatComposerState({
     handlePaste,
     handleTextareaClick,
     handleTextareaInput,
-    syncInputOverlayScroll,
     handleClearInput,
     handleAbortSession,
     handlePermissionDecision,

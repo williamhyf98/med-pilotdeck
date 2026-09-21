@@ -418,6 +418,12 @@ function uiFilesToAttachments(files) {
     for (const file of files) {
         if (!file || typeof file !== 'object') continue;
         if (file.kind === 'document-selection' || file.kind === 'content-reference') continue;
+        // @-mentioned workspace files are path references to files already in
+        // the project. Passing them to the gateway would make the attachment
+        // resolver read and inline their full content (and resolve relative
+        // paths against the server cwd). The chat message's attachment note
+        // already carries the path, so the agent can open the file itself.
+        if (file.metadata && file.metadata.workspaceFileMention === true) continue;
         const filePath = typeof file.path === 'string' ? file.path : '';
         if (!filePath) continue;
         const metadata = (file.metadata && typeof file.metadata === 'object')
