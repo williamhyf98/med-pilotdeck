@@ -11,9 +11,13 @@
  * is a property of the process boundary, which is the one boundary that
  * cannot leak by forgetting a cache key.
  *
- * Processes start on first use and are reaped after an idle period, so
- * an install with twenty accounts does not pay for twenty runtimes
- * unless twenty people are actually working.
+ * This is still a pool, just a pool of per-tenant workers rather than
+ * interchangeable ones: runtimes start on first use, stay warm for
+ * reuse, are capped at `PILOTDECK_MAX_USER_GATEWAYS`, evict
+ * least-recently-used when full, and are reaped after an idle period.
+ * An install with twenty accounts does not pay for twenty runtimes
+ * unless twenty people are working at once — and past the cap,
+ * requests queue for a slot instead of forking more processes.
  *
  * With login disabled there is no scope, and callers get the shared
  * gateway started by `concurrently` exactly as before.
@@ -39,7 +43,19 @@ const USER_GATEWAY_BOOT_TIMEOUT_MS =
   Number.parseInt(process.env.PILOTDECK_USER_GATEWAY_BOOT_TIMEOUT ?? '', 10) || 180_000;
 const IDLE_SHUTDOWN_MS =
   Number.parseInt(process.env.PILOTDECK_USER_GATEWAY_IDLE_MS ?? '', 10) || 30 * 60_000;
+/**
+ * Ceiling on live per-user runtimes. Without it a burst of sign-ins
+ * would fork one agent runtime per person with nothing to stop it.
+ * At capacity we evict the least-recently-used *idle* runtime; if every
+ * slot is mid-turn the request waits for one to free up rather than
+ * piling on more processes.
+ */
+const MAX_USER_GATEWAYS =
+  Number.parseInt(process.env.PILOTDECK_MAX_USER_GATEWAYS ?? '', 10) || 8;
+const SLOT_WAIT_TIMEOUT_MS =
+  Number.parseInt(process.env.PILOTDECK_USER_GATEWAY_SLOT_TIMEOUT ?? '', 10) || 120_000;
 const RETRY_INTERVAL_MS = 500;
+const SLOT_POLL_INTERVAL_MS = 250;
 const IDLE_SWEEP_INTERVAL_MS = 60_000;
 
 /** @type {Map<string, GatewayEntry>} keyed by pilotHome */
@@ -198,6 +214,54 @@ async function startUserGateway(userId, userHome) {
   return { gateway, proc: child, port };
 }
 
+/**
+ * Make room for the freshly reserved entry `self`.
+ *
+ * Eviction targets the least-recently-used runtime that is not mid-turn.
+ * A runtime with work in flight is never killed — the user would lose
+ * their answer — so when every slot is busy we wait instead. That wait
+ * is the queue: past the cap, requests line up rather than forking more
+ * processes.
+ */
+async function ensureCapacity(self) {
+  const deadline = Date.now() + SLOT_WAIT_TIMEOUT_MS;
+  while (pool.size > MAX_USER_GATEWAYS) {
+    let victim = null;
+    for (const entry of pool.values()) {
+      if (entry === self || entry.inFlight > 0) continue;
+      if (!victim || entry.lastUsed < victim.lastUsed) victim = entry;
+    }
+    if (victim) {
+      console.log(
+        `[gateway-pool] at capacity (${MAX_USER_GATEWAYS}); evicting idle runtime for user ${victim.userId}`,
+      );
+      pool.delete(victim.userHome);
+      victim.proc?.kill('SIGTERM');
+      continue;
+    }
+    if (Date.now() >= deadline) {
+      pool.delete(self.userHome);
+      throw new Error(
+        `[gateway-pool] all ${MAX_USER_GATEWAYS} agent runtime slots are busy; retry in a moment `
+        + '(raise PILOTDECK_MAX_USER_GATEWAYS if this is routine)',
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, SLOT_POLL_INTERVAL_MS));
+  }
+}
+
+/**
+ * How a runtime gets booted. Swappable so the pool's bookkeeping
+ * (capacity, eviction, reuse) can be tested without paying ~15s per
+ * real gateway start. Production never reassigns this.
+ */
+let runtimeFactory = startUserGateway;
+
+/** @param {typeof startUserGateway | null} factory */
+export function __setRuntimeFactoryForTests(factory) {
+  runtimeFactory = factory ?? startUserGateway;
+}
+
 function ensureIdleSweeper() {
   if (idleTimer) return;
   idleTimer = setInterval(() => {
@@ -242,7 +306,12 @@ export async function acquireGateway() {
       userHome,
       userId: scope.userId,
     };
-    entry.promise = startUserGateway(scope.userId, userHome)
+    // Reserve the slot synchronously so two concurrent requests from
+    // the same user cannot each boot a runtime; capacity is settled
+    // inside the promise, once the entry is already accounted for.
+    pool.set(userHome, entry);
+    entry.promise = ensureCapacity(entry)
+      .then(() => runtimeFactory(scope.userId, userHome))
       .then(({ gateway, proc, port }) => {
         entry.proc = proc;
         entry.port = port;
@@ -252,7 +321,6 @@ export async function acquireGateway() {
         pool.delete(userHome);
         throw error;
       });
-    pool.set(userHome, entry);
     ensureIdleSweeper();
   }
   entry.lastUsed = Date.now();
