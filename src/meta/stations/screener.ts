@@ -26,15 +26,50 @@ function normalizeWhitespace(text: string): string {
   return text.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
+/**
+ * 模型常用省略号把两处不连续的原文缝成一条 span
+ * （例："A randomised trial... mean follow up of 4.4 years"）。
+ * 这违反"连续片段"要求，但每一段本身是真的，与凭空编造不是一类错误，
+ * 因此拆成片段分别核对，并在结果里区分这两种失败。
+ */
+function splitSpanFragments(span: string): string[] {
+  return span
+    .split(/\.{3,}|…|\s+\.\.\.\s+/g)
+    .map((part) => normalizeWhitespace(part))
+    .filter((part) => part.length >= 12);
+}
+
+export type EvidenceCheck = {
+  verified: boolean;
+  /** none=全部核对通过；spliced=片段真实但被省略号拼接；missing=找不到对应原文 */
+  failure: "none" | "spliced" | "missing";
+};
+
 /** evidenceSpan 必须能在标题摘要里找到，否则标记未通过校验，交给错误分析。 */
-export function verifyEvidence(decision: ScreeningDecision, record: CandidateRecord): boolean {
+export function checkEvidence(
+  decision: ScreeningDecision,
+  record: CandidateRecord,
+): EvidenceCheck {
   const haystack = normalizeWhitespace(`${record.title} ${record.abstract}`);
-  return decision.criteriaJudgements.every((item) => {
-    if (item.verdict === "not_reported") return true;
+  let spliced = false;
+  for (const item of decision.criteriaJudgements) {
+    if (item.verdict === "not_reported") continue;
     const span = normalizeWhitespace(item.evidenceSpan);
-    if (!span) return false;
-    return haystack.includes(span);
-  });
+    if (!span) return { verified: false, failure: "missing" };
+    if (haystack.includes(span)) continue;
+    const fragments = splitSpanFragments(item.evidenceSpan);
+    if (fragments.length > 1 && fragments.every((part) => haystack.includes(part))) {
+      spliced = true;
+      continue;
+    }
+    return { verified: false, failure: "missing" };
+  }
+  return spliced ? { verified: false, failure: "spliced" } : { verified: true, failure: "none" };
+}
+
+/** 兼容旧调用点：只关心是否完全通过。 */
+export function verifyEvidence(decision: ScreeningDecision, record: CandidateRecord): boolean {
+  return checkEvidence(decision, record).verified;
 }
 
 /**
@@ -103,10 +138,12 @@ export function createScreenerStation(model: StructuredModelClient): ScreenerSta
           signal: input.signal,
         });
         const decision = enforceSensitivity(alignJudgements(raw, criteria));
+        const evidence = checkEvidence(decision, record);
         return {
           pmid: record.pmid,
           ...decision,
-          evidenceVerified: verifyEvidence(decision, record),
+          evidenceVerified: evidence.verified,
+          ...(evidence.failure === "none" ? {} : { evidenceFailure: evidence.failure }),
         };
       } catch (error) {
         if (input.signal?.aborted) throw error;

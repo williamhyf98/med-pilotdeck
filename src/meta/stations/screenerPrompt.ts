@@ -60,7 +60,15 @@ criteriaJudgements 必须覆盖 <criteria> 中给出的每一个元素，顺序�
 
 evidenceSpan 必须是 <record> 中真实存在的连续原文片段，不得改写、翻译或拼接不连续的片段。verdict 为 not_reported 时 evidenceSpan 为空字符串。
 
+禁止用省略号把两处不相邻的原文缝成一条 evidenceSpan。例如不得写
+"A randomised trial... mean follow up period of 4.4 years"。
+一个元素只需要一处最有力的原文；若最有力的证据分散在多处，只取其中一处连续片段。
+
 不得使用标题摘要之外的知识补全信息，也不得根据研究名称、期刊或作者推断未写明的内容。
+
+年龄、样本量、随访时长这类数值，只有摘要里明确写出与标准冲突的数值时才算 not_met。
+摘要只写了总体平均值而标准针对某个亚组时，属于 not_reported，不是 not_met——
+因为原文可能单独报告了该亚组的结果，这要看全文才能确定。
 
 ## 总体判断规则（敏感度优先）
 

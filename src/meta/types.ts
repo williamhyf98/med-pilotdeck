@@ -21,6 +21,8 @@ export type ScreeningPrediction = ScreeningDecision & {
   pmid: string;
   /** evidenceSpan 未在标题摘要中找到时置 false，供错误分析使用。 */
   evidenceVerified: boolean;
+  /** 未通过时的失败类型：spliced=省略号拼接真实片段；missing=找不到原文。 */
+  evidenceFailure?: "spliced" | "missing";
   /** 模型调用失败时的兜底标记：按敏感度优先保留，并记录原因。 */
   failed?: boolean;
   error?: string;

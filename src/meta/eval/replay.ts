@@ -101,35 +101,55 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-/** 本阶段应当保留的金标准 PMID：初筛把 in 与 ex 都算应保留。 */
-function retainedGoldPmids(review: BenchmarkReview): Set<string> {
+/**
+ * 金标准按标签分开统计。
+ *
+ * retain_gold_labels 把 in 与 ex 都算作"题摘阶段应当保留"，因为 Cochrane 也是
+ * 检索到之后读全文才排除的。但这两类的含义完全不同：
+ *   - in：最终纳入。漏掉就是真漏，这是敏感度的硬指标。
+ *   - ex：检索到、读全文后排除。模型在题摘阶段就排掉它，往往是提前做了
+ *         全文筛选的工作，不一定是错误。
+ * 合成一个数字会把后者的"提前排除"记成漏检，掩盖真实敏感度，所以分开报。
+ */
+function goldByLabel(review: BenchmarkReview): { included: Set<string>; excluded: Set<string> } {
   const labels = new Set(review.screening.initial.retain_gold_labels ?? ["in", "ex"]);
-  return new Set(review.gold.filter((item) => labels.has(item.label)).map((item) => item.pmid));
+  const included = new Set<string>();
+  const excluded = new Set<string>();
+  for (const item of review.gold) {
+    if (!labels.has(item.label)) continue;
+    (item.label === "in" ? included : excluded).add(item.pmid);
+  }
+  return { included, excluded };
+}
+
+function ratio(kept: number, total: number): string {
+  return total > 0 ? (kept / total).toFixed(3) : "n/a";
 }
 
 function summarize(review: BenchmarkReview, predictions: readonly ScreeningPrediction[]): string {
-  const gold = retainedGoldPmids(review);
-  const included = new Set(
+  const { included: goldIn, excluded: goldEx } = goldByLabel(review);
+  const keptPmids = new Set(
     predictions.filter((item) => item.decision === "include").map((item) => item.pmid),
   );
-  const goldKept = [...gold].filter((pmid) => included.has(pmid)).length;
-  const negatives = predictions.length - gold.size;
-  const negativesDropped = predictions.filter(
-    (item) => item.decision === "exclude" && !gold.has(item.pmid),
-  ).length;
+  const keptIn = [...goldIn].filter((pmid) => keptPmids.has(pmid)).length;
+  const keptEx = [...goldEx].filter((pmid) => keptPmids.has(pmid)).length;
+  const isGold = (pmid: string) => goldIn.has(pmid) || goldEx.has(pmid);
+  const negatives = predictions.filter((item) => !isGold(item.pmid));
+  const negativesDropped = negatives.filter((item) => item.decision === "exclude").length;
   const failed = predictions.filter((item) => item.failed).length;
-  const unverified = predictions.filter((item) => !item.evidenceVerified && !item.failed).length;
-  const sens = gold.size > 0 ? (goldKept / gold.size).toFixed(3) : "n/a";
-  const spec = negatives > 0 ? (negativesDropped / negatives).toFixed(3) : "n/a";
+  const spliced = predictions.filter((item) => item.evidenceFailure === "spliced").length;
+  const missing = predictions.filter((item) => item.evidenceFailure === "missing").length;
   return [
-    `${review.id}`,
-    `candidates=${predictions.length}`,
-    `gold=${gold.size}`,
-    `kept_gold=${goldKept}`,
-    `sens~${sens}`,
-    `spec~${spec}`,
+    review.id,
+    `n=${predictions.length}`,
+    // 真正的敏感度：最终纳入的研究有没有被留下。
+    `sens_in=${ratio(keptIn, goldIn.size)}(${keptIn}/${goldIn.size})`,
+    // 参考值：全文阶段才被排除的研究，题摘阶段留下了多少。
+    `kept_ex=${ratio(keptEx, goldEx.size)}(${keptEx}/${goldEx.size})`,
+    `spec=${ratio(negativesDropped, negatives.length)}(${negativesDropped}/${negatives.length})`,
     failed > 0 ? `failed=${failed}` : "",
-    unverified > 0 ? `unverified_span=${unverified}` : "",
+    spliced > 0 ? `span_spliced=${spliced}` : "",
+    missing > 0 ? `span_missing=${missing}` : "",
   ]
     .filter(Boolean)
     .join(" ");

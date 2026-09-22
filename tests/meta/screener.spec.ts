@@ -15,6 +15,7 @@ import { validateScreeningDecision } from "../../src/meta/schemas.js";
 import {
   buildCriteriaBlock,
   buildRecordBlock,
+  checkEvidence,
   createScreenerStation,
   verifyEvidence,
 } from "../../src/meta/stations/screener.js";
@@ -147,7 +148,7 @@ test("model failure is retained, not silently excluded", async () => {
   assert.match(result.error ?? "", /503/);
 });
 
-test("evidence verification rejects spans absent from the record", async () => {
+test("evidence check separates spliced spans from fabricated ones", async () => {
   const review = await loadBenchmarkReview(fixtureFile);
   const record = review.candidates[0];
   const base: ScreeningDecision = {
@@ -158,9 +159,30 @@ test("evidence verification rejects spans absent from the record", async () => {
     confidence: "high",
     decisionReason: "ok",
   };
+  assert.deepEqual(checkEvidence(base, record), { verified: true, failure: "none" });
   assert.equal(verifyEvidence(base, record), true);
-  assert.equal(
-    verifyEvidence(
+
+  // 两段都是原文，但用省略号缝在一起：违反连续片段要求，与编造区分开。
+  assert.deepEqual(
+    checkEvidence(
+      {
+        ...base,
+        criteriaJudgements: [
+          {
+            key: "P",
+            verdict: "met",
+            evidenceSpan: "We randomly assigned 240 adults... Mortality at 30 days",
+            reason: "拼接",
+          },
+        ],
+      },
+      record,
+    ),
+    { verified: false, failure: "spliced" },
+  );
+
+  assert.deepEqual(
+    checkEvidence(
       {
         ...base,
         criteriaJudgements: [
@@ -169,9 +191,63 @@ test("evidence verification rejects spans absent from the record", async () => {
       },
       record,
     ),
-    false,
-    "捏造的引用片段必须被标记",
+    { verified: false, failure: "missing" },
+    "捏造的引用片段必须标记为 missing",
   );
+
+  // 省略号拼接里只要有一段不存在，就算编造。
+  assert.deepEqual(
+    checkEvidence(
+      {
+        ...base,
+        criteriaJudgements: [
+          {
+            key: "P",
+            verdict: "met",
+            evidenceSpan: "We randomly assigned 240 adults... followed for twenty years",
+            reason: "半真半编",
+          },
+        ],
+      },
+      record,
+    ),
+    { verified: false, failure: "missing" },
+  );
+});
+
+test("station records the evidence failure type", async () => {
+  const review = await loadBenchmarkReview(fixtureFile);
+  const criteria = resolveCriteriaSet(review, "article_picos.PICOS");
+  const model: StructuredModelClient = {
+    async completeJson<T>(): Promise<T> {
+      return {
+        criteriaJudgements: [
+          {
+            key: "P",
+            verdict: "met",
+            evidenceSpan: "We randomly assigned 240 adults... Mortality at 30 days",
+            reason: "拼接",
+          },
+          { key: "I", verdict: "met", evidenceSpan: "oral drug A or placebo", reason: "ok" },
+          { key: "S", verdict: "met", evidenceSpan: "randomly assigned 240 adults", reason: "ok" },
+        ],
+        decision: "include",
+        confidence: "high",
+        decisionReason: "符合",
+      } as T;
+    },
+  };
+  const result = await createScreenerStation(model).screen({
+    record: review.candidates[0],
+    criteria,
+  });
+  assert.equal(result.evidenceVerified, false);
+  assert.equal(result.evidenceFailure, "spliced");
+});
+
+test("screener prompt forbids ellipsis splicing and subgroup age over-exclusion", () => {
+  assert.match(SCREENER_SYSTEM_PROMPT, /禁止用省略号/);
+  assert.match(SCREENER_SYSTEM_PROMPT, /属于 not_reported，不是 not_met/);
 });
 
 test("schema validation rejects malformed station output", () => {
