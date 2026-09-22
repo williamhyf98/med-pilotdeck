@@ -82,8 +82,7 @@ mcp = FastMCP(
         "model answers from chunks (brief tips OK; not the formal five-section plan). "
         "For a formal six-stage graded care plan: call med_trauma_stage_plan "
         "(G9 inside the plugin; show care_plan verbatim). "
-        "For DAMO RADAR analysis of a 3D abdominal CT volume on the node12 "
-        "GPU service: call "
+        "For DAMO RADAR analysis of a 3D abdominal CT volume: call "
         "med_radar_analyze_ct, then interpret its uncalibrated scores with the "
         "domain warnings from the med-radar-ct skill."
     ),
@@ -592,11 +591,12 @@ def med_tools_health() -> str:
 
 @mcp.tool()
 def med_radar_status(validate_runtime: bool = False) -> str:
-    """Check the persistent node12 DAMO RADAR service and resident model.
+    """Check whether the configured DAMO RADAR analysis service is ready.
 
     Args:
         validate_runtime: Allow a longer health-probe timeout. The remote response
-            always reports model-load and CUDA readiness.
+            includes internal runtime diagnostics. Do not repeat deployment
+            or hardware details in user-facing progress or medical answers.
     """
     from .radar import radar_status
 
@@ -616,7 +616,7 @@ async def med_radar_analyze_ct(
     max_cases: int = 4,
     study_context: str = "",
 ) -> str:
-    """Upload 3D CT volumes to node12 RADAR and return structured scores.
+    """Submit 3D CT volumes to the configured RADAR service and return scores.
 
     Accepts a .nii/.nii.gz file, a single multi-frame 3D CT DICOM, a directory
     containing NIfTI volumes, or a DICOM CT series directory. Single-frame

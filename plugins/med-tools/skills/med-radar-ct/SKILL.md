@@ -1,19 +1,19 @@
 ---
 name: med-radar-ct
-description: 使用部署在 node12 的 DAMO RADAR 模型分析 node36 上的完整腹部/盆腔三维 CT（NIfTI、单个多帧 CT DICOM 或 DICOM 序列），输出器官感知的异常评分和可复核 CSV。DICOM 路由确认完整腹部/盆腔 CT 后自动使用，也用于用户明确要求 RADAR、146 项 finding 或器官异常评分的场景。
+description: 使用 DAMO RADAR 模型分析完整腹部/盆腔三维 CT（NIfTI、单个多帧 CT DICOM 或 DICOM 序列），输出器官感知的异常评分和可复核 CSV。DICOM 路由确认完整腹部/盆腔 CT 后自动使用，也用于用户明确要求 RADAR、146 项 finding 或器官异常评分的场景。
 ---
 
 # RADAR 腹部 CT 分析
 
-RADAR 主要在增强腹部 CT 上训练。通过 `mcp__med-tools__med_radar_analyze_ct` 将 node36 输入安全上传到 node12 常驻 GPU 服务；工具返回结构化分数，最终医学解释由主 Agent 完成。
+RADAR 主要在增强腹部 CT 上训练。通过 `mcp__med-tools__med_radar_analyze_ct` 将输入提交给已配置的 RADAR 分析服务；工具返回结构化分数，最终医学解释由主 Agent 完成。
 
-在当前部署中，用户上传完整腹部/盆腔 CT 并要求分析即授权使用已配置的 node12 RADAR 服务；无需再次询问。用户明确要求不上传或只做本地处理时不得调用 RADAR。
+在当前部署中，用户上传完整腹部/盆腔 CT 并要求分析即授权使用已配置的 RADAR 服务；无需再次询问。用户明确要求不上传或只做本地处理时不得调用 RADAR。
 
 ## 强制流程
 
-1. 确认输入是完整三维 CT：`.nii` / `.nii.gz` 文件、`NumberOfFrames >= 3` 的单个多帧 CT DICOM，或包含同一 CT 序列的 DICOM 目录。单张截图、照片或孤立 DICOM 帧不适用。多帧 DICOM 会在 node12 本地转换为临时 `.nii.gz`，再进入与原生 NIfTI 相同的 RADAR 预处理和几何校验。
+1. 确认输入是完整三维 CT：`.nii` / `.nii.gz` 文件、`NumberOfFrames >= 3` 的单个多帧 CT DICOM，或包含同一 CT 序列的 DICOM 目录。单张截图、照片或孤立 DICOM 帧不适用。工具会自动完成多帧 DICOM 的格式转换、预处理和几何校验。
 2. 只从用户描述或本轮已知上下文确定检查部位和增强期；把简短结论传给 `study_context`，例如 `contrast-enhanced abdominal CT`。无法确认时传空字符串，不要猜。需要另行解读 DICOM 元数据时，先加载 `med-medical` 再调用 `med_parse_medical`。
-3. 首次使用或工具报告不可用时，调用 `mcp__med-tools__med_radar_status(validate_runtime=true)` 检查 node12 服务、常驻模型和 CUDA 状态。
+3. 首次使用或工具报告不可用时，调用 `mcp__med-tools__med_radar_status(validate_runtime=true)` 确认分析服务是否可用。
 4. 调用 `mcp__med-tools__med_radar_analyze_ct`：
    - `path` 尽量传绝对路径。
    - `top_k` 默认 15，只有用户要求更长清单时才提高。
@@ -23,6 +23,8 @@ RADAR 主要在增强腹部 CT 上训练。通过 `mcp__med-tools__med_radar_ana
 
 ## 回答用户问题
 
+- 面向用户的过程说明和最终回答只描述检查资料、分析进度、医学结果和必要限制。不要主动提及服务器/节点名、IP、端口、GPU/CUDA、部署拓扑、环境变量、内部目录或上传到哪台机器。工具中的 `remote`、`api_base`、`transfer` 和运行诊断字段用于内部判断，不要复述。用户明确询问部署或故障排查时才按需解释相关信息；不得因此隐瞒分析使用远程服务的事实。
+- 如需说明进度，使用“正在检查影像资料”“正在分析”“正在整理结果”等简短中文，不逐条播报内部工具操作。结果文件以简短中文名称的可点击链接提供，优先使用项目内相对路径，不把服务器绝对路径作为可见文案。
 - RADAR 工具返回后必须继续由主智能体回答，不要把原始 JSON 当作最终回答，也不要只说“分析已完成”。
 - 最终回答必须从简体中文医学结论直接开始。不要输出思考过程、作答计划、自我指令、工具完成播报或任何过渡语；尤其不要出现 `RADAR analysis completed`、`Let me summarize`、`Let me structure` 等元叙述。工具阶段进度由界面单独展示，不得混入最终回答。
 - 先回答用户的原始问题，再补充与问题直接相关的 RADAR 高分信号、限制和复核建议。
@@ -44,7 +46,7 @@ RADAR 主要在增强腹部 CT 上训练。通过 `mcp__med-tools__med_radar_ana
 
 1. **适用性与质量提示**：检查部位、增强期、`domain_flags`、缺失项。
 2. **重点复核项**：按分数降序列出 finding 与分数，避免重复扩写。
-3. **原始产物**：给出 CSV/JSON 路径。
+3. **结果文件**：提供“下载评分表（CSV）”“查看结果数据（JSON）”等可点击链接。
 4. **结论边界**：说明分数未校准、需阅片和临床复核。
 
-若工具失败，原样概括 `error` 与缺失检查项，不得编造 RADAR 输出。用户仍需要常规医学附件解读时，加载 `med-medical` 并改用 `med_parse_medical`；必须清楚标注那不是 RADAR 结果。
+若工具失败，根据 `error` 用中文解释对用户的影响，例如“分析服务暂不可用”“分析超时”或“影像资料不完整”，保留用户能采取行动的具体原因，不照抄包含部署信息的原始错误、堆栈或内部路径，不得编造 RADAR 输出。用户仍需要常规医学附件解读时，加载 `med-medical` 并改用 `med_parse_medical`；必须清楚标注那不是 RADAR 结果。

@@ -465,6 +465,10 @@ def run_radar_analysis(
         "Let me / analysis completed 的过渡语。将结构化分数解释为未校准的模型信号，"
         "而非诊断或概率；说明域偏移和局限，引用本地产物，并建议放射科医师复核。"
         "不得仅因分数低而声称某项不存在。"
+        "面向用户的过程说明和最终回答不主动展示服务器/节点名、IP、端口、GPU/CUDA、"
+        "环境变量、内部目录或部署细节；remote、api_base、transfer 等字段仅供内部判断。"
+        "结果文件使用简短中文链接名称，优先链接项目内相对路径，不展示服务器绝对路径。"
+        "用户明确询问技术部署时才按需解释，不隐瞒使用远程分析服务的事实。"
     )
     summary_temp = output_dir / ".summary.json.tmp"
     summary_temp.write_text(
