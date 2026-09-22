@@ -126,6 +126,7 @@ import projectsRoutes, { WORKSPACES_ROOT, validateWorkspacePath } from './routes
 import userRoutes from './routes/user.js';
 import pluginsRoutes from './routes/plugins.js';
 import messagesRoutes from './routes/messages.js';
+import adminUsersRoutes from './routes/adminUsers.js';
 import { closeMemoryServices, startMemoryScheduler, stopMemoryScheduler } from './services/memoryService.js';
 import { createNormalizedMessage } from './pilotdeck-message.js';
 import { startEnabledPluginServers, stopAllPlugins, getPluginPort } from './utils/plugin-process-manager.js';
@@ -133,7 +134,7 @@ import { initializeDatabase, sessionNamesDb, applyCustomSessionNames, userDb } f
 import { configureWebPush } from './services/vapid-keys.js';
 
 import { runServerStartupBeforeListen, startServerAfterStartup } from './services/server-startup.js';
-import { validateApiKey, authenticateToken, authenticateWebSocket } from './middleware/auth.js';
+import { validateApiKey, authenticateToken, authenticateWebSocket, requireAdmin, requireAdminForWrites } from './middleware/auth.js';
 import { DISABLE_LOCAL_AUTH, IS_PLATFORM } from './constants/config.js';
 import { getConnectableHost } from '../shared/networkHosts.js';
 import { contentDispositionAttachment } from './utils/downloadHeaders.js';
@@ -516,8 +517,8 @@ app.use('/api/projects', authenticateToken, projectsRoutes);
 // Git API Routes (protected)
 app.use('/api/git', authenticateToken, gitRoutes);
 
-// MCP API Routes (protected)
-app.use('/api/mcp', authenticateToken, mcpRoutes);
+// MCP API Routes (protected; config writes are admin-only)
+app.use('/api/mcp', authenticateToken, requireAdminForWrites, mcpRoutes);
 
 // TaskMaster API Routes (protected)
 app.use('/api/taskmaster', authenticateToken, taskmasterRoutes);
@@ -542,11 +543,12 @@ app.use('/api/storage', authenticateToken, storageRoutes);
 // Settings API Routes (protected)
 app.use('/api/settings', authenticateToken, settingsRoutes);
 
-// PilotDeck unified YAML config routes (protected)
-app.use('/api/config', authenticateToken, configRoutes);
+// PilotDeck unified YAML config routes (protected; reads stay open for chat
+// UI needs — provider/model display, office-preview status — writes are admin-only)
+app.use('/api/config', authenticateToken, requireAdminForWrites, configRoutes);
 
-// Gateway IM channel setup routes (protected)
-app.use('/api/gateway', authenticateToken, gatewayRoutes);
+// Gateway IM channel setup routes (protected; writes are admin-only)
+app.use('/api/gateway', authenticateToken, requireAdminForWrites, gatewayRoutes);
 
 // User API Routes (protected)
 app.use('/api/user', authenticateToken, userRoutes);
@@ -556,6 +558,9 @@ app.use('/api/plugins', authenticateToken, pluginsRoutes);
 
 // Unified session messages route (protected) — PilotDeck-only.
 app.use('/api/sessions', authenticateToken, messagesRoutes);
+
+// Admin-only user management (create accounts, toggle role/active, reset passwords)
+app.use('/api/admin/users', authenticateToken, requireAdmin, adminUsersRoutes);
 
 // Agent API Routes (uses API key authentication)
 app.use('/api/agent', agentRoutes);
@@ -3882,7 +3887,9 @@ async function ensureLocalUserWhenAuthDisabled() {
         return;
     }
     const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
-    userDb.createUser('local', passwordHash);
+    // System account: full admin while auth is bypassed, hidden from user
+    // management and rejected at interactive login (is_system = 1).
+    userDb.createUser('local', passwordHash, 'admin', 1);
     console.log(`${c.info('[INFO]')} Web UI login is disabled (default). Using built-in user. Set PILOTDECK_DISABLE_LOCAL_AUTH=0 to require username/password.`);
 }
 

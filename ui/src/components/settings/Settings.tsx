@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PilotDeckConfigProvider } from "../../hooks/usePilotDeckConfig";
 import { authenticatedFetch } from "../../utils/api";
+import { useIsAdmin } from "../auth";
 import type { SettingsProps } from "./shared/types";
 import type { SettingsMenuKey } from "./types";
-import { mapInitialTabToMenuKey } from "./navigation";
+import { clampMenuKeyForRole, mapInitialTabToMenuKey } from "./navigation";
 import SettingsSidebar from "./view/SettingsSidebar";
 import SettingsContent from "./view/SettingsContent";
 
@@ -49,9 +50,10 @@ function SettingsInner({
 }: SettingsProps) {
   const isDesktopApp =
     typeof window !== "undefined" && !!(window as any).pilotdeckDesktop;
+  const isAdmin = useIsAdmin();
   const initialKey = useMemo(
-    () => mapInitialTabToMenuKey(initialTab),
-    [initialTab],
+    () => clampMenuKeyForRole(mapInitialTabToMenuKey(initialTab), isAdmin),
+    [initialTab, isAdmin],
   );
   const [selectedKey, setSelectedKey] =
     useState<SettingsMenuKey>(initialKey);
@@ -101,16 +103,16 @@ function SettingsInner({
 
   useEffect(() => {
     if (!isOpen) return;
-    const nextKey = mapInitialTabToMenuKey(initialTab);
+    const nextKey = clampMenuKeyForRole(mapInitialTabToMenuKey(initialTab), isAdmin);
     setSelectedKey(nextKey);
     setMobileNavigationOpen(nextKey === "general");
     void checkVersion();
-  }, [isOpen, initialTab, checkVersion]);
+  }, [isOpen, initialTab, isAdmin, checkVersion]);
 
   const selectMenuItem = useCallback((key: SettingsMenuKey) => {
-    setSelectedKey(key);
+    setSelectedKey(clampMenuKeyForRole(key, isAdmin));
     setMobileNavigationOpen(false);
-  }, []);
+  }, [isAdmin]);
 
   if (!isOpen) {
     return null;

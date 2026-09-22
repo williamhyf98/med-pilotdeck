@@ -72,6 +72,7 @@
       "mcpServers": "MCP 服务器",
       "officePreview": "Office 预览",
       "privacy": "安全隐私",
+      "users": "用户管理",
       "advanced": "高级",
       "about": "关于"
     },
@@ -90,6 +91,7 @@
       "mcpServers": "扩展 / MCP 服务器",
       "officePreview": "扩展 / Office 预览",
       "privacy": "安全隐私",
+      "users": "用户管理",
       "advanced": "高级",
       "about": "关于"
     },
@@ -125,6 +127,47 @@
       "integrations": "配置文件当前不是有效 YAML，暂时无法加载网关配置表单。",
       "officePreview": "配置文件当前不是有效 YAML，暂时无法加载 Office 预览表单。",
       "modelPool": "配置文件当前不是有效 YAML，暂时无法加载模型池表单。"
+    }
+  },
+  "userManagement": {
+    "createTitle": "新建账号",
+    "createDescription": "开放注册已关闭，新成员的账号由管理员在此创建。",
+    "usernamePlaceholder": "用户名（至少 3 个字符）",
+    "passwordPlaceholder": "初始密码（至少 6 个字符）",
+    "create": "创建账号",
+    "listTitle": "账号列表",
+    "loading": "加载中…",
+    "columns": {
+      "username": "用户名",
+      "role": "角色",
+      "status": "状态",
+      "createdAt": "创建时间",
+      "lastLogin": "最近登录",
+      "actions": "操作"
+    },
+    "roleAdmin": "管理员",
+    "roleUser": "普通用户",
+    "statusActive": "启用中",
+    "statusDisabled": "已禁用",
+    "you": "当前登录",
+    "enable": "启用",
+    "disable": "禁用",
+    "resetPassword": "重置密码",
+    "resetPasswordPrompt": "为 {{username}} 设置新密码（至少 6 个字符）：",
+    "resetPasswordDone": "已重置 {{username}} 的密码。",
+    "created": "账号 {{username}} 已创建。",
+    "loadError": "加载用户列表失败。",
+    "retry": "重试",
+    "empty": "还没有账号。",
+    "never": "从未登录",
+    "selfNote": "为避免误锁，不能降级或禁用当前登录的账号。",
+    "errors": {
+      "selfLockout": "不能降级或禁用当前登录的账号。",
+      "lastAdmin": "系统至少需要保留一名启用状态的管理员。",
+      "usernameExists": "用户名已存在。",
+      "invalidInput": "用户名至少 3 个字符，密码至少 6 个字符。",
+      "passwordTooShort": "密码至少需要 6 个字符。",
+      "generic": "操作失败，请重试。"
     }
   },
   "quickSettings": {

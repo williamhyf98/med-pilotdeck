@@ -100,6 +100,38 @@ const runMigrations = () => {
       db.exec('ALTER TABLE users ADD COLUMN has_completed_onboarding BOOLEAN DEFAULT 0');
     }
 
+    if (!columnNames.includes('role')) {
+      console.log('Running migration: Adding role column');
+      db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'");
+    }
+
+    if (!columnNames.includes('is_system')) {
+      console.log('Running migration: Adding is_system column');
+      db.exec('ALTER TABLE users ADD COLUMN is_system BOOLEAN DEFAULT 0');
+      // The bypass-mode auto-provisioned account predates this column; tag it
+      // so it never counts as a real user (its password is random/unknowable).
+      db.exec("UPDATE users SET is_system = 1 WHERE username = 'local'");
+    }
+
+    // Self-heal: the system must always have at least one active admin.
+    // Prefer the earliest real account; fall back to the system account so
+    // bypass mode keeps full access. No-op on a fresh install (zero users) —
+    // there the first registered user becomes admin via /api/auth/register.
+    const activeAdmins = db.prepare(
+      "SELECT COUNT(*) as count FROM users WHERE role = 'admin' AND is_active = 1"
+    ).get().count;
+    if (activeAdmins === 0) {
+      const promoted = db.prepare(
+        "UPDATE users SET role = 'admin' WHERE id = (SELECT id FROM users WHERE is_active = 1 AND is_system = 0 ORDER BY id LIMIT 1)"
+      ).run();
+      const fallback = promoted.changes > 0 ? promoted : db.prepare(
+        "UPDATE users SET role = 'admin' WHERE id = (SELECT id FROM users WHERE is_active = 1 ORDER BY id LIMIT 1)"
+      ).run();
+      if (fallback.changes > 0) {
+        console.log('Running migration: Promoted first user to admin (no active admin existed)');
+      }
+    }
+
     db.exec(`
       CREATE TABLE IF NOT EXISTS user_notification_preferences (
         user_id INTEGER PRIMARY KEY,
@@ -180,12 +212,23 @@ const userDb = {
     }
   },
 
-  // Create a new user
-  createUser: (username, passwordHash) => {
+  // Check if any real (non-system) users exist. Counts inactive accounts too,
+  // so a disabled account still blocks the "first user becomes admin" path.
+  hasRealUsers: () => {
     try {
-      const stmt = db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)');
-      const result = stmt.run(username, passwordHash);
-      return { id: result.lastInsertRowid, username };
+      const row = db.prepare('SELECT COUNT(*) as count FROM users WHERE is_system = 0').get();
+      return row.count > 0;
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  // Create a new user
+  createUser: (username, passwordHash, role = 'user', isSystem = 0) => {
+    try {
+      const stmt = db.prepare('INSERT INTO users (username, password_hash, role, is_system) VALUES (?, ?, ?, ?)');
+      const result = stmt.run(username, passwordHash, role, isSystem ? 1 : 0);
+      return { id: result.lastInsertRowid, username, role };
     } catch (err) {
       throw err;
     }
@@ -213,7 +256,7 @@ const userDb = {
   // Get user by ID
   getUserById: (userId) => {
     try {
-      const row = db.prepare('SELECT id, username, created_at, last_login FROM users WHERE id = ? AND is_active = 1').get(userId);
+      const row = db.prepare('SELECT id, username, role, is_system, created_at, last_login FROM users WHERE id = ? AND is_active = 1').get(userId);
       return row;
     } catch (err) {
       throw err;
@@ -222,8 +265,69 @@ const userDb = {
 
   getFirstUser: () => {
     try {
-      const row = db.prepare('SELECT id, username, created_at, last_login FROM users WHERE is_active = 1 LIMIT 1').get();
+      const row = db.prepare('SELECT id, username, role, is_system, created_at, last_login FROM users WHERE is_active = 1 LIMIT 1').get();
       return row;
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  // ---- Admin user-management helpers (real users only; system accounts stay hidden) ----
+
+  listUsers: () => {
+    try {
+      return db.prepare(
+        'SELECT id, username, role, is_active, created_at, last_login FROM users WHERE is_system = 0 ORDER BY id'
+      ).all();
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  // Admin-facing lookup: includes inactive users (so they can be re-enabled)
+  getManagedUser: (userId) => {
+    try {
+      return db.prepare(
+        'SELECT id, username, role, is_active, created_at, last_login FROM users WHERE id = ? AND is_system = 0'
+      ).get(userId);
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  setUserRole: (userId, role) => {
+    try {
+      const result = db.prepare('UPDATE users SET role = ? WHERE id = ? AND is_system = 0').run(role, userId);
+      return result.changes > 0;
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  setUserActive: (userId, isActive) => {
+    try {
+      const result = db.prepare('UPDATE users SET is_active = ? WHERE id = ? AND is_system = 0').run(isActive ? 1 : 0, userId);
+      return result.changes > 0;
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  updatePassword: (userId, passwordHash) => {
+    try {
+      const result = db.prepare('UPDATE users SET password_hash = ? WHERE id = ? AND is_system = 0').run(passwordHash, userId);
+      return result.changes > 0;
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  countActiveAdmins: () => {
+    try {
+      const row = db.prepare(
+        "SELECT COUNT(*) as count FROM users WHERE role = 'admin' AND is_active = 1 AND is_system = 0"
+      ).get();
+      return row.count;
     } catch (err) {
       throw err;
     }

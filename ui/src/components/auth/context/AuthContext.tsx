@@ -33,6 +33,22 @@ export function useAuth(): AuthContextValue {
   return context;
 }
 
+// Non-throwing variant for components that also render outside an
+// AuthProvider (standalone unit tests, embedded views).
+export function useOptionalAuth(): AuthContextValue | null {
+  return useContext(AuthContext);
+}
+
+// UI role gate. Outside an AuthProvider — and before a user is loaded — this
+// defaults to true: hiding admin affordances is purely cosmetic, the server
+// enforces the real check via requireAdmin. Only an explicit 'user' role hides
+// admin UI, so admins never lose controls to a missing/stale role field.
+export function useIsAdmin(): boolean {
+  const context = useContext(AuthContext);
+  if (!context) return true;
+  return context.user?.role !== 'user';
+}
+
 export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(() => readStoredToken());
@@ -61,7 +77,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       const statusPayload = await parseJsonSafely<AuthStatusPayload>(statusResponse);
 
       if (statusPayload?.authDisabled) {
-        setUser({ username: 'local' });
+        setUser({ username: 'local', role: 'admin' });
         setNeedsSetup(false);
         return;
       }
@@ -100,7 +116,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   useEffect(() => {
     if (IS_PLATFORM || DISABLE_LOCAL_AUTH) {
-      setUser({ username: DISABLE_LOCAL_AUTH ? 'local-user' : 'platform-user' });
+      setUser({ username: DISABLE_LOCAL_AUTH ? 'local-user' : 'platform-user', role: 'admin' });
       setNeedsSetup(false);
       setIsLoading(false);
       return;

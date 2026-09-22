@@ -18,6 +18,7 @@ import ModelPoolSections from "./modelPool";
 import PrivacySections from "./privacy";
 import AboutSections from "./about";
 import OfficePreviewSections from "./officePreview";
+import UserManagementSections from "./users";
 
 type SettingsContentProps = {
   selectedKey: SettingsMenuKey;
@@ -43,6 +44,7 @@ const MENU_TITLE_KEYS: Record<SettingsMenuKey, string> = {
   mcpServers: "settingsPage.titles.mcpServers",
   officePreview: "settingsPage.titles.officePreview",
   privacy: "settingsPage.titles.privacy",
+  users: "settingsPage.titles.users",
   advanced: "settingsPage.titles.advanced",
   about: "settingsPage.titles.about",
 };
@@ -99,6 +101,8 @@ export default function SettingsContent({
           <ModelPoolSections title={title} />
         ) : selectedKey === "privacy" ? (
           <PrivacySections title={title} />
+        ) : selectedKey === "users" ? (
+          <UserManagementSections title={title} />
         ) : selectedKey === "advanced" ? (
           <AdvancedSections title={title} />
         ) : selectedKey === "about" ? (

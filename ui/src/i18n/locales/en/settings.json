@@ -72,6 +72,7 @@
       "mcpServers": "MCP Servers",
       "officePreview": "Office Preview",
       "privacy": "Security & Privacy",
+      "users": "User Management",
       "advanced": "Advanced",
       "about": "About"
     },
@@ -90,6 +91,7 @@
       "mcpServers": "Extensions / MCP Servers",
       "officePreview": "Extensions / Office Preview",
       "privacy": "Security & Privacy",
+      "users": "User Management",
       "advanced": "Advanced",
       "about": "About"
     },
@@ -125,6 +127,47 @@
       "integrations": "The config file is not valid YAML, so the Integrations form is unavailable.",
       "officePreview": "The config file is not valid YAML, so the Office Preview form is unavailable.",
       "modelPool": "The config file is not valid YAML, so the Model Pool form is unavailable."
+    }
+  },
+  "userManagement": {
+    "createTitle": "Create account",
+    "createDescription": "Open registration is closed; administrators create accounts for new members here.",
+    "usernamePlaceholder": "Username (min 3 characters)",
+    "passwordPlaceholder": "Initial password (min 6 characters)",
+    "create": "Create account",
+    "listTitle": "Accounts",
+    "loading": "Loading…",
+    "columns": {
+      "username": "Username",
+      "role": "Role",
+      "status": "Status",
+      "createdAt": "Created",
+      "lastLogin": "Last login",
+      "actions": "Actions"
+    },
+    "roleAdmin": "Admin",
+    "roleUser": "Member",
+    "statusActive": "Active",
+    "statusDisabled": "Disabled",
+    "you": "You",
+    "enable": "Enable",
+    "disable": "Disable",
+    "resetPassword": "Reset password",
+    "resetPasswordPrompt": "Set a new password for {{username}} (min 6 characters):",
+    "resetPasswordDone": "Password for {{username}} has been reset.",
+    "created": "Account {{username}} created.",
+    "loadError": "Failed to load users.",
+    "retry": "Retry",
+    "empty": "No accounts yet.",
+    "never": "Never",
+    "selfNote": "To avoid locking yourself out, you cannot demote or disable your own account.",
+    "errors": {
+      "selfLockout": "You cannot demote or deactivate your own account.",
+      "lastAdmin": "At least one active administrator is required.",
+      "usernameExists": "Username already exists.",
+      "invalidInput": "Username must be at least 3 characters and the password at least 6 characters.",
+      "passwordTooShort": "Password must be at least 6 characters.",
+      "generic": "Operation failed. Please try again."
     }
   },
   "quickSettings": {

@@ -101,6 +101,23 @@ const authenticateToken = async (req, res, next) => {
   }
 };
 
+// Role gate — must run after authenticateToken so req.user is populated.
+const requireAdmin = (req, res, next) => {
+  if (req.user?.role === 'admin') {
+    return next();
+  }
+  return res.status(403).json({ error: 'Admin privileges required', code: 'ADMIN_REQUIRED' });
+};
+
+// Read-only passthrough variant: safe methods stay open to every
+// authenticated user, mutating methods require admin.
+const requireAdminForWrites = (req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
+    return next();
+  }
+  return requireAdmin(req, res, next);
+};
+
 // Generate JWT token
 const generateToken = (user) => {
   return jwt.sign(
@@ -120,7 +137,7 @@ const authenticateWebSocket = (token) => {
     try {
       const user = userDb.getFirstUser();
       if (user) {
-        return { id: user.id, userId: user.id, username: user.username };
+        return { id: user.id, userId: user.id, username: user.username, role: user.role };
       }
       return null;
     } catch (error) {
@@ -141,7 +158,7 @@ const authenticateWebSocket = (token) => {
     if (!user) {
       return null;
     }
-    return { userId: user.id, username: user.username };
+    return { userId: user.id, username: user.username, role: user.role };
   } catch (error) {
     console.error('WebSocket token verification error:', error);
     return null;
@@ -151,6 +168,8 @@ const authenticateWebSocket = (token) => {
 export {
   validateApiKey,
   authenticateToken,
+  requireAdmin,
+  requireAdminForWrites,
   generateToken,
   authenticateWebSocket,
   JWT_SECRET

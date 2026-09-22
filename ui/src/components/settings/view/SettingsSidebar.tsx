@@ -1,6 +1,9 @@
 import { ArrowLeft } from "lucide-react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { cn } from "../../../lib/utils.js";
+import { useIsAdmin } from "../../auth";
+import { NON_ADMIN_MENU_KEYS } from "../navigation";
 import type { SettingsMenuKey } from "../types";
 
 type SettingsMenuItemI18n = {
@@ -8,6 +11,7 @@ type SettingsMenuItemI18n = {
   labelKey: string;
   children?: SettingsMenuItemI18n[];
   showDot?: boolean;
+  adminOnly?: boolean;
 };
 
 const MENU_ITEMS: SettingsMenuItemI18n[] = [
@@ -33,6 +37,7 @@ const MENU_ITEMS: SettingsMenuItemI18n[] = [
     ],
   },
   { key: "privacy", labelKey: "settingsPage.menu.privacy" },
+  { key: "users", labelKey: "settingsPage.menu.users", adminOnly: true },
   { key: "advanced", labelKey: "settingsPage.menu.advanced" },
   { key: "about", labelKey: "settingsPage.menu.about", showDot: true },
 ];
@@ -62,6 +67,13 @@ export default function SettingsSidebar({
   mobileVisible = true,
 }: SettingsSidebarProps) {
   const { t } = useTranslation("settings");
+  const isAdmin = useIsAdmin();
+  const menuItems = useMemo(() => {
+    if (isAdmin) return MENU_ITEMS;
+    return MENU_ITEMS.filter(
+      (item) => !item.adminOnly && NON_ADMIN_MENU_KEYS.includes(item.key),
+    );
+  }, [isAdmin]);
 
   return (
     <aside
@@ -84,7 +96,7 @@ export default function SettingsSidebar({
 
         <nav className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-5">
           <ul className="space-y-3">
-            {MENU_ITEMS.map((item) => {
+            {menuItems.map((item) => {
               const active = isItemActive(item, selectedKey);
               const hasChildren = Boolean(item.children?.length);
               return (

@@ -16,9 +16,11 @@ router.get('/status', async (req, res) => {
         authDisabled: true,
       });
     }
-    const hasUsers = await userDb.hasUsers();
-    res.json({ 
-      needsSetup: !hasUsers,
+    const hasRealUsers = userDb.hasRealUsers();
+    res.json({
+      // System accounts (auto-provisioned in bypass mode with a random
+      // password) must not block first-time setup after auth is enabled.
+      needsSetup: !hasRealUsers,
       isAuthenticated: false // Will be overridden by frontend if token exists
     });
   } catch (error) {
@@ -47,23 +49,25 @@ router.post('/register', async (req, res) => {
     // Use a transaction to prevent race conditions
     db.prepare('BEGIN').run();
     try {
-      // Check if users already exist (only allow one user)
-      const hasUsers = userDb.hasUsers();
-      if (hasUsers) {
+      // Open registration only bootstraps the very first real account, which
+      // becomes the administrator. Everyone else is created by an admin via
+      // /api/admin/users.
+      const hasRealUsers = userDb.hasRealUsers();
+      if (hasRealUsers) {
         db.prepare('ROLLBACK').run();
-        return res.status(403).json({ error: 'User already exists. This is a single-user system.' });
+        return res.status(403).json({ error: 'Registration is closed. Ask an administrator to create your account.' });
       }
-      
+
       // Hash password
       const saltRounds = 12;
       const passwordHash = await bcrypt.hash(password, saltRounds);
-      
-      // Create user
-      const user = userDb.createUser(username, passwordHash);
-      
+
+      // Create user (first real user = admin)
+      const user = userDb.createUser(username, passwordHash, 'admin');
+
       // Generate token
       const token = generateToken(user);
-      
+
       db.prepare('COMMIT').run();
 
       // Update last login (non-fatal, outside transaction)
@@ -71,7 +75,7 @@ router.post('/register', async (req, res) => {
 
       res.json({
         success: true,
-        user: { id: user.id, username: user.username },
+        user: { id: user.id, username: user.username, role: user.role },
         token
       });
     } catch (error) {
@@ -102,27 +106,28 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Username and password are required' });
     }
     
-    // Get user from database
+    // Get user from database (system accounts have random passwords and are
+    // not meant for interactive login)
     const user = userDb.getUserByUsername(username);
-    if (!user) {
+    if (!user || user.is_system) {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
-    
+
     // Verify password
     const isValidPassword = await bcrypt.compare(password, user.password_hash);
     if (!isValidPassword) {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
-    
+
     // Generate token
     const token = generateToken(user);
-    
+
     // Update last login
     userDb.updateLastLogin(user.id);
-    
+
     res.json({
       success: true,
-      user: { id: user.id, username: user.username },
+      user: { id: user.id, username: user.username, role: user.role },
       token
     });
     
