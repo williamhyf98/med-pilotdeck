@@ -1,5 +1,4 @@
 import fs from 'fs/promises';
-import os from 'os';
 import path from 'path';
 import { DatabaseSync } from 'node:sqlite';
 import {
@@ -18,9 +17,11 @@ import {
   readPilotDeckConfigFile,
 } from './pilotdeckConfig.js';
 
-const MEMORY_ROOT_DIR = path.join(process.env.PILOT_HOME || path.join(os.homedir(), '.pilotdeck'), 'memory');
-const MEMORY_WORKSPACES_ROOT = path.join(MEMORY_ROOT_DIR, 'workspaces');
-const MEMORY_GLOBAL_ROOT = path.join(MEMORY_ROOT_DIR, 'global');
+// Per call, not per module load: memory is private to each user, so the
+// root has to follow the active scope rather than the process-wide home.
+const memoryRootDir = () => path.join(resolvePilotHome(process.env), 'memory');
+const memoryWorkspacesRoot = () => path.join(memoryRootDir(), 'workspaces');
+const memoryGlobalRoot = () => path.join(memoryRootDir(), 'global');
 const MEMORY_SCHEDULER_INTERVAL_MS = 60_000;
 const GLOBAL_MAINTENANCE_TASK_KEY = '__edgeclaw_memory_global_maintenance__';
 
@@ -49,7 +50,7 @@ function buildServiceForDataDir(dataDir, workspaceDir = dataDir) {
   }
   const service = new EdgeClawMemoryService({
     workspaceDir,
-    rootDir: MEMORY_ROOT_DIR,
+    rootDir: memoryRootDir(),
     dbPath: path.join(dataDir, 'control.sqlite'),
     memoryDir: path.join(dataDir, 'memory'),
     source: 'pilotdeck',
@@ -339,10 +340,10 @@ async function listWorkspaceDataDirs() {
   };
 
   try {
-    const entries = await fs.readdir(MEMORY_WORKSPACES_ROOT, { withFileTypes: true });
+    const entries = await fs.readdir(memoryWorkspacesRoot(), { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      await pushIfValid(path.join(MEMORY_WORKSPACES_ROOT, entry.name));
+      await pushIfValid(path.join(memoryWorkspacesRoot(), entry.name));
     }
   } catch {
     // legacy hash root may be absent after migration
@@ -520,9 +521,9 @@ export async function clearAllMemoryData() {
   servicesByDataDir.clear();
   workspaceTaskChains.clear();
 
-  await fs.rm(MEMORY_ROOT_DIR, { recursive: true, force: true });
-  await fs.mkdir(MEMORY_WORKSPACES_ROOT, { recursive: true });
-  await fs.mkdir(MEMORY_GLOBAL_ROOT, { recursive: true });
+  await fs.rm(memoryRootDir(), { recursive: true, force: true });
+  await fs.mkdir(memoryWorkspacesRoot(), { recursive: true });
+  await fs.mkdir(memoryGlobalRoot(), { recursive: true });
 
   return {
     scope: 'all_memory',
@@ -555,7 +556,7 @@ export async function exportAllProjectsMemoryBundle() {
     formatVersion: ALL_PROJECTS_MEMORY_EXPORT_FORMAT_VERSION,
     scope: 'all_projects',
     exportedAt: new Date().toISOString(),
-    globalFiles: await listSnapshotFiles(MEMORY_GLOBAL_ROOT),
+    globalFiles: await listSnapshotFiles(memoryGlobalRoot()),
     projects,
   };
 }
@@ -576,7 +577,7 @@ export async function importAllProjectsMemoryBundle(bundle) {
     }
   }
 
-  await replaceSnapshotFiles(MEMORY_GLOBAL_ROOT, normalized.globalFiles);
+  await replaceSnapshotFiles(memoryGlobalRoot(), normalized.globalFiles);
 
   return {
     formatVersion: ALL_PROJECTS_MEMORY_EXPORT_FORMAT_VERSION,

@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { KeyRound, Loader2, UserPlus } from "lucide-react";
+import { Eye, KeyRound, Loader2, UserPlus } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { authenticatedFetch } from "../../../../utils/api";
+import {
+  authenticatedFetch,
+  getUserScopeId,
+  setUserScopeId,
+} from "../../../../utils/api";
 import { cn } from "../../../../lib/utils";
 import { useOptionalAuth } from "../../../auth";
 import { PageSectionHeader, SettingsCard } from "../../shared/view";
@@ -53,6 +57,19 @@ export default function UserManagementSections({
   const [newPassword, setNewPassword] = useState("");
   const [newRole, setNewRole] = useState<ManagedRole>("user");
   const [creating, setCreating] = useState(false);
+  const [scopeUserId, setScopeUserId] = useState<string | null>(() => getUserScopeId());
+
+  /**
+   * Point the whole UI at another account's private workspace. A full
+   * reload is the honest way to do this: projects, sessions, files and
+   * the chat socket were all opened against the previous scope, so
+   * re-mounting beats trying to invalidate each of them.
+   */
+  const applyScope = useCallback((userId: number | null) => {
+    setUserScopeId(userId);
+    setScopeUserId(userId ? String(userId) : null);
+    window.location.reload();
+  }, []);
 
   const translateApiError = useCallback(
     (status: number, payload: { error?: string; code?: string } | null): string => {
@@ -244,6 +261,24 @@ export default function UserManagementSections({
         </div>
       </SettingsCard>
 
+      {scopeUserId ? (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-blue-300 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-200">
+          <span>
+            {t("userManagement.scopeBanner", {
+              username:
+                users.find((user) => String(user.id) === scopeUserId)?.username ?? scopeUserId,
+            })}
+          </span>
+          <button
+            type="button"
+            onClick={() => applyScope(null)}
+            className="shrink-0 rounded-md border border-blue-400 px-3 py-1.5 text-xs font-medium transition-colors hover:bg-blue-100 dark:border-blue-700 dark:hover:bg-blue-900/40"
+          >
+            {t("userManagement.scopeExit")}
+          </button>
+        </div>
+      ) : null}
+
       <PageSectionHeader
         title={t("userManagement.listTitle")}
         description={t("userManagement.selfNote")}
@@ -363,6 +398,22 @@ export default function UserManagementSections({
                           >
                             <KeyRound className="h-3.5 w-3.5" />
                             {t("userManagement.resetPassword")}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => applyScope(isSelf ? null : user.id)}
+                            disabled={!user.isActive && !isSelf}
+                            className={cn(
+                              "inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+                              scopeUserId === String(user.id)
+                                ? "border-blue-400 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-300"
+                                : "border-border text-foreground hover:bg-muted",
+                            )}
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                            {scopeUserId === String(user.id)
+                              ? t("userManagement.viewingData")
+                              : t("userManagement.viewData")}
                           </button>
                           <button
                             type="button"

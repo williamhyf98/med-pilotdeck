@@ -10,6 +10,8 @@ import { getPilotDeckGateway } from '../pilotdeck-bridge.js';
 
 const router = express.Router();
 
+// Installation-wide home on purpose: channel credentials and adapter
+// runtime status belong to the deployment, not to an individual user.
 const PILOT_HOME = process.env.PILOT_HOME || join(homedir(), '.pilotdeck');
 const PILOTDECK_YAML = process.env.PILOTDECK_CONFIG_PATH || join(PILOT_HOME, 'pilotdeck.yaml');
 const WEIXIN_CREDS = join(PILOT_HOME, 'weixin-credentials.json');

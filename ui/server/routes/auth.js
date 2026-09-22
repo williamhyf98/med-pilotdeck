@@ -3,6 +3,7 @@ import bcrypt from 'bcrypt';
 import { userDb, db } from '../database/db.js';
 import { generateToken, authenticateToken } from '../middleware/auth.js';
 import { DISABLE_LOCAL_AUTH } from '../constants/config.js';
+import { migrateLegacySharedData } from '../services/userHomes.js';
 
 const router = express.Router();
 
@@ -72,6 +73,16 @@ router.post('/register', async (req, res) => {
 
       // Update last login (non-fatal, outside transaction)
       userDb.updateLastLogin(user.id);
+
+      // This account is the person who was using the single-user
+      // install, so any pre-isolation projects/sessions/memory become
+      // theirs. Startup can't do this on a fresh database — there was
+      // no one to give the data to yet.
+      try {
+        await migrateLegacySharedData(user.id);
+      } catch (migrationError) {
+        console.error('Legacy data migration after first registration failed:', migrationError);
+      }
 
       res.json({
         success: true,

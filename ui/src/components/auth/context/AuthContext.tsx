@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { IS_PLATFORM, DISABLE_LOCAL_AUTH } from '../../../constants/config';
-import { api } from '../../../utils/api';
+import { api, setUserScopeId } from '../../../utils/api';
 import { AUTH_ERROR_MESSAGES, AUTH_TOKEN_STORAGE_KEY } from '../constants';
 import type {
   AuthContextValue,
@@ -60,12 +60,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
     setUser(nextUser);
     setToken(nextToken);
     persistToken(nextToken);
+    // A fresh sign-in always starts on your own data, never on whoever
+    // the previous session happened to be inspecting.
+    setUserScopeId(null);
   }, []);
 
   const clearSession = useCallback(() => {
     setUser(null);
     setToken(null);
     clearStoredToken();
+    setUserScopeId(null);
   }, []);
 
   const checkAuthStatus = useCallback(async () => {

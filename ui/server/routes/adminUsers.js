@@ -1,6 +1,9 @@
 import express from 'express';
 import bcrypt from 'bcrypt';
+import path from 'node:path';
+import { promises as fsPromises } from 'node:fs';
 import { userDb } from '../database/db.js';
+import { ensureUserHome } from '../services/userHomes.js';
 
 // Admin-only user management. Mounted behind authenticateToken + requireAdmin
 // in index.js, so every handler here can assume req.user is an admin.
@@ -50,8 +53,21 @@ router.post('/', async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
     const created = userDb.createUser(username, passwordHash, role);
+
+    // Give the account its private workspace now — including its own
+    // copy of the skill library — so their first login is instant and
+    // the admin can see the seeded skills immediately. A failure here
+    // is not fatal: the scope middleware provisions lazily too.
+    let seededSkills = 0;
+    try {
+      const home = await ensureUserHome(created.id);
+      seededSkills = (await fsPromises.readdir(path.join(home, 'skills'))).length;
+    } catch (error) {
+      console.warn(`[admin-users] workspace provisioning for ${username} deferred: ${error.message}`);
+    }
+
     const user = userDb.getManagedUser(created.id);
-    res.json({ success: true, user: toClientUser(user) });
+    res.json({ success: true, user: toClientUser(user), seededSkills });
   } catch (error) {
     if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
       return res.status(409).json({ error: 'Username already exists' });

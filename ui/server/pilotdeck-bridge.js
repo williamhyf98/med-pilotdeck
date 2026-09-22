@@ -2,13 +2,17 @@
  * PilotDeck bridge — the only chat-execution entry point in `ui/server/`.
  *
  *
- *   1. Connects to the standalone PilotDeck gateway server
- *      (`pilotdeck server`, default ws://127.0.0.1:18789/ws) as a
- *      WebSocket client. We never instantiate an in-process gateway
- *      here — that would create a second, divergent agent runtime that
- *      doesn't share `~/.pilotdeck/projects/<id>/chats/*.jsonl` writes
- *      and permission state with the CLI/TUI surfaces. One process, one
- *      gateway.
+ *   1. Connects to a standalone PilotDeck gateway server
+ *      (`pilotdeck server`) as a WebSocket client. We never instantiate
+ *      an in-process gateway here — that would create a second,
+ *      divergent agent runtime that doesn't share
+ *      `$PILOT_HOME/projects/<id>/chats/*.jsonl` writes and permission
+ *      state with the CLI/TUI surfaces.
+ *
+ *      Which gateway depends on the caller: with login disabled it is
+ *      the single shared one on ws://127.0.0.1:18789/ws; with
+ *      multi-user isolation on, `services/gatewayPool.js` hands back
+ *      the requesting user's own runtime, rooted at their own home.
  *   2. Maps each old "sessionId" → PilotDeck "sessionKey" (1:1, generated
  *      on first turn and remembered for resume).
  *   3. Translates GatewayEvent → NormalizedMessage and writes back via
@@ -35,13 +39,17 @@
  * The pair is started together via `cd ui && npm run dev` (or
  * `npm start`), which uses `concurrently` to launch both. Either order
  * is fine — the bridge retries the WebSocket handshake for
- * `GATEWAY_CONNECT_TIMEOUT_MS` so race conditions resolve themselves.
+ * `PILOTDECK_BRIDGE_TIMEOUT` so race conditions resolve themselves.
+ *
+ * With multi-user isolation enabled the bridge additionally spawns one
+ * `pilotdeck server` per active user on an ephemeral port; see
+ * `services/gatewayPool.js` for why isolation lives at the process
+ * boundary rather than inside the engine.
  */
 
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
-import { promises as fsPromises } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 import { installGlobalProxy } from '../../src/cli/proxy.js';
@@ -53,32 +61,30 @@ import { resolvePilotHome, createProjectId, sanitizeSessionIdForPath, resolveGat
 // is required. (A prior tsx 4.x JSDoc dynamic-import parse bug was fixed by
 // rewriting the offending @type annotation below to `ReturnType<typeof
 // createRemoteGateway>`, which is why this import can live on `src/` again.)
-import { createRemoteGateway } from '../../src/gateway/index.js';
 import {
     createVisibleErrorStatusDetail,
     isVisibleFailureStatusDetail,
 } from '../../src/status/agentStatus.js';
 import { createNormalizedMessage } from './pilotdeck-message.js';
 import { readPermissionSettings } from './services/permissionSettings.js';
+import {
+    acquireGateway,
+    holdGateway,
+    resetGatewayConnection,
+    describeGatewayTarget,
+} from './services/gatewayPool.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const GENERAL_HOME = resolvePilotHome(process.env);
+/**
+ * The active home for this request. Under multi-user isolation this is
+ * the caller's private home; otherwise the installation-wide one. It
+ * must stay a function — resolving it once at import would pin every
+ * project/session/memory lookup to whichever home existed at boot.
+ */
+const generalHome = () => resolvePilotHome(process.env);
 const TRUSTED_GATEWAY_TURN_OPTIONS = Symbol('pilotdeck.trustedGatewayTurnOptions');
-
-const GATEWAY_URL =
-    process.env.PILOTDECK_GATEWAY_URL || 'ws://127.0.0.1:18789/ws';
-const GATEWAY_TOKEN_PATH =
-    process.env.PILOTDECK_GATEWAY_TOKEN_PATH ||
-    path.join(GENERAL_HOME, 'server-token');
-// The two processes (gateway + bridge) are typically started in
-// parallel by `concurrently`. We allow up to 30 s for the gateway to
-// come up before failing the first call — covers cold MCP startup on
-// slower machines.
-const GATEWAY_CONNECT_TIMEOUT_MS =
-    Number.parseInt(process.env.PILOTDECK_BRIDGE_TIMEOUT ?? '', 10) || 60_000;
-const GATEWAY_CONNECT_RETRY_INTERVAL_MS = 500;
 const subagentActivityStarts = new Map();
 /** @type {Map<string, string[]>} sessionId → [toolCallId, ...] for pending agent/Task tool calls */
 const pendingAgentToolCalls = new Map();
@@ -183,84 +189,20 @@ const WEB_DEFAULT_PERMISSION_MODE =
     process.env.PILOTDECK_WEB_PERMISSION_MODE || 'default';
 
 
-// Resolves to the Gateway returned by `createRemoteGateway`. We express
-// the type via `typeof createRemoteGateway` (the symbol is already imported
-// above) instead of a JSDoc dynamic-import annotation, because some tsx 4.x
-// builds mis-parse such tokens inside JSDoc when running through
-// `node --import tsx`, producing a spurious "Parse error" at EOF during
-// ESM rewriting on fresh installs.
-/** @type {ReturnType<typeof createRemoteGateway> | null} */
-let gatewayPromise = null;
-
-async function readGatewayToken() {
-    try {
-        const raw = await fsPromises.readFile(GATEWAY_TOKEN_PATH, 'utf8');
-        const trimmed = raw.trim();
-        return trimmed || null;
-    } catch {
-        return null;
-    }
-}
-
-async function connectWithRetry() {
-    const deadline = Date.now() + GATEWAY_CONNECT_TIMEOUT_MS;
-    let lastError;
-    while (Date.now() < deadline) {
-        const token = await readGatewayToken();
-        if (token) {
-            try {
-                const gateway = await createRemoteGateway({
-                    url: GATEWAY_URL,
-                    token,
-                    clientName: 'web',
-                });
-                console.log(
-                    `[pilotdeck-bridge] connected → ${GATEWAY_URL}`,
-                );
-                return gateway;
-            } catch (error) {
-                lastError = error;
-            }
-        }
-        await new Promise((resolve) =>
-            setTimeout(resolve, GATEWAY_CONNECT_RETRY_INTERVAL_MS),
-        );
-    }
-    const detail = lastError instanceof Error ? `: ${lastError.message}` : '';
-    throw new Error(
-        `[pilotdeck-bridge] gateway connect failed after ${GATEWAY_CONNECT_TIMEOUT_MS}ms${detail}`,
-    );
-}
-
-function ensureGateway() {
-    if (!gatewayPromise) {
-        gatewayPromise = connectWithRetry().catch((error) => {
-            // Reset so the next caller retries instead of cementing the
-            // failure forever. The deadline inside connectWithRetry()
-            // already bounds individual attempts.
-            gatewayPromise = null;
-            throw error;
-        });
-    }
-    return gatewayPromise;
-}
-
-function resetGatewayConnection() {
-    gatewayPromise = null;
-}
-
 export function isGatewayUnavailableError(error) {
     const message = error instanceof Error ? error.message : String(error);
-    return /gateway websocket (closed|is not connected)|failed to connect to gateway websocket|gateway hello timed out|gateway closed during hello|gateway connect failed/i.test(message);
+    return /gateway websocket (closed|is not connected)|failed to connect to gateway websocket|gateway hello timed out|gateway closed during hello|gateway connect failed|did not become healthy/i.test(message);
 }
 
 /**
- * Public accessor for the shared gateway client. Other ui/server modules
- * (`projects.js`, etc.) await this so they share one WebSocket
- * connection instead of opening their own.
+ * Public accessor for the gateway client of the *current user*. Other
+ * ui/server modules (`projects.js`, `routes/skills.js`, …) await this
+ * so they reuse one WebSocket connection per user instead of opening
+ * their own. With login disabled this is the single shared gateway,
+ * exactly as before.
  */
 export async function getPilotDeckGateway() {
-    return ensureGateway();
+    return acquireGateway();
 }
 
 export function getPilotDeckRepoRoot() {
@@ -1265,8 +1207,8 @@ export async function runChatViaGateway(
     provider = 'pilotdeck',
 ) {
     const projectKey = resolveGatewayProjectKey(
-        options.projectPath || options.cwd || GENERAL_HOME,
-        GENERAL_HOME,
+        options.projectPath || options.cwd || generalHome(),
+        generalHome(),
     );
     const channelKey = 'web';
 
@@ -1310,8 +1252,14 @@ export async function runChatViaGateway(
     console.log(`[pilotdeck-bridge] submitTurn runMode=${runMode} mode=${resolvedMode} (options.permissionMode=${options?.permissionMode}, options.mode=${options?.mode})`);
 
     let gw = null;
+    // Claimed after acquire, because the pool entry only exists once the
+    // runtime has been created — holding before that would be a no-op.
+    let releaseGatewayHold = () => {};
     try {
-        gw = await ensureGateway();
+        gw = await acquireGateway();
+        // Keep this user's runtime off the idle reaper for the whole turn
+        // so a long answer never has its gateway killed mid-stream.
+        releaseGatewayHold = holdGateway();
 
         if (staleRunId) {
             const abortReason = options?.forceStart === true
@@ -1464,7 +1412,7 @@ export async function runChatViaGateway(
                 userHint: 'Start or restart the PilotDeck gateway, then retry this message.',
                 scope: 'preflight',
                 detail: {
-                    gatewayUrl: GATEWAY_URL,
+                    gatewayUrl: describeGatewayTarget(),
                 },
             })
             : createBridgeFailureStatusEvent({
@@ -1491,6 +1439,7 @@ export async function runChatViaGateway(
         sendBridgeStatusEvent(writer, statusEvent, sessionKey, provider);
     } finally {
         clearActiveRunIfCurrent(state, runId);
+        releaseGatewayHold();
     }
 }
 
@@ -1514,7 +1463,7 @@ async function recordGatewayStatusMessage(gateway, { sessionKey, turnId, project
 }
 
 export async function abortViaGateway(sessionId, _provider = 'pilotdeck') {
-    const gw = await ensureGateway();
+    const gw = await acquireGateway();
     const sessionKey = isPilotDeckSessionKey(sessionId) ? sessionId : null;
     if (!sessionKey) return false;
     const state = sessionState.get(sessionKey);
@@ -1533,7 +1482,7 @@ export async function abortViaGateway(sessionId, _provider = 'pilotdeck') {
 }
 
 export async function decidePermissionViaGateway(requestId, decision, options = {}) {
-    const gw = await ensureGateway();
+    const gw = await acquireGateway();
     // PermissionBus is keyed by sessionKey + requestId. We don't know
     // which session owns the request, so try each known session.
     for (const state of sessionState.values()) {
@@ -1554,7 +1503,7 @@ export async function decidePermissionViaGateway(requestId, decision, options = 
 }
 
 export async function grantSessionPermissionViaGateway(sessionId, entry) {
-    const gw = await ensureGateway();
+    const gw = await acquireGateway();
     if (!isPilotDeckSessionKey(sessionId) || typeof entry !== 'string' || !entry.trim()) {
         return false;
     }
@@ -1577,7 +1526,7 @@ export function isSessionActiveViaGateway(sessionId) {
 
 export async function getActiveTurnSnapshotFramesViaGateway(sessionId, provider = 'pilotdeck') {
     if (!isPilotDeckSessionKey(sessionId)) return [];
-    const gw = await ensureGateway();
+    const gw = await acquireGateway();
     if (typeof gw.getActiveTurnSnapshot !== 'function') return [];
     const snapshot = await gw.getActiveTurnSnapshot({ sessionKey: sessionId });
     if (!snapshot?.active || !Array.isArray(snapshot.events)) return [];
@@ -1614,8 +1563,8 @@ function _buildSessionProjectIndex() {
     const sessionIndex = new Map();
     const dirToPath = new Map();
     try {
-        for (const projectId of listProjectStorageIds(GENERAL_HOME)) {
-            const projectDir = resolveTypedProjectDir(projectId, GENERAL_HOME);
+        for (const projectId of listProjectStorageIds(generalHome())) {
+            const projectDir = resolveTypedProjectDir(projectId, generalHome());
             const cwdFile = path.join(projectDir, '.cwd');
             try {
                 const realPath = fs.readFileSync(cwdFile, 'utf-8').trim();
@@ -1639,9 +1588,9 @@ function loadPersistedStatsFromDisk() {
     const result = new Map();
     try {
         // Prefer new JSONL format, fall back to legacy JSON.
-        const jsonlPath = path.join(GENERAL_HOME, 'router', 'stats.jsonl');
-        const jsonPath = path.join(GENERAL_HOME, 'router', 'stats.json');
-        const legacyPath = path.join(GENERAL_HOME, 'router-stats.json');
+        const jsonlPath = path.join(generalHome(), 'router', 'stats.jsonl');
+        const jsonPath = path.join(generalHome(), 'router', 'stats.json');
+        const legacyPath = path.join(generalHome(), 'router-stats.json');
 
         let records;
         if (fs.existsSync(jsonlPath)) {
@@ -1654,15 +1603,15 @@ function loadPersistedStatsFromDisk() {
         // Build a filesystem-based sessionId→projectDirName index for
         // backward compatibility (records written before projectPath existed).
         const { sessionIndex: fsIndex, dirToPath } = _buildSessionProjectIndex();
-        const generalProjectDirName = createProjectId(GENERAL_HOME);
+        const generalProjectDirName = createProjectId(generalHome());
 
         const resolveProjectPath = (dirName) => {
-            if (dirName === generalProjectDirName) return GENERAL_HOME;
+            if (dirName === generalProjectDirName) return generalHome();
             const fromCwd = dirToPath.get(dirName);
             if (fromCwd) return fromCwd;
             const repoProjectDirName = createProjectId(REPO_ROOT);
             if (dirName === repoProjectDirName) return REPO_ROOT;
-            return GENERAL_HOME;
+            return generalHome();
         };
 
         const byProject = new Map();
@@ -1679,7 +1628,7 @@ function loadPersistedStatsFromDisk() {
                     }
                 }
             }
-            if (!projectKey) projectKey = GENERAL_HOME;
+            if (!projectKey) projectKey = generalHome();
 
             if (!byProject.has(projectKey)) {
                 byProject.set(projectKey, []);
@@ -1758,14 +1707,14 @@ function lookupSessionTitle(sessionId, projectKey) {
 
 function _resolveTranscriptProjectId(projectKey) {
     if (!projectKey) {
-        return resolveProjectStorageId(GENERAL_HOME, GENERAL_HOME);
+        return resolveProjectStorageId(generalHome(), generalHome());
     }
-    const gatewayKey = resolveGatewayProjectKey(projectKey, GENERAL_HOME);
-    return resolveProjectStorageId(gatewayKey, GENERAL_HOME);
+    const gatewayKey = resolveGatewayProjectKey(projectKey, generalHome());
+    return resolveProjectStorageId(gatewayKey, generalHome());
 }
 
 function _transcriptFileCandidates(sessionId, projectKey) {
-    const pilotHome = GENERAL_HOME;
+    const pilotHome = generalHome();
     const safeId = sanitizeSessionIdForPath(sessionId);
     const fileVariants = safeId === sessionId ? [sessionId] : [safeId, sessionId];
     const candidates = [];
@@ -2274,7 +2223,7 @@ function mergeRecordIntoSession(routing, record) {
 }
 
 function isGeneralProject(projectKey) {
-    return path.resolve(projectKey) === path.resolve(GENERAL_HOME);
+    return path.resolve(projectKey) === path.resolve(generalHome());
 }
 
 function deriveProjectName(projectKey) {
@@ -2369,7 +2318,7 @@ export function registerAlwaysOnNotificationForwarding(clients, forwardToSession
         }
     };
 
-    ensureGateway().then((gw) => {
+    acquireGateway().then((gw) => {
         gw.onNotification((name, payload) => {
             if (name !== 'always-on:turn-event') return;
             const { sessionKey, channelKey, event } = payload ?? {};
@@ -2433,7 +2382,7 @@ export function registerAlwaysOnNotificationForwarding(clients, forwardToSession
 }
 
 export async function elicitationRespondViaGateway(requestId, answer) {
-    const gw = await ensureGateway();
+    const gw = await acquireGateway();
     for (const state of sessionState.values()) {
         try {
             const result = await gw.respondElicitation({
@@ -2455,7 +2404,7 @@ export async function traumaConfirmTransitionViaGateway({
     answer,
     expectedVersion,
 }) {
-    const gw = await ensureGateway();
+    const gw = await acquireGateway();
     if (typeof gw.traumaConfirmTransition !== 'function') {
         throw new Error('The active gateway does not support trauma stage confirmation.');
     }
@@ -2468,7 +2417,7 @@ export async function traumaConfirmTransitionViaGateway({
 }
 
 export async function traumaGetCaseViaGateway({ projectKey, sessionKey }) {
-    const gw = await ensureGateway();
+    const gw = await acquireGateway();
     if (typeof gw.traumaGetCase !== 'function') {
         throw new Error('The active gateway does not support trauma case reads.');
     }
@@ -2476,7 +2425,7 @@ export async function traumaGetCaseViaGateway({ projectKey, sessionKey }) {
 }
 
 export async function traumaOverrideStageViaGateway(input) {
-    const gw = await ensureGateway();
+    const gw = await acquireGateway();
     if (typeof gw.traumaOverrideStage !== 'function') {
         throw new Error('The active gateway does not support trauma stage overrides.');
     }
@@ -2484,7 +2433,7 @@ export async function traumaOverrideStageViaGateway(input) {
 }
 
 export async function traumaExtractFormViaGateway({ projectKey, sessionKey, rawText, caseHistory }) {
-    const gw = await ensureGateway();
+    const gw = await acquireGateway();
     if (typeof gw.traumaExtractForm !== 'function') {
         throw new Error('The active gateway does not support trauma form extraction.');
     }

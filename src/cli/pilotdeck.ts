@@ -31,6 +31,15 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     const env = process.env;
     const pilotHome = resolvePilotHome(env);
     const snapshot = loadPilotConfig({ projectRoot, env });
+    /**
+     * A per-user runtime spawned by the Web bridge for data isolation.
+     * It must not start channel adapters or the always-on manager:
+     * those connect to the outside world (a WeChat bot, a Feishu app,
+     * a scheduled worktree run) and there is exactly one of each per
+     * deployment, not one per account. The installation-wide gateway
+     * keeps owning them.
+     */
+    const isPerUserRuntime = env.PILOTDECK_GATEWAY_ROLE === "user";
     const telemetry = createTelemetryCollector({
       env, pilotHome,
       enabled: snapshot.config.telemetry?.enabled,
@@ -61,6 +70,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     };
 
     function buildAlwaysOn(config: AlwaysOnConfig | undefined): AlwaysOnManager | undefined {
+      if (isPerUserRuntime) return undefined;
       if (!config?.enabled) return undefined;
       return createAlwaysOnManager({
         config,
@@ -261,7 +271,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     }
 
     async function handleAdapterHotReload(config: (typeof snapshot)["config"]): Promise<void> {
-      if (!serverRef) return;
+      if (!serverRef || isPerUserRuntime) return;
       const parts: string[] = [];
 
       const fCfg = config.adapters?.feishu;
@@ -328,8 +338,10 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     // --- Server startup ---
 
     const envPort = Number.parseInt(env.PILOTDECK_GATEWAY_PORT ?? "", 10);
-    const extraChannels = await loadEnabledChannels(snapshot.config.adapters);
-    const feishuCfg = snapshot.config.adapters?.feishu;
+    const extraChannels = isPerUserRuntime
+      ? []
+      : await loadEnabledChannels(snapshot.config.adapters);
+    const feishuCfg = isPerUserRuntime ? undefined : snapshot.config.adapters?.feishu;
     const savedFeishuState = await channelStatePersistence.load<FeishuSessionMapperState>("feishu");
     const feishuChannel = feishuCfg?.enabled === true
       ? new FeishuChannel({
@@ -343,7 +355,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
           onStateChange: (state) => channelStatePersistence.save("feishu", state),
         })
       : undefined;
-    const weixinCfg = snapshot.config.adapters?.weixin;
+    const weixinCfg = isPerUserRuntime ? undefined : snapshot.config.adapters?.weixin;
     const savedWeixinState = await channelStatePersistence.load<WeixinSessionMapperState>("weixin");
     const weixinChannel = weixinCfg?.enabled === true
       ? new WeixinChannel({
@@ -351,7 +363,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
           onStateChange: (state) => channelStatePersistence.save("weixin", state),
         })
       : undefined;
-    const qqCfg = snapshot.config.adapters?.qq;
+    const qqCfg = isPerUserRuntime ? undefined : snapshot.config.adapters?.qq;
     const savedQQState = await channelStatePersistence.load<QQSessionMapperState>("qq");
     const qqChannel = qqCfg?.enabled === true
       ? new QQChannel({
@@ -364,7 +376,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
           onStateChange: (state) => channelStatePersistence.save("qq", state),
         })
       : undefined;
-    const wecomCfg = snapshot.config.adapters?.wecom;
+    const wecomCfg = isPerUserRuntime ? undefined : snapshot.config.adapters?.wecom;
     const savedWeComState = await channelStatePersistence.load<WeComSessionMapperState>("wecom");
     const wecomChannel = wecomCfg?.enabled === true
       ? new WeComChannel({

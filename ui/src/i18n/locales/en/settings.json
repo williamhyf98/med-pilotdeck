@@ -160,7 +160,11 @@
     "retry": "Retry",
     "empty": "No accounts yet.",
     "never": "Never",
-    "selfNote": "To avoid locking yourself out, you cannot demote or disable your own account.",
+    "selfNote": "To avoid locking yourself out, you cannot demote or disable your own account. Projects, sessions, memory and skills are isolated per account.",
+    "viewData": "View data",
+    "viewingData": "Viewing",
+    "scopeBanner": "You are viewing {{username}}'s workspace. Anything you do here lands in that account.",
+    "scopeExit": "Back to my workspace",
     "errors": {
       "selfLockout": "You cannot demote or deactivate your own account.",
       "lastAdmin": "At least one active administrator is required.",

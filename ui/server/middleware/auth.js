@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { userDb, appConfigDb } from '../database/db.js';
 import { IS_PLATFORM, DISABLE_LOCAL_AUTH } from '../constants/config.js';
+import { withUserScope } from './userScope.js';
 
 // Use env var if set, otherwise auto-generate a unique secret per installation
 const JWT_SECRET = process.env.JWT_SECRET || appConfigDb.getOrCreateJwtSecret();
@@ -94,7 +95,10 @@ const authenticateToken = async (req, res, next) => {
     }
 
     req.user = user;
-    next();
+    // Every data route funnels through here, so binding the per-user
+    // data scope at this one point means no route can accidentally be
+    // left reading the shared home.
+    return withUserScope(req, res, next);
   } catch (error) {
     console.error('Token verification error:', error);
     return res.status(403).json({ error: 'Invalid token' });

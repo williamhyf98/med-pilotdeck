@@ -52,7 +52,10 @@ const upload = multer({
 // ---------------------------------------------------------------------------
 
 const SLUG_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/;
-const PILOT_HOME = resolvePilotHome(process.env);
+// Resolved per call, not once at import: under multi-user isolation this
+// returns the requesting user's private home (see `utils/userScope.js`),
+// so the "user" skill scope is genuinely their own library.
+const pilotHome = () => resolvePilotHome(process.env);
 const PROJECT_DIR = '.pilotdeck';
 const SKILLS_SUBDIR = 'skills';
 const BUNDLED_SKILLS_ROOT = path.resolve(
@@ -69,7 +72,7 @@ function safeSlug(slug) {
 }
 
 function isGeneralCwd(projectPath) {
-  return isGeneralProjectKey(projectPath, PILOT_HOME);
+  return isGeneralProjectKey(projectPath, pilotHome());
 }
 
 function resolveRequestedScope(scope, projectPath, { defaultToProjectWhenAvailable = false } = {}) {
@@ -105,12 +108,12 @@ function resolveRequestedScope(scope, projectPath, { defaultToProjectWhenAvailab
 }
 
 function userSkillsRoot() {
-  return path.join(PILOT_HOME, SKILLS_SUBDIR);
+  return path.join(pilotHome(), SKILLS_SUBDIR);
 }
 
 function resolveProjectPathForSkills(projectPath) {
   if (!projectPath || isGeneralCwd(projectPath)) return null;
-  return resolveLinkedRepoPath(projectPath, PILOT_HOME);
+  return resolveLinkedRepoPath(projectPath, pilotHome());
 }
 
 function gatewayProjectKey(projectPath) {
@@ -436,7 +439,7 @@ router.post('/generate-from-session', async (req, res) => {
     // use — NOT gatewayProjectKey(), which resolves the linked-repo skills root.
     const chatProjectKey = resolveGatewayProjectKey(
       String(projectPath || process.cwd()),
-      PILOT_HOME,
+      pilotHome(),
     );
     const read = await callGateway('readSessionMessages', {
       sessionKey: sessionId,
@@ -575,7 +578,7 @@ router.post('/generate-from-flow', async (req, res) => {
     // factory only reads projectKey, so the sessionKey is a fixed marker.
     const chatProjectKey = resolveGatewayProjectKey(
       String(projectPath || process.cwd()),
-      PILOT_HOME,
+      pilotHome(),
     );
     let existingSlugs = [];
     try {

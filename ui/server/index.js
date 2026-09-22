@@ -135,6 +135,10 @@ import { configureWebPush } from './services/vapid-keys.js';
 
 import { runServerStartupBeforeListen, startServerAfterStartup } from './services/server-startup.js';
 import { validateApiKey, authenticateToken, authenticateWebSocket, requireAdmin, requireAdminForWrites } from './middleware/auth.js';
+import { buildUserScopeFor, isolationEnabled } from './middleware/userScope.js';
+import { runWithUserScope, bindUserScope } from './utils/userScope.js';
+import { migrateLegacySharedData } from './services/userHomes.js';
+import { shutdownGatewayPool } from './services/gatewayPool.js';
 import { DISABLE_LOCAL_AUTH, IS_PLATFORM } from './constants/config.js';
 import { getConnectableHost } from '../shared/networkHosts.js';
 import { contentDispositionAttachment } from './utils/downloadHeaders.js';
@@ -2460,16 +2464,33 @@ wss.on('connection', (ws, request) => {
     const urlObj = new URL(url, 'http://localhost');
     const pathname = urlObj.pathname;
 
-    if (pathname === '/shell') {
-        handleShellConnection(ws);
-    } else if (pathname === '/ws') {
-        handleChatConnection(ws, request);
-    } else if (pathname.startsWith('/plugin-ws/')) {
-        handlePluginWsProxy(ws, pathname);
-    } else {
-        console.log('[WARN] Unknown WebSocket path:', pathname);
-        ws.close();
-    }
+    // The upgrade handshake already authenticated the user onto
+    // `request.user`. Resolve their private home before dispatching so
+    // the handlers below — and every message they later receive —
+    // read and write inside it.
+    void (async () => {
+        let scope = null;
+        try {
+            scope = await buildUserScopeFor(request.user, urlObj.searchParams.get('scopeUser'));
+        } catch (error) {
+            console.error('[user-scope] WebSocket scope setup failed:', error);
+            ws.close(1011, 'workspace_unavailable');
+            return;
+        }
+
+        runWithUserScope(scope, () => {
+            if (pathname === '/shell') {
+                handleShellConnection(ws);
+            } else if (pathname === '/ws') {
+                handleChatConnection(ws, request);
+            } else if (pathname.startsWith('/plugin-ws/')) {
+                handlePluginWsProxy(ws, pathname);
+            } else {
+                console.log('[WARN] Unknown WebSocket path:', pathname);
+                ws.close();
+            }
+        });
+    })();
 });
 
 /**
@@ -2535,7 +2556,10 @@ function handleChatConnection(ws, request) {
         send: (data) => broadcastChatFrame(data, ws, userId),
     };
 
-    ws.on('message', async (message) => {
+    // `bindUserScope` re-enters the scope captured at connection time:
+    // socket events fire from the event loop, so they would otherwise
+    // land outside it and resolve paths against the shared home.
+    ws.on('message', bindUserScope(async (message) => {
         try {
             const data = JSON.parse(message);
 
@@ -2722,7 +2746,7 @@ function handleChatConnection(ws, request) {
                 error: error.message
             });
         }
-    });
+    }));
 
     const cleanup = () => {
         if (cleanedUp) return;
@@ -2750,7 +2774,7 @@ function handleShellConnection(ws) {
     let urlDetectionBuffer = '';
     const announcedAuthUrls = new Set();
 
-    ws.on('message', async (message) => {
+    ws.on('message', bindUserScope(async (message) => {
         try {
             const data = JSON.parse(message);
             console.log('📨 Shell message received:', data.type);
@@ -3084,7 +3108,7 @@ function handleShellConnection(ws) {
                 }));
             }
         }
-    });
+    }));
 
     ws.on('close', () => {
         console.log('🔌 Shell client disconnected');
@@ -3893,6 +3917,33 @@ async function ensureLocalUserWhenAuthDisabled() {
     console.log(`${c.info('[INFO]')} Web UI login is disabled (default). Using built-in user. Set PILOTDECK_DISABLE_LOCAL_AUTH=0 to require username/password.`);
 }
 
+/**
+ * Hand the pre-isolation data to its owner.
+ *
+ * Before per-user isolation every project, session and memory row sat
+ * directly under the shared home. The first administrator is the person
+ * who was using that single-user install, so their home inherits it;
+ * everyone created afterwards starts empty. Runs at most once, guarded
+ * by a marker file.
+ */
+async function migrateSharedDataToOwner() {
+    if (!isolationEnabled()) return;
+    try {
+        const owner = userDb.listUsers().find((user) => user.role === 'admin')
+            ?? userDb.listUsers()[0];
+        if (!owner) return;
+        const result = await migrateLegacySharedData(owner.id);
+        if (result.migrated && result.moved.length > 0) {
+            console.log(
+                `${c.info('[INFO]')} Existing projects/sessions/memory now belong to "${owner.username}". `
+                + 'Other accounts start with an empty workspace.',
+            );
+        }
+    } catch (error) {
+        console.error(`${c.warn('[ERROR]')} User data migration failed:`, error);
+    }
+}
+
 // Initialize database and start server
 async function startServer() {
     try {
@@ -3903,6 +3954,7 @@ async function startServer() {
                     ensureLocalUserWhenAuthDisabledFn: ensureLocalUserWhenAuthDisabled,
                     configureWebPushFn: configureWebPush
                 });
+                await migrateSharedDataToOwner();
             },
             listenFn: async () => {
                 // Check if running in production mode (dist folder exists)
@@ -4000,6 +4052,9 @@ async function startServer() {
                     } catch { /* Chrome may not have been started */ }
                     // PilotDeck cron is owned by `pilotdeck server` and shuts
                     // down with it; ui/server never spawns its own daemon.
+                    // Per-user gateways, however, ARE our children — stop
+                    // them or they outlive the bridge and hold their ports.
+                    shutdownGatewayPool();
                 } finally {
                     process.exit(0);
                 }
