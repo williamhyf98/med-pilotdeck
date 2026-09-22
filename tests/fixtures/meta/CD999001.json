@@ -1,0 +1,82 @@
+{
+  "schema_version": "1.0",
+  "id": "CD999001",
+  "review": {
+    "title": "Fixture review for meta screening tests",
+    "pdf": "cochrane_pdf/CD999001.pdf"
+  },
+  "search": {
+    "database": "PubMed",
+    "cutoff": "2026-01-31",
+    "query": "(\"fixture\"[tiab]) AND (\"placebo\"[tiab])"
+  },
+  "criteria": {
+    "article_picos": {
+      "P": "Types of participants We included adults aged 18 years or older with confirmed condition X. (Review) Copyright © 2026 The Cochrane Collaboration. Published by John Wiley & Sons, Ltd. 7",
+      "I": "Types of interventions Oral drug A at any dose, alone or in combination.",
+      "C": null,
+      "O": null,
+      "S": "Types of studies We included only parallel-group randomised controlled trials."
+    },
+    "refined_picos": {
+      "P": "Adults aged 18 years or older with condition X.",
+      "I": "Oral drug A at any dose.",
+      "C": "Placebo or no treatment.",
+      "O": "All-cause mortality at 30 days.",
+      "S": "Parallel-group randomised controlled trials."
+    }
+  },
+  "screening": {
+    "initial": {
+      "input": ["title", "abstract"],
+      "criteria_options": [
+        "article_picos.PIC",
+        "article_picos.PICO",
+        "article_picos.PICOS"
+      ],
+      "retain_gold_labels": ["in", "ex", "a"]
+    },
+    "final": {
+      "input": ["title", "abstract"],
+      "criteria": "refined_picos.PICOS",
+      "include_gold_label": "in"
+    }
+  },
+  "gold": [
+    { "pmid": "1000001", "label": "in", "study_id": "Alpha-2001" },
+    { "pmid": "1000002", "label": "ex", "study_id": "Beta-2005" }
+  ],
+  "candidates": [
+    {
+      "pmid": "1000001",
+      "title": "Oral drug A versus placebo in adults with condition X: a randomised controlled trial",
+      "abstract": "We randomly assigned 240 adults aged 18 years or older with condition X to oral drug A or placebo. Mortality at 30 days was the primary outcome. Drug A reduced mortality (p &lt; .05) with a difference of &#x2265;5 percentage points.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/1000001/"
+    },
+    {
+      "pmid": "1000002",
+      "title": "Oral drug A in adults with condition X: a retrospective cohort study",
+      "abstract": "This retrospective cohort study reviewed records of 180 adults aged 18 years or older with condition X who received oral drug A. There was no randomisation and no placebo group.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/1000002/"
+    },
+    {
+      "pmid": "1000003",
+      "title": "Surgical repair of unrelated condition Y in children: a randomised trial",
+      "abstract": "Children aged 2 to 11 years with condition Y were randomly assigned to surgical repair or watchful waiting. Condition X and drug A were not studied.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/1000003/"
+    },
+    {
+      "pmid": "1000004",
+      "title": "Oral drug A for condition X: conference abstract with no methods reported",
+      "abstract": "",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/1000004/"
+    }
+  ],
+  "_recall_check": {
+    "count": 4,
+    "gold_in_file": 2,
+    "refined_picos_is_copy": false
+  },
+  "_source": { "template": "fixture", "a_class": "A" },
+  "_v": 2
+}

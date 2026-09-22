@@ -232,3 +232,10 @@ Auto-Research-Skills/
 
 # Local agent notes
 CLAUDE.md
+
+# Meta-analysis benchmark dataset (610 Cochrane reviews, ~424MB, local only)
+/reviews_a/
+# Meta-analysis replay output consumed by the evaluation harness
+predictions/
+# Scoped typecheck config for src/meta (local convenience)
+/tsconfig.meta.json
