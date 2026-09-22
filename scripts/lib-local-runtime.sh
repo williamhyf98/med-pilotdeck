@@ -168,7 +168,10 @@ download_file() {
   local url="$1"
   local dest="$2"
   if command -v curl >/dev/null 2>&1; then
-    curl -fL --retry 3 --retry-delay 2 -o "$dest" "$url"
+    # GitHub/proxy paths on the shared server occasionally fail HTTP/2
+    # negotiation.  Force HTTP/1.1 and resume a partial personal download.
+    curl --http1.1 -fL --retry 5 --retry-all-errors --retry-delay 2 \
+      --continue-at - -o "$dest" "$url"
   elif command -v wget >/dev/null 2>&1; then
     wget -O "$dest" "$url"
   else
