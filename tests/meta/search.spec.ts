@@ -11,7 +11,7 @@ import {
   composeBlock,
   composeQuery,
 } from "../../src/meta/search/queryComposer.js";
-import { withDateCeiling } from "../../src/meta/search/pubmed.js";
+import { parseNcbiApiKey, withDateCeiling } from "../../src/meta/search/pubmed.js";
 import {
   createConceptBuilderStation,
   validateMeshTerms,
@@ -110,6 +110,21 @@ test("date ceiling matches the dataset cutoff format", () => {
     withDateCeiling("abc", "2024-06-10"),
     '(abc) AND ("1900/01/01"[dp] : "2024/06/10"[dp])',
   );
+});
+
+/**
+ * 用户把密钥存成 "NCBI_API_KEY=..." 整行，直接发给 NCBI 会得到 HTTP 400。
+ * 解析器按 36 位十六进制抽 key，对前缀、引号、换行、BOM 都要稳。
+ */
+test("ncbi key parser tolerates env-style prefixes, quotes and whitespace", () => {
+  const key = "0123456789abcdef0123456789abcdef0123";
+  assert.equal(parseNcbiApiKey(key), key);
+  assert.equal(parseNcbiApiKey(`NCBI_API_KEY=${key}\n`), key);
+  assert.equal(parseNcbiApiKey(`export NCBI_API_KEY="${key}"`), key);
+  assert.equal(parseNcbiApiKey(`﻿  ${key}  \r\n`), key);
+  assert.equal(parseNcbiApiKey("   \n"), undefined);
+  // 不是 36 位十六进制时退回等号后的内容，让服务端报错而不是静默无 key。
+  assert.equal(parseNcbiApiKey("NCBI_API_KEY='short'"), "short");
 });
 
 test("station drops the S block and caps block count", async () => {

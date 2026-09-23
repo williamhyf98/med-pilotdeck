@@ -14,6 +14,23 @@
 
 const ESEARCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi";
 
+/**
+ * 从密钥文件内容里抽出 NCBI API key。
+ *
+ * 用户保存密钥时常连同变量名一起写进去（"NCBI_API_KEY=xxxx"），或带引号、
+ * 空格、换行。直接把整段内容当 key 发出去会得到 HTTP 400。NCBI key 固定是
+ * 36 位十六进制，按这个特征抽取最稳。抽不到时原样返回去掉空白的内容，
+ * 让上游报错而不是静默无 key 运行。
+ */
+export function parseNcbiApiKey(raw: string): string | undefined {
+  const text = raw.replace(/﻿/g, "").trim();
+  if (!text) return undefined;
+  const hex = text.match(/[0-9a-fA-F]{36}/);
+  if (hex) return hex[0];
+  const afterEquals = text.split("=").pop()?.trim().replace(/^["']|["']$/g, "");
+  return afterEquals || undefined;
+}
+
 export type PubMedClientOptions = {
   apiKey?: string;
   /** NCBI 要求标识调用方，便于出问题时联系。 */

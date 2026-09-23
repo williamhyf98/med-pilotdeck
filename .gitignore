@@ -245,3 +245,6 @@ predictions/
 
 # local scratch scripts and downloaded pdfs
 /.scratch/
+
+# Local full-text cache (JATS XML parsed to JSON, per PMID)
+/.cache/

@@ -12,7 +12,7 @@
  *   tsx src/meta/eval/replaySearch.ts --dir reviews_a --split dev --limit 10 --baseline
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -21,7 +21,7 @@ import {
   loadOrCreateSplit,
   resolveCriteriaSet,
 } from "../benchmark/load.js";
-import { createPubMedClient, withDateCeiling } from "../search/pubmed.js";
+import { createPubMedClient, parseNcbiApiKey, withDateCeiling } from "../search/pubmed.js";
 import { composeQuery } from "../search/queryComposer.js";
 import {
   createConceptBuilderStation,
@@ -93,15 +93,21 @@ async function main(): Promise<void> {
     apiKey: args.apiKey,
   });
   const station = createConceptBuilderStation(model);
+  // 密钥优先级：命令行 > 环境变量 > 仓库根目录的 NCBI_API_KEY.txt。
+  // 文件里常带着 "NCBI_API_KEY=" 前缀或引号，parseNcbiApiKey 负责抽出真正的 key。
+  let ncbiKey = args.ncbiKey;
+  if (!ncbiKey) {
+    ncbiKey = await readFile("NCBI_API_KEY.txt", "utf8").then(parseNcbiApiKey).catch(() => undefined);
+  }
   const pubmed = createPubMedClient({
-    apiKey: args.ncbiKey,
+    apiKey: ncbiKey,
     email: args.email,
     tool: "med-pilotdeck-meta",
   });
 
   console.log(
     `[replay-search] model=${args.model} reviews=${ids.length} `
-    + `rctFilter=${args.rctFilter} baseline=${args.baseline} ncbiKey=${args.ncbiKey ? "yes" : "no"}`,
+    + `rctFilter=${args.rctFilter} baseline=${args.baseline} ncbiKey=${ncbiKey ? "yes" : "no"}`,
   );
 
   for (const id of ids) {
