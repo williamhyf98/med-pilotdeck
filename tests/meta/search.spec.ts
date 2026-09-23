@@ -49,6 +49,22 @@ test("prompt forbids writing boolean syntax and keeps C/O out by default", () =>
   assert.match(CONCEPT_BUILDER_SYSTEM_PROMPT, /不得执行/);
 });
 
+/**
+ * 回归测试：CD000028 漏掉了一篇甲基多巴试验，因为概念表只给了药物类别名
+ * （beta blocker、ACE inhibitor）和泛称 antihypertensive，没有任何具体药名，
+ * 而那篇摘要只写了它用的药。prompt 必须要求列举代表性具体名称。
+ */
+test("prompt requires concrete agent names, not just drug classes", () => {
+  assert.match(CONCEPT_BUILDER_SYSTEM_PROMPT, /还必须给出具体名称/);
+  assert.match(CONCEPT_BUILDER_SYSTEM_PROMPT, /methyldopa/);
+  assert.match(
+    CONCEPT_BUILDER_SYSTEM_PROMPT,
+    /只写 "beta blocker"、"ACE inhibitor" 这样的类别名会漏掉这些研究/,
+  );
+  // MeSH 树状展开是覆盖具体药物的另一条路径，必须一并说明。
+  assert.match(CONCEPT_BUILDER_SYSTEM_PROMPT, /上位主题词会自动涵盖它下面的具体药物/);
+});
+
 test("block composition tags mesh and free terms differently", () => {
   const query = composeBlock(TABLE.blocks[0]);
   assert.equal(query, '("Hypertension"[mh] OR hypertension[tiab] OR "high blood pressure"[tiab])');
