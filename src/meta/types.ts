@@ -81,6 +81,67 @@ export type SearchStagePrediction = {
   error?: string;
 };
 
+// ---- 步骤 3b：全文筛选 ----------------------------------------------------
+
+export type FullTextVerdict = "met" | "not_met" | "not_reported" | "conflict";
+
+/** 证据定位：文档里的 [methods#3] 这类标记 + 该段落中的连续原文。 */
+export type EvidenceLocator = {
+  locator: string;
+  span: string;
+};
+
+export type FullTextCriterionJudgement = {
+  key: PicoKey;
+  verdict: FullTextVerdict;
+  evidence: EvidenceLocator[];
+  reason: string;
+};
+
+export type FullTextDecision = {
+  criteriaJudgements: FullTextCriterionJudgement[];
+  decision: "include" | "exclude" | "unresolved";
+  confidence: "high" | "medium" | "low";
+  decisionReason: string;
+};
+
+/** bad_locator=自造定位器；missing=片段不在段内；spliced=省略号拼接真实片段。 */
+export type EvidenceFailure = "bad_locator" | "missing" | "spliced";
+
+export type FullTextPrediction = FullTextDecision & {
+  pmid: string;
+  pmcid: string;
+  /** 文档过长被截断时为 true；此时 not_reported 可能是没看到而不是没写。 */
+  truncated: boolean;
+  /** 本次是否启用了证据门（RQ2 的实验开关）。 */
+  evidenceGate: boolean;
+  evidenceVerified: boolean;
+  evidenceFailure?: EvidenceFailure;
+  failed?: boolean;
+  error?: string;
+};
+
+export type FullTextItemRecord = {
+  pmid: string;
+  goldLabel: "in" | "ex";
+  availability: "available" | "no_pmc" | "no_body" | "error";
+  pmcid?: string;
+  error?: string;
+  prediction?: FullTextPrediction;
+};
+
+export type FullTextStagePrediction = {
+  reviewId: string;
+  stage: "fulltext";
+  criteriaSource: CriteriaSource;
+  criteriaKeys: PicoKey[];
+  model: { provider: string; model: string };
+  evidenceGate: boolean;
+  startedAt: string;
+  finishedAt: string;
+  items: FullTextItemRecord[];
+};
+
 export type ScreeningStagePrediction = {
   reviewId: string;
   stage: "initial" | "final";

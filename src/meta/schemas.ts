@@ -116,6 +116,52 @@ export function validateScreeningDecision(value: unknown): value is ScreeningDec
   });
 }
 
+const FULLTEXT_VERDICT = enumOf("met", "not_met", "not_reported", "conflict");
+const FULLTEXT_DECISION = enumOf("include", "exclude", "unresolved");
+
+export const FULLTEXT_SCREENING_SCHEMA: Record<string, unknown> = described(
+  object({
+    criteriaJudgements: {
+      type: "array",
+      items: object({
+        key: enumOf(...PICO_KEYS),
+        verdict: FULLTEXT_VERDICT,
+        evidence: {
+          type: "array",
+          items: object({ locator: STRING, span: STRING }),
+        },
+        reason: STRING,
+      }),
+    },
+    decision: FULLTEXT_DECISION,
+    confidence: CONFIDENCE,
+    decisionReason: STRING,
+  }),
+  "一篇文献的全文筛选判断：逐元素结论、证据定位与总体纳入/排除/未决决定。",
+);
+
+const FULLTEXT_VERDICTS: readonly string[] = ["met", "not_met", "not_reported", "conflict"];
+const FULLTEXT_DECISIONS: readonly string[] = ["include", "exclude", "unresolved"];
+
+export function validateFullTextDecision(
+  value: unknown,
+): value is import("./types.js").FullTextDecision {
+  if (!isRecord(value)) return false;
+  if (!FULLTEXT_DECISIONS.includes(String(value.decision))) return false;
+  if (!CONFIDENCES.includes(String(value.confidence))) return false;
+  if (typeof value.decisionReason !== "string") return false;
+  if (!Array.isArray(value.criteriaJudgements)) return false;
+  return value.criteriaJudgements.every((item) => {
+    if (!isRecord(item)) return false;
+    if (!PICO_KEYS.includes(item.key as never)) return false;
+    if (!FULLTEXT_VERDICTS.includes(String(item.verdict))) return false;
+    if (typeof item.reason !== "string") return false;
+    if (!Array.isArray(item.evidence)) return false;
+    return item.evidence.every((ev) =>
+      isRecord(ev) && typeof ev.locator === "string" && typeof ev.span === "string");
+  });
+}
+
 export function isScreeningVerdict(value: string): value is ScreeningVerdict {
   return VERDICTS.includes(value);
 }
