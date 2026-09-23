@@ -239,3 +239,6 @@ CLAUDE.md
 predictions/
 # Scoped typecheck config for src/meta (local convenience)
 /tsconfig.meta.json
+
+# NCBI E-utilities key (secret, local only)
+/NCBI_API_KEY.txt
