@@ -19,8 +19,21 @@ const EFETCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi";
 export type FullTextAvailability =
   | { status: "available"; pmid: string; pmcid: string; doc: FullTextDocument }
   | { status: "no_pmc"; pmid: string }
-  | { status: "no_body"; pmid: string; pmcid: string }
+  /**
+   * 有 PMCID 但 XML 没有 <body>。两种来源：扫描件（pmc-prop-is-scanned-article=yes），
+   * 或出版社只存了 PDF 的记录（scanned=no，但 <self-uri> 指向一个 .pdf）。
+   * 两种都记下 pdfUri，将来接 PDF 解析时可以补上，现在不丢信息。
+   */
+  | { status: "no_body"; pmid: string; pmcid: string; scanned: boolean; pdfUri?: string }
   | { status: "error"; pmid: string; pmcid?: string; error: string };
+
+/**
+ * 缓存格式版本。结果形状变了就把这个数加一，旧缓存自动视为未命中，
+ * 不用手动删文件。
+ */
+const CACHE_VERSION = 2;
+
+type CachedAvailability = FullTextAvailability & { v: number };
 
 export type FullTextClientOptions = {
   apiKey?: string;
@@ -119,9 +132,12 @@ export function createFullTextClient(options: FullTextClientOptions = {}) {
     async get(pmid: string, knownPmcid?: string): Promise<FullTextAvailability> {
       const cacheFile = join(cacheDir, `${pmid}.json`);
       try {
-        const cached = JSON.parse(await readFile(cacheFile, "utf8")) as FullTextAvailability;
-        // 错误结果不缓存复用，下次重试。
-        if (cached.status !== "error") return cached;
+        const cached = JSON.parse(await readFile(cacheFile, "utf8")) as CachedAvailability;
+        // 版本不符或错误结果都不复用，下次重新取。
+        if (cached.v === CACHE_VERSION && cached.status !== "error") {
+          const { v: _v, ...result } = cached;
+          return result as FullTextAvailability;
+        }
       } catch {
         // 无缓存
       }
@@ -141,9 +157,20 @@ export function createFullTextClient(options: FullTextClientOptions = {}) {
             throw new Error(`efetch error: ${xml.replace(/<[^>]+>/g, " ").trim().slice(0, 120)}`);
           }
           const doc = parseJats(xml, { pmid, pmcid });
-          result = doc.hasBody
-            ? { status: "available", pmid, pmcid, doc }
-            : { status: "no_body", pmid, pmcid };
+          if (doc.hasBody) {
+            result = { status: "available", pmid, pmcid, doc };
+          } else {
+            const scanned = /pmc-prop-is-scanned-article[^<]*<[^>]*>\s*yes/i.test(xml)
+              || /<custom-meta[^>]*>\s*<meta-name>pmc-prop-is-scanned-article<\/meta-name>\s*<meta-value>yes/i.test(xml);
+            const pdfUri = xml.match(/<self-uri[^>]*xlink:href="([^"]+\.pdf)"/i)?.[1];
+            result = {
+              status: "no_body",
+              pmid,
+              pmcid,
+              scanned,
+              ...(pdfUri ? { pdfUri } : {}),
+            };
+          }
         }
       } catch (error) {
         result = {
@@ -156,7 +183,8 @@ export function createFullTextClient(options: FullTextClientOptions = {}) {
 
       if (result.status !== "error") {
         await mkdir(cacheDir, { recursive: true });
-        await writeFile(cacheFile, `${JSON.stringify(result)}\n`, "utf8");
+        const record: CachedAvailability = { v: CACHE_VERSION, ...result };
+        await writeFile(cacheFile, `${JSON.stringify(record)}\n`, "utf8");
       }
       return result;
     },

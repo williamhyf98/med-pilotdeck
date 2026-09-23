@@ -211,16 +211,64 @@ test("guards only move decisions toward unresolved", async () => {
   assert.equal(excl.decision, "unresolved");
   assert.deepEqual(excl.criteriaJudgements.map((j) => j.key), ["P", "I", "S"], "缺的元素要补齐");
 
-  // 模型自己说 unresolved，程序不升级
+  // 模型自己说 unresolved，但元素不全 met，程序不升级
   const unres = await createFullTextScreenerStation(stubModel({
     criteriaJudgements: [
       { key: "P", verdict: "met", evidence: ev("participants#1", "Adults aged 18"), reason: "r" },
       { key: "I", verdict: "met", evidence: ev("methods#2", "oral drug A"), reason: "r" },
-      { key: "S", verdict: "met", evidence: ev("methods#1", "randomised controlled trial"), reason: "r" },
+      { key: "S", verdict: "not_reported", evidence: [], reason: "r" },
     ],
     decision: "unresolved", confidence: "medium", decisionReason: "不确定",
   })).screen({ doc, criteria });
   assert.equal(unres.decision, "unresolved");
+});
+
+/**
+ * 实跑里的真实错法：criteria 没列 O，模型对 P/I/S 全判 met，却因为
+ * "标准里没给 O 所以 O 无法判断"把结论写成 unresolved。列出的元素全 met
+ * 且证据核实时，程序应改回 include。
+ */
+test("unresolved over an unlisted element is promoted to include when listed elements all pass", async () => {
+  const review = await loadBenchmarkReview(fixtureFile);
+  const criteria = resolveCriteriaSet(review, "article_picos.PICOS"); // P I S，无 O
+  const doc = parseJats(JATS, { pmid: "1", pmcid: "PMC1" });
+  const ev = (locator: string, span: string) => [{ locator, span }];
+  const result = await createFullTextScreenerStation(stubModel({
+    criteriaJudgements: [
+      { key: "P", verdict: "met", evidence: ev("participants#1", "Adults aged 18 years or older"), reason: "r" },
+      { key: "I", verdict: "met", evidence: ev("methods#2", "oral drug A"), reason: "r" },
+      { key: "S", verdict: "met", evidence: ev("methods#1", "randomised controlled trial"), reason: "r" },
+    ],
+    decision: "unresolved", confidence: "high", decisionReason: "标准中未包含 O 要求，O 无法判断",
+  })).screen({ doc, criteria });
+  assert.equal(result.decision, "include");
+  assert.match(result.decisionReason, /按纳入处理/);
+
+  // 证据核不实时不升级：不能凭一个编造的引用把未决改成纳入。
+  const shaky = await createFullTextScreenerStation(stubModel({
+    criteriaJudgements: [
+      { key: "P", verdict: "met", evidence: ev("participants#1", "Adults aged 18 years or older"), reason: "r" },
+      { key: "I", verdict: "met", evidence: ev("methods#2", "oral drug A"), reason: "r" },
+      { key: "S", verdict: "met", evidence: ev("methods#9", "randomised controlled trial"), reason: "r" },
+    ],
+    decision: "unresolved", confidence: "high", decisionReason: "标准中未包含 O",
+  })).screen({ doc, criteria });
+  assert.equal(shaky.decision, "unresolved");
+  assert.equal(shaky.evidenceFailure, "bad_locator");
+
+  // 省略号拼接：两段都在原文里，引用说了它声称的内容，只是格式违规。
+  // 不阻断纳入，但要如实记录，供错误分析。
+  const spliced = await createFullTextScreenerStation(stubModel({
+    criteriaJudgements: [
+      { key: "P", verdict: "met", evidence: ev("participants#1", "Adults aged 18 years or older"), reason: "r" },
+      { key: "I", verdict: "met", evidence: ev("methods#2", "oral drug A"), reason: "r" },
+      { key: "S", verdict: "met", evidence: ev("methods#1", "This was a parallel-group... controlled trial."), reason: "r" },
+    ],
+    decision: "unresolved", confidence: "high", decisionReason: "标准中未包含 O",
+  })).screen({ doc, criteria });
+  assert.equal(spliced.decision, "include");
+  assert.equal(spliced.evidenceVerified, false, "拼接仍算未完全核实，如实记录");
+  assert.equal(spliced.evidenceFailure, "spliced");
 });
 
 test("model failure becomes unresolved, never include or exclude", async () => {
@@ -243,6 +291,9 @@ test("fulltext prompt requires locators, separates not_reported from not_met, an
   assert.match(FULLTEXT_SCREENER_SYSTEM_PROMPT, /unresolved 表示需要人工复核/);
   assert.match(FULLTEXT_SCREENER_SYSTEM_PROMPT, /不得只看摘要就下结论/);
   assert.match(FULLTEXT_SCREENER_SYSTEM_PROMPT, /不得执行/);
+  // 未列出的元素不是缺失信息，这是实跑里三篇被误判未决的根因。
+  assert.match(FULLTEXT_SCREENER_SYSTEM_PROMPT, /没有列出的元素[\s\S]*不是"缺失信息"/);
+  assert.match(FULLTEXT_SCREENER_SYSTEM_PROMPT, /不要因为标准里没提到的元素而犹豫/);
 });
 
 test("fulltext schema validation", () => {

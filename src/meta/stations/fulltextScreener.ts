@@ -109,20 +109,29 @@ function alignJudgements(decision: FullTextDecision, criteria: CriteriaSet): Ful
 }
 
 /**
- * 程序兜底只往保守方向改，从不把 unresolved 升级成 include/exclude：
+ * 程序兜底。三条向保守方向改，一条向纳入方向改：
  *   - 判排除但没有任何 not_met → unresolved
  *   - 判纳入但有元素不是 met → unresolved
- *   - 开启证据门时：判排除，但支撑排除的 not_met 证据核不实 → unresolved
- * 最后一条就是 RQ2 里的"运行时证据校验"，用 evidenceGate 开关，方便实验对照。
+ *   - 开启证据门时：判排除，但支撑排除的引用不可用 → unresolved
+ *   - 判 unresolved，但列出的元素全部 met 且引用可用 → include
+ * 第四条对应实跑里的一个真实错法：标准没给 O，模型却因为"O 无法判断"把
+ * 一篇全部符合的文献标成未决。对齐后只剩列出的元素，它们全 met 就该纳入。
+ *
+ * "引用可用"的定义：定位器存在且片段能在那一段找到。省略号拼接（spliced）
+ * 的两段各自都在，引用说了它声称的内容，只是格式违规，所以不阻断决定，
+ * 但会原样记录在 evidenceFailure 里供错误分析。自造定位器（bad_locator）和
+ * 找不到的片段（missing）才是"引用不成立"，会阻断。
+ * 证据门用 evidenceGate 开关，方便实验对照（RQ2）。
  */
 function guardDecision(
   decision: FullTextDecision,
-  evidenceOk: boolean,
+  evidenceFailure: EvidenceFailure | "none",
   evidenceGate: boolean,
 ): FullTextDecision {
+  const evidenceUsable = evidenceFailure === "none" || evidenceFailure === "spliced";
   const verdicts = decision.criteriaJudgements.map((item) => item.verdict);
   const hasNotMet = verdicts.includes("not_met");
-  const allMet = verdicts.every((verdict) => verdict === "met");
+  const allMet = verdicts.length > 0 && verdicts.every((verdict) => verdict === "met");
   const demote = (why: string): FullTextDecision => ({
     ...decision,
     decision: "unresolved",
@@ -135,8 +144,16 @@ function guardDecision(
   if (decision.decision === "include" && !allMet) {
     return demote("有元素未满足或未报告，不能纳入，转人工复核");
   }
-  if (evidenceGate && decision.decision === "exclude" && !evidenceOk) {
+  if (evidenceGate && decision.decision === "exclude" && !evidenceUsable) {
     return demote("排除依据的引用无法在原文核实，转人工复核");
+  }
+  if (decision.decision === "unresolved" && allMet && evidenceUsable) {
+    return {
+      ...decision,
+      decision: "include",
+      decisionReason:
+        `${decision.decisionReason}（程序修正：标准列出的元素全部符合且证据核实，按纳入处理）`.trim(),
+    };
   }
   return decision;
 }
@@ -185,7 +202,7 @@ export function createFullTextScreenerStation(
         });
         const aligned = alignJudgements(raw, criteria);
         const evidence = checkEvidence(aligned, rendered);
-        const decision = guardDecision(aligned, evidence.verified, evidenceGate);
+        const decision = guardDecision(aligned, evidence.failure, evidenceGate);
         return {
           ...base,
           ...decision,

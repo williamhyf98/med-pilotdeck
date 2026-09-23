@@ -52,6 +52,10 @@ export const FULLTEXT_SCREENER_SYSTEM_PROMPT = `你是系统评价的全文筛�
 
 criteriaJudgements 必须覆盖 <criteria> 中给出的每一个元素，顺序一致，不得增删元素。
 
+<criteria> 里列出的元素就是本次评价需要判断的全部元素。没有列出的元素（例如未给出 C 或 O）
+是本次评价本来就不考察的，不是"缺失信息"，不要为它们输出判断，也不要因为它们没出现
+而把结论改成 unresolved。
+
 ## 逐元素判断规则
 
 对每个元素只回答四种结果之一：
@@ -84,8 +88,10 @@ span 必须是该定位器所指段落里真实存在的连续原文，不得改
 
 ## 总体判断规则
 
+只看 <criteria> 里列出的元素：
+
 1. 任何一个元素为 not_met，且该判断有可核实的证据，输出 decision=exclude。
-2. 全部元素为 met，输出 decision=include。
+2. 列出的元素全部为 met，输出 decision=include。不要因为标准里没提到的元素而犹豫。
 3. 其余情况一律输出 decision=unresolved，包括：有元素 not_reported、有元素 conflict、证据不足以确定。
    unresolved 表示需要人工复核，不是失败。全文阶段拿不准时不要猜，明确标出未决。
 
