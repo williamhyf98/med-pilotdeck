@@ -242,3 +242,6 @@ predictions/
 
 # NCBI E-utilities key (secret, local only)
 /NCBI_API_KEY.txt
+
+# local scratch scripts and downloaded pdfs
+/.scratch/
