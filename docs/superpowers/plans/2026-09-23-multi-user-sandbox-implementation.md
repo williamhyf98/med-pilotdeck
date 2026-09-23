@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: 使用 `superpowers:executing-plans` 在当前会话按批次执行。每项使用复选框记录实际结果，不派遣子代理。当前请求仅授权编写文档；用户随后明确要求开始实施时，从 Task 1 开始，不跳过合并、安全处理和临时环境验证。
 
+> **执行状态（2026-09-23 更新）：** 用户已明确要求开始实施。当前完成检查点 A（Task 1—3），详情见文末第 9 节；Task 4 起尚未执行。真实迁移、远程部署、GitHub push 和多人生产开放仍未授权。
+
 **Goal:** 复用同事多用户初版，在保留医学功能的前提下实现账号权限、用户内容隔离、独立 Agent 运行态、受控业务工具和生产执行沙箱。
 
 **Architecture:** 共享登录/管理服务；每个活跃用户独立 Gateway，由运行时池按需启动和回收；统一资源授权与业务能力服务；独立任务沙箱执行固定程序。模型只能选择业务能力并分析结果，不能任意访问本地目录、源码、命令和凭据。
@@ -323,14 +325,14 @@ type SecurityFixture = {
 **输入:** 当前 feat/multi-user 和同事 feat/capability-layer。
 **输出:** 可追溯合并状态，尚不启动应用。
 
-- [ ] 检查 `git status --short`、分支、HEAD；保护未跟踪计划和用户修改。工作区有重叠修改时停止并确认，不自动 stash。
-- [ ] 经实施授权保存文档检查点和本地备份引用；记录原 HEAD，备份引用不替代业务数据备份。
-- [ ] fetch 同事分支并重新运行 merge-tree；若不再是 6b70c51，先检查新增差异与冲突，不机械采用旧清单。
-- [ ] 使用明确版本执行 `git merge --no-ff --no-commit origin/feat/capability-layer`，不启动服务，不立即完成合并提交。
-- [ ] 解决 `config/deploy.env.example`：RADAR/DeepChest 与多用户配置都保留；不得从示例覆盖真实配置。
-- [ ] 解决 `memoryService.js`：保留 fsSync，采用用户记忆根，移除未使用 os；本步不声称后台调度已隔离完成。
-- [ ] 解决 `SidebarV2.tsx`：保留 HardDrive/LogOut，技能/记忆/存储在分隔线上方；用户信息和退出在下方，设置最底；使用四主题语义颜色。
-- [ ] 检查自动合并文件的医学引用、文件预览、技能中文名、转录和配置定位；随后立即执行 Task 2。
+- [x] 检查 `git status --short`、分支、HEAD；保护未跟踪计划和用户修改。工作区有重叠修改时停止并确认，不自动 stash。
+- [x] 经实施授权保存文档检查点和本地备份引用；记录原 HEAD，备份引用不替代业务数据备份。
+- [x] fetch 同事分支并重新运行 merge-tree；确认仍为 6b70c51，无新增差异。
+- [x] 使用明确版本执行 `git merge --no-ff --no-commit origin/feat/capability-layer`，不启动服务，不立即完成合并提交。
+- [x] 解决 `config/deploy.env.example`：RADAR/DeepChest 与多用户配置都保留；未从示例覆盖真实配置。
+- [x] 解决 `memoryService.js`：保留 fsSync，采用用户记忆根，移除未使用 os；后台调度留待 Task 13。
+- [x] 解决 `SidebarV2.tsx`：保留 HardDrive/LogOut，技能/记忆/存储在分隔线上方；用户信息和退出在下方，设置最底；使用四主题语义颜色。
+- [x] 检查自动合并文件的医学引用、文件预览、技能中文名、转录和配置定位；随后执行 Task 2。
 
 **检查:** `git diff --check`、`git diff --name-only --diff-filter=U`；后者应为空。若失败只报告冲突，不重置用户改动。
 
@@ -340,17 +342,17 @@ type SecurityFixture = {
 **新增测试:** `ui/server/services/userHomes.safety.spec.js`。
 **输出:** 启动/注册不移动数据，旧布局进入明确维护状态。
 
-- [ ] 创建含旧 projects/workspaces/memory 的临时根；测试启动和首次注册不执行 rename/rm、不产生迁移完成标记：
+- [x] 创建含旧 projects/workspaces/memory 的临时根；以真实文件保留、目标无私有文件、无完成标记验证启动和首次注册无迁移：
 
 ```js
-expect(migrateLegacySharedData).not.toHaveBeenCalled();
 expect(await fs.readFile(legacyCasePath, "utf8")).toBe(originalContent);
+await expect(fs.stat(legacyMigrationMarker)).rejects.toHaveProperty("code", "ENOENT");
 ```
 
-- [ ] 移除启动与注册中的自动迁移调用，不以“出错后继续”代替禁止。发现旧数据时给出“需管理员迁移”的状态，不让首个注册者自动取得旧数据。
-- [ ] 默认不复制全局私有技能；公共模板必须显式配置。禁 admin scopeUser/Header 代入，收到该参数返回明确拒绝。
-- [ ] 初始注册在临时环境使用一次性初始化令牌；没有凭据时不允许任何来访者抢占首个管理员。完整账号流程由 Task 4 补齐。
-- [ ] 执行 UI 定向测试与静态检查后完成合并检查点；记录已合入与尚未加固内容。
+- [x] 删除启动与注册自动迁移调用及不安全迁移实现。旧数据存在时多用户启动报 LEGACY_STORAGE_MIGRATION_REQUIRED，不监听；状态 API 提供只读检查结果。
+- [x] 默认不复制全局私有技能；仅显式 seedSkills=true 使用 shared/skills。禁 admin scopeUser/Header 代入，收到参数明确拒绝。
+- [x] 初始注册使用 PILOTDECK_SETUP_TOKEN；前端增加输入；缺配置返回 503，错误令牌返回 403；成功后关闭注册，并发只允许一个账号。完整账号流程由 Task 4 补齐。
+- [x] 执行 UI 定向测试与静态检查后保存合并检查点；覆盖清单记录已合入与尚未加固内容。
 
 **停止条件:** 如果无法证明启动不会迁移真实目录，不执行任何集成启动测试。
 
@@ -359,11 +361,11 @@ expect(await fs.readFile(legacyCasePath, "utf8")).toBe(originalContent);
 **新增:** `tests/security/fixtures.ts`、`tests/security/merge-baseline.spec.ts`、`docs/superpowers/plans/2026-09-23-capability-coverage.md`。
 **输出:** SecurityFixture；现有业务操作覆盖清单；检查点 A。
 
-- [ ] 创建 A/B 测试账号、两类项目、同名附件、历史会话和两种 slug；所有数据在 mkdtemp 根内，dispose 只删除该根。
-- [ ] 运行两账号登录/列项目/新会话/退出，确认实例与目录不同；不把正常流程成功当成越权验收。
-- [ ] 运行时工厂用假进程先验证可重复启动；记录跨用户请求、配置 GET、Shell、后台维护仍存在的缺口，不跳过失败。
-- [ ] 枚举 docx/pdf/pptx/spreadsheets/diagram-maker/frontend-slides 技能每个面向用户操作，记录“旧入口→新能力→测试→支持差异”。
-- [ ] 在隔离配置中执行根构建、UI typecheck/build，跑现有医学/预览/侧栏相关测试；区分原有失败与合并新增失败。
+- [x] 创建 A/B 测试账号、两类项目、同名附件、历史会话和两种 slug；所有数据在 mkdtemp 根内，dispose 只删除该根。
+- [x] 运行两账号登录/列项目/新项目/退出；新会话在真实 transcript 写入/读取层验证。未测试浏览器发起模型新回合，不把此基线视为端到端/越权验收。
+- [x] 运行时工厂用假进程验证复用与 A/B 分离；覆盖清单记录跨用户请求、配置 GET、Shell、后台维护仍存在的缺口。
+- [x] 枚举 docx/pdf/pptx/spreadsheets/diagram-maker/frontend-slides 技能的面向用户操作，记录“旧入口→新能力→目标测试→支持差异”。
+- [x] 根构建禁用配置引导写入，UI typecheck/build 通过；既有医学/预览/侧栏/桥接等定向回归通过，详见第 9 节。
 
 **检查点 A:** 仅说明合并与启动保护完成。不迁移真实数据、不部署 node12、不启用多人生产。向用户报告合并结果和下一批内容。
 
@@ -609,7 +611,7 @@ assert.equal(await exists(completedMarker), false); // 模拟部分迁移失败
 
 ## 7. 总验收与禁止跳过项
 
-- [ ] 同事代码合并记录明确，三个冲突正确解决，自动迁移已关闭。
+- [x] 同事代码合并记录明确，三个冲突正确解决，自动迁移已关闭。
 - [ ] 两账号正常使用成功，跨账号直接请求/订阅/工具调用失败。
 - [ ] Gateway owner 固定，缺身份不回退；启动/回收无孤儿进程或超配。
 - [ ] 角色与 Agent 能力独立，admin 聊天也不能任意访问服务器。
@@ -635,3 +637,52 @@ assert.equal(await exists(completedMarker), false); // 模拟部分迁移失败
 
 **执行起点：用户批准开始后，Task 1 合并同事代码 → Task 2 禁自动迁移 → Task 3 临时环境验证。**
 此文档创建时所有任务均未执行；文档完成不代表允许迁移、部署或开放多人访问。
+
+## 9. 检查点 A 实施记录（2026-09-23）
+
+### 版本与授权
+
+- 原基线：`feat/multi-user@56185c2`。
+- 文档保护提交：`efd208e`；备份引用：`backup/multi-user-before-capability-20260923`。
+- 合并来源：重新 fetch 确认为 `origin/feat/capability-layer@6b70c51`。
+- 合并结果由包含本记录的本地 merge commit 标识；`git log --merges -1 feat/multi-user` 可查看准确 ID。
+- 未使用其他 worktree：按批准计划在当前 feat/multi-user 实施；未派遣子代理。
+
+### 本批补充修正
+
+1. 原数据库模块会把安装目录旧 auth.db 自动复制到新 DATABASE_PATH，已删除此隐式复制。测试用合成旧库验证，不打开真实旧库。
+2. 删除“无管理员时自动提升第一个账号”，避免重启带来隐式提权。单机免登录模式在请求身份上保持管理访问，但不持久改变账号角色。
+3. 注册密码哈希移到事务外，在同步事务内复查首次注册；修复并发初始化导致嵌套事务错误。
+4. 新增前端初始化令牌输入及 API Header 传递；真实令牌未写入示例或代码。
+5. 旧布局门禁在多用户启动协调器中、数据库 schema 初始化之前执行；递归忽略空目录骨架，旧迁移标记不能掩盖残留数据。整套生产入口未实际启动。
+6. 初期 SecurityFixture 只提供真实临时存储、两账号作用域；不创建可伪装为安全完成的假 CapabilityService，Task 8 再接入正式服务。
+
+### 测试证据
+
+- 合并前路径/中文技能基线：2 文件、28 测试通过。
+- TDD 红灯：初始 9 项存储/注册/作用域保护失败，新增数据库复制及自动角色提升 2 项失败，前端初始化令牌字段与单机兼容分别复现失败；随后修复并通过。
+- UI 最终定向回归：19 文件、158 测试通过，无失败。
+  - 新增：userHomes.safety、db.safety、auth.bypass、multiUser.baseline、SetupForm。
+  - 既有：pilotPaths、skillRecommend、memoryService.scope/global、caseState、storage、officePreview、SidebarV2、DicomPreview、XmlDocumentPreview、PdfDocumentPreview、TraumaWorkspace、pilotdeck-bridge、pilotdeckConfig。
+- 核心定向回归：209 测试通过，无失败。命令：
+
+```bash
+node --test --test-force-exit --test-timeout 60000 \
+  dist/tests/security/*.spec.js \
+  dist/tests/pilot/workspace-paths.spec.js \
+  dist/tests/trauma/*.spec.js \
+  dist/tests/session/traumaSessionList.spec.js \
+  dist/tests/web/trauma-attachment-history.spec.js
+```
+
+- `PILOTDECK_SKIP_BOOTSTRAP=1 npm run build`：通过（明确不生成/修改操作者配置）。
+- `npm --prefix ui run typecheck`、`npm --prefix ui run build`：通过。
+- 构建仍有 Cornerstone codec fs/path 浏览器外置与大 chunk 警告；测试有 Node SQLite experimental 警告，不将其描述为零警告。
+- `git diff --check` 和 JS 语法检查通过；冲突暂存后无 unmerged entries。
+- 未运行全量 npm test、完整 UI 套件、真实模型/GPU或浏览器 E2E；均不在本批已验收范围。
+
+### 交接
+
+本批不迁移真实数据、不变更真实部署配置、不启动真实应用服务、不部署 node12、不 push。测试仅启动临时回环 HTTP 服务并在结束后关闭；只有 Git fetch 接触远程代码。
+
+下一批从 Task 4 开始：账号撤销及后台读权限 → 归属/路径 → Gateway 租约和身份 → 文件/预览/事件授权。详细功能覆盖与发布阻断见 `2026-09-23-capability-coverage.md`。本批完成不代表系统已经可以安全开放多人使用。

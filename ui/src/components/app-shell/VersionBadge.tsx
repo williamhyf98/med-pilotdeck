@@ -1,12 +1,15 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { GitCommit, RefreshCw, X, Check, AlertCircle } from 'lucide-react';
 import { useGitVersion } from '../../hooks/useGitVersion';
+import { useIsAdmin } from '../auth';
 import { cn } from '../../lib/utils.js';
 
 type UpdatePhase = 'idle' | 'updating' | 'success' | 'error';
 
 export function VersionBadge() {
   const { info, loading, triggerUpdate, triggerRestart, fetchVersion } = useGitVersion();
+  // Update/restart hit admin-only endpoints; keep the version display for everyone.
+  const isAdmin = useIsAdmin();
   const [showDialog, setShowDialog] = useState(false);
   const [phase, setPhase] = useState<UpdatePhase>('idle');
   const [logs, setLogs] = useState<string[]>([]);
@@ -217,7 +220,7 @@ export function VersionBadge() {
             </div>
 
             <div className="flex justify-end gap-2 border-t border-neutral-200 px-5 py-3 dark:border-neutral-700">
-              {phase === 'idle' && info.hasUpdate && (
+              {isAdmin && phase === 'idle' && info.hasUpdate && (
                 <button
                   type="button"
                   onClick={handleUpdate}

@@ -1,4 +1,5 @@
 import { IS_PLATFORM } from '../../../constants/config';
+import { getUserScopeId } from '../../../utils/api';
 import type { ShellIncomingMessage, ShellOutgoingMessage } from '../types/types';
 
 export function getShellWebSocketUrl(): string | null {
@@ -9,7 +10,9 @@ export function getShellWebSocketUrl(): string | null {
     return `${protocol}//${window.location.host}/shell`;
   }
 
-  return `${protocol}//${window.location.host}/shell?token=${encodeURIComponent(token)}`;
+  const scopeUserId = getUserScopeId();
+  const scope = scopeUserId ? `&scopeUser=${encodeURIComponent(scopeUserId)}` : '';
+  return `${protocol}//${window.location.host}/shell?token=${encodeURIComponent(token)}${scope}`;
 }
 
 export function parseShellMessage(payload: string): ShellIncomingMessage | null {

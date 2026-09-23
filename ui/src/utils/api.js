@@ -31,6 +31,31 @@ const appendAuthToken = (url) => {
   return `${url}${separator}token=${encodeURIComponent(token)}`;
 };
 
+/**
+ * Admin-only: id of the account whose data the UI is currently
+ * inspecting. Empty means "my own". The server ignores this for
+ * non-admins, so a tampered value buys nothing.
+ */
+export const USER_SCOPE_STORAGE_KEY = 'pilotdeck-user-scope';
+
+export const getUserScopeId = () => {
+  try {
+    const raw = localStorage.getItem(USER_SCOPE_STORAGE_KEY);
+    return raw && /^\d+$/.test(raw) ? raw : null;
+  } catch {
+    return null;
+  }
+};
+
+export const setUserScopeId = (userId) => {
+  try {
+    if (userId) localStorage.setItem(USER_SCOPE_STORAGE_KEY, String(userId));
+    else localStorage.removeItem(USER_SCOPE_STORAGE_KEY);
+  } catch {
+    // Private-mode storage failures just mean the switch doesn't stick.
+  }
+};
+
 // Utility function for authenticated API calls
 export const authenticatedFetch = (url, options = {}) => {
   const token = localStorage.getItem('auth-token');
@@ -48,6 +73,11 @@ export const authenticatedFetch = (url, options = {}) => {
 
   if (!IS_PLATFORM && token) {
     defaultHeaders['Authorization'] = `Bearer ${token}`;
+  }
+
+  const scopeUserId = getUserScopeId();
+  if (scopeUserId) {
+    defaultHeaders['X-PilotDeck-User-Scope'] = scopeUserId;
   }
 
   return fetch(url, {
@@ -162,9 +192,9 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     }),
-    register: (username, password) => fetch('/api/auth/register', {
+    register: (username, password, setupToken) => fetch('/api/auth/register', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-PilotDeck-Setup-Token': setupToken },
       body: JSON.stringify({ username, password }),
     }),
     user: () => authenticatedFetch('/api/auth/user'),

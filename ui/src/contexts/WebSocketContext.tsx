@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../components/auth/context/AuthContext';
 import { IS_PLATFORM } from '../constants/config';
+import { getUserScopeId } from '../utils/api';
 
 type WSSubscriber = (msg: any) => void;
 
@@ -39,7 +40,11 @@ export const useWebSocket = () => {
 const buildWebSocketUrl = (token: string | null) => {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   if (IS_PLATFORM || !token) return `${protocol}//${window.location.host}/ws`;
-  return `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}`;
+  // A handshake can't carry headers, so the admin data-scope rides as a
+  // query param here instead of `X-PilotDeck-User-Scope`.
+  const scopeUserId = getUserScopeId();
+  const scope = scopeUserId ? `&scopeUser=${encodeURIComponent(scopeUserId)}` : '';
+  return `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}${scope}`;
 };
 
 const INITIAL_RECONNECT_MS = 1000;

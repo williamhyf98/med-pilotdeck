@@ -16,6 +16,7 @@ import { homedir } from 'node:os';
 import { resolve, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { getUserScope } from './userScope.js';
 
 export const DEFAULT_PILOT_HOME = '~/.pilotdeck';
 export const GENERAL_WORKSPACE_ID = 'general';
@@ -120,15 +121,34 @@ function normalizeHomePath(p) {
 }
 
 /**
+ * The installation-wide home, ignoring any per-user scope. Holds the
+ * things every user shares: `pilotdeck.yaml`, `plugins/`, `auth.db`,
+ * the skill template library, and `users/<id>/` itself.
+ *
+ * @param {Record<string, string | undefined>} [env] Environment to read.
+ * @returns {string} Absolute path.
+ */
+export function resolveGlobalPilotHome(env = process.env) {
+    return normalizeHomePath(env.PILOT_HOME ?? DEFAULT_PILOT_HOME);
+}
+
+/**
  * Resolve the active PilotDeck home directory. Honors `PILOT_HOME` so
  * tests / multi-instance setups can isolate state. Defaults to
  * `~/.pilotdeck`.
+ *
+ * When a request runs inside a user scope (see `utils/userScope.js`)
+ * this returns that user's private home instead, which is what makes
+ * every `resolve*` helper below — projects, workspaces, memory,
+ * skills, archives — partition per user without any call-site change.
  *
  * @param {Record<string, string | undefined>} [env] Environment to read.
  * @returns {string} Absolute path.
  */
 export function resolvePilotHome(env = process.env) {
-    return normalizeHomePath(env.PILOT_HOME ?? DEFAULT_PILOT_HOME);
+    const scoped = getUserScope()?.pilotHome;
+    if (scoped) return scoped;
+    return resolveGlobalPilotHome(env);
 }
 
 /**

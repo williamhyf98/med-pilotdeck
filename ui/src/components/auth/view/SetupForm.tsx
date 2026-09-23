@@ -7,12 +7,14 @@ import AuthInputField from './AuthInputField';
 import AuthScreenLayout from './AuthScreenLayout';
 
 type SetupFormState = {
+  setupToken: string;
   username: string;
   password: string;
   confirmPassword: string;
 };
 
 const initialState: SetupFormState = {
+  setupToken: '',
   username: '',
   password: '',
   confirmPassword: '',
@@ -24,6 +26,7 @@ const initialState: SetupFormState = {
  *   form is valid.
  */
 function validateSetupForm(formState: SetupFormState): string | null {
+  if (!formState.setupToken) return '请输入部署管理员提供的初始化令牌。';
   if (!formState.username.trim() || !formState.password || !formState.confirmPassword) {
     return 'Please fill in all fields.';
   }
@@ -72,7 +75,7 @@ export default function SetupForm() {
       }
 
       setIsSubmitting(true);
-      const result = await register(formState.username.trim(), formState.password);
+      const result = await register(formState.username.trim(), formState.password, formState.setupToken);
       if (!result.success) {
         setErrorMessage(result.error);
       }
@@ -84,8 +87,8 @@ export default function SetupForm() {
   return (
     <AuthScreenLayout
       title="Welcome to MedPD"
-      description="Set up your account to get started"
-      footerText="This is a single-user system. Only one account can be created."
+      description="使用初始化令牌创建管理员账号"
+      footerText="初始化仅允许一次。其他账号由管理员创建；旧数据不会自动导入。"
       logo={
         <div className="flex items-center justify-center gap-2">
           <img
@@ -98,6 +101,17 @@ export default function SetupForm() {
       }
     >
       <form onSubmit={handleSubmit} className="space-y-4">
+        <AuthInputField
+          id="setupToken"
+          name="setupToken"
+          label="初始化令牌"
+          value={formState.setupToken}
+          onChange={(value) => updateField('setupToken', value)}
+          placeholder="由部署管理员提供"
+          isDisabled={isSubmitting}
+          type="password"
+          autoComplete="off"
+        />
         <AuthInputField
           id="username"
           name="username"

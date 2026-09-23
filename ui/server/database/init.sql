@@ -1,7 +1,8 @@
 -- Initialize authentication database
 PRAGMA foreign_keys = ON;
 
--- Users table (single user system)
+-- Users table (multi-user: role = 'admin' | 'user'; is_system marks
+-- auto-provisioned bypass-mode accounts that never appear in user management)
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
@@ -11,7 +12,9 @@ CREATE TABLE IF NOT EXISTS users (
     is_active BOOLEAN DEFAULT 1,
     git_name TEXT,
     git_email TEXT,
-    has_completed_onboarding BOOLEAN DEFAULT 0
+    has_completed_onboarding BOOLEAN DEFAULT 0,
+    role TEXT NOT NULL DEFAULT 'user',
+    is_system BOOLEAN DEFAULT 0
 );
 
 -- Indexes for performance

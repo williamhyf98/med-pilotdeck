@@ -8,6 +8,7 @@ export {
   createCollisionResistantProjectId,
   resolveProjectStorageId,
   getPilotConfigFilePath,
+  resolveActiveConfigFilePath,
   getPilotExtensionPaths,
   getPilotProjectConfigFilePath,
   getPilotProjectChatDir,

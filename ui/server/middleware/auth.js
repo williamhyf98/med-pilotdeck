@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { userDb, appConfigDb } from '../database/db.js';
 import { IS_PLATFORM, DISABLE_LOCAL_AUTH } from '../constants/config.js';
+import { withUserScope } from './userScope.js';
 
 // Use env var if set, otherwise auto-generate a unique secret per installation
 const JWT_SECRET = process.env.JWT_SECRET || appConfigDb.getOrCreateJwtSecret();
@@ -48,7 +49,9 @@ const authenticateToken = async (req, res, next) => {
       if (!user) {
         return res.status(500).json({ error: 'No user found in database (restart server after DB init)' });
       }
-      req.user = user;
+      // Explicit single-operator mode retains its original management
+      // access, but never persists an admin promotion into the account DB.
+      req.user = { ...user, role: 'admin' };
       return next();
     } catch (error) {
       console.error('Auth bypass mode error:', error);
@@ -94,11 +97,31 @@ const authenticateToken = async (req, res, next) => {
     }
 
     req.user = user;
-    next();
+    // Every data route funnels through here, so binding the per-user
+    // data scope at this one point means no route can accidentally be
+    // left reading the shared home.
+    return withUserScope(req, res, next);
   } catch (error) {
     console.error('Token verification error:', error);
     return res.status(403).json({ error: 'Invalid token' });
   }
+};
+
+// Role gate — must run after authenticateToken so req.user is populated.
+const requireAdmin = (req, res, next) => {
+  if (req.user?.role === 'admin') {
+    return next();
+  }
+  return res.status(403).json({ error: 'Admin privileges required', code: 'ADMIN_REQUIRED' });
+};
+
+// Read-only passthrough variant: safe methods stay open to every
+// authenticated user, mutating methods require admin.
+const requireAdminForWrites = (req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
+    return next();
+  }
+  return requireAdmin(req, res, next);
 };
 
 // Generate JWT token
@@ -120,7 +143,7 @@ const authenticateWebSocket = (token) => {
     try {
       const user = userDb.getFirstUser();
       if (user) {
-        return { id: user.id, userId: user.id, username: user.username };
+        return { id: user.id, userId: user.id, username: user.username, role: 'admin' };
       }
       return null;
     } catch (error) {
@@ -141,7 +164,7 @@ const authenticateWebSocket = (token) => {
     if (!user) {
       return null;
     }
-    return { userId: user.id, username: user.username };
+    return { userId: user.id, username: user.username, role: user.role };
   } catch (error) {
     console.error('WebSocket token verification error:', error);
     return null;
@@ -151,6 +174,8 @@ const authenticateWebSocket = (token) => {
 export {
   validateApiKey,
   authenticateToken,
+  requireAdmin,
+  requireAdminForWrites,
   generateToken,
   authenticateWebSocket,
   JWT_SECRET

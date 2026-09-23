@@ -24,6 +24,9 @@ import { parseGatewayConfig } from '../../../src/pilot/config/parseGatewayConfig
 // schemas. UI server just round-trips them.
 
 const CONFIG_VERSION = 1;
+// Deliberately the installation-wide home, never a per-user one:
+// models, MCP servers and gateway settings are admin-owned and shared
+// by every account. Do not route this through `resolvePilotHome()`.
 const PILOT_HOME_DIR = process.env.PILOT_HOME || path.join(os.homedir(), '.pilotdeck');
 const DEFAULT_CONFIG_PATH = path.join(PILOT_HOME_DIR, 'pilotdeck.yaml');
 const MASK = '********';

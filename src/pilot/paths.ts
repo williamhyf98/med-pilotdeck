@@ -208,6 +208,24 @@ export function getPilotConfigFilePath(pilotHome: string): string {
   return resolve(pilotHome, PILOT_CONFIG_FILE_NAME);
 }
 
+/**
+ * The config file this process should actually read.
+ *
+ * Normally `$PILOT_HOME/pilotdeck.yaml`. Under multi-user isolation the
+ * Web bridge gives each user their own `PILOT_HOME` but points them all
+ * back at one `PILOTDECK_CONFIG_PATH`, because models, MCP servers and
+ * router settings are administered once for the whole deployment —
+ * copying them per user would fork admin config N ways.
+ */
+export function resolveActiveConfigFilePath(
+  pilotHome: string,
+  env: PilotPathEnv = process.env,
+): string {
+  const override = env.PILOTDECK_CONFIG_PATH?.trim();
+  if (override) return resolve(override);
+  return getPilotConfigFilePath(pilotHome);
+}
+
 export function getPilotProjectConfigFilePath(projectRoot: string): string {
   return resolve(projectRoot, PILOT_PROJECT_DIR_NAME, PILOT_CONFIG_FILE_NAME);
 }

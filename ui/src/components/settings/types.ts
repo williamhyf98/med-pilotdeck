@@ -13,6 +13,7 @@ export type SettingsMenuKey =
   | 'mcpServers'
   | 'officePreview'
   | 'privacy'
+  | 'users'
   | 'advanced'
   | 'about';
 

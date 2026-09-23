@@ -16,6 +16,7 @@ import {
   resolveBashExecutable,
   resolveRestartCommand,
 } from '../services/updateRuntime.js';
+import { requireAdmin } from '../middleware/auth.js';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -231,7 +232,7 @@ router.get('/desktop/releases', async (req, res) => {
  * POST /api/update/desktop/download
  * Start downloading the selected desktop installer asset.
  */
-router.post('/desktop/download', async (req, res) => {
+router.post('/desktop/download', requireAdmin, async (req, res) => {
   try {
     const download = await startDesktopUpdateDownload({
       force: req.body?.force === true,
@@ -261,7 +262,7 @@ router.get('/desktop/download/status', (_req, res) => {
  * POST /api/update/desktop/download/cancel
  * Cancel an in-flight desktop installer download.
  */
-router.post('/desktop/download/cancel', (_req, res) => {
+router.post('/desktop/download/cancel', requireAdmin, (_req, res) => {
   res.json(cancelDesktopUpdateDownload());
 });
 
@@ -269,7 +270,7 @@ router.post('/desktop/download/cancel', (_req, res) => {
  * POST /api/update/desktop/install
  * Launch the downloaded installer through the OS shell.
  */
-router.post('/desktop/install', (req, res) => {
+router.post('/desktop/install', requireAdmin, (req, res) => {
   try {
     const result = launchDownloadedDesktopUpdate({ filePath: req.body?.filePath });
     res.json({ success: true, ...result });
@@ -286,7 +287,7 @@ router.post('/desktop/install', (req, res) => {
  * Pull latest code, rebuild, and prepare for restart.
  * Streams progress via newline-delimited JSON.
  */
-router.post('/apply', async (req, res) => {
+router.post('/apply', requireAdmin, async (req, res) => {
   if (updateInProgress) {
     return res.status(409).json({
       error: 'Update already in progress',
@@ -362,7 +363,7 @@ router.post('/apply', async (req, res) => {
  * Restart PilotDeck by spawning a fresh process, then exiting.
  * Works in both Docker (process manager respawns) and local dev (self-respawn).
  */
-router.post('/restart', async (req, res) => {
+router.post('/restart', requireAdmin, async (req, res) => {
   res.json({
     message: 'Restart initiated.',
     status: 'restarting',

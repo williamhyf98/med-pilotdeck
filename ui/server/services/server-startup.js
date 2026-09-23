@@ -1,7 +1,10 @@
+import { assertUserStorageReady } from './userHomes.js';
+
 export async function runServerStartupBeforeListen({
   initializeDatabaseFn,
   ensureLocalUserWhenAuthDisabledFn,
-  configureWebPushFn
+  configureWebPushFn,
+  multiUser = false,
 }) {
   if (typeof initializeDatabaseFn !== 'function') {
     throw new TypeError('initializeDatabaseFn is required');
@@ -13,6 +16,7 @@ export async function runServerStartupBeforeListen({
     throw new TypeError('configureWebPushFn is required');
   }
 
+  if (multiUser) await assertUserStorageReady();
   await initializeDatabaseFn();
   await ensureLocalUserWhenAuthDisabledFn();
   configureWebPushFn();

@@ -3,6 +3,7 @@ import { Check, Loader2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { authenticatedFetch } from "../../../../utils/api";
 import { cn } from "../../../../lib/utils";
+import { useIsAdmin } from "../../../auth";
 import type { DesktopVersionCheckResult } from "../../Settings";
 import { SettingsCard } from "../../shared/view";
 import {
@@ -46,6 +47,9 @@ export default function AboutSections({
   checkingVersion,
 }: AboutSectionsProps) {
   const { t } = useTranslation("settings");
+  // Regular users can see the version and update status, but applying
+  // updates / restarting the server is admin-only (matches server gating).
+  const isAdmin = useIsAdmin();
   const [downloading, setDownloading] = useState(false);
   const [webUpdating, setWebUpdating] = useState(false);
   const [installing, setInstalling] = useState(false);
@@ -158,14 +162,15 @@ export default function AboutSections({
   };
 
   const showDownloadButton =
-    isDesktop && status === "updateAvailable" && localUpdateResult !== "downloaded";
-  const showRestartInstallButton = isDesktop && localUpdateResult === "downloaded";
+    isAdmin && isDesktop && status === "updateAvailable" && localUpdateResult !== "downloaded";
+  const showRestartInstallButton = isAdmin && isDesktop && localUpdateResult === "downloaded";
   const showWebUpdateButton =
-    !isDesktop
+    isAdmin
+    && !isDesktop
     && versionInfo.hasUpdate
     && localUpdateResult !== "webUpdated"
     && localUpdateResult !== "webUpToDate";
-  const showWebRestartButton = !isDesktop && localUpdateResult === "webUpdated";
+  const showWebRestartButton = isAdmin && !isDesktop && localUpdateResult === "webUpdated";
   const statusBadgeClass = cn(
     "inline-flex items-center rounded-md border px-2 py-0.5 text-sm font-medium leading-5",
     status === "updateAvailable"

@@ -127,6 +127,7 @@ import projectsRoutes, { WORKSPACES_ROOT, validateWorkspacePath } from './routes
 import userRoutes from './routes/user.js';
 import pluginsRoutes from './routes/plugins.js';
 import messagesRoutes from './routes/messages.js';
+import adminUsersRoutes from './routes/adminUsers.js';
 import { closeMemoryServices, startMemoryScheduler, stopMemoryScheduler } from './services/memoryService.js';
 import { createNormalizedMessage } from './pilotdeck-message.js';
 import { startEnabledPluginServers, stopAllPlugins, getPluginPort } from './utils/plugin-process-manager.js';
@@ -134,7 +135,10 @@ import { initializeDatabase, sessionNamesDb, applyCustomSessionNames, userDb } f
 import { configureWebPush } from './services/vapid-keys.js';
 
 import { runServerStartupBeforeListen, startServerAfterStartup } from './services/server-startup.js';
-import { validateApiKey, authenticateToken, authenticateWebSocket } from './middleware/auth.js';
+import { validateApiKey, authenticateToken, authenticateWebSocket, requireAdmin, requireAdminForWrites } from './middleware/auth.js';
+import { buildUserScopeFor, isolationEnabled } from './middleware/userScope.js';
+import { runWithUserScope, bindUserScope } from './utils/userScope.js';
+import { shutdownGatewayPool } from './services/gatewayPool.js';
 import { DISABLE_LOCAL_AUTH, IS_PLATFORM } from './constants/config.js';
 import { getConnectableHost } from '../shared/networkHosts.js';
 import { contentDispositionAttachment } from './utils/downloadHeaders.js';
@@ -517,8 +521,8 @@ app.use('/api/projects', authenticateToken, projectsRoutes);
 // Git API Routes (protected)
 app.use('/api/git', authenticateToken, gitRoutes);
 
-// MCP API Routes (protected)
-app.use('/api/mcp', authenticateToken, mcpRoutes);
+// MCP API Routes (protected; config writes are admin-only)
+app.use('/api/mcp', authenticateToken, requireAdminForWrites, mcpRoutes);
 
 // TaskMaster API Routes (protected)
 app.use('/api/taskmaster', authenticateToken, taskmasterRoutes);
@@ -543,11 +547,12 @@ app.use('/api/storage', authenticateToken, storageRoutes);
 // Settings API Routes (protected)
 app.use('/api/settings', authenticateToken, settingsRoutes);
 
-// PilotDeck unified YAML config routes (protected)
-app.use('/api/config', authenticateToken, configRoutes);
+// PilotDeck unified YAML config routes (protected; reads stay open for chat
+// UI needs — provider/model display, office-preview status — writes are admin-only)
+app.use('/api/config', authenticateToken, requireAdminForWrites, configRoutes);
 
-// Gateway IM channel setup routes (protected)
-app.use('/api/gateway', authenticateToken, gatewayRoutes);
+// Gateway IM channel setup routes (protected; writes are admin-only)
+app.use('/api/gateway', authenticateToken, requireAdminForWrites, gatewayRoutes);
 
 // User API Routes (protected)
 app.use('/api/user', authenticateToken, userRoutes);
@@ -557,6 +562,9 @@ app.use('/api/plugins', authenticateToken, pluginsRoutes);
 
 // Unified session messages route (protected) — PilotDeck-only.
 app.use('/api/sessions', authenticateToken, messagesRoutes);
+
+// Admin-only user management (create accounts, toggle role/active, reset passwords)
+app.use('/api/admin/users', authenticateToken, requireAdmin, adminUsersRoutes);
 
 // Agent API Routes (uses API key authentication)
 app.use('/api/agent', agentRoutes);
@@ -2591,16 +2599,33 @@ wss.on('connection', (ws, request) => {
     const urlObj = new URL(url, 'http://localhost');
     const pathname = urlObj.pathname;
 
-    if (pathname === '/shell') {
-        handleShellConnection(ws);
-    } else if (pathname === '/ws') {
-        handleChatConnection(ws, request);
-    } else if (pathname.startsWith('/plugin-ws/')) {
-        handlePluginWsProxy(ws, pathname);
-    } else {
-        console.log('[WARN] Unknown WebSocket path:', pathname);
-        ws.close();
-    }
+    // The upgrade handshake already authenticated the user onto
+    // `request.user`. Resolve their private home before dispatching so
+    // the handlers below — and every message they later receive —
+    // read and write inside it.
+    void (async () => {
+        let scope = null;
+        try {
+            scope = await buildUserScopeFor(request.user, urlObj.searchParams.get('scopeUser'));
+        } catch (error) {
+            console.error('[user-scope] WebSocket scope setup failed:', error);
+            ws.close(1011, 'workspace_unavailable');
+            return;
+        }
+
+        runWithUserScope(scope, () => {
+            if (pathname === '/shell') {
+                handleShellConnection(ws);
+            } else if (pathname === '/ws') {
+                handleChatConnection(ws, request);
+            } else if (pathname.startsWith('/plugin-ws/')) {
+                handlePluginWsProxy(ws, pathname);
+            } else {
+                console.log('[WARN] Unknown WebSocket path:', pathname);
+                ws.close();
+            }
+        });
+    })();
 });
 
 /**
@@ -2666,7 +2691,10 @@ function handleChatConnection(ws, request) {
         send: (data) => broadcastChatFrame(data, ws, userId),
     };
 
-    ws.on('message', async (message) => {
+    // `bindUserScope` re-enters the scope captured at connection time:
+    // socket events fire from the event loop, so they would otherwise
+    // land outside it and resolve paths against the shared home.
+    ws.on('message', bindUserScope(async (message) => {
         try {
             const data = JSON.parse(message);
 
@@ -2853,7 +2881,7 @@ function handleChatConnection(ws, request) {
                 error: error.message
             });
         }
-    });
+    }));
 
     const cleanup = () => {
         if (cleanedUp) return;
@@ -2881,7 +2909,7 @@ function handleShellConnection(ws) {
     let urlDetectionBuffer = '';
     const announcedAuthUrls = new Set();
 
-    ws.on('message', async (message) => {
+    ws.on('message', bindUserScope(async (message) => {
         try {
             const data = JSON.parse(message);
             console.log('📨 Shell message received:', data.type);
@@ -3215,7 +3243,7 @@ function handleShellConnection(ws) {
                 }));
             }
         }
-    });
+    }));
 
     ws.on('close', () => {
         console.log('🔌 Shell client disconnected');
@@ -4023,7 +4051,9 @@ async function ensureLocalUserWhenAuthDisabled() {
         return;
     }
     const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
-    userDb.createUser('local', passwordHash);
+    // System account: full admin while auth is bypassed, hidden from user
+    // management and rejected at interactive login (is_system = 1).
+    userDb.createUser('local', passwordHash, 'admin', 1);
     console.log(`${c.info('[INFO]')} Web UI login is disabled (default). Using built-in user. Set PILOTDECK_DISABLE_LOCAL_AUTH=0 to require username/password.`);
 }
 
@@ -4035,7 +4065,8 @@ async function startServer() {
                 await runServerStartupBeforeListen({
                     initializeDatabaseFn: initializeDatabase,
                     ensureLocalUserWhenAuthDisabledFn: ensureLocalUserWhenAuthDisabled,
-                    configureWebPushFn: configureWebPush
+                    configureWebPushFn: configureWebPush,
+                    multiUser: isolationEnabled(),
                 });
             },
             listenFn: async () => {
@@ -4134,6 +4165,9 @@ async function startServer() {
                     } catch { /* Chrome may not have been started */ }
                     // PilotDeck cron is owned by `pilotdeck server` and shuts
                     // down with it; ui/server never spawns its own daemon.
+                    // Per-user gateways, however, ARE our children — stop
+                    // them or they outlive the bridge and hold their ports.
+                    shutdownGatewayPool();
                 } finally {
                     process.exit(0);
                 }

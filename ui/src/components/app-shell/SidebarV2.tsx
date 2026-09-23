@@ -17,6 +17,7 @@ import {
   Folder,
   FolderOpen,
   HardDrive,
+  LogOut,
   MessageSquarePlus,
   PanelLeftClose,
   Pencil,
@@ -25,10 +26,12 @@ import {
   Settings as SettingsIcon,
   Sparkles,
   Trash2,
+  UserRound,
 } from 'lucide-react';
 import type { TFunction } from 'i18next';
 import type { AppTab, Project, ProjectSession, ProjectType } from '../../types/app';
 import { cn } from '../../lib/utils.js';
+import { useOptionalAuth } from '../auth';
 import { isImeEnterEvent } from '../../utils/ime';
 import { readProjectSortPreference } from '../../utils/projectSortPreference';
 import {
@@ -312,6 +315,8 @@ export default function SidebarV2({
 }: SidebarV2Props) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  // Null outside AuthProvider (unit tests render the sidebar standalone).
+  const auth = useOptionalAuth();
   useCustomNamesVersion();
   const safeProjects = Array.isArray(projects) ? projects : [];
 
@@ -1156,6 +1161,28 @@ export default function SidebarV2({
       </div>
 
       <div className="border-t border-border px-2 pb-2 pt-2">
+        {auth?.token && auth.user ? (
+          <div className="mb-1 flex items-center gap-2 rounded-lg px-3 py-1.5">
+            <UserRound className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
+            <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
+              {auth.user.username}
+            </span>
+            <span className="shrink-0 rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+              {auth.user.role === 'admin'
+                ? t('sidebar:user.roleAdmin', { defaultValue: 'Admin' })
+                : t('sidebar:user.roleUser', { defaultValue: 'Member' })}
+            </span>
+            <button
+              type="button"
+              onClick={() => auth.logout()}
+              aria-label={t('sidebar:user.logout', { defaultValue: 'Log out' }) as string}
+              title={t('sidebar:user.logout', { defaultValue: 'Log out' }) as string}
+              className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            >
+              <LogOut className="h-3.5 w-3.5" strokeWidth={1.75} />
+            </button>
+          </div>
+        ) : null}
         <button
           type="button"
           onClick={onShowSettings}

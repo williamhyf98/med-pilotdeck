@@ -1,8 +1,10 @@
 import express from 'express';
 import bcrypt from 'bcrypt';
+import { timingSafeEqual } from 'node:crypto';
 import { userDb, db } from '../database/db.js';
 import { generateToken, authenticateToken } from '../middleware/auth.js';
 import { DISABLE_LOCAL_AUTH } from '../constants/config.js';
+import { getUserStorageStatus } from '../services/userHomes.js';
 
 const router = express.Router();
 
@@ -16,9 +18,13 @@ router.get('/status', async (req, res) => {
         authDisabled: true,
       });
     }
-    const hasUsers = await userDb.hasUsers();
-    res.json({ 
-      needsSetup: !hasUsers,
+    const hasRealUsers = userDb.hasRealUsers();
+    res.json({
+      // System accounts (auto-provisioned in bypass mode with a random
+      // password) must not block first-time setup after auth is enabled.
+      needsSetup: !hasRealUsers,
+      setupTokenRequired: !hasRealUsers,
+      storage: await getUserStorageStatus(),
       isAuthenticated: false // Will be overridden by frontend if token exists
     });
   } catch (error) {
@@ -33,10 +39,23 @@ router.post('/register', async (req, res) => {
     if (DISABLE_LOCAL_AUTH) {
       return res.status(403).json({ error: 'Registration is disabled (PILOTDECK_DISABLE_LOCAL_AUTH)' });
     }
+    if (userDb.hasRealUsers()) {
+      return res.status(403).json({ error: 'Registration is closed. Ask an administrator to create your account.' });
+    }
+    const expectedToken = process.env.PILOTDECK_SETUP_TOKEN;
+    if (!expectedToken) {
+      return res.status(503).json({ error: '请由部署管理员配置初始化令牌后再创建账号。', code: 'SETUP_NOT_CONFIGURED' });
+    }
+    const suppliedToken = req.get('X-PilotDeck-Setup-Token') || '';
+    const expectedBytes = Buffer.from(expectedToken);
+    const suppliedBytes = Buffer.from(suppliedToken);
+    if (expectedBytes.length !== suppliedBytes.length || !timingSafeEqual(expectedBytes, suppliedBytes)) {
+      return res.status(403).json({ error: '初始化令牌无效。', code: 'SETUP_TOKEN_REQUIRED' });
+    }
     const { username, password } = req.body;
     
     // Validate input
-    if (!username || !password) {
+    if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
       return res.status(400).json({ error: 'Username and password are required' });
     }
     
@@ -44,26 +63,26 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Username must be at least 3 characters, password at least 6 characters' });
     }
     
-    // Use a transaction to prevent race conditions
+    // Hash outside the transaction; recheck setup inside the synchronous
+    // transaction so simultaneous setup requests cannot create two admins.
+    const passwordHash = await bcrypt.hash(password, 12);
     db.prepare('BEGIN').run();
     try {
-      // Check if users already exist (only allow one user)
-      const hasUsers = userDb.hasUsers();
-      if (hasUsers) {
+      // Open registration only bootstraps the very first real account, which
+      // becomes the administrator. Everyone else is created by an admin via
+      // /api/admin/users.
+      const hasRealUsers = userDb.hasRealUsers();
+      if (hasRealUsers) {
         db.prepare('ROLLBACK').run();
-        return res.status(403).json({ error: 'User already exists. This is a single-user system.' });
+        return res.status(403).json({ error: 'Registration is closed. Ask an administrator to create your account.' });
       }
-      
-      // Hash password
-      const saltRounds = 12;
-      const passwordHash = await bcrypt.hash(password, saltRounds);
-      
-      // Create user
-      const user = userDb.createUser(username, passwordHash);
-      
+
+      // Create user (first real user = admin)
+      const user = userDb.createUser(username, passwordHash, 'admin');
+
       // Generate token
       const token = generateToken(user);
-      
+
       db.prepare('COMMIT').run();
 
       // Update last login (non-fatal, outside transaction)
@@ -71,11 +90,11 @@ router.post('/register', async (req, res) => {
 
       res.json({
         success: true,
-        user: { id: user.id, username: user.username },
+        user: { id: user.id, username: user.username, role: user.role },
         token
       });
     } catch (error) {
-      db.prepare('ROLLBACK').run();
+      if (db.inTransaction) db.prepare('ROLLBACK').run();
       throw error;
     }
     
@@ -102,27 +121,28 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Username and password are required' });
     }
     
-    // Get user from database
+    // Get user from database (system accounts have random passwords and are
+    // not meant for interactive login)
     const user = userDb.getUserByUsername(username);
-    if (!user) {
+    if (!user || user.is_system) {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
-    
+
     // Verify password
     const isValidPassword = await bcrypt.compare(password, user.password_hash);
     if (!isValidPassword) {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
-    
+
     // Generate token
     const token = generateToken(user);
-    
+
     // Update last login
     userDb.updateLastLogin(user.id);
-    
+
     res.json({
       success: true,
-      user: { id: user.id, username: user.username },
+      user: { id: user.id, username: user.username, role: user.role },
       token
     });
     

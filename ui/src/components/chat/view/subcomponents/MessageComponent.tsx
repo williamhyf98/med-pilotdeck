@@ -20,6 +20,7 @@ import {
 } from '../../../../types/contentReference';
 import { formatUsageLimitText } from '../../utils/chatFormatting';
 import { getPilotDeckPermissionSuggestion } from '../../utils/chatPermissions';
+import { useIsAdmin } from '../../../auth';
 import type { Project } from '../../../../types/app';
 import { ToolRenderer, shouldHideToolResult } from '../../tools';
 import { getToolDisplayName } from '../../tools/configs/toolConfigs';
@@ -150,6 +151,9 @@ function attachmentToDocumentReference(attachment: ChatAttachment): ContentRefer
 
 const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, onShowSettings, onGrantSessionToolPermission, autoExpandTools, showRawParameters, showThinking, selectedProject, provider, hideHeader = false }: MessageComponentProps) => {
   const { t } = useTranslation('chat');
+  // Settings deep-links inside error hints lead to admin-only tabs; hide them
+  // for regular users (true outside AuthProvider, e.g. in unit tests).
+  const isAdmin = useIsAdmin();
   const isGrouped = prevMessage && prevMessage.type === message.type &&
     ((prevMessage.type === 'assistant') ||
       (prevMessage.type === 'user') ||
@@ -485,20 +489,22 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, o
                                   <div className="mt-1 text-xs leading-5 text-amber-700/90 dark:text-amber-300/80">
                                     {t('toolUseError.webSearchNotConfigured.description', { defaultValue: '搜索 API 密钥缺失或无效。请前往设置中的配置 > 搜索，检查搜索提供方和密钥。' })}
                                   </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (typeof window !== 'undefined' && window.openSettings) {
-                                        window.openSettings('config:tools');
-                                      } else if (onShowSettings) {
-                                        onShowSettings();
-                                      }
-                                    }}
-                                    className="mt-2.5 inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-white/80 px-3 py-1.5 text-xs font-medium text-amber-800 transition-colors hover:bg-white dark:border-amber-700/60 dark:bg-amber-900/30 dark:text-amber-200 dark:hover:bg-amber-900/50"
-                                  >
-                                    <Settings className="h-3 w-3" />
-                                    {t('toolUseError.webSearchNotConfigured.openSettings', { defaultValue: '前往设置' })}
-                                  </button>
+                                  {isAdmin && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (typeof window !== 'undefined' && window.openSettings) {
+                                          window.openSettings('config:tools');
+                                        } else if (onShowSettings) {
+                                          onShowSettings();
+                                        }
+                                      }}
+                                      className="mt-2.5 inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-white/80 px-3 py-1.5 text-xs font-medium text-amber-800 transition-colors hover:bg-white dark:border-amber-700/60 dark:bg-amber-900/30 dark:text-amber-200 dark:hover:bg-amber-900/50"
+                                    >
+                                      <Settings className="h-3 w-3" />
+                                      {t('toolUseError.webSearchNotConfigured.openSettings', { defaultValue: '前往设置' })}
+                                    </button>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -523,7 +529,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, o
                                 <div className="mt-0.5 text-xs text-amber-700 dark:text-amber-300/80">
                                   {renderedErrorContent}
                                 </div>
-                                {onShowSettings && (
+                                {isAdmin && onShowSettings && (
                                   <button
                                     type="button"
                                     onClick={() => {
@@ -627,7 +633,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, o
                                         ? t('permissions.added')
                                         : t('permissions.grant', { tool: permissionSuggestion.toolName })}
                                     </button>
-                                    {onShowSettings && (
+                                    {isAdmin && onShowSettings && (
                                       <button
                                         type="button"
                                         onClick={(e) => {
