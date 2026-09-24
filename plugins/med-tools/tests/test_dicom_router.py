@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 try:
     import pydicom
@@ -46,7 +47,7 @@ def write_dicom(
 
 
 class DicomRouterTests(unittest.TestCase):
-    def test_chest_ct_routes_to_deepchest(self) -> None:
+    def test_chest_ct_falls_back_when_specialized_ct_is_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             series = generate_uid()
@@ -56,13 +57,14 @@ class DicomRouterTests(unittest.TestCase):
         self.assertEqual(result["modality"], "CT")
         self.assertEqual(result["body_region"], "chest")
         self.assertTrue(result["is_complete_3d_series"])
-        self.assertEqual(result["recommended_skill"], "med-deepchest-3dmedagent")
-        self.assertEqual(result["route_mode"], "3dmedagent")
-        self.assertEqual(result["specialized_support"], "full")
-        self.assertTrue(result["requires_main_agent_synthesis"])
+        self.assertEqual(result["recommended_skill"], "med-medical")
+        self.assertEqual(result["route_mode"], "general-medical")
+        self.assertEqual(result["specialized_support"], "not-applicable")
+        self.assertFalse(result["requires_main_agent_synthesis"])
         self.assertFalse(result["authorization_required"])
+        self.assertTrue(any("RADAR 和 DeepChest" in warning for warning in result["warnings"]))
 
-    def test_head_ct_routes_to_3dmedagent_compatibility_check(self) -> None:
+    def test_head_ct_falls_back_when_specialized_ct_is_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             series = generate_uid()
@@ -77,11 +79,11 @@ class DicomRouterTests(unittest.TestCase):
             result = route_dicom(root)
 
         self.assertEqual(result["body_region"], "head")
-        self.assertEqual(result["recommended_skill"], "med-deepchest-3dmedagent")
-        self.assertEqual(result["route_mode"], "3dmedagent")
-        self.assertEqual(result["specialized_support"], "compatibility-check")
-        self.assertTrue(result["domain_flags"])
-        self.assertTrue(any("不得伪造" in flag for flag in result["domain_flags"]))
+        self.assertEqual(result["recommended_skill"], "med-medical")
+        self.assertEqual(result["route_mode"], "general-medical")
+        self.assertEqual(result["specialized_support"], "not-applicable")
+        self.assertFalse(result["domain_flags"])
+        self.assertTrue(any("RADAR 和 DeepChest" in warning for warning in result["warnings"]))
 
     def test_unknown_complete_ct_degrades_to_general_medical(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -144,23 +146,23 @@ class DicomRouterTests(unittest.TestCase):
         self.assertEqual(result["route_mode"], "general-medical")
         self.assertTrue(any("完整三维序列" in warning for warning in result["warnings"]))
 
-    def test_abdominal_ct_routes_to_radar_and_agent_synthesis(self) -> None:
+    def test_abdominal_ct_falls_back_when_specialized_ct_is_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             series = generate_uid()
             for index in range(1, 4):
                 write_dicom(root / f"slice{index}.dcm", modality="CT", body="ABDOMEN", series_uid=series, instance=index)
             result = route_dicom(root)
-        self.assertEqual(result["recommended_skill"], "med-radar-ct")
+        self.assertEqual(result["recommended_skill"], "med-medical")
         self.assertFalse(result["authorization_required"])
-        self.assertIn("med-radar-ct", result["candidate_skills"])
-        self.assertEqual(result["recommended_tool"], "mcp__med-tools__med_radar_analyze_ct")
-        self.assertTrue(result["requires_main_agent_synthesis"])
-        self.assertIn("用户原始问题", result["next_action"])
-        self.assertEqual(result["status"], "ready")
-        self.assertTrue(result["domain_flags"])
+        self.assertEqual(result["candidate_skills"], ["med-medical"])
+        self.assertEqual(result["recommended_tool"], "mcp__med-tools__med_parse_medical")
+        self.assertFalse(result["requires_main_agent_synthesis"])
+        self.assertIn("不调用 RADAR 或 DeepChest", result["next_action"])
+        self.assertEqual(result["status"], "degraded")
+        self.assertTrue(any("RADAR 和 DeepChest" in warning for warning in result["warnings"]))
 
-    def test_single_multiframe_abdominal_ct_routes_to_radar(self) -> None:
+    def test_single_multiframe_abdominal_ct_falls_back_when_specialized_ct_is_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "abdomen-volume.dcm"
             write_dicom(
@@ -175,8 +177,27 @@ class DicomRouterTests(unittest.TestCase):
 
         self.assertTrue(result["is_complete_3d_series"])
         self.assertEqual(result["frame_count"], 120)
-        self.assertEqual(result["recommended_skill"], "med-radar-ct")
+        self.assertEqual(result["recommended_skill"], "med-medical")
         self.assertFalse(result["authorization_required"])
+        self.assertEqual(result["recommended_tool"], "mcp__med-tools__med_parse_medical")
+        self.assertTrue(any("RADAR 和 DeepChest" in warning for warning in result["warnings"]))
+
+    def test_abdominal_ct_uses_radar_when_explicitly_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            series = generate_uid()
+            for index in range(1, 4):
+                write_dicom(
+                    root / f"slice{index}.dcm",
+                    modality="CT",
+                    body="ABDOMEN",
+                    series_uid=series,
+                    instance=index,
+                )
+            with patch.dict("os.environ", {"MED_SPECIALIZED_CT_ENABLED": "1"}):
+                result = route_dicom(root)
+
+        self.assertEqual(result["recommended_skill"], "med-radar-ct")
         self.assertEqual(result["recommended_tool"], "mcp__med-tools__med_radar_analyze_ct")
 
     def test_non_ct_routes_to_general_medical(self) -> None:

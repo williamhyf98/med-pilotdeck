@@ -31,6 +31,7 @@ import { getAutomationPolicyViolation } from "../automationPolicyConstraints.js"
 import {
   buildMedToolsSkillGateMessage,
   getMedToolsSkillRequirement,
+  isMedToolDisabled,
   isRequiredMedToolsSkillLoaded,
   normalizeLoadedSkillName,
 } from "../medToolsSkillGate.js";
@@ -91,6 +92,17 @@ export class ToolRuntime {
         call.name,
         "tool_not_found",
         `Tool ${call.name} does not exist.`,
+        startedAt,
+        runtimeContext,
+      );
+    }
+
+    if (isMedToolDisabled(tool.name)) {
+      return this.errorResult(
+        call.id,
+        tool.name,
+        "permission_denied",
+        `${tool.name} is temporarily disabled in offline mode; no remote request was made.`,
         startedAt,
         runtimeContext,
       );

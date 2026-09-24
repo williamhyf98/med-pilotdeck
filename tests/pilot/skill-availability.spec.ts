@@ -49,6 +49,20 @@ test("legacy skill availability overrides are normalized to global", async () =>
       ),
       true,
     );
+    assert.equal(
+      isToolAvailableForProjectType(
+        "mcp__med-tools__med_dicom_route",
+        "general_medicine",
+      ),
+      true,
+    );
+    assert.equal(
+      isToolAvailableForProjectType(
+        "mcp__med-tools__med_radar_status",
+        "general_medicine",
+      ),
+      false,
+    );
   } finally {
     if (previousPilotHome === undefined) delete process.env.PILOT_HOME;
     else process.env.PILOT_HOME = previousPilotHome;

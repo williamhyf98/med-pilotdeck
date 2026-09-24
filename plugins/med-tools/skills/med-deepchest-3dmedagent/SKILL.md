@@ -5,6 +5,11 @@ description: "处理 DICOM 路由判定的非腹部完整 CT：胸部运行 Deep
 
 # DeepChest 3DMedAgent
 
+仅当 `MED_SPECIALIZED_CT_ENABLED=1` 且运行时允许时执行本 Skill。否则不得调用
+`med_deepchest_status`、`med_deepchest_submit` 或 `med_deepchest_job`，
+即使远程 HTTP 服务可访问；请改用 `med-medical` 的通用解析，并明确说明
+DeepChest 暂不可用。工具返回 disabled 时不得重试。
+
 ## 系统上传病例：远程服务入口（优先）
 
 系统对话中的真实上传病例必须使用以下工具，不运行后文 smoke20 命令：

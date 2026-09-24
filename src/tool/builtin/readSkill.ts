@@ -1,4 +1,5 @@
 import type { PilotDeckToolDefinition, PilotDeckToolRuntimeContext } from "../protocol/types.js";
+import { isMedicalSkillAvailable } from "../../pilot/medicalCapabilities.js";
 
 export type ReadSkillInput = {
   skillName: string;
@@ -36,7 +37,7 @@ export function createReadSkillTool(deps: ReadSkillDeps): PilotDeckToolDefinitio
     isReadOnly: () => true,
     isConcurrencySafe: () => true,
     async execute(input, context) {
-      const available = deps.lister(context);
+      const available = deps.lister(context).filter((skill) => isMedicalSkillAvailable(skill.name));
       const requestedName = shortSkillName(input.skillName);
       const selected = available.find((entry) => shortSkillName(entry.name) === requestedName);
       const content = selected ? await deps.loader(selected.name, context) : undefined;

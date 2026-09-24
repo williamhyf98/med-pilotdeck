@@ -1,3 +1,6 @@
+import { isSpecializedCtEnabled } from "../pilot/medicalCapabilities.js";
+export { isSpecializedCtEnabled, isMedToolDisabled } from "../pilot/medicalCapabilities.js";
+
 export type MedToolsSkillRequirement = {
   /** Skill injected when none of the accepted skills has been loaded. */
   loadSkill: string;
@@ -69,6 +72,9 @@ export function normalizeLoadedSkillName(name: string): string {
 export function getMedToolsSkillRequirement(
   toolName: string,
 ): MedToolsSkillRequirement | undefined {
+  if (toolName === "mcp__med-tools__med_dicom_route" && !isSpecializedCtEnabled()) {
+    return { loadSkill: "med-medical", acceptedSkills: ["med-medical"] };
+  }
   return MED_TOOLS_SKILL_REQUIREMENTS[toolName]
     ?? (toolName.startsWith("mcp__med-tools__")
       ? DEFAULT_MED_TOOLS_REQUIREMENT

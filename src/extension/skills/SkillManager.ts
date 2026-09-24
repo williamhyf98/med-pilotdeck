@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, posix, relative, resolve } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { isMedicalSkillAvailable } from "../../pilot/medicalCapabilities.js";
 
 import {
   getPilotExtensionPaths,
@@ -229,6 +230,9 @@ export class SkillManager {
   }
 
   async read(input: SkillAddressInput): Promise<SkillReadResult> {
+    if (!isMedicalSkillAvailable(input.slug)) {
+      throw new SkillManagerError("not_found", `Skill "${input.slug}" is not available.`);
+    }
     const skillDir = this.resolveSkillDir(input);
     const skillFile = join(skillDir, "SKILL.md");
     let content: string;
@@ -241,6 +245,9 @@ export class SkillManager {
       throw e;
     }
     const skill = await readSkillMeta(skillDir, input.scope, this.pilotHome);
+    if (skill && !isMedicalSkillAvailable(skill.name)) {
+      throw new SkillManagerError("not_found", `Skill "${input.slug}" is not available.`);
+    }
     return { content, scope: input.scope, slug: input.slug, skill };
   }
 
@@ -804,7 +811,7 @@ async function listSkillsIn(
   }
   const skills: SkillSummary[] = [];
   for (const entry of entries) {
-    if (!isValidSlug(entry.name)) continue;
+    if (!isValidSlug(entry.name) || !isMedicalSkillAvailable(entry.name)) continue;
     let isSkillDir = entry.isDirectory();
     if (!isSkillDir && entry.isSymbolicLink()) {
       // Accept symlinks-to-directories (the import-as-symlink path
@@ -818,7 +825,7 @@ async function listSkillsIn(
     }
     if (!isSkillDir) continue;
     const meta = await readSkillMeta(join(root, entry.name), scope, pilotHome);
-    if (!meta) continue;
+    if (!meta || !isMedicalSkillAvailable(meta.name)) continue;
     skills.push(meta);
   }
   skills.sort((a, b) => a.slug.localeCompare(b.slug));

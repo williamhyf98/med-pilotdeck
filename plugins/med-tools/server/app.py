@@ -10,7 +10,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 
-from .dicom_router import route_dicom
+from .dicom_router import route_dicom, specialized_ct_enabled
 from .parsers import SUPPORTED_SUFFIXES, collect_medical_files, parse_medical_file
 from .vlm_client import analyze_medical_with_vlm, get_vlm_config
 
@@ -40,6 +40,32 @@ PRESENTATION = PRESENTATION_TERMINAL
 
 VALID_CONTINUATION_MODES = frozenset({"terminal", "material"})
 
+SPECIALIZED_CT_GUIDANCE = (
+    "For a complete abdominal/pelvic CT route, load med-radar-ct and call "
+    "med_radar_analyze_ct; for another complete CT with a known body region, "
+    "load med-deepchest-3dmedagent and follow its compatibility rules. "
+    "For chest CT, use med_deepchest_status, med_deepchest_submit, then "
+    "med_deepchest_job until completion. Never use example results for an uploaded case."
+    if specialized_ct_enabled()
+    else
+    "For DICOM attachments including complete CT series, load med-medical, "
+    "use med_dicom_route for local metadata checks, then med_parse_medical. "
+    "Use only the advertised tools; general parsing is not specialized 3D inference."
+)
+
+
+def _disabled_specialized_tool(tool: str) -> str:
+    return json.dumps(
+        {
+            "ok": False,
+            "status": "disabled",
+            "disabled": True,
+            "tool": tool,
+            "reason": "RADAR and DeepChest are disabled because MED_SPECIALIZED_CT_ENABLED is not 1",
+        },
+        ensure_ascii=False,
+    )
+
 
 def _normalize_continuation_mode(value: Any) -> str:
     mode = str(value or "terminal").strip().lower()
@@ -68,25 +94,18 @@ mcp = FastMCP(
         "For a DICOM file or directory that needs automatic modality/body-part "
         "routing, call med_dicom_route first. It is local read-only metadata "
         "triage; wait for its result before calling another medical tool. "
-        "For a complete abdominal/pelvic CT route, load med-radar-ct, call "
-        "med_radar_analyze_ct, and then answer the user's original question from "
-        "the returned scores and domain warnings. Do not substitute med_parse_medical. "
-        "For any other complete CT with a known body region, load "
-        "med-deepchest-3dmedagent and perform its 3DMedAgent workflow or explicit "
-        "compatibility downgrade before using general medical parsing. "
-        "For chest CT use med_deepchest_status, med_deepchest_submit and "
-        "med_deepchest_job; poll the same job until success/failure. Never run "
-        "smoke20 examples to answer an uploaded case. The production service "
-        "provides CT-CLIP evidence analysis, not direct image observations. "
+        f"{SPECIALIZED_CT_GUIDANCE} "
         "For war-trauma knowledge Q&A: call med_trauma_rag_query, then the main "
         "model answers from chunks (brief tips OK; not the formal five-section plan). "
         "For a formal six-stage graded care plan: call med_trauma_stage_plan "
-        "(G9 inside the plugin; show care_plan verbatim). "
-        "For DAMO RADAR analysis of a 3D abdominal CT volume: call "
-        "med_radar_analyze_ct, then interpret its uncalibrated scores with the "
-        "domain warnings from the med-radar-ct skill."
+        "(G9 inside the plugin; show care_plan verbatim)."
     ),
 )
+
+
+def _specialized_ct_tool():
+    """Keep implementations for restoration, but do not advertise disabled tools."""
+    return mcp.tool() if specialized_ct_enabled() else lambda fn: fn
 
 
 def _load_prompt(prefer_medical: bool = True) -> str:
@@ -467,9 +486,9 @@ def med_dicom_route(path: str, max_files: int = 512) -> str:
 
     This is a local metadata-only preflight. It reports modality, anatomical
         region, contrast hint, series completeness, warnings, recommended skill,
-        and recommended tool. It never sends DICOM data to node12 or invokes a
-        model. Complete abdominal/pelvic CT routes require RADAR; other complete
-        CT studies with a known region require the 3DMedAgent skill as the next step.
+        and recommended tool. It never sends DICOM data to a remote service or
+        invokes a model. When specialized CT is disabled, complete studies
+        recommend med-medical for local parsing.
 
     Args:
         path: Absolute or relative path to one DICOM file or a DICOM directory.
@@ -579,17 +598,20 @@ def med_tools_health() -> str:
     except Exception as exc:  # noqa: BLE001
         info["rag"] = {"ready": False, "reason": f"{type(exc).__name__}: {exc}"}
 
-    try:
-        from .radar import radar_status
+    if specialized_ct_enabled():
+        try:
+            from .radar import radar_status
 
-        info["radar"] = radar_status(validate_runtime=False)
-    except Exception as exc:  # noqa: BLE001
-        info["radar"] = {"ready": False, "reason": f"{type(exc).__name__}: {exc}"}
+            info["radar"] = radar_status(validate_runtime=False)
+        except Exception as exc:  # noqa: BLE001
+            info["radar"] = {"ready": False, "reason": f"{type(exc).__name__}: {exc}"}
+    else:
+        info["radar"] = {"ready": False, "disabled": True}
 
     return json.dumps(info, ensure_ascii=False, indent=2)
 
 
-@mcp.tool()
+@_specialized_ct_tool()
 def med_radar_status(validate_runtime: bool = False) -> str:
     """Check whether the configured DAMO RADAR analysis service is ready.
 
@@ -598,6 +620,8 @@ def med_radar_status(validate_runtime: bool = False) -> str:
             includes internal runtime diagnostics. Do not repeat deployment
             or hardware details in user-facing progress or medical answers.
     """
+    if not specialized_ct_enabled():
+        return _disabled_specialized_tool("med_radar_status")
     from .radar import radar_status
 
     return json.dumps(
@@ -607,7 +631,7 @@ def med_radar_status(validate_runtime: bool = False) -> str:
     )
 
 
-@mcp.tool()
+@_specialized_ct_tool()
 async def med_radar_analyze_ct(
     path: str,
     ctx: Context,
@@ -633,6 +657,8 @@ async def med_radar_analyze_ct(
         study_context: Known region/contrast context, e.g. "contrast-enhanced
             abdominal CT". Leave empty when unknown; never guess metadata.
     """
+    if not specialized_ct_enabled():
+        return _disabled_specialized_tool("med_radar_analyze_ct")
     from .radar import run_radar_analysis
 
     await ctx.report_progress(
@@ -656,14 +682,16 @@ async def med_radar_analyze_ct(
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-@mcp.tool()
+@_specialized_ct_tool()
 async def med_deepchest_status() -> str:
     """Check configured DeepChest HTTP service, file/configuration readiness and queue."""
+    if not specialized_ct_enabled():
+        return _disabled_specialized_tool("med_deepchest_status")
     from .deepchest import call_deepchest
     return json.dumps(await asyncio.to_thread(call_deepchest, 'health'), ensure_ascii=False)
 
 
-@mcp.tool()
+@_specialized_ct_tool()
 async def med_deepchest_submit(path: str, question: str, body_region: str,
                               modality: str, intensity_units: str) -> str:
     """Submit ONE complete chest CT (NIfTI, DICOM series folder, or DICOM ZIP).
@@ -673,13 +701,15 @@ async def med_deepchest_submit(path: str, question: str, body_region: str,
     Returns job_id; use med_deepchest_job until succeeded/failed. Do not resubmit.
     Include the original question and current presentation preferences in question.
     """
+    if not specialized_ct_enabled():
+        return _disabled_specialized_tool("med_deepchest_submit")
     from .deepchest import call_deepchest
     result = await asyncio.to_thread(call_deepchest, 'submit', path=path, question=question,
                                     body_region=body_region, modality=modality, intensity_units=intensity_units)
     return json.dumps(result, ensure_ascii=False)
 
 
-@mcp.tool()
+@_specialized_ct_tool()
 async def med_deepchest_job(job_id: str, wait_seconds: int = 30, continuation_mode: str = "terminal") -> str:
     """Wait up to 30 seconds for a DeepChest job, return stage or saved report/artifacts.
 
@@ -687,6 +717,8 @@ async def med_deepchest_job(job_id: str, wait_seconds: int = 30, continuation_mo
     job and do not answer from demo data. terminal presents/persists the report and
     ends the turn. Use material if further clinical integration or export is needed.
     """
+    if not specialized_ct_enabled():
+        return _disabled_specialized_tool("med_deepchest_job")
     from .deepchest import call_deepchest
     deadline = asyncio.get_running_loop().time() + min(30, max(0, wait_seconds))
     while True:

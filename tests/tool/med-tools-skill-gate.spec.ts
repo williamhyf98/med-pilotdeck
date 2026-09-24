@@ -5,6 +5,8 @@ import { createReadSkillTool } from "../../src/tool/builtin/readSkill.js";
 import { ToolRuntime } from "../../src/tool/execution/ToolRuntime.js";
 import {
   getMedToolsSkillRequirement,
+  isMedToolDisabled,
+  isSpecializedCtEnabled,
   normalizeLoadedSkillName,
 } from "../../src/tool/medToolsSkillGate.js";
 import type { PilotDeckToolRuntimeContext } from "../../src/tool/protocol/types.js";
@@ -22,6 +24,14 @@ const MEDICAL_TOOLS = [
   "mcp__med-tools__med_radar_analyze_ct",
   "mcp__med-tools__med_radar_status",
   "mcp__med-tools__med_tools_health",
+] as const;
+
+const DISABLED_MEDICAL_TOOLS = [
+  "mcp__med-tools__med_deepchest_status",
+  "mcp__med-tools__med_deepchest_submit",
+  "mcp__med-tools__med_deepchest_job",
+  "mcp__med-tools__med_radar_analyze_ct",
+  "mcp__med-tools__med_radar_status",
 ] as const;
 
 function context(): PilotDeckToolRuntimeContext {
@@ -127,10 +137,55 @@ test("RADAR tools require the med-radar-ct skill", () => {
   }
 });
 
-test("DICOM route accepts the router or general medical skill but does not unlock RADAR", () => {
+test("RADAR and DeepChest tools are hard-disabled before skill loading or execution", async () => {
+  const previous = process.env.MED_SPECIALIZED_CT_ENABLED;
+  process.env.MED_SPECIALIZED_CT_ENABLED = "0";
+  try {
+    for (const toolName of DISABLED_MEDICAL_TOOLS) {
+      assert.equal(isMedToolDisabled(toolName), true, toolName);
+      const { runtime, executions } = createRuntime(toolName);
+      const result = await runtime.execute(
+        { id: `${toolName}-disabled`, name: toolName, input: {} },
+        context(),
+      );
+      assert.equal(result.type, "error", toolName);
+      assert.equal(result.error.code, "permission_denied", toolName);
+      assert.match(result.error.message, /temporarily disabled in offline mode/u);
+      assert.equal(executions.count, 0, toolName);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.MED_SPECIALIZED_CT_ENABLED;
+    else process.env.MED_SPECIALIZED_CT_ENABLED = previous;
+  }
+});
+
+test("the specialized CT flag allows the skill gate to proceed", async () => {
+  const previous = process.env.MED_SPECIALIZED_CT_ENABLED;
+  process.env.MED_SPECIALIZED_CT_ENABLED = "1";
+  try {
+    assert.equal(isSpecializedCtEnabled(), true);
+    const { runtime, executions } = createRuntime("mcp__med-tools__med_radar_status");
+    const result = await runtime.execute(
+      { id: "radar-enabled", name: "mcp__med-tools__med_radar_status", input: {} },
+      context(),
+    );
+    assert.equal(result.type, "success");
+    assert.equal(executions.count, 0);
+    assert.equal(
+      (result.metadata?.medToolsSkillGate as { retryRequired?: boolean } | undefined)
+        ?.retryRequired,
+      true,
+    );
+  } finally {
+    if (previous === undefined) delete process.env.MED_SPECIALIZED_CT_ENABLED;
+    else process.env.MED_SPECIALIZED_CT_ENABLED = previous;
+  }
+});
+
+test("DICOM route uses med-medical while specialized CT skills are hidden", () => {
   assert.deepEqual(getMedToolsSkillRequirement("mcp__med-tools__med_dicom_route"), {
-    loadSkill: "med-dicom-router",
-    acceptedSkills: ["med-dicom-router", "med-medical"],
+    loadSkill: "med-medical",
+    acceptedSkills: ["med-medical"],
   });
   assert.deepEqual(
     getMedToolsSkillRequirement("mcp__med-tools__med_radar_analyze_ct")?.acceptedSkills,
@@ -139,6 +194,9 @@ test("DICOM route accepts the router or general medical skill but does not unloc
 });
 
 test("DeepChest is accepted for generic medical health checks but not RADAR", async () => {
+  const previous = process.env.MED_SPECIALIZED_CT_ENABLED;
+  process.env.MED_SPECIALIZED_CT_ENABLED = "1";
+  try {
   const health = createRuntime("mcp__med-tools__med_tools_health");
   const loadedHealth = await health.runtime.execute(
     {
@@ -177,6 +235,10 @@ test("DeepChest is accepted for generic medical health checks but not RADAR", as
       ?.retryRequired,
     true,
   );
+  } finally {
+    if (previous === undefined) delete process.env.MED_SPECIALIZED_CT_ENABLED;
+    else process.env.MED_SPECIALIZED_CT_ENABLED = previous;
+  }
 });
 
 test("general-medicine projects can load the trauma RAG skill gate", async () => {
@@ -197,6 +259,7 @@ test("general-medicine projects can load the trauma RAG skill gate", async () =>
 
 test("every med-tools MCP tool is blocked once, loads its skill, and executes on retry", async () => {
   for (const toolName of MEDICAL_TOOLS) {
+    if (isMedToolDisabled(toolName)) continue;
     const { runtime, executions } = createRuntime(toolName);
     const first = await runtime.execute(
       { id: `${toolName}-first`, name: toolName, input: {} },

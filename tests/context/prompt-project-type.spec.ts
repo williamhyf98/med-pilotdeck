@@ -55,8 +55,8 @@ test("general-medicine projects receive their persona and all skills", () => {
   assert.match(prompt, /med-tools:med-medical/u);
   assert.match(prompt, /med-tools:med-trauma-assist/u);
   assert.match(prompt, /med-tools:med-trauma-stage-plan/u);
-  assert.match(prompt, /med-tools:med-deepchest-3dmedagent/u);
-  assert.match(prompt, /med-tools:med-dicom-router/u);
+  assert.doesNotMatch(prompt, /med-tools:med-deepchest-3dmedagent/u);
+  assert.doesNotMatch(prompt, /med-tools:med-dicom-router/u);
   assert.match(prompt, /general-custom/u);
   assert.match(prompt, /trauma-custom/u);
 });
@@ -68,8 +68,8 @@ test("war-trauma projects retain their persona and receive all skills", () => {
   assert.match(prompt, /med-tools:med-medical/u);
   assert.match(prompt, /med-tools:med-trauma-assist/u);
   assert.match(prompt, /med-tools:med-trauma-stage-plan/u);
-  assert.match(prompt, /med-tools:med-deepchest-3dmedagent/u);
-  assert.match(prompt, /med-tools:med-dicom-router/u);
+  assert.doesNotMatch(prompt, /med-tools:med-deepchest-3dmedagent/u);
+  assert.doesNotMatch(prompt, /med-tools:med-dicom-router/u);
   assert.match(prompt, /trauma-custom/u);
   assert.match(prompt, /general-custom/u);
 });

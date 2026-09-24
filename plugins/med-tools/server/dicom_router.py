@@ -9,12 +9,19 @@ skill and obtain any authorization required by that workflow.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 _DICOM_SUFFIXES = {".dcm", ".dicom", ".ima"}
 _MAX_CANDIDATE_BYTES = 256 * 1024 * 1024
+SPECIALIZED_CT_ENABLED_ENV = "MED_SPECIALIZED_CT_ENABLED"
+
+
+def specialized_ct_enabled() -> bool:
+    """Return whether RADAR/DeepChest routing is explicitly enabled."""
+    return os.environ.get(SPECIALIZED_CT_ENABLED_ENV, "") == "1"
 
 _REGION_KEYWORDS: Dict[str, Tuple[str, ...]] = {
     "chest": (
@@ -408,7 +415,16 @@ def route_dicom(path: str | Path, *, max_files: int = 512) -> Dict[str, Any]:
     payload["frame_count"] = sum(int(item["instance_count"]) for item in series_output)
     payload["contrast_hint"] = _contrast_hint(all_region_rows)
     if payload["modality"] == "CT" and complete_ct:
-        if region in {"abdomen", "pelvis", "abdomen_pelvis"}:
+        if not specialized_ct_enabled():
+            payload["warnings"].append(
+                "RADAR 和 DeepChest 专用流程当前暂时关闭，已回退到 med-medical。"
+            )
+            if region in {"unknown", "mixed"}:
+                payload["warnings"].append("检查部位不确定；请用户确认后再解读。")
+            payload["next_action"] = (
+                "使用 med-medical 进行本地医学附件解析；当前不调用 RADAR 或 DeepChest。"
+            )
+        elif region in {"abdomen", "pelvis", "abdomen_pelvis"}:
             payload["candidate_skills"] = ["med-radar-ct", "med-medical"]
             payload["recommended_skill"] = "med-radar-ct"
             payload["recommended_tool"] = "mcp__med-tools__med_radar_analyze_ct"
