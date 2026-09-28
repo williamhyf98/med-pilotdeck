@@ -165,3 +165,48 @@ export function validateFullTextDecision(
 export function isScreeningVerdict(value: string): value is ScreeningVerdict {
   return VERDICTS.includes(value);
 }
+
+// ---- 步骤 0：PICO 抽取 ----------------------------------------------------
+
+const PICO_STATUS = enumOf("extracted", "inferred", "missing");
+
+export const PICO_EXTRACTION_SCHEMA: Record<string, unknown> = described(
+  object({
+    elements: {
+      type: "array",
+      items: object({
+        key: enumOf(...PICO_KEYS),
+        status: PICO_STATUS,
+        text: STRING,
+        sourceSpan: STRING,
+        followUpQuestion: STRING,
+      }),
+    },
+    draftCriteria: object({
+      inclusion: { type: "array", items: STRING },
+      exclusion: { type: "array", items: STRING },
+    }),
+    notes: STRING,
+  }),
+  "研究问题的 PICOS 结构化结果：逐元素状态、原文依据、追问，以及纳排标准草案。",
+);
+
+const PICO_STATUSES: readonly string[] = ["extracted", "inferred", "missing"];
+
+export function validatePicoExtraction(
+  value: unknown,
+): value is import("./types.js").PicoExtraction {
+  if (!isRecord(value)) return false;
+  if (typeof value.notes !== "string") return false;
+  if (!isRecord(value.draftCriteria)) return false;
+  if (!isStringArray(value.draftCriteria.inclusion) || !isStringArray(value.draftCriteria.exclusion)) return false;
+  if (!Array.isArray(value.elements)) return false;
+  return value.elements.every((item) => {
+    if (!isRecord(item)) return false;
+    if (!PICO_KEYS.includes(item.key as never)) return false;
+    if (!PICO_STATUSES.includes(String(item.status))) return false;
+    return typeof item.text === "string"
+      && typeof item.sourceSpan === "string"
+      && typeof item.followUpQuestion === "string";
+  });
+}

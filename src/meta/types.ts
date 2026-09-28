@@ -30,6 +30,62 @@ export type ScreeningPrediction = ScreeningDecision & {
   error?: string;
 };
 
+// ---- 步骤 0：PICO 抽取 ----------------------------------------------------
+
+/** extracted=原文明说；inferred=上下文推断，需医生确认；missing=没说也推不出，需追问。 */
+export type PicoElementStatus = "extracted" | "inferred" | "missing";
+
+export type PicoElement = {
+  key: PicoKey;
+  status: PicoElementStatus;
+  /** 规范化描述；missing 时为空。 */
+  text: string;
+  /** 输入中的连续原文；仅 extracted 有。 */
+  sourceSpan: string;
+  /** 给医生的一句追问；extracted 时为空。 */
+  followUpQuestion: string;
+};
+
+export type PicoExtraction = {
+  elements: PicoElement[];
+  draftCriteria: { inclusion: string[]; exclusion: string[] };
+  notes: string;
+};
+
+export type PicoExtractionPrediction = PicoExtraction & {
+  /** 所有 extracted 元素的 sourceSpan 都在输入里找到时为 true。 */
+  spanVerified: boolean;
+  /** 片段核不实、被程序从 extracted 降为 inferred 的元素。 */
+  demoted: PicoKey[];
+  failed?: boolean;
+  error?: string;
+};
+
+/** 单个元素的冒烟对比：与金标准的内容词召回。正式指标由评测方算。 */
+export type PicoElementSmoke = {
+  key: PicoKey;
+  status: PicoElementStatus;
+  /** 金标准该元素为空时为 null。 */
+  goldPresent: boolean;
+  /** 金标准内容词里有多少出现在抽取结果中；金标准为空或抽取为空时为 null。 */
+  contentRecall: number | null;
+};
+
+export type PicoStagePrediction = {
+  reviewId: string;
+  stage: "pico";
+  model: { provider: string; model: string };
+  startedAt: string;
+  finishedAt: string;
+  /** 喂给工位的输入：来自哪篇 PubMed 记录的哪些段落。 */
+  input: { pmid: string | null; sections: string[]; text: string };
+  goldSource: CriteriaSource;
+  prediction: PicoExtractionPrediction | null;
+  smoke: PicoElementSmoke[];
+  failed?: boolean;
+  error?: string;
+};
+
 // ---- 步骤 1：检索概念表 ----------------------------------------------------
 
 export type ConceptBlock = {

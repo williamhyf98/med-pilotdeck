@@ -13,6 +13,61 @@
  */
 
 const ESEARCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi";
+const EFETCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi";
+
+/** efetch 回来的一条 PubMed 记录，只保留步骤 0 需要的字段。 */
+export type PubMedAbstract = {
+  pmid: string;
+  title: string;
+  journal: string;
+  year: string;
+  /** 结构化摘要的各段；无标签的摘要只有一段，label 为空串。 */
+  sections: { label: string; text: string }[];
+};
+
+function stripXml(fragment: string): string {
+  return fragment
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, body: string) => {
+      if (/^#x/i.test(body)) {
+        const code = Number.parseInt(body.slice(2), 16);
+        return Number.isFinite(code) ? String.fromCodePoint(code) : match;
+      }
+      if (body.startsWith("#")) {
+        const code = Number.parseInt(body.slice(1), 10);
+        return Number.isFinite(code) ? String.fromCodePoint(code) : match;
+      }
+      return { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'" }[body.toLowerCase()] ?? match;
+    })
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** 解析 efetch db=pubmed retmode=xml 的输出。纯函数，便于测试。 */
+export function parsePubMedAbstracts(xml: string): PubMedAbstract[] {
+  const out: PubMedAbstract[] = [];
+  const articles = xml.split(/<PubmedArticle[\s>]/).slice(1);
+  for (const chunk of articles) {
+    const pmid = chunk.match(/<PMID[^>]*>(\d+)<\/PMID>/)?.[1];
+    if (!pmid) continue;
+    const title = stripXml(chunk.match(/<ArticleTitle[^>]*>([\s\S]*?)<\/ArticleTitle>/)?.[1] ?? "");
+    const journalBlock = chunk.match(/<Journal>([\s\S]*?)<\/Journal>/)?.[1] ?? "";
+    const journal = stripXml(journalBlock.match(/<Title>([\s\S]*?)<\/Title>/)?.[1] ?? "");
+    const year = journalBlock.match(/<Year>(\d{4})<\/Year>/)?.[1]
+      ?? journalBlock.match(/<MedlineDate>(\d{4})/)?.[1]
+      ?? "";
+    const sections: PubMedAbstract["sections"] = [];
+    const abstractBlock = chunk.match(/<Abstract>([\s\S]*?)<\/Abstract>/)?.[1] ?? "";
+    const re = /<AbstractText([^>]*)>([\s\S]*?)<\/AbstractText>/g;
+    for (let m = re.exec(abstractBlock); m; m = re.exec(abstractBlock)) {
+      const label = m[1].match(/Label="([^"]*)"/)?.[1] ?? "";
+      const text = stripXml(m[2]);
+      if (text) sections.push({ label: stripXml(label), text });
+    }
+    out.push({ pmid, title, journal, year, sections });
+  }
+  return out;
+}
 
 /**
  * 从密钥文件内容里抽出 NCBI API key。
@@ -169,6 +224,50 @@ export function createPubMedClient(options: PubMedClientOptions = {}) {
       const notFound = result?.errorlist?.phrasesnotfound ?? [];
       if (notFound.length > 0) return false;
       return (Number.parseInt(result?.count ?? "0", 10) || 0) > 0;
+    },
+
+    /** 取命中的 PMID 列表（少量），步骤 0 用它按标题找 Cochrane 评价自己的 PubMed 记录。 */
+    async searchIds(term: string, retmax = 20): Promise<string[]> {
+      const result = await esearch(term, retmax);
+      return result?.idlist ?? [];
+    },
+
+    /** 下载几条记录的结构化摘要。 */
+    async fetchAbstracts(pmids: readonly string[]): Promise<PubMedAbstract[]> {
+      const unique = [...new Set(pmids)].filter(Boolean);
+      if (unique.length === 0) return [];
+      let lastError: unknown;
+      for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+        await throttle();
+        const body = new URLSearchParams({
+          db: "pubmed",
+          id: unique.join(","),
+          retmode: "xml",
+          rettype: "abstract",
+          tool: options.tool ?? "med-pilotdeck",
+          ...(options.email ? { email: options.email } : {}),
+          ...(options.apiKey ? { api_key: options.apiKey } : {}),
+        });
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const response = await fetch(EFETCH, {
+            method: "POST",
+            headers: { "content-type": "application/x-www-form-urlencoded" },
+            body,
+            signal: controller.signal,
+          });
+          if (response.status === 429) throw new Error("pubmed 429 rate limited");
+          if (!response.ok) throw new Error(`pubmed http ${response.status}`);
+          return parsePubMedAbstracts(await response.text());
+        } catch (error) {
+          lastError = error;
+          if (attempt < maxRetries) await sleep(1000 * 2 ** attempt);
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      throw lastError instanceof Error ? lastError : new Error(String(lastError));
     },
   };
 }
