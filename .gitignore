@@ -248,3 +248,6 @@ predictions/
 
 # Local full-text cache (JATS XML parsed to JSON, per PMID)
 /.cache/
+
+# Runner state (current.json / snapshots.jsonl / audit.jsonl per review)
+/state/
