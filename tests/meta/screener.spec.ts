@@ -35,14 +35,16 @@ test("screener prompt separates not_reported from not_met before deciding", () =
   assert.match(SCREENER_SYSTEM_PROMPT, /不得执行/);
 });
 
-test("screener prompt v2 stops treating pilot/open-label and drug-class doubts as not_met", () => {
-  // CD000029 漏掉 5/6 纳入研究的三类错因，每类都要有对应规则，且版本号要变。
-  assert.match(SCREENER_PROMPT_VERSION, /^v2-/);
+test("screener prompt v2/v3 stops treating pilot/open-label, drug-class doubts and abstract outcomes as not_met", () => {
+  // CD000029 漏掉 5/6、CD000259 漏掉 65/246 的错因，每类都要有对应规则，且版本号要变。
+  assert.match(SCREENER_PROMPT_VERSION, /^v3-/);
   assert.match(SCREENER_SYSTEM_PROMPT, /pilot、feasibility、preliminary：说的是规模和目的/);
   assert.match(SCREENER_SYSTEM_PROMPT, /open、open-label、unblinded、single-blind：说的是盲法/);
   assert.match(SCREENER_SYSTEM_PROMPT, /不得把"开放试验"解读为"分配未隐藏"/);
   assert.match(SCREENER_SYSTEM_PROMPT, /不得凭药理常识判 not_met/);
   assert.match(SCREENER_SYSTEM_PROMPT, /不得出现自我修正或反复/);
+  assert.match(SCREENER_SYSTEM_PROMPT, /题摘阶段 O 只能是 met 或 not_reported/);
+  assert.match(SCREENER_SYSTEM_PROMPT, /摘要通常只写最显眼的部分/);
   const designRule = SCREENER_SYSTEM_PROMPT.indexOf("研究设计（S）的特别规则");
   const overall = SCREENER_SYSTEM_PROMPT.indexOf("## 总体判断规则");
   assert.ok(designRule > 0 && designRule < overall, "S 的特别规则属于逐元素判断，要在总体规则之前");
@@ -141,6 +143,40 @@ test("station keeps an explicit conflict as exclude", async () => {
   const result = await createScreenerStation(model).screen({ record, criteria });
   assert.equal(result.decision, "exclude");
   assert.equal(result.evidenceVerified, true, "引用片段应能在标题摘要中找到");
+});
+
+test("outcome verdicts cannot exclude at title/abstract stage unless the guard is switched off", async () => {
+  const review = await loadBenchmarkReview(fixtureFile);
+  const criteria = resolveCriteriaSet(review, "refined_picos.PICOS");
+  assert.ok(criteria.keys.includes("O"));
+  const record = review.candidates[1];
+  const model: StructuredModelClient = {
+    async completeJson<T>(): Promise<T> {
+      return {
+        criteriaJudgements: [
+          { key: "P", verdict: "met", evidenceSpan: "adults aged 18 years or older", reason: "符合" },
+          { key: "I", verdict: "met", evidenceSpan: "oral drug A", reason: "符合" },
+          { key: "C", verdict: "not_reported", evidenceSpan: "", reason: "未提" },
+          { key: "O", verdict: "not_met", evidenceSpan: "retrospective cohort study", reason: "主要结局是患者结局，不是标准要求的结局" },
+          { key: "S", verdict: "not_reported", evidenceSpan: "", reason: "未提" },
+        ],
+        decision: "exclude",
+        confidence: "high",
+        decisionReason: "O 冲突",
+      } as T;
+    },
+  };
+
+  const guarded = await createScreenerStation(model).screen({ record, criteria });
+  assert.equal(guarded.decision, "include", "O 的 not_met 被降为 not_reported 后没有冲突元素，按敏感度保留");
+  assert.equal(guarded.criteriaJudgements.find((j) => j.key === "O")?.verdict, "not_reported");
+  assert.equal(guarded.criteriaJudgements.find((j) => j.key === "O")?.evidenceSpan, "");
+  assert.deepEqual(guarded.guardCorrections, ["O:not_met->not_reported"]);
+  assert.match(guarded.decisionReason, /程序修正/);
+
+  const baseline = await createScreenerStation(model, { outcomeNeverExcludes: false }).screen({ record, criteria });
+  assert.equal(baseline.decision, "exclude", "B0 基线关掉守卫时保持模型原判");
+  assert.equal(baseline.guardCorrections, undefined);
 });
 
 test("model failure is retained, not silently excluded", async () => {

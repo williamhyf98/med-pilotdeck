@@ -116,6 +116,38 @@ function enforceSensitivity(decision: ScreeningDecision): ScreeningDecision {
   return decision;
 }
 
+/**
+ * 阶段规则：题摘阶段结局（O）不得作为排除依据。
+ *
+ * dev 集 CD000259 漏掉的 65 篇纳入研究里，46 次 not_met 落在 O 上——模型把"摘要的主要结局是
+ * 患者结局"读成"研究没有测量专业人员表现"。摘要只列主要结局，报告了什么不等于没测什么，
+ * 这条在提示词里写了，模型仍会违反，所以程序兜底：O 的 not_met 一律改成 not_reported，
+ * 并记录在 guardCorrections 里供错误分析与实验对照（B0 基线可关）。
+ */
+export function applyAbstractStageRules(
+  decision: ScreeningDecision,
+  options: { outcomeNeverExcludes: boolean },
+): { decision: ScreeningDecision; corrections: string[] } {
+  if (!options.outcomeNeverExcludes) return { decision, corrections: [] };
+  const corrections: string[] = [];
+  const criteriaJudgements = decision.criteriaJudgements.map((item) => {
+    if (item.key !== "O" || item.verdict !== "not_met") return item;
+    corrections.push("O:not_met->not_reported");
+    return {
+      ...item,
+      verdict: "not_reported" as const,
+      evidenceSpan: "",
+      reason: `（程序修正：题摘阶段结局不作排除依据）${item.reason}`,
+    };
+  });
+  return { decision: { ...decision, criteriaJudgements }, corrections };
+}
+
+export type ScreenerStationOptions = {
+  /** 题摘阶段 O 的 not_met 是否降为 not_reported。默认开；实验矩阵 B0 关。 */
+  outcomeNeverExcludes?: boolean;
+};
+
 export type ScreenerStation = {
   screen(input: {
     record: CandidateRecord;
@@ -124,7 +156,11 @@ export type ScreenerStation = {
   }): Promise<ScreeningPrediction>;
 };
 
-export function createScreenerStation(model: StructuredModelClient): ScreenerStation {
+export function createScreenerStation(
+  model: StructuredModelClient,
+  options: ScreenerStationOptions = {},
+): ScreenerStation {
+  const outcomeNeverExcludes = options.outcomeNeverExcludes !== false;
   return {
     async screen(input) {
       const { record, criteria } = input;
@@ -137,13 +173,15 @@ export function createScreenerStation(model: StructuredModelClient): ScreenerSta
           validate: validateScreeningDecision,
           signal: input.signal,
         });
-        const decision = enforceSensitivity(alignJudgements(raw, criteria));
+        const staged = applyAbstractStageRules(alignJudgements(raw, criteria), { outcomeNeverExcludes });
+        const decision = enforceSensitivity(staged.decision);
         const evidence = checkEvidence(decision, record);
         return {
           pmid: record.pmid,
           ...decision,
           evidenceVerified: evidence.verified,
           ...(evidence.failure === "none" ? {} : { evidenceFailure: evidence.failure }),
+          ...(staged.corrections.length > 0 ? { guardCorrections: staged.corrections } : {}),
         };
       } catch (error) {
         if (input.signal?.aborted) throw error;

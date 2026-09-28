@@ -25,6 +25,8 @@ export type ScreeningPrediction = ScreeningDecision & {
   evidenceVerified: boolean;
   /** 未通过时的失败类型：spliced=省略号拼接真实片段；missing=找不到原文。 */
   evidenceFailure?: "spliced" | "missing";
+  /** 程序按阶段规则改写过的判断，例如 "O:not_met->not_reported"。供错误分析。 */
+  guardCorrections?: string[];
   /** 模型调用失败时的兜底标记：按敏感度优先保留，并记录原因。 */
   failed?: boolean;
   error?: string;
