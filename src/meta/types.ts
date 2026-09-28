@@ -204,6 +204,8 @@ export type ScreeningStagePrediction = {
   criteriaSource: CriteriaSource;
   criteriaKeys: PicoKey[];
   model: { provider: string; model: string };
+  /** 提示词版本；不同版本的结果不能混在一起比。 */
+  promptVersion?: string;
   startedAt: string;
   finishedAt: string;
   predictions: ScreeningPrediction[];

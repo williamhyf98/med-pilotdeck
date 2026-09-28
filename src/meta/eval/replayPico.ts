@@ -120,7 +120,11 @@ async function main(): Promise<void> {
       goldSource: args.gold,
     };
 
-    const abstract = await findCochraneAbstract(pubmed, review, args.cacheDir);
+    const abstract = await findCochraneAbstract(pubmed, review, args.cacheDir).catch((error: unknown) => {
+      // PubMed 偶发 fetch failed；一篇查不到不应该让整批停下。
+      console.error(`${review.id} pubmed lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    });
     const question = abstract ? buildQuestionText(abstract) : null;
     if (!abstract || !question) {
       totals.noAbstract += 1;

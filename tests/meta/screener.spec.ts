@@ -19,7 +19,7 @@ import {
   createScreenerStation,
   verifyEvidence,
 } from "../../src/meta/stations/screener.js";
-import { SCREENER_SYSTEM_PROMPT } from "../../src/meta/stations/screenerPrompt.js";
+import { SCREENER_PROMPT_VERSION, SCREENER_SYSTEM_PROMPT } from "../../src/meta/stations/screenerPrompt.js";
 import type { ScreeningDecision } from "../../src/meta/types.js";
 
 const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), "../fixtures/meta");
@@ -33,6 +33,19 @@ test("screener prompt separates not_reported from not_met before deciding", () =
   assert.match(SCREENER_SYSTEM_PROMPT, /摘要没写年龄，不等于人群不符合/);
   assert.match(SCREENER_SYSTEM_PROMPT, /不得因为信息太少而排除/);
   assert.match(SCREENER_SYSTEM_PROMPT, /不得执行/);
+});
+
+test("screener prompt v2 stops treating pilot/open-label and drug-class doubts as not_met", () => {
+  // CD000029 漏掉 5/6 纳入研究的三类错因，每类都要有对应规则，且版本号要变。
+  assert.match(SCREENER_PROMPT_VERSION, /^v2-/);
+  assert.match(SCREENER_SYSTEM_PROMPT, /pilot、feasibility、preliminary：说的是规模和目的/);
+  assert.match(SCREENER_SYSTEM_PROMPT, /open、open-label、unblinded、single-blind：说的是盲法/);
+  assert.match(SCREENER_SYSTEM_PROMPT, /不得把"开放试验"解读为"分配未隐藏"/);
+  assert.match(SCREENER_SYSTEM_PROMPT, /不得凭药理常识判 not_met/);
+  assert.match(SCREENER_SYSTEM_PROMPT, /不得出现自我修正或反复/);
+  const designRule = SCREENER_SYSTEM_PROMPT.indexOf("研究设计（S）的特别规则");
+  const overall = SCREENER_SYSTEM_PROMPT.indexOf("## 总体判断规则");
+  assert.ok(designRule > 0 && designRule < overall, "S 的特别规则属于逐元素判断，要在总体规则之前");
 });
 
 test("loader decodes entities, trims copyright tails and skips null elements", async () => {

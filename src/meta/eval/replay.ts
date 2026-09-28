@@ -21,6 +21,7 @@ import {
 } from "../benchmark/load.js";
 import type { BenchmarkReview } from "../benchmark/types.js";
 import { createScreenerStation } from "../stations/screener.js";
+import { SCREENER_PROMPT_VERSION } from "../stations/screenerPrompt.js";
 import type { ScreeningPrediction, ScreeningStagePrediction } from "../types.js";
 import { createOpenAiCompatibleClient } from "./openaiClient.js";
 
@@ -174,7 +175,7 @@ async function main(): Promise<void> {
   });
   const station = createScreenerStation(model);
 
-  console.log(`[replay] model=${args.model} reviews=${ids.length} concurrency=${args.concurrency}`);
+  console.log(`[replay] model=${args.model} prompt=${SCREENER_PROMPT_VERSION} reviews=${ids.length} concurrency=${args.concurrency}`);
 
   for (const id of ids) {
     const review = await loadBenchmarkReview(benchmarkFile(args.dir, id));
@@ -199,6 +200,7 @@ async function main(): Promise<void> {
       criteriaSource: criteria.source,
       criteriaKeys: criteria.keys,
       model: { provider: "openai-compatible", model: args.model },
+      promptVersion: SCREENER_PROMPT_VERSION,
       startedAt,
       finishedAt: new Date().toISOString(),
       predictions,
