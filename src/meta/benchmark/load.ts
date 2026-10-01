@@ -53,7 +53,7 @@ const PAGE_FURNITURE =
 
 /** 页脚落在别的元素里时，本元素开头只剩下一页的页眉，单独摘掉。 */
 const PAGE_HEADER =
-  /Cochrane Library\s*Trusted evidence\.\s*Informed decisions\.\s*Better health\.\s*Cochrane Database of Systematic Reviews\s*/g;
+  /Cochrane Library\s*Trusted evidence\.?(?:\s*Informed decisions\.?)?(?:\s*Better health\.?)?(?:\s*Cochrane Database of Systematic Reviews?)?\s*/g;
 
 export function cleanPicoText(text: string | null): string | null {
   if (!text) return null;
