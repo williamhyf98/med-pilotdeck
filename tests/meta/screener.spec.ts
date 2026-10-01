@@ -37,7 +37,7 @@ test("screener prompt separates not_reported from not_met before deciding", () =
 
 test("screener prompt v2/v3 stops treating pilot/open-label, drug-class doubts and abstract outcomes as not_met", () => {
   // CD000029 漏掉 5/6、CD000259 漏掉 65/246 的错因，每类都要有对应规则，且版本号要变。
-  assert.match(SCREENER_PROMPT_VERSION, /^v3-/);
+  assert.match(SCREENER_PROMPT_VERSION, /^v4-/);
   assert.match(SCREENER_SYSTEM_PROMPT, /pilot、feasibility、preliminary：说的是规模和目的/);
   assert.match(SCREENER_SYSTEM_PROMPT, /open、open-label、unblinded、single-blind：说的是盲法/);
   assert.match(SCREENER_SYSTEM_PROMPT, /不得把"开放试验"解读为"分配未隐藏"/);
@@ -48,6 +48,19 @@ test("screener prompt v2/v3 stops treating pilot/open-label, drug-class doubts a
   const designRule = SCREENER_SYSTEM_PROMPT.indexOf("研究设计（S）的特别规则");
   const overall = SCREENER_SYSTEM_PROMPT.indexOf("## 总体判断规则");
   assert.ok(designRule > 0 && designRule < overall, "S 的特别规则属于逐元素判断，要在总体规则之前");
+});
+
+test("screener prompt v4 closes the 'different category' loophole and adds multi-arm, provider-population and unit rules", () => {
+  // v3 残余 26 条漏判的分类：13 条借逃生口、5 条提供者 vs 患者、2 条析因/多臂、1 条单位未换算。
+  assert.match(SCREENER_SYSTEM_PROMPT, /同一大类之下的不同方法不算"完全不同的类别"/);
+  assert.match(SCREENER_SYSTEM_PROMPT, /"未提及"正是 not_reported 的定义/);
+  assert.match(SCREENER_SYSTEM_PROMPT, /多臂、析因或三组以上的试验/);
+  assert.match(SCREENER_SYSTEM_PROMPT, /人群（P）的特别规则/);
+  assert.match(SCREENER_SYSTEM_PROMPT, /患者是结局测量对象/);
+  assert.match(SCREENER_SYSTEM_PROMPT, /先把单位换算到同一尺度/);
+  const populationRule = SCREENER_SYSTEM_PROMPT.indexOf("人群（P）的特别规则");
+  const overall = SCREENER_SYSTEM_PROMPT.indexOf("## 总体判断规则");
+  assert.ok(populationRule > 0 && populationRule < overall, "P 的特别规则要在总体规则之前");
 });
 
 test("loader decodes entities, trims copyright tails and skips null elements", async () => {
