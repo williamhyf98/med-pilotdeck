@@ -37,12 +37,28 @@ export function decodeHtmlEntities(text: string): string {
 }
 
 /**
- * PICO 原文是从 PDF 抽的，末尾常粘着页眉页脚（Copyright © … Cochrane Library …）。
- * 只截掉尾部噪音，不动正文。
+ * PICO 原文是从 PDF 抽的，里面粘着页眉页脚。页脚格式固定：
+ *   "<综述标题> (Review) Copyright © 2024 The Cochrane Collaboration. Published by John Wiley & Sons, Ltd. 12"
+ * 后面常跟下一页页眉 "Cochrane Library Trusted evidence. Informed decisions. Better health. Cochrane Database of Systematic Reviews"。
+ *
+ * 2026-10-02 修正：旧实现在第一个 "Copyright ©" 处把后文全部截掉。纳排标准往往跨页，
+ * dev 集 101 篇里 52 篇因此丢掉页脚之后的正文（41 个要素各丢 ≥200 字；CD013562 的合格干预列表只剩第 1 项，
+ * 18 篇纳入研究全部漏判）。现在只摘除页脚页眉本身，保留其后的正文；无法识别的其他 Copyright 变体仍按尾部截断。
+ *
+ * 跑在综述标题前的那段 running title 没有分隔符，取法是：回退到上一个句末标点为止（最多 200 字）。
+ * 标题里含句点时会残留半截标题，这是可接受的噪音。
  */
+const PAGE_FURNITURE =
+  /(?:(?<=[.;:)\]])\s*[^.;:]{0,200}?)?\(Review\)\s*Copyright ©\s*\d{4}\s*The Cochrane Collaboration\.\s*Published by John Wiley & Sons, Ltd\.\s*\d*\s*(?:Cochrane Library\s*Trusted evidence\.\s*Informed decisions\.\s*Better health\.\s*Cochrane Database of Systematic Reviews\s*)?/g;
+
+/** 页脚落在别的元素里时，本元素开头只剩下一页的页眉，单独摘掉。 */
+const PAGE_HEADER =
+  /Cochrane Library\s*Trusted evidence\.\s*Informed decisions\.\s*Better health\.\s*Cochrane Database of Systematic Reviews\s*/g;
+
 export function cleanPicoText(text: string | null): string | null {
   if (!text) return null;
   let cleaned = text.replace(/\s+/g, " ").trim();
+  cleaned = cleaned.replace(PAGE_FURNITURE, " ").replace(PAGE_HEADER, " ").replace(/\s+/g, " ").trim();
   const copyright = cleaned.indexOf("Copyright ©");
   if (copyright > 0) cleaned = cleaned.slice(0, copyright).trim();
   cleaned = cleaned.replace(/\(Review\)$/, "").trim();

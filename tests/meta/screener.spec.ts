@@ -69,6 +69,22 @@ test("loader decodes entities, trims copyright tails and skips null elements", a
     cleanPicoText("Adults with X. (Review) Copyright © 2026 The Cochrane Collaboration. 7"),
     "Adults with X.",
   );
+  // 跨页的纳排标准：页脚 + 下一页页眉夹在正文中间，摘掉它们之后，后半段正文必须保留（CD013562 的教训）。
+  assert.equal(
+    cleanPicoText(
+      "1. Conventional synthetic DMARDs: methotrexate, of any dosing strategy. " +
+        "Disease-modifying antirheumatic drugs (DMARDs) for rheumatoid arthritis (Review) " +
+        "Copyright © 2026 The Cochrane Collaboration. Published by John Wiley & Sons, Ltd. 19 " +
+        "Cochrane Library Trusted evidence. Informed decisions. Better health. Cochrane Database of Systematic Reviews " +
+        "2. Biologic DMARDs: TNF inhibitors.",
+    ),
+    "1. Conventional synthetic DMARDs: methotrexate, of any dosing strategy. 2. Biologic DMARDs: TNF inhibitors.",
+  );
+  // 页脚在末尾且没有下一页页眉：同样只摘页脚。
+  assert.equal(
+    cleanPicoText("We included RCTs. Exercise for depression (Review) Copyright © 2026 The Cochrane Collaboration. Published by John Wiley & Sons, Ltd. 42"),
+    "We included RCTs.",
+  );
 
   const review = await loadBenchmarkReview(fixtureFile);
   assert.equal(review.id, "CD999001");
