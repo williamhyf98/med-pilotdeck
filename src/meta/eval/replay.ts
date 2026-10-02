@@ -8,6 +8,8 @@
  * 用法：
  *   tsx src/meta/eval/replay.ts --dir <reviews_a> --split dev --limit 5
  *   tsx src/meta/eval/replay.ts --dir <reviews_a> --reviews CD000028,CD000029
+ *   tsx src/meta/eval/replay.ts --reviews CD000259 --out predictions-g --verify   # G 臂：排除核验
+ *   META_SCREENER_PROMPT=v3-2026-09-29 tsx src/meta/eval/replay.ts ...           # 选筛选提示词版本
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
@@ -19,7 +21,11 @@ import {
   loadOrCreateSplit,
   resolveCriteriaSet,
 } from "../benchmark/load.js";
+import { partitionUsableReviews } from "../benchmark/knownIssues.js";
 import type { BenchmarkReview } from "../benchmark/types.js";
+import { createBudgetMeter } from "../budget.js";
+import { createExclusionVerifier } from "../stations/exclusionVerifier.js";
+import { EXCLUSION_VERIFIER_PROMPT_VERSION } from "../stations/exclusionVerifierPrompt.js";
 import { createScreenerStation } from "../stations/screener.js";
 import { SCREENER_PROMPT_VERSION } from "../stations/screenerPrompt.js";
 import type { ScreeningPrediction, ScreeningStagePrediction } from "../types.js";
@@ -34,6 +40,8 @@ type Args = {
   criteria: string | null;
   maxCandidates: number | null;
   concurrency: number;
+  /** G 臂开关：每条排除再发一次核验调用。 */
+  verify: boolean;
   baseUrl: string;
   model: string;
   apiKey: string;
@@ -75,6 +83,7 @@ function parseArgs(argv: readonly string[]): Args {
     criteria: map.get("criteria") ?? null,
     maxCandidates: number("max-candidates"),
     concurrency: number("concurrency") ?? 4,
+    verify: map.get("verify") === "true",
     baseUrl: map.get("base-url") ?? process.env.META_MODEL_BASE_URL ?? "http://10.31.112.13:8040/v1",
     model: map.get("model") ?? process.env.META_MODEL ?? "Qwen3.8-27B",
     apiKey: map.get("api-key") ?? process.env.META_MODEL_API_KEY ?? "EMPTY",
@@ -140,6 +149,8 @@ function summarize(review: BenchmarkReview, predictions: readonly ScreeningPredi
   const failed = predictions.filter((item) => item.failed).length;
   const spliced = predictions.filter((item) => item.evidenceFailure === "spliced").length;
   const missing = predictions.filter((item) => item.evidenceFailure === "missing").length;
+  const overturned = predictions.filter((item) => (item.verifierCorrections?.length ?? 0) > 0).length;
+  const verifierFailed = predictions.filter((item) => item.verifierFailed).length;
   return [
     review.id,
     `n=${predictions.length}`,
@@ -151,6 +162,9 @@ function summarize(review: BenchmarkReview, predictions: readonly ScreeningPredi
     failed > 0 ? `failed=${failed}` : "",
     spliced > 0 ? `span_spliced=${spliced}` : "",
     missing > 0 ? `span_missing=${missing}` : "",
+    // G 臂：核验推翻了多少条排除（这些候选从 exclude 变回 include），以及核验调用失败数。
+    overturned > 0 ? `verifier_overturned=${overturned}` : "",
+    verifierFailed > 0 ? `verifier_failed=${verifierFailed}` : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -163,19 +177,33 @@ async function main(): Promise<void> {
     ids = args.reviews;
   } else {
     const split = await loadOrCreateSplit(args.dir, args.devSize);
-    ids = args.split === "all" ? [...split.dev, ...split.test].sort() : split[args.split];
+    const selected = args.split === "all" ? [...split.dev, ...split.test].sort() : split[args.split];
+    // 按 split 跑批时跳过已登记的坏数据（P/I 为空、抽错章节），并把跳过的写进日志；
+    // --reviews 显式点名不受影响，方便复现问题。
+    const { usable, skipped } = partitionUsableReviews(selected);
+    for (const item of skipped) console.warn(`[replay] ${item.id} skipped (known data issue): ${item.reason}`);
+    ids = usable;
   }
   if (args.limit !== null) ids = ids.slice(0, args.limit);
   if (ids.length === 0) throw new Error("no reviews selected");
 
-  const model = createOpenAiCompatibleClient({
+  const rawModel = createOpenAiCompatibleClient({
     baseUrl: args.baseUrl,
     model: args.model,
     apiKey: args.apiKey,
   });
-  const station = createScreenerStation(model);
+  // 预算计量包在客户端外面：筛选与核验的每次调用（含失败）都数进去，RQ3 的成本轴从这里来。
+  const budget = createBudgetMeter();
+  const model = budget.meterModel(rawModel);
+  const station = createScreenerStation(model, {
+    ...(args.verify ? { exclusionVerifier: createExclusionVerifier(model) } : {}),
+  });
 
-  console.log(`[replay] model=${args.model} prompt=${SCREENER_PROMPT_VERSION} reviews=${ids.length} concurrency=${args.concurrency}`);
+  console.log(
+    `[replay] model=${args.model} prompt=${SCREENER_PROMPT_VERSION}`
+      + (args.verify ? ` verifier=${EXCLUSION_VERIFIER_PROMPT_VERSION}` : "")
+      + ` reviews=${ids.length} concurrency=${args.concurrency}`,
+  );
 
   for (const id of ids) {
     const review = await loadBenchmarkReview(benchmarkFile(args.dir, id));
@@ -192,8 +220,11 @@ async function main(): Promise<void> {
       : review.candidates;
 
     const startedAt = new Date().toISOString();
+    const before = budget.snapshot();
+    const startedMs = Date.now();
     const predictions = await mapWithConcurrency(candidates, args.concurrency, (record) =>
       station.screen({ record, criteria }));
+    const after = budget.snapshot();
     const payload: ScreeningStagePrediction = {
       reviewId: review.id,
       stage: "initial",
@@ -201,6 +232,12 @@ async function main(): Promise<void> {
       criteriaKeys: criteria.keys,
       model: { provider: "openai-compatible", model: args.model },
       promptVersion: SCREENER_PROMPT_VERSION,
+      ...(args.verify ? { verifier: { promptVersion: EXCLUSION_VERIFIER_PROMPT_VERSION } } : {}),
+      budget: {
+        modelCalls: after.modelCalls - before.modelCalls,
+        promptChars: after.promptChars - before.promptChars,
+        wallClockMs: Date.now() - startedMs,
+      },
       startedAt,
       finishedAt: new Date().toISOString(),
       predictions,
@@ -212,7 +249,7 @@ async function main(): Promise<void> {
       `${JSON.stringify(payload, null, 2)}\n`,
       "utf8",
     );
-    console.log(summarize(review, predictions));
+    console.log(`${summarize(review, predictions)} calls=${payload.budget?.modelCalls ?? 0}`);
   }
 }
 

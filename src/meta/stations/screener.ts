@@ -2,6 +2,8 @@ import type { StructuredModelClient } from "../../trauma/modelClient.js";
 import type { CandidateRecord, CriteriaSet, PicoKey } from "../benchmark/types.js";
 import { SCREENING_OUTPUT_SCHEMA, validateScreeningDecision } from "../schemas.js";
 import type { ScreeningDecision, ScreeningPrediction } from "../types.js";
+import type { ExclusionVerifier } from "./exclusionVerifier.js";
+import { applyExclusionVerification } from "./exclusionVerifier.js";
 import { SCREENER_SYSTEM_PROMPT } from "./screenerPrompt.js";
 
 const ELEMENT_LABEL: Record<PicoKey, string> = {
@@ -102,7 +104,7 @@ function alignJudgements(decision: ScreeningDecision, criteria: CriteriaSet): Sc
  * 程序兜底敏感度规则：没有任何元素明确冲突却判排除时，改回纳入。
  * 这一条与 prompt 里的"敏感度优先"重复，用于防止模型不遵守。
  */
-function enforceSensitivity(decision: ScreeningDecision): ScreeningDecision {
+export function enforceSensitivity(decision: ScreeningDecision): ScreeningDecision {
   const hasConflict = decision.criteriaJudgements.some((item) => item.verdict === "not_met");
   if (decision.decision === "exclude" && !hasConflict) {
     return {
@@ -146,6 +148,11 @@ export function applyAbstractStageRules(
 export type ScreenerStationOptions = {
   /** 题摘阶段 O 的 not_met 是否降为 not_reported。默认开；实验矩阵 B0 关。 */
   outcomeNeverExcludes?: boolean;
+  /**
+   * G 臂：传入排除核验工位后，每条 exclude 决定会再发一次窄调用核验其 not_met 引用；
+   * 被推翻的元素降为 not_reported，决定按敏感度规则重新推导。缺省不开（B0/M 臂）。
+   */
+  exclusionVerifier?: ExclusionVerifier;
 };
 
 export type ScreenerStation = {
@@ -174,7 +181,26 @@ export function createScreenerStation(
           signal: input.signal,
         });
         const staged = applyAbstractStageRules(alignJudgements(raw, criteria), { outcomeNeverExcludes });
-        const decision = enforceSensitivity(staged.decision);
+        let decision = enforceSensitivity(staged.decision);
+        let verifierCorrections: string[] = [];
+        let verifierFailed = false;
+        if (options.exclusionVerifier && decision.decision === "exclude") {
+          try {
+            const result = await options.exclusionVerifier.verify({
+              record,
+              criteria,
+              decision,
+              signal: input.signal,
+            });
+            const verified = applyExclusionVerification(decision, result, record);
+            verifierCorrections = verified.corrections;
+            decision = enforceSensitivity(verified.decision);
+          } catch (error) {
+            if (input.signal?.aborted) throw error;
+            // 核验失败不改原判：否则故障会伪装成"推翻"，抬高敏感度并掩盖问题。只打标记。
+            verifierFailed = true;
+          }
+        }
         const evidence = checkEvidence(decision, record);
         return {
           pmid: record.pmid,
@@ -182,6 +208,8 @@ export function createScreenerStation(
           evidenceVerified: evidence.verified,
           ...(evidence.failure === "none" ? {} : { evidenceFailure: evidence.failure }),
           ...(staged.corrections.length > 0 ? { guardCorrections: staged.corrections } : {}),
+          ...(verifierCorrections.length > 0 ? { verifierCorrections } : {}),
+          ...(verifierFailed ? { verifierFailed } : {}),
         };
       } catch (error) {
         if (input.signal?.aborted) throw error;

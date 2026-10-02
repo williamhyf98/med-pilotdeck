@@ -27,6 +27,10 @@ export type ScreeningPrediction = ScreeningDecision & {
   evidenceFailure?: "spliced" | "missing";
   /** 程序按阶段规则改写过的判断，例如 "O:not_met->not_reported"。供错误分析。 */
   guardCorrections?: string[];
+  /** G 臂：排除核验工位推翻的判断，例如 "I:not_met->not_reported(absent)"。 */
+  verifierCorrections?: string[];
+  /** G 臂：核验调用失败，维持原判并标记，供成本与故障统计。 */
+  verifierFailed?: boolean;
   /** 模型调用失败时的兜底标记：按敏感度优先保留，并记录原因。 */
   failed?: boolean;
   error?: string;
@@ -208,6 +212,10 @@ export type ScreeningStagePrediction = {
   model: { provider: string; model: string };
   /** 提示词版本；不同版本的结果不能混在一起比。 */
   promptVersion?: string;
+  /** G 臂开启时记录核验工位的提示词版本；未开启则缺省。 */
+  verifier?: { promptVersion: string };
+  /** 本篇综述的预算消耗（模型调用次数、prompt 字符数等），RQ3 成本曲线的数据源。 */
+  budget?: { modelCalls: number; promptChars: number; wallClockMs: number };
   startedAt: string;
   finishedAt: string;
   predictions: ScreeningPrediction[];
