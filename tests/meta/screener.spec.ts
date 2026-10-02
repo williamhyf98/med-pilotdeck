@@ -19,7 +19,12 @@ import {
   createScreenerStation,
   verifyEvidence,
 } from "../../src/meta/stations/screener.js";
-import { SCREENER_PROMPT_VERSION, SCREENER_SYSTEM_PROMPT } from "../../src/meta/stations/screenerPrompt.js";
+import {
+  SCREENER_PROMPTS,
+  SCREENER_PROMPT_VERSION,
+  SCREENER_SYSTEM_PROMPT,
+  resolveScreenerPromptVersion,
+} from "../../src/meta/stations/screenerPrompt.js";
 import type { ScreeningDecision } from "../../src/meta/types.js";
 
 const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), "../fixtures/meta");
@@ -37,7 +42,7 @@ test("screener prompt separates not_reported from not_met before deciding", () =
 
 test("screener prompt v2/v3 stops treating pilot/open-label, drug-class doubts and abstract outcomes as not_met", () => {
   // CD000029 漏掉 5/6、CD000259 漏掉 65/246 的错因，每类都要有对应规则，且版本号要变。
-  assert.match(SCREENER_PROMPT_VERSION, /^v4-/);
+  assert.match(SCREENER_PROMPT_VERSION, /^v4\.1-/);
   assert.match(SCREENER_SYSTEM_PROMPT, /pilot、feasibility、preliminary：说的是规模和目的/);
   assert.match(SCREENER_SYSTEM_PROMPT, /open、open-label、unblinded、single-blind：说的是盲法/);
   assert.match(SCREENER_SYSTEM_PROMPT, /不得把"开放试验"解读为"分配未隐藏"/);
@@ -57,10 +62,23 @@ test("screener prompt v4 closes the 'different category' loophole and adds multi
   assert.match(SCREENER_SYSTEM_PROMPT, /多臂、析因或三组以上的试验/);
   assert.match(SCREENER_SYSTEM_PROMPT, /人群（P）的特别规则/);
   assert.match(SCREENER_SYSTEM_PROMPT, /患者是结局测量对象/);
-  assert.match(SCREENER_SYSTEM_PROMPT, /先把单位换算到同一尺度/);
+  // v4.1 去掉了单位换算句：它疑似诱发数值字面比较（CD013673 三条剂量/疗程倒退）。
+  assert.doesNotMatch(SCREENER_SYSTEM_PROMPT, /先把单位换算到同一尺度/);
   const populationRule = SCREENER_SYSTEM_PROMPT.indexOf("人群（P）的特别规则");
   const overall = SCREENER_SYSTEM_PROMPT.indexOf("## 总体判断规则");
   assert.ok(populationRule > 0 && populationRule < overall, "P 的特别规则要在总体规则之前");
+});
+
+test("screener prompt versions are selectable and v3 stays byte-stable for the experiment matrix", () => {
+  assert.deepEqual(Object.keys(SCREENER_PROMPTS).sort(), ["v3-2026-09-29", "v4.1-2026-10-02"]);
+  assert.equal(resolveScreenerPromptVersion(undefined), "v4.1-2026-10-02");
+  assert.equal(resolveScreenerPromptVersion("nonsense"), "v4.1-2026-10-02");
+  assert.equal(resolveScreenerPromptVersion("v3-2026-09-29"), "v3-2026-09-29");
+  const v3 = SCREENER_PROMPTS["v3-2026-09-29"]!;
+  // v3 没有 v4 的三条新规则，这样对照臂才是真的 v3。
+  assert.doesNotMatch(v3, /多臂、析因或三组以上的试验/);
+  assert.doesNotMatch(v3, /人群（P）的特别规则/);
+  assert.match(v3, /题摘阶段 O 只能是 met 或 not_reported/);
 });
 
 test("loader decodes entities, trims copyright tails and skips null elements", async () => {
