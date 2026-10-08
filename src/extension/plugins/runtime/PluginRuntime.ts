@@ -1,4 +1,5 @@
 import { resolvePluginDirectories } from "../discovery/PluginDirectoryResolver.js";
+import { isMedicalSkillAvailable } from "../../../pilot/medicalCapabilities.js";
 import { discoverPluginPaths, discoverSkillPaths } from "../discovery/discoverLocalPlugins.js";
 import { loadPluginFromPath, loadSkillFromPath } from "../loading/PluginLoader.js";
 import { loadPluginAgentProfiles } from "../loading/PluginAgentProfileLoader.js";
@@ -156,7 +157,7 @@ export class PluginRuntime {
       plugins,
       commands: plugins.flatMap((plugin) => (plugin.commands ?? []).map((command) => toCommandContribution(plugin, command))),
       agents: this.getAllAgentProfiles(),
-      skills: collectSkillContributions(plugins),
+      skills: collectSkillContributions(plugins).filter((skill) => isMedicalSkillAvailable(skill.name)),
       outputStyles: plugins.flatMap((plugin) => plugin.outputStyles ?? []),
       hooks: loadPluginHooks(plugins),
       mcpServers: this.mcpServers(),
@@ -186,6 +187,7 @@ export class PluginRuntime {
   }
 
   async loadSkillPrompt(extensionId: string): Promise<string | undefined> {
+    if (!isMedicalSkillAvailable(extensionId)) return undefined;
     const plugins = sortByResolutionPriority(this.registry.list());
 
     for (const plugin of plugins) {

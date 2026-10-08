@@ -274,6 +274,7 @@ Restart PilotDeck (or reload plugins) after changing `plugin.json` env.
 | `MED_RAG_TOPIC` | `战创伤` | Default topic filter; empty string = whole library |
 | `MED_RAG_MANIFEST` | `<plugin>/data/rag/manifest.json` | Override manifest path (tests) |
 | `MED_DICOM_DERIVED_DIR` / `MED_DERIVED_DIR` | `<parent>/.med-tools-derived` | Preview/PNG output dir |
+| `MED_SPECIALIZED_CT_ENABLED` | `0` | `1` restores specialized CT skills and tools; other values hide the three skills and block RADAR/DeepChest calls |
 | `MED_RADAR_API_BASE` | `https://127.0.0.1:18120` | Set the actual RADAR URL in `config/deploy.env` |
 | `MED_RADAR_API_KEY` | *(empty)* | Bearer key; takes precedence over the key file |
 | `MED_RADAR_API_KEY_FILE` | `$PILOT_HOME/secrets/med-radar-api-key` | Node36 key file; keep mode `600` |

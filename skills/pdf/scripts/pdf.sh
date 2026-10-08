@@ -137,8 +137,8 @@ cmd_bootstrap_runtime() {
   printf '%s\n' "$expected" > "$STAMP_FILE"
 
   if ! find_pdfinfo >/dev/null || ! find_pdftoppm >/dev/null; then
-    poppler_missing_json >&2
-    exit 2
+    printf '{"status":"degraded","warning":"Poppler（pdfinfo / pdftoppm）未安装；PDF 文本处理运行时已就绪，但 PDF 页面渲染能力暂不可用。"}\n' >&2
+    exit 0
   fi
   cmd_check
 }
