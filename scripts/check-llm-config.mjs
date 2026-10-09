@@ -61,6 +61,12 @@ function providerAllowsMissingApiKey(providerId) {
   return providerId === 'ollama';
 }
 
+function resolveProbeApiKey(value) {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  const reference = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(raw);
+  return reference ? (process.env[reference[1]] || '').trim() : raw;
+}
+
 function joinUrl(base, path) {
   return `${String(base).replace(/\/+$/, '')}/${String(path).replace(/^\/+/, '')}`;
 }
@@ -109,7 +115,11 @@ function isUsableProvider(providerId, provider, modelId) {
   }
   const url = typeof provider.url === 'string' ? provider.url.trim() : '';
   if (!url) return { ok: false, reason: 'missing url' };
-  const apiKey = typeof provider.apiKey === 'string' ? provider.apiKey.trim() : '';
+  const apiKey = resolveProbeApiKey(provider.apiKey);
+  const keyReference = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(String(provider.apiKey || '').trim());
+  if (keyReference && !apiKey) {
+    return { ok: false, reason: `environment variable ${keyReference[1]} is not set` };
+  }
   if (apiKey === PLACEHOLDER_API_KEY) {
     return {
       ok: false,
@@ -210,7 +220,7 @@ function buildProbeRequest(protocol, baseUrl, apiKey, model) {
 
 async function probeModel({ providerId, modelId, provider, timeoutMs }) {
   const protocol = normalizeProtocol(provider.protocol);
-  const apiKey = typeof provider.apiKey === 'string' ? provider.apiKey.trim() : '';
+  const apiKey = resolveProbeApiKey(provider.apiKey);
   const { urls, options, validate } = buildProbeRequest(protocol, provider.url, apiKey, modelId);
   let lastError = 'no endpoint candidates';
 
@@ -425,7 +435,7 @@ async function main() {
   if (embeddingTarget) {
     console.log(`    embed:  ${embeddingTarget.modelId}`);
   }
-  console.log(`    probe:  ${totalProbes} model(s), timeout ${timeoutMs}ms each`);
+  console.log(`    probe:  ${totalProbes} model(s), default timeout ${timeoutMs}ms`);
   console.log('');
 
   let mainOk = false;
@@ -442,7 +452,9 @@ async function main() {
       continue;
     }
 
-    const result = await probeModel({ ...target, timeoutMs });
+    const probeTimeoutMs = Number.isFinite(target.provider.probeTimeoutMs) && target.provider.probeTimeoutMs > 0
+      ? target.provider.probeTimeoutMs : timeoutMs;
+    const result = await probeModel({ ...target, timeoutMs: probeTimeoutMs });
     if (result.ok) {
       if (isMain) mainOk = true;
       console.log(`  ${OK} ${label}${isMain ? '  (main agent)' : ''}`);

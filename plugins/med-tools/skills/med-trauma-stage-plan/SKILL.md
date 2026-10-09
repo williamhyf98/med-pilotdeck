@@ -1,6 +1,6 @@
 ---
 name: med-trauma-stage-plan
-description: 生成战创伤分级救治方案（插件内 G9，主 Agent 模型回退）。当用户需要针对伤员发生地/野战分类场/收容处置组/重伤救治组/手术组/洗消组之一给出结构化救治方案时使用。用户未点名阶段时必须先 ask_user_question，禁止自行猜测。原样粘贴 care_plan。不用于教材问答（用 med-trauma-assist），也不用于仅解读附件（用 med-medical）。
+description: 生成战创伤分级救治方案（插件内配置的医学模型，主 Agent 模型回退）。当用户需要针对伤员发生地/野战分类场/收容处置组/重伤救治组/手术组/洗消组之一给出结构化救治方案时使用。用户未点名阶段时必须先 ask_user_question，禁止自行猜测。原样粘贴 care_plan。不用于教材问答（用 med-trauma-assist），也不用于仅解读附件（用 med-medical）。
 ---
 
 # 战创伤分阶段正式救治方案（med-tools）
@@ -63,7 +63,7 @@ description: 生成战创伤分级救治方案（插件内 G9，主 Agent 模型
        · 否则根据用户文本整理成规范伤情述说
        · 禁止：主 Agent 根据普通照片自行写影像所见
   → 若有 DICOM/PDF/报告类附件：先 med_parse_medical（`continuation_mode: "material"`），把 report/summary 并入 injury_text；不要把本轮当成已结束
-  → 普通伤情照片：把绝对路径放入 image_paths，交给工具内 G9 看图
+  → 普通伤情照片：把绝对路径放入 image_paths，交给工具内医学模型看图
   → 调用 mcp__med-tools__med_trauma_stage_plan(stage, injury_text, image_paths?)
   → 不强制 RAG
   → care_plan 非空 → 方案会在界面流式展示，**本轮不结束**。不要复述或改写全文。
@@ -73,7 +73,7 @@ description: 生成战创伤分级救治方案（插件内 G9，主 Agent 模型
 
 ## 图片必须传路径（常见失误）
 
-用户附了伤情照片时，**必须**把路径放进 `image_paths`，否则 G9 看不到图，第一节只能写「无影像」。
+用户附了伤情照片时，**必须**把路径放进 `image_paths`，否则医学模型看不到图，第一节只能写「无影像」。
 
 - 附件路径来自**当前或更早轮次**用户消息里的清单（后续轮次可能不再重复打印，路径仍然有效），形如：
 
@@ -87,7 +87,7 @@ description: 生成战创伤分级救治方案（插件内 G9，主 Agent 模型
 
 ## 耗时预期
 
-G9 生成完整五段方案通常 **60–120 秒**，正文会在 G9 生成时直接流式显示。调用工具前不要输出前言，以免前言混入方案正文。方案出来后若用户还要求 Word/PDF，继续走文档技能，不要把本轮当成已经结束。若返回 `MCP error -32001 / Request timed out`，说明网关 MCP 超时过短（需 `PILOTDECK_MCP_TOOL_TIMEOUT_MS ≥ 300000` 并重启），向用户说明后再重试，不要改写成主模型自撰方案。
+医学模型生成完整五段方案可能需要 **60–120 秒**，正文会在生成时直接流式显示。调用工具前不要输出前言，以免前言混入方案正文。方案出来后若用户还要求 Word/PDF，继续走文档技能，不要把本轮当成已经结束。若返回 `MCP error -32001 / Request timed out`，说明网关 MCP 超时过短（需 `PILOTDECK_MCP_TOOL_TIMEOUT_MS ≥ 300000` 并重启），向用户说明后再重试，不要改写成主模型自撰方案。
 
 ## 工具返回
 

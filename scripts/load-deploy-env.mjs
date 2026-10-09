@@ -1,10 +1,8 @@
 /**
- * Single on-site configuration entry point: `config/deploy.env`.
+ * Deployment service settings: `config/deploy.env`; model settings live in
+ * `pilotdeck.yaml` and may be overridden by explicit shell variables.
  *
- * The repo ships no model IP any more — `plugins/med-tools/plugin.json` now
- * carries `${env:NAME:-http://127.0.0.1:…}` placeholders, so a deployment site
- * only edits `config/deploy.env` (copied from `config/deploy.env.example`) and
- * everything downstream picks the values up.
+ * `plugins/med-tools/plugin.json` passes through explicit MED_* overrides.
  *
  * Rules:
  * - The shell environment always wins; the file only fills in what is unset or
@@ -17,6 +15,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
@@ -106,5 +105,21 @@ export function collectModelHosts(entries = new Map()) {
       // Not a URL (model name, token, …) — ignore.
     }
   }
+  const pilotConfigPath = join(process.env.PILOT_HOME || join(repoRoot, '.pilotdeck-home'), 'pilotdeck.yaml');
+  if (existsSync(pilotConfigPath)) {
+    try {
+      const config = parseYaml(readFileSync(pilotConfigPath, 'utf8'));
+      const providers = config?.model?.providers ?? {};
+      for (const provider of Object.values(providers)) {
+        if (typeof provider?.url === 'string') hosts.add(new URL(provider.url).hostname);
+      }
+      for (const url of [config?.embedding?.apiBase, config?.embedding?.endpoint]) {
+        if (typeof url === 'string') hosts.add(new URL(url).hostname);
+      }
+    } catch {
+      // Invalid YAML or URL is reported by the config loader; do not block boot.
+    }
+  }
+  hosts.delete('');
   return [...hosts];
 }

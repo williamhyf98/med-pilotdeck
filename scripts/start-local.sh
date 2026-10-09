@@ -87,7 +87,7 @@ fi
 ensure_node22
 assert_no_share
 
-# Medical MCP (G9-V-Med) can take >60s for a full trauma stage plan.
+# Medical MCP can take >60s for a full trauma stage plan.
 export PILOTDECK_MCP_TOOL_TIMEOUT_MS="${PILOTDECK_MCP_TOOL_TIMEOUT_MS:-300000}"
 
 run_llm_check() {
