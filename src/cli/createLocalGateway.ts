@@ -932,7 +932,7 @@ class ProjectRuntimeRegistry {
     // 影像判读交给医学微调 VLM；它正是 med_parse_medical 背后的同一个模型，
     // 但 prompt 与输出长度由我们控制，避开那份冗长的通用报告。
     const INTERPRETATION_PROVIDER = "local";
-    const INTERPRETATION_MODEL = "G9-V-Med";
+    const INTERPRETATION_MODEL = "/private/models/checkpoint-212-merged";
     let interpretationSelection = {
       provider: INTERPRETATION_PROVIDER,
       model: INTERPRETATION_MODEL,

@@ -9,12 +9,12 @@ import { DEFAULT_MODEL_CAPABILITIES } from "../../src/model/protocol/capabilitie
 import { createLocalGateway } from "../../src/cli/createLocalGateway.js";
 
 /**
- * Task 9 pins 工位 I 的判读模型为 provider "local" / model "G9-V-Med", with a
+ * Task 9 pins 工位 I 的判读模型为 provider "local" / model "/private/models/checkpoint-212-merged", with a
  * fallback to the main agent model when that provider/model is absent from
  * config (see `createTraumaRunner` in src/cli/createLocalGateway.ts).
  *
  * The fallback is implemented as: try
- *   runtime.model.getMultimodal("local", "G9-V-Med").input.includes("image"),
+ *   runtime.model.getMultimodal("local", "/private/models/checkpoint-212-merged").input.includes("image"),
  *   and on failure fall back to the agent's configured modelSelection.
  *
  * These tests exercise the real `createModelRuntime` production factory —
@@ -37,7 +37,7 @@ function multimodalModel(input: string[]) {
   };
 }
 
-test("getMultimodal throws when local/G9-V-Med is absent from config (fallback trigger)", () => {
+test("getMultimodal throws when local model is absent from config (fallback trigger)", () => {
   const runtime = createModelRuntime({
     providers: {
       openai: {
@@ -54,12 +54,12 @@ test("getMultimodal throws when local/G9-V-Med is absent from config (fallback t
   });
 
   assert.throws(
-    () => runtime.getMultimodal("local", "G9-V-Med"),
+    () => runtime.getMultimodal("local", "/private/models/checkpoint-212-merged"),
     /Provider local does not exist/,
   );
 });
 
-test("getMultimodal throws model_not_found when provider exists but G9-V-Med model does not", () => {
+test("getMultimodal throws model_not_found when provider exists but medical model does not", () => {
   const runtime = createModelRuntime({
     providers: {
       local: {
@@ -76,12 +76,12 @@ test("getMultimodal throws model_not_found when provider exists but G9-V-Med mod
   });
 
   assert.throws(
-    () => runtime.getMultimodal("local", "G9-V-Med"),
-    /Model G9-V-Med does not exist in provider local/,
+    () => runtime.getMultimodal("local", "/private/models/checkpoint-212-merged"),
+    /Model \/private\/models\/checkpoint-212-merged does not exist in provider local/,
   );
 });
 
-test("getMultimodal resolves and reports image support when local/G9-V-Med is configured", () => {
+test("getMultimodal resolves and reports image support when medical model is configured", () => {
   const runtime = createModelRuntime({
     providers: {
       local: {
@@ -91,13 +91,13 @@ test("getMultimodal resolves and reports image support when local/G9-V-Med is co
         apiKey: "test",
         headers: {},
         models: {
-          "G9-V-Med": multimodalModel(["text", "image"]),
+          "/private/models/checkpoint-212-merged": multimodalModel(["text", "image"]),
         },
       },
     },
   });
 
-  const multimodal = runtime.getMultimodal("local", "G9-V-Med");
+  const multimodal = runtime.getMultimodal("local", "/private/models/checkpoint-212-merged");
   assert.equal(multimodal.input.includes("image"), true);
 });
 
@@ -163,7 +163,7 @@ async function withTraumaRunnerGateway(
 
 const CONFIG_WITH_G9_V_MED = `schemaVersion: 1
 agent:
-  model: local/G9-V-Med
+  model: local//private/models/checkpoint-212-merged
 model:
   providers:
     local:
@@ -171,7 +171,7 @@ model:
       url: http://127.0.0.1:1/v1
       apiKey: EMPTY
       models:
-        G9-V-Med:
+        /private/models/checkpoint-212-merged:
           capabilities:
             supportsToolUse: true
             supportsStreaming: true
@@ -215,24 +215,24 @@ telemetry:
   enabled: false
 `;
 
-test("createTraumaRunner picks local/G9-V-Med when it is configured (real assembly, not a copy)", async () => {
+test("createTraumaRunner picks configured local medical model (real assembly, not a copy)", async () => {
   await withTraumaRunnerGateway("present", CONFIG_WITH_G9_V_MED, async ({ calls, projectRoot, registry }) => {
     const runner = await registry.createTraumaRunner(projectRoot, "sess-present");
     assert.equal(typeof runner.runTurn, "function");
     // Only the pinned provider/model was probed — it resolved, so no
     // fallback probe against the agent's model selection happened.
-    assert.deepEqual(calls, [["local", "G9-V-Med"]]);
+    assert.deepEqual(calls, [["local", "/private/models/checkpoint-212-merged"]]);
   });
 });
 
-test("createTraumaRunner falls back to the agent model when local/G9-V-Med is absent (real assembly, not a copy)", async () => {
+test("createTraumaRunner falls back to the agent model when local medical model is absent (real assembly, not a copy)", async () => {
   await withTraumaRunnerGateway("absent", CONFIG_WITHOUT_G9_V_MED, async ({ calls, projectRoot, registry }) => {
     const runner = await registry.createTraumaRunner(projectRoot, "sess-absent");
     assert.equal(typeof runner.runTurn, "function");
-    // First probe (pinned local/G9-V-Med) fails, so createTraumaRunner
+    // First probe (pinned local medical model) fails, so createTraumaRunner
     // falls back to a second probe against the agent's configured model.
     assert.deepEqual(calls, [
-      ["local", "G9-V-Med"],
+      ["local", "/private/models/checkpoint-212-merged"],
       ["openai", "gpt-agent"],
     ]);
   });
