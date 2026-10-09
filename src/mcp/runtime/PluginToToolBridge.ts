@@ -509,7 +509,7 @@ function medicalCompletion(
 }
 
 /**
- * Tools whose plugin already generates user-facing prose (G9-V-Med) and
+ * Tools whose plugin already generates user-facing prose (medical VLM) and
  * streams it via MCP progress into the assistant bubble.
  *
  * `endTurn` false: keep streaming, but let the agent loop continue (so a

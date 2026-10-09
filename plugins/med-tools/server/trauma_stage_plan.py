@@ -1,4 +1,4 @@
-"""Six-stage war-trauma graded-care plan via G9-V-Med (+ main-agent fallback)."""
+"""Six-stage war-trauma graded-care plan via the configured medical VLM."""
 
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ PRESENTATION = (
     "若 care_plan 非空：将 care_plan 字段原样展示给用户；不要改写、压缩、转述或重新组织。"
     "最多可在方案前后各加 1–2 句说明（阶段名/来源模型/是否回退）。"
     "若 care_plan 为空且 agent_continue=true：主 Agent 必须按五段固定格式自行补写方案，"
-    "并明确说明 G9/回退均失败。"
+    "并明确说明医学模型/回退均失败。"
 )
 _SECTION_TITLES = (
     "一、图像/影像判读",
@@ -219,7 +219,7 @@ def generate_stage_plan(
     max_images: int = 8,
     timeout_s: float = 180.0,
 ) -> Dict[str, Any]:
-    """Build prompts and call G9 (with main-agent fallback). Returns JSON-serializable dict."""
+    """Build prompts and call the medical VLM (with main-agent fallback). Returns JSON-serializable dict."""
     canonical = normalize_stage(stage)
     paths = [p for p in _normalize_image_paths(image_paths) if Path(p).is_file()]
     max_images = max(1, min(int(max_images or 8), 16))
@@ -309,7 +309,7 @@ async def generate_stage_plan_stream(
     max_images: int = 8,
     timeout_s: float = 180.0,
 ) -> Dict[str, Any]:
-    """Generate a stage plan while forwarding each G9 text delta."""
+    """Generate a stage plan while forwarding each medical model text delta."""
     canonical = normalize_stage(stage)
     paths = [p for p in _normalize_image_paths(image_paths) if Path(p).is_file()]
     max_images = max(1, min(int(max_images or 8), 16))

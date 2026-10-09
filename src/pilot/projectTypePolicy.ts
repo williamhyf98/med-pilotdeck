@@ -1,5 +1,6 @@
 import type { ProjectMetaType } from "./paths.js";
 import type { SkillAvailability } from "./skillAvailability.js";
+import { isMedicalSkillAvailable, isMedToolDisabled } from "./medicalCapabilities.js";
 
 export type ProjectScopedSkill = {
   name: string;
@@ -9,10 +10,10 @@ export type ProjectScopedSkill = {
 };
 
 export function isSkillAvailableForProjectType(
-  _skill: ProjectScopedSkill,
+  skill: ProjectScopedSkill,
   _projectType: ProjectMetaType,
 ): boolean {
-  return true;
+  return isMedicalSkillAvailable(skill.name);
 }
 
 export function filterSkillsForProjectType<T extends ProjectScopedSkill>(
@@ -23,11 +24,11 @@ export function filterSkillsForProjectType<T extends ProjectScopedSkill>(
 }
 
 export function isToolAvailableForProjectType(
-  _toolName: string,
+  toolName: string,
   _projectType: ProjectMetaType,
 ): boolean {
   // med-tools capabilities are global, including trauma RAG and staged plans.
-  return true;
+  return !isMedToolDisabled(toolName);
 }
 
 export function filterToolsForProjectType<T extends { name: string }>(

@@ -9,13 +9,8 @@ import { DEFAULT_MODEL_CAPABILITIES } from "../../src/model/protocol/capabilitie
 import { createLocalGateway } from "../../src/cli/createLocalGateway.js";
 
 /**
- * Task 9 pins 工位 I 的判读模型为 provider "local" / model "G9-V-Med", with a
- * fallback to the main agent model when that provider/model is absent from
- * config (see `createTraumaRunner` in src/cli/createLocalGateway.ts).
- *
- * The fallback is implemented as: try
- *   runtime.model.getMultimodal("local", "G9-V-Med").input.includes("image"),
- *   and on failure fall back to the agent's configured modelSelection.
+ * 工位 I uses medical.interpretationModel, or agent.model when no medical
+ * model is configured (see createTraumaRunner).
  *
  * These tests exercise the real `createModelRuntime` production factory —
  * not a hand-traced reimplementation — to prove the exact precondition
@@ -37,7 +32,7 @@ function multimodalModel(input: string[]) {
   };
 }
 
-test("getMultimodal throws when local/G9-V-Med is absent from config (fallback trigger)", () => {
+test("getMultimodal throws when local model is absent from config (fallback trigger)", () => {
   const runtime = createModelRuntime({
     providers: {
       openai: {
@@ -59,7 +54,7 @@ test("getMultimodal throws when local/G9-V-Med is absent from config (fallback t
   );
 });
 
-test("getMultimodal throws model_not_found when provider exists but G9-V-Med model does not", () => {
+test("getMultimodal throws model_not_found when provider exists but medical model does not", () => {
   const runtime = createModelRuntime({
     providers: {
       local: {
@@ -81,7 +76,7 @@ test("getMultimodal throws model_not_found when provider exists but G9-V-Med mod
   );
 });
 
-test("getMultimodal resolves and reports image support when local/G9-V-Med is configured", () => {
+test("getMultimodal resolves and reports image support when medical model is configured", () => {
   const runtime = createModelRuntime({
     providers: {
       local: {
@@ -162,10 +157,20 @@ async function withTraumaRunnerGateway(
 }
 
 const CONFIG_WITH_G9_V_MED = `schemaVersion: 1
+medical:
+  interpretationModel: local/G9-V-Med
 agent:
-  model: local/G9-V-Med
+  model: openai/gpt-agent
 model:
   providers:
+    openai:
+      protocol: openai
+      url: http://127.0.0.1:1/v1
+      apiKey: EMPTY
+      models:
+        gpt-agent:
+          multimodal:
+            input: [text, image]
     local:
       protocol: openai
       url: http://127.0.0.1:1/v1
@@ -215,25 +220,27 @@ telemetry:
   enabled: false
 `;
 
-test("createTraumaRunner picks local/G9-V-Med when it is configured (real assembly, not a copy)", async () => {
+test("createTraumaRunner picks configured local medical model (real assembly, not a copy)", async () => {
   await withTraumaRunnerGateway("present", CONFIG_WITH_G9_V_MED, async ({ calls, projectRoot, registry }) => {
     const runner = await registry.createTraumaRunner(projectRoot, "sess-present");
     assert.equal(typeof runner.runTurn, "function");
-    // Only the pinned provider/model was probed — it resolved, so no
-    // fallback probe against the agent's model selection happened.
+    // Explicit medical model wins over the different main Agent model.
     assert.deepEqual(calls, [["local", "G9-V-Med"]]);
   });
 });
 
-test("createTraumaRunner falls back to the agent model when local/G9-V-Med is absent (real assembly, not a copy)", async () => {
+test("createTraumaRunner uses the agent model when medical model is not configured", async () => {
   await withTraumaRunnerGateway("absent", CONFIG_WITHOUT_G9_V_MED, async ({ calls, projectRoot, registry }) => {
     const runner = await registry.createTraumaRunner(projectRoot, "sess-absent");
     assert.equal(typeof runner.runTurn, "function");
-    // First probe (pinned local/G9-V-Med) fails, so createTraumaRunner
-    // falls back to a second probe against the agent's configured model.
-    assert.deepEqual(calls, [
-      ["local", "G9-V-Med"],
-      ["openai", "gpt-agent"],
-    ]);
+    assert.deepEqual(calls, [["openai", "gpt-agent"]]);
+  });
+});
+
+test("createTraumaRunner follows a changed medical model id without code changes", async () => {
+  const config = CONFIG_WITH_G9_V_MED.replaceAll("G9-V-Med", "another-visual-model");
+  await withTraumaRunnerGateway("changed", config, async ({ calls, projectRoot, registry }) => {
+    await registry.createTraumaRunner(projectRoot, "sess-changed");
+    assert.deepEqual(calls, [["local", "another-visual-model"]]);
   });
 });

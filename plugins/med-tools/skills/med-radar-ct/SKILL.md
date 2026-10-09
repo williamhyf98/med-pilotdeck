@@ -5,6 +5,11 @@ description: 使用 DAMO RADAR 模型分析完整腹部/盆腔三维 CT（NIfTI�
 
 # RADAR 腹部 CT 分析
 
+仅当 `MED_SPECIALIZED_CT_ENABLED=1` 且运行时允许时执行本 Skill。否则不得调用
+`mcp__med-tools__med_radar_status` 或 `mcp__med-tools__med_radar_analyze_ct`，
+即使远程 HTTP 服务可访问；请改用 `med-medical` 的通用解析，并明确说明
+RADAR 暂不可用。工具返回 disabled 时不得重试。
+
 RADAR 主要在增强腹部 CT 上训练。通过 `mcp__med-tools__med_radar_analyze_ct` 将输入提交给已配置的 RADAR 分析服务；工具返回结构化分数，最终医学解释由主 Agent 完成。
 
 在当前部署中，用户上传完整腹部/盆腔 CT 并要求分析即授权使用已配置的 RADAR 服务；无需再次询问。用户明确要求不上传或只做本地处理时不得调用 RADAR。
@@ -30,7 +35,7 @@ RADAR 主要在增强腹部 CT 上训练。通过 `mcp__med-tools__med_radar_ana
 - 先回答用户的原始问题，再补充与问题直接相关的 RADAR 高分信号、限制和复核建议。
 - 用户只是泛化地要求“解读/分析”时，再使用下方默认四段结构。
 - RADAR 不提供可靠的病灶位置、大小或形态。用户问题超出评分能力时，明确说明不能仅凭 RADAR 回答；不要依据 finding 名称编造影像细节。
-- 若同一轮还需要通用影像解读，需加载 `med-medical` 并以 `continuation_mode="material"` 调用 `med_parse_medical`，随后将 G9 影像描述与 RADAR 分数分来源综合，不得把二者混写成同一种证据。
+- 若同一轮还需要通用影像解读，需加载 `med-medical` 并以 `continuation_mode="material"` 调用 `med_parse_medical`，随后将医学模型影像描述与 RADAR 分数分来源综合，不得把二者混写成同一种证据。
 
 ## 解释规则
 

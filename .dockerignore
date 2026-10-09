@@ -2,6 +2,10 @@ wcb-output/
 wcb/
 test-results/
 node_modules/
+plugins/**/.venv/
+.runtime/
+.pilotdeck-home/
+**/.DS_Store
 .git/
 Auto-Research-Skills/
 apps/

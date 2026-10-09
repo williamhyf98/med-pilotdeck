@@ -37,6 +37,7 @@ export type PilotRawConfig = {
   schemaVersion?: unknown;
   agent?: unknown;
   model?: unknown;
+  medical?: unknown;
   extension?: unknown;
   memory?: unknown;
   gateway?: unknown;
@@ -59,6 +60,10 @@ export type PilotAgentModelSelection = {
   id: string;
   provider: string;
   model: string;
+};
+
+export type PilotMedicalConfig = {
+  interpretationModel: PilotAgentModelSelection;
 };
 
 export type PilotAgentConfig = {
@@ -239,6 +244,7 @@ export type PilotTelemetryConfig = {
 export type PilotConfig = {
   agent: PilotAgentConfig;
   model: ModelConfig;
+  medical?: PilotMedicalConfig;
   extension: PilotExtensionConfig;
   memory?: PilotMemoryConfig;
   gateway?: PilotGatewayConfig;
