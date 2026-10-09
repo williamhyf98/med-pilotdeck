@@ -603,6 +603,121 @@ router.post('/generate-from-flow', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// POST /flow-chat — conversational editing for the flow editor's side chat.
+// The UI sends the full canvas graph plus the chat history; the gateway's
+// `skill_flow_chat` RPC returns a short reply and the complete updated graph,
+// which the UI applies back to the canvas (keeping positions of surviving
+// node ids). Stateless by design: the canvas is the single source of truth,
+// so manual edits between chat turns are always reflected in the next call.
+// ---------------------------------------------------------------------------
+
+const FLOW_CHAT_MAX_EDGES = 300;
+const FLOW_CHAT_MAX_MESSAGES = 40;
+const FLOW_CHAT_MAX_MESSAGE_CHARS = 4000;
+
+/**
+ * Validate + strip the canvas graph down to the exact shape the gateway
+ * expects. Unlike `serializeFlowForDraft`, text is kept verbatim (only
+ * length-capped): the model echoes back what it reads, so collapsing
+ * whitespace here would silently rewrite untouched nodes on the canvas.
+ */
+function sanitizeFlowForChat(flow) {
+  const rawNodes = Array.isArray(flow?.nodes) ? flow.nodes : null;
+  const rawEdges = Array.isArray(flow?.edges) ? flow.edges : [];
+  if (!rawNodes) {
+    return { ok: false, error: 'flow.nodes must be an array' };
+  }
+  if (rawNodes.length > FLOW_MAX_NODES) {
+    return { ok: false, error: `flow.nodes exceeds ${FLOW_MAX_NODES} nodes` };
+  }
+  if (rawEdges.length > FLOW_CHAT_MAX_EDGES) {
+    return { ok: false, error: `flow.edges exceeds ${FLOW_CHAT_MAX_EDGES} edges` };
+  }
+  const ids = new Set();
+  const decisions = new Set();
+  const nodes = [];
+  for (const n of rawNodes) {
+    const id = String(n?.id ?? '');
+    if (!id || ids.has(id)) {
+      return { ok: false, error: 'every flow node needs a unique id' };
+    }
+    ids.add(id);
+    const kind = n?.kind === 'decision' ? 'decision' : 'step';
+    if (kind === 'decision') decisions.add(id);
+    nodes.push({ id, kind, text: String(n?.text || '').slice(0, FLOW_MAX_NODE_TEXT_CHARS) });
+  }
+  const edges = [];
+  for (const e of rawEdges) {
+    const source = String(e?.source ?? '');
+    const target = String(e?.target ?? '');
+    if (!ids.has(source) || !ids.has(target)) continue; // dangling edge — ignore
+    const sourceHandle = decisions.has(source) &&
+      (e?.sourceHandle === 'yes' || e?.sourceHandle === 'no')
+      ? e.sourceHandle
+      : null;
+    edges.push({ source, target, sourceHandle });
+  }
+  return { ok: true, flow: { nodes, edges } };
+}
+
+/**
+ * Validate the chat transcript. Older turns beyond the window are dropped
+ * silently (the canvas itself carries the accumulated state, so losing old
+ * history only costs conversational nuance); malformed entries reject.
+ */
+function sanitizeFlowChatMessages(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return { ok: false, error: 'messages must be a non-empty array' };
+  }
+  const windowed = messages.slice(-FLOW_CHAT_MAX_MESSAGES);
+  const out = [];
+  for (const m of windowed) {
+    const role = m?.role;
+    if (role !== 'user' && role !== 'assistant') {
+      return { ok: false, error: 'each message needs role "user" or "assistant"' };
+    }
+    const text = typeof m?.text === 'string' ? m.text.trim() : '';
+    if (!text) {
+      return { ok: false, error: 'each message needs non-empty text' };
+    }
+    out.push({ role, text: text.slice(0, FLOW_CHAT_MAX_MESSAGE_CHARS) });
+  }
+  if (out[out.length - 1].role !== 'user') {
+    return { ok: false, error: 'the last message must be from the user' };
+  }
+  return { ok: true, messages: out };
+}
+
+router.post('/flow-chat', async (req, res) => {
+  try {
+    const { flow, messages, projectPath } = req.body || {};
+    const sanitizedFlow = sanitizeFlowForChat(flow);
+    if (!sanitizedFlow.ok) {
+      return res.status(400).json({ error: sanitizedFlow.error, code: 'invalid_flow' });
+    }
+    const chat = sanitizeFlowChatMessages(messages);
+    if (!chat.ok) {
+      return res.status(400).json({ error: chat.error, code: 'invalid_messages' });
+    }
+    // Same model-resolution key the draft routes use; the station factory
+    // only reads projectKey, so the sessionKey is a fixed marker.
+    const chatProjectKey = resolveGatewayProjectKey(
+      String(projectPath || process.cwd()),
+      PILOT_HOME,
+    );
+    const out = await callGateway('skillFlowChat', {
+      projectKey: chatProjectKey,
+      sessionKey: 'flow-chat',
+      flow: sanitizedFlow.flow,
+      messages: chat.messages,
+    });
+    res.json({ reply: out.reply, flow: out.flow });
+  } catch (e) {
+    sendGatewayError(res, e);
+  }
+});
+
 router.post('/delete', async (req, res) => {
   try {
     const { skillPath, projectPath } = req.body || {};

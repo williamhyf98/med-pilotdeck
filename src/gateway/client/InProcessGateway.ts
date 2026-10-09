@@ -28,6 +28,8 @@ import type {
   GatewayExtractTraumaFormOutput,
   GatewaySkillGenerateDraftInput,
   GatewaySkillGenerateDraftOutput,
+  GatewaySkillFlowChatInput,
+  GatewaySkillFlowChatOutput,
   GatewayTraumaCaseInput,
   GatewayTraumaConfirmTransitionInput,
   GatewayTraumaOverrideStageInput,
@@ -375,6 +377,11 @@ export type InProcessGatewayOptions = {
     projectKey: string;
     sessionKey: string;
   }) => import("../../extension/skills/draftStation.js").SkillDraftStation | Promise<import("../../extension/skills/draftStation.js").SkillDraftStation>;
+  /** Builds the stateless flow-chat station used by the skillFlowChat RPC. */
+  skillFlowChatFactory?: (input: {
+    projectKey: string;
+    sessionKey: string;
+  }) => import("../../extension/skills/flowChatStation.js").SkillFlowChatStation | Promise<import("../../extension/skills/flowChatStation.js").SkillFlowChatStation>;
 };
 
 const ACTIVE_TURN_EVENT_LIMIT = 500;
@@ -1480,6 +1487,23 @@ export class InProcessGateway implements Gateway {
       source: input.source,
     });
     return { draft };
+  }
+
+  async skillFlowChat(
+    input: GatewaySkillFlowChatInput,
+  ): Promise<GatewaySkillFlowChatOutput> {
+    if (!this.options.skillFlowChatFactory) {
+      throw new Error("skill flow chat is not configured");
+    }
+    const station = await this.options.skillFlowChatFactory({
+      projectKey: input.projectKey,
+      sessionKey: input.sessionKey,
+    });
+    const result = await station.chat({
+      flow: input.flow,
+      messages: input.messages,
+    });
+    return { reply: result.reply, flow: result.flow };
   }
 
   async permissionDecide(input: GatewayPermissionDecisionInput): Promise<{ delivered: boolean }> {

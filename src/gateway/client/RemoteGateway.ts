@@ -10,6 +10,8 @@ import type {
   GatewayExtractTraumaFormOutput,
   GatewaySkillGenerateDraftInput,
   GatewaySkillGenerateDraftOutput,
+  GatewaySkillFlowChatInput,
+  GatewaySkillFlowChatOutput,
   GatewayPermissionDecisionInput,
   GatewayServerInfo,
   GatewaySubmitTurnInput,
@@ -267,6 +269,15 @@ export class RemoteGateway implements Gateway {
       "skill_generate_draft",
       input,
     )) as GatewaySkillGenerateDraftOutput;
+  }
+
+  async skillFlowChat(
+    input: GatewaySkillFlowChatInput,
+  ): Promise<GatewaySkillFlowChatOutput> {
+    return (await this.client.request(
+      "skill_flow_chat",
+      input,
+    )) as GatewaySkillFlowChatOutput;
   }
 
   async alwaysOnApply(input: AlwaysOnApplyInput): Promise<AlwaysOnApplyResult> {

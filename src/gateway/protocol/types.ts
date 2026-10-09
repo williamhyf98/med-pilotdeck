@@ -342,6 +342,22 @@ export type GatewaySkillGenerateDraftOutput = {
   draft: import("../../extension/skills/draftStation.js").SkillDraft;
 };
 
+/** 流程图对话式编辑 RPC 的输入。无副作用，不落盘。 */
+export type GatewaySkillFlowChatInput = {
+  projectKey: string;
+  sessionKey: string;
+  /** 用户当前画布上的流程图（节点 + 连线，可能为空图）。 */
+  flow: import("../../extension/skills/flowChatStation.js").FlowChatGraph;
+  /** 完整对话历史，最后一条为用户的最新消息。 */
+  messages: import("../../extension/skills/flowChatStation.js").FlowChatMessage[];
+};
+
+/** 流程图对话式编辑 RPC 的输出：简短回复 + 修改后的完整流程图。 */
+export type GatewaySkillFlowChatOutput = {
+  reply: string;
+  flow: import("../../extension/skills/flowChatStation.js").FlowChatGraph;
+};
+
 /**
  * Web-facing permission decision input. Mirrors the elicitation
  * round-trip pattern: the agent (via `GatewayPermissionBus`) emits a
@@ -605,4 +621,7 @@ export interface Gateway {
   skillGenerateDraft?(
     input: GatewaySkillGenerateDraftInput,
   ): Promise<GatewaySkillGenerateDraftOutput>;
+  skillFlowChat?(
+    input: GatewaySkillFlowChatInput,
+  ): Promise<GatewaySkillFlowChatOutput>;
 }

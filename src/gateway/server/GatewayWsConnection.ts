@@ -295,6 +295,11 @@ export class GatewayWsConnection {
           this.options.gateway.skillGenerateDraft,
           this.options.gateway,
         )(frame.params as never);
+      case "skill_flow_chat":
+        return requireSkillMethod(
+          this.options.gateway.skillFlowChat,
+          this.options.gateway,
+        )(frame.params as never);
       case "always_on_apply":
         if (this.options.gateway.alwaysOnApply) {
           return this.options.gateway.alwaysOnApply(frame.params as never);

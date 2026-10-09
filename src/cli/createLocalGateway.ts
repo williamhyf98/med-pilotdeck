@@ -109,7 +109,7 @@ import { SessionRouterStore } from "../router/session/SessionRouterStore.js";
 import type { RouterEventBus, RouterEvent } from "../router/protocol/events.js";
 import type { EdgeClawMemoryProvider } from "../context/index.js";
 import { loadBuiltinPlugins } from "../extension/plugins/builtin/loadBuiltinPlugins.js";
-import { SkillManager, createSkillDraftStation, migrateLegacyBundledSkillCopies } from "../extension/skills/index.js";
+import { SkillManager, createSkillDraftStation, createSkillFlowChatStation, migrateLegacyBundledSkillCopies } from "../extension/skills/index.js";
 import { ExtensionWatchManager, type ExtensionWatchEvent } from "./ExtensionWatchManager.js";
 import { createTelemetryCollector, type TelemetryClient } from "../telemetry/index.js";
 import {
@@ -353,6 +353,8 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
       registry.createTraumaMemoryProvider(projectKey, sessionKey)?.() ?? null,
     skillDraftFactory: ({ projectKey }) =>
       registry.createSkillDraftStation(projectKey),
+    skillFlowChatFactory: ({ projectKey }) =>
+      registry.createSkillFlowChatStation(projectKey),
     traumaCaseReader: ({ projectKey, sessionKey }) =>
       registry.readTraumaCase(projectKey, sessionKey),
     // 战创伤长期记忆写入（Task 7）。sink 按项目构建，未启用时为 undefined。
@@ -994,6 +996,18 @@ class ProjectRuntimeRegistry {
     await runtime.pluginRuntime.refresh();
     const selection = runtime.snapshot.config.agent.model;
     return createSkillDraftStation(createStructuredModelClient({
+      complete: runtime.model.complete.bind(runtime.model),
+      stream: runtime.model.stream.bind(runtime.model),
+      provider: selection.provider,
+      model: selection.model,
+    }));
+  }
+
+  async createSkillFlowChatStation(projectKey: string) {
+    const runtime = this.resolve(projectKey);
+    await runtime.pluginRuntime.refresh();
+    const selection = runtime.snapshot.config.agent.model;
+    return createSkillFlowChatStation(createStructuredModelClient({
       complete: runtime.model.complete.bind(runtime.model),
       stream: runtime.model.stream.bind(runtime.model),
       provider: selection.provider,
