@@ -6,6 +6,7 @@ import os
 from typing import Sequence
 
 import httpx
+from ..pilotdeck_model_config import load_config
 
 
 class EmbeddingError(RuntimeError):
@@ -13,17 +14,22 @@ class EmbeddingError(RuntimeError):
 
 
 def get_embedding_config() -> dict[str, str | float | int | None]:
+    raw = load_config() or {}
+    embedding = raw.get("embedding")
+    embedding = embedding if isinstance(embedding, dict) else {}
     api_base = (
         os.environ.get("MED_EMBEDDING_API_BASE", "").strip()
-        or "http://127.0.0.1:65507/v1"
+        or str(embedding.get("apiBase") or "").strip()
     ).rstrip("/")
-    endpoint = os.environ.get("MED_EMBEDDING_ENDPOINT", "").strip()
+    endpoint = os.environ.get("MED_EMBEDDING_ENDPOINT", "").strip() or str(embedding.get("endpoint") or "").strip()
     if not endpoint:
         endpoint = f"{api_base}/embeddings"
-    model = os.environ.get("MED_EMBEDDING_MODEL", "").strip() or "qwen3-vl-embedding"
-    api_key = os.environ.get("MED_EMBEDDING_API_KEY", "").strip() or "EMPTY"
+    model = os.environ.get("MED_EMBEDDING_MODEL", "").strip() or str(embedding.get("model") or "").strip()
+    api_key = os.environ.get("MED_EMBEDDING_API_KEY", "").strip() or str(embedding.get("apiKey") or "").strip()
+    if api_key.startswith("${") and api_key.endswith("}"):
+        api_key = os.environ.get(api_key[2:-1], "").strip()
     timeout = float(os.environ.get("MED_EMBEDDING_TIMEOUT_SECONDS", "30") or 30)
-    expected_dim_raw = os.environ.get("MED_EMBEDDING_DIMENSION", "").strip()
+    expected_dim_raw = os.environ.get("MED_EMBEDDING_DIMENSION", "").strip() or str(embedding.get("dimension") or "").strip()
     expected_dim = int(expected_dim_raw) if expected_dim_raw else None
     return {
         "api_base": api_base,

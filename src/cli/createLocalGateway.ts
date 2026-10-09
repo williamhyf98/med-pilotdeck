@@ -929,29 +929,15 @@ class ProjectRuntimeRegistry {
       return output.data ?? output.content;
     };
 
-    // 影像判读交给医学微调 VLM；它正是 med_parse_medical 背后的同一个模型，
-    // 但 prompt 与输出长度由我们控制，避开那份冗长的通用报告。
-    const INTERPRETATION_PROVIDER = "local";
-    const INTERPRETATION_MODEL = "/private/models/checkpoint-212-merged";
-    let interpretationSelection = {
-      provider: INTERPRETATION_PROVIDER,
-      model: INTERPRETATION_MODEL,
-    };
+    // 与 med_parse_medical 共用 medical.interpretationModel；未配置时用主 Agent。
+    const interpretationSelection = runtime.snapshot.config.medical?.interpretationModel ?? modelSelection;
     let supportsImages = false;
     try {
       supportsImages = runtime.model
-        .getMultimodal(INTERPRETATION_PROVIDER, INTERPRETATION_MODEL)
+        .getMultimodal(interpretationSelection.provider, interpretationSelection.model)
         .input.includes("image");
     } catch {
-      // 配置里没有这个 provider/model，退回主 agent 模型。
-      interpretationSelection = modelSelection;
-      try {
-        supportsImages = runtime.model
-          .getMultimodal(modelSelection.provider, modelSelection.model)
-          .input.includes("image");
-      } catch {
-        supportsImages = false;
-      }
+      // 主模型的多模态能力未声明时仍可执行文本分析。
     }
 
     const interpreter = createInterpretationStation({

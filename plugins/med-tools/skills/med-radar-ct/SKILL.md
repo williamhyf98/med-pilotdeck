@@ -35,7 +35,7 @@ RADAR 主要在增强腹部 CT 上训练。通过 `mcp__med-tools__med_radar_ana
 - 先回答用户的原始问题，再补充与问题直接相关的 RADAR 高分信号、限制和复核建议。
 - 用户只是泛化地要求“解读/分析”时，再使用下方默认四段结构。
 - RADAR 不提供可靠的病灶位置、大小或形态。用户问题超出评分能力时，明确说明不能仅凭 RADAR 回答；不要依据 finding 名称编造影像细节。
-- 若同一轮还需要通用影像解读，需加载 `med-medical` 并以 `continuation_mode="material"` 调用 `med_parse_medical`，随后将 G9 影像描述与 RADAR 分数分来源综合，不得把二者混写成同一种证据。
+- 若同一轮还需要通用影像解读，需加载 `med-medical` 并以 `continuation_mode="material"` 调用 `med_parse_medical`，随后将医学模型影像描述与 RADAR 分数分来源综合，不得把二者混写成同一种证据。
 
 ## 解释规则
 

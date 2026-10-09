@@ -252,18 +252,18 @@ Restart PilotDeck (or reload plugins) after changing `plugin.json` env.
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `MED_VLM_API_BASE` | `http://127.0.0.1:8030/v1` | OpenAI-compatible **G9** VLM base |
-| `MED_VLM_MODEL` | `G9-V-Med` | Primary medical VLM model id |
-| `MED_VLM_API_KEY` | `EMPTY` | Bearer token if required |
+| `MED_VLM_API_BASE` | YAML medical model provider `url` | Optional one-off override of medical VLM base |
+| `MED_VLM_MODEL` | YAML `medical.interpretationModel` | Optional one-off override of medical VLM model id |
+| `MED_VLM_API_KEY` | YAML medical model provider `apiKey` | Optional one-off bearer token override |
 | `MED_VLM_MAX_TOKENS` | `8192` | Max generation tokens |
 | `MED_VLM_FALLBACK_ENABLED` | `1` | Enable fallback when G9 fails |
 | `MED_VLM_FALLBACK_MODEL` | *(from `pilotdeck.yaml` `agent.model`)* | Fallback model id; env overrides config |
 | `MED_VLM_FALLBACK_API_BASE` | *(from matching provider `url`)* | Fallback OpenAI-compatible base |
 | `MED_VLM_FALLBACK_API_KEY` | *(from matching provider `apiKey`)* | Fallback API key |
-| `MED_EMBEDDING_API_BASE` | `http://127.0.0.1:65507/v1` | Embedding OpenAI-compatible base |
-| `MED_EMBEDDING_ENDPOINT` | `{API_BASE}/embeddings` | Full embeddings URL |
-| `MED_EMBEDDING_MODEL` | `qwen3-vl-embedding` | Embedding model id |
-| `MED_EMBEDDING_DIMENSION` | `2048` | Expected vector dim |
+| `MED_EMBEDDING_API_BASE` | YAML `embedding.apiBase` | Optional embedding base override |
+| `MED_EMBEDDING_ENDPOINT` | YAML `embedding.endpoint` or `{API_BASE}/embeddings` | Optional full embeddings URL override |
+| `MED_EMBEDDING_MODEL` | YAML `embedding.model` | Optional embedding model override |
+| `MED_EMBEDDING_DIMENSION` | YAML `embedding.dimension` | Optional expected vector dim override |
 | `MED_RAG_SERVICE_ENABLED` | `1` | Query the remote med-rag service first; `0` = local corpus only |
 | `MED_RAG_SERVICE_API_BASE` | `http://127.0.0.1:18080` | med-rag service base (no `/v1`; not OpenAI-shaped) |
 | `MED_RAG_SERVICE_ENDPOINT` | `{API_BASE}/retrieve` | Override the retrieve URL |
@@ -295,7 +295,13 @@ local vector path only. `med_trauma_rag_status` probes the service and reports
 Only `MED_RAG_SERVICE_API_BASE` normally needs setting — the retrieve and health
 URLs derive from it.
 
-When `MED_VLM_FALLBACK_*` are unset, med-tools reads `$PILOT_HOME/pilotdeck.yaml` (then `.pilotdeck-home/pilotdeck.yaml` / `~/.pilotdeck/pilotdeck.yaml`) and uses `agent.model` plus that provider's `url` / `apiKey`.
+Medical interpretation uses `medical.interpretationModel: provider/model` in
+`$PILOT_HOME/pilotdeck.yaml`, resolving its URL and API key from `model.providers`.
+When the medical reference is absent, it uses `agent.model`. The same YAML
+supplies the embedding settings. The MCP process reads the file for each new
+request, so a config update does not require a Python restart; explicit
+`MED_VLM_*` and `MED_EMBEDDING_*` environment variables still override YAML.
+When `MED_VLM_FALLBACK_*` are unset, the fallback uses `agent.model`.
 
 Optional Python deps (degraded if missing): `pymupdf`, `wfdb`.
 

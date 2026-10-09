@@ -11,6 +11,8 @@ from unittest import mock
 
 SAMPLE_YAML = """
 schemaVersion: 1
+medical:
+  interpretationModel: qwen/Qwen3.8-27B
 agent:
   model: openai/gpt-5.5
 model:
@@ -37,7 +39,6 @@ class FallbackConfigFromPilotdeckTests(unittest.TestCase):
         from server import vlm_client
 
         self.vlm = vlm_client
-        self.vlm._load_main_agent_llm_from_pilotdeck.cache_clear()
         self._env_backup = {
             key: os.environ.get(key)
             for key in (
@@ -45,6 +46,9 @@ class FallbackConfigFromPilotdeckTests(unittest.TestCase):
                 "MED_VLM_FALLBACK_API_BASE",
                 "MED_VLM_FALLBACK_API_KEY",
                 "MED_VLM_FALLBACK_ENABLED",
+                "MED_VLM_MODEL",
+                "MED_VLM_API_BASE",
+                "MED_VLM_API_KEY",
                 "PILOT_HOME",
             )
         }
@@ -52,11 +56,13 @@ class FallbackConfigFromPilotdeckTests(unittest.TestCase):
             "MED_VLM_FALLBACK_MODEL",
             "MED_VLM_FALLBACK_API_BASE",
             "MED_VLM_FALLBACK_API_KEY",
+            "MED_VLM_MODEL",
+            "MED_VLM_API_BASE",
+            "MED_VLM_API_KEY",
         ):
             os.environ.pop(key, None)
 
     def tearDown(self) -> None:
-        self.vlm._load_main_agent_llm_from_pilotdeck.cache_clear()
         for key, value in self._env_backup.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -87,13 +93,12 @@ class FallbackConfigFromPilotdeckTests(unittest.TestCase):
             "_pilotdeck_config_candidates",
             return_value=[path],
         ):
-            self.vlm._load_main_agent_llm_from_pilotdeck.cache_clear()
             cfg = self.vlm.get_vlm_config()
+            fallback = self.vlm.get_fallback_vlm_config()
         self.assertEqual(cfg["fallback_model"], "gpt-5.5")
         self.assertEqual(cfg["fallback_api_base"], "https://example.test/llm/v1")
         self.assertEqual(cfg["fallback_api_key"], "sk-test-key")
         self.assertEqual(cfg["fallback_source"], "pilotdeck.yaml")
-        fallback = self.vlm.get_fallback_vlm_config()
         self.assertIsNotNone(fallback)
         assert fallback is not None
         self.assertEqual(fallback["model"], "gpt-5.5")
@@ -108,16 +113,55 @@ class FallbackConfigFromPilotdeckTests(unittest.TestCase):
             "_pilotdeck_config_candidates",
             return_value=[path],
         ):
-            self.vlm._load_main_agent_llm_from_pilotdeck.cache_clear()
             cfg = self.vlm.get_vlm_config()
         self.assertEqual(cfg["fallback_model"], "Qwen3.8-27B")
         self.assertEqual(cfg["fallback_api_base"], "http://127.0.0.1:8040/v1")
         self.assertEqual(cfg["fallback_source"], "env")
 
-    def test_primary_g9_defaults_unchanged(self) -> None:
-        cfg = self.vlm.get_vlm_config()
-        self.assertEqual(cfg["model"], self.vlm.DEFAULT_MODEL)
-        self.assertTrue(cfg["api_base"].endswith("/v1") or "8030" in cfg["api_base"] or cfg["api_base"])
+    def test_primary_model_follows_medical_reference_and_yaml_changes(self) -> None:
+        path = self._write_config()
+        with mock.patch.object(self.vlm, "_pilotdeck_config_candidates", return_value=[path]):
+            cfg = self.vlm.get_vlm_config()
+            self.assertEqual(cfg["model"], "Qwen3.8-27B")
+            self.assertEqual(cfg["api_base"], "http://127.0.0.1:8040/v1")
+            path.write_text(SAMPLE_YAML.replace("qwen/Qwen3.8-27B", "openai/gpt-5.5"), encoding="utf-8")
+            updated = self.vlm.get_vlm_config()
+            self.assertEqual(updated["model"], "gpt-5.5")
+            self.assertEqual(updated["api_base"], "https://example.test/llm/v1")
+
+    def test_primary_environment_override_is_explicit(self) -> None:
+        path = self._write_config()
+        os.environ["MED_VLM_MODEL"] = "one-off-model"
+        with mock.patch.object(self.vlm, "_pilotdeck_config_candidates", return_value=[path]):
+            cfg = self.vlm.get_vlm_config()
+        self.assertEqual(cfg["model"], "one-off-model")
+        self.assertEqual(cfg["api_base"], "http://127.0.0.1:8040/v1")
+
+    def test_embedding_follows_yaml_updates(self) -> None:
+        from server.rag.embedding_client import get_embedding_config
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pilotdeck.yaml"
+            path.write_text(
+                SAMPLE_YAML + "\nembedding:\n  apiBase: http://127.0.0.1:1111/v1\n"
+                "  endpoint: http://127.0.0.1:1111/v1/embeddings\n"
+                "  model: first-embedding\n  apiKey: EMPTY\n  dimension: 2048\n",
+                encoding="utf-8",
+            )
+            overrides = {key: "" for key in (
+                "MED_EMBEDDING_API_BASE", "MED_EMBEDDING_ENDPOINT",
+                "MED_EMBEDDING_MODEL", "MED_EMBEDDING_API_KEY", "MED_EMBEDDING_DIMENSION",
+            )}
+            overrides["PILOT_HOME"] = directory
+            with mock.patch.dict(os.environ, overrides):
+                initial = get_embedding_config()
+                self.assertEqual(initial["model"], "first-embedding")
+                self.assertEqual(initial["api_base"], "http://127.0.0.1:1111/v1")
+                path.write_text(
+                    path.read_text(encoding="utf-8").replace("first-embedding", "next-embedding"),
+                    encoding="utf-8",
+                )
+                self.assertEqual(get_embedding_config()["model"], "next-embedding")
 
 
 if __name__ == "__main__":

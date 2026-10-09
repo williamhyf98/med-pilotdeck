@@ -10,13 +10,22 @@ test("server preload reads site settings and preserves shell overrides", () => {
   try {
     const envFile = join(dir, "deploy.env");
     writeFileSync(envFile, "MED_RADAR_API_BASE=https://radar.test:18120\nMED_RADAR_TIMEOUT_SECONDS=900\n");
+    writeFileSync(join(dir, "pilotdeck.yaml"), `model:
+  providers:
+    medical:
+      url: http://medical.test:8030/v1
+embedding:
+  apiBase: http://embedding.test:65507/v1
+`);
     const output = execFileSync(process.execPath, ["--import", resolve("scripts/register-deploy-env.mjs"), "-e",
       "console.log(JSON.stringify([process.env.MED_RADAR_API_BASE,process.env.MED_RADAR_TIMEOUT_SECONDS,process.env.NO_PROXY]))"], {
-      env: { ...process.env, PILOTDECK_DEPLOY_ENV: envFile, MED_RADAR_API_BASE: "", MED_RADAR_TIMEOUT_SECONDS: "840" }, encoding: "utf8",
+      env: { ...process.env, PILOT_HOME: dir, PILOTDECK_DEPLOY_ENV: envFile, MED_RADAR_API_BASE: "", MED_RADAR_TIMEOUT_SECONDS: "840" }, encoding: "utf8",
     });
     const [url, timeout, noProxy] = JSON.parse(output);
     assert.equal(url, "https://radar.test:18120");
     assert.equal(timeout, "840");
     assert.ok(noProxy.split(",").includes("radar.test"));
+    assert.ok(noProxy.split(",").includes("medical.test"));
+    assert.ok(noProxy.split(",").includes("embedding.test"));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

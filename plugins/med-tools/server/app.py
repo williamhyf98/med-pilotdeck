@@ -1,4 +1,4 @@
-"""PilotDeck MCP server: unified medical parse + local G9-V-Med (27B)."""
+"""PilotDeck MCP server: unified medical parse + configured medical VLM."""
 
 from __future__ import annotations
 
@@ -82,8 +82,8 @@ mcp = FastMCP(
         "Medical helper tools for PilotDeck. "
         "Prefer med_parse_medical for any supported medical attachment "
         f"(suffixes: {', '.join(sorted(SUPPORTED_SUFFIXES))}): parse locally, "
-        "then call on-box G9-V-Med for a structured report "
-        "(falls back to the main agent model when G9 is unavailable). "
+        "then call the configured medical VLM for a structured report "
+        "(falls back to the main agent model when the medical VLM is unavailable). "
         "Use continuation_mode='terminal' for pure attachment interpretation "
         "(default; runtime may end the turn after a successful report). "
         "Use continuation_mode='material' when the parse is only one step of a "
@@ -98,7 +98,7 @@ mcp = FastMCP(
         "For war-trauma knowledge Q&A: call med_trauma_rag_query, then the main "
         "model answers from chunks (brief tips OK; not the formal five-section plan). "
         "For a formal six-stage graded care plan: call med_trauma_stage_plan "
-        "(G9 inside the plugin; show care_plan verbatim)."
+        "(medical VLM inside the plugin; show care_plan verbatim)."
     ),
 )
 
@@ -332,7 +332,7 @@ def _apply_vlm_result(payload: Dict[str, Any], vlm: Dict[str, Any]) -> Dict[str,
     elif payload["fallback_used"] and payload["vlm_ok"] and payload["status"] == "ready":
         payload["status"] = "degraded"
         payload["warnings"] = list(payload.get("warnings") or []) + [
-            f"G9-V-Med 不可用，已回退到 {payload.get('model')} 生成报告。"
+            f"{payload.get('primary_model') or '医学模型'} 不可用，已回退到 {payload.get('model')} 生成报告。"
             f" primary_error={payload.get('primary_error') or 'unknown'}"
         ]
     return payload
@@ -380,7 +380,7 @@ async def _run_medical_parse_stream(
     continuation_mode: str = "terminal",
     tool_name: str = "med_parse_medical",
 ) -> Dict[str, Any]:
-    """Parse then stream the G9 report through ``on_text`` (with main-agent fallback)."""
+    """Parse then stream the medical report through ``on_text`` (with main-agent fallback)."""
     from .vlm_client import analyze_medical_with_vlm_stream
 
     payload = _prepare_medical_parse(
@@ -420,7 +420,7 @@ async def med_parse_medical(
     skip_vlm: bool = False,
     continuation_mode: str = "terminal",
 ) -> str:
-    """Unified medical attachment parser + G9-V-Med report (301-aligned suffixes).
+    """Unified medical attachment parser + configured medical VLM report (301-aligned suffixes).
 
     Accepts a single file or a directory. Supported suffixes include:
     .dcm/.dicom, .pdf, .png/.jpg/.jpeg/.bmp, .xml/.cda, .txt/.md,
@@ -429,7 +429,7 @@ async def med_parse_medical(
     Steps:
     1. Local parse (metadata / text / preview images), including structured CDA
        lab/observation extraction when applicable.
-    2. Unless skip_vlm, call G9-V-Med and return one structured Chinese report.
+    2. Unless skip_vlm, call the medical VLM and return one structured Chinese report.
 
     continuation_mode:
     - terminal (default): pure attachment interpretation. On a successful
@@ -794,16 +794,16 @@ async def med_trauma_stage_plan(
     image_paths: Optional[List[str]] = None,
     max_images: int = 8,
 ) -> str:
-    """Generate a formal six-stage war-trauma graded care plan via G9-V-Med.
+    """Generate a formal six-stage war-trauma graded care plan via the medical VLM.
 
     One stage per call. Plugin builds the fixed Chinese prompt (stage-specific
     task + five output sections + multi-image reading rules), calls on-box
-    G9-V-Med, and falls back to the configured main agent model when G9 fails.
+    The configured medical VLM is primary; the main agent model is the fallback.
 
     Agent presentation rule (important):
     If `care_plan` is non-empty, show it VERBATIM (do not rewrite).
     If `care_plan` is empty and `agent_continue` is true, write the five-section
-    plan yourself and state that G9/fallback failed.
+    plan yourself and state that the medical model and fallback failed.
 
     Args:
         stage: One of 伤员发生地 / 野战分类场 / 收容处置组 / 重伤救治组 / 手术组 / 洗消组.
@@ -811,8 +811,8 @@ async def med_trauma_stage_plan(
             compliant description verbatim; otherwise rewrite user text into a proper
             injury narrative. Fold med_parse_medical report/summary here when present.
             Do NOT invent image findings from photos in the Agent — pass photos via
-            image_paths so G9 reads them.
-        image_paths: Optional absolute paths to ordinary injury photos for G9.
+            image_paths so the medical model reads them.
+        image_paths: Optional absolute paths to ordinary injury photos for the medical model.
         max_images: Max images to send (default 8, max 16).
     """
     from .trauma_stage_plan import generate_stage_plan_stream
