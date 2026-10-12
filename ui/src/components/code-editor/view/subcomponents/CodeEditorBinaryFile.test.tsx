@@ -94,6 +94,11 @@ vi.mock('./DicomPreview', () => ({
     <div data-testid="dicom-preview">Cornerstone preview: {file.name}</div>
   ),
 }));
+vi.mock('./NiftiPreview', () => ({
+  default: ({ file }: { file: { name: string } }) => (
+    <div data-testid="nifti-preview">NIfTI preview: {file.name}</div>
+  ),
+}));
 
 const baseProps = {
   file: {
@@ -201,6 +206,27 @@ describe('CodeEditorBinaryFile', () => {
     expect(await screen.findByTestId('dicom-preview')).not.toBeNull();
     expect(screen.getByText('Cornerstone preview: chest-ct.dcm')).not.toBeNull();
     expect(screen.queryByText('Preview unavailable')).toBeNull();
+  });
+
+  it('opens compressed NIfTI files in the image viewer', async () => {
+    render(
+      <CodeEditorBinaryFile
+        {...baseProps}
+        file={{ name: 'TotalSegmentator_example_ct.nii.gz', path: '/workspace/CT/TotalSegmentator_example_ct.nii.gz', diffInfo: null }}
+      />,
+    );
+    expect(await screen.findByTestId('nifti-preview')).not.toBeNull();
+    expect(screen.queryByText('Preview unavailable')).toBeNull();
+  });
+
+  it('opens historically renamed compressed NIfTI attachments', async () => {
+    render(
+      <CodeEditorBinaryFile
+        {...baseProps}
+        file={{ name: 'TotalSegmentator_example_ct.nii(2).gz', path: '/workspace/CT/inbox/test/TotalSegmentator_example_ct.nii(2).gz', diffInfo: null }}
+      />,
+    );
+    expect(await screen.findByTestId('nifti-preview')).not.toBeNull();
   });
 
   it('keeps the fullscreen action available for image previews outside the sidebar', () => {

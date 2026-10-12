@@ -146,7 +146,7 @@ def _output_dir_for(input_path: Path, call_id: str) -> Path:
 
 def _is_nifti(path: Path) -> bool:
     lower = path.name.lower()
-    return lower.endswith(".nii") or lower.endswith(".nii.gz")
+    return lower.endswith(".nii") or bool(re.search(r"\.nii(?:\(\d+\))?\.gz$", lower))
 
 
 def _validate_multiframe_ct_file(path: Path) -> Dict[str, Any]:
@@ -369,7 +369,9 @@ def run_radar_analysis(
         else:
             upload_path = input_path
             file_count = 1
-            upload_name = input_path.name
+            upload_name = re.sub(
+                r"\.nii\((\d+)\)\.gz$", r"(\1).nii.gz", input_path.name, flags=re.IGNORECASE
+            )
             content_type = (
                 "application/octet-stream"
                 if _is_nifti(input_path)

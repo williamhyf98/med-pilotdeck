@@ -4,6 +4,7 @@ const IMAGE_EXTENSIONS = [
 
 const PDF_EXTENSIONS = ['pdf'];
 const DICOM_EXTENSIONS = ['dcm', 'dicom', 'ima'];
+const isNiftiName = (filename: string): boolean => /\.nii(?:\(\d+\))?\.gz$|\.nii$/i.test(filename);
 
 const OFFICE_EXTENSIONS = [
   'doc', 'docx', 'wps', 'xls', 'xlsx', 'et', 'ppt', 'pptx', 'dps', 'odt', 'ods', 'odp',
@@ -23,7 +24,7 @@ const BINARY_EXTENSIONS = [
   // Media
   'mp3', 'mp4', 'wav', 'avi', 'mov', 'mkv', 'flv', 'wmv', 'm4a', 'ogg',
   // Documents
-  ...PDF_EXTENSIONS, ...OFFICE_EXTENSIONS, ...DICOM_EXTENSIONS,
+  ...PDF_EXTENSIONS, ...OFFICE_EXTENSIONS, ...DICOM_EXTENSIONS, 'nii',
   // Fonts
   'ttf', 'otf', 'woff', 'woff2', 'eot',
   // Database
@@ -46,6 +47,8 @@ export const isPdfFile = (filename: string): boolean =>
 
 export const isDicomFile = (filename: string): boolean =>
   DICOM_EXTENSIONS.includes(getExtension(filename));
+
+export const isNiftiFile = (filename: string): boolean => isNiftiName(filename);
 
 export const isOfficeFile = (filename: string): boolean =>
   OFFICE_EXTENSIONS.includes(getExtension(filename));

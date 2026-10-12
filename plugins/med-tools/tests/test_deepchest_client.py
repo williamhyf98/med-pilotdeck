@@ -10,6 +10,25 @@ from server.deepchest import DeepChestClient
 
 
 class ClientTests(unittest.TestCase):
+    def test_legacy_nifti_filename_uploads_with_valid_extension(self):
+        requests = []
+
+        def respond(request):
+            requests.append(request)
+            return httpx.Response(200, json={"job_id": "a" * 32, "status": "queued"})
+
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "chest.nii(2).gz"
+            source.write_bytes(b"test")
+            with patch.dict(os.environ, {
+                "MED_DEEPCHEST_API_BASE": "http://127.0.0.1:18130",
+                "MED_DEEPCHEST_API_KEY": "test",
+            }, clear=True):
+                with DeepChestClient(transport=httpx.MockTransport(respond)) as client:
+                    result = client.submit(str(source), "分析", "chest", "CT", "HU")
+            self.assertEqual(result["job_id"], "a" * 32)
+            self.assertIn(b'filename="chest(2).nii.gz"', requests[0].content)
+
     def test_rejects_insecure_remote_and_missing_credentials(self):
         with patch.dict(
             os.environ,

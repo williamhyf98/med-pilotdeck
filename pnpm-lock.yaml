@@ -159,6 +159,9 @@ importers:
       '@cornerstonejs/dicom-image-loader':
         specifier: ^4.22.13
         version: 4.22.13(@cornerstonejs/core@4.22.13(@babel/preset-env@7.29.7(@babel/core@7.29.7))(autoprefixer@10.5.0(postcss@8.5.15))(webpack@5.111.1(postcss@8.5.15)(sharp@0.34.5))(wslink@2.5.0))(dicom-parser@1.8.21)
+      '@cornerstonejs/nifti-volume-loader':
+        specifier: 4.22.13
+        version: 4.22.13(@cornerstonejs/core@4.22.13(@babel/preset-env@7.29.7(@babel/core@7.29.7))(autoprefixer@10.5.0(postcss@8.5.15))(webpack@5.111.1(postcss@8.5.15)(sharp@0.34.5))(wslink@2.5.0))
       '@cornerstonejs/tools':
         specifier: ^4.22.13
         version: 4.22.13(@cornerstonejs/core@4.22.13(@babel/preset-env@7.29.7(@babel/core@7.29.7))(autoprefixer@10.5.0(postcss@8.5.15))(webpack@5.111.1(postcss@8.5.15)(sharp@0.34.5))(wslink@2.5.0))(@kitware/vtk.js@34.15.1(@babel/preset-env@7.29.7(@babel/core@7.29.7))(autoprefixer@10.5.0(postcss@8.5.15))(webpack@5.111.1(postcss@8.5.15)(sharp@0.34.5))(wslink@2.5.0))(@types/d3-array@3.2.1)(@types/d3-interpolate@3.0.4)(d3-array@3.2.4)(d3-interpolate@3.0.1)(gl-matrix@3.4.3)
@@ -1103,6 +1106,11 @@ packages:
     peerDependencies:
       '@cornerstonejs/core': 4.22.13
       dicom-parser: 1.8.21
+
+  '@cornerstonejs/nifti-volume-loader@4.22.13':
+    resolution: {integrity: sha512-JOovlju7DieVUErsf1VlZmL1Fhp1xShPYEeRM+K/dljaQoqLxzYY4QT+lcSBDMbZf4ME21HsPUYvoUU33/YKJw==}
+    peerDependencies:
+      '@cornerstonejs/core': 4.22.13
 
   '@cornerstonejs/tools@4.22.13':
     resolution: {integrity: sha512-h6y3cF1AZVgODhdg4EtTnVySoDhKfvmC6It/GjoVGbQfT4lfL8FGXESm0jdKPKtx4Jr6oGIycZKLbhpLvFJx3w==}
@@ -5792,6 +5800,9 @@ packages:
     resolution: {integrity: sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg==}
     engines: {node: '>= 0.6'}
 
+  nifti-reader-js@0.6.9:
+    resolution: {integrity: sha512-oEC35cuYFR0i+KeXhaK0hJz4oSj511Vo7LmO/6iqbxzwek6XWnBi77VURlk4jsnJ86tlJNpYv6ujmSDpPP46Tw==}
+
   node-abi@3.92.0:
     resolution: {integrity: sha512-KdHvFWZjEKDf0cakgFjebl371GPsISX2oZHcuyKqM7DtogIsHrqKeLTo8wBHxaXRAQlY2PsPlZmfo+9ZCxEREQ==}
     engines: {node: '>=10'}
@@ -8351,6 +8362,11 @@ snapshots:
       jpeg-lossless-decoder-js: 2.1.2
       pako: 2.1.0
       uuid: 9.0.1
+
+  '@cornerstonejs/nifti-volume-loader@4.22.13(@cornerstonejs/core@4.22.13(@babel/preset-env@7.29.7(@babel/core@7.29.7))(autoprefixer@10.5.0(postcss@8.5.15))(webpack@5.111.1(postcss@8.5.15)(sharp@0.34.5))(wslink@2.5.0))':
+    dependencies:
+      '@cornerstonejs/core': 4.22.13(@babel/preset-env@7.29.7(@babel/core@7.29.7))(autoprefixer@10.5.0(postcss@8.5.15))(webpack@5.111.1(postcss@8.5.15)(sharp@0.34.5))(wslink@2.5.0)
+      nifti-reader-js: 0.6.9
 
   '@cornerstonejs/tools@4.22.13(@cornerstonejs/core@4.22.13(@babel/preset-env@7.29.7(@babel/core@7.29.7))(autoprefixer@10.5.0(postcss@8.5.15))(webpack@5.111.1(postcss@8.5.15)(sharp@0.34.5))(wslink@2.5.0))(@kitware/vtk.js@34.15.1(@babel/preset-env@7.29.7(@babel/core@7.29.7))(autoprefixer@10.5.0(postcss@8.5.15))(webpack@5.111.1(postcss@8.5.15)(sharp@0.34.5))(wslink@2.5.0))(@types/d3-array@3.2.1)(@types/d3-interpolate@3.0.4)(d3-array@3.2.4)(d3-interpolate@3.0.1)(gl-matrix@3.4.3)':
     dependencies:
@@ -13486,6 +13502,10 @@ snapshots:
   negotiator@0.6.3: {}
 
   negotiator@1.0.0: {}
+
+  nifti-reader-js@0.6.9:
+    dependencies:
+      fflate: 0.7.3
 
   node-abi@3.92.0:
     dependencies:

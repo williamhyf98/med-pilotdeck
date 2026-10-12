@@ -52,6 +52,7 @@
     "@cornerstonejs/codec-openjph": "2.4.7",
     "@cornerstonejs/core": "^4.22.13",
     "@cornerstonejs/dicom-image-loader": "^4.22.13",
+    "@cornerstonejs/nifti-volume-loader": "4.22.13",
     "@cornerstonejs/tools": "^4.22.13",
     "@fontsource-variable/inter": "^5.2.8",
     "@iarna/toml": "^2.2.5",

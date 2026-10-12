@@ -295,6 +295,11 @@ export const api = {
       cache: 'no-store',
       signal: options.signal,
     }),
+  niftiPreviewUrl: (projectName, filePath, cacheKey = 0) => {
+    const params = new URLSearchParams({ path: filePath, _: String(cacheKey) });
+    const suffix = /\.nii(?:\(\d+\))?\.gz$/i.test(filePath) ? 'volume.nii.gz' : 'volume.nii';
+    return appendAuthToken(`/api/projects/${encodeURIComponent(projectName)}/files/content/${suffix}?${params.toString()}`);
+  },
   dicomPreviewMetadata: (projectName, filePath, options = {}) => {
     const params = new URLSearchParams({
       path: filePath,

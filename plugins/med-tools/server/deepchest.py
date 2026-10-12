@@ -102,7 +102,11 @@ class DeepChestClient:
                 response = self.http.post(
                     "/v1/jobs",
                     data=data,
-                    files={"file": (source.name, handle, "application/octet-stream")},
+                    files={"file": (
+                        re.sub(r"\.nii\((\d+)\)\.gz$", r"(\1).nii.gz", source.name, flags=re.IGNORECASE),
+                        handle,
+                        "application/octet-stream",
+                    )},
                 )
             response.raise_for_status()
             result = response.json()

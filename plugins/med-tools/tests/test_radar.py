@@ -225,6 +225,24 @@ class RadarClientTests(unittest.TestCase):
             self.assertTrue(csv_path.is_file())
             self.assertTrue(summary_path.is_file())
 
+    def test_legacy_nifti_filename_uploads_with_valid_extension(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            input_path = Path(temp) / "abdomen.nii(2).gz"
+            input_path.write_bytes(b"nifti")
+            response = FakeResponse({
+                "ok": True, "status": "completed", "request_id": "c" * 32,
+                "cases": [],
+                "artifacts": {"scores_csv_url": f"/v1/artifacts/{'c' * 32}/scores.csv"},
+            })
+            client = FakeClient(response, FakeResponse(content=b"file,score\nstudy,0.5\n"))
+            with patch.object(radar, "get_radar_config", return_value=config()), patch(
+                "httpx.Client", return_value=client
+            ):
+                result = radar.run_radar_analysis(path=str(input_path))
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["transfer"]["kind"], "nifti")
+            self.assertEqual(client.post_calls[0][1]["files"]["file"][0], "abdomen(2).nii.gz")
+
     def test_single_frame_dicom_is_rejected_before_upload(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             input_path = Path(temp) / "slice.dcm"

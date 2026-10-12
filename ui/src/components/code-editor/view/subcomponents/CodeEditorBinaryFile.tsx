@@ -24,6 +24,7 @@ import type { CodeEditorFile } from '../../types/types';
 import {
   isBuiltinOfficeFile,
   isDicomFile,
+  isNiftiFile,
   isImageFile,
   isOfficeFile,
   isPdfFile,
@@ -49,6 +50,9 @@ const PptxBuiltinPreview = lazy(
 );
 const DicomPreview = lazy(
   () => import('./DicomPreview'),
+);
+const NiftiPreview = lazy(
+  () => import('./NiftiPreview'),
 );
 
 type CodeEditorBinaryFileProps = {
@@ -124,6 +128,13 @@ function getFileTypeBadge(filename: string) {
   if (isDicomFile(filename)) {
     return {
       label: 'DCM',
+      className: 'bg-cyan-700 text-white text-[7px]',
+      titleKey: 'fileTypes.dicom',
+    };
+  }
+  if (isNiftiFile(filename)) {
+    return {
+      label: 'NII',
       className: 'bg-cyan-700 text-white text-[7px]',
       titleKey: 'fileTypes.dicom',
     };
@@ -1515,10 +1526,11 @@ export default function CodeEditorBinaryFile({
 
   const isImage = isImageFile(file.name);
   const isDicom = isDicomFile(file.name);
+  const isNifti = isNiftiFile(file.name);
   const isPdf = isPdfFile(file.name);
   const isOffice = isOfficeFile(file.name);
-  const canPreview = isDicom || isImage || isPdf || isOffice;
-  const hasEmbeddedDocumentToolbar = isDicom || isPdf || isOffice;
+  const canPreview = isDicom || isNifti || isImage || isPdf || isOffice;
+  const hasEmbeddedDocumentToolbar = isDicom || isNifti || isPdf || isOffice;
   const documentIsFullscreen = isSidebar ? isExpanded : isFullscreen;
   const onToggleDocumentFullscreen = isSidebar ? onToggleExpand : onToggleFullscreen;
 
@@ -1581,6 +1593,10 @@ export default function CodeEditorBinaryFile({
   const previewContent = isDicom
     ? <Suspense fallback={<PreviewSpinner label={t('dicomPreview.loading')} />}>
         <DicomPreview projectName={projectName} file={file} isFullscreen={documentIsFullscreen} onToggleFullscreen={onToggleDocumentFullscreen} />
+      </Suspense>
+    : isNifti
+    ? <Suspense fallback={<PreviewSpinner label={t('dicomPreview.loading')} />}>
+        <NiftiPreview projectName={projectName} file={file} isFullscreen={documentIsFullscreen} onToggleFullscreen={onToggleDocumentFullscreen} />
       </Suspense>
     : isImage
     ? <ImagePreview projectName={projectName} file={file} title={title} message={message} onClose={onClose} toolbarActions={headerTopBar} />

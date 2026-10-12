@@ -7,6 +7,7 @@ installGlobalProxy();
 
 import fs from 'fs';
 import path from 'path';
+import { claimUniqueProjectFileName } from './utils/uniqueProjectFileName.js';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
@@ -1590,7 +1591,7 @@ app.get('/api/projects/:projectName/file', authenticateToken, async (req, res) =
 });
 
 // Serve raw file bytes for previews and downloads.
-app.get('/api/projects/:projectName/files/content', authenticateToken, async (req, res) => {
+app.get(['/api/projects/:projectName/files/content', '/api/projects/:projectName/files/content/volume.nii', '/api/projects/:projectName/files/content/volume.nii.gz'], authenticateToken, async (req, res) => {
     try {
         const { projectName } = req.params;
         const { path: filePath } = req.query;
@@ -1614,6 +1615,15 @@ app.get('/api/projects/:projectName/files/content', authenticateToken, async (re
         const stats = await fsPromises.stat(resolved).catch(() => null);
         if (!stats?.isFile()) {
             return res.status(404).json({ error: 'File not found' });
+        }
+        if (/\/volume\.nii(?:\.gz)?$/.test(req.path)) {
+            const sourceName = path.basename(resolved).toLowerCase();
+            const validFormat = req.path.endsWith('.gz')
+                ? /\.nii(?:\(\d+\))?\.gz$/.test(sourceName)
+                : sourceName.endsWith('.nii');
+            if (!validFormat || stats.size > 512 * 1024 * 1024) {
+                return res.status(413).json({ error: 'NIfTI preview requires a .nii/.nii.gz file no larger than 512 MB' });
+            }
         }
 
         const mimeType = mime.lookup(resolved) || 'application/octet-stream';
@@ -3877,23 +3887,6 @@ async function collectProjectFileNames(rootDir, maxDepth = 10, currentDepth = 0,
         }
     }
     return usedNames;
-}
-
-// Return desiredName unchanged when free, otherwise "stem(1).ext",
-// "stem(2).ext", ... The claimed name is registered in usedNames so
-// same-batch uploads also get distinct suffixes.
-function claimUniqueProjectFileName(usedNames, desiredName) {
-    const extIndex = desiredName.lastIndexOf('.');
-    const stem = extIndex > 0 ? desiredName.slice(0, extIndex) : desiredName;
-    const ext = extIndex > 0 ? desiredName.slice(extIndex) : '';
-    let candidate = desiredName;
-    let counter = 1;
-    while (usedNames.has(candidate.toLowerCase())) {
-        candidate = `${stem}(${counter})${ext}`;
-        counter += 1;
-    }
-    usedNames.add(candidate.toLowerCase());
-    return candidate;
 }
 
 async function getFileTree(dirPath, maxDepth = 3, currentDepth = 0, showHidden = true) {
