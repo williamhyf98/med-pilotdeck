@@ -10,7 +10,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 
-from .dicom_router import route_dicom, specialized_ct_enabled
+from .dicom_router import _is_nifti, route_image, specialized_ct_enabled
 from .parsers import SUPPORTED_SUFFIXES, collect_medical_files, parse_medical_file
 from .vlm_client import analyze_medical_with_vlm, get_vlm_config
 
@@ -48,9 +48,8 @@ SPECIALIZED_CT_GUIDANCE = (
     "med_deepchest_job until completion. Never use example results for an uploaded case."
     if specialized_ct_enabled()
     else
-    "For DICOM attachments including complete CT series, load med-medical, "
-    "use med_dicom_route for local metadata checks, then med_parse_medical. "
-    "Use only the advertised tools; general parsing is not specialized 3D inference."
+    "For DICOM, use med_image_route then med_parse_medical when recommended. "
+    "For NIfTI, use med_image_route; med_parse_medical cannot parse NIfTI."
 )
 
 
@@ -91,9 +90,10 @@ mcp = FastMCP(
         "continues after the streamed report. "
         "If report is empty and agent_continue=true, continue the medical "
         "interpretation yourself using summary/png_paths. "
-        "For a DICOM file or directory that needs automatic modality/body-part "
-        "routing, call med_dicom_route first. It is local read-only metadata "
-        "triage; wait for its result before calling another medical tool. "
+        "For DICOM or NIfTI volumes, call med_image_route first. It is a "
+        "local read-only preflight; wait for its result before calling another "
+        "medical tool. NIfTI needs explicit CT/body-region context; chest CT "
+        "also requires confirmed HU units. Never send NIfTI to med_parse_medical. "
         f"{SPECIALIZED_CT_GUIDANCE} "
         "For war-trauma knowledge Q&A: call med_trauma_rag_query, then the main "
         "model answers from chunks (brief tips OK; not the formal five-section plan). "
@@ -170,7 +170,6 @@ def _prepare_medical_parse(
     should run and with what summary/images. Callers strip it before returning.
     """
     root = _resolve_path(path)
-    derived_dir = _resolve_derived_dir(root)
     max_items = max(1, min(int(max_items or 64), 64))
     max_frames = max(1, min(int(max_frames or 8), 32))
     mode = _normalize_continuation_mode(continuation_mode)
@@ -202,12 +201,34 @@ def _prepare_medical_parse(
         payload["vlm_error"] = "path missing"
         return payload
 
+    contains_nifti = (
+        root.is_file() and _is_nifti(root)
+    ) or (
+        root.is_dir() and any(
+            child.is_file()
+            and _is_nifti(child)
+            and not any(
+                part.startswith(".") or part == "derived"
+                for part in child.relative_to(root).parts
+            )
+            for child in root.rglob("*")
+        )
+    )
+    if contains_nifti:
+        payload["status"] = "degraded"
+        payload["warnings"] = [
+            "NIfTI 不受通用解析器支持；请使用 med_image_route 检查影像并选择专用流程。"
+        ]
+        payload["vlm_error"] = "unsupported NIfTI"
+        return payload
+
+    derived_dir = _resolve_derived_dir(root)
     # Discover generously so truncation warnings report true folder size;
     # parse still respects max_items (≤64).
     files = collect_medical_files(root, max_files=max(512, max_items * 8))
     discovered_count = len(files)
 
-    if not files and root.is_file():
+    if not files and root.is_file() and root.suffix.lower() in SUPPORTED_SUFFIXES:
         files = [root]
         discovered_count = 1
 
@@ -298,7 +319,7 @@ def _prepare_medical_parse(
         payload["_vlm"] = {"run": False}
         return payload
 
-    if not combined_summary.strip() and not unique_pngs:
+    if not any_ready and not unique_pngs:
         payload["vlm_error"] = "parse failed; skipped VLM"
         payload["_vlm"] = {"run": False}
         return payload
@@ -439,6 +460,7 @@ async def med_parse_medical(
       (case report, HTML, Word/PDF, care plan). Do not rewrite the report; keep
       working on unfinished planned steps.
 
+    NIfTI (.nii/.nii.gz) is not supported here; use med_image_route instead.
     If `report` is empty and `agent_continue` is true, continue the medical
     interpretation yourself with the main agent using summary/png_paths.
 
@@ -481,25 +503,57 @@ async def med_parse_medical(
 
 
 @mcp.tool()
-def med_dicom_route(path: str, max_files: int = 512) -> str:
-    """Route a DICOM file/series to an existing medical Skill.
+def med_image_route(
+    path: str,
+    max_files: int = 512,
+    modality: str = "",
+    body_region: str = "",
+    intensity_units: str = "",
+    requested_model: str = "",
+) -> str:
+    """Route DICOM or NIfTI to a supported medical skill using local metadata.
 
-    This is a local metadata-only preflight. It reports modality, anatomical
-        region, contrast hint, series completeness, warnings, recommended skill,
-        and recommended tool. It never sends DICOM data to a remote service or
-        invokes a model. When specialized CT is disabled, complete studies
-        recommend med-medical for local parsing.
+    NIfTI headers establish 3D geometry, not whether the CT study is complete,
+    its modality, anatomical region, HU units or contrast phase. Pass only
+    context explicitly supplied by the user or trusted examination records,
+    not a guess from the filename. For example, modality
+    may be CT, body_region abdomen/chest, intensity_units HU, and requested_model
+    radar/deepchest only when explicitly requested. An unsupported or uncertain
+    NIfTI never routes to med_parse_medical.
 
     Args:
-        path: Absolute or relative path to one DICOM file or a DICOM directory.
+        path: File or directory to inspect without running inference.
+        max_files: Maximum files to inspect for DICOM (1-2048).
+        modality: Confirmed modality (CT, MR or OTHER), if known.
+        body_region: Confirmed region (abdomen, pelvis, abdomen_pelvis, chest, etc.).
+        intensity_units: Confirmed voxel units (HU, UNKNOWN or OTHER), if known.
+        requested_model: Explicitly requested model (radar or deepchest), if any.
+    """
+    return json.dumps(
+        route_image(
+            path, max_files=max(1, min(int(max_files or 512), 2048)),
+            modality=modality, body_region=body_region,
+            intensity_units=intensity_units, requested_model=requested_model,
+        ),
+        ensure_ascii=False, indent=2,
+    )
+
+
+@mcp.tool()
+def med_dicom_route(path: str, max_files: int = 512) -> str:
+    """Compatibility alias for imaging routing; use med_image_route for new calls.
+
+    DICOM routing remains unchanged; NIfTI without confirmed context requests
+    more information instead of recommending the general parser.
+
+    Args:
+        path: Absolute or relative path to a medical imaging file or directory.
         max_files: Maximum directory files to inspect (1-2048, default 512).
     """
     bounded_max_files = max(1, min(int(max_files or 512), 2048))
-    return json.dumps(
-        route_dicom(path, max_files=bounded_max_files),
-        ensure_ascii=False,
-        indent=2,
-    )
+    result = route_image(path, max_files=bounded_max_files)
+    result["tool"] = "med_dicom_route"
+    return json.dumps(result, ensure_ascii=False, indent=2)
 
 
 @mcp.tool()

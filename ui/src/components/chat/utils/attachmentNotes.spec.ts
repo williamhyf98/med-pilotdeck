@@ -34,7 +34,7 @@ describe('attachment path notes', () => {
     });
     expect(note).toContain('[Medical materials folder attached');
     expect(note).toContain('- folder: /work/.tmp/chat-attachments/abc');
-    expect(note).toContain('med_parse_medical');
+    expect(note).toContain('med_image_route');
     expect(note).toContain('case-1/a.dcm');
   });
 
@@ -62,7 +62,20 @@ describe('attachment path notes', () => {
       },
     );
     expect(note.indexOf('[Medical materials folder attached')).toBeGreaterThan(-1);
-    expect(note.indexOf(marker)).toBeGreaterThan(note.indexOf('med_parse_medical'));
+    expect(note.indexOf(marker)).toBeGreaterThan(note.indexOf('med_image_route'));
+  });
+
+  it('strips historical medical folder notes without exposing their instructions', () => {
+    const legacy = [
+      '请分析',
+      '[Medical materials folder attached — parse with med_parse_medical on the folder path:]',
+      '- folder: /private/legacy',
+      '[End medical materials folder]',
+      buildAttachmentPathNote([{ name: 'scan.nii.gz', path: '/private/legacy/scan.nii.gz' }]),
+    ].join('\n');
+    const parsed = parseUserAttachmentNote(legacy);
+    expect(parsed.content).toBe('请分析');
+    expect(parsed.attachments[0]?.path).toBe('/private/legacy/scan.nii.gz');
   });
 
   it('recovers an xlsx path from a legacy note glued to attachment diagnostics', () => {

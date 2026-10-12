@@ -9,7 +9,8 @@ PilotDeck.
 
 | Tool | Role |
 |------|------|
-| `med_dicom_route` | Local read-only DICOM modality/body-part/series preflight and Skill recommendation |
+| `med_image_route` | Local DICOM/NIfTI header preflight and Skill recommendation |
+| `med_dicom_route` | Compatibility alias for the image router |
 | `med_parse_medical` | Parse medical file/folder + G9 report |
 | `med_tools_health` | VLM / deps / RAG summary |
 | `med_radar_status` | Check the node12 RADAR service, resident model, and CUDA |
@@ -28,9 +29,10 @@ Wire names in chat: `mcp__med-tools__<tool>`.
 ```text
 用户
   │
-  ├─【自动识别 DICOM 模态/部位】── Skill med-dicom-router
-  │                  └─ med_dicom_route（本地只读元数据）
-  │                     ├─ 非 CT / 不完整 / 不确定 → med-medical
+  ├─【自动识别 DICOM/NIfTI】── Skill med-dicom-router
+  │                  └─ med_image_route（本地只读文件头）
+  │                     ├─ DICOM 非 CT / 不完整 / 不确定 → med-medical
+  │                     ├─ NIfTI 非 CT / 信息不足 → 补充信息或说明不可处理
   │                     ├─ 非腹部且部位明确的完整 CT → med-deepchest-3dmedagent
   │                     └─ 腹部/盆腔完整 CT → med-radar-ct → RADAR → 主智能体按用户问题回答
   │
@@ -67,7 +69,7 @@ Skills:
 - `med-case-report` — 固定 9 段模版病例报告；附件解析必须用 `material`，解析后继续写报告/HTML
 - `med-radar-ct` — node12 RADAR 三维 CT 推理；只把分数当作需复核的模型信号
 - `med-deepchest-3dmedagent` — 上传病例使用 HTTPS 任务服务，配置 `MED_DEEPCHEST_API_BASE`、密钥及 CA；服务端使用 `MED_DEEPCHEST_ROOT` 工作区生成本次病例证据和中文分析。shell/smoke20 仅用于明确要求的实验验证。
-- `med-dicom-router` — 本地只读 DICOM 预检和 Skill 路由；不会解码像素、调用模型或上传 node12
+- `med-dicom-router` — 本地只读 DICOM/NIfTI 预检和 Skill 路由；不会解码像素、调用模型或上传 node12
 
 3DMedAgent 与 RADAR 是两个独立医学流程。完整腹部/盆腔 CT 自动调用 RADAR；其他部位明确的完整 CT 先进入 3DMedAgent。胸部具备完整 DeepChest/CT-CLIP 支持；头颈、脊柱、四肢等当前不在器官词表内时必须明确兼容性降级。两套证据、分数、产物和限制分别保留，不把 RADAR 分数写入 3DMedAgent `facts_memory`。
 
@@ -81,7 +83,7 @@ Skills:
 
 映射关系：
 
-- `med_dicom_route` → `med-dicom-router`；已加载 `med-medical` 时也可使用。
+- `med_image_route` → `med-dicom-router`；`med_dicom_route` 是兼容别名；已加载 `med-medical` 时也可使用。
 - `med_parse_medical` → `med-medical`；已加载 `med-case-report` 或 `med-trauma-stage-plan` 时也可使用。
 - `med_trauma_rag_query` / `med_trauma_rag_status` → `med-trauma-assist`。
 - `med_trauma_stage_plan` → `med-trauma-stage-plan`。

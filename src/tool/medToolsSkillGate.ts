@@ -33,6 +33,10 @@ const MED_TOOLS_SKILL_REQUIREMENTS: Readonly<
     loadSkill: "med-dicom-router",
     acceptedSkills: ["med-dicom-router", "med-medical"],
   },
+  "mcp__med-tools__med_image_route": {
+    loadSkill: "med-dicom-router",
+    acceptedSkills: ["med-dicom-router", "med-medical", "med-radar-ct", "med-deepchest-3dmedagent"],
+  },
   "mcp__med-tools__med_parse_medical": {
     loadSkill: "med-medical",
     acceptedSkills: ["med-medical", "med-trauma-stage-plan", "med-case-report"],
@@ -72,7 +76,11 @@ export function normalizeLoadedSkillName(name: string): string {
 export function getMedToolsSkillRequirement(
   toolName: string,
 ): MedToolsSkillRequirement | undefined {
-  if (toolName === "mcp__med-tools__med_dicom_route" && !isSpecializedCtEnabled()) {
+  if (
+    (toolName === "mcp__med-tools__med_dicom_route"
+      || toolName === "mcp__med-tools__med_image_route")
+    && !isSpecializedCtEnabled()
+  ) {
     return { loadSkill: "med-medical", acceptedSkills: ["med-medical"] };
   }
   return MED_TOOLS_SKILL_REQUIREMENTS[toolName]

@@ -11,7 +11,8 @@ PilotDeck（包括 gateway 和 med-tools MCP 子进程），刷新浏览器。
   用户或项目目录中的同名副本同样隐藏，文件不删除。
 - MCP 工具发现和 agent 工具列表不提供 `med_radar_*`、`med_deepchest_*`；
   旧会话发出的专用调用仍由执行门禁阻止，健康检查不探测 RADAR。
-- 保留 `med-medical`、`med_dicom_route`、`med_parse_medical`。
+- 保留 `med-medical`、`med_image_route`（及旧名 `med_dicom_route`）、`med_parse_medical`。
+  NIfTI 不受通用解析器支持，开关关闭时不推荐 `med_parse_medical`。
   DICOM 在通用医学技能下完成元数据预检和附件解析，不依赖隐藏的路由技能。
 - G9、主模型回退、战创伤 RAG 和历史报告不受该开关影响。
   通用解析不等同于 RADAR/DeepChest 三维推理，也不代表系统禁止一切网络访问。

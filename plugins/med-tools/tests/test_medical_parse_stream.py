@@ -3,12 +3,52 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 from server import app
 
 
 class MedicalParseStreamTests(unittest.IsolatedAsyncioTestCase):
+    async def test_nifti_fast_rejects_without_model_call(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "study.nii.gz"
+            path.write_bytes(b"not decoded by general parser")
+            with patch("server.vlm_client.analyze_medical_with_vlm_stream") as stream:
+                payload = await app._run_medical_parse_stream(
+                    path=str(path), on_text=lambda _text: None
+                )
+            stream.assert_not_called()
+        self.assertEqual(payload["status"], "degraded")
+        self.assertEqual(payload["report"], "")
+        self.assertFalse(payload["vlm_ok"])
+        self.assertIn("med_image_route", payload["warnings"][0])
+
+    async def test_directory_containing_nifti_does_not_generate_partial_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            (Path(temp) / "study.nii.gz").write_bytes(b"not decoded")
+            (Path(temp) / "report.txt").write_text("a supported report")
+            with patch("server.vlm_client.analyze_medical_with_vlm_stream") as stream:
+                payload = await app._run_medical_parse_stream(
+                    path=temp, on_text=lambda _text: None
+                )
+            stream.assert_not_called()
+        self.assertEqual(payload["status"], "degraded")
+        self.assertEqual(payload["vlm_error"], "unsupported NIfTI")
+        self.assertEqual(payload["report"], "")
+
+    async def test_legacy_renamed_nifti_is_not_sent_to_model(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "study.nii(1).gz"
+            path.write_bytes(b"not decoded")
+            with patch("server.vlm_client.analyze_medical_with_vlm_stream") as stream:
+                payload = await app._run_medical_parse_stream(
+                    path=str(path), on_text=lambda _text: None
+                )
+            stream.assert_not_called()
+        self.assertEqual(payload["vlm_error"], "unsupported NIfTI")
+
     async def test_stream_forwards_report_and_marks_direct(self) -> None:
         base_payload = {
             "tool": "med_parse_medical",

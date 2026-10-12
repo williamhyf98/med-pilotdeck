@@ -1,16 +1,17 @@
-"""Local, read-only DICOM routing.
+"""Local, read-only medical imaging routing.
 
-The router deliberately reads metadata only.  It does not decode pixels, call a
-model, or upload an examination.  Its output is a conservative recommendation
-for the existing MedPilotDeck skills; the caller still has to load the selected
-skill and obtain any authorization required by that workflow.
+The router reads DICOM metadata or NIfTI headers only. It does not decode
+volumes, call a model, or upload an examination.
 """
 
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+import gzip
+import math
 import os
 from pathlib import Path
+import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
@@ -475,3 +476,289 @@ def route_dicom(path: str | Path, *, max_files: int = 512) -> Dict[str, Any]:
         payload["warnings"].extend(read_errors[:5])
     payload["status"] = "ready" if not payload["warnings"] else "degraded"
     return payload
+
+
+def _is_nifti(path: Path) -> bool:
+    return bool(re.search(r"\.nii(?:\(\d+\))?\.gz$|\.nii$", path.name.lower()))
+
+
+def _nifti_header(path: Path) -> Dict[str, Any]:
+    import nibabel as nib
+    import numpy as np
+
+    try:
+        if re.search(r"\.nii\(\d+\)\.gz$", path.name.lower()):
+            with gzip.open(path, "rb") as handle:
+                version_bytes = handle.read(4)
+            header_sizes = {
+                int.from_bytes(version_bytes, "little"),
+                int.from_bytes(version_bytes, "big"),
+            }
+            version = (
+                nib.Nifti1Image if 348 in header_sizes
+                else nib.Nifti2Image if 540 in header_sizes
+                else None
+            )
+            if version is None:
+                raise ValueError("Invalid NIfTI header")
+            file_map = version.make_file_map()
+            file_map["image"].filename = str(path)
+            image = version.from_file_map(file_map, mmap=False)
+        else:
+            image = nib.load(str(path), mmap=False)
+    except nib.filebasedimages.ImageFileError as exc:
+        raise ValueError("Invalid NIfTI header") from exc
+    shape = tuple(int(size) for size in image.shape)
+    affine = np.asarray(image.affine, dtype=np.float64)
+    dtype = np.dtype(image.get_data_dtype())
+    zooms = image.header.get_zooms()[:3]
+    if (
+        len(shape) != 3
+        or min(shape) < 3
+        or math.prod(shape) > 256 * 1024**2
+        or dtype.kind not in "iuf"
+        or affine.shape != (4, 4)
+        or not np.isfinite(affine).all()
+        or abs(float(np.linalg.det(affine[:3, :3]))) < 1e-8
+        or len(zooms) != 3
+        or any(not math.isfinite(float(z)) or float(z) <= 0 for z in zooms)
+    ):
+        raise ValueError("NIfTI must be a finite numeric 3D volume with valid geometry")
+    linear = affine[:3, :3]
+    normalized = np.abs(linear / np.linalg.norm(linear, axis=0))
+    diagonal = np.diag(linear)
+    return {
+        "shape": list(shape),
+        "dtype": str(dtype),
+        "spacing_mm": [float(z) for z in zooms],
+        "radar_spacing_mm": [float(abs(value)) for value in diagonal],
+        "file_bytes": path.stat().st_size,
+        "axis_aligned": bool(np.allclose(normalized.max(axis=0), 1, atol=1e-4)),
+        "radar_axis_aligned": bool(
+            np.all(np.abs(diagonal) >= 1e-6)
+            and np.all(
+                np.abs(linear - np.diag(diagonal))
+                <= max(1e-5, float(np.max(np.abs(linear))) * 1e-3)
+            )
+        ),
+    }
+
+
+def route_image(
+    path: str | Path,
+    *,
+    max_files: int = 512,
+    modality: str = "",
+    body_region: str = "",
+    intensity_units: str = "",
+    requested_model: str = "",
+) -> Dict[str, Any]:
+    """Route DICOM or NIfTI using header evidence and explicitly supplied context."""
+    root = Path(path).expanduser().resolve()
+    result: Dict[str, Any] = {
+        "tool": "med_image_route",
+        "path": str(root),
+        "format": "nifti",
+        "status": "degraded",
+        "modality": "UNKNOWN",
+        "body_region": "unknown",
+        "contrast_hint": "unknown",
+        "is_complete_3d_series": None,
+        "is_3d_volume": False,
+        "volumes": [],
+        "candidate_skills": [],
+        "recommended_skill": None,
+        "recommended_tool": None,
+        "requires_main_agent_synthesis": False,
+        "route_mode": "needs-context",
+        "specialized_support": "not-applicable",
+        "authorization_required": False,
+        "domain_flags": [],
+        "required_context": [],
+        "warnings": [],
+        "next_action": "",
+    }
+    if not root.exists():
+        if _is_nifti(root):
+            result["status"] = "error"
+            result["route_mode"] = "invalid-input"
+            result["warnings"].append("NIfTI 路径不存在。")
+            result["next_action"] = "请确认文件路径，不要调用 med_parse_medical。"
+            return result
+        result = route_dicom(root, max_files=max_files)
+        result["tool"] = "med_image_route"
+        return result
+
+    if root.is_file():
+        nifti = [root] if _is_nifti(root) else []
+        other = [] if nifti else [root]
+    elif root.is_dir():
+        # NIfTI volumes can exceed the DICOM header reader's 256 MiB limit.
+        # Detect them separately before applying that DICOM-specific filter.
+        nifti, other = [], []
+        for file in root.rglob("*"):
+            relative = file.relative_to(root)
+            if any(part.startswith(".") or part == "derived" for part in relative.parts):
+                continue
+            if not file.is_file():
+                continue
+            (nifti if _is_nifti(file) else other).append(file)
+            if len(nifti) > 1 or (nifti and other):
+                break
+    else:
+        nifti, other = [], []
+    if not nifti:
+        result = route_dicom(root, max_files=max_files)
+        result["tool"] = "med_image_route"
+        if requested_model.strip().lower() == "deepchest" and specialized_ct_enabled():
+            if result["recommended_tool"] != "mcp__med-tools__med_deepchest_submit":
+                result.update(
+                    candidate_skills=[],
+                    recommended_skill=None,
+                    recommended_tool=None,
+                    route_mode="incompatible",
+                    specialized_support="not-applicable",
+                    requires_main_agent_synthesis=False,
+                    next_action="DeepChest 仅支持完整胸部 CT；请核对模态、部位和影像完整性。",
+                )
+                result["warnings"].append("该 DICOM 检查不能提交给 DeepChest。")
+                result["status"] = "degraded"
+            return result
+        if (
+            requested_model.strip().lower() == "radar"
+            and specialized_ct_enabled()
+            and result["modality"] == "CT"
+            and result["is_complete_3d_series"]
+            and result["body_region"] not in {"abdomen", "pelvis", "abdomen_pelvis", "mixed"}
+        ):
+            region = result["body_region"]
+            result.update(
+                candidate_skills=["med-radar-ct"],
+                recommended_skill="med-radar-ct",
+                recommended_tool="mcp__med-tools__med_radar_analyze_ct",
+                route_mode="radar",
+                specialized_support="domain-unverified",
+                requires_main_agent_synthesis=True,
+                next_action="加载 med-radar-ct，明确提示当前部位偏离训练域，按域外信号解释 RADAR 结果。",
+            )
+            result["domain_flags"].append(f"部位 {region} 不是已确认的腹部/盆腔；RADAR 结果存在域偏移风险。")
+            if result["contrast_hint"] != "contrast":
+                result["domain_flags"].append("增强期未确认；RADAR 结果需结合原始检查信息复核。")
+            result["status"] = "degraded"
+        return result
+
+    result["format"] = "nifti" if not other else "mixed"
+    if other or (root.is_dir() and len(nifti) > 1):
+        result["route_mode"] = "ambiguous-input"
+        result["warnings"].append("目录包含多个影像或不同格式；请先选择单个 NIfTI 文件。")
+        result["next_action"] = "请用户选择本轮要分析的一份影像，不自动提交专用模型。"
+        return result
+
+    volume = nifti[0]
+    try:
+        result["volumes"] = [{"path": str(volume), **_nifti_header(volume)}]
+    except (OSError, ValueError, ImportError) as exc:
+        result["route_mode"] = "invalid-input"
+        result["warnings"].append(f"NIfTI 文件头或三维几何无效：{type(exc).__name__}")
+        result["next_action"] = "请用户提供有效的三维影像文件。"
+        return result
+    result["is_3d_volume"] = True
+    volume_info = result["volumes"][0]
+
+    modality = modality.strip().upper()
+    region = body_region.strip().lower()
+    units = intensity_units.strip().upper()
+    model = requested_model.strip().lower()
+    if (
+        modality not in {"", "CT", "MR", "OTHER"}
+        or region not in {"", "abdomen", "pelvis", "abdomen_pelvis", "chest", "head", "neck", "spine", "extremity", "other"}
+        or units not in {"", "HU", "UNKNOWN", "OTHER"}
+        or model not in {"", "radar", "deepchest"}
+    ):
+        result["route_mode"] = "invalid-context"
+        result["warnings"].append("检查信息不在允许值范围内；请核对用户提供的模态、部位和模型名称。")
+        result["next_action"] = "请核对检查信息后重新预检；不要直接提交模型。"
+        return result
+    result["modality"] = modality or "UNKNOWN"
+    result["body_region"] = region or "unknown"
+
+    if not specialized_ct_enabled():
+        result["route_mode"] = "disabled"
+        result["warnings"].append("专用 CT 能力未启用；通用解析器也不支持 NIfTI。")
+        result["next_action"] = "请告知用户当前无法解析 NIfTI，不要调用 med_parse_medical。"
+        return result
+    if modality != "CT":
+        if modality:
+            result["route_mode"] = "incompatible"
+            result["next_action"] = "已确认不是 CT，不能提交给 RADAR 或 DeepChest。"
+        else:
+            result["required_context"].append("modality")
+            if not model and not region:
+                result["required_context"].append("body_region")
+            result["next_action"] = "请用户确认检查模态和部位；不能从 NIfTI 文件头推断是 CT。"
+        return result
+    if model == "deepchest" and region != "chest":
+        if region:
+            result["route_mode"] = "incompatible"
+            result["next_action"] = "已确认不是胸部 CT，不能提交给 DeepChest。"
+        else:
+            result["required_context"].append("body_region")
+            result["next_action"] = "DeepChest 仅支持胸部 CT；请用户确认检查部位。"
+        return result
+    if model == "radar" or (not model and region in {"abdomen", "pelvis", "abdomen_pelvis"}):
+        shape = volume_info["shape"]
+        spacing = volume_info["radar_spacing_mm"]
+        if not volume_info["radar_axis_aligned"] or min(
+            int(shape[0] * spacing[1]),
+            int(shape[1] * spacing[0]),
+            int(shape[2] * spacing[2] / 5),
+        ) <= 0:
+            result["route_mode"] = "incompatible"
+            result["warnings"].append("RADAR 不支持当前 NIfTI 的轴置换、斜切几何或重采样后的空维度。")
+            result["next_action"] = "请提供经校验、与轴对齐且具有足够切片的 CT 体数据。"
+            return result
+        result.update(
+            candidate_skills=["med-radar-ct"],
+            recommended_skill="med-radar-ct",
+            recommended_tool="mcp__med-tools__med_radar_analyze_ct",
+            route_mode="radar",
+            specialized_support="full" if region in {"abdomen", "pelvis", "abdomen_pelvis"} else "domain-unverified",
+            requires_main_agent_synthesis=True,
+            next_action="加载 med-radar-ct，检查服务后提交该 NIfTI；按适用范围解释结果。",
+        )
+        if region not in {"abdomen", "pelvis", "abdomen_pelvis"}:
+            result["domain_flags"].append("检查部位不是已确认的腹部/盆腔 CT；RADAR 结果存在域偏移风险。")
+        result["domain_flags"].append("NIfTI 无法确认增强期；RADAR 结果需结合原始检查信息复核。")
+    elif region == "chest":
+        if (
+            min(volume_info["shape"]) < 16
+            or not volume_info["axis_aligned"]
+            or volume_info["file_bytes"] > 2 * 1024**3
+        ):
+            result["route_mode"] = "incompatible"
+            result["warnings"].append("DeepChest 要求各维至少 16 个体素、非斜切几何且文件不超过 2 GiB。")
+            result["next_action"] = "请提供符合 DeepChest 输入要求的完整胸部 CT；不要直接提交。"
+            return result
+        if units == "OTHER":
+            result["route_mode"] = "incompatible"
+            result["next_action"] = "已确认体素单位不是 HU，不能提交 DeepChest。"
+            return result
+        if units != "HU":
+            result["required_context"].append("intensity_units")
+            result["next_action"] = "请用户确认胸部 CT 体素单位为 HU，之后才能提交 DeepChest。"
+            return result
+        result.update(
+            candidate_skills=["med-deepchest-3dmedagent"],
+            recommended_skill="med-deepchest-3dmedagent",
+            recommended_tool="mcp__med-tools__med_deepchest_submit",
+            route_mode="deepchest",
+            specialized_support="full",
+            next_action="加载 med-deepchest-3dmedagent，检查服务并提交本轮胸部 CT。",
+        )
+    else:
+        if not region:
+            result["required_context"].append("body_region")
+        result["next_action"] = "请用户确认检查部位；当前没有适合该部位的 NIfTI 专用流程。"
+        return result
+    result["status"] = "ready" if not result["domain_flags"] else "degraded"
+    return result

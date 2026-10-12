@@ -1,30 +1,49 @@
 ---
 name: med-dicom-router
-description: 根据 DICOM 元数据本地判断模态、检查部位和三维序列完整性；专用 CT 能力关闭时路由到 med-medical。
+description: 医学影像本地预检：DICOM 读取元数据，NIfTI (.nii/.nii.gz) 校验三维文件头并依据明确检查信息推荐 RADAR 或 DeepChest。
 ---
 
-# DICOM 路由（med-tools）
+# 医学影像路由（med-tools）
 
 RADAR 和 DeepChest 由 `MED_SPECIALIZED_CT_ENABLED` 控制。路由器只做本地
-元数据预检；关闭时所有检查回退到 `med-medical`。
+元数据预检，不读取整个三维体数据；关闭时 DICOM 可使用 `med-medical`，
+但 NIfTI 不受通用解析器支持，不可回退到 `med_parse_medical`。
 
-当用户上传或指向一个 DICOM 文件/目录，并希望自动判断检查类型、部位或选择医学工具时，先调用：
+当用户上传 DICOM 文件/目录或 NIfTI 文件，需要选择医学工具时，先调用：
 
 ```text
-mcp__med-tools__med_dicom_route(path=<绝对路径>, max_files=512)
+mcp__med-tools__med_image_route(path=<绝对路径>, max_files=512,
+  modality=<用户明确确认的模态>, body_region=<用户明确确认的部位>,
+  intensity_units=<用户明确确认的单位>,
+  requested_model=<用户明确指定的模型>)
 ```
 
-这是本地只读预检：只读 DICOM 文件头，不解码像素、不调用 VLM、不上传 node12。读取结果中的 `warnings`、`domain_flags`、`modality`、`body_region`、`is_complete_3d_series`、`series`、`recommended_skill` 和 `recommended_tool`，不要根据文件名自行猜测部位。`domain_flags` 是后续解释限制，不等同于路由失败。
+所有上下文参数可省略；只传已由用户或可信检查资料确认的值，不从文件名猜测
+模态、部位、HU 或增强期。NIfTI 文件头不能证明模态或 HU。
+`requested_model` 仅在用户明确点名 RADAR/DeepChest 时传入。
+这是本地只读预检：DICOM 只读文件头，NIfTI 检查三维形状与基本几何，
+不能据此断言整套 CT 检查完整；
+不调用 VLM，不上传远程服务。读取 `required_context`、`warnings`、
+`domain_flags`、`recommended_skill` 和 `recommended_tool` 后执行下一步。
+当 `recommended_tool` 为 null 时，先获取缺失信息或说明不支持，不调用通用解析器碰运气。
 
-必须等待路由结果后再调用后续医学工具；不要把 `med_dicom_route` 与 `med_parse_medical` 或 `med_radar_analyze_ct` 放在同一个并行调用批次。
+必须等待路由结果后再调用后续医学工具；不要把路由与解析或推理并行执行。
 
 ## 固定路由
 
 - 先读取并返回 DICOM 元数据、模态、部位、序列完整性和警告。
-- 能力关闭时，无论是否为完整 CT、腹部 CT 或胸部 CT，都使用 `med-medical`
-  的 `mcp__med-tools__med_parse_medical` 做通用解析，不调用专用工具。
+- DICOM 保留原有模态、部位、序列完整性判断；能力关闭时可用 `med-medical`
+  做通用解析。
+- NIfTI 三维文件须先确认是 CT；腹部/盆腔 CT 自动推荐 RADAR。
+  胸部 CT 还须确认体素单位是 HU，之后才能推荐 DeepChest。
+  用户明确指定 RADAR 时，在确认 CT 后可以调用；部位或增强期未知时必须
+  说明域偏移，不得称为腹部增强域内结果。明确指定 DeepChest 也不能绕过胸部/HU 条件。
+- DICOM 已确认是胸部等非腹部完整 CT，但用户明确指定 RADAR 时，可覆盖默认
+  推荐并提示部位域偏移；混合部位、非 CT 和不完整序列不可用此覆盖。
+- NIfTI 无效、信息不足、多个影像混用或能力关闭时，不推荐
+  `med_parse_medical`；按照 `required_context` 询问或明确说明无法处理。
 - 能力开启且路由器推荐专用流程时，按相应 Skill 执行；工具返回 disabled
-  时不得重试，应回退到 `med-medical`。
+  时不得重试。只有 DICOM 或其他通用解析器支持的格式才可回退到 `med-medical`。
 
 ## 与专用 Skill 的关系
 
@@ -34,4 +53,6 @@ mcp__med-tools__med_dicom_route(path=<绝对路径>, max_files=512)
 
 ## 普通 DICOM
 
-如果用户只是要求“解读这个 DICOM”，也必须执行上述固定路由：能力关闭时全部走 `med-medical`；开启时完整腹部/盆腔 CT 走 RADAR，其他已识别部位的完整 CT 先过 3DMedAgent，非 CT、不完整 CT 或部位不确定走 `med-medical`。专用流程完成后，由主智能体结合模型结果、域偏移提示和用户原始问题生成最终回答；不要把路由器推荐本身当作诊断结论。最终回答使用简体中文，并说明医学辅助用途和需合格医务人员复核的边界。
+对 DICOM 按原有规则分流；对 NIfTI 不要从文件名推断部位或调用 DICOM-only
+兼容别名 `med_dicom_route`。专用流程完成后，由主智能体结合模型结果、
+域偏移提示和用户原始问题作答；路由建议不是诊断结论。

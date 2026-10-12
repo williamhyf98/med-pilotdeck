@@ -12,7 +12,8 @@ import {
 
 const ATTACHMENT_NOTE_MARKER = '[Files attached by user and available for reading in the project:]';
 const ATTACHMENT_NOTE_END_MARKER = '[End files attached by user]';
-const MEDICAL_FOLDER_NOTE_MARKER = '[Medical materials folder attached — parse with med_parse_medical on the folder path:]';
+const MEDICAL_FOLDER_NOTE_MARKER = '[Medical materials folder attached:]';
+const LEGACY_MEDICAL_FOLDER_NOTE_MARKER = '[Medical materials folder attached — parse with med_parse_medical on the folder path:]';
 const MEDICAL_FOLDER_NOTE_END_MARKER = '[End medical materials folder]';
 // Older transcripts have no end marker. Their next canonical text block may
 // be concatenated directly onto the final path during history projection.
@@ -20,6 +21,7 @@ const LEGACY_ATTACHMENT_NOTE_TERMINATORS = [
   ATTACHMENT_NOTE_END_MARKER,
   MEDICAL_FOLDER_NOTE_END_MARKER,
   MEDICAL_FOLDER_NOTE_MARKER,
+  LEGACY_MEDICAL_FOLDER_NOTE_MARKER,
   '[Attachment diagnostics]',
   '[Registered attachment files in this session:]',
   '[PDF attachment:',
@@ -53,7 +55,7 @@ export function buildMedicalFolderPathNote(folder: MedicalFolderPathNote): strin
     }
   }
   lines.push(
-    '- instruction: For DICOM, first load med-dicom-router and await med_dicom_route, then follow its selected workflow. For general medical parsing, call mcp__med-tools__med_parse_medical with path set to the folder above (not individual files). Do not use read_file on DICOM/PDF/CDA/ECG binaries. Pure interpretation uses continuation_mode="terminal": the runtime displays and saves the original report, then ends the turn. Composite tasks use continuation_mode="material": preserve the original interpretation in the final deliverable and complete the requested analysis/files without repeating a summary of the report.',
+    '- instruction: For DICOM or NIfTI (.nii/.nii.gz), first load med-dicom-router and await med_image_route, then follow its selected workflow. NIfTI requires confirmed CT/body region (and HU for DeepChest); never pass it to med_parse_medical. For other supported medical files, call mcp__med-tools__med_parse_medical with path set to the folder above (not individual files). Do not use read_file on medical binaries. Pure interpretation uses continuation_mode="terminal": the runtime displays and saves the original report, then ends the turn. Composite tasks use continuation_mode="material": preserve the original interpretation in the final deliverable and complete the requested analysis/files without repeating a summary of the report.',
   );
   return `\n\n${MEDICAL_FOLDER_NOTE_MARKER}\n${lines.join('\n')}\n${MEDICAL_FOLDER_NOTE_END_MARKER}\n`;
 }
@@ -127,10 +129,14 @@ export function parseUserAttachmentNote(content: unknown): {
     ...parsedContentReferences.references.map(contentReferenceToAttachment),
   ];
 
-  const folderMarkerIndex = text.indexOf(MEDICAL_FOLDER_NOTE_MARKER);
+  const folderMarker = [MEDICAL_FOLDER_NOTE_MARKER, LEGACY_MEDICAL_FOLDER_NOTE_MARKER]
+    .map((marker) => ({ marker, index: text.indexOf(marker) }))
+    .filter(({ index }) => index >= 0)
+    .sort((a, b) => a.index - b.index)[0];
+  const folderMarkerIndex = folderMarker?.index ?? -1;
   if (folderMarkerIndex >= 0) {
     const before = text.slice(0, folderMarkerIndex);
-    const afterMarker = text.slice(folderMarkerIndex + MEDICAL_FOLDER_NOTE_MARKER.length);
+    const afterMarker = text.slice(folderMarkerIndex + folderMarker.marker.length);
     const endIndex = afterMarker.indexOf(MEDICAL_FOLDER_NOTE_END_MARKER);
     const remainder = endIndex >= 0
       ? afterMarker.slice(endIndex + MEDICAL_FOLDER_NOTE_END_MARKER.length)

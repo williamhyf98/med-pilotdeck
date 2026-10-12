@@ -94,6 +94,46 @@ test("DICOM routing emits only sanitized medical activity", async () => {
   assert.doesNotMatch(JSON.stringify(activityEvents), /private|alice|scan\.dcm/);
 });
 
+test("NIfTI routing exposes only sanitized image preflight activity", async () => {
+  const events: any[] = [];
+  const runtime = runtimeFor("med_image_route", async () => ({
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        status: "degraded",
+        path: "/private/patient/ct.nii.gz",
+        modality: "CT",
+        body_region: "unknown",
+        recommended_skill: null,
+      }),
+    }],
+  }));
+  const [definition] = await createMcpToolDefinitionsFromRuntime(runtime as any);
+  await definition.execute({ path: "/private/patient/ct.nii.gz" }, context(events));
+  const activity = events.filter((event) => event.metadata?.channel === "medical_activity");
+  assert.equal(activity.length, 2);
+  assert.equal(activity[0].metadata.title, "正在检查医学影像");
+  assert.equal(activity[1].metadata.title, "影像预检完成");
+  assert.match(activity[1].metadata.detail, /暂无推荐流程/);
+  assert.doesNotMatch(activity[1].metadata.detail, /med-medical/);
+  assert.doesNotMatch(JSON.stringify(activity), /private|ct\.nii\.gz/);
+});
+
+test("unsupported NIfTI general parse does not claim pending medical interpretation", async () => {
+  const events: any[] = [];
+  const runtime = runtimeFor("med_parse_medical", async () => ({
+    content: [{ type: "text", text: JSON.stringify({
+      status: "degraded", report: "", vlm_error: "unsupported NIfTI", items: [],
+    }) }],
+  }));
+  const [definition] = await createMcpToolDefinitionsFromRuntime(runtime as any);
+  await definition.execute({ path: "/workspace/inbox/scan.nii.gz" }, context(events));
+  const activity = events.filter((event) => event.metadata?.channel === "medical_activity").at(-1);
+  assert.equal(activity?.metadata.title, "NIfTI 无法通用解析");
+  assert.match(activity?.metadata.detail, /NIfTI 不支持通用解析/);
+  assert.doesNotMatch(activity?.metadata.detail, /等待主智能体继续解读/);
+});
+
 test("medical report progress remains assistant text while stages use activity", async () => {
   const events: any[] = [];
   const runtime = runtimeFor("med_parse_medical", async (_name: string, _input: unknown, options: any) => {

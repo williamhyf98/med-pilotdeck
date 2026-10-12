@@ -14,7 +14,7 @@ DeepChest 暂不可用。工具返回 disabled 时不得重试。
 
 系统对话中的真实上传病例必须使用以下工具，不运行后文 smoke20 命令：
 
-1. `med_deepchest_status` 检查配置和服务。不可用时明确说明，不改用示例答案。
+1. 先调用 `med_image_route` 本地预检，并根据用户明确说明或可信检查资料确认是完整胸部 CT、HU 单位；然后用 `med_deepchest_status` 检查服务。不可用时明确说明，不改用示例答案。
 2. 确认本轮附件是完整胸部 CT、强度单位为 HU。DICOM 可读取元数据；NIfTI 无法自行确认模态和部位，缺少用户说明时先询问。不得因文件名包含 CT 就自动确认。
 3. 调用 `med_deepchest_submit(path, question, body_region="chest", modality="CT", intensity_units="HU")`。path 是本次上传 NIfTI、单序列 DICOM 目录或 ZIP；question 包含原始问题和本轮表达偏好。非胸部不提交本服务，明确兼容性降级。
 4. 保存返回的 job_id，重复调用 `med_deepchest_job(job_id, wait_seconds=30)` 直到 succeeded/failed。等待中不重复提交，不把阶段进度当作结果；如果本轮执行预算耗尽，保留 job_id 并明确仍在运行，下次继续查询。

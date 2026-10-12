@@ -16,7 +16,7 @@ RADAR 主要在增强腹部 CT 上训练。通过 `mcp__med-tools__med_radar_ana
 
 ## 强制流程
 
-1. 确认输入是完整三维 CT：`.nii` / `.nii.gz` 文件、`NumberOfFrames >= 3` 的单个多帧 CT DICOM，或包含同一 CT 序列的 DICOM 目录。单张截图、照片或孤立 DICOM 帧不适用。工具会自动完成多帧 DICOM 的格式转换、预处理和几何校验。
+1. 先调用 `med_image_route` 预检。确认输入是完整三维 CT：`.nii` / `.nii.gz` 文件、`NumberOfFrames >= 3` 的单个多帧 CT DICOM，或包含同一 CT 序列的 DICOM 目录。NIfTI 文件头不能证明是 CT，须由用户或可信检查资料确认模态；明确指定 RADAR 时把 `requested_model="radar"` 传给路由器。单张截图、照片或孤立 DICOM 帧不适用。
 2. 只从用户描述或本轮已知上下文确定检查部位和增强期；把简短结论传给 `study_context`，例如 `contrast-enhanced abdominal CT`。无法确认时传空字符串，不要猜。需要另行解读 DICOM 元数据时，先加载 `med-medical` 再调用 `med_parse_medical`。
 3. 首次使用或工具报告不可用时，调用 `mcp__med-tools__med_radar_status(validate_runtime=true)` 确认分析服务是否可用。
 4. 调用 `mcp__med-tools__med_radar_analyze_ct`：
@@ -35,7 +35,7 @@ RADAR 主要在增强腹部 CT 上训练。通过 `mcp__med-tools__med_radar_ana
 - 先回答用户的原始问题，再补充与问题直接相关的 RADAR 高分信号、限制和复核建议。
 - 用户只是泛化地要求“解读/分析”时，再使用下方默认四段结构。
 - RADAR 不提供可靠的病灶位置、大小或形态。用户问题超出评分能力时，明确说明不能仅凭 RADAR 回答；不要依据 finding 名称编造影像细节。
-- 若同一轮还需要通用影像解读，需加载 `med-medical` 并以 `continuation_mode="material"` 调用 `med_parse_medical`，随后将医学模型影像描述与 RADAR 分数分来源综合，不得把二者混写成同一种证据。
+- 若同一轮还需要通用影像解读，且输入是 `med_parse_medical` 支持的 DICOM 或其他格式，需加载 `med-medical` 并以 `continuation_mode="material"` 调用；NIfTI 不支持通用解析，不能这样回退。随后将医学模型影像描述与 RADAR 分数分来源综合，不得把二者混写成同一种证据。
 
 ## 解释规则
 
@@ -54,4 +54,4 @@ RADAR 主要在增强腹部 CT 上训练。通过 `mcp__med-tools__med_radar_ana
 3. **结果文件**：提供“下载评分表（CSV）”“查看结果数据（JSON）”等可点击链接。
 4. **结论边界**：说明分数未校准、需阅片和临床复核。
 
-若工具失败，根据 `error` 用中文解释对用户的影响，例如“分析服务暂不可用”“分析超时”或“影像资料不完整”，保留用户能采取行动的具体原因，不照抄包含部署信息的原始错误、堆栈或内部路径，不得编造 RADAR 输出。用户仍需要常规医学附件解读时，加载 `med-medical` 并改用 `med_parse_medical`；必须清楚标注那不是 RADAR 结果。
+若工具失败，根据 `error` 用中文解释对用户的影响，例如“分析服务暂不可用”“分析超时”或“影像资料不完整”，保留用户能采取行动的具体原因，不照抄包含部署信息的原始错误、堆栈或内部路径，不得编造 RADAR 输出。用户仍需要常规医学附件解读且输入格式受到通用解析器支持时，才加载 `med-medical` 并调用 `med_parse_medical`；NIfTI 不支持此回退。

@@ -274,6 +274,7 @@ function buildToolDefinition(
 const PROJECT_PATH_MEDICAL_TOOLS = new Set([
   "med_deepchest_submit",
   "med_dicom_route",
+  "med_image_route",
   "med_parse_medical",
 ]);
 
@@ -386,6 +387,11 @@ const MEDICAL_ACTIVITY_DEFINITIONS: Record<string, MedicalActivityDefinition> = 
     startDetail: "本地识别模态、部位和序列完整性",
     failedTitle: "DICOM 路由失败",
   },
+  med_image_route: {
+    startTitle: "正在检查医学影像",
+    startDetail: "本地识别格式和三维影像信息",
+    failedTitle: "影像路由失败",
+  },
   med_parse_medical: {
     startTitle: "正在解析医学附件",
     startDetail: "读取元数据并准备影像关键帧",
@@ -462,26 +468,31 @@ function medicalCompletion(
       ...(failed ? { severity: "error" as const } : {}),
     };
   }
-  if (toolName === "med_dicom_route") {
+  if (toolName === "med_dicom_route" || toolName === "med_image_route") {
     const modality = safeActivityValue(data.modality, "未知模态");
     const region = safeActivityValue(data.body_region, "未知部位");
-    const skill = safeActivityValue(data.recommended_skill, "med-medical");
-    const complete = data.is_complete_3d_series === true ? "三维序列完整" : "序列完整性未确认";
+    const skill = safeActivityValue(data.recommended_skill, "暂无推荐流程");
+    const complete = data.is_3d_volume === true
+      ? "三维文件头有效，检查完整性未确认"
+      : data.is_complete_3d_series === true ? "三维序列完整" : "序列完整性未确认";
     return {
-      title: "DICOM 路由完成",
-      detail: `已识别 ${modality} / ${region}；${complete}；建议 ${skill}`,
-      state: "completed",
-      ...(data.status === "degraded" ? { severity: "warning" as const } : {}),
+      title: toolName === "med_image_route" ? "影像预检完成" : "DICOM 路由完成",
+      detail: `已识别 ${modality} / ${region}；${complete}；${data.recommended_skill ? `建议 ${skill}` : skill}`,
+      state: data.status === "error" ? "failed" : "completed",
+      ...(data.status === "degraded" || data.status === "error"
+        ? { severity: data.status === "error" ? "error" as const : "warning" as const }
+        : {}),
     };
   }
   if (toolName === "med_parse_medical") {
+    const unsupportedNifti = data.vlm_error === "unsupported NIfTI";
     const itemCount = arrayLength(data.items);
     const frameCount = arrayLength(data.png_paths);
     const hasReport = typeof data.report === "string" && data.report.trim().length > 0;
     const degraded = data.status === "degraded" || data.status === "error";
     return {
-      title: degraded ? "医学附件已降级解析" : "医学附件解析完成",
-      detail: `已解析 ${itemCount} 个附件，准备 ${frameCount} 张关键帧；${hasReport ? "医学报告已生成" : "等待主智能体继续解读"}`,
+      title: unsupportedNifti ? "NIfTI 无法通用解析" : degraded ? "医学附件已降级解析" : "医学附件解析完成",
+      detail: `已解析 ${itemCount} 个附件，准备 ${frameCount} 张关键帧；${hasReport ? "医学报告已生成" : data.vlm_error === "unsupported NIfTI" ? "NIfTI 不支持通用解析" : "等待主智能体继续解读"}`,
       state: data.status === "error" ? "failed" : "completed",
       ...(degraded ? { severity: data.status === "error" ? "error" as const : "warning" as const } : {}),
     };

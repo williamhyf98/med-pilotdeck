@@ -18,6 +18,7 @@ const MEDICAL_TOOLS = [
   "mcp__med-tools__med_deepchest_job",
   "mcp__med-tools__med_parse_medical",
   "mcp__med-tools__med_dicom_route",
+  "mcp__med-tools__med_image_route",
   "mcp__med-tools__med_trauma_rag_query",
   "mcp__med-tools__med_trauma_rag_status",
   "mcp__med-tools__med_trauma_stage_plan",
@@ -182,7 +183,11 @@ test("the specialized CT flag allows the skill gate to proceed", async () => {
   }
 });
 
-test("DICOM route uses med-medical while specialized CT skills are hidden", () => {
+test("image route uses med-medical while specialized CT skills are hidden", () => {
+  assert.deepEqual(getMedToolsSkillRequirement("mcp__med-tools__med_image_route"), {
+    loadSkill: "med-medical",
+    acceptedSkills: ["med-medical"],
+  });
   assert.deepEqual(getMedToolsSkillRequirement("mcp__med-tools__med_dicom_route"), {
     loadSkill: "med-medical",
     acceptedSkills: ["med-medical"],
