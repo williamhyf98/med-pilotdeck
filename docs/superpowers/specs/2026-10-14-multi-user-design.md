@@ -2,7 +2,7 @@
 
 > 文档版本：2026-10-14
 > 适用分支：`feat/multi-user-v2`（基于 develop 重新开始，不沿用 `feat/multi-user` 的代码）
-> 取代：`feat/multi-user` 分支上的 `2026-09-23-multi-user-sandbox-implementation.md` 中与多用户相关的部分。该旧文档里「Agent 受控执行 / 业务能力沙箱」主题**不在本文范围内**，另立项目处理。
+> 取代：`feat/multi-user` 分支上的 `2026-09-23-multi-user-sandbox-implementation.md`。旧文档里「用业务能力服务替换通用工具」的路线**不采用**；本文 §16 改为「保留通用工具 + 后端硬校验 + 操作系统级沙箱」的用户目录沙箱方案。
 > 参考实现：`feat/multi-user` 分支的 `gatewayPool.js`、`userHomes.js`、`userScope.js`，以及 `Downloads/mailob/PilotDeck` 的 `ensureDefaultAdminUser.js`。两者只作阅读参考，所有代码在 v2 重写。
 
 ---
@@ -21,10 +21,12 @@
 - 单机免登录模式与旧数据迁移
 - 技能、记忆、设置页、非浏览器入口在多用户下的归属规则
 - 前端账号区与管理页
+- 用户目录沙箱：Agent 保留通用工具，靠后端路径校验与操作系统级沙箱防止越界（§16）
+- 目录瘦身与清理策略（§9.4、§10.5）
 
 ### 1.3 本文不覆盖
 
-- 医学 Agent 的工具白名单、业务能力服务、任务沙箱（旧文档批次 C/D 的内容）
+- 用业务能力服务替换通用工具的「受控执行」路线（旧文档批次 C/D）
 - 用户间共享项目、团队角色、SSO、共享技能目录
 - 跨用户记忆
 - 管理员浏览他人数据的任何入口
@@ -51,6 +53,9 @@
 | D12 | 非浏览器入口：CLI / TUI 仅在免登录模式可用（即 admin）；外部 API key 按表中已有的 `user_id` 归属请求；IM 接入与 always-on 常驻任务在多用户模式下**禁用**。 |
 | D13 | 记忆后台维护（Index / Dream）**只在用户 Gateway 在线时运行**，不为离线用户拉起进程。 |
 | D14 | 所有代码在 `feat/multi-user-v2` **重写**，旧分支仅作参考。 |
+| D15 | **Agent 保留通用工具**（bash、read_file 等）。越界防护靠三层：提示词引导、文件与插件工具的后端硬校验、bash 的操作系统级沙箱。提示词不算安全边界。 |
+| D16 | bash 沙箱做成**可替换适配层**：Linux 生产用 bubblewrap，macOS 开发用 `sandbox-exec`，`none` 仅在显式配置下允许。多用户模式下无可用沙箱则拒绝启动。 |
+| D17 | 旧目录中的诊断日志、空目录、历史迁移产物、孤儿默认项目**不带入新结构**；保留的目录加清理策略（§9.4、§10.5）。 |
 
 ---
 
@@ -92,26 +97,38 @@
 ```text
 <PILOT_ROOT>/                         # 原 PILOT_HOME 所指位置，例如 .pilotdeck-home
   pilotdeck.yaml                      # 系统级配置（模型、服务地址、密钥），仅 UI 服务器与 Gateway 启动时读取
+  plugins/                            # 管理员安装的插件，所有用户共享只读（现有 med-tools 符号链接保留在此）
   system/
     auth.db                           # 账号、会话、注册开关等（由 DATABASE_PATH 指向此处）
     gateway-tokens/<userId>           # 每个用户 Gateway 的服务令牌
-    migration/legacy-done.json        # 旧数据迁移完成标记
+    gateway-pids.json                 # 池内子进程 pid，供 stop 脚本与启动扫描使用
+    config-backups/                   # 操作者手工备份的 pilotdeck.yaml（可选）
+    migration/
+      legacy-done.json                # 旧数据迁移完成标记
+      history/                        # 历史迁移报告与备份（migration-reports、migration-backups 等）
   users/
-    <userId>/                         # 该用户的 PILOT_HOME，内部布局与今天的单机 PILOT_HOME 完全一致
+    <userId>/                         # 该用户的 PILOT_HOME，内部布局与今天的单机 PILOT_HOME 一致
       projects/<typeKey>/<projectId>/
       workspaces/<typeKey>/<workspaceId>/
       memory/global/
       memory/<typeKey>/<projectId>/
       skills/                         # 个人技能
-      always-on/                      # 多用户模式下不启用，目录保留以兼容引擎
-      archives/
+      archives/                       # 删除项目后的快照，30 天自动清理
+      logs/                           # trauma-agent.jsonl 等审计日志，按大小滚动
+      .pilotdeck/tool-results/        # 会话回放依赖的工具输出缓存
+      .tmp/chat-attachments/          # 附件暂存，7 天清理
+      .legacy-bundled-skills-migrated-v1   # 建目录骨架时预写，跳过内置技能迁移
+      plugins -> ../../plugins        # 符号链接，建骨架时创建
+      router/ telemetry/ cron/        # 仅在对应功能开启时才创建；多用户模式下三者默认关闭
   archives/
     legacy-<timestamp>/               # §9 迁移前的原始快照
 ```
 
 `<userId>` 使用数据库自增整数的字符串形式（与现有 `users.id` 一致）。不引入新的 UUID，避免账号库与目录名两套 ID。
 
-**为什么用户目录内部布局与今天完全一致**：这样 `src/pilot/paths.ts` 和 `ui/server/utils/pilotPaths.js` 的全部函数无需修改，只需把传入的 `pilotHome` 从「全局」换成「该用户的」。引擎、测试、迁移脚本的既有假设全部保留。
+**为什么用户目录内部布局与今天一致**：这样 `src/pilot/paths.ts` 和 `ui/server/utils/pilotPaths.js` 的全部函数无需修改，只需把传入的 `pilotHome` 从「全局」换成「该用户的」。引擎、测试、迁移脚本的既有假设全部保留。
+
+**根目录瘦身后只剩五样**：`pilotdeck.yaml`、`plugins/`、`system/`、`users/`、`archives/`。每个用户目录常态下八个条目：`projects`、`workspaces`、`memory`、`skills`、`archives`、`logs`、`.pilotdeck`、`.tmp`。
 
 ---
 
@@ -311,17 +328,48 @@ UI 服务器收到 SIGTERM 时，对池内所有实例执行 `stopping` 流程�
 
 ### 9.2 迁移步骤
 
-1. 创建 `<PILOT_ROOT>/archives/legacy-<timestamp>/`，把上述旧目录**硬链接复制**进去作为快照（同一文件系统下成本极低；跨文件系统退化为普通复制）。
-2. 创建 `<PILOT_ROOT>/users/<adminId>/`，把旧目录逐个 `rename` 进去。
-3. 把源码目录下的旧 `auth.db`（若存在且新位置没有）移动到 `system/auth.db`。
-4. 写入 `legacy-done.json`：时间、admin id、迁移了哪些目录、快照路径。
-5. 任一步失败：打印错误，**退出进程，不监听端口**。此时快照完好，操作者可手工恢复或重试。
+1. 创建 `<PILOT_ROOT>/archives/legacy-<timestamp>/`，把 §9.4 表中**全部**旧条目（含将被丢弃的）**硬链接复制**进去作为快照（同一文件系统下成本极低；跨文件系统退化为普通复制）。
+2. 创建 `<PILOT_ROOT>/users/<adminId>/` 骨架（含 `plugins` 符号链接与内置技能迁移标记），把 §9.4 中标记为「搬入 admin」的目录逐个 `rename` 进去。
+3. 把 `auth.db` 移动到 `system/auth.db`；若源码目录下还有旧库且新位置没有，同样移动。
+4. 把 §9.4 中标记为「归档」的条目移入 `system/migration/history/`，标记为「丢弃」的条目从根目录删除（快照中仍有）。
+5. 写入 `legacy-done.json`：时间、admin id、每个条目的处理方式、快照路径。
+6. 任一步失败：打印错误，**退出进程，不监听端口**。此时快照完好，操作者可手工恢复或重试。
 
 迁移在任何 Gateway 启动之前完成，不存在读写竞争。
 
 ### 9.3 操作者命令
 
-提供 `scripts/migrate-user-storage.mjs`，支持 `--dry-run`（只打印将移动的目录和大小）与 `--assign-admin <username>`（无 admin 时手动指定某个既有账号为管理员，对应 §5.2 第 2 条）。
+提供 `scripts/migrate-user-storage.mjs`，支持 `--dry-run`（只打印每个条目的处理方式和大小）与 `--assign-admin <username>`（无 admin 时手动指定某个既有账号为管理员，对应 §5.2 第 2 条）。
+
+### 9.4 旧目录逐项处理表
+
+以 2026-10-14 开发机上的 `.pilotdeck-home` 为样本。处理方式分三种：**搬入 admin**（进入 `users/<adminId>/`）、**归档**（进入 `system/migration/history/`，不再参与运行）、**丢弃**（只留在 legacy 快照里）。
+
+| 旧条目 | 处理 | 新位置 | 依据 |
+|---|---|---|---|
+| `pilotdeck.yaml` | 原地保留 | `<root>/pilotdeck.yaml` | 系统级配置 |
+| `pilotdeck.yaml.bak-*` | 原地保留 | 不动；操作者可自行移入 `system/config-backups/` | 操作者手工备份，迁移不碰 |
+| `plugins/`（含 med-tools 符号链接） | 原地保留 | `<root>/plugins/` | 共享只读；每个用户目录用符号链接指回 |
+| `auth.db` | 搬入系统层 | `system/auth.db` | 账号库 |
+| `server-token` | 丢弃 | 由池按用户在 `system/gateway-tokens/` 重新生成 | 旧令牌作废 |
+| `projects/general_med/`、`projects/trauma_med/` | 搬入 admin | `users/<admin>/projects/…` | 用户数据 |
+| `projects/Users-william-…-.pilotdeck-home/` | 丢弃 | 无 | 「无项目对话」的默认容器，目录名由 `PILOT_HOME` 路径派生，搬家后引擎会生成新名字，旧目录必然成为孤儿；样本中仅一条 2 KB 会话 |
+| `workspaces/general_med/`、`workspaces/trauma_med/` | 搬入 admin | `users/<admin>/workspaces/…` | 用户数据（样本 252 MB） |
+| `workspaces/general/` | 丢弃 | 无 | 未分类旧布局残留，空目录 |
+| `memory/` | 搬入 admin | `users/<admin>/memory/` | global、general_med、trauma_med 整体搬 |
+| `skills/` | 搬入 admin | `users/<admin>/skills/` | 个人技能 |
+| `archives/projects/` | 搬入 admin | `users/<admin>/archives/projects/` | 删除项目的快照，受 §10.5 的 30 天策略约束 |
+| `.pilotdeck/tool-results/` | 搬入 admin | `users/<admin>/.pilotdeck/tool-results/` | `readSessionMessages.ts`、`forkSession.ts` 读取，会话回放依赖 |
+| `.tmp/chat-attachments/` | 搬入 admin | `users/<admin>/.tmp/chat-attachments/` | 附件暂存，受 7 天清理约束 |
+| `logs/trauma-agent.jsonl` | 搬入 admin | `users/<admin>/logs/` | 战创伤审计日志含病例内容，必须按用户；受滚动策略约束 |
+| `.legacy-bundled-skills-migrated-v1` | 搬入 admin | `users/<admin>/` | `migrateLegacyBundledSkills.ts` 读取此标记 |
+| `router/events.jsonl`、`router/stats.jsonl` | 丢弃 | 无 | 仅 `createLocalGateway.ts:1066` 写入，产品代码无读取方；写入改为调试开关，默认关 |
+| `telemetry/` | 丢弃 | 无 | 空目录；`telemetry.enabled: false` 时不再创建 |
+| `cron/` | 丢弃 | 无 | 空目录；多用户模式下常驻任务禁用，不创建 |
+| `migration-backups/`、`migration-reports/` | 归档 | `system/migration/history/` | 2026-09 路径迁移的产物，无读取方 |
+| `.workspace-migration-v1.json` | 归档 | `system/migration/history/` | 一次性迁移标记，引擎与 UI 服务器均不读取 |
+
+表外出现的未知条目：迁移脚本一律**归档**并在日志中列出，不丢弃也不搬入用户目录，由操作者事后判断。
 
 ---
 
@@ -364,6 +412,20 @@ UI 服务器收到 SIGTERM 时，对池内所有实例执行 `stopping` 流程�
 | IM 接入 | 配置加载时若多用户模式则跳过注册并打印警告 | 保持现状 |
 | always-on 常驻任务 | Gateway 启动参数禁用 | 保持现状 |
 
+### 10.5 清理策略
+
+保留下来的几类会持续增长的目录，统一由各用户 Gateway 在启动时和每日一次的轻量任务里清理，不在 UI 服务器侧另建调度器。参数全部为配置项，位于 `multiUser.retention.*`。
+
+| 目录 | 策略 | 默认值 | 说明 |
+|---|---|---|---|
+| `logs/*.jsonl` | 按大小滚动 | 单文件 20 MB，保留 5 份 | 审计日志有保留价值，不按时间删 |
+| `.pilotdeck/tool-results/` | 随会话删除 | 无时间阈值 | 删除会话时同步删除其工具输出；不单独过期，否则历史回放会缺块 |
+| `.tmp/chat-attachments/` | 按修改时间 | 7 天 | 已被引用进项目的附件早已复制到 workspace，暂存区可放心清 |
+| `archives/projects/` | 按创建时间 | 30 天 | 存储页提供「立即清空」按钮；清理前在存储页显示将删除的条目数 |
+| `router/`、`telemetry/`、`cron/` | 不创建 | 功能关闭时不建目录 | `router` 事件写入改为 `PILOTDECK_ROUTER_DEBUG=1` 才开启 |
+
+清理只删除本用户目录内的文件，使用 §16 同样的「路径必须在用户 home 内」校验，防止配置错误导致越界删除。
+
 ---
 
 ## 11. 前端改动
@@ -404,7 +466,9 @@ UI 服务器收到 SIGTERM 时，对池内所有实例执行 `stopping` 流程�
 - `ui/server/utils/pilotPaths.users.spec.js`：`resolveUserHome` 输出；与 TS 侧的一致性测试 `tests/pilot/user-paths-parity.spec.ts`。
 - `ui/server/routes/auth.multiuser.spec.js`：启动引导建 admin；默认密码与环境变量；不重置既有密码；无 admin 时拒绝启动；注册 `admin` 被拒；注册开关；第二个用户可注册且 role 为 user；logout 后旧 JWT 401；重置密码后旧 JWT 401；最后一个 admin 不可停用。
 - `ui/server/services/gatewayPool.spec.js`：同用户并发 acquire 只 spawn 一次；A/B 得到不同进程与不同 `PILOT_HOME`；idle 超时回收；上限淘汰 LRU；队列唤醒；启动失败重试与熔断；token_version 变化触发回收；关闭时清理全部子进程。
-- `ui/server/services/legacyMigration.spec.js`：旧布局被移动到 admin 目录且快照完整；有标记则跳过；`users/` 非空则跳过；中途失败不写标记且进程退出。
+- `ui/server/services/legacyMigration.spec.js`：§9.4 表中每一类条目都得到对应处理（搬入 / 归档 / 丢弃 / 未知条目归档）且快照完整；有标记则跳过；`users/` 非空则跳过；中途失败不写标记且进程退出。
+- `tests/tool/sandbox-adapter.spec.ts`：三种适配器生成的包装命令正确，bwrap 的 argv 只挂载用户 home 可写、代码与 node 只读、无其他 `--bind`；`none` 在多用户模式且未显式允许时抛错；自动探测顺序正确。此测试不执行真实命令，macOS 上可跑。
+- `tests/tool/path-safety-multiuser.spec.ts`：Web 模式下 `bypassPermissions` 不再跳过路径校验；经符号链接指向用户 home 之外的路径被拒；`read_skill` 返回的路径不含绝对前缀；网络工具拒绝 `file://`。
 
 ### 13.2 隔离回归（最重要）
 
@@ -415,14 +479,31 @@ UI 服务器收到 SIGTERM 时，对池内所有实例执行 `stopping` 流程�
 - A 的技能列表不含 B 的个人技能。
 - A 的文件预览 / 下载请求 B 的路径得到 404。
 - B 的 session_names 不出现在 A 的会话列表。
+- A 的 Agent 调用 `read_file`、`glob`、`grep` 读取 `../../users/<B>/…` 以及指向 B 目录的符号链接，全部被拒。
 
 此测试在每个批次结束时都要跑，作为合并门槛。
 
-### 13.3 模块级常量扫描
+### 13.3 Linux 容器内的沙箱对抗测试
+
+bash 沙箱的真实效果只能在 Linux 上验证。新增 `docker compose run sandbox-test`：基于仓库现有的 bookworm 镜像安装 bubblewrap，在容器里启动 A、B 两个用户的 Gateway，由测试脚本以 A 的身份提交一组对抗性命令，断言全部失败：
+
+```bash
+cat ../../users/<B>/memory/global/*.md
+ls /
+cat /etc/passwd
+bash -c 'cd / && find . -name "*.jsonl"'
+python3 -c 'print(open("/proc/1/environ").read())'
+curl file:///etc/hostname
+ln -s ../../users/<B> ./peek && cat peek/memory/global/*.md
+```
+
+同时验证正向用例仍然通过：docx / pptx / pdf 技能的脚本在沙箱内能正常生成文件到本用户 workspace。此测试进 CI；本地开发机不要求每次跑。
+
+### 13.4 模块级常量扫描
 
 一个静态检查脚本 `scripts/check-module-level-pilot-home.mjs`：在 `ui/server/**` 中查找顶层作用域对 `process.env.PILOT_HOME`、`resolvePilotHome(` 的引用，命中即失败。纳入 `npm --prefix ui run typecheck` 之前执行。
 
-### 13.4 手工冒烟
+### 13.5 手工冒烟
 
 两个浏览器会话分别登录 A、B，各自创建项目、上传文件、对话、查看记忆；管理员停用 B 后 B 的页面应立刻跳回登录；重启服务后数据各归各处；免登录模式下行为与今天一致。
 
@@ -437,10 +518,11 @@ UI 服务器收到 SIGTERM 时，对池内所有实例执行 `stopping` 流程�
 | A 账号与作用域 | §5 数据库变更、启动引导、注册规则、令牌版本；§6 作用域中间件与 `resolveUserHome`；拆掉模块级常量 | 单进程下两个账号的 REST 数据已隔离，Gateway 仍是旧单例 |
 | B Gateway 池 | §7 全部；bridge 改为按用户租约；启动脚本调整 | 两个账号各自独立 Gateway，对话、记忆、技能全隔离 |
 | C 模式与迁移 | §8 免登录模式走 admin；§9 自动迁移与操作者命令 | 单机用户升级无感；旧数据归 admin |
-| D 设置、入口与前端 | §10 设置页后端授权、Git 配置、非浏览器入口；§11 前端 | 普通用户与管理员界面分离，管理页可用 |
-| E 验收 | §13.4 手工冒烟；内存与并发实测；文档 | 可开放科室内多人使用 |
+| D 设置、入口与前端 | §10 设置页后端授权、Git 配置、非浏览器入口、§10.5 清理策略；§11 前端 | 普通用户与管理员界面分离，管理页可用 |
+| E 用户目录沙箱 | §16 全部：文件与插件工具硬校验、沙箱适配层、bwrap / sandbox-exec 实现、`read_skill` 与 `file://` 收口；§13.3 容器对抗测试 | Agent 在 Linux 上无法越出用户目录；macOS 开发机有弱化沙箱 |
+| F 验收 | §13.5 手工冒烟；内存与并发实测；Linux 真机跑 §13.3；文档 | 可开放科室内多人使用 |
 
-批次 A 完成后系统已经可用（只是所有用户共用一个 Gateway 进程，会话运行态有串用风险），因此 A 不单独对外开放，A+B 一起才是最小可用版本。
+批次 A 完成后系统已经可用（只是所有用户共用一个 Gateway 进程，会话运行态有串用风险），因此 A 不单独对外开放，A+B 一起才是最小可用版本。**批次 E 完成前不得在多人环境开放 bash 工具**：A 到 D 期间多用户模式下 bash 工具对普通用户暂时不可见，由配置 `multiUser.sandbox.bashEnabled=false` 控制，E 完成后翻为 true。
 
 ---
 
@@ -454,3 +536,104 @@ UI 服务器收到 SIGTERM 时，对池内所有实例执行 `stopping` 流程�
 | SQLite 并发 | 单进程写入，压力不大 | 开 WAL 与 `busy_timeout=5000` 即可 |
 | 端口耗尽与僵尸进程 | 池异常时可能留下孤儿 Gateway | pid 文件 + stop 脚本清理 + 启动时扫描并回收上次残留 |
 | 免登录模式下 CLI 与 Web 同时写同一目录 | 与今天行为一致，不新增风险 | 不处理 |
+| 生产机缺少 bubblewrap | 麒麟 / 统信 / 鲲鹏 ARM64 均有 `bubblewrap` 包，但现场可能未装 | 部署脚本检查并安装；缺失时多用户模式拒绝启动（D16），日志给出安装命令 |
+| `sandbox-exec` 被苹果标为弃用 | Darwin 24 上仍可用，未来版本可能移除 | 仅用于开发自测，不作为验收依据；若失效则 macOS 开发走 `none` 并显式配置允许 |
+| 文档技能脚本在 bwrap 内缺依赖 | docx / pptx / pdf 脚本依赖 python、libreoffice 等系统程序 | §13.3 正向用例覆盖；bwrap 只读挂载 `/usr`、`/lib`、`/etc/alternatives` 等系统路径，不挂载 `/home`、`/root`、`/proc/1` |
+| 符号链接绕过文件校验 | 用户在自己目录里建链接指向他人目录 | 校验用 realpath 后再比对；bwrap 内他人目录根本不存在，双保险 |
+
+---
+
+## 16. 用户目录沙箱
+
+### 16.1 目标与边界
+
+每用户独立 Gateway 保证了引擎「不知道」别人的目录，但 Agent 的通用工具接受任意路径或任意命令，仍可能被用户指令或上传文件中的注入内容带出用户目录。本节的目标是：**Agent 保留全部通用工具，但无论模型怎么调用，都只能触及本用户的 `PILOT_HOME`。**
+
+三层防护，强度递增，缺一不可：
+
+| 层 | 手段 | 性质 |
+|---|---|---|
+| 1 提示词 | 系统提示说明「你只能在当前工作目录与用户目录内操作」 | 体验层。降低误操作，**不计入安全边界** |
+| 2 后端硬校验 | 文件工具、插件工具的路径参数在执行前校验必须位于用户 home 内 | 安全边界，对所有带路径参数的工具生效 |
+| 3 操作系统级沙箱 | bash 命令在 bwrap / sandbox-exec 中执行，用户目录以外不可见 | 安全边界，对 bash 及其派生的一切子进程生效 |
+
+### 16.2 文件与插件工具的硬校验
+
+现有 `src/tool/builtin/filesystem/pathSafety.ts` 已对 `read_file`、`write_file`、`edit_file`、`glob`、`grep` 做范围校验，允许范围为当前 workspace 与 `$PILOT_HOME` 下若干固定子目录。多用户后 `$PILOT_HOME` 即用户 home，因此这套校验天然成为「只许在自己家里」。需补三处：
+
+1. **堵掉 bypass**：第 28 行 `permissionMode === "bypassPermissions"` 时直接放行。Web 模式下该分支改为仍然执行范围校验，只跳过交互确认。CLI 本机模式保留原语义。
+2. **realpath 比对**：所有「是否在根目录内」的判断先对候选路径与根目录做 `realpath`，再比较前缀。符号链接目标在用户 home 之外则拒绝。目标不存在的路径（写入新文件）对其父目录做 realpath。
+3. **统一入口**：新增 `assertWithinUserHome(candidate, context)`，`pathSafety.ts` 与下述插件桥共用。错误码 `PATH_OUTSIDE_USER_HOME`，返回给模型的消息只说「路径不在允许范围内」，不回显真实根路径。
+
+插件工具：`src/mcp/runtime/PluginToToolBridge.ts` 在把参数交给插件前，对 schema 中标记为路径类型的字段调用同一校验；`plugins/med-tools/server/app.py` 里接受绝对路径直接透传的分支一并收口，服务端二次校验 `PILOT_HOME` 前缀。
+
+两个小口：`read_skill` 返回技能内容时去掉绝对安装路径，只给相对路径；网络类工具（`web_fetch` 等）拒绝 `file://` 与 `localhost` 以外的回环地址。
+
+### 16.3 沙箱适配层
+
+新增 `src/tool/builtin/bash/sandbox/`：
+
+```ts
+interface CommandSandbox {
+  readonly kind: "bwrap" | "sandbox-exec" | "none";
+  /** 把原始命令包装成实际要 spawn 的 argv；不改变 cwd 与 stdio 语义 */
+  wrap(command: string, options: { cwd: string; userHome: string; env: NodeJS.ProcessEnv }): { file: string; args: string[] };
+  /** 启动时自检：二进制存在、能执行 `true`，失败则返回原因 */
+  probe(): Promise<{ ok: true } | { ok: false; reason: string }>;
+}
+```
+
+`commandRunner.ts` 不再直接 `spawn(command, { shell: true })`，而是 `spawn(file, args)`，`file`/`args` 来自 `sandbox.wrap()`。`none` 的 `wrap` 返回 `{ file: "/bin/sh", args: ["-c", command] }`，行为与今天一致。
+
+选择顺序：配置 `multiUser.sandbox.kind` 指定 > 自动探测（Linux 找 `bwrap`，macOS 找 `sandbox-exec`）> `none`。Gateway 启动时执行 `probe()`，日志第一行打印 `sandbox: bwrap (ok)`。多用户模式下若落到 `none` 且 `multiUser.sandbox.allowUnsandboxed` 不为 true，Gateway **拒绝启动**，UI 服务器收到启动失败后返回 503 并在管理页显示原因。免登录模式允许 `none`，只打警告。
+
+### 16.4 bwrap 实现（Linux 生产）
+
+`wrap()` 生成的 argv 骨架：
+
+```text
+bwrap
+  --ro-bind /usr /usr  --ro-bind /lib /lib  --ro-bind /lib64 /lib64  --ro-bind /bin /bin  --ro-bind /sbin /sbin
+  --ro-bind /etc/alternatives /etc/alternatives  --ro-bind /etc/ssl /etc/ssl  --ro-bind /etc/resolv.conf /etc/resolv.conf
+  --ro-bind <APP_ROOT> <APP_ROOT>          # 代码、dist、node_modules、skills 脚本
+  --ro-bind <NODE_BIN_DIR> <NODE_BIN_DIR>
+  --bind <USER_HOME> <USER_HOME>           # 唯一可写区域
+  --tmpfs /tmp  --proc /proc  --dev /dev
+  --unshare-pid  --unshare-ipc  --unshare-uts
+  --die-with-parent  --new-session
+  --chdir <cwd>
+  --setenv HOME <USER_HOME>  --setenv TMPDIR /tmp  --setenv PILOT_HOME <USER_HOME>
+  /bin/sh -c <command>
+```
+
+要点：
+
+- 不挂载 `/home`、`/root`、`<PILOT_ROOT>/users` 的上级、`<PILOT_ROOT>/system`、`<PILOT_ROOT>/pilotdeck.yaml`。模型在沙箱内 `ls <PILOT_ROOT>` 只看到自己的 home 这一条路径链。
+- `--unshare-net` 作为配置项 `multiUser.sandbox.network`，默认 **不隔离网络**，因为医学技能需要调用远程 RADAR / DeepChest 服务。隔离网络时需要一个受控代理，本期不做。
+- 环境变量白名单：`PATH`、`HOME`、`LANG`、`TMPDIR`、`PILOT_HOME` 与配置里显式列出的键；默认不透传宿主全部 env，避免密钥泄漏。
+- `--die-with-parent` 保证 Gateway 被回收时沙箱内进程树一起结束，与 §7.3 的停止流程配合。
+- 系统程序路径（python、libreoffice、ImageMagick 等）由 `multiUser.sandbox.extraReadOnlyBinds` 配置补充，部署脚本按目标发行版给默认值。
+
+### 16.5 sandbox-exec 实现（macOS 开发）
+
+生成一份 SBPL profile 写到 `<USER_HOME>/.tmp/sandbox.sb`：
+
+```scheme
+(version 1)
+(deny default)
+(allow process-exec process-fork signal)
+(allow sysctl-read mach-lookup)
+(allow network*)
+(allow file-read* (subpath "/usr") (subpath "/bin") (subpath "/sbin") (subpath "/System") (subpath "/Library")
+                  (subpath "/private/etc") (subpath "/opt/homebrew") (subpath "<APP_ROOT>") (subpath "<NODE_BIN_DIR>"))
+(allow file* (subpath "<USER_HOME>") (subpath "/private/tmp") (subpath "/private/var/folders"))
+```
+
+`wrap()` 返回 `{ file: "/usr/bin/sandbox-exec", args: ["-f", profilePath, "/bin/sh", "-c", command] }`。此实现只用于开发自测与 §13.1 的参数测试，**不作为生产验收依据**。
+
+### 16.6 与现有能力的关系
+
+- 文档技能（docx / pptx / pdf / spreadsheets / diagram-maker）的脚本在沙箱内运行，输出落到本用户 workspace，不需要改技能本身。§13.3 用正向用例确认。
+- 战创伤 Runner 直接调用 `tool.execute()` 的路径同样经过 `commandRunner.ts`，自动受沙箱约束，无需单独处理。
+- 子代理、`sessions_spawn` 派生的会话继承父会话的 `userHome` 与沙箱实例，不能通过嵌套获得更宽的范围。
+- 管理员的 Agent 与普通用户使用**同一套**沙箱配置。管理员身份只影响 UI 服务器侧的管理接口，不放宽 Agent 能力（与 D11 一致）。
