@@ -151,7 +151,13 @@ export function createGatewayPool(options = {}) {
     }, config.idleTimeoutMs);
   }
 
+  /** Instances that still hold a slot: running ones plus ones not yet confirmed exited. */
+  function liveCount() {
+    return entries.size + stoppingEntries.size;
+  }
+
   function stopEntry(entry, reason) {
+    if (entry.cancelRetry) entry.cancelRetry();
     if (entry.state === 'stopping') return entry.stopped ?? Promise.resolve();
     entry.state = 'stopping';
     if (entry.idleTimer) { clearTimer(entry.idleTimer); entry.idleTimer = null; }
@@ -180,9 +186,10 @@ export function createGatewayPool(options = {}) {
   }
 
   function drainWaiting() {
-    // An instance that merely turned idle (release) does not shrink `entries`,
-    // but `acquire` can evict it, so it counts as room too.
-    while (waiting.length && (entries.size < config.maxInstances || hasIdleInstance())) {
+    // An instance that merely turned idle (release) does not shrink the live
+    // count, but `acquire` can evict it, so it counts as room too. Slots of
+    // instances still being stopped stay occupied until their exit is confirmed.
+    while (waiting.length && (liveCount() < config.maxInstances || hasIdleInstance())) {
       const next = waiting.shift();
       acquire(next.userId).then(next.resolve, next.reject);
     }
@@ -200,7 +207,7 @@ export function createGatewayPool(options = {}) {
     const entry = {
       userId, state: 'starting', port: null, leases: 0, idleSince: null,
       startedAt: new Date().toISOString(), child: null, gateway: null,
-      exited: false, revoked: false, idleTimer: null, starting: null, stopped: null,
+      exited: false, revoked: false, idleTimer: null, starting: null, stopped: null, cancelRetry: null,
     };
     // Registered before the first await so a concurrent acquire for the same
     // user sees the `starting` entry instead of spawning a second process.
@@ -229,9 +236,16 @@ export function createGatewayPool(options = {}) {
       const userHome = ensureUserHomeSkeleton(userId, env);
       entry.port = await Promise.race([findFreePort(config.portBase), timeout]);
       if (timedOut) throw poolError('GATEWAY_START_TIMEOUT', `Gateway for user ${userId} did not become ready within ${config.startTimeoutMs}ms`);
+      // stopUser/shutdown may have landed while we awaited the port: never spawn then.
+      if (entry.state === 'stopping' || shuttingDown) throw poolError('GATEWAY_UNAVAILABLE', `Gateway for user ${userId} was stopped before it started`);
       const { token, tokenPath } = ensureToken(userHome);
 
       entry.child = spawnGateway({ userId, userHome, port: entry.port, tokenPath, env, configPath });
+      if (entry.state === 'stopping') {
+        // Defensive: a child that appeared after stopEntry resolved is never left running.
+        try { entry.child.kill('SIGTERM'); } catch { /* ignore */ }
+        throw poolError('GATEWAY_UNAVAILABLE', `Gateway for user ${userId} was stopped before it started`);
+      }
       const onGone = () => {
         entry.exited = true;
         if (entries.get(userId) === entry && entry.state !== 'stopping' && entry.state !== 'starting') {
@@ -269,7 +283,10 @@ export function createGatewayPool(options = {}) {
             if (error?.code === 'GATEWAY_UNAVAILABLE') throw error;
             lastError = error;
           }
-          await new Promise((r) => setTimer(r, CONNECT_RETRY_MS));
+          await new Promise((resolve) => {
+            const t = setTimer(() => { entry.cancelRetry = null; resolve(); }, CONNECT_RETRY_MS);
+            entry.cancelRetry = () => { clearTimer(t); entry.cancelRetry = null; resolve(); };
+          });
         }
         throw lastError ?? poolError('GATEWAY_START_TIMEOUT', 'Gateway start timed out');
       })();
@@ -306,11 +323,12 @@ export function createGatewayPool(options = {}) {
     if (breakerOpen(userId)) throw poolError('GATEWAY_UNAVAILABLE', `Gateway for user ${userId} failed repeatedly; retry later`);
 
     let entry;
+    let evicted = false;
     for (;;) {
       if (shuttingDown) throw poolError('GATEWAY_UNAVAILABLE', 'Server is shutting down');
       entry = entries.get(userId);
       if (!entry) {
-        if (entries.size < config.maxInstances) {
+        if (liveCount() < config.maxInstances) {
           startEntry(userId);
           entry = entries.get(userId);
           await entry.starting;
@@ -318,8 +336,12 @@ export function createGatewayPool(options = {}) {
           const victim = pickIdleVictim();
           if (victim) {
             await stopEntry(victim, 'lru-evict');
+            evicted = true;
             continue; // capacity and entries may have changed while stopping
           }
+          // A caller that already evicted for its slot lost it to a racing acquire:
+          // it goes to the head of the queue and is not rejected for queue length.
+          if (evicted) return new Promise((resolve, reject) => waiting.unshift({ userId, resolve, reject }));
           if (waiting.length >= config.maxWaiting) throw poolError('GATEWAY_POOL_EXHAUSTED', 'Too many active users; please try again shortly');
           return new Promise((resolve, reject) => waiting.push({ userId, resolve, reject }));
         }

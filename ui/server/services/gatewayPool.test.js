@@ -7,30 +7,37 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createGatewayPool } from './gatewayPool.js';
 
 let root; let clock; let timers;
-function makeFakes({ failUsers = new Set(), connectDelayMs = 0 } = {}) {
+function makeFakes({ failUsers = new Set(), connectDelayMs = 0, killExitDelayMs = 0, connectFails = false, findFreePort: customFindFreePort } = {}) {
   const spawned = []; const closed = [];
   let nextPort = 20000;
   const spawnGateway = vi.fn(({ userId, userHome, port }) => {
     const child = new EventEmitter();
     child.pid = 1000 + spawned.length;
     child.killed = false;
-    child.kill = vi.fn(() => { child.killed = true; queueMicrotask(() => child.emit('exit', 0, null)); return true; });
+    child.kill = vi.fn(() => {
+      child.killed = true;
+      if (killExitDelayMs) clock.setTimer(() => child.emit('exit', 0, null), killExitDelayMs);
+      else queueMicrotask(() => child.emit('exit', 0, null));
+      return true;
+    });
     spawned.push({ userId, userHome, port, child });
     if (failUsers.has(String(userId))) queueMicrotask(() => child.emit('exit', 1, null));
     return child;
   });
   const connectGateway = vi.fn(async ({ url, token }) => {
+    if (connectFails) throw new Error('not ready');
     if (connectDelayMs) await new Promise((r) => setTimeout(r, connectDelayMs));
     const gw = { url, token, close: vi.fn(() => closed.push(url)) };
     return gw;
   });
-  const findFreePort = vi.fn(async () => nextPort++);
+  const findFreePort = customFindFreePort ?? vi.fn(async () => nextPort++);
   return { spawned, closed, spawnGateway, connectGateway, findFreePort };
 }
 function makeClock() {
   let now = 1_000_000; const pending = [];
   return {
     now: () => now,
+    pendingCount: () => pending.length,
     setTimer: (fn, ms) => { const t = { fn, at: now + ms }; pending.push(t); return t; },
     clearTimer: (t) => { const i = pending.indexOf(t); if (i >= 0) pending.splice(i, 1); },
     advance: async (ms) => { now += ms; for (const t of [...pending].filter((t) => t.at <= now)) { pending.splice(pending.indexOf(t), 1); await t.fn(); } },
@@ -107,6 +114,19 @@ describe('gatewayPool', () => {
     const p = pool.acquire(1);
     await clock.advance(60);
     await expect(p).rejects.toMatchObject({ code: 'GATEWAY_START_TIMEOUT' });
+    expect(clock.pendingCount()).toBe(0);
+  });
+
+  it('clears the connect-retry timer when the start is stopped', async () => {
+    const f = makeFakes({ connectFails: true }); const pool = mk(f);
+    const p = pool.acquire(1);
+    p.catch(() => {});
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    expect(f.connectGateway).toHaveBeenCalledTimes(1);
+    expect(clock.pendingCount()).toBeGreaterThan(0); // start timeout + retry sleep
+    await pool.stopUser(1);
+    await expect(p).rejects.toMatchObject({ code: 'GATEWAY_UNAVAILABLE' });
+    expect(clock.pendingCount()).toBe(0);
   });
 
   it('markRevoked stops an idle instance immediately and a busy one on release', async () => {
@@ -117,6 +137,61 @@ describe('gatewayPool', () => {
     lease.release();
     await Promise.resolve();
     expect(f.closed).toHaveLength(1);
+  });
+
+  for (const how of ['stopUser', 'shutdown']) {
+    it(`${how} before the port resolves never leaves an orphan child`, async () => {
+      let resolvePort;
+      const f = makeFakes({ findFreePort: vi.fn(() => new Promise((r) => { resolvePort = r; })) });
+      const pool = mk(f);
+      const p = pool.acquire(1);
+      p.catch(() => {});
+      await pool[how](...(how === 'stopUser' ? [1] : []));
+      resolvePort(20000);
+      await expect(p).rejects.toMatchObject({ code: 'GATEWAY_UNAVAILABLE', status: 503 });
+      expect(f.spawnGateway).not.toHaveBeenCalled();
+      expect(pool.snapshot()).toEqual([]);
+      expect(JSON.parse(fs.readFileSync(path.join(root, 'system', 'gateway-pids.json'), 'utf8'))).toEqual({});
+    });
+  }
+
+  it('holds capacity until the evicted child has actually exited', async () => {
+    const f = makeFakes({ killExitDelayMs: 20 }); const pool = mk(f);
+    (await pool.acquire(1)).release();
+    await clock.advance(10);
+    (await pool.acquire(2)).release();
+    expect(f.spawnGateway).toHaveBeenCalledTimes(2);
+    const p = pool.acquire(3);
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    expect(f.spawned[0].child.kill).toHaveBeenCalled();
+    expect(f.spawnGateway).toHaveBeenCalledTimes(2);
+    await clock.advance(19);
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    expect(f.spawnGateway).toHaveBeenCalledTimes(2);
+    expect(pool.snapshot().length).toBeLessThanOrEqual(2);
+    await clock.advance(1);
+    const c = await p;
+    expect(f.spawnGateway).toHaveBeenCalledTimes(3);
+    expect(pool.snapshot().map((x) => x.userId).sort()).toEqual(['2', '3']);
+    c.release();
+  });
+
+  it('a racing acquire cannot take the slot of an instance that is still exiting', async () => {
+    const f = makeFakes({ killExitDelayMs: 20 }); const pool = mk(f);
+    (await pool.acquire(1)).release();
+    await clock.advance(10);
+    (await pool.acquire(2)).release();
+    const p = pool.acquire(3); const q = pool.acquire(4);
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    expect(f.spawnGateway).toHaveBeenCalledTimes(2); // nothing new while user 1 is exiting
+    await clock.advance(20);
+    const first = await Promise.race([p, q]);
+    first.release();
+    await clock.advance(20); // the other waiter evicts the now-idle instance
+    const second = await Promise.all([p, q]);
+    expect(second).toHaveLength(2);
+    expect(pool.snapshot().filter((x) => x.state !== 'stopping').length).toBeLessThanOrEqual(2);
+    second.forEach((l) => l.release());
   });
 
   it('shutdown stops everything and clears the pid file', async () => {
