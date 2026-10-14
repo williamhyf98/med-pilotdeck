@@ -1,5 +1,5 @@
 import { join } from 'path';
-import { homedir } from 'os';
+import { resolvePilotRoot } from './pilotPaths.js';
 import { createConnection } from 'net';
 import { spawn, execSync } from 'child_process';
 import fs from 'fs';
@@ -28,8 +28,7 @@ const LOCK_FILE_NAME = 'chrome-cdp.lock';
 function getUserDataDir() {
   const configDir =
     process.env.PILOTDECK_CONFIG_DIR
-    ?? process.env.PILOT_HOME
-    ?? join(homedir(), '.pilotdeck');
+    ?? resolvePilotRoot();
   return join(configDir, 'browser-use-profile');
 }
 

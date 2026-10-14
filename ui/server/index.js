@@ -3783,7 +3783,7 @@ app.get('/api/projects/:projectName/sessions/:sessionId/token-usage', ...require
             });
         }
 
-        const pilotHome = process.env.PILOT_HOME || path.join(os.homedir(), '.pilotdeck-home');
+        const pilotHome = resolveScopedHome();
         const chatDir = resolveProjectChatDir(projectName, pilotHome);
         const jsonlPath = path.join(chatDir, `${sanitizeSessionIdForPath(safeSessionId)}.jsonl`);
 

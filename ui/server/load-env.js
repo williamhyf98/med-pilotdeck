@@ -1,6 +1,5 @@
 import '../../scripts/register-deploy-env.mjs';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -8,6 +7,7 @@ import {
   getPilotDeckConfigPath,
   readPilotDeckConfigFile,
 } from './services/pilotdeckConfig.js';
+import { resolvePilotRoot } from './utils/pilotPaths.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -49,7 +49,7 @@ export function loadRootPilotDeckEnv() {
   applyDerivedRuntimeEnv();
 
   if (!process.env.DATABASE_PATH) {
-    process.env.DATABASE_PATH = path.join(process.env.PILOT_HOME || path.join(os.homedir(), '.pilotdeck'), 'auth.db');
+    process.env.DATABASE_PATH = path.join(resolvePilotRoot(), 'auth.db');
   }
 
   return hasPilotDeckConfigFile();

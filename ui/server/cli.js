@@ -2,7 +2,6 @@
 
 import fs from 'fs';
 import net from 'net';
-import os from 'os';
 import path from 'path';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
@@ -11,6 +10,7 @@ import {
   readPilotDeckConfigFile,
   validatePilotDeckConfig,
 } from './services/pilotdeckConfig.js';
+import { resolvePilotRoot } from './utils/pilotPaths.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,7 +39,7 @@ const c = {
 };
 
 function defaultDatabasePath() {
-  return path.join(process.env.PILOT_HOME || path.join(os.homedir(), '.pilotdeck'), 'auth.db');
+  return path.join(resolvePilotRoot(), 'auth.db');
 }
 
 function getInstallDir() {
