@@ -6,6 +6,7 @@ import {
     buildDefaultPilotDeckConfig,
     buildRuntimeEnv,
     normalizePilotDeckConfig,
+    readMultiUserConfig,
     readPilotDeckConfigFile,
     sanitizeProviderCredentials,
     validatePilotDeckConfig,
@@ -245,5 +246,23 @@ describe('validatePilotDeckConfig gateway validation', () => {
 
         expect(config.model.providers.ollama).not.toHaveProperty('apiKey');
         expect(config.model.providers.ollama.url).toBe('http://localhost:11434/v1');
+    });
+});
+
+describe('readMultiUserConfig', () => {
+    afterEach(() => { delete process.env.PILOTDECK_GATEWAY_PORT_BASE; });
+
+    it('returns pool defaults when the yaml has no multiUser block', () => {
+        useTempConfig(null);
+        expect(readMultiUserConfig().gatewayPool).toEqual({
+            maxInstances: 30, idleTimeoutMs: 30 * 60_000, startTimeoutMs: 60_000, maxWaiting: 20, portBase: 18800,
+        });
+    });
+
+    it('reads multiUser.gatewayPool overrides and lets the env port base win', () => {
+        useTempConfig('multiUser:\n  gatewayPool:\n    maxInstances: 5\n    portBase: 19000\n');
+        expect(readMultiUserConfig().gatewayPool).toMatchObject({ maxInstances: 5, portBase: 19000, maxWaiting: 20 });
+        process.env.PILOTDECK_GATEWAY_PORT_BASE = '21000';
+        expect(readMultiUserConfig().gatewayPool.portBase).toBe(21000);
     });
 });

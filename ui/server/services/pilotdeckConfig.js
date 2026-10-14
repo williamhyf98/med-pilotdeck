@@ -561,6 +561,21 @@ export function readPilotDeckConfigFile() {
   return { exists: true, configPath, raw, config, rawYaml: parsed, parseError: null };
 }
 
+/** Multi-user settings (`multiUser.gatewayPool.*` in pilotdeck.yaml) with defaults. */
+export function readMultiUserConfig() {
+  const { config } = readPilotDeckConfigFile();
+  const mu = config?.multiUser ?? {};
+  return {
+    gatewayPool: {
+      maxInstances: Number(mu.gatewayPool?.maxInstances) || 30,
+      idleTimeoutMs: Number(mu.gatewayPool?.idleTimeoutMs) || 30 * 60_000,
+      startTimeoutMs: Number(mu.gatewayPool?.startTimeoutMs) || 60_000,
+      maxWaiting: Number(mu.gatewayPool?.maxWaiting) || 20,
+      portBase: Number(process.env.PILOTDECK_GATEWAY_PORT_BASE) || Number(mu.gatewayPool?.portBase) || 18800,
+    },
+  };
+}
+
 // Keep `router.scenarios.default` aligned with `agent.model` whenever we
 // write the config. The gateway treats agent.model as the source of truth
 // (loadPilotConfig.ts auto-overrides router.scenarios.default with
