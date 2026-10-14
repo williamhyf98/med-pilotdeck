@@ -15,6 +15,7 @@ import {
     resolveAssociatedProjectPath,
 } from './pilotPaths.js';
 import { getAlwaysOnRoot } from '../services/always-on-paths.js';
+import { runWithUserScope } from '../middleware/userScope.js';
 
 describe('UI project storage ID resolution', () => {
     it('resolves portable markers relative to pilot home, not process cwd', () => {
@@ -101,15 +102,16 @@ describe('UI project storage ID resolution', () => {
         const root = mkdtempSync(join(tmpdir(), 'pilotdeck-ui-always-on-root-'));
         const previousPilotHome = process.env.PILOT_HOME;
         try {
-            const pilotHome = join(root, 'pilot-home');
+            const systemRoot = join(root, 'pilot-home');
+            const pilotHome = join(systemRoot, 'users', 'u1');
             const projectRoot = join(root, 'home', '会议纪要');
             const projectId = createCollisionResistantProjectId(projectRoot);
             mkdirSync(projectRoot, { recursive: true });
             mkdirSync(join(pilotHome, 'projects', projectId), { recursive: true });
             writeFileSync(join(pilotHome, 'projects', projectId, '.cwd'), projectRoot, 'utf8');
-            process.env.PILOT_HOME = pilotHome;
+            process.env.PILOT_HOME = systemRoot;
 
-            expect(getAlwaysOnRoot(projectRoot)).toBe(
+            expect(runWithUserScope({ userId: 'u1', role: 'user' }, () => getAlwaysOnRoot(projectRoot))).toBe(
                 join(pilotHome, 'always-on', 'projects', projectId),
             );
         } finally {

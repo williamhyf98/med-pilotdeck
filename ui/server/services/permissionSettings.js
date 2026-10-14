@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { resolvePilotHome } from '../utils/pilotPaths.js';
+import { resolveScopedHome } from '../utils/pilotPaths.js';
 
 const DEFAULT_SETTINGS = {
   version: 1,
@@ -21,7 +21,7 @@ const TOOL_NAME_ALIASES = new Map([
 ]);
 
 export function getPermissionSettingsPath(env = process.env) {
-  return path.join(resolvePilotHome(env), 'permissions.json');
+  return path.join(resolveScopedHome(env), 'permissions.json');
 }
 
 export function normalizePermissionEntry(entry) {
@@ -47,8 +47,11 @@ export function normalizePermissionSettings(value) {
 }
 
 export function readPermissionSettings(env = process.env) {
+  // Resolve outside the try so a missing user scope surfaces instead of
+  // silently reading as "no settings".
+  const filePath = getPermissionSettingsPath(env);
   try {
-    const raw = fs.readFileSync(getPermissionSettingsPath(env), 'utf8');
+    const raw = fs.readFileSync(filePath, 'utf8');
     return normalizePermissionSettings(JSON.parse(raw));
   } catch {
     return { ...DEFAULT_SETTINGS };

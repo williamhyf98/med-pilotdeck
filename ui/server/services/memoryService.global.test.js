@@ -20,7 +20,14 @@ it('existing and new projects follow global settings; trauma service rejects pro
   const writeConfig = (mode) => fs.writeFileSync(path.join(home, 'pilotdeck.yaml'),
     `memory:\n  enabled: true\n  maintenanceMode: ${mode}\n  autoIndexIntervalMinutes: 90\n  autoDreamIntervalMinutes: 120\n`);
   writeConfig('manual');
-  api = await import('./memoryService.js');
+  const raw = await import('./memoryService.js');
+  const { runWithUserScope } = await import('../middleware/userScope.js');
+  const scoped = (fn) => (...args) => runWithUserScope({ userId: 'u1', role: 'user' }, () => fn(...args));
+  api = {
+    closeMemoryServices: raw.closeMemoryServices,
+    getMemoryServiceForRequest: scoped(raw.getMemoryServiceForRequest),
+    runMemorySchedulerCycle: scoped(raw.runMemorySchedulerCycle),
+  };
   const get = (id) => api.getMemoryServiceForRequest({ query: { projectId: id } });
   for (const id of ['general_med-old', 'trauma_med-old']) {
     const { service } = await get(id);

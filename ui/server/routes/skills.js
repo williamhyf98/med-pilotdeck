@@ -29,7 +29,7 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
 import { getPilotDeckGateway } from '../pilotdeck-bridge.js';
-import { resolvePilotHome, isGeneralProjectKey, resolveLinkedRepoPath, resolveGatewayProjectKey } from '../utils/pilotPaths.js';
+import { resolveScopedHome, isGeneralProjectKey, resolveLinkedRepoPath, resolveGatewayProjectKey } from '../utils/pilotPaths.js';
 import { moveDirectoryAcrossDevicesSafe } from '../utils/fileMoves.js';
 import { recommendSkills } from '../utils/skillRecommend.js';
 
@@ -52,7 +52,6 @@ const upload = multer({
 // ---------------------------------------------------------------------------
 
 const SLUG_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/;
-const PILOT_HOME = resolvePilotHome(process.env);
 const PROJECT_DIR = '.pilotdeck';
 const SKILLS_SUBDIR = 'skills';
 const BUNDLED_SKILLS_ROOT = path.resolve(
@@ -69,7 +68,7 @@ function safeSlug(slug) {
 }
 
 function isGeneralCwd(projectPath) {
-  return isGeneralProjectKey(projectPath, PILOT_HOME);
+  return isGeneralProjectKey(projectPath, resolveScopedHome());
 }
 
 function resolveRequestedScope(scope, projectPath, { defaultToProjectWhenAvailable = false } = {}) {
@@ -105,12 +104,12 @@ function resolveRequestedScope(scope, projectPath, { defaultToProjectWhenAvailab
 }
 
 function userSkillsRoot() {
-  return path.join(PILOT_HOME, SKILLS_SUBDIR);
+  return path.join(resolveScopedHome(), SKILLS_SUBDIR);
 }
 
 function resolveProjectPathForSkills(projectPath) {
   if (!projectPath || isGeneralCwd(projectPath)) return null;
-  return resolveLinkedRepoPath(projectPath, PILOT_HOME);
+  return resolveLinkedRepoPath(projectPath, resolveScopedHome());
 }
 
 function gatewayProjectKey(projectPath) {
@@ -436,7 +435,7 @@ router.post('/generate-from-session', async (req, res) => {
     // use — NOT gatewayProjectKey(), which resolves the linked-repo skills root.
     const chatProjectKey = resolveGatewayProjectKey(
       String(projectPath || process.cwd()),
-      PILOT_HOME,
+      resolveScopedHome(),
     );
     const read = await callGateway('readSessionMessages', {
       sessionKey: sessionId,
@@ -575,7 +574,7 @@ router.post('/generate-from-flow', async (req, res) => {
     // factory only reads projectKey, so the sessionKey is a fixed marker.
     const chatProjectKey = resolveGatewayProjectKey(
       String(projectPath || process.cwd()),
-      PILOT_HOME,
+      resolveScopedHome(),
     );
     let existingSlugs = [];
     try {

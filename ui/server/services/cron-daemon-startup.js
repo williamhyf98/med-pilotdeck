@@ -1,10 +1,10 @@
 import path from 'path';
 import { promises as fs, openSync } from 'fs';
 import { mkdirSync } from 'fs';
-import os from 'os';
 import { spawn } from 'child_process';
 import { sendCronDaemonRequest } from './cron-daemon-owner.js';
 import { prepareBackgroundSpawnOptions } from '../utils/processSpawn.js';
+import { resolvePilotRoot } from '../utils/pilotPaths.js';
 
 // Cron daemon entry point. The launcher script is discoverable on PATH
 // or supplied via PILOTDECK_CRON_DAEMON_BIN. Returning `null` falls back
@@ -18,7 +18,7 @@ const DEFAULT_RETRY_DELAY_MS = 250;
 const START_LOCK_STALE_MS = 30000;
 
 function getPilotDeckConfigHomeDir() {
-  return process.env.PILOTDECK_CONFIG_DIR || process.env.PILOT_HOME || path.join(os.homedir(), '.pilotdeck');
+  return process.env.PILOTDECK_CONFIG_DIR || resolvePilotRoot();
 }
 
 function getCronDaemonStartLockPath() {
@@ -41,7 +41,7 @@ function getCronDaemonStartLockPath() {
 function resolveCronDaemonLogPath() {
   const override = process.env.PILOTDECK_CRON_DAEMON_LOG?.trim();
   if (override) return override;
-  return path.join(process.env.PILOT_HOME || path.join(os.homedir(), '.pilotdeck'), 'cron-daemon.log');
+  return path.join(resolvePilotRoot(), 'cron-daemon.log');
 }
 
 function openCronDaemonLogFd() {

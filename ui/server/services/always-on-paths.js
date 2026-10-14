@@ -1,8 +1,8 @@
 import path from 'path';
-import { resolvePilotHome, resolveProjectStorageId, resolveGatewayProjectKey } from '../utils/pilotPaths.js';
+import { resolveScopedHome, resolveProjectStorageId, resolveGatewayProjectKey } from '../utils/pilotPaths.js';
 
 export function getAlwaysOnRoot(projectRoot) {
-  const pilotHome = resolvePilotHome();
+  const pilotHome = resolveScopedHome();
   const gatewayKey = resolveGatewayProjectKey(projectRoot, pilotHome);
   const projectId = resolveProjectStorageId(gatewayKey, pilotHome);
   return path.join(pilotHome, 'always-on', 'projects', projectId);

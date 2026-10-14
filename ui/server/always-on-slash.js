@@ -7,7 +7,7 @@ import {
   rerunDiscoveryPlan,
 } from './discovery-plans.js';
 import { getPilotDeckGateway } from './pilotdeck-bridge.js';
-import { resolvePilotHome, resolveGatewayProjectKey } from './utils/pilotPaths.js';
+import { resolveScopedHome, resolveGatewayProjectKey } from './utils/pilotPaths.js';
 import { sortCronJobsByCreatedAt } from './utils/cronJobSort.js';
 
 const TARGET_ALIASES = new Map([
@@ -143,7 +143,7 @@ function getProjectContext(context) {
   return {
     projectName,
     projectPath,
-    gatewayKey: resolveGatewayProjectKey(projectPath || projectName, resolvePilotHome(process.env)),
+    gatewayKey: resolveGatewayProjectKey(projectPath || projectName, resolveScopedHome()),
   };
 }
 

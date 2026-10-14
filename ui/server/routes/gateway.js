@@ -1,19 +1,21 @@
 import express from 'express';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
-import { homedir } from 'os';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { suppressNextWatchEvent } from '../services/pilotdeckConfigWatcher.js';
 import { reloadPilotDeckConfig } from '../services/pilotdeckConfigReloader.js';
 import { readPilotDeckConfigFile } from '../services/pilotdeckConfig.js';
 import { getPilotDeckGateway } from '../pilotdeck-bridge.js';
+import { resolvePilotRoot } from '../utils/pilotPaths.js';
 
 const router = express.Router();
 
-const PILOT_HOME = process.env.PILOT_HOME || join(homedir(), '.pilotdeck');
-const PILOTDECK_YAML = process.env.PILOTDECK_CONFIG_PATH || join(PILOT_HOME, 'pilotdeck.yaml');
-const WEIXIN_CREDS = join(PILOT_HOME, 'weixin-credentials.json');
-const CHANNEL_RUNTIME_STATUS = join(PILOT_HOME, 'channels', 'runtime-status.json');
+// System-level files (IM credentials, channel status, pilotdeck.yaml) live in
+// the shared root, not in a per-user home.
+const pilotRoot = () => resolvePilotRoot();
+const pilotdeckYamlPath = () => process.env.PILOTDECK_CONFIG_PATH || join(pilotRoot(), 'pilotdeck.yaml');
+const weixinCredsPath = () => join(pilotRoot(), 'weixin-credentials.json');
+const channelRuntimeStatusPath = () => join(pilotRoot(), 'channels', 'runtime-status.json');
 
 const FEISHU_TOKEN_URL = 'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal';
 const LARK_TOKEN_URL = 'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal';
@@ -42,15 +44,15 @@ async function notifyGatewayReload() {
 
 function loadYaml() {
   try {
-    if (!existsSync(PILOTDECK_YAML)) return {};
-    return parseYaml(readFileSync(PILOTDECK_YAML, 'utf-8')) ?? {};
+    if (!existsSync(pilotdeckYamlPath())) return {};
+    return parseYaml(readFileSync(pilotdeckYamlPath(), 'utf-8')) ?? {};
   } catch { return {}; }
 }
 
 function loadChannelRuntimeStatus() {
   try {
-    if (!existsSync(CHANNEL_RUNTIME_STATUS)) return {};
-    const parsed = JSON.parse(readFileSync(CHANNEL_RUNTIME_STATUS, 'utf-8'));
+    if (!existsSync(channelRuntimeStatusPath())) return {};
+    const parsed = JSON.parse(readFileSync(channelRuntimeStatusPath(), 'utf-8'));
     return parsed?.channels && typeof parsed.channels === 'object' ? parsed.channels : {};
   } catch {
     return {};
@@ -59,8 +61,8 @@ function loadChannelRuntimeStatus() {
 
 function loadWeixinCredentials() {
   try {
-    if (!existsSync(WEIXIN_CREDS)) return null;
-    const raw = JSON.parse(readFileSync(WEIXIN_CREDS, 'utf-8'));
+    if (!existsSync(weixinCredsPath())) return null;
+    const raw = JSON.parse(readFileSync(weixinCredsPath(), 'utf-8'));
     return raw.accountId ? { accountId: raw.accountId } : null;
   } catch {
     return null;
@@ -68,9 +70,9 @@ function loadWeixinCredentials() {
 }
 
 function saveYaml(config) {
-  mkdirSync(dirname(PILOTDECK_YAML), { recursive: true });
+  mkdirSync(dirname(pilotdeckYamlPath()), { recursive: true });
   suppressNextWatchEvent();
-  writeFileSync(PILOTDECK_YAML, stringifyYaml(config, { lineWidth: 0 }), 'utf-8');
+  writeFileSync(pilotdeckYamlPath(), stringifyYaml(config, { lineWidth: 0 }), 'utf-8');
 }
 
 function maskValue(value) {

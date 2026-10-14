@@ -337,9 +337,11 @@ async function createMemoryApp() {
   mockMemoryCoreLib();
 
   const { default: memoryRoutes } = await import('./memory.js');
+  const { userScopeMiddleware } = await import('../middleware/userScope.js');
   const app = express();
   app.use(express.json());
-  app.use('/api/memory', memoryRoutes);
+  // Production mounts memory routes behind requireUser, i.e. inside a user scope.
+  app.use('/api/memory', (req, _res, next) => { req.user = { id: 'u1', role: 'user' }; next(); }, userScopeMiddleware, memoryRoutes);
 
   return {
     clearAllMemoryData,

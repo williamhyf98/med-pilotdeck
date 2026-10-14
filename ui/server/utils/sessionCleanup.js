@@ -17,7 +17,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import {
-    resolvePilotHome,
+    resolveScopedHome,
     resolveProjectChatDir,
     resolveTypedProjectMemoryDir,
     resolveWorkspaceDirectoryForProjectName,
@@ -94,7 +94,7 @@ function probeNames(slug, sessionId) {
  * }>}
  */
 export async function deleteSessionArtifacts(projectName, sessionId, options = {}) {
-    const pilotHome = options.pilotHome ?? resolvePilotHome(process.env);
+    const pilotHome = options.pilotHome ?? resolveScopedHome();
     const identity = resolveMemoryScopeIdentity({
         projectKey: projectName,
         pilotHome,

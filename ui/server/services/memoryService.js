@@ -1,6 +1,5 @@
 import fs from 'fs/promises';
 import fsSync from 'fs';
-import os from 'os';
 import path from 'path';
 import { DatabaseSync } from 'node:sqlite';
 import {
@@ -10,20 +9,25 @@ import {
 } from '../../../src/context/memory/edgeclaw-memory-core/lib/index.js';
 import { extractProjectDirectory } from '../projects.js';
 import {
-  resolvePilotHome,
+  resolveScopedHome,
   resolveGatewayProjectKey,
   resolveProjectMemoryDataDir,
   resolveWorkspaceId,
 } from '../utils/pilotPaths.js';
 import { resolveMemoryScopeIdentity } from '../utils/memoryIdentity.js';
+import { DISABLE_LOCAL_AUTH } from '../constants/config.js';
+import { runWithUserScope } from '../middleware/userScope.js';
+import { userDb } from '../database/db.js';
 import {
   buildMemoryDefaults,
   readPilotDeckConfigFile,
 } from './pilotdeckConfig.js';
 
-const MEMORY_ROOT_DIR = path.join(process.env.PILOT_HOME || path.join(os.homedir(), '.pilotdeck'), 'memory');
-const MEMORY_WORKSPACES_ROOT = path.join(MEMORY_ROOT_DIR, 'workspaces');
-const MEMORY_GLOBAL_ROOT = path.join(MEMORY_ROOT_DIR, 'global');
+// Memory lives under the current user's home. These are functions (not
+// module-level constants) because the scoped home is only known per request.
+function memoryRootDir() { return path.join(resolveScopedHome(), 'memory'); }
+function memoryWorkspacesRoot() { return path.join(memoryRootDir(), 'workspaces'); }
+function memoryGlobalRoot() { return path.join(memoryRootDir(), 'global'); }
 const MEMORY_SCHEDULER_INTERVAL_MS = 60_000;
 const GLOBAL_MAINTENANCE_TASK_KEY = '__edgeclaw_memory_global_maintenance__';
 
@@ -40,7 +44,7 @@ function normalizePath(projectPath) {
 }
 
 function resolveWorkspaceDataDir(projectPath) {
-  return resolveProjectMemoryDataDir(projectPath, resolvePilotHome(process.env));
+  return resolveProjectMemoryDataDir(projectPath, resolveScopedHome());
 }
 
 function buildServiceForDataDir(dataDir, workspaceDir = dataDir) {
@@ -52,7 +56,7 @@ function buildServiceForDataDir(dataDir, workspaceDir = dataDir) {
   }
   const service = new EdgeClawMemoryService({
     workspaceDir,
-    rootDir: MEMORY_ROOT_DIR,
+    rootDir: memoryRootDir(),
     dbPath: path.join(dataDir, 'control.sqlite'),
     memoryDir: path.join(dataDir, 'memory'),
     source: 'pilotdeck',
@@ -60,7 +64,7 @@ function buildServiceForDataDir(dataDir, workspaceDir = dataDir) {
     settingsSource: 'global',
     projectType: resolveMemoryScopeIdentity({
       projectKey: /^(general_med|trauma_med)-/.test(path.basename(dataDir)) ? path.basename(dataDir) : workspaceDir,
-      pilotHome: resolvePilotHome(process.env),
+      pilotHome: resolveScopedHome(),
     }).projectType,
   });
   // Global settings are authoritative; legacy database settings remain untouched.
@@ -301,7 +305,7 @@ function normalizeAllProjectsBundle(value) {
   // Bundles are keyed by the stable projectId (Task 8).  Bundles written before
   // that only carry projectPath; accept them by deriving the id from the path,
   // which is exactly what the storage layer would have done anyway.
-  const pilotHome = resolvePilotHome(process.env);
+  const pilotHome = resolveScopedHome();
   const seenProjectIds = new Set();
   const projects = value.projects.map((project, index) => {
     if (!project || typeof project !== 'object' || Array.isArray(project)) {
@@ -364,16 +368,16 @@ async function listWorkspaceDataDirs() {
   };
 
   try {
-    const entries = await fs.readdir(MEMORY_WORKSPACES_ROOT, { withFileTypes: true });
+    const entries = await fs.readdir(memoryWorkspacesRoot(), { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      await pushIfValid(path.join(MEMORY_WORKSPACES_ROOT, entry.name));
+      await pushIfValid(path.join(memoryWorkspacesRoot(), entry.name));
     }
   } catch {
     // legacy hash root may be absent after migration
   }
 
-  const pilotHome = resolvePilotHome(process.env);
+  const pilotHome = resolveScopedHome();
   const memoryRoot = path.join(pilotHome, 'memory');
   for (const typeKey of ['general_med', 'trauma_med']) {
     const typeDir = path.join(memoryRoot, typeKey);
@@ -434,7 +438,7 @@ export class MemoryScopeMismatchError extends Error {
  * resort.  When both an id and a path are present they must agree.
  */
 export async function resolveProjectPathFromRequest(req) {
-  const pilotHome = resolvePilotHome(process.env);
+  const pilotHome = resolveScopedHome();
   const projectId = readRequestField(req, 'projectId');
   const queryProjectPath = normalizePath(req.query?.projectPath) || normalizePath(req.body?.projectPath);
 
@@ -481,7 +485,7 @@ export async function getMemoryServiceForRequest(req) {
 function buildScopeIdentity(projectKey, dataDir, sessionId) {
   const identity = resolveMemoryScopeIdentity({
     projectKey,
-    pilotHome: resolvePilotHome(process.env),
+    pilotHome: resolveScopedHome(),
     ...(sessionId ? { sessionId } : {}),
   });
   return {
@@ -546,6 +550,20 @@ export async function runMemorySchedulerCycle() {
 }
 
 export function startMemoryScheduler() {
+  if (!DISABLE_LOCAL_AUTH) {
+    console.log('[memory] UI-side maintenance scheduler disabled in multi-user mode (runs inside each user gateway).');
+    return;
+  }
+  // No-login mode: everything belongs to the admin user.
+  const admin = userDb.getAdminUser();
+  if (!admin) {
+    return;
+  }
+  const runInAdminScope = () => runWithUserScope(
+    { userId: admin.id, role: 'admin' },
+    () => runMemorySchedulerCycle(),
+  );
+
   try {
     if (!readPilotDeckConfigFile().config.memory?.enabled) {
       return;
@@ -559,14 +577,14 @@ export function startMemoryScheduler() {
   }
 
   schedulerTimer = setInterval(() => {
-    void runMemorySchedulerCycle();
+    void runInAdminScope();
   }, MEMORY_SCHEDULER_INTERVAL_MS);
 
   if (typeof schedulerTimer.unref === 'function') {
     schedulerTimer.unref();
   }
 
-  void runMemorySchedulerCycle();
+  void runInAdminScope();
 }
 
 export function stopMemoryScheduler() {
@@ -617,9 +635,9 @@ export async function clearAllMemoryData() {
   servicesByDataDir.clear();
   workspaceTaskChains.clear();
 
-  await fs.rm(MEMORY_ROOT_DIR, { recursive: true, force: true });
-  await fs.mkdir(MEMORY_WORKSPACES_ROOT, { recursive: true });
-  await fs.mkdir(MEMORY_GLOBAL_ROOT, { recursive: true });
+  await fs.rm(memoryRootDir(), { recursive: true, force: true });
+  await fs.mkdir(memoryWorkspacesRoot(), { recursive: true });
+  await fs.mkdir(memoryGlobalRoot(), { recursive: true });
 
   return {
     scope: 'all_memory',
@@ -642,7 +660,7 @@ export async function exportAllProjectsMemoryBundle() {
     const { service } = getOrCreateServiceForDataDir(dataDir, restoredWorkspaceDir ?? dataDir);
     const projectMeta = service.getProjectMeta();
     projects.push({
-      projectId: resolveWorkspaceId(service.workspaceDir, resolvePilotHome(process.env)),
+      projectId: resolveWorkspaceId(service.workspaceDir, resolveScopedHome()),
       projectPath: service.workspaceDir,
       projectName: projectMeta?.projectName || path.basename(service.workspaceDir),
       bundle: service.exportBundle(),
@@ -653,7 +671,7 @@ export async function exportAllProjectsMemoryBundle() {
     formatVersion: ALL_PROJECTS_MEMORY_EXPORT_FORMAT_VERSION,
     scope: 'all_projects',
     exportedAt: new Date().toISOString(),
-    globalFiles: await listSnapshotFiles(MEMORY_GLOBAL_ROOT),
+    globalFiles: await listSnapshotFiles(memoryGlobalRoot()),
     projects,
   };
 }
@@ -674,7 +692,7 @@ export async function importAllProjectsMemoryBundle(bundle) {
     }
   }
 
-  await replaceSnapshotFiles(MEMORY_GLOBAL_ROOT, normalized.globalFiles);
+  await replaceSnapshotFiles(memoryGlobalRoot(), normalized.globalFiles);
 
   return {
     formatVersion: ALL_PROJECTS_MEMORY_EXPORT_FORMAT_VERSION,

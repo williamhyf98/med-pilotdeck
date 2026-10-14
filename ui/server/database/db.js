@@ -4,7 +4,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { resolvePilotHome } from '../utils/pilotPaths.js';
+import { resolvePilotRoot } from '../utils/pilotPaths.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -23,7 +23,9 @@ const c = {
     dim: (text) => `${colors.dim}${text}${colors.reset}`,
 };
 
-const PILOT_ROOT = resolvePilotHome(process.env);
+// auth.db is the one shared system database: it is opened once at import time
+// from the system root (never a per-user home).
+const PILOT_ROOT = resolvePilotRoot(process.env);
 const DB_PATH = process.env.DATABASE_PATH?.trim()
   ? path.resolve(process.env.DATABASE_PATH.trim())
   : path.join(PILOT_ROOT, 'system', 'auth.db');

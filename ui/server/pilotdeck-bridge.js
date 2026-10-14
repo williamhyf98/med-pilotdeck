@@ -47,7 +47,7 @@ import { randomUUID } from 'node:crypto';
 import { installGlobalProxy } from '../../src/cli/proxy.js';
 await installGlobalProxy();
 
-import { resolvePilotHome, createProjectId, sanitizeSessionIdForPath, resolveGatewayProjectKey, resolveProjectStorageId, resolveTypedProjectDir, listProjectStorageIds, resolveAgentCwd } from './utils/pilotPaths.js';
+import { resolvePilotRoot, createProjectId, sanitizeSessionIdForPath, resolveGatewayProjectKey, resolveProjectStorageId, resolveTypedProjectDir, listProjectStorageIds, resolveAgentCwd } from './utils/pilotPaths.js';
 // Read the gateway client straight from TypeScript source via tsx — the UI
 // server is launched with `node --import tsx`, so no prior `npm run build`
 // is required. (A prior tsx 4.x JSDoc dynamic-import parse bug was fixed by
@@ -64,7 +64,9 @@ import { readPermissionSettings } from './services/permissionSettings.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const GENERAL_HOME = resolvePilotHome(process.env);
+// TODO(multi-user Task 11): still the single shared gateway's root until the
+// bridge leases a per-user gateway; Task 11 replaces every GENERAL_HOME use.
+const GENERAL_HOME = resolvePilotRoot(process.env);
 const TRUSTED_GATEWAY_TURN_OPTIONS = Symbol('pilotdeck.trustedGatewayTurnOptions');
 
 const GATEWAY_URL =

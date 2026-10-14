@@ -14,6 +14,8 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let PILOT_HOME = '';
+let USER_HOME = '';
+const TEST_USER_ID = 'u1';
 
 /**
  * A system project's workspace path only resolves back to its projectId through
@@ -21,8 +23,8 @@ let PILOT_HOME = '';
  * with id" case is actually exercised rather than accidentally passing.
  */
 function seedProject(projectId, typeKey) {
-  const workspaceDir = path.join(PILOT_HOME, 'workspaces', typeKey, projectId);
-  const markerDir = path.join(PILOT_HOME, 'projects', typeKey, projectId);
+  const workspaceDir = path.join(USER_HOME, 'workspaces', typeKey, projectId);
+  const markerDir = path.join(USER_HOME, 'projects', typeKey, projectId);
   fs.mkdirSync(workspaceDir, { recursive: true });
   fs.mkdirSync(markerDir, { recursive: true });
   fs.writeFileSync(path.join(markerDir, '.cwd'), workspaceDir, 'utf8');
@@ -37,9 +39,17 @@ async function loadService() {
     MemoryBundleValidationError: class extends Error {},
   }));
   vi.doMock('../projects.js', () => ({
-    extractProjectDirectory: vi.fn(async (name) => path.join(PILOT_HOME, 'workspaces', name)),
+    extractProjectDirectory: vi.fn(async (name) => path.join(USER_HOME, 'workspaces', name)),
   }));
-  return import('./memoryService.js');
+  const mod = await import('./memoryService.js');
+  const { runWithUserScope } = await import('../middleware/userScope.js');
+  return {
+    ...mod,
+    resolveProjectPathFromRequest: (req) => runWithUserScope(
+      { userId: TEST_USER_ID, role: 'user' },
+      () => mod.resolveProjectPathFromRequest(req),
+    ),
+  };
 }
 
 function request({ query = {}, body = {}, params = {} } = {}) {
@@ -50,6 +60,8 @@ describe('resolveProjectPathFromRequest', () => {
   beforeEach(() => {
     PILOT_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'pilotdeck-scope-'));
     process.env.PILOT_HOME = PILOT_HOME;
+    // Per-user home: <root>/users/<id>. Everything below runs in that scope.
+    USER_HOME = path.join(PILOT_HOME, 'users', TEST_USER_ID);
   });
 
   afterEach(() => {

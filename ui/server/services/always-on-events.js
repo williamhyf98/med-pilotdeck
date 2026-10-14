@@ -1,6 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { resolvePilotHome, resolveProjectStorageId } from '../utils/pilotPaths.js';
+import { resolveScopedHome, resolveProjectStorageId } from '../utils/pilotPaths.js';
 import { getPilotDeckGateway } from '../pilotdeck-bridge.js';
 
 /**
@@ -55,7 +55,7 @@ async function buildProjectLookup(pilotHome) {
  */
 export async function getAlwaysOnDashboardEvents(opts = {}) {
     const { limit = 200, since } = opts;
-    const pilotHome = resolvePilotHome();
+    const pilotHome = resolveScopedHome();
     const projectsDir = resolve(pilotHome, 'always-on', 'projects');
 
     let projectDirs;

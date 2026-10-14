@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { parseGatewayConfig } from '../../../src/pilot/config/parseGatewayConfig.js';
+import { resolvePilotRoot } from '../utils/pilotPaths.js';
 
 // Source of truth: ~/.pilotdeck/pilotdeck.yaml. The disk format and the
 // "internal" config object are the same V2 schema — no more adapter layer.
@@ -24,8 +25,10 @@ import { parseGatewayConfig } from '../../../src/pilot/config/parseGatewayConfig
 // schemas. UI server just round-trips them.
 
 const CONFIG_VERSION = 1;
-const PILOT_HOME_DIR = process.env.PILOT_HOME || path.join(os.homedir(), '.pilotdeck');
-const DEFAULT_CONFIG_PATH = path.join(PILOT_HOME_DIR, 'pilotdeck.yaml');
+// pilotdeck.yaml is a system-level file: it lives in the shared root, not in a
+// per-user home. Functions (not constants) so nothing is resolved at import time.
+function pilotHomeDir() { return resolvePilotRoot(); }
+function defaultConfigPath() { return path.join(pilotHomeDir(), 'pilotdeck.yaml'); }
 const MASK = '********';
 
 const SECRET_KEY_RE = /(api[_-]?key|token|secret|password|auth[_-]?token|access[_-]?token|bot[_-]?token|app[_-]?token|encoding[_-]?aes[_-]?key)$/i;
@@ -411,8 +414,8 @@ export function buildRuntimeEnv(config) {
   };
 
   // Persist portable values; resolve them only at the process boundary.
-  if (runtime.databasePath) env.DATABASE_PATH = path.resolve(PILOT_HOME_DIR, expandTilde(runtime.databasePath));
-  if (runtime.workspacesRoot) env.WORKSPACES_ROOT = path.resolve(PILOT_HOME_DIR, expandTilde(runtime.workspacesRoot));
+  if (runtime.databasePath) env.DATABASE_PATH = path.resolve(pilotHomeDir(), expandTilde(runtime.databasePath));
+  if (runtime.workspacesRoot) env.WORKSPACES_ROOT = path.resolve(pilotHomeDir(), expandTilde(runtime.workspacesRoot));
   const proxyUrl = normalized.proxy?.url
     || (typeof normalized.proxy === 'string' ? normalized.proxy : '')
     || runtime.httpsProxy || '';
@@ -525,7 +528,7 @@ export function getPilotDeckConfigPath() {
   if (process.env.PILOTDECK_CONFIG_PATH?.trim()) {
     return process.env.PILOTDECK_CONFIG_PATH.trim();
   }
-  return DEFAULT_CONFIG_PATH;
+  return defaultConfigPath();
 }
 
 export function readPilotDeckConfigFile() {
