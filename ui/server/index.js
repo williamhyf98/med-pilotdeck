@@ -136,6 +136,8 @@ import { ensureAdminUser } from './services/adminBootstrap.js';
 
 import { runServerStartupBeforeListen, startServerAfterStartup } from './services/server-startup.js';
 import { validateApiKey, authenticateToken, authenticateWebSocket } from './middleware/auth.js';
+import { requireAdmin } from './middleware/requireAdmin.js';
+import { createAdminUsersRouter } from './routes/adminUsers.js';
 import { DISABLE_LOCAL_AUTH, IS_PLATFORM } from './constants/config.js';
 import { getConnectableHost } from '../shared/networkHosts.js';
 import { contentDispositionAttachment } from './utils/downloadHeaders.js';
@@ -511,6 +513,12 @@ app.use('/api', validateApiKey);
 
 // Authentication routes (public)
 app.use('/api/auth', authRoutes);
+
+// Filled in by Task 11 (closes the user's WebSockets and recycles their Gateway).
+let revokeUserRuntime = (_userId) => {};
+app.use('/api/admin', authenticateToken, requireAdmin, createAdminUsersRouter({
+    onUserRevoked: (userId) => revokeUserRuntime(userId),
+}));
 
 // Projects API Routes (protected)
 app.use('/api/projects', authenticateToken, projectsRoutes);
