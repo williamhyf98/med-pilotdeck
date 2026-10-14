@@ -9,6 +9,17 @@ const fail = (res, status, code, error) => res.status(status).json({ error, code
 const toPublic = (u) => ({ id: u.id, username: u.username, role: u.role, isActive: Number(u.is_active) === 1, createdAt: u.created_at, lastLogin: u.last_login });
 const randomPassword = () => randomBytes(9).toString('base64url').slice(0, 12);
 
+// Express 4 does not catch rejected promises from async handlers; map every throw to {error, code}.
+const guard = (handler) => async (req, res) => {
+  try {
+    await handler(req, res);
+  } catch (error) {
+    if (error?.code === 'SQLITE_CONSTRAINT_UNIQUE') return fail(res, 409, 'USERNAME_TAKEN', 'Username already exists');
+    console.error('[admin-users] request failed:', error);
+    return fail(res, 500, 'INTERNAL', 'Internal server error');
+  }
+};
+
 function wouldRemoveLastAdmin(target, patch) {
   if (target.role !== 'admin' || Number(target.is_active) !== 1) return false;
   const losesAdmin = (patch.role !== undefined && patch.role !== 'admin') || patch.isActive === false;
@@ -18,11 +29,11 @@ function wouldRemoveLastAdmin(target, patch) {
 export function createAdminUsersRouter({ onUserRevoked = () => {} } = {}) {
   const router = express.Router();
 
-  router.get('/users', (_req, res) => {
+  router.get('/users', guard((_req, res) => {
     res.json({ users: userDb.listUsers().map(toPublic) });
-  });
+  }));
 
-  router.post('/users', async (req, res) => {
+  router.post('/users', guard(async (req, res) => {
     const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
     const role = req.body?.role === 'admin' ? 'admin' : 'user';
@@ -31,9 +42,9 @@ export function createAdminUsersRouter({ onUserRevoked = () => {} } = {}) {
     if (userDb.getUserByUsername(username)) return fail(res, 409, 'USERNAME_TAKEN', 'Username already exists');
     const created = userDb.createUser(username, await bcrypt.hash(password, 12), role);
     res.status(201).json({ user: toPublic(userDb.getUserById(created.id)) });
-  });
+  }));
 
-  router.patch('/users/:id', (req, res) => {
+  router.patch('/users/:id', guard((req, res) => {
     const target = userDb.getUserById(Number(req.params.id));
     if (!target) return fail(res, 404, 'USER_NOT_FOUND', 'User not found');
     const patch = {};
@@ -46,9 +57,9 @@ export function createAdminUsersRouter({ onUserRevoked = () => {} } = {}) {
     userDb.bumpTokenVersion(target.id);
     onUserRevoked(target.id);
     res.json({ user: toPublic(userDb.getUserById(target.id)) });
-  });
+  }));
 
-  router.post('/users/:id/reset-password', async (req, res) => {
+  router.post('/users/:id/reset-password', guard(async (req, res) => {
     const target = userDb.getUserById(Number(req.params.id));
     if (!target) return fail(res, 404, 'USER_NOT_FOUND', 'User not found');
     const password = randomPassword();
@@ -56,17 +67,17 @@ export function createAdminUsersRouter({ onUserRevoked = () => {} } = {}) {
     userDb.bumpTokenVersion(target.id);
     onUserRevoked(target.id);
     res.json({ password });
-  });
+  }));
 
-  router.get('/settings/registration', (_req, res) => {
+  router.get('/settings/registration', guard((_req, res) => {
     res.json({ allowPublicRegistration: systemSettingsDb.isPublicRegistrationAllowed() });
-  });
+  }));
 
-  router.put('/settings/registration', (req, res) => {
+  router.put('/settings/registration', guard((req, res) => {
     if (typeof req.body?.allowPublicRegistration !== 'boolean') return fail(res, 400, 'INVALID_VALUE', 'allowPublicRegistration must be boolean');
     systemSettingsDb.set('allow_public_registration', req.body.allowPublicRegistration ? 'true' : 'false');
     res.json({ allowPublicRegistration: systemSettingsDb.isPublicRegistrationAllowed() });
-  });
+  }));
 
   return router;
 }

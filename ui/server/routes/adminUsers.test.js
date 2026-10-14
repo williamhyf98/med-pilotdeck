@@ -47,6 +47,17 @@ describe('admin users API', () => {
     expect(res.status).toBe(201);
     expect((await res.json()).user).toMatchObject({ username: 'bob', role: 'admin' });
   });
+  it('rejects a duplicate username with 409 USERNAME_TAKEN', async () => {
+    const res = await call('POST', '/api/admin/users', { username: 'alice', password: 'secret1' }, adminToken);
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe('USERNAME_TAKEN');
+  });
+  it('blocks non-admins from writes too', async () => {
+    const { users } = await (await call('GET', '/api/admin/users', null, adminToken)).json();
+    const alice = users.find((u) => u.username === 'alice');
+    expect((await call('POST', '/api/admin/users', { username: 'eve', password: 'secret1' }, userToken)).status).toBe(403);
+    expect((await call('PATCH', `/api/admin/users/${alice.id}`, { role: 'admin' }, userToken)).status).toBe(403);
+  });
   it('deactivating a user revokes tokens and notifies', async () => {
     const { users } = await (await call('GET', '/api/admin/users', null, adminToken)).json();
     const alice = users.find((u) => u.username === 'alice');
