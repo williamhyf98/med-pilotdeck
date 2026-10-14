@@ -85,4 +85,25 @@ describe('auth routes (multi-user)', () => {
     expect((await get('/api/auth/user', fresh)).status).toBe(200);
     expect((await post('/api/auth/login', { username: 'carol', password: 'newpass2' })).status).toBe(200);
   });
+
+  it('password change does not leak a stale X-Refreshed-Token', async () => {
+    const jwt = (await import('jsonwebtoken')).default;
+    const { JWT_SECRET } = await import('../middleware/auth.js');
+    const reg = await (await post('/api/auth/register', { username: 'dave', password: 'oldpass1' })).json();
+    const aged = jwt.sign(
+      { userId: reg.user.id, username: 'dave', role: 'user', tokenVersion: 0, iat: Math.floor(Date.now() / 1000) - 4 * 24 * 3600 },
+      JWT_SECRET,
+      { expiresIn: '7d' },
+    );
+    // Fixture sanity: an aged token triggers auto-refresh on a plain request.
+    const plain = await get('/api/auth/user', aged);
+    expect(plain.status).toBe(200);
+    expect(plain.headers.get('x-refreshed-token')).not.toBeNull();
+
+    const res = await post('/api/auth/password', { currentPassword: 'oldpass1', newPassword: 'newpass2' }, aged);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-refreshed-token')).toBeNull();
+    const { token } = await res.json();
+    expect((await get('/api/auth/user', token)).status).toBe(200);
+  });
 });
