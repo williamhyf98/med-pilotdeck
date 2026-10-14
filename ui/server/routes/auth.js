@@ -1,149 +1,104 @@
 import express from 'express';
 import bcrypt from 'bcrypt';
-import { userDb, db } from '../database/db.js';
+import { userDb, systemSettingsDb } from '../database/db.js';
 import { generateToken, authenticateToken } from '../middleware/auth.js';
 import { DISABLE_LOCAL_AUTH } from '../constants/config.js';
+import { isReservedUsername } from '../services/adminBootstrap.js';
 
 const router = express.Router();
+const SALT_ROUNDS = 12;
 
-// Check auth status and setup requirements
-router.get('/status', async (req, res) => {
-  try {
-    if (DISABLE_LOCAL_AUTH) {
-      return res.json({
-        needsSetup: false,
-        isAuthenticated: true,
-        authDisabled: true,
-      });
-    }
-    const hasUsers = await userDb.hasUsers();
-    res.json({ 
-      needsSetup: !hasUsers,
-      isAuthenticated: false // Will be overridden by frontend if token exists
-    });
-  } catch (error) {
-    console.error('Auth status error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+const publicUser = (user) => ({ id: user.id, username: user.username, role: user.role ?? 'user' });
+const fail = (res, status, code, error) => res.status(status).json({ error, code });
+
+router.get('/status', (_req, res) => {
+  if (DISABLE_LOCAL_AUTH) {
+    return res.json({ needsSetup: false, isAuthenticated: true, authDisabled: true, registrationOpen: false });
   }
-});
-
-// User registration (setup) - only allowed if no users exist
-router.post('/register', async (req, res) => {
-  try {
-    if (DISABLE_LOCAL_AUTH) {
-      return res.status(403).json({ error: 'Registration is disabled (PILOTDECK_DISABLE_LOCAL_AUTH)' });
-    }
-    const { username, password } = req.body;
-    
-    // Validate input
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required' });
-    }
-    
-    if (username.length < 3 || password.length < 6) {
-      return res.status(400).json({ error: 'Username must be at least 3 characters, password at least 6 characters' });
-    }
-    
-    // Use a transaction to prevent race conditions
-    db.prepare('BEGIN').run();
-    try {
-      // Check if users already exist (only allow one user)
-      const hasUsers = userDb.hasUsers();
-      if (hasUsers) {
-        db.prepare('ROLLBACK').run();
-        return res.status(403).json({ error: 'User already exists. This is a single-user system.' });
-      }
-      
-      // Hash password
-      const saltRounds = 12;
-      const passwordHash = await bcrypt.hash(password, saltRounds);
-      
-      // Create user
-      const user = userDb.createUser(username, passwordHash);
-      
-      // Generate token
-      const token = generateToken(user);
-      
-      db.prepare('COMMIT').run();
-
-      // Update last login (non-fatal, outside transaction)
-      userDb.updateLastLogin(user.id);
-
-      res.json({
-        success: true,
-        user: { id: user.id, username: user.username },
-        token
-      });
-    } catch (error) {
-      db.prepare('ROLLBACK').run();
-      throw error;
-    }
-    
-  } catch (error) {
-    console.error('Registration error:', error);
-    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-      res.status(409).json({ error: 'Username already exists' });
-    } else {
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  }
-});
-
-// User login
-router.post('/login', async (req, res) => {
-  try {
-    if (DISABLE_LOCAL_AUTH) {
-      return res.status(403).json({ error: 'Login is disabled (PILOTDECK_DISABLE_LOCAL_AUTH)' });
-    }
-    const { username, password } = req.body;
-    
-    // Validate input
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required' });
-    }
-    
-    // Get user from database
-    const user = userDb.getUserByUsername(username);
-    if (!user) {
-      return res.status(401).json({ error: 'Invalid username or password' });
-    }
-    
-    // Verify password
-    const isValidPassword = await bcrypt.compare(password, user.password_hash);
-    if (!isValidPassword) {
-      return res.status(401).json({ error: 'Invalid username or password' });
-    }
-    
-    // Generate token
-    const token = generateToken(user);
-    
-    // Update last login
-    userDb.updateLastLogin(user.id);
-    
-    res.json({
-      success: true,
-      user: { id: user.id, username: user.username },
-      token
-    });
-    
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Get current user (protected route)
-router.get('/user', authenticateToken, (req, res) => {
   res.json({
-    user: req.user
+    needsSetup: false,
+    isAuthenticated: false,
+    authDisabled: false,
+    registrationOpen: systemSettingsDb.isPublicRegistrationAllowed(),
   });
 });
 
-// Logout (client-side token removal, but this endpoint can be used for logging)
+router.post('/register', async (req, res) => {
+  try {
+    if (DISABLE_LOCAL_AUTH) return fail(res, 403, 'AUTH_DISABLED', 'Registration is disabled (PILOTDECK_DISABLE_LOCAL_AUTH)');
+    const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    if (!username || !password) return fail(res, 400, 'MISSING_FIELDS', 'Username and password are required');
+    if (username.length < 3 || password.length < 6) {
+      return fail(res, 400, 'WEAK_CREDENTIALS', 'Username must be at least 3 characters, password at least 6 characters');
+    }
+    if (isReservedUsername(username)) return fail(res, 403, 'RESERVED_USERNAME', 'This username is reserved');
+    if (!systemSettingsDb.isPublicRegistrationAllowed()) {
+      return fail(res, 403, 'REGISTRATION_DISABLED', 'Registration is closed. Ask an administrator to create your account.');
+    }
+    if (userDb.getUserByUsername(username)) return fail(res, 409, 'USERNAME_TAKEN', 'Username already exists');
+
+    const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+    let user;
+    try {
+      user = userDb.createUser(username, passwordHash, 'user');
+    } catch (error) {
+      if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return fail(res, 409, 'USERNAME_TAKEN', 'Username already exists');
+      throw error;
+    }
+    const full = userDb.getUserById(user.id);
+    userDb.updateLastLogin(user.id);
+    res.json({ success: true, user: publicUser(full), token: generateToken(full) });
+  } catch (error) {
+    console.error('Registration error:', error);
+    fail(res, 500, 'INTERNAL', 'Internal server error');
+  }
+});
+
+router.post('/login', async (req, res) => {
+  try {
+    if (DISABLE_LOCAL_AUTH) return fail(res, 403, 'AUTH_DISABLED', 'Login is disabled (PILOTDECK_DISABLE_LOCAL_AUTH)');
+    const { username, password } = req.body ?? {};
+    if (!username || !password) return fail(res, 400, 'MISSING_FIELDS', 'Username and password are required');
+    const user = userDb.getUserByUsername(String(username).trim());
+    const ok = user && Number(user.is_active) === 1 && (await bcrypt.compare(password, user.password_hash));
+    if (!ok) return fail(res, 401, 'BAD_CREDENTIALS', 'Invalid username or password');
+    userDb.updateLastLogin(user.id);
+    res.json({ success: true, user: publicUser(user), token: generateToken(user) });
+  } catch (error) {
+    console.error('Login error:', error);
+    fail(res, 500, 'INTERNAL', 'Internal server error');
+  }
+});
+
+router.get('/user', authenticateToken, (req, res) => {
+  res.json({ user: publicUser(req.user) });
+});
+
 router.post('/logout', authenticateToken, (req, res) => {
-  // In a simple JWT system, logout is mainly client-side
-  // This endpoint exists for consistency and potential future logging
+  if (!DISABLE_LOCAL_AUTH) userDb.bumpTokenVersion(req.user.id);
   res.json({ success: true, message: 'Logged out successfully' });
+});
+
+router.post('/password', authenticateToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body ?? {};
+    if (typeof newPassword !== 'string' || newPassword.length < 6) {
+      return fail(res, 400, 'WEAK_CREDENTIALS', 'New password must be at least 6 characters');
+    }
+    const user = userDb.getUserByUsername(req.user.username);
+    if (!DISABLE_LOCAL_AUTH) {
+      const ok = typeof currentPassword === 'string' && (await bcrypt.compare(currentPassword, user.password_hash));
+      if (!ok) return fail(res, 401, 'BAD_CREDENTIALS', 'Current password is incorrect');
+    }
+    userDb.updatePasswordHash(user.id, await bcrypt.hash(newPassword, SALT_ROUNDS));
+    userDb.bumpTokenVersion(user.id);
+    const fresh = userDb.getUserById(user.id);
+    res.json({ success: true, token: generateToken(fresh) });
+  } catch (error) {
+    console.error('Password change error:', error);
+    fail(res, 500, 'INTERNAL', 'Internal server error');
+  }
 });
 
 export default router;
