@@ -26,6 +26,7 @@
     "lint:fix": "eslint src/ --fix",
     "pretest": "npm --prefix ../src/context/memory/edgeclaw-memory-core run build",
     "test": "vitest run",
+    "test:isolation": "vitest run server/multiUser.isolation.test.js server/pilotdeck-bridge.scope.test.js server/projects.scope.test.js",
     "test:watch": "vitest",
     "start": "npm run build && npm run start:built",
     "start:built": "npm run server",
