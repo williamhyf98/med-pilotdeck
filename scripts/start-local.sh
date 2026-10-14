@@ -39,12 +39,17 @@ ensure_node22() {
 }
 
 # Ports come from scripts/config.env and are hard-pinned, so the dev launcher
-# can no longer slide off a busy port. Fail loudly instead of half-starting:
-# a gateway that cannot bind leaves the UI answering 500 on every request.
+# can no longer slide off a busy port. Fail loudly instead of half-starting.
+# The gateway port is only the pool's base (it probes upward for free ports),
+# so a busy base is a warning, not an abort.
+export PILOTDECK_GATEWAY_PORT_BASE="${PILOTDECK_GATEWAY_PORT}"
 assert_ports_free() {
   local busy=() entry name port
+  if (exec 3<>"/dev/tcp/127.0.0.1/${PILOTDECK_GATEWAY_PORT}") 2>/dev/null; then
+    exec 3>&- 2>/dev/null || true
+    echo "warning: gateway-base port ${PILOTDECK_GATEWAY_PORT} is in use; the gateway pool will probe upward" >&2
+  fi
   for entry in "SERVER_PORT:${SERVER_PORT}" \
-               "gateway-base:${PILOTDECK_GATEWAY_PORT}" \
                "VITE_PORT:${VITE_PORT}"; do
     name="${entry%%:*}"
     port="${entry##*:}"

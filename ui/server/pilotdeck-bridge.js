@@ -194,7 +194,8 @@ export async function getPilotDeckGateway() {
 }
 
 export function revokeUserGateway(userId) {
-    pool().markRevoked(userId);
+    if (!poolInstance) return;
+    poolInstance.markRevoked(userId);
 }
 
 export async function shutdownGatewayPool() {

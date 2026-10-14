@@ -4178,6 +4178,9 @@ async function startServer() {
                 return shutdownPromise;
             }
 
+            // Bounded fallback: never hang on a stuck socket or child.
+            setTimeout(() => process.exit(0), 20_000).unref();
+
             shutdownPromise = (async () => {
                 try {
                     // Gateways first: they are child processes we must not orphan.
@@ -4198,7 +4201,13 @@ async function startServer() {
                     // PilotDeck cron is owned by `pilotdeck server` and shuts
                     // down with it; ui/server never spawns its own daemon.
                 } finally {
-                    process.exit(0);
+                    // Then the HTTP server. WebSocket clients are told to go away
+                    // (1001) first, otherwise their connections keep close() pending.
+                    for (const client of connectedClients) {
+                        try { client.close(1001, 'SERVER_SHUTDOWN'); } catch { /* already closed */ }
+                    }
+                    console.log('[INFO] Gateways stopped, closing HTTP server...');
+                    server.close(() => process.exit(0));
                 }
             })();
 
