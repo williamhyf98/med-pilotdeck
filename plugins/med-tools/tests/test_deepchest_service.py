@@ -33,6 +33,14 @@ class ProcessTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ServiceTests(unittest.TestCase):
+    def test_no_key_still_enforces_upload_validation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with TestClient(create_app(Path(temp), runner=self.succeed)) as client:
+                self.assertEqual(client.get("/health").status_code, 200)
+                self.assertEqual(
+                    client.post("/v1/jobs", content=b"bad").status_code, 422
+                )
+
     def test_requires_auth_before_accepting_upload(self):
         with tempfile.TemporaryDirectory() as temp:
             with TestClient(

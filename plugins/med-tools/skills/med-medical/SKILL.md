@@ -1,18 +1,19 @@
 ---
 name: med-medical
-description: 解析通用医学附件（包括专用 CT 能力关闭时的完整 CT、PDF、报告截图、CDA/XML、检验文本、JSON、心电图/WFDB）。DICOM 必须先路由。
+description: 解析通用医学附件（包括非腹部/盆腔及非胸部的 DICOM、专用 CT 能力关闭时的完整 CT、PDF、报告截图、CDA/XML、检验文本、JSON、心电图/WFDB）。DICOM 必须先路由。
 ---
 
 # 医疗多源解析（med-tools）
 
 RADAR 和 DeepChest 由 `MED_SPECIALIZED_CT_ENABLED` 控制。关闭时不得调用
 `med_radar_*` 或 `med_deepchest_*`；完整 CT 使用本 Skill 的通用医学解析。
+能力开启时，其他部位的完整 CT DICOM 也直接使用本 Skill。
 此时对 DICOM 可在本 Skill 下调用 `med_image_route` 和 `med_parse_medical`，
 无需加载独立的路由 Skill；NIfTI 不支持通用解析，不得传给 `med_parse_medical`。
 
 当用户提供**医疗材料**——单文件、多文件或文件夹——且包含以下任一类型时：
 
-- 影像：`.dcm` / `.dicom`
+- 影像：`.dcm` / `.dicom` / `.ima`
 - 报告 / 截图：`.pdf`、`.png` / `.jpg` / `.jpeg` / `.bmp`
 - 文书：`.xml` / `.cda`、`.txt` / `.md` / `.markdown`、`.json` / `.xml1`
 - 心电图：`.hea` / `.dat`、`.ecg` / `.wfdb` / `.atr` / `.qrs` / `.edf` / `.scp`

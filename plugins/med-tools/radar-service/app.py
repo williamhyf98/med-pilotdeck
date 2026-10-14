@@ -169,7 +169,7 @@ class RadarGuardMiddleware:
         headers = {key.lower(): value for key, value in scope.get("headers", [])}
         supplied = headers.get(b"authorization", b"")
         expected = f"Bearer {API_KEY}".encode("utf-8")
-        if not API_KEY or not secrets.compare_digest(supplied, expected):
+        if API_KEY and not secrets.compare_digest(supplied, expected):
             await JSONResponse(status_code=401, content={"detail": "invalid API key"})(
                 scope, receive, send
             )
@@ -257,8 +257,6 @@ async def _model_retry_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    if not API_KEY:
-        raise RuntimeError("RADAR_API_KEY must be configured; unauthenticated mode is disabled")
     WORK_ROOT.mkdir(parents=True, exist_ok=True)
     await asyncio.to_thread(cleanup_expired_requests)
     await asyncio.to_thread(runtime.load)
@@ -280,7 +278,7 @@ app.add_middleware(RadarGuardMiddleware)
 def authorize(request: Request) -> None:
     supplied = request.headers.get("authorization", "")
     expected = f"Bearer {API_KEY}"
-    if not API_KEY or not secrets.compare_digest(supplied, expected):
+    if API_KEY and not secrets.compare_digest(supplied, expected):
         raise HTTPException(status_code=401, detail="invalid API key")
 
 

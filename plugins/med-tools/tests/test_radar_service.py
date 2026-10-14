@@ -116,6 +116,13 @@ class RadarServiceTests(unittest.TestCase):
                 self.service.authorize(denied)
         self.assertEqual(raised.exception.status_code, 401)
 
+    def test_authorize_accepts_no_key_when_disabled(self) -> None:
+        from starlette.requests import Request
+
+        request = Request({"type": "http", "headers": []})
+        with patch.object(self.service, "API_KEY", ""):
+            self.service.authorize(request)
+
     def test_save_upload_removes_partial_file_via_caller_cleanup_contract(self) -> None:
         class AsyncUpload:
             def __init__(self):

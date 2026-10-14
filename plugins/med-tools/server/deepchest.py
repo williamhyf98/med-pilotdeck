@@ -24,14 +24,6 @@ class DeepChestClient:
             or url.fragment
         ):
             raise ValueError("Configure MED_DEEPCHEST_API_BASE")
-        if url.scheme == "http" and url.hostname not in (
-            "localhost",
-            "127.0.0.1",
-            "::1",
-        ):
-            raise ValueError(
-                "Remote DeepChest requires HTTPS; HTTP is allowed only through a loopback tunnel"
-            )
         key = os.environ.get("MED_DEEPCHEST_API_KEY", "").strip()
         if not key and os.environ.get("MED_DEEPCHEST_API_KEY_FILE"):
             key = (
@@ -40,15 +32,15 @@ class DeepChestClient:
                 .read_text()
                 .strip()
             )
-        if not key:
-            raise ValueError("Configure MED_DEEPCHEST_API_KEY_FILE")
+        if os.environ.get("MED_DEEPCHEST_API_KEY_FILE") and not key:
+            raise ValueError("Configured MED_DEEPCHEST_API_KEY_FILE is empty")
         ca = os.environ.get("MED_DEEPCHEST_CA_BUNDLE", "").strip()
         import ssl
 
-        verify = ssl.create_default_context(cafile=ca) if ca else True
+        verify = ssl.create_default_context(cafile=ca) if url.scheme == "https" and ca else True
         self.http = httpx.Client(
             base_url=self.base,
-            headers={"Authorization": f"Bearer {key}"},
+            headers={"Authorization": f"Bearer {key}"} if key else {},
             verify=verify,
             trust_env=False,
             timeout=httpx.Timeout(300, connect=10),

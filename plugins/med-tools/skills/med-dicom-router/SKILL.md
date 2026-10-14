@@ -32,14 +32,19 @@ mcp__med-tools__med_image_route(path=<绝对路径>, max_files=512,
 ## 固定路由
 
 - 先读取并返回 DICOM 元数据、模态、部位、序列完整性和警告。
-- DICOM 保留原有模态、部位、序列完整性判断；能力关闭时可用 `med-medical`
-  做通用解析。
+- DICOM 保留模态、部位、序列完整性判断；能力开启时仅完整腹部/盆腔 CT
+  推荐 RADAR，完整胸部 CT 推荐 DeepChest；其他 DICOM（包括完整头颈、
+  脊柱、四肢 CT）直接加载 `med-medical` 并调用 `med_parse_medical`。
+  能力关闭时所有 DICOM 都使用通用解析。
 - NIfTI 三维文件须先确认是 CT；腹部/盆腔 CT 自动推荐 RADAR。
   胸部 CT 还须确认体素单位是 HU，之后才能推荐 DeepChest。
   用户明确指定 RADAR 时，在确认 CT 后可以调用；部位或增强期未知时必须
   说明域偏移，不得称为腹部增强域内结果。明确指定 DeepChest 也不能绕过胸部/HU 条件。
-- DICOM 已确认是胸部等非腹部完整 CT，但用户明确指定 RADAR 时，可覆盖默认
-  推荐并提示部位域偏移；混合部位、非 CT 和不完整序列不可用此覆盖。
+- DICOM 即使用户明确指定 RADAR，也仅完整腹部/盆腔 CT 推荐 RADAR；
+  胸部完整 CT 仍推荐 DeepChest，其他部位、混合部位、非 CT 和不完整
+  序列仍走通用解析，并提示用户指定的模型不适用。
+  明确点名 DeepChest 但 DICOM 不符合完整胸部 CT 条件时，仍推荐通用解析，
+  同时提示专用模型不适用。
 - NIfTI 无效、信息不足、多个影像混用或能力关闭时，不推荐
   `med_parse_medical`；按照 `required_context` 询问或明确说明无法处理。
 - 能力开启且路由器推荐专用流程时，按相应 Skill 执行；工具返回 disabled
@@ -49,7 +54,7 @@ mcp__med-tools__med_image_route(path=<绝对路径>, max_files=512,
 
 路由器只选择候选，不代替专用 Skill，也不自动同时运行两个模型。仅在能力开启且用户明确要求联合分析时，分别加载 `med-deepchest-3dmedagent` 和 `med-radar-ct`，分别执行并分别报告来源、产物、分数和限制；不要把 RADAR 分数写入 DeepChest `facts_memory`。
 
-能力开启时，用户提交完整腹部/盆腔 CT 并要求分析，即表示允许将该检查发送到已配置的 RADAR 服务；无需再次询问。用户提交其他完整 CT 并要求分析，也表示允许执行 3DMedAgent 默认的预处理和文本化 memory 流程；`--include-t1s` 发送切片图像仍需单独授权。若用户明确要求不上传或只做本地处理，则遵守该限制。
+能力开启时，用户提交完整腹部/盆腔 CT 并要求分析，即表示允许将该检查发送到已配置的 RADAR 服务；无需再次询问。完整胸部 CT 可进入 DeepChest 流程；`--include-t1s` 发送切片图像仍需单独授权。其他部位 DICOM 使用通用解析。若用户明确要求不上传或只做本地处理，则遵守该限制。
 
 ## 普通 DICOM
 

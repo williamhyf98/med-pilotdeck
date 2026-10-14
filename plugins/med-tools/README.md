@@ -31,9 +31,9 @@ Wire names in chat: `mcp__med-tools__<tool>`.
   │
   ├─【自动识别 DICOM/NIfTI】── Skill med-dicom-router
   │                  └─ med_image_route（本地只读文件头）
-  │                     ├─ DICOM 非 CT / 不完整 / 不确定 → med-medical
+  │                     ├─ DICOM 非 CT / 不完整 / 其他部位 / 不确定 → med-medical
   │                     ├─ NIfTI 非 CT / 信息不足 → 补充信息或说明不可处理
-  │                     ├─ 非腹部且部位明确的完整 CT → med-deepchest-3dmedagent
+  │                     ├─ 完整胸部 CT → med-deepchest-3dmedagent
   │                     └─ 腹部/盆腔完整 CT → med-radar-ct → RADAR → 主智能体按用户问题回答
   │
   ├─【解读附件】── Skill med-medical
@@ -68,10 +68,10 @@ Skills:
 - `med-trauma-stage-plan` — 六阶段正式方案；先 parse 时用 `material`；`care_plan` 流式展示后本轮可继续
 - `med-case-report` — 固定 9 段模版病例报告；附件解析必须用 `material`，解析后继续写报告/HTML
 - `med-radar-ct` — node12 RADAR 三维 CT 推理；只把分数当作需复核的模型信号
-- `med-deepchest-3dmedagent` — 上传病例使用 HTTPS 任务服务，配置 `MED_DEEPCHEST_API_BASE`、密钥及 CA；服务端使用 `MED_DEEPCHEST_ROOT` 工作区生成本次病例证据和中文分析。shell/smoke20 仅用于明确要求的实验验证。
+- `med-deepchest-3dmedagent` — 上传病例使用任务服务，配置 `MED_DEEPCHEST_API_BASE`；当前内网 HTTP 部署免 CA 和 key，跨网络边界应使用 HTTPS。服务端使用 `MED_DEEPCHEST_ROOT` 工作区生成本次病例证据和中文分析。shell/smoke20 仅用于明确要求的实验验证。
 - `med-dicom-router` — 本地只读 DICOM/NIfTI 预检和 Skill 路由；不会解码像素、调用模型或上传 node12
 
-3DMedAgent 与 RADAR 是两个独立医学流程。完整腹部/盆腔 CT 自动调用 RADAR；其他部位明确的完整 CT 先进入 3DMedAgent。胸部具备完整 DeepChest/CT-CLIP 支持；头颈、脊柱、四肢等当前不在器官词表内时必须明确兼容性降级。两套证据、分数、产物和限制分别保留，不把 RADAR 分数写入 3DMedAgent `facts_memory`。
+3DMedAgent 与 RADAR 是两个独立医学流程。完整腹部/盆腔 CT 自动调用 RADAR；完整胸部 CT 调用 DeepChest；头颈、脊柱、四肢等其他部位 DICOM 直接使用 `med_parse_medical` 通用解析。两套专用模型的证据、分数、产物和限制分别保留，不把 RADAR 分数写入 3DMedAgent `facts_memory`。
 
 ### MCP 调用前的 Skill 门禁
 
@@ -144,32 +144,36 @@ data on node36 and uploads it to the persistent RADAR service on node12. It acce
 - a directory containing NIfTI volumes; or
 - a DICOM CT series directory. Files are validated as CT by DICOM metadata before upload.
 
-Node12 keeps one FastAPI process and one loaded model on GPU 4. Requests are accepted
-one at a time. NIfTI data or a ZIP containing the validated DICOM series is uploaded
-over authenticated HTTPS on the private network; the raw upload and staged input are deleted after inference,
-and the remote result directory is deleted after node36 downloads the CSV (with a
-one-hour TTL as a fallback). Every request requires a bearer key.
+Node12 runs an HTTP gateway on `10.31.112.13:18120` and a resident inference API on
+`127.0.0.1:18221` (GPU 4). Requests are accepted one at a time. NIfTI data or a ZIP
+containing the validated DICOM series is uploaded over the private network without
+an API key. The raw upload and staged input are deleted after inference, and the
+remote result directory is deleted after the client downloads the CSV (with a
+one-hour TTL as a fallback).
 The service accepts NIfTI volumes, DICOM CT series directories, and single
 multi-frame CT DICOM files with at least three frames. DICOM inputs are converted to
 temporary NIfTI volumes on node12 before the existing RADAR preprocessing runs;
-single-frame DICOM and non-CT DICOM are rejected. The service enforces authentication,
-single-request admission, and actual streamed request size before multipart parsing.
+single-frame DICOM and non-CT DICOM are rejected. The service enforces
+single-request admission and actual streamed request size before multipart parsing.
 NIfTI headers are checked for a bounded 3D numeric volume, axis-aligned geometry, and
 both decoded and model-resampled memory budgets before voxel data reaches the model.
 The GPU budget includes RADAR's three peak 37-channel mask tensors rather than only
 the input image.
 
 ```text
-node12 /local_data/radar-service/
+node12 /local_data/huojianfan/radar-gpu-poc/
   app.py
+  gpu_api.py
   radar_inference.py
-  radar.env                  # mode 600; not committed
+  config/gateway.env
+  config/gpu.env
   venv/
   damo-radar/
   models/
 ```
 
-The node36 key is read from `$PILOT_HOME/secrets/med-radar-api-key` by default.
+The client sends no key unless one is explicitly configured. The GPU API only
+listens on loopback and requires no key in the current deployment.
 Raw scores and a JSON summary are kept in a unique directory under
 `derived/radar/<study>-<hash>/<request-uuid>/`; the MCP response contains only bounded
 ranked results. RADAR was trained primarily on contrast-enhanced abdominal CT. Scores
@@ -178,17 +182,20 @@ out-of-domain studies must be labeled as such.
 
 ### Node12 service deployment
 
-The deployment unit and pinned service dependencies live in `radar-service/`. Create a
+The repository's optional TLS deployment template and pinned service dependencies
+live in `radar-service/`; the current HTTP deployment uses
+`radar-cpu-gateway.service` and `radar-inference-api.service` on node12. For the
+template, create a
 `--system-site-packages` venv so the host CUDA build of PyTorch is reused, then install
 `radar-service/requirements.txt`. Copy the official RADAR source to `damo-radar/`, model
 files to `models/`, and `scripts/radar_inference.py` beside `app.py`. Create a dedicated
-`radar` system user, copy `radar.env.example` to `radar.env`, replace the API key, set
-mode `600`, install `radar.service`, and start it with systemd. The unit binds only
+`radar` system user, copy `radar.env.example` to `radar.env`, set
+mode `600`, install `radar.service`, and start it with systemd. The optional TLS unit binds only
 `10.31.112.13:18120` with a certificate containing that IP as a SAN, sets
 `CUDA_VISIBLE_DEVICES=4`, and runs the service as `radar`. Place the trusted certificate
-on node36 at `$PILOT_HOME/certs/med-radar-ca.crt`.
+on the client at `$PILOT_HOME/certs/med-radar-ca.crt` when using that unit.
 
-Before starting the unit, create its writable paths and TLS files:
+Before starting the optional TLS unit, create its writable paths and TLS files:
 
 ```bash
 install -d -o radar -g radar -m 0700 \

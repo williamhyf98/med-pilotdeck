@@ -29,20 +29,52 @@ class ClientTests(unittest.TestCase):
             self.assertEqual(result["job_id"], "a" * 32)
             self.assertIn(b'filename="chest(2).nii.gz"', requests[0].content)
 
-    def test_rejects_insecure_remote_and_missing_credentials(self):
+    def test_remote_http_without_key_or_certificate(self):
+        requests = []
+
+        def respond(request):
+            requests.append(request)
+            return httpx.Response(200, json={"ready": True})
+
         with patch.dict(
             os.environ,
             {
                 "MED_DEEPCHEST_API_BASE": "http://10.0.0.1:18130",
-                "MED_DEEPCHEST_API_KEY": "test",
+                "MED_DEEPCHEST_CA_BUNDLE": "/nonexistent/certificate.crt",
             },
             clear=True,
         ):
-            with self.assertRaises(ValueError):
+            with DeepChestClient(transport=httpx.MockTransport(respond)) as client:
+                self.assertTrue(client.health()["ready"])
+        self.assertEqual(str(requests[0].url), "http://10.0.0.1:18130/health")
+        self.assertNotIn("Authorization", requests[0].headers)
+
+    def test_optional_key_is_sent_when_configured(self):
+        requests = []
+
+        def respond(request):
+            requests.append(request)
+            return httpx.Response(200, json={"ready": True})
+
+        with patch.dict(os.environ, {
+            "MED_DEEPCHEST_API_BASE": "http://10.0.0.1:18130",
+            "MED_DEEPCHEST_API_KEY": "test",
+        }, clear=True):
+            with DeepChestClient(transport=httpx.MockTransport(respond)) as client:
+                self.assertTrue(client.health()["ready"])
+        self.assertEqual(requests[0].headers["Authorization"], "Bearer test")
+
+    def test_invalid_url_and_configured_empty_key_are_rejected(self):
+        with patch.dict(
+            os.environ,
+            {"MED_DEEPCHEST_API_BASE": "https://localhost:18130", "MED_DEEPCHEST_API_KEY_FILE": "/nonexistent/key"},
+            clear=True,
+        ):
+            with self.assertRaises(OSError):
                 DeepChestClient()
         with patch.dict(
             os.environ,
-            {"MED_DEEPCHEST_API_BASE": "https://localhost:18130"},
+            {"MED_DEEPCHEST_API_BASE": "ftp://10.0.0.1:18130", "MED_DEEPCHEST_API_KEY": "test"},
             clear=True,
         ):
             with self.assertRaises(ValueError):

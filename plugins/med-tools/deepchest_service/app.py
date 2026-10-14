@@ -1,4 +1,4 @@
-"""Authenticated, bounded single-worker HTTP queue. Run exactly one Uvicorn worker."""
+"""Bounded single-worker HTTP queue. Run exactly one Uvicorn worker."""
 
 import asyncio
 import json
@@ -48,11 +48,9 @@ async def subprocess_runner(job):
 
 
 def create_app(
-    root, api_key, runner=subprocess_runner, max_upload=2 * 1024**3, max_jobs=4
+    root, api_key="", runner=subprocess_runner, max_upload=2 * 1024**3, max_jobs=4
 ):
     root = Path(root).resolve()
-    if not api_key:
-        raise ValueError("DEEPCHEST_API_KEY is required")
     queue = asyncio.Queue(maxsize=max_jobs)
     active = set()
     retention = max(3600, int(os.environ.get("DEEPCHEST_RETENTION_SECONDS", "86400")))
@@ -134,7 +132,7 @@ def create_app(
 
     @app.middleware("http")
     async def authenticate(request, call_next):
-        if not secrets.compare_digest(
+        if api_key and not secrets.compare_digest(
             request.headers.get("authorization", ""), f"Bearer {api_key}"
         ):
             return JSONResponse({"detail": "invalid API key"}, status_code=401)
@@ -274,4 +272,6 @@ def configured_app():
         if key_path
         else os.environ.get("DEEPCHEST_API_KEY", "")
     )
+    if key_path and not key:
+        raise ValueError("Configured DEEPCHEST_API_KEY_FILE is empty")
     return create_app(Path(os.environ["DEEPCHEST_WORK_ROOT"]), key)

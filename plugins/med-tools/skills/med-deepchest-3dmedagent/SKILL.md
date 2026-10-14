@@ -1,6 +1,6 @@
 ---
 name: med-deepchest-3dmedagent
-description: "处理 DICOM 路由判定的非腹部完整 CT：胸部运行 DeepChestVQA / CT-CLIP / 3DMedAgent，其他部位先做 3DMedAgent 兼容性检查并在证据不受支持时明确降级。"
+description: "处理路由确认的完整胸部 CT，运行 DeepChestVQA / CT-CLIP / 3DMedAgent；其他部位 DICOM 由 med-medical 通用解析。"
 ---
 
 # DeepChest 3DMedAgent
@@ -24,7 +24,7 @@ DeepChest 暂不可用。工具返回 disabled 时不得重试。
 
 ## 外部实验验证的适用范围（仅明确要求复现实验时）
 
-用户要求胸部 CT、气道、胸膜、DeepChestVQA、CT-CLIP、3DMedAgent 流程、dry-run、数据质检或结果分析时使用本 Skill。DICOM 路由将其他已识别部位的完整非腹部 CT 也交给本 Skill 做兼容性检查。使用部署环境变量 `MED_DEEPCHEST_ROOT` 指向已有代码、模型和产物的外部工作区；未配置或目录不可用时，明确报告不可用并降级，不猜测固定机器路径。
+用户要求胸部 CT、气道、胸膜、DeepChestVQA、CT-CLIP、3DMedAgent 流程、dry-run、数据质检或结果分析时使用本 Skill。其他部位 DICOM 由 `med-medical` 通用解析。使用部署环境变量 `MED_DEEPCHEST_ROOT` 指向已有代码、模型和产物的外部工作区；未配置或目录不可用时，明确报告不可用并降级，不猜测固定机器路径。
 
 分析本轮上传病例前，必须确认实际推理输入、病例标识、分割和 CT-CLIP 产物对应本轮附件。下面 smoke20 命令仅用于用户明确要求的环境验证/实验复现，不能用于回答上传病例。当前外部脚本若没有已验证的上传病例接入方式，应明确说明并退回 med-medical，不能拿示例数据的结果回答用户。
 
@@ -34,7 +34,7 @@ DeepChest 暂不可用。工具返回 disabled 时不得重试。
 
 - 腹部/盆腔 CT 的 RADAR、146 项 finding 或 RADAR 分数 → `med-radar-ct`。
 - 完整胸部 CT → 执行本 Skill 的完整 DeepChest/CT-CLIP/3DMedAgent 流程。
-- 完整头颈、脊柱、四肢等 CT → 必须先进入本 Skill，但当前器官词表只覆盖胸腹部。先检查是否存在受支持器官、mask、CT-CLIP 和 Agent 产物；不满足时记录 `compatibility-check` 降级，再用 `med-medical` 回答，不得声称已完成有效的 3DMedAgent 推理。
+- 完整头颈、脊柱、四肢等 CT DICOM → 直接使用 `med-medical` 的 `med_parse_medical`；不进入 DeepChest 兼容性检查，不得声称已完成有效的 3DMedAgent 推理。
 - 非 CT、单帧/不完整 CT、部位未知或混合目录、PDF、图片或报告附件解读 → `med-medical`。
 - 用户明确要求 DeepChest 与 RADAR 联合分析时，分别加载并运行两个 Skill；两套证据、分数、产物和限制必须按来源分开，不能互相覆盖。
 - 完整 CT 只运行路由选中的一个专用流程，不同时运行 DeepChest 和 RADAR。

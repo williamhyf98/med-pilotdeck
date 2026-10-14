@@ -47,6 +47,28 @@ def write_dicom(
     dataset.save_as(path)
 
 
+def write_renderable_head_dicom(path: Path) -> None:
+    meta = FileMetaDataset()
+    meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.2"
+    meta.MediaStorageSOPInstanceUID = generate_uid()
+    meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    dataset = FileDataset(str(path), {}, file_meta=meta, preamble=b"\0" * 128)
+    dataset.Modality = "CT"
+    dataset.BodyPartExamined = "HEAD"
+    dataset.StudyDescription = "HEAD CT"
+    dataset.SeriesInstanceUID = generate_uid()
+    dataset.SOPInstanceUID = meta.MediaStorageSOPInstanceUID
+    dataset.InstanceNumber = 1
+    dataset.Rows = dataset.Columns = 2
+    dataset.SamplesPerPixel = 1
+    dataset.PhotometricInterpretation = "MONOCHROME2"
+    dataset.BitsAllocated = dataset.BitsStored = 16
+    dataset.HighBit = 15
+    dataset.PixelRepresentation = 0
+    dataset.PixelData = bytes([0, 0, 128, 0, 255, 0, 64, 0])
+    dataset.save_as(path)
+
+
 class DicomRouterTests(unittest.TestCase):
     def test_chest_ct_falls_back_when_specialized_ct_is_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -201,6 +223,40 @@ class DicomRouterTests(unittest.TestCase):
         self.assertEqual(result["recommended_skill"], "med-radar-ct")
         self.assertEqual(result["recommended_tool"], "mcp__med-tools__med_radar_analyze_ct")
 
+    def test_other_complete_ct_dicom_uses_general_parser_when_enabled(self) -> None:
+        for body in ("HEAD", "NECK", "SPINE", "EXTREMITY"):
+            with self.subTest(body=body), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                series = generate_uid()
+                for index in range(1, 4):
+                    write_dicom(root / f"{index}.dcm", modality="CT", body=body,
+                                series_uid=series, instance=index)
+                with patch.dict("os.environ", {"MED_SPECIALIZED_CT_ENABLED": "1"}):
+                    result = route_image(root)
+                self.assertTrue(result["is_complete_3d_series"])
+                self.assertEqual(result["recommended_skill"], "med-medical")
+                self.assertEqual(result["recommended_tool"], "mcp__med-tools__med_parse_medical")
+                self.assertEqual(result["route_mode"], "general-medical")
+                self.assertEqual(result["candidate_skills"], ["med-medical"])
+                self.assertEqual(result["specialized_support"], "not-applicable")
+
+    def test_head_dicom_route_can_be_followed_by_actual_parse(self) -> None:
+        from server.app import _prepare_medical_parse
+
+        for suffix in (".dcm", ".dicom", ".ima", "", ".bin"):
+            with self.subTest(suffix=suffix), tempfile.TemporaryDirectory() as temp:
+                path = Path(temp) / f"scan{suffix}"
+                write_renderable_head_dicom(path)
+                with patch.dict("os.environ", {"MED_SPECIALIZED_CT_ENABLED": "1"}):
+                    route = route_image(path)
+                self.assertEqual(route["recommended_tool"], "mcp__med-tools__med_parse_medical")
+                parsed = _prepare_medical_parse(path=str(path), skip_vlm=True)
+                self.assertEqual(parsed["status"], "ready")
+                self.assertEqual(len(parsed["items"]), 1)
+                self.assertEqual(parsed["items"][0]["kind"], "dicom")
+                self.assertTrue(parsed["items"][0]["included"])
+                self.assertTrue(parsed["png_paths"])
+
     def test_non_ct_routes_to_general_medical(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "mr.dcm"
@@ -266,7 +322,7 @@ class ImageRouterTests(unittest.TestCase):
         self.assertEqual(confirmed["specialized_support"], "domain-unverified")
         self.assertEqual(confirmed["body_region"], "unknown")
 
-    def test_explicit_radar_routes_complete_dicom_with_unknown_region(self) -> None:
+    def test_explicit_radar_keeps_unknown_dicom_on_general_parser(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             series = generate_uid()
@@ -275,10 +331,11 @@ class ImageRouterTests(unittest.TestCase):
                             series_uid=series, instance=index)
             with patch.dict("os.environ", {"MED_SPECIALIZED_CT_ENABLED": "1"}):
                 result = route_image(root, requested_model="radar")
-        self.assertEqual(result["recommended_skill"], "med-radar-ct")
-        self.assertEqual(result["specialized_support"], "domain-unverified")
+        self.assertEqual(result["recommended_skill"], "med-medical")
+        self.assertEqual(result["recommended_tool"], "mcp__med-tools__med_parse_medical")
+        self.assertEqual(result["route_mode"], "general-medical")
 
-    def test_explicit_radar_overrides_chest_dicom_with_domain_warning(self) -> None:
+    def test_explicit_radar_does_not_override_chest_dicom(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             series = generate_uid()
@@ -291,9 +348,10 @@ class ImageRouterTests(unittest.TestCase):
                 default = route_image(root)
                 explicit = route_image(root, requested_model="radar")
         self.assertEqual(default["recommended_skill"], "med-deepchest-3dmedagent")
-        self.assertEqual(explicit["recommended_skill"], "med-radar-ct")
+        self.assertEqual(explicit["recommended_skill"], "med-deepchest-3dmedagent")
+        self.assertEqual(explicit["recommended_tool"], "mcp__med-tools__med_deepchest_submit")
         self.assertEqual(explicit["status"], "degraded")
-        self.assertTrue(any("域偏移" in flag for flag in explicit["domain_flags"]))
+        self.assertTrue(any("不能提交给 RADAR" in warning for warning in explicit["warnings"]))
 
     def test_explicit_deepchest_does_not_recommend_radar_for_abdominal_dicom(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -306,8 +364,25 @@ class ImageRouterTests(unittest.TestCase):
                 )
             with patch.dict("os.environ", {"MED_SPECIALIZED_CT_ENABLED": "1"}):
                 result = route_image(root, requested_model="deepchest")
-        self.assertEqual(result["route_mode"], "incompatible")
-        self.assertIsNone(result["recommended_tool"])
+        self.assertEqual(result["route_mode"], "radar")
+        self.assertEqual(result["recommended_skill"], "med-radar-ct")
+        self.assertEqual(result["recommended_tool"], "mcp__med-tools__med_radar_analyze_ct")
+        self.assertTrue(any("不能提交给 DeepChest" in warning for warning in result["warnings"]))
+
+    def test_explicit_specialized_model_keeps_other_dicom_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            series = generate_uid()
+            for index in range(1, 4):
+                write_dicom(root / f"{index}.dcm", modality="CT", body="HEAD",
+                            series_uid=series, instance=index)
+            with patch.dict("os.environ", {"MED_SPECIALIZED_CT_ENABLED": "1"}):
+                for model in ("radar", "deepchest"):
+                    with self.subTest(model=model):
+                        result = route_image(root, requested_model=model)
+                        self.assertEqual(result["recommended_skill"], "med-medical")
+                        self.assertEqual(result["recommended_tool"], "mcp__med-tools__med_parse_medical")
+                        self.assertTrue(result["warnings"])
 
     def test_known_non_ct_does_not_route_to_specialized_model(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

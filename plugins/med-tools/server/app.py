@@ -42,10 +42,10 @@ VALID_CONTINUATION_MODES = frozenset({"terminal", "material"})
 
 SPECIALIZED_CT_GUIDANCE = (
     "For a complete abdominal/pelvic CT route, load med-radar-ct and call "
-    "med_radar_analyze_ct; for another complete CT with a known body region, "
-    "load med-deepchest-3dmedagent and follow its compatibility rules. "
-    "For chest CT, use med_deepchest_status, med_deepchest_submit, then "
-    "med_deepchest_job until completion. Never use example results for an uploaded case."
+    "med_radar_analyze_ct. For a complete chest CT, load med-deepchest-3dmedagent "
+    "and use med_deepchest_status, med_deepchest_submit, then med_deepchest_job "
+    "until completion. For all other DICOM, load med-medical and call "
+    "med_parse_medical. Never use example results for an uploaded case."
     if specialized_ct_enabled()
     else
     "For DICOM, use med_image_route then med_parse_medical when recommended. "
@@ -444,7 +444,7 @@ async def med_parse_medical(
     """Unified medical attachment parser + configured medical VLM report (301-aligned suffixes).
 
     Accepts a single file or a directory. Supported suffixes include:
-    .dcm/.dicom, .pdf, .png/.jpg/.jpeg/.bmp, .xml/.cda, .txt/.md,
+    .dcm/.dicom/.ima, .pdf, .png/.jpg/.jpeg/.bmp, .xml/.cda, .txt/.md,
     .json/.xml1, .hea/.dat and other ECG-related names (some degraded).
 
     Steps:

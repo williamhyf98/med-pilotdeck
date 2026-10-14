@@ -421,7 +421,7 @@ def route_dicom(path: str | Path, *, max_files: int = 512) -> Dict[str, Any]:
                 "RADAR 和 DeepChest 专用流程当前暂时关闭，已回退到 med-medical。"
             )
             if region in {"unknown", "mixed"}:
-                payload["warnings"].append("检查部位不确定；请用户确认后再解读。")
+                payload["warnings"].append("检查部位不确定；通用解析时注明此限制。")
             payload["next_action"] = (
                 "使用 med-medical 进行本地医学附件解析；当前不调用 RADAR 或 DeepChest。"
             )
@@ -441,36 +441,36 @@ def route_dicom(path: str | Path, *, max_files: int = 512) -> Dict[str, Any]:
                 "加载 med-radar-ct 并调用 med_radar_analyze_ct；"
                 "完成后由主智能体结合 RADAR 结果回答用户原始问题。"
             )
-        elif region not in {"unknown", "mixed"}:
+        elif region == "chest":
             payload["candidate_skills"] = ["med-deepchest-3dmedagent", "med-medical"]
             payload["recommended_skill"] = "med-deepchest-3dmedagent"
-            payload["recommended_tool"] = "mcp__med-tools__med_deepchest_submit" if region == "chest" else None
+            payload["recommended_tool"] = "mcp__med-tools__med_deepchest_submit"
             payload["requires_main_agent_synthesis"] = True
             payload["route_mode"] = "3dmedagent"
-            payload["specialized_support"] = "full" if region == "chest" else "compatibility-check"
+            payload["specialized_support"] = "full"
             payload["authorization_required"] = False
-            if region != "chest":
-                payload["domain_flags"].append(
-                    "当前 3DMedAgent 的器官 mask 与 CT-CLIP 词表主要覆盖胸腹部；"
-                    "该非腹部、非胸部 CT 必须先做兼容性检查，不得伪造不受支持的 3D 证据。"
-                )
             payload["next_action"] = (
-                "加载 med-deepchest-3dmedagent 并按其非腹部 CT 流程执行；"
-                "胸部运行完整 3DMedAgent，其他部位先检查器官与产物兼容性，"
-                "完成或降级后由主智能体回答用户原始问题。"
+                "加载 med-deepchest-3dmedagent 并对完整胸部 CT 执行 DeepChest；"
+                "完成后由主智能体回答用户原始问题。"
+            )
+        elif region not in {"unknown", "mixed"}:
+            payload["next_action"] = (
+                "该部位 DICOM 不适用 RADAR 或 DeepChest；"
+                "加载 med-medical 并调用 med_parse_medical 进行通用解析。"
             )
         else:
             payload["warnings"].append(
-                "检查部位不确定；完整 CT 仍不能安全选择 RADAR 或 3DMedAgent，"
-                "请用户确认后再选择专用 Skill。"
+                "检查部位不确定；不能安全选择 RADAR 或 DeepChest，"
+                "先使用 med-medical 做通用解析并注明此限制。"
             )
+            payload["next_action"] = "加载 med-medical 并调用 med_parse_medical；不要提交专用 CT 模型。"
     else:
         if payload["modality"] != "CT":
             payload["warnings"].append("当前附件不是单一 CT；不调用 RADAR 或 DeepChest 专用流程。")
         elif not complete_ct:
             payload["warnings"].append("当前 CT 不是已确认的完整三维序列；不调用专用 CT 流程。")
         if region == "unknown" or region == "mixed":
-            payload["warnings"].append("检查部位不确定；请用户确认后再选择专用 Skill。")
+            payload["warnings"].append("检查部位不确定；使用通用解析并注明此限制。")
 
     if read_errors:
         payload["warnings"].extend(read_errors[:5])
@@ -612,38 +612,15 @@ def route_image(
         result["tool"] = "med_image_route"
         if requested_model.strip().lower() == "deepchest" and specialized_ct_enabled():
             if result["recommended_tool"] != "mcp__med-tools__med_deepchest_submit":
-                result.update(
-                    candidate_skills=[],
-                    recommended_skill=None,
-                    recommended_tool=None,
-                    route_mode="incompatible",
-                    specialized_support="not-applicable",
-                    requires_main_agent_synthesis=False,
-                    next_action="DeepChest 仅支持完整胸部 CT；请核对模态、部位和影像完整性。",
-                )
-                result["warnings"].append("该 DICOM 检查不能提交给 DeepChest。")
+                result["warnings"].append("该 DICOM 检查不能提交给 DeepChest；按检查部位选择适用流程。")
+                if result["recommended_skill"] == "med-medical":
+                    result["next_action"] = "DeepChest 仅支持完整胸部 CT；加载 med-medical 并调用 med_parse_medical。"
                 result["status"] = "degraded"
             return result
-        if (
-            requested_model.strip().lower() == "radar"
-            and specialized_ct_enabled()
-            and result["modality"] == "CT"
-            and result["is_complete_3d_series"]
-            and result["body_region"] not in {"abdomen", "pelvis", "abdomen_pelvis", "mixed"}
-        ):
-            region = result["body_region"]
-            result.update(
-                candidate_skills=["med-radar-ct"],
-                recommended_skill="med-radar-ct",
-                recommended_tool="mcp__med-tools__med_radar_analyze_ct",
-                route_mode="radar",
-                specialized_support="domain-unverified",
-                requires_main_agent_synthesis=True,
-                next_action="加载 med-radar-ct，明确提示当前部位偏离训练域，按域外信号解释 RADAR 结果。",
-            )
-            result["domain_flags"].append(f"部位 {region} 不是已确认的腹部/盆腔；RADAR 结果存在域偏移风险。")
-            if result["contrast_hint"] != "contrast":
-                result["domain_flags"].append("增强期未确认；RADAR 结果需结合原始检查信息复核。")
+        if requested_model.strip().lower() == "radar" and specialized_ct_enabled() and result["recommended_skill"] != "med-radar-ct":
+            result["warnings"].append("该 DICOM 检查不属于完整腹部/盆腔 CT，不能提交给 RADAR。")
+            if result["recommended_skill"] == "med-medical":
+                result["next_action"] = "加载 med-medical 并调用 med_parse_medical；不提交给 RADAR。"
             result["status"] = "degraded"
         return result
 

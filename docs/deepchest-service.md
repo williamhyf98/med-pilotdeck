@@ -10,32 +10,29 @@
 
 ## 服务端
 
-使用经过验证的 Linux GPU 环境，复制 `plugins/med-tools/deepchest_service` 到独立服务目录。复制 `service.env.example` 配置工作区、任务目录、GPU、模型服务地址和密钥文件。用原环境 Python 启动：
+使用经过验证的 Linux GPU 环境，复制 `plugins/med-tools/deepchest_service` 到独立服务目录。复制 `service.env.example` 配置工作区、任务目录、GPU 和模型服务地址。用原环境 Python 启动：
 
 ```bash
 python -m uvicorn deepchest_service.app:configured_app --factory \
-  --host 0.0.0.0 --port 18130 --workers 1 \
-  --ssl-certfile /deployment/certs/server.crt \
-  --ssl-keyfile /deployment/certs/server.key
+  --host 10.31.112.13 --port 18130 --workers 1
 ```
 
 只允许一个 worker；目录锁会拒绝多进程同时管理任务。并发上限 4 个待处理/运行/上传任务，逐一执行。默认每个任务超时 1800 秒，超时或停服务会清理子进程组；重启后未完成任务标记失败，不偷偷重试。任务默认保留 24 小时，每 10 分钟清理已结束且过期的任务。不要把任务目录指向已有患者资料目录。
 
-独立 Bearer 密钥保存在服务器文件中，客户端指定对应 CA，不能关闭 TLS 校验。服务端不得开放调试文档或提供任意路径下载。日志和任务文件使用私有权限。
+当前 node12 入口和本机 GPU API 均免 key：内网 HTTP 上传的影像和报告为明文，任何能访问 `18130` 的设备都可以发起任务。部署时必须限制可访问的网段和主机，避免绕过应用登录、泄露数据或耗尽计算资源。按需配置独立 Bearer key 可重新启用鉴权；若启用 HTTPS，客户端仍须校验证书。服务端不得开放调试文档或提供任意路径下载。日志和任务文件使用私有权限。
 
 ## 客户端
 
 在忽略的 `config/deploy.env` 设置：
 
 ```dotenv
-MED_DEEPCHEST_API_BASE=https://your-server:18130
-MED_DEEPCHEST_API_KEY_FILE=/deployment/secrets/deepchest-key
-MED_DEEPCHEST_CA_BUNDLE=/deployment/certs/deepchest-ca.crt
+MED_DEEPCHEST_API_BASE=http://10.31.112.13:18130
+# 可选：MED_DEEPCHEST_API_KEY_FILE=/deployment/secrets/deepchest-key
 # 可选，默认 PILOT_HOME/artifacts/deepchest
 MED_DEEPCHEST_OUTPUT_DIR=/deployment/artifacts/deepchest
 ```
 
-真实地址和凭据不提交到 Git；HTTP 仅允许 loopback 隧道。
+真实地址和凭据不提交到 Git；HTTPS 部署需另配置 `MED_DEEPCHEST_CA_BUNDLE`（自签证书场景）。
 
 MCP 工具：
 
@@ -52,6 +49,8 @@ Python 测试：`python -m unittest discover -s tests -p 'test_deepchest*.py'`�
 TypeScript 测试覆盖 DeepChest 阶段活动和文件产物，保证不会从工具报告额外推送 assistant 文本。
 
 ## 本次部署与验收（2026-09-22）
+
+下述为 2026-09-22 的历史部署记录；当前 node12 网关已切换为内网 HTTP，参见上方配置及文末的 2026-10-13 记录。
 
 - node12 服务目录：`/local_data/huojianfan/3D-MLLM/service`，HTTPS 监听 18130。
 - 用户级服务：`pilotdeck-deepchest.service`，已 enable，用户 linger 已启用，退出 SSH 后仍运行。使用 `systemctl --user status|restart|stop pilotdeck-deepchest.service` 管理。
@@ -74,3 +73,17 @@ TypeScript 测试覆盖 DeepChest 阶段活动和文件产物，保证不会从�
 - 经用户明确授权，备份为 `app.py.before-headers-fix-20260922`，补回 `headers = dict(scope.get("headers", []))`，语法检查后重启 `radar.service`。仅修改这一行；仓库内保留鉴权的服务模板原本已有该定义，无需同步覆盖独立服务的鉴权配置。
 - 重测任务 `f2929c7afa824969b4cda6a079378c16` 约 7 秒：无密钥上传、GPU 推理、CSV 下载均 HTTP 200；146 个候选字段中 139 项有效、7 项缺失，failed_cases 为空，结束后 busy=false。
 - 本次使用已知胸部 CT 样例，只验证技术链路。RADAR 主要训练域为增强腹部 CT，不能据此宣称腹部临床效果已经验收。
+
+## 内网 HTTP 切换（2026-10-13）
+
+- node12 的 `pilotdeck-deepchest.service` 在 `10.31.112.13:18130` 提供 HTTP；原 TLS 单元已备份。GPU 推理仍只在 `127.0.0.1:18330` 监听，服务逻辑和模型配置不变。
+- Mac 与 node12 的 `config/deploy.env` 指向 `http://10.31.112.13:18130`，不再设置 `MED_DEEPCHEST_CA_BUNDLE`；证书文件保留，但运行时不使用。切换当时仍启用 API key。
+- Mac 客户端健康检查成功，无密钥请求返回 401；Mac 上传胸部 CT 测试样例后，任务完成并取回报告与两个产物。node12 客户端与服务端相关测试通过。
+- 该端口直接在内网传输明文影像、报告和 Bearer key；绑定内网 IP 不等于限制了能访问该 IP 的主机。医院部署时必须另行落实网络访问控制，或在跨主机链路启用加密。
+
+## 免 key 部署（2026-10-13）
+
+- node12 的 DeepChest `18130` 入口和 `127.0.0.1:18330` GPU API、RADAR `18120` 入口和 `127.0.0.1:18221` GPU API 均不配置 key。GPU API 仍只监听本机回环地址；旧密钥文件保留作回退，但运行时不读取。
+- Mac/node12 的 `config/deploy.env` 只需 DeepChest 地址，不再需要 `MED_DEEPCHEST_API_KEY_FILE`。DeepChest 的网关及两套 GPU 推理进程已移除 key 启动依赖，上传大小、任务容量和输入校验不变。
+- Mac 无 key 上传测试 CT 到 RADAR、调用 GPU 推理并下载评分 CSV 成功，约 3.5 秒；Mac 无 key 提交 DeepChest 胸部 CT、完成 GPU 推理和回答并取回报告及两个产物成功，约 90 秒。两套 GPU API 无 key 健康检查均返回 ready，node12 和 Mac 项目进程重载部署配置后仍可访问。
+- 这些直连服务没有医生身份校验；应用登录不会阻止其他能访问 `18120` / `18130` 的机器直接提交影像。医院部署时应在网络侧限制来源地址，并监控流量与 GPU 任务容量。
