@@ -38,8 +38,10 @@ const c = {
   dim: (text) => `${colors.dim}${text}${colors.reset}`,
 };
 
+// Mirrors the default in `database/db.js`; used for display only. The env var
+// is never defaulted here — db.js owns the default so there is exactly one.
 function defaultDatabasePath() {
-  return path.join(resolvePilotRoot(), 'auth.db');
+  return path.join(resolvePilotRoot(), 'system', 'auth.db');
 }
 
 function getInstallDir() {
@@ -81,7 +83,6 @@ function applyOptions(options) {
 
   if (options.databasePath) process.env.DATABASE_PATH = options.databasePath;
   if (options.configPath) process.env.PILOTDECK_CONFIG_PATH = options.configPath;
-  if (!process.env.DATABASE_PATH) process.env.DATABASE_PATH = defaultDatabasePath();
 }
 
 function showHelp() {

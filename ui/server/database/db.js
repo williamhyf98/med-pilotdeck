@@ -33,18 +33,11 @@ const INIT_SQL_PATH = path.join(__dirname, 'init.sql');
 
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
-// One-time: an older single-user install kept auth.db at <PILOT_ROOT>/auth.db.
-// Copy it into system/ so accounts survive the upgrade. The install-directory
-// copy that used to live here was removed on purpose (it could resurrect a
-// stale database from the source tree).
-const ROOT_LEGACY_DB_PATH = path.join(PILOT_ROOT, 'auth.db');
-if (DB_PATH !== ROOT_LEGACY_DB_PATH && !fs.existsSync(DB_PATH) && fs.existsSync(ROOT_LEGACY_DB_PATH)) {
-  fs.copyFileSync(ROOT_LEGACY_DB_PATH, DB_PATH);
-  for (const suffix of ['-wal', '-shm']) {
-    if (fs.existsSync(ROOT_LEGACY_DB_PATH + suffix)) fs.copyFileSync(ROOT_LEGACY_DB_PATH + suffix, DB_PATH + suffix);
-  }
-  console.log(`[MIGRATION] Copied ${ROOT_LEGACY_DB_PATH} → ${DB_PATH}`);
-}
+// An older single-user install kept auth.db at <PILOT_ROOT>/auth.db. That file
+// is deliberately left untouched here: it has no admin account, so copying it
+// in would only reproduce NO_ACTIVE_ADMIN. A fresh system/auth.db is created
+// instead (ensureAdminUser seeds the administrator) and moving the legacy data
+// across is the job of the explicit migration command in the next plan.
 
 // Create database connection
 const db = new Database(DB_PATH);

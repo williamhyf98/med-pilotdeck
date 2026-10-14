@@ -15,10 +15,25 @@ import {
 const tempDirs = [];
 
 it('anchors relative runtime paths to pilot home', () => {
-    const env = buildRuntimeEnv({ webui: { runtime: { databasePath: 'auth.db', workspacesRoot: 'workspaces' } } });
+    const env = buildRuntimeEnv({ webui: { runtime: { databasePath: 'system/auth.db', workspacesRoot: 'workspaces' } } });
     const home = process.env.PILOT_HOME || join(homedir(), '.pilotdeck');
-    expect(env.DATABASE_PATH).toBe(join(home, 'auth.db'));
+    expect(env.DATABASE_PATH).toBe(join(home, 'system', 'auth.db'));
     expect(env.WORKSPACES_ROOT).toBe(join(home, 'workspaces'));
+});
+
+it('ignores a pre-multi-user databasePath that points at the legacy <root>/auth.db', () => {
+    // Plan 1 leaves the legacy single-user database alone; db.js then applies
+    // its own default instead of opening and migrating it in place.
+    const home = process.env.PILOT_HOME || join(homedir(), '.pilotdeck');
+    expect(buildRuntimeEnv({ webui: { runtime: { databasePath: 'auth.db' } } }).DATABASE_PATH).toBeUndefined();
+    expect(buildRuntimeEnv({ webui: { runtime: { databasePath: './auth.db' } } }).DATABASE_PATH).toBeUndefined();
+    expect(buildRuntimeEnv({ webui: { runtime: { databasePath: join(home, 'auth.db') } } }).DATABASE_PATH).toBeUndefined();
+    // An explicit path elsewhere is still an operator choice and is honoured.
+    expect(buildRuntimeEnv({ webui: { runtime: { databasePath: '/var/db/pd.db' } } }).DATABASE_PATH).toBe('/var/db/pd.db');
+});
+
+it('defaults databasePath to the system directory', () => {
+    expect(normalizePilotDeckConfig({}).webui.runtime.databasePath).toBe('system/auth.db');
 });
 
 it('uses flat UI fields first and falls back to each legacy schedule field', () => {

@@ -7,7 +7,6 @@ import {
   getPilotDeckConfigPath,
   readPilotDeckConfigFile,
 } from './services/pilotdeckConfig.js';
-import { resolvePilotRoot } from './utils/pilotPaths.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -48,10 +47,10 @@ export function assertRequiredPilotDeckEnv() {
 export function loadRootPilotDeckEnv() {
   applyDerivedRuntimeEnv();
 
-  if (!process.env.DATABASE_PATH) {
-    process.env.DATABASE_PATH = path.join(resolvePilotRoot(), 'auth.db');
-  }
-
+  // DATABASE_PATH is deliberately NOT defaulted here: `database/db.js` owns the
+  // default (`<PILOT_ROOT>/system/auth.db`). Setting it here would make that
+  // default dead and point the one shared account DB at the legacy
+  // single-user location `<PILOT_ROOT>/auth.db`.
   return hasPilotDeckConfigFile();
 }
 

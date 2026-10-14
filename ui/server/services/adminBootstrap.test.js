@@ -46,4 +46,14 @@ describe('ensureAdminUser', () => {
       .rejects.toMatchObject({ code: 'NO_ACTIVE_ADMIN' });
     expect(userDb.users).toHaveLength(1);
   });
+
+  it('points the operator at remediation that actually exists', async () => {
+    const userDb = fakeUserDb([{ id: 1, username: 'alice', role: 'user', is_active: 1, password_hash: 'x' }]);
+    const error = await ensureAdminUser({ userDb, env: {}, bcryptHash: async (p) => p, log: () => {}, ensureHome: () => {} })
+      .then(() => null, (e) => e);
+    expect(error.message).toContain('fresh PILOT_HOME');
+    expect(error.message).toContain("UPDATE users SET role='admin'");
+    // scripts/migrate-user-storage.mjs does not exist; never name it.
+    expect(error.message).not.toContain('migrate-user-storage');
+  });
 });

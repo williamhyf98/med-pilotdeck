@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
+import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let root;
@@ -72,39 +73,49 @@ describe('multi-user schema', () => {
   });
 });
 
+const LEGACY_SCHEMA_SQL = `
+  CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_login DATETIME,
+    is_active BOOLEAN DEFAULT 1,
+    git_name TEXT,
+    git_email TEXT,
+    has_completed_onboarding BOOLEAN DEFAULT 0
+  );
+  CREATE TABLE session_names (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    provider TEXT NOT NULL DEFAULT 'claude',
+    custom_name TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(session_id, provider)
+  );
+  CREATE INDEX idx_session_names_lookup ON session_names(session_id, provider);
+  INSERT INTO users (username, password_hash) VALUES ('old', 'h');
+  INSERT INTO session_names (session_id, provider, custom_name) VALUES ('legacy-s1', 'claude', 'Legacy Name');
+`;
+
+function writeLegacyDb(file) {
+  const legacy = new Database(file);
+  legacy.exec(LEGACY_SCHEMA_SQL);
+  legacy.close();
+}
+
 describe('legacy upgrade path', () => {
-  it('migrates an old-schema <root>/auth.db into system/auth.db', async () => {
-    const legacy = new Database(path.join(root, 'auth.db'));
-    legacy.exec(`
-      CREATE TABLE users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        last_login DATETIME,
-        is_active BOOLEAN DEFAULT 1,
-        git_name TEXT,
-        git_email TEXT,
-        has_completed_onboarding BOOLEAN DEFAULT 0
-      );
-      CREATE TABLE session_names (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL,
-        provider TEXT NOT NULL DEFAULT 'claude',
-        custom_name TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(session_id, provider)
-      );
-      CREATE INDEX idx_session_names_lookup ON session_names(session_id, provider);
-      INSERT INTO users (username, password_hash) VALUES ('old', 'h');
-      INSERT INTO session_names (session_id, provider, custom_name) VALUES ('legacy-s1', 'claude', 'Legacy Name');
-    `);
-    legacy.close();
+  // DATABASE_PATH points straight at an old-schema file (that is how an
+  // operator opens a pre-multi-user database): runMigrations must upgrade it
+  // in place without losing rows.
+  it('migrates an old-schema database the operator points DATABASE_PATH at', async () => {
+    const legacyPath = path.join(root, 'legacy-auth.db');
+    writeLegacyDb(legacyPath);
+    vi.stubEnv('DATABASE_PATH', legacyPath);
 
     const { userDb, sessionNamesDb, initializeDatabase, db } = await loadDb();
 
-    expect(fs.existsSync(path.join(root, 'system', 'auth.db'))).toBe(true);
     expect(userDb.getUserById(1)).toMatchObject({ username: 'old', role: 'user', token_version: 0 });
     expect(sessionNamesDb.getName(0, 'legacy-s1', 'claude')).toBe('Legacy Name');
     expect(sessionNamesDb.getName(1, 'legacy-s1', 'claude')).toBeNull();
@@ -115,5 +126,27 @@ describe('legacy upgrade path', () => {
     await expect(initializeDatabase()).resolves.not.toThrow();
     expect(userDb.getUserById(1)).toMatchObject({ role: 'user', token_version: 0 });
     expect(sessionNamesDb.getName(0, 'legacy-s1', 'claude')).toBe('Legacy Name');
+  });
+
+  // Plan 1 ruling: the legacy single-user database at <root>/auth.db is left
+  // alone. Moving that data across is the next plan's explicit migration.
+  it('leaves a pre-existing <root>/auth.db byte-for-byte untouched', async () => {
+    const rootDbPath = path.join(root, 'auth.db');
+    writeLegacyDb(rootDbPath);
+    const before = createHash('sha256').update(fs.readFileSync(rootDbPath)).digest('hex');
+    const beforeStat = fs.statSync(rootDbPath);
+
+    const { userDb } = await loadDb();
+
+    expect(fs.existsSync(path.join(root, 'system', 'auth.db'))).toBe(true);
+    const after = createHash('sha256').update(fs.readFileSync(rootDbPath)).digest('hex');
+    expect(after).toBe(before);
+    expect(fs.statSync(rootDbPath).size).toBe(beforeStat.size);
+    // No sidecar journals were created next to the legacy file either.
+    expect(fs.existsSync(`${rootDbPath}-wal`)).toBe(false);
+    expect(fs.existsSync(`${rootDbPath}-shm`)).toBe(false);
+    // The fresh system database does not carry the legacy account over.
+    expect(userDb.getUserByUsername('old')).toBeUndefined();
+    expect(userDb.hasUsers()).toBe(false);
   });
 });

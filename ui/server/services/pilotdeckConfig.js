@@ -94,7 +94,7 @@ export function buildDefaultPilotDeckConfig() {
         serverPort: 3001,
         vitePort: 5173,
         apiTimeoutMs: 120000,
-        databasePath: 'auth.db',
+        databasePath: 'system/auth.db',
         workspacesRoot: '~',
       },
       officePreview: {
@@ -414,7 +414,15 @@ export function buildRuntimeEnv(config) {
   };
 
   // Persist portable values; resolve them only at the process boundary.
-  if (runtime.databasePath) env.DATABASE_PATH = path.resolve(pilotHomeDir(), expandTilde(runtime.databasePath));
+  // A config written before multi-user pins the legacy single-user location
+  // `<root>/auth.db`. Honouring it would open and migrate that database in
+  // place, which Plan 1 must not do: drop the value and let database/db.js
+  // apply its own default (`<root>/system/auth.db`). Any other path is a
+  // deliberate operator choice and is honoured.
+  const databasePath = runtime.databasePath
+    ? path.resolve(pilotHomeDir(), expandTilde(runtime.databasePath))
+    : '';
+  if (databasePath && databasePath !== path.join(pilotHomeDir(), 'auth.db')) env.DATABASE_PATH = databasePath;
   if (runtime.workspacesRoot) env.WORKSPACES_ROOT = path.resolve(pilotHomeDir(), expandTilde(runtime.workspacesRoot));
   const proxyUrl = normalized.proxy?.url
     || (typeof normalized.proxy === 'string' ? normalized.proxy : '')

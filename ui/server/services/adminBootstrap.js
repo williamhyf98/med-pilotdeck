@@ -12,8 +12,9 @@ export function isReservedUsername(username) {
 /**
  * Startup guarantee: the system always has an admin account.
  * - Empty users table → create `admin` (password from PILOTDECK_ADMIN_PASSWORD, else default).
- * - Users exist but no active admin → refuse to start (operator must run the
- *   migration command with --assign-admin; see plan 2).
+ * - Users exist but no active admin → refuse to start (the operator either
+ *   starts from a fresh PILOT_HOME or promotes an account by hand; the
+ *   data-migration command arrives in the next plan).
  * - Existing admin → do nothing. Passwords are never re-synced on startup.
  */
 export async function ensureAdminUser({
@@ -39,7 +40,10 @@ export async function ensureAdminUser({
 
   if (userDb.countActiveAdmins() === 0) {
     const error = new Error(
-      'No active administrator account exists. Refusing to start. Run `node scripts/migrate-user-storage.mjs --assign-admin <username>` to promote an existing account.',
+      'No active administrator account exists. Refusing to start. '
+      + 'Start with a fresh PILOT_HOME (an admin is created automatically), or promote an existing account: '
+      + 'sqlite3 <path-to-auth.db> "UPDATE users SET role=\'admin\' WHERE username=\'<name>\'". '
+      + 'The data-migration command arrives in the next plan.',
     );
     error.code = 'NO_ACTIVE_ADMIN';
     throw error;
