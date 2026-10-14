@@ -9,7 +9,7 @@ import { CURSOR_MODELS, CODEX_MODELS } from '../../shared/modelConstants.js';
 import { parseFrontmatter } from '../utils/frontmatter.js';
 import { getClaudeRuntimeModelConfig, getClaudeRuntimeModelValues } from '../utils/claude-runtime-config.js';
 import { readPilotDeckConfigFile, resolveModel } from '../services/pilotdeckConfig.js';
-import { resolvePilotHome, resolveLinkedRepoPath } from '../utils/pilotPaths.js';
+import { resolveScopedHome, resolveLinkedRepoPath } from '../utils/pilotPaths.js';
 import { executeTurnkeySlashCommand } from '../turnkey-slash.js';
 import { getRegisteredCommands } from '../../../src/adapters/channel/protocol/ChannelCommandRegistry.js';
 import { runChatSearchFormatted } from '../../../src/cli/commands/chatSearch.js';
@@ -21,7 +21,7 @@ const __dirname = path.dirname(__filename);
 
 function normalizeRepoProjectPath(projectPath) {
   if (!projectPath || typeof projectPath !== 'string') return projectPath;
-  return resolveLinkedRepoPath(projectPath, resolvePilotHome(process.env));
+  return resolveLinkedRepoPath(projectPath, resolveScopedHome());
 }
 
 function normalizeCommandContext(context) {
@@ -292,7 +292,7 @@ async function executeSearchCommand(args, context) {
   const { result, text } = await runChatSearchFormatted({
     arg: rawArg,
     projectRoot: context?.projectPath,
-    pilotHome: resolvePilotHome(process.env),
+    pilotHome: resolveScopedHome(),
     locale: 'en',
   });
 
@@ -680,7 +680,7 @@ Custom commands can be created in:
 router.post('/list', async (req, res) => {
   try {
     const { projectPath } = req.body;
-    const pilotHome = resolvePilotHome(process.env);
+    const pilotHome = resolveScopedHome();
 
     const customCommandSources = [];
 
@@ -897,7 +897,7 @@ router.post('/execute', async (req, res) => {
     // Security: validate commandPath is within allowed directories.
     {
       const resolvedPath = path.resolve(commandPath);
-      const pilotHome = resolvePilotHome(process.env);
+      const pilotHome = resolveScopedHome();
       const allowedBases = [
         path.resolve(path.join(pilotHome, 'commands')),
         path.resolve(path.join(pilotHome, 'skills')),

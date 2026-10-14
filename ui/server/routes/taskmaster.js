@@ -17,10 +17,10 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import os from 'os';
 import { extractProjectDirectory } from '../projects.js';
-import { resolvePilotHome, resolveLinkedRepoPath } from '../utils/pilotPaths.js';
+import { resolveScopedHome, resolveLinkedRepoPath } from '../utils/pilotPaths.js';
 
 async function resolveRepoProjectPath(projectName) {
-  const pilotHome = resolvePilotHome(process.env);
+  const pilotHome = resolveScopedHome();
   return resolveLinkedRepoPath(projectName, pilotHome);
 }
 import { detectTaskMasterMCPServer } from '../utils/mcp-detector.js';

@@ -3,10 +3,10 @@ import { spawn } from 'child_process';
 import path from 'path';
 import { promises as fs } from 'fs';
 import { extractProjectDirectory } from '../projects.js';
-import { resolvePilotHome, resolveLinkedRepoPath } from '../utils/pilotPaths.js';
+import { resolveScopedHome, resolveLinkedRepoPath } from '../utils/pilotPaths.js';
 
 async function resolveRepoProjectPath(projectName) {
-  const pilotHome = resolvePilotHome(process.env);
+  const pilotHome = resolveScopedHome();
   return resolveLinkedRepoPath(projectName, pilotHome);
 }
 import { runChatViaGateway } from '../pilotdeck-bridge.js';

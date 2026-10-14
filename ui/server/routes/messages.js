@@ -17,13 +17,13 @@
 import express from 'express';
 import { getPilotDeckGateway } from '../pilotdeck-bridge.js';
 import { createNormalizedMessage } from '../pilotdeck-message.js';
-import { resolvePilotHome, resolveGatewayProjectKey } from '../utils/pilotPaths.js';
+import { resolveScopedHome, resolveGatewayProjectKey } from '../utils/pilotPaths.js';
 
 const router = express.Router();
 const REPO_ROOT = process.cwd();
 
 function resolveMessagesProjectKey(projectPathOrName) {
-  const pilotHome = resolvePilotHome(process.env);
+  const pilotHome = resolveScopedHome();
   const raw = String(projectPathOrName || REPO_ROOT);
   return resolveGatewayProjectKey(raw, pilotHome);
 }

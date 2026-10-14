@@ -70,7 +70,7 @@ import {
   clearProjectDirectoryCache,
   searchConversations,
 } from './projects.js';
-import { resolvePilotHome, resolveProjectChatDir, sanitizeSessionIdForPath, resolveLinkedRepoPath, resolveGatewayProjectKey } from './utils/pilotPaths.js';
+import { resolveScopedHome, resolveProjectChatDir, sanitizeSessionIdForPath, resolveLinkedRepoPath, resolveGatewayProjectKey } from './utils/pilotPaths.js';
 import {
     runChatViaGateway,
     abortViaGateway,
@@ -137,7 +137,7 @@ import { ensureAdminUser } from './services/adminBootstrap.js';
 import { runServerStartupBeforeListen, startServerAfterStartup } from './services/server-startup.js';
 import { validateApiKey, authenticateToken, authenticateWebSocket } from './middleware/auth.js';
 import { requireAdmin } from './middleware/requireAdmin.js';
-import { runWithUserScope, userScopeMiddleware } from './middleware/userScope.js';
+import { runWithUserScope, userScopeMiddleware, requireUserScope } from './middleware/userScope.js';
 import { createAdminUsersRouter } from './routes/adminUsers.js';
 import { DISABLE_LOCAL_AUTH, IS_PLATFORM } from './constants/config.js';
 import { getConnectableHost } from '../shared/networkHosts.js';
@@ -649,7 +649,7 @@ app.post('/api/always-on/cron-jobs', ...requireUser, async (req, res) => {
         const timezone = typeof req.body?.timezone === 'string' && req.body.timezone.trim()
             ? req.body.timezone.trim()
             : undefined;
-        const pilotHome = resolvePilotHome(process.env);
+        const pilotHome = resolveScopedHome();
         const projectKey = rawProjectKey
             ? resolveGatewayProjectKey(rawProjectKey, pilotHome)
             : '';
@@ -689,7 +689,7 @@ app.post('/api/always-on/cron-jobs/:taskId/run-now', ...requireUser, async (req,
         const result = await gateway.cronRunNow({
             taskId: req.params.taskId,
             projectKey: rawProjectKey
-                ? resolveGatewayProjectKey(String(rawProjectKey), resolvePilotHome(process.env))
+                ? resolveGatewayProjectKey(String(rawProjectKey), resolveScopedHome())
                 : undefined,
         });
         res.json(result);
@@ -706,7 +706,7 @@ app.post('/api/always-on/cron-jobs/:taskId/stop', ...requireUser, async (req, re
         const result = await gateway.cronStop({
             taskId: req.params.taskId,
             projectKey: rawProjectKey
-                ? resolveGatewayProjectKey(String(rawProjectKey), resolvePilotHome(process.env))
+                ? resolveGatewayProjectKey(String(rawProjectKey), resolveScopedHome())
                 : undefined,
         });
         res.json(result);
@@ -723,7 +723,7 @@ app.delete('/api/always-on/cron-jobs/:taskId', ...requireUser, async (req, res) 
         const result = await gateway.cronDelete({
             taskId: req.params.taskId,
             projectKey: rawProjectKey
-                ? resolveGatewayProjectKey(String(rawProjectKey), resolvePilotHome(process.env))
+                ? resolveGatewayProjectKey(String(rawProjectKey), resolveScopedHome())
                 : undefined,
             stopRunning: true,
         });
@@ -855,7 +855,7 @@ app.get('/api/projects/:projectName/sessions', ...requireUser, async (req, res) 
     try {
         const { limit = 5, offset = 0 } = req.query;
         const result = await getSessions(req.params.projectName, parseInt(limit), parseInt(offset));
-        applyCustomSessionNames(0, result.sessions, 'pilotdeck');
+        applyCustomSessionNames(requireUserScope().userId, result.sessions, 'pilotdeck');
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -938,7 +938,7 @@ app.delete('/api/projects/:projectName/sessions/:sessionId', ...requireUser, asy
             parentSessionId: req.query.parentSessionId || null,
             relativeTranscriptPath: req.query.relativeTranscriptPath || null,
         });
-        sessionNamesDb.deleteName(0, sessionId, 'pilotdeck');
+        sessionNamesDb.deleteName(requireUserScope().userId, sessionId, 'pilotdeck');
         console.log(`[API] Session ${sessionId} deleted successfully`);
         res.json({ success: true });
     } catch (error) {
@@ -965,7 +965,7 @@ app.put('/api/sessions/:sessionId/rename', ...requireUser, async (req, res) => {
         if (!provider || !VALID_PROVIDERS.includes(provider)) {
             return res.status(400).json({ error: `Provider must be one of: ${VALID_PROVIDERS.join(', ')}` });
         }
-        sessionNamesDb.setName(0, safeSessionId, provider, summary.trim());
+        sessionNamesDb.setName(requireUserScope().userId, safeSessionId, provider, summary.trim());
         res.json({ success: true });
     } catch (error) {
         console.error(`[API] Error renaming session ${req.params.sessionId}:`, error);
@@ -2914,7 +2914,7 @@ function handleShellConnection(ws, request) {
                 const rawProjectPath = data.projectPath || process.cwd();
                 let projectPath = rawProjectPath;
                 try {
-                    projectPath = resolveLinkedRepoPath(rawProjectPath, resolvePilotHome(process.env));
+                    projectPath = resolveLinkedRepoPath(rawProjectPath, resolveScopedHome());
                 } catch {
                     projectPath = rawProjectPath;
                 }

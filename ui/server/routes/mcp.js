@@ -13,7 +13,7 @@ import {
   writeMcpConfigFile,
   normalizeMcpConfig,
 } from '../services/mcpConfig.js';
-import { resolvePilotHome, resolveLinkedRepoPath } from '../utils/pilotPaths.js';
+import { resolveScopedHome, resolveLinkedRepoPath } from '../utils/pilotPaths.js';
 
 const router = express.Router();
 const __filename = fileURLToPath(import.meta.url);
@@ -21,7 +21,7 @@ const __dirname = dirname(__filename);
 
 function normalizeMcpProjectPath(projectPath) {
   if (!projectPath || typeof projectPath !== 'string') return undefined;
-  return resolveLinkedRepoPath(projectPath, resolvePilotHome(process.env));
+  return resolveLinkedRepoPath(projectPath, resolveScopedHome());
 }
 
 function spawnCli(command, args, options = {}) {

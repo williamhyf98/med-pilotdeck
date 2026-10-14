@@ -19,7 +19,7 @@ import fs from 'fs/promises';
 import path from 'path';
 
 import { isWarTraumaScope, resolveMemoryScopeIdentity } from '../utils/memoryIdentity.js';
-import { resolvePilotHome, resolveTypedProjectMemoryDir } from '../utils/pilotPaths.js';
+import { resolveScopedHome, resolveTypedProjectMemoryDir } from '../utils/pilotPaths.js';
 
 const router = express.Router();
 
@@ -353,7 +353,7 @@ function resolveScope(req, res) {
     return null;
   }
 
-  const pilotHome = resolvePilotHome(process.env);
+  const pilotHome = resolveScopedHome();
   const identity = resolveMemoryScopeIdentity({ projectKey, pilotHome, sessionId });
   if (!isWarTraumaScope(identity)) {
     // 通用医学项目根本没有 cases/ 目录，这不是错误状态而是「不适用」。

@@ -11,6 +11,7 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import caseStateRoutes from './caseState.js';
+import { userScopeMiddleware } from '../middleware/userScope.js';
 
 let PILOT_HOME = '';
 let server;
@@ -21,7 +22,7 @@ const GENERAL_PROJECT = 'general_med-xyz789';
 
 function caseDirFor(projectId, dirName) {
   const typeKey = projectId.startsWith('trauma_med') ? 'trauma_med' : 'general_med';
-  return path.join(PILOT_HOME, 'memory', typeKey, projectId, 'cases', dirName);
+  return path.join(PILOT_HOME, 'users', '1', 'memory', typeKey, projectId, 'cases', dirName);
 }
 
 function seedCase(projectId, dirName, { current, snapshots } = {}) {
@@ -87,6 +88,8 @@ beforeEach(async () => {
   process.env.PILOT_HOME = PILOT_HOME;
 
   const app = express();
+  app.use((req, _res, next) => { req.user = { id: 1, role: 'admin' }; next(); });
+  app.use(userScopeMiddleware);
   app.use('/cases', caseStateRoutes);
   await new Promise((resolve) => {
     server = app.listen(0, '127.0.0.1', resolve);

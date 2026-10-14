@@ -28,7 +28,7 @@ import {
 } from './pilotdeck-bridge.js';
 import { mapLegacySessionPresentation } from '../../src/web/server/legacySessionPresentation.js';
 import {
-    resolvePilotHome,
+    resolveScopedHome,
     createProjectId,
     createCollisionResistantProjectId,
     sanitizeSessionIdForPath,
@@ -48,6 +48,7 @@ import { archiveAndDeleteProjectStorage } from './utils/projectDelete.js';
 import { mapCronRunOutcome } from '../../src/cron/protocol/types.js';
 import sessionManager from './sessionManager.js';
 import { applyCustomSessionNames } from './database/db.js';
+import { requireUserScope } from './middleware/userScope.js';
 
 /** Project type ids (P0). Immutable after create. */
 export const PROJECT_TYPES = Object.freeze({
@@ -138,7 +139,7 @@ async function createSystemProject({ displayName, type }) {
         throw err;
     }
 
-    const pilotHome = resolvePilotHome(process.env);
+    const pilotHome = resolveScopedHome();
     const id = await allocateSystemProjectId(pilotHome, typeKey);
     const projectDir = resolveTypedProjectDir(id, pilotHome);
     const workspacePath = resolveWorkspaceDataRoot(id, pilotHome);
@@ -286,7 +287,7 @@ async function readMarkedProjectPaths() {
     // Scan ~/.pilotdeck/projects/[<typeKey>/]<id>/.cwd to recover real workspace paths
     // for projects whose encoded id is ambiguous (see addProjectManually).
     // Returns a Map<id, absoluteCwd>; missing/unreadable markers are skipped.
-    const pilotHome = resolvePilotHome(process.env);
+    const pilotHome = resolveScopedHome();
     const result = new Map();
     for await (const { projectId, projectDir } of iterateProjectDirs(pilotHome)) {
         const cwdFile = path.join(projectDir, '.cwd');
@@ -324,7 +325,7 @@ async function getProjects(progressCallback = null) {
     // the user-typed verbatim path, so it wins over the heuristic
     // decode). Session counts from the gateway are preserved.
     const byId = new Map();
-    const pilotHome = resolvePilotHome(process.env);
+    const pilotHome = resolveScopedHome();
     for (const project of webProjects) {
         const fullPath = project.fullPath || project.projectKey;
         if (!fullPath) continue;
@@ -394,7 +395,7 @@ async function getProjects(progressCallback = null) {
         const sessions = (sessionsResult.sessions || []).map((session) =>
             toLegacySession(session, name),
         );
-        applyCustomSessionNames(0, sessions, 'claude');
+        applyCustomSessionNames(requireUserScope().userId, sessions, 'claude');
 
         const taskmaster = await detectTaskMaster(workspacePath).catch(() => ({
             hasTaskmaster: false,
@@ -432,7 +433,7 @@ async function getProjects(progressCallback = null) {
 
 async function getSessions(projectName, limit = 5, offset = 0) {
     const gateway = await getPilotDeckGateway();
-    const pilotHome = resolvePilotHome(process.env);
+    const pilotHome = resolveScopedHome();
     const gatewayKey = resolveGatewayProjectKey(projectName, pilotHome);
     const cursor = offset > 0 ? String(offset) : undefined;
     // Fan-out the page query and the project summary (for the authoritative
@@ -472,7 +473,7 @@ async function getSessions(projectName, limit = 5, offset = 0) {
  * Resolve a `projectName` to the workspace data root used as agent cwd.
  */
 async function extractProjectDirectory(projectName) {
-    const pilotHome = resolvePilotHome(process.env);
+    const pilotHome = resolveScopedHome();
     const workspaceDir = resolveWorkspaceDirectoryForProjectName(projectName, pilotHome);
     ensureWorkspaceLayout(workspaceDir);
     if (projectName) {
@@ -489,7 +490,7 @@ async function addProjectManually(projectPath, _displayName = null) {
         throw new Error('projectPath is required');
     }
     const absolute = path.resolve(projectPath);
-    const pilotHome = resolvePilotHome(process.env);
+    const pilotHome = resolveScopedHome();
     const name = await allocateProjectIdForPath(absolute, pilotHome);
     rememberProjectDirectory(name, absolute);
 
@@ -558,7 +559,7 @@ async function renameProject(_projectName, _displayName) {
 }
 
 async function deleteSession(projectName, sessionId, _options = {}) {
-    const pilotHome = resolvePilotHome(process.env);
+    const pilotHome = resolveScopedHome();
     const result = await deleteSessionArtifacts(projectName, sessionId, { pilotHome });
     return result;
 }
@@ -569,7 +570,7 @@ async function deleteSession(projectName, sessionId, _options = {}) {
  * @returns {{ success: boolean, projectId: string, archivePath: string | null }}
  */
 async function deleteProject(projectName, force = false) {
-    const pilotHome = resolvePilotHome(process.env);
+    const pilotHome = resolveScopedHome();
     const projectId = resolveProjectStorageId(
         resolveGatewayProjectKey(projectName, pilotHome),
         pilotHome,
@@ -601,7 +602,7 @@ async function resolveProjectIdForPathOrName(projectName, fullPath) {
 async function getProjectCronJobsOverview(projectName) {
     try {
         const gateway = await getPilotDeckGateway();
-        const pilotHome = resolvePilotHome(process.env);
+        const pilotHome = resolveScopedHome();
         const projectKey = projectName
             ? resolveGatewayProjectKey(projectName, pilotHome)
             : undefined;

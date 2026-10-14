@@ -4,7 +4,7 @@ import path from 'node:path';
 import mime from 'mime-types';
 import {
     PROJECT_TYPE_KEYS,
-    resolvePilotHome,
+    resolveScopedHome,
 } from '../utils/pilotPaths.js';
 
 const router = express.Router();
@@ -147,7 +147,7 @@ async function scanArchiveGroups(pilotHome) {
     return groups.sort((left, right) => right.id.localeCompare(left.id));
 }
 
-export async function scanStorage(pilotHome = resolvePilotHome(process.env)) {
+export async function scanStorage(pilotHome = resolveScopedHome()) {
     const [workspaces, archives] = await Promise.all([
         scanWorkspaceGroups(pilotHome),
         scanArchiveGroups(pilotHome),
@@ -234,7 +234,7 @@ async function deleteTarget(pilotHome, target) {
     await fs.rm(resolved.target);
 }
 
-export async function deleteStorageTargets(targets, pilotHome = resolvePilotHome(process.env)) {
+export async function deleteStorageTargets(targets, pilotHome = resolveScopedHome()) {
     const normalized = normalizeDeleteTargets(pilotHome, targets);
     const settled = await Promise.allSettled(
         normalized.map((target) => deleteTarget(pilotHome, target)),
@@ -266,7 +266,7 @@ router.get('/', async (_req, res) => {
 
 router.get('/preview', async (req, res) => {
     try {
-        const pilotHome = resolvePilotHome(process.env);
+        const pilotHome = resolveScopedHome();
         const resolved = await resolveManagedFile(pilotHome, {
             scope: req.query.scope,
             groupId: req.query.groupId,
