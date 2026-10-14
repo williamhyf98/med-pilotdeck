@@ -93,6 +93,10 @@ import {
     revokeUserGateway,
     shutdownGatewayPool,
 } from './pilotdeck-bridge.js';
+// Route-error → HTTP mapping (gateway 503s included) lives in its own module so
+// it is unit-testable; index.js boots a server at import time.
+import { sendRouteError } from './utils/routeErrors.js';
+import { bindConnectionScope, runMessageInScope, closeUserSockets } from './services/wsScope.js';
 import sessionManager from './sessionManager.js';
 import gitRoutes from './routes/git.js';
 import authRoutes from './routes/auth.js';
@@ -546,10 +550,7 @@ app.use('/api', validateApiKey);
 // Used by admin disable/reset/delete and by self-initiated logout/password change.
 let revokeUserRuntime = (userId) => {
     const id = String(userId);
-    for (const client of connectedClients) {
-        if (String(client.__pilotdeckUserId) !== id) continue;
-        try { client.close(4401, 'TOKEN_REVOKED'); } catch { /* already closed */ }
-    }
+    closeUserSockets(connectedClients, id);
     revokeUserGateway(id);
 };
 app.locals.revokeUserRuntime = (id) => revokeUserRuntime(id);
@@ -889,15 +890,6 @@ app.use(express.static(path.join(__dirname, '../dist'), {
 // Frontend now uses window.location for WebSocket URLs.
 // /api/system/update was the V1 "Update available" banner backend; the
 // VersionUpgradeModal that consumed it was removed during the V1 cleanup.
-
-// Gateway pool errors (503 GATEWAY_UNAVAILABLE / POOL_EXHAUSTED / START_TIMEOUT) carry
-// their own status; surface it instead of a blanket 500.
-function sendRouteError(res, error) {
-    const status = Number.isInteger(error?.status) && error.status >= 400 && error.status < 600 ? error.status : 500;
-    const body = { error: error?.message || 'Request failed' };
-    if (status !== 500 && typeof error?.code === 'string') body.code = error.code;
-    res.status(status).json(body);
-}
 
 app.get('/api/projects', ...requireUser, async (req, res) => {
     try {
@@ -2730,6 +2722,16 @@ class WebSocketWriter {
 function handleChatConnection(ws, request) {
     console.log('[INFO] Chat WebSocket connected');
 
+    // The scope is bound once, from THIS connection's authenticated user, and
+    // never re-read afterwards (Review Focus 1). verifyClient is the real gate;
+    // a request without a user can only mean a bug, so refuse the socket.
+    const scope = bindConnectionScope(request);
+    if (!scope) {
+        console.log('[WARN] Chat WebSocket without an authenticated user; refusing');
+        try { ws.close(4401, 'UNAUTHENTICATED'); } catch { /* already closed */ }
+        return;
+    }
+
     // Add to connected clients for project updates
     const userId = request?.user?.id ?? request?.user?.userId ?? null;
     ws.__pilotdeckUserId = userId;
@@ -2744,8 +2746,7 @@ function handleChatConnection(ws, request) {
         send: (data) => broadcastChatFrame(data, ws, userId),
     };
 
-    const scope = { userId, role: request?.user?.role ?? 'user' };
-    ws.on('message', (message) => runWithUserScope(scope, async () => {
+    ws.on('message', runMessageInScope(scope, async (message) => {
         try {
             const data = JSON.parse(message);
 
@@ -2960,9 +2961,13 @@ function handleShellConnection(ws, request) {
     let urlDetectionBuffer = '';
     const announcedAuthUrls = new Set();
 
-    const shellUserId = request?.user?.id ?? request?.user?.userId ?? null;
-    const shellScope = { userId: shellUserId, role: request?.user?.role ?? 'user' };
-    ws.on('message', (message) => runWithUserScope(shellScope, async () => {
+    const shellScope = bindConnectionScope(request);
+    if (!shellScope) {
+        console.log('[WARN] Shell WebSocket without an authenticated user; refusing');
+        try { ws.close(4401, 'UNAUTHENTICATED'); } catch { /* already closed */ }
+        return;
+    }
+    ws.on('message', runMessageInScope(shellScope, async (message) => {
         try {
             const data = JSON.parse(message);
             console.log('📨 Shell message received:', data.type);
