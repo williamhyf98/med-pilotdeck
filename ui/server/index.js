@@ -43,7 +43,6 @@ console.log('SERVER_PORT from runtime config:', process.env.SERVER_PORT);
 
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import os from 'os';
 import http from 'http';
@@ -133,6 +132,7 @@ import { createNormalizedMessage } from './pilotdeck-message.js';
 import { startEnabledPluginServers, stopAllPlugins, getPluginPort } from './utils/plugin-process-manager.js';
 import { initializeDatabase, sessionNamesDb, applyCustomSessionNames, userDb } from './database/db.js';
 import { configureWebPush } from './services/vapid-keys.js';
+import { ensureAdminUser } from './services/adminBootstrap.js';
 
 import { runServerStartupBeforeListen, startServerAfterStartup } from './services/server-startup.js';
 import { validateApiKey, authenticateToken, authenticateWebSocket } from './middleware/auth.js';
@@ -4011,15 +4011,6 @@ function listenWithPortFallback(srv, preferredPort, host) {
     });
 }
 
-async function ensureLocalUserWhenAuthDisabled() {
-    if (!DISABLE_LOCAL_AUTH || userDb.hasUsers()) {
-        return;
-    }
-    const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
-    userDb.createUser('local', passwordHash);
-    console.log(`${c.info('[INFO]')} Web UI login is disabled (default). Using built-in user. Set PILOTDECK_DISABLE_LOCAL_AUTH=0 to require username/password.`);
-}
-
 // Initialize database and start server
 async function startServer() {
     try {
@@ -4027,7 +4018,7 @@ async function startServer() {
             startupFn: async () => {
                 await runServerStartupBeforeListen({
                     initializeDatabaseFn: initializeDatabase,
-                    ensureLocalUserWhenAuthDisabledFn: ensureLocalUserWhenAuthDisabled,
+                    ensureAdminUserFn: () => ensureAdminUser({ userDb }),
                     configureWebPushFn: configureWebPush
                 });
             },
@@ -4137,6 +4128,10 @@ async function startServer() {
         process.on('SIGTERM', () => void gracefulShutdown());
         process.on('SIGINT', () => void gracefulShutdown());
     } catch (error) {
+        if (error?.code === 'NO_ACTIVE_ADMIN') {
+            console.error(`${c.warn('[ERROR]')} ${error.message}`);
+            process.exit(1);
+        }
         console.error('[ERROR] Failed to start server:', error);
         process.exit(1);
     }
