@@ -19,6 +19,7 @@ import { loadPilotConfig, resolvePilotHome } from "../pilot/index.js";
 import { createLocalGateway } from "./createLocalGateway.js";
 import { startPilotDeckServer } from "./pilotdeckServer.js";
 import { installGlobalProxy, reinstallGlobalProxy } from "./proxy.js";
+import { isAlwaysOnDisabled } from "./serverFeatureFlags.js";
 import { createShutdownAndExit } from "./shutdownCoordinator.js";
 import { createTelemetryCollector } from "../telemetry/index.js";
 
@@ -42,6 +43,13 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       await installGlobalProxy(snapshot.config.proxy.url);
     }
 
+    // Pooled per-user gateways share one pilotdeck.yaml: only a standalone
+    // gateway may run the background subsystems it declares.
+    const backgroundDisabled = isAlwaysOnDisabled(env);
+    if (backgroundDisabled) {
+      console.log("[server] always-on, cron and IM channels disabled (PILOTDECK_DISABLE_ALWAYS_ON)");
+    }
+
     let alwaysOn: AlwaysOnManager | undefined;
     let cron: CronManager | undefined;
     let deferredBroadcast: ((name: string, payload?: unknown) => void) | undefined;
@@ -61,6 +69,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     };
 
     function buildAlwaysOn(config: AlwaysOnConfig | undefined): AlwaysOnManager | undefined {
+      if (backgroundDisabled) return undefined;
       if (!config?.enabled) return undefined;
       return createAlwaysOnManager({
         config,
@@ -81,6 +90,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     }
 
     function buildCron(config: CronConfig | undefined): CronManager | undefined {
+      if (backgroundDisabled) return undefined;
       if (!config) return undefined;
       return createCronManager({
         config,
@@ -252,7 +262,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     let serverRef: Awaited<ReturnType<typeof startPilotDeckServer>> | undefined;
 
     async function hotStartWeixinChannel(): Promise<void> {
-      if (!serverRef) return;
+      if (backgroundDisabled || !serverRef) return;
       const savedWeixin = await channelStatePersistence.load<WeixinSessionMapperState>("weixin");
       await serverRef.hotStartChannel(new WeixinChannel({
         mapper: savedWeixin ? new WeixinSessionMapper(savedWeixin) : undefined,
@@ -261,7 +271,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     }
 
     async function handleAdapterHotReload(config: (typeof snapshot)["config"]): Promise<void> {
-      if (!serverRef) return;
+      if (backgroundDisabled || !serverRef) return;
       const parts: string[] = [];
 
       const fCfg = config.adapters?.feishu;
@@ -328,8 +338,8 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     // --- Server startup ---
 
     const envPort = Number.parseInt(env.PILOTDECK_GATEWAY_PORT ?? "", 10);
-    const extraChannels = await loadEnabledChannels(snapshot.config.adapters);
-    const feishuCfg = snapshot.config.adapters?.feishu;
+    const extraChannels = backgroundDisabled ? [] : await loadEnabledChannels(snapshot.config.adapters);
+    const feishuCfg = backgroundDisabled ? undefined : snapshot.config.adapters?.feishu;
     const savedFeishuState = await channelStatePersistence.load<FeishuSessionMapperState>("feishu");
     const feishuChannel = feishuCfg?.enabled === true
       ? new FeishuChannel({
@@ -343,7 +353,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
           onStateChange: (state) => channelStatePersistence.save("feishu", state),
         })
       : undefined;
-    const weixinCfg = snapshot.config.adapters?.weixin;
+    const weixinCfg = backgroundDisabled ? undefined : snapshot.config.adapters?.weixin;
     const savedWeixinState = await channelStatePersistence.load<WeixinSessionMapperState>("weixin");
     const weixinChannel = weixinCfg?.enabled === true
       ? new WeixinChannel({
@@ -351,7 +361,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
           onStateChange: (state) => channelStatePersistence.save("weixin", state),
         })
       : undefined;
-    const qqCfg = snapshot.config.adapters?.qq;
+    const qqCfg = backgroundDisabled ? undefined : snapshot.config.adapters?.qq;
     const savedQQState = await channelStatePersistence.load<QQSessionMapperState>("qq");
     const qqChannel = qqCfg?.enabled === true
       ? new QQChannel({
@@ -364,7 +374,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
           onStateChange: (state) => channelStatePersistence.save("qq", state),
         })
       : undefined;
-    const wecomCfg = snapshot.config.adapters?.wecom;
+    const wecomCfg = backgroundDisabled ? undefined : snapshot.config.adapters?.wecom;
     const savedWeComState = await channelStatePersistence.load<WeComSessionMapperState>("wecom");
     const wecomChannel = wecomCfg?.enabled === true
       ? new WeComChannel({
@@ -394,7 +404,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       }
     ).setPrepareWeixinLogin?.(async () => {
       const requestedAt = new Date().toISOString();
-      if (!serverRef) {
+      if (backgroundDisabled || !serverRef) {
         return { requested: false, requestedAt, reason: "unsupported" };
       }
       await hotStartWeixinChannel();
