@@ -31,9 +31,14 @@ function poolError(code, message) {
   return error;
 }
 
-export function defaultFindFreePort(startAt) {
+export function defaultFindFreePort(startAt, isReserved = () => false) {
   return new Promise((resolve, reject) => {
     const tryPort = (port) => {
+      if (isReserved(port)) {
+        if (port < 65000) tryPort(port + 1);
+        else reject(new Error('No free gateway port available'));
+        return;
+      }
       const srv = net.createServer();
       srv.once('error', (err) => (err.code === 'EADDRINUSE' && port < 65000 ? tryPort(port + 1) : reject(err)));
       srv.listen(port, '127.0.0.1', () => srv.close(() => resolve(port)));
@@ -85,6 +90,16 @@ export function createGatewayPool(options = {}) {
   const entries = new Map();
   /** Entries removed from `entries` whose child process may still be alive. */
   const stoppingEntries = new Set();
+  /** Ports handed to a gateway child that is starting/running/exiting. Bind-then-close probing
+   *  cannot see these until the child has bound, so concurrent starts would collide. */
+  const reservedPorts = new Set();
+  const isPortReserved = (port) => reservedPorts.has(port);
+  function releasePort(entry) {
+    if (entry.reservedPort != null) {
+      reservedPorts.delete(entry.reservedPort);
+      entry.reservedPort = null;
+    }
+  }
   /** userId → { count, until } */
   const failures = new Map();
   /** FIFO of { userId, resolve, reject } */
@@ -173,6 +188,7 @@ export function createGatewayPool(options = {}) {
         });
       }
       stoppingEntries.delete(entry);
+      releasePort(entry);
       writePidFile();
       log(`[gateway-pool] stopped gateway for user ${entry.userId} (${reason})`);
       drainWaiting();
@@ -207,7 +223,7 @@ export function createGatewayPool(options = {}) {
     const entry = {
       userId, state: 'starting', port: null, leases: 0, idleSince: null,
       startedAt: new Date().toISOString(), child: null, gateway: null,
-      exited: false, revoked: false, idleTimer: null, starting: null, stopped: null, cancelRetry: null,
+      exited: false, revoked: false, idleTimer: null, starting: null, stopped: null, cancelRetry: null, reservedPort: null,
     };
     // Registered before the first await so a concurrent acquire for the same
     // user sees the `starting` entry instead of spawning a second process.
@@ -234,10 +250,19 @@ export function createGatewayPool(options = {}) {
 
     try {
       const userHome = ensureUserHomeSkeleton(userId, env);
-      entry.port = await Promise.race([findFreePort(config.portBase), timeout]);
+      let port = await Promise.race([findFreePort(config.portBase, isPortReserved), timeout]);
+      // A concurrent start may have probed the same port before either child bound it.
+      while (reservedPorts.has(port)) {
+        if (port >= 65000) throw poolError('GATEWAY_UNAVAILABLE', 'No free gateway port available');
+        port = await Promise.race([findFreePort(port + 1, isPortReserved), timeout]);
+      }
       if (timedOut) throw poolError('GATEWAY_START_TIMEOUT', `Gateway for user ${userId} did not become ready within ${config.startTimeoutMs}ms`);
       // stopUser/shutdown may have landed while we awaited the port: never spawn then.
       if (entry.state === 'stopping' || shuttingDown) throw poolError('GATEWAY_UNAVAILABLE', `Gateway for user ${userId} was stopped before it started`);
+      // No await between the last reservedPorts check and this add.
+      reservedPorts.add(port);
+      entry.reservedPort = port;
+      entry.port = port;
       const { token, tokenPath } = ensureToken(userHome);
 
       entry.child = spawnGateway({ userId, userHome, port: entry.port, tokenPath, env, configPath });
@@ -253,6 +278,7 @@ export function createGatewayPool(options = {}) {
           entry.state = 'stopping';
           if (entry.idleTimer) { clearTimer(entry.idleTimer); entry.idleTimer = null; }
           entries.delete(userId);
+          releasePort(entry); // the child is gone, its port is free
           try { entry.gateway?.close?.(); } catch { /* ignore */ }
           log(`[gateway-pool] gateway for user ${userId} exited unexpectedly`);
         }
@@ -296,6 +322,7 @@ export function createGatewayPool(options = {}) {
       const externallyStopped = entry.state === 'stopping';
       if (!externallyStopped) recordFailure(userId);
       await stopEntry(entry, 'start-failed');
+      if (!entry.child || entry.exited) releasePort(entry);
       throw error?.code ? error : poolError('GATEWAY_UNAVAILABLE', error?.message ?? 'Gateway failed to start');
     } finally {
       clearTimer(timer);

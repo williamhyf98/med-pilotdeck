@@ -194,6 +194,44 @@ describe('gatewayPool', () => {
     second.forEach((l) => l.release());
   });
 
+  describe('port reservation', () => {
+    // Mimics bind-then-close probing: always reports the base port unless told it is reserved.
+    const stubbornFinder = () => vi.fn(async (_startAt, isReserved = () => false) => (isReserved(20000) ? 20001 : 20000));
+
+    it('gives concurrent first starts for different users different ports', async () => {
+      const f = makeFakes({ findFreePort: stubbornFinder() }); const pool = mk(f, { maxInstances: 3 });
+      const [a, b] = await Promise.all([pool.acquire(1), pool.acquire(2)]);
+      expect(f.spawned.map((x) => x.port).sort()).toEqual([20000, 20001]);
+      a.release(); b.release();
+    });
+
+    it('releases the reservation once the instance has exited', async () => {
+      const f = makeFakes({ findFreePort: stubbornFinder() }); const pool = mk(f, { maxInstances: 3 });
+      (await pool.acquire(1)).release();
+      await pool.stopUser(1);
+      (await pool.acquire(3)).release();
+      expect(f.spawned.map((x) => x.port)).toEqual([20000, 20000]);
+    });
+
+    it('keeps the reservation while the child is still exiting', async () => {
+      const f = makeFakes({ findFreePort: stubbornFinder(), killExitDelayMs: 20 }); const pool = mk(f, { maxInstances: 3 });
+      (await pool.acquire(1)).release();
+      const stopping = pool.stopUser(1);
+      const b = await pool.acquire(2);
+      expect(f.spawned[1].port).toBe(20001);
+      await clock.advance(20);
+      await stopping;
+      b.release();
+    });
+
+    it('releases the reservation when a start fails', async () => {
+      const f = makeFakes({ findFreePort: stubbornFinder(), failUsers: new Set(['9']) }); const pool = mk(f, { maxInstances: 3 });
+      await expect(pool.acquire(9)).rejects.toMatchObject({ code: 'GATEWAY_UNAVAILABLE' });
+      (await pool.acquire(1)).release();
+      expect(f.spawned.map((x) => x.port)).toEqual([20000, 20000]);
+    });
+  });
+
   it('shutdown stops everything and clears the pid file', async () => {
     const f = makeFakes(); const pool = mk(f);
     (await pool.acquire(1)).release(); (await pool.acquire(2)).release();
