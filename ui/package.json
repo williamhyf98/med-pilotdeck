@@ -12,7 +12,7 @@
     "check:runtime": "node ../scripts/check-node-runtime.mjs",
     "predev": "npm run check:runtime && node ../scripts/bootstrap-pilotdeck-config.mjs",
     "dev": "node ../scripts/dev-launcher.mjs",
-    "dev:concurrent": "concurrently --kill-others-on-fail --names gateway,server,client \"npm:dev:gateway\" \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:concurrent": "concurrently --kill-others-on-fail --names server,client \"npm:dev:server\" \"npm:dev:client\"",
     "dev:gateway": "npm --prefix .. run server",
     "dev:server": "npm run check:runtime && node --import tsx server/index.js",
     "dev:client": "vite",
@@ -28,7 +28,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "start": "npm run build && npm run start:built",
-    "start:built": "concurrently --kill-others-on-fail --names gateway,server \"npm:gateway\" \"npm:server\"",
+    "start:built": "npm run server",
     "postinstall": "node scripts/fix-node-pty.js"
   },
   "dependencies": {

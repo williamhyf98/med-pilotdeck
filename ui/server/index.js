@@ -90,6 +90,8 @@ import {
     getPilotDeckGateway,
     registerAlwaysOnNotificationForwarding,
     getSessionTokenBudget,
+    revokeUserGateway,
+    shutdownGatewayPool,
 } from './pilotdeck-bridge.js';
 import sessionManager from './sessionManager.js';
 import gitRoutes from './routes/git.js';
@@ -175,13 +177,22 @@ let projectsWatchers = [];
 const projectsWatcherTimers = new Map(); // userId -> debounce timer
 const connectedClients = new Set();
 const sessionWatchRegistry = createSessionWatchRegistry();
-registerAlwaysOnNotificationForwarding(connectedClients, (sessionId, frame) => {
-    // Always-On gateway notifications do not carry the originating UI socket.
-    // Delivering them to every tab caused unrelated sessions' live status
-    // (notably compaction progress) to race in the frontend. A tab explicitly
-    // watches its displayed session, so that registry is the routing authority.
-    broadcastToSessionWatchers(sessionId, frame, undefined);
-});
+// Always-On gateway notifications are subscribed per user gateway, and only in
+// single-user (no-login) mode — see startAlwaysOnForwardingForLocalUser().
+function startAlwaysOnForwardingForLocalUser() {
+    if (!DISABLE_LOCAL_AUTH) return;
+    const admin = userDb.getAdminUser();
+    if (!admin) return;
+    runWithUserScope({ userId: admin.id, role: admin.role }, () => {
+        registerAlwaysOnNotificationForwarding(connectedClients, (sessionId, frame) => {
+            // Always-On gateway notifications do not carry the originating UI socket.
+            // Delivering them to every tab caused unrelated sessions' live status
+            // (notably compaction progress) to race in the frontend. A tab explicitly
+            // watches its displayed session, so that registry is the routing authority.
+            broadcastToSessionWatchers(sessionId, frame, undefined);
+        });
+    });
+}
 const projectsRefreshRunning = new Map(); // userId -> true while getProjects() runs (prevents reentrant calls)
 
 function normalizeSessionId(value) {
@@ -531,11 +542,21 @@ app.get('/health', (req, res) => {
 // Optional API key validation (if configured)
 app.use('/api', validateApiKey);
 
+// Closes a user's WebSockets (4401 TOKEN_REVOKED) and recycles their Gateway.
+// Used by admin disable/reset/delete and by self-initiated logout/password change.
+let revokeUserRuntime = (userId) => {
+    const id = String(userId);
+    for (const client of connectedClients) {
+        if (String(client.__pilotdeckUserId) !== id) continue;
+        try { client.close(4401, 'TOKEN_REVOKED'); } catch { /* already closed */ }
+    }
+    revokeUserGateway(id);
+};
+app.locals.revokeUserRuntime = (id) => revokeUserRuntime(id);
+
 // Authentication routes (public)
 app.use('/api/auth', authRoutes);
 
-// Filled in by Task 11 (closes the user's WebSockets and recycles their Gateway).
-let revokeUserRuntime = (_userId) => {};
 app.use('/api/admin', authenticateToken, userScopeMiddleware, requireAdmin, createAdminUsersRouter({
     onUserRevoked: (userId) => revokeUserRuntime(userId),
 }));
@@ -631,6 +652,16 @@ app.get('/api/ccr/dashboard', ...requireUser, (_req, res) => {
         console.error('[router-dashboard] failed:', error);
         res.status(500).json({ error: error?.message || 'router-dashboard failed' });
     }
+});
+
+// Always-on tasks are tied to a single shared gateway; disabled in multi-user
+// mode (DISABLE_LOCAL_AUTH keeps the original single-user behaviour).
+app.use('/api/always-on', (_req, res, next) => {
+    if (DISABLE_LOCAL_AUTH) return next();
+    return res.status(501).json({
+        error: 'Always-on tasks are disabled in multi-user mode',
+        code: 'FEATURE_DISABLED',
+    });
 });
 
 app.get('/api/always-on/events', ...requireUser, async (req, res) => {
@@ -859,12 +890,21 @@ app.use(express.static(path.join(__dirname, '../dist'), {
 // /api/system/update was the V1 "Update available" banner backend; the
 // VersionUpgradeModal that consumed it was removed during the V1 cleanup.
 
+// Gateway pool errors (503 GATEWAY_UNAVAILABLE / POOL_EXHAUSTED / START_TIMEOUT) carry
+// their own status; surface it instead of a blanket 500.
+function sendRouteError(res, error) {
+    const status = Number.isInteger(error?.status) && error.status >= 400 && error.status < 600 ? error.status : 500;
+    const body = { error: error?.message || 'Request failed' };
+    if (status !== 500 && typeof error?.code === 'string') body.code = error.code;
+    res.status(status).json(body);
+}
+
 app.get('/api/projects', ...requireUser, async (req, res) => {
     try {
         const projects = await getProjects(makeProgressBroadcaster(requireUserScope().userId));
         res.json(projects);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        sendRouteError(res, error);
     }
 });
 
@@ -875,7 +915,7 @@ app.get('/api/projects/:projectName/sessions', ...requireUser, async (req, res) 
         applyCustomSessionNames(requireUserScope().userId, result.sessions, 'pilotdeck');
         res.json(result);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        sendRouteError(res, error);
     }
 });
 
@@ -4112,6 +4152,9 @@ async function startServer() {
                     // Start background memory scheduler for auto index/dream.
                     startMemoryScheduler();
 
+                    // Single-user mode only: subscribe to Always-On notifications.
+                    startAlwaysOnForwardingForLocalUser();
+
                     // Start server-side plugin processes for enabled plugins
                     startEnabledPluginServers().catch(err => {
                         console.error('[Plugins] Error during startup:', err.message);
@@ -4137,6 +4180,11 @@ async function startServer() {
 
             shutdownPromise = (async () => {
                 try {
+                    // Gateways first: they are child processes we must not orphan.
+                    console.log('[INFO] Shutdown requested, stopping gateways...');
+                    try { await shutdownGatewayPool(); } catch (error) {
+                        console.error('[gateway-pool] shutdown failed:', error?.message || error);
+                    }
                     stopMemoryScheduler();
                     closeMemoryServices();
                     stopPilotDeckConfigWatcher();

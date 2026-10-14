@@ -65,6 +65,13 @@ for port in "${PORTS[@]}"; do
   fi
 done
 
+# Per-user gateways are children of the UI server; if it died without cleaning
+# up, signal the pids it recorded.
+PIDS_FILE="${PILOT_HOME:-${PILOT_HOME_DIR}}/system/gateway-pids.json"
+if [ -f "$PIDS_FILE" ]; then
+  node -e 'const d=require(process.argv[1]);for(const {pid} of Object.values(d)){try{process.kill(pid,"SIGTERM")}catch{}}' "$PIDS_FILE" || true
+fi
+
 # Catch orphaned launcher / gateway if ports already freed.
 pkill -f "${PILOTDECK_ROOT}/scripts/dev-launcher.mjs" 2>/dev/null || true
 pkill -f "${PILOTDECK_ROOT}/src/cli/pilotdeck.ts server" 2>/dev/null || true

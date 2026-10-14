@@ -133,7 +133,7 @@ async function main() {
 
   const map = [
     ['server (express/ws)', server],
-    ['gateway (pilotdeck)', gateway],
+    ['gateway-base (pool)', gateway],
     ['vite client       ', vite],
   ];
   console.log('[dev-launcher] resolved dev ports:');
@@ -145,9 +145,9 @@ async function main() {
   const env = {
     ...process.env,
     SERVER_PORT: String(server.port),
-    PILOTDECK_GATEWAY_PORT: String(gateway.port),
-    PILOTDECK_GATEWAY_URL:
-      process.env.PILOTDECK_GATEWAY_URL ?? `ws://127.0.0.1:${gateway.port}/ws`,
+    // Gateways are spawned per user by the UI server's pool; this is only the
+    // port the pool starts probing from.
+    PILOTDECK_GATEWAY_PORT_BASE: String(gateway.port),
     VITE_PORT: String(vite.port),
   };
 

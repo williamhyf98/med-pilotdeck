@@ -78,7 +78,11 @@ router.get('/user', authenticateToken, (req, res) => {
 });
 
 router.post('/logout', authenticateToken, (req, res) => {
-  if (!DISABLE_LOCAL_AUTH) userDb.bumpTokenVersion(req.user.id);
+  if (!DISABLE_LOCAL_AUTH) {
+    userDb.bumpTokenVersion(req.user.id);
+    // Other devices are now logged out too: drop their sockets and recycle the gateway.
+    req.app.locals.revokeUserRuntime?.(req.user.id);
+  }
   // authenticateToken may have set X-Refreshed-Token for the pre-bump version; it is now revoked.
   res.removeHeader('X-Refreshed-Token');
   res.json({ success: true, message: 'Logged out successfully' });
@@ -97,6 +101,7 @@ router.post('/password', authenticateToken, async (req, res) => {
     }
     userDb.updatePasswordHash(user.id, await bcrypt.hash(newPassword, SALT_ROUNDS));
     userDb.bumpTokenVersion(user.id);
+    req.app.locals.revokeUserRuntime?.(user.id);
     const fresh = userDb.getUserById(user.id);
     // Drop the stale auto-refreshed token (old tokenVersion); the body carries the valid one.
     res.removeHeader('X-Refreshed-Token');

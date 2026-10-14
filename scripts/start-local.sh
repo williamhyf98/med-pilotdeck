@@ -44,7 +44,7 @@ ensure_node22() {
 assert_ports_free() {
   local busy=() entry name port
   for entry in "SERVER_PORT:${SERVER_PORT}" \
-               "PILOTDECK_GATEWAY_PORT:${PILOTDECK_GATEWAY_PORT}" \
+               "gateway-base:${PILOTDECK_GATEWAY_PORT}" \
                "VITE_PORT:${VITE_PORT}"; do
     name="${entry%%:*}"
     port="${entry##*:}"
@@ -117,7 +117,7 @@ echo "    root:  ${PILOTDECK_ROOT}"
 echo "    home:  ${PILOT_HOME}"
 echo "    node:  $(command -v node) ($(node -v))"
 echo "    log:   ${LOG_FILE}"
-echo "    ports: server=${SERVER_PORT} gateway=${PILOTDECK_GATEWAY_PORT} vite=${VITE_PORT}  (from ${LOCAL_PORT_CONFIG})"
+echo "    ports: server=${SERVER_PORT} gateway-base=${PILOTDECK_GATEWAY_PORT} vite=${VITE_PORT}  (from ${LOCAL_PORT_CONFIG})"
 if [[ -f "${PILOTDECK_ROOT}/config/deploy.env" ]]; then
   echo "    site:  ${PILOTDECK_ROOT}/config/deploy.env"
 else

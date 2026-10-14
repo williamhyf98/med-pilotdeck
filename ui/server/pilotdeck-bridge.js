@@ -2,12 +2,13 @@
  * PilotDeck bridge — the only chat-execution entry point in `ui/server/`.
  *
  *
- *   1. Connects to the standalone PilotDeck gateway server
- *      (`pilotdeck server`, default ws://127.0.0.1:18789/ws) as a
+ *   1. Leases a per-user PilotDeck gateway (`pilotdeck server`, one child
+ *      process per user with PILOT_HOME=<root>/users/<id>) from the
+ *      gateway pool (`services/gatewayPool.js`) and talks to it as a
  *      WebSocket client. We never instantiate an in-process gateway
  *      here — that would create a second, divergent agent runtime that
- *      doesn't share `~/.pilotdeck/projects/<id>/chats/*.jsonl` writes
- *      and permission state with the CLI/TUI surfaces. One process, one
+ *      doesn't share `<home>/projects/<id>/chats/*.jsonl` writes
+ *      and permission state with the CLI/TUI surfaces. One user, one
  *      gateway.
  *   2. Maps each old "sessionId" → PilotDeck "sessionKey" (1:1, generated
  *      on first turn and remembered for resume).
@@ -21,66 +22,45 @@
  * existing `ui/server/` route handlers — those are local/disk operations
  * that do not need an agent runtime.
  *
- * Two-process launch:
+ * Launch model:
  *
- *   - `pilotdeck server` (port 18789) owns the gateway, agent loop,
- *     model router, MCP runtime, cron daemon, and on-disk session
- *     transcripts. Edit `src/**` then restart this process to pick up
- *     changes — no `npm run build` required when running via `tsx`.
- *   - `ui/server/index.js` (port 3001) is the express bridge: REST
- *     endpoints for non-agent UI concerns + a WebSocket adapter that
- *     re-shapes gateway events into the legacy NormalizedMessage frames
- *     the React frontend reducer still expects.
- *
- * The pair is started together via `cd ui && npm run dev` (or
- * `npm start`), which uses `concurrently` to launch both. Either order
- * is fine — the bridge retries the WebSocket handshake for
- * `GATEWAY_CONNECT_TIMEOUT_MS` so race conditions resolve themselves.
+ *   - `ui/server/index.js` is the express bridge: REST endpoints for
+ *     non-agent UI concerns + a WebSocket adapter that re-shapes gateway
+ *     events into the legacy NormalizedMessage frames the React frontend
+ *     reducer still expects.
+ *   - Gateways are spawned on demand by the pool on a user's first request
+ *     (no pre-started gateway), and reaped when idle or revoked. Each
+ *     gateway owns that user's agent loop, model router, MCP runtime, cron
+ *     daemon and on-disk session transcripts.
  */
 
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
-import { promises as fsPromises } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 import { installGlobalProxy } from '../../src/cli/proxy.js';
 await installGlobalProxy();
 
-import { resolvePilotRoot, createProjectId, sanitizeSessionIdForPath, resolveGatewayProjectKey, resolveProjectStorageId, resolveTypedProjectDir, listProjectStorageIds, resolveAgentCwd } from './utils/pilotPaths.js';
-// Read the gateway client straight from TypeScript source via tsx — the UI
-// server is launched with `node --import tsx`, so no prior `npm run build`
-// is required. (A prior tsx 4.x JSDoc dynamic-import parse bug was fixed by
-// rewriting the offending @type annotation below to `ReturnType<typeof
-// createRemoteGateway>`, which is why this import can live on `src/` again.)
-import { createRemoteGateway } from '../../src/gateway/index.js';
+import { createProjectId, sanitizeSessionIdForPath, resolveGatewayProjectKey, resolveProjectStorageId, resolveTypedProjectDir, listProjectStorageIds, resolveAgentCwd } from './utils/pilotPaths.js';
 import {
     createVisibleErrorStatusDetail,
     isVisibleFailureStatusDetail,
 } from '../../src/status/agentStatus.js';
 import { createNormalizedMessage } from './pilotdeck-message.js';
 import { readPermissionSettings } from './services/permissionSettings.js';
+import { createGatewayPool } from './services/gatewayPool.js';
+import { readMultiUserConfig } from './services/pilotdeckConfig.js';
+import { requireUserScope, runWithUserScope } from './middleware/userScope.js';
+import { resolveScopedHome } from './utils/pilotPaths.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-// TODO(multi-user Task 11): still the single shared gateway's root until the
-// bridge leases a per-user gateway; Task 11 replaces every GENERAL_HOME use.
-const GENERAL_HOME = resolvePilotRoot(process.env);
 const TRUSTED_GATEWAY_TURN_OPTIONS = Symbol('pilotdeck.trustedGatewayTurnOptions');
 
-const GATEWAY_URL =
-    process.env.PILOTDECK_GATEWAY_URL || 'ws://127.0.0.1:18789/ws';
-const GATEWAY_TOKEN_PATH =
-    process.env.PILOTDECK_GATEWAY_TOKEN_PATH ||
-    path.join(GENERAL_HOME, 'server-token');
-// The two processes (gateway + bridge) are typically started in
-// parallel by `concurrently`. We allow up to 30 s for the gateway to
-// come up before failing the first call — covers cold MCP startup on
-// slower machines.
-const GATEWAY_CONNECT_TIMEOUT_MS =
-    Number.parseInt(process.env.PILOTDECK_BRIDGE_TIMEOUT ?? '', 10) || 60_000;
-const GATEWAY_CONNECT_RETRY_INTERVAL_MS = 500;
+// Per-session / per-user keyed state. All keys carry the user id via stateKey()
+// so two users never share an entry. (stateKey is a hoisted function declaration.)
 const subagentActivityStarts = new Map();
 /** @type {Map<string, string[]>} sessionId → [toolCallId, ...] for pending agent/Task tool calls */
 const pendingAgentToolCalls = new Map();
@@ -185,84 +165,45 @@ const WEB_DEFAULT_PERMISSION_MODE =
     process.env.PILOTDECK_WEB_PERMISSION_MODE || 'default';
 
 
-// Resolves to the Gateway returned by `createRemoteGateway`. We express
-// the type via `typeof createRemoteGateway` (the symbol is already imported
-// above) instead of a JSDoc dynamic-import annotation, because some tsx 4.x
-// builds mis-parse such tokens inside JSDoc when running through
-// `node --import tsx`, producing a spurious "Parse error" at EOF during
-// ESM rewriting on fresh installs.
-/** @type {ReturnType<typeof createRemoteGateway> | null} */
-let gatewayPromise = null;
+let poolInstance = null;
+function pool() {
+    if (!poolInstance) poolInstance = createGatewayPool({ config: readMultiUserConfig().gatewayPool });
+    return poolInstance;
+}
 
-async function readGatewayToken() {
+/** Run `fn` with the current user's Gateway; the lease spans the whole call. */
+export async function withUserGateway(fn) {
+    const { userId } = requireUserScope();
+    const lease = await pool().acquire(userId);
     try {
-        const raw = await fsPromises.readFile(GATEWAY_TOKEN_PATH, 'utf8');
-        const trimmed = raw.trim();
-        return trimmed || null;
-    } catch {
-        return null;
+        return await fn(lease.gateway);
+    } finally {
+        lease.release();
     }
 }
 
-async function connectWithRetry() {
-    const deadline = Date.now() + GATEWAY_CONNECT_TIMEOUT_MS;
-    let lastError;
-    while (Date.now() < deadline) {
-        const token = await readGatewayToken();
-        if (token) {
-            try {
-                const gateway = await createRemoteGateway({
-                    url: GATEWAY_URL,
-                    token,
-                    clientName: 'web',
-                });
-                console.log(
-                    `[pilotdeck-bridge] connected → ${GATEWAY_URL}`,
-                );
-                return gateway;
-            } catch (error) {
-                lastError = error;
-            }
-        }
-        await new Promise((resolve) =>
-            setTimeout(resolve, GATEWAY_CONNECT_RETRY_INTERVAL_MS),
-        );
-    }
-    const detail = lastError instanceof Error ? `: ${lastError.message}` : '';
-    throw new Error(
-        `[pilotdeck-bridge] gateway connect failed after ${GATEWAY_CONNECT_TIMEOUT_MS}ms${detail}`,
-    );
+/**
+ * Short-RPC accessor kept for existing callers (projects.js, gateway.js,
+ * index.js always-on routes). The lease is released before this returns; the
+ * pool only closes a gateway after the idle timeout or a revocation, so short
+ * RPCs finish well inside that window. Long flows (`submitTurn`) must use
+ * `withUserGateway`.
+ */
+export async function getPilotDeckGateway() {
+    return withUserGateway(async (gateway) => gateway);
 }
 
-function ensureGateway() {
-    if (!gatewayPromise) {
-        gatewayPromise = connectWithRetry().catch((error) => {
-            // Reset so the next caller retries instead of cementing the
-            // failure forever. The deadline inside connectWithRetry()
-            // already bounds individual attempts.
-            gatewayPromise = null;
-            throw error;
-        });
-    }
-    return gatewayPromise;
+export function revokeUserGateway(userId) {
+    pool().markRevoked(userId);
 }
 
-function resetGatewayConnection() {
-    gatewayPromise = null;
+export async function shutdownGatewayPool() {
+    if (poolInstance) await poolInstance.shutdown();
 }
 
 export function isGatewayUnavailableError(error) {
     const message = error instanceof Error ? error.message : String(error);
-    return /gateway websocket (closed|is not connected)|failed to connect to gateway websocket|gateway hello timed out|gateway closed during hello|gateway connect failed/i.test(message);
-}
-
-/**
- * Public accessor for the shared gateway client. Other ui/server modules
- * (`projects.js`, etc.) await this so they share one WebSocket
- * connection instead of opening their own.
- */
-export async function getPilotDeckGateway() {
-    return ensureGateway();
+    return /gateway websocket (closed|is not connected)|failed to connect to gateway websocket|gateway hello timed out|gateway closed during hello|gateway connect failed|gateway for user .* (exited|did not become ready)|too many active users/i.test(message);
 }
 
 export function getPilotDeckRepoRoot() {
@@ -276,6 +217,9 @@ export function getPilotDeckRepoRoot() {
  * the transcript and the agent state machine.
  */
 const sessionState = new Map();
+function stateKey(sessionKey) {
+    return `${requireUserScope().userId}:${sessionKey}`;
+}
 
 function isPilotDeckSessionKey(value) {
     if (typeof value !== 'string' || !value.trim()) return false;
@@ -296,7 +240,8 @@ function newSessionKey() {
 }
 
 function ensureSessionState(sessionKey, projectKey, channelKey) {
-    let state = sessionState.get(sessionKey);
+    const key = stateKey(sessionKey);
+    let state = sessionState.get(key);
     if (!state) {
         state = {
             sessionKey,
@@ -307,7 +252,7 @@ function ensureSessionState(sessionKey, projectKey, channelKey) {
             tokenBudget: null,
             hasVisibleFailureStatus: false,
         };
-        sessionState.set(sessionKey, state);
+        sessionState.set(key, state);
     } else {
         state.projectKey = projectKey;
         state.channelKey = channelKey;
@@ -322,7 +267,7 @@ function clearActiveRunIfCurrent(state, runId) {
 }
 
 export function getSessionTokenBudget(sessionKey) {
-    const state = sessionState.get(sessionKey);
+    const state = sessionState.get(stateKey(sessionKey));
     return state?.tokenBudget || {
         used: 0,
         total: 0,
@@ -650,9 +595,9 @@ export function gatewayEventToFrames(event, sessionId, provider) {
             const displayName = normalizeToolDisplayName(event.name);
             const rawName = String(event.name || '').toLowerCase();
             if (rawName === 'agent' || rawName === 'task') {
-                const pending = pendingAgentToolCalls.get(base.sessionId) || [];
+                const pending = pendingAgentToolCalls.get(stateKey(base.sessionId)) || [];
                 pending.push(event.toolCallId);
-                pendingAgentToolCalls.set(base.sessionId, pending);
+                pendingAgentToolCalls.set(stateKey(base.sessionId), pending);
             }
             return [
                 createNormalizedMessage({
@@ -997,7 +942,7 @@ function createSubagentStatusFrames(event, base) {
     const subagentId = String(detail.subagentId || 'unknown');
     const status = normalizeSubagentStatus(event.event, detail);
     const subagentType = detail.subagentType || 'agent';
-    const activityKey = `${base.sessionId || ''}:${subagentId}`;
+    const activityKey = stateKey(`${base.sessionId || ''}:${subagentId}`);
     const nowMs = Date.now();
     const reportedDurationMs = Number(detail.durationMs);
     let startedAtMs = subagentActivityStarts.get(activityKey);
@@ -1040,19 +985,19 @@ function createSubagentStatusFrames(event, base) {
     if (event.event === 'subagent_started') {
         let toolCallId = detail.toolCallId;
         if (!toolCallId) {
-            const pending = pendingAgentToolCalls.get(base.sessionId) || [];
+            const pending = pendingAgentToolCalls.get(stateKey(base.sessionId)) || [];
             toolCallId = pending.shift();
             if (pending.length === 0) {
-                pendingAgentToolCalls.delete(base.sessionId);
+                pendingAgentToolCalls.delete(stateKey(base.sessionId));
             } else {
-                pendingAgentToolCalls.set(base.sessionId, pending);
+                pendingAgentToolCalls.set(stateKey(base.sessionId), pending);
             }
         } else {
-            const pending = pendingAgentToolCalls.get(base.sessionId);
+            const pending = pendingAgentToolCalls.get(stateKey(base.sessionId));
             if (pending) {
                 const idx = pending.indexOf(toolCallId);
                 if (idx !== -1) pending.splice(idx, 1);
-                if (pending.length === 0) pendingAgentToolCalls.delete(base.sessionId);
+                if (pending.length === 0) pendingAgentToolCalls.delete(stateKey(base.sessionId));
             }
         }
         frames.push(createNormalizedMessage({
@@ -1399,8 +1344,8 @@ export async function runChatViaGateway(
     provider = 'pilotdeck',
 ) {
     const projectKey = resolveGatewayProjectKey(
-        options.projectPath || options.cwd || GENERAL_HOME,
-        GENERAL_HOME,
+        options.projectPath || options.cwd || resolveScopedHome(),
+        resolveScopedHome(),
     );
     const channelKey = 'web';
 
@@ -1444,167 +1389,167 @@ export async function runChatViaGateway(
     const traumaExtract = options?.traumaExtract === true;
     const traumaAttachments = sanitizeTraumaAttachments(
         options?.traumaAttachments,
-        resolveAgentCwd(projectKey, GENERAL_HOME),
+        resolveAgentCwd(projectKey, resolveScopedHome()),
     );
     console.log(`[pilotdeck-bridge] submitTurn runMode=${runMode} mode=${resolvedMode} (options.permissionMode=${options?.permissionMode}, options.mode=${options?.mode})`);
 
     let gw = null;
     try {
-        gw = await ensureGateway();
+        await withUserGateway(async (leasedGateway) => {
+            gw = leasedGateway;
 
-        if (staleRunId) {
-            const abortReason = options?.forceStart === true
-                ? 'user:force_start_next_turn'
-                : 'system:stale_turn';
-            const abortAction = options?.forceStart === true ? 'force-start aborting' : 'aborting stale';
-            console.log(
-                `[pilotdeck-bridge] ${abortAction} turn ${staleRunId} for ${sessionKey} before submit`,
-            );
-            try {
-                await gw.abortTurn({ sessionKey, runId: staleRunId, reason: abortReason });
-            } catch (err) {
-                if (options?.forceStart === true) {
-                    const message = 'Could not stop the current turn before sending the queued message. Please wait for the current turn to finish or try stopping it again.';
-                    console.warn('[pilotdeck-bridge] force-start abort failed:', err?.message || err);
-                    writer.send(
-                        createNormalizedMessage({
-                            provider,
-                            sessionId: sessionKey,
-                            kind: 'error',
-                            code: 'force_start_abort_failed',
-                            content: message,
-                            userHint: message,
-                        }),
-                    );
-                    clearActiveRunIfCurrent(state, staleRunId);
-                    return;
-                }
-                console.warn('[pilotdeck-bridge] stale abort failed (continuing):', err?.message || err);
-            }
-        }
-
-        const stream = gw.submitTurn({
-            sessionKey,
-            channelKey,
-            projectKey,
-            message: command ?? '',
-            ...(traumaForm ? { traumaForm } : {}),
-            ...(traumaRawInput ? { traumaRawInput } : {}),
-            ...(traumaExtract ? { traumaExtract: true } : {}),
-            ...(traumaAttachments ? { traumaAttachments } : {}),
-            runMode,
-            mode: resolvedMode,
-            // Only an explicit user-selected plan mode enables plan submission.
-            allowPlanModeTools: runMode === 'plan' && resolvedMode === 'plan',
-            runId,
-            ...(basePermissionMode ? { basePermissionMode } : {}),
-            ...(attachments.length > 0 ? { attachments } : {}),
-            ...(options.workspaceCwd ? { workspaceCwd: options.workspaceCwd } : {}),
-            ...getGatewayTurnSafetyOverrides(options),
-        });
-
-        let sawTurnCompleted = false;
-        let sawGatewayError = false;
-        for await (const event of stream) {
-            if (isVisibleFailureAgentStatus(event)) {
-                state.hasVisibleFailureStatus = true;
-            }
-            if (event && event.type === 'error') {
-                sawGatewayError = true;
-                console.error(
-                    '[pilotdeck-bridge] gateway error event:',
-                    JSON.stringify(
-                        {
-                            sessionKey,
-                            projectKey,
-                            runId,
-                            code: event.code,
-                            message: event.message,
-                            recoverable: event.recoverable,
-                        },
-                        null,
-                        2,
-                    ),
+            if (staleRunId) {
+                const abortReason = options?.forceStart === true
+                    ? 'user:force_start_next_turn'
+                    : 'system:stale_turn';
+                const abortAction = options?.forceStart === true ? 'force-start aborting' : 'aborting stale';
+                console.log(
+                    `[pilotdeck-bridge] ${abortAction} turn ${staleRunId} for ${sessionKey} before submit`,
                 );
-            }
-            if (event && event.type === 'context_budget') {
-                state.tokenBudget = {
-                    used: event.used,
-                    displayUsed: event.displayUsed,
-                    budgetUsed: event.budgetUsed,
-                    total: event.total,
-                    effectiveTotal: event.effectiveTotal,
-                    reservedOutputTokens: event.reservedOutputTokens,
-                    ratio: event.ratio,
-                    state: event.state,
-                };
-            }
-            const compactTokenBudget = event && event.type === 'agent_status' && event.event === 'compact_completed'
-                ? tokenBudgetFromCompact(state.tokenBudget, event.detail)
-                : null;
-            const eventForFrames = compactTokenBudget
-                ? {
-                    ...event,
-                    detail: {
-                        ...(event.detail || {}),
-                        tokenBudget: compactTokenBudget,
-                    },
-                }
-                : event;
-            if (compactTokenBudget) {
-                state.tokenBudget = compactTokenBudget;
-            }
-            // Clear active flag as soon as we see turn_completed so that
-            // a subsequent submitTurn from the user (who already sees the
-            // input box) does NOT trigger the stale-abort path while we
-            // wait for the async generator to fully close.
-            if (event && event.type === 'turn_completed') {
-                sawTurnCompleted = true;
-                clearActiveRunIfCurrent(state, runId);
-            }
-            const suppressDuplicateError = eventForFrames?.type === 'error' && state.hasVisibleFailureStatus;
-            if (!suppressDuplicateError) {
-                for (const frame of gatewayEventToFrames(eventForFrames, sessionKey, provider)) {
-                    writer.send(frame);
+                try {
+                    await gw.abortTurn({ sessionKey, runId: staleRunId, reason: abortReason });
+                } catch (err) {
+                    if (options?.forceStart === true) {
+                        const message = 'Could not stop the current turn before sending the queued message. Please wait for the current turn to finish or try stopping it again.';
+                        console.warn('[pilotdeck-bridge] force-start abort failed:', err?.message || err);
+                        writer.send(
+                            createNormalizedMessage({
+                                provider,
+                                sessionId: sessionKey,
+                                kind: 'error',
+                                code: 'force_start_abort_failed',
+                                content: message,
+                                userHint: message,
+                            }),
+                        );
+                        clearActiveRunIfCurrent(state, staleRunId);
+                        return;
+                    }
+                    console.warn('[pilotdeck-bridge] stale abort failed (continuing):', err?.message || err);
                 }
             }
-        }
 
-        if (!sawTurnCompleted && !sawGatewayError) {
-            const message = 'Gateway stream ended before turn_completed; no final assistant response was received.';
-            const userHint = 'The model stream ended before PilotDeck received a final turn result. Please retry this message; if it repeats, check the gateway/model provider logs.';
-            const statusEvent = createBridgeFailureStatusEvent({
-                event: 'gateway_stream_ended_without_completion',
-                message,
-                userHint,
-            });
-            console.warn(`[pilotdeck-bridge] ${message}`, { sessionKey, projectKey, runId });
-            await recordGatewayStatusMessage(gw, {
+            const stream = gw.submitTurn({
                 sessionKey,
-                turnId: runId,
+                channelKey,
                 projectKey,
-                event: statusEvent.event,
-                text: message,
-                detail: statusEvent.detail,
+                message: command ?? '',
+                ...(traumaForm ? { traumaForm } : {}),
+                ...(traumaRawInput ? { traumaRawInput } : {}),
+                ...(traumaExtract ? { traumaExtract: true } : {}),
+                ...(traumaAttachments ? { traumaAttachments } : {}),
+                runMode,
+                mode: resolvedMode,
+                // Only an explicit user-selected plan mode enables plan submission.
+                allowPlanModeTools: runMode === 'plan' && resolvedMode === 'plan',
+                runId,
+                ...(basePermissionMode ? { basePermissionMode } : {}),
+                ...(attachments.length > 0 ? { attachments } : {}),
+                ...(options.workspaceCwd ? { workspaceCwd: options.workspaceCwd } : {}),
+                ...getGatewayTurnSafetyOverrides(options),
             });
-            state.hasVisibleFailureStatus = true;
-            sendBridgeStatusEvent(writer, statusEvent, sessionKey, provider);
-        }
+
+            let sawTurnCompleted = false;
+            let sawGatewayError = false;
+            for await (const event of stream) {
+                if (isVisibleFailureAgentStatus(event)) {
+                    state.hasVisibleFailureStatus = true;
+                }
+                if (event && event.type === 'error') {
+                    sawGatewayError = true;
+                    console.error(
+                        '[pilotdeck-bridge] gateway error event:',
+                        JSON.stringify(
+                            {
+                                sessionKey,
+                                projectKey,
+                                runId,
+                                code: event.code,
+                                message: event.message,
+                                recoverable: event.recoverable,
+                            },
+                            null,
+                            2,
+                        ),
+                    );
+                }
+                if (event && event.type === 'context_budget') {
+                    state.tokenBudget = {
+                        used: event.used,
+                        displayUsed: event.displayUsed,
+                        budgetUsed: event.budgetUsed,
+                        total: event.total,
+                        effectiveTotal: event.effectiveTotal,
+                        reservedOutputTokens: event.reservedOutputTokens,
+                        ratio: event.ratio,
+                        state: event.state,
+                    };
+                }
+                const compactTokenBudget = event && event.type === 'agent_status' && event.event === 'compact_completed'
+                    ? tokenBudgetFromCompact(state.tokenBudget, event.detail)
+                    : null;
+                const eventForFrames = compactTokenBudget
+                    ? {
+                        ...event,
+                        detail: {
+                            ...(event.detail || {}),
+                            tokenBudget: compactTokenBudget,
+                        },
+                    }
+                    : event;
+                if (compactTokenBudget) {
+                    state.tokenBudget = compactTokenBudget;
+                }
+                // Clear active flag as soon as we see turn_completed so that
+                // a subsequent submitTurn from the user (who already sees the
+                // input box) does NOT trigger the stale-abort path while we
+                // wait for the async generator to fully close.
+                if (event && event.type === 'turn_completed') {
+                    sawTurnCompleted = true;
+                    clearActiveRunIfCurrent(state, runId);
+                }
+                const suppressDuplicateError = eventForFrames?.type === 'error' && state.hasVisibleFailureStatus;
+                if (!suppressDuplicateError) {
+                    for (const frame of gatewayEventToFrames(eventForFrames, sessionKey, provider)) {
+                        writer.send(frame);
+                    }
+                }
+            }
+
+            if (!sawTurnCompleted && !sawGatewayError) {
+                const message = 'Gateway stream ended before turn_completed; no final assistant response was received.';
+                const userHint = 'The model stream ended before PilotDeck received a final turn result. Please retry this message; if it repeats, check the gateway/model provider logs.';
+                const statusEvent = createBridgeFailureStatusEvent({
+                    event: 'gateway_stream_ended_without_completion',
+                    message,
+                    userHint,
+                });
+                console.warn(`[pilotdeck-bridge] ${message}`, { sessionKey, projectKey, runId });
+                await recordGatewayStatusMessage(gw, {
+                    sessionKey,
+                    turnId: runId,
+                    projectKey,
+                    event: statusEvent.event,
+                    text: message,
+                    detail: statusEvent.detail,
+                });
+                state.hasVisibleFailureStatus = true;
+                sendBridgeStatusEvent(writer, statusEvent, sessionKey, provider);
+            }
+        });
     } catch (error) {
         const rawMessage = error instanceof Error ? error.message : String(error);
-        const gatewayUnavailable = !gw || isGatewayUnavailableError(error);
-        if (gatewayUnavailable) {
-            resetGatewayConnection();
-        }
+        // Pool errors (acquire failed / start timeout / exhausted) carry status 503.
+        const gatewayUnavailable = error?.status === 503 || isGatewayUnavailableError(error);
         const message = gatewayUnavailable ? 'PilotDeck gateway is unavailable.' : rawMessage;
         const statusEvent = gatewayUnavailable
             ? createBridgeFailureStatusEvent({
                 event: 'gateway_unavailable',
                 message,
-                userHint: 'Start or restart the PilotDeck gateway, then retry this message.',
+                userHint: 'Your PilotDeck gateway could not be started or is busy. Wait a moment, then retry this message.',
                 scope: 'preflight',
                 detail: {
-                    gatewayUrl: GATEWAY_URL,
+                    code: typeof error?.code === 'string' ? error.code : undefined,
                 },
             })
             : createBridgeFailureStatusEvent({
@@ -1654,78 +1599,90 @@ async function recordGatewayStatusMessage(gateway, { sessionKey, turnId, project
 }
 
 export async function abortViaGateway(sessionId, _provider = 'pilotdeck') {
-    const gw = await ensureGateway();
     const sessionKey = isPilotDeckSessionKey(sessionId) ? sessionId : null;
     if (!sessionKey) return false;
-    const state = sessionState.get(sessionKey);
-    try {
-        const runId = state?.runId;
-        await gw.abortTurn({ sessionKey, runId });
-        if (state && (!runId || state.runId === runId)) {
-            state.active = false;
-            state.runId = undefined;
+    return withUserGateway(async (gw) => {
+        const state = sessionState.get(stateKey(sessionKey));
+        try {
+            const runId = state?.runId;
+            await gw.abortTurn({ sessionKey, runId });
+            if (state && (!runId || state.runId === runId)) {
+                state.active = false;
+                state.runId = undefined;
+            }
+            return true;
+        } catch (error) {
+            console.warn('[pilotdeck-bridge] abortTurn failed:', error);
+            return false;
         }
-        return true;
-    } catch (error) {
-        console.warn('[pilotdeck-bridge] abortTurn failed:', error);
-        return false;
-    }
+    });
 }
 
 export async function decidePermissionViaGateway(requestId, decision, options = {}) {
-    const gw = await ensureGateway();
-    // PermissionBus is keyed by sessionKey + requestId. We don't know
-    // which session owns the request, so try each known session.
-    for (const state of sessionState.values()) {
-        try {
-            const result = await gw.permissionDecide({
-                sessionKey: state.sessionKey,
-                requestId,
-                decision: decision === 'allow' || decision === true ? 'allow' : 'deny',
-                remember: options.remember,
-                reason: options.reason,
-            });
-            if (result?.delivered) return true;
-        } catch (error) {
-            console.warn('[pilotdeck-bridge] permissionDecide failed:', error);
+    return withUserGateway(async (gw) => {
+        // PermissionBus is keyed by sessionKey + requestId. We don't know
+        // which session owns the request, so try each of this user's known sessions.
+        for (const state of userSessionStates()) {
+            try {
+                const result = await gw.permissionDecide({
+                    sessionKey: state.sessionKey,
+                    requestId,
+                    decision: decision === 'allow' || decision === true ? 'allow' : 'deny',
+                    remember: options.remember,
+                    reason: options.reason,
+                });
+                if (result?.delivered) return true;
+            } catch (error) {
+                console.warn('[pilotdeck-bridge] permissionDecide failed:', error);
+            }
         }
-    }
-    return false;
+        return false;
+    });
 }
 
 export async function grantSessionPermissionViaGateway(sessionId, entry) {
-    const gw = await ensureGateway();
-    if (!isPilotDeckSessionKey(sessionId) || typeof entry !== 'string' || !entry.trim()) {
-        return false;
-    }
-    try {
-        const result = await gw.grantSessionPermission({
-            sessionKey: sessionId,
-            entry,
-        });
-        return Boolean(result?.granted);
-    } catch (error) {
-        console.warn('[pilotdeck-bridge] grantSessionPermission failed:', error);
-        return false;
-    }
+    return withUserGateway(async (gw) => {
+        if (!isPilotDeckSessionKey(sessionId) || typeof entry !== 'string' || !entry.trim()) {
+            return false;
+        }
+        try {
+            const result = await gw.grantSessionPermission({
+                sessionKey: sessionId,
+                entry,
+            });
+            return Boolean(result?.granted);
+        } catch (error) {
+            console.warn('[pilotdeck-bridge] grantSessionPermission failed:', error);
+            return false;
+        }
+    });
 }
 
 export function isSessionActiveViaGateway(sessionId) {
     if (!isPilotDeckSessionKey(sessionId)) return false;
-    return Boolean(sessionState.get(sessionId)?.active);
+    return Boolean(sessionState.get(stateKey(sessionId))?.active);
 }
 
 export async function getActiveTurnSnapshotFramesViaGateway(sessionId, provider = 'pilotdeck') {
     if (!isPilotDeckSessionKey(sessionId)) return [];
-    const gw = await ensureGateway();
-    if (typeof gw.getActiveTurnSnapshot !== 'function') return [];
-    const snapshot = await gw.getActiveTurnSnapshot({ sessionKey: sessionId });
-    if (!snapshot?.active || !Array.isArray(snapshot.events)) return [];
-    return snapshot.events.flatMap((event) => gatewayEventToFrames(event, sessionId, provider) || []);
+    return withUserGateway(async (gw) => {
+        if (typeof gw.getActiveTurnSnapshot !== 'function') return [];
+        const snapshot = await gw.getActiveTurnSnapshot({ sessionKey: sessionId });
+        if (!snapshot?.active || !Array.isArray(snapshot.events)) return [];
+        return snapshot.events.flatMap((event) => gatewayEventToFrames(event, sessionId, provider) || []);
+    });
+}
+
+/** Session states owned by the current scoped user. */
+function userSessionStates() {
+    const prefix = `${requireUserScope().userId}:`;
+    return [...sessionState.entries()]
+        .filter(([key]) => key.startsWith(prefix))
+        .map(([, state]) => state);
 }
 
 export function getActiveSessionIdsViaGateway() {
-    return [...sessionState.values()]
+    return userSessionStates()
         .filter((state) => state.active)
         .map((state) => state.sessionKey);
 }
@@ -1753,13 +1710,14 @@ export function getActiveSessionIdsViaGateway() {
 function _buildSessionProjectIndex() {
     const sessionIndex = new Map();
     const dirToPath = new Map();
+    const home = resolveScopedHome(); // outside the try: a missing user scope must throw, not read as "no projects"
     try {
-        for (const projectId of listProjectStorageIds(GENERAL_HOME)) {
-            const projectDir = resolveTypedProjectDir(projectId, GENERAL_HOME);
+        for (const projectId of listProjectStorageIds(home)) {
+            const projectDir = resolveTypedProjectDir(projectId, home);
             const cwdFile = path.join(projectDir, '.cwd');
             try {
                 const realPath = fs.readFileSync(cwdFile, 'utf-8').trim();
-                if (realPath) dirToPath.set(projectId, path.resolve(GENERAL_HOME, realPath));
+                if (realPath) dirToPath.set(projectId, path.resolve(home, realPath));
             } catch { /* no .cwd — will use fallback below */ }
 
             const chatsDir = path.join(projectDir, 'chats');
@@ -1777,11 +1735,12 @@ function _buildSessionProjectIndex() {
 
 function loadPersistedStatsFromDisk() {
     const result = new Map();
+    const home = resolveScopedHome(); // outside the try: a missing user scope must throw
     try {
         // Prefer new JSONL format, fall back to legacy JSON.
-        const jsonlPath = path.join(GENERAL_HOME, 'router', 'stats.jsonl');
-        const jsonPath = path.join(GENERAL_HOME, 'router', 'stats.json');
-        const legacyPath = path.join(GENERAL_HOME, 'router-stats.json');
+        const jsonlPath = path.join(home, 'router', 'stats.jsonl');
+        const jsonPath = path.join(home, 'router', 'stats.json');
+        const legacyPath = path.join(home, 'router-stats.json');
 
         let records;
         if (fs.existsSync(jsonlPath)) {
@@ -1794,15 +1753,15 @@ function loadPersistedStatsFromDisk() {
         // Build a filesystem-based sessionId→projectDirName index for
         // backward compatibility (records written before projectPath existed).
         const { sessionIndex: fsIndex, dirToPath } = _buildSessionProjectIndex();
-        const generalProjectDirName = createProjectId(GENERAL_HOME);
+        const generalProjectDirName = createProjectId(home);
 
         const resolveProjectPath = (dirName) => {
-            if (dirName === generalProjectDirName) return GENERAL_HOME;
+            if (dirName === generalProjectDirName) return home;
             const fromCwd = dirToPath.get(dirName);
             if (fromCwd) return fromCwd;
             const repoProjectDirName = createProjectId(REPO_ROOT);
             if (dirName === repoProjectDirName) return REPO_ROOT;
-            return GENERAL_HOME;
+            return home;
         };
 
         const byProject = new Map();
@@ -1819,7 +1778,7 @@ function loadPersistedStatsFromDisk() {
                     }
                 }
             }
-            if (!projectKey) projectKey = GENERAL_HOME;
+            if (!projectKey) projectKey = home;
 
             if (!byProject.has(projectKey)) {
                 byProject.set(projectKey, []);
@@ -1890,22 +1849,24 @@ function _formatPromptTitle(text) {
 }
 
 function lookupSessionTitle(sessionId, projectKey) {
-    if (_sessionTitleCache.has(sessionId)) return _sessionTitleCache.get(sessionId);
+    const cacheKey = stateKey(sessionId);
+    if (_sessionTitleCache.has(cacheKey)) return _sessionTitleCache.get(cacheKey);
     const title = _readFirstPrompt(sessionId, projectKey);
-    _sessionTitleCache.set(sessionId, title);
+    _sessionTitleCache.set(cacheKey, title);
     return title;
 }
 
 function _resolveTranscriptProjectId(projectKey) {
+    const home = resolveScopedHome();
     if (!projectKey) {
-        return resolveProjectStorageId(GENERAL_HOME, GENERAL_HOME);
+        return resolveProjectStorageId(home, home);
     }
-    const gatewayKey = resolveGatewayProjectKey(projectKey, GENERAL_HOME);
-    return resolveProjectStorageId(gatewayKey, GENERAL_HOME);
+    const gatewayKey = resolveGatewayProjectKey(projectKey, home);
+    return resolveProjectStorageId(gatewayKey, home);
 }
 
 function _transcriptFileCandidates(sessionId, projectKey) {
-    const pilotHome = GENERAL_HOME;
+    const pilotHome = resolveScopedHome();
     const safeId = sanitizeSessionIdForPath(sessionId);
     const fileVariants = safeId === sessionId ? [sessionId] : [safeId, sessionId];
     const candidates = [];
@@ -1958,7 +1919,7 @@ function _readFirstPrompt(sessionId, projectKey) {
 const _userQueriesCache = new Map();
 
 function extractUserQueries(sessionId, projectKey, limit = 20) {
-    const cacheKey = `${sessionId}::${projectKey || ''}`;
+    const cacheKey = stateKey(`${sessionId}::${projectKey || ''}`);
     const cached = _userQueriesCache.get(cacheKey);
     if (cached) {
         const currentMtime = _getTranscriptMtime(sessionId, projectKey);
@@ -2021,7 +1982,7 @@ function _readUserQueriesFromTranscript(sessionId, projectKey, limit) {
 const _toolSequenceCache = new Map();
 
 function _extractToolSequence(sessionId, projectKey) {
-    const cacheKey = `${sessionId}::${projectKey || ''}::tools`;
+    const cacheKey = stateKey(`${sessionId}::${projectKey || ''}::tools`);
     const cached = _toolSequenceCache.get(cacheKey);
     if (cached) {
         const currentMtime = _getTranscriptMtime(sessionId, projectKey);
@@ -2085,7 +2046,7 @@ function _readToolSequenceFromTranscript(sessionId, projectKey) {
 const _subagentPromptCache = new Map();
 
 function _extractSubagentPrompts(sessionId, projectKey) {
-    const cacheKey = `${sessionId}::${projectKey || ''}::subprompts`;
+    const cacheKey = stateKey(`${sessionId}::${projectKey || ''}::subprompts`);
     const cached = _subagentPromptCache.get(cacheKey);
     if (cached) {
         const currentMtime = _getTranscriptMtime(sessionId, projectKey);
@@ -2414,7 +2375,7 @@ function mergeRecordIntoSession(routing, record) {
 }
 
 function isGeneralProject(projectKey) {
-    return path.resolve(projectKey) === path.resolve(GENERAL_HOME);
+    return path.resolve(projectKey) === path.resolve(resolveScopedHome());
 }
 
 function deriveProjectName(projectKey) {
@@ -2493,6 +2454,9 @@ export function getRouterStatsSummary() {
  * @param {(sessionId: string, frame: object) => void} [forwardToSessionWatchers]
  */
 export function registerAlwaysOnNotificationForwarding(clients, forwardToSessionWatchers) {
+    // Single-user (no-login) mode only: must be called inside a user scope. Always-on
+    // is disabled in multi-user mode, so index.js never calls this there.
+    const scope = { ...requireUserScope() };
     const knownSessions = new Set();
 
     const forwardFrame = (sessionId, frame) => {
@@ -2509,8 +2473,10 @@ export function registerAlwaysOnNotificationForwarding(clients, forwardToSession
         }
     };
 
-    ensureGateway().then((gw) => {
-        gw.onNotification((name, payload) => {
+    // The lease is intentionally never released: this subscription lives on the
+    // gateway connection, so that gateway must not be idle-reaped while we listen.
+    pool().acquire(scope.userId).then(({ gateway: gw }) => {
+        gw.onNotification((name, payload) => runWithUserScope(scope, () => {
             if (name !== 'always-on:turn-event') return;
             const { sessionKey, channelKey, event } = payload ?? {};
             if (!sessionKey || !event) return;
@@ -2566,27 +2532,28 @@ export function registerAlwaysOnNotificationForwarding(clients, forwardToSession
             if (event.type === 'turn_completed') {
                 knownSessions.delete(sessionKey);
             }
-        });
+        }));
     }).catch((err) => {
         console.warn('[pilotdeck-bridge] failed to register always-on notification forwarding:', err?.message || err);
     });
 }
 
 export async function elicitationRespondViaGateway(requestId, answer) {
-    const gw = await ensureGateway();
-    for (const state of sessionState.values()) {
-        try {
-            const result = await gw.respondElicitation({
-                sessionKey: state.sessionKey,
-                requestId,
-                answer,
-            });
-            if (result?.delivered) return true;
-        } catch (error) {
-            console.warn('[pilotdeck-bridge] respondElicitation failed:', error);
+    return withUserGateway(async (gw) => {
+        for (const state of userSessionStates()) {
+            try {
+                const result = await gw.respondElicitation({
+                    sessionKey: state.sessionKey,
+                    requestId,
+                    answer,
+                });
+                if (result?.delivered) return true;
+            } catch (error) {
+                console.warn('[pilotdeck-bridge] respondElicitation failed:', error);
+            }
         }
-    }
-    return false;
+        return false;
+    });
 }
 
 export async function traumaConfirmTransitionViaGateway({
@@ -2595,38 +2562,53 @@ export async function traumaConfirmTransitionViaGateway({
     answer,
     expectedVersion,
 }) {
-    const gw = await ensureGateway();
-    if (typeof gw.traumaConfirmTransition !== 'function') {
-        throw new Error('The active gateway does not support trauma stage confirmation.');
-    }
-    return gw.traumaConfirmTransition({
-        projectKey,
-        sessionKey,
-        answer,
-        expectedVersion,
+    return withUserGateway(async (gw) => {
+        if (typeof gw.traumaConfirmTransition !== 'function') {
+            throw new Error('The active gateway does not support trauma stage confirmation.');
+        }
+        return gw.traumaConfirmTransition({
+            projectKey,
+            sessionKey,
+            answer,
+            expectedVersion,
+        });
     });
 }
 
 export async function traumaGetCaseViaGateway({ projectKey, sessionKey }) {
-    const gw = await ensureGateway();
-    if (typeof gw.traumaGetCase !== 'function') {
-        throw new Error('The active gateway does not support trauma case reads.');
-    }
-    return gw.traumaGetCase({ projectKey, sessionKey });
+    return withUserGateway(async (gw) => {
+        if (typeof gw.traumaGetCase !== 'function') {
+            throw new Error('The active gateway does not support trauma case reads.');
+        }
+        return gw.traumaGetCase({ projectKey, sessionKey });
+    });
 }
 
 export async function traumaOverrideStageViaGateway(input) {
-    const gw = await ensureGateway();
-    if (typeof gw.traumaOverrideStage !== 'function') {
-        throw new Error('The active gateway does not support trauma stage overrides.');
-    }
-    return gw.traumaOverrideStage(input);
+    return withUserGateway(async (gw) => {
+        if (typeof gw.traumaOverrideStage !== 'function') {
+            throw new Error('The active gateway does not support trauma stage overrides.');
+        }
+        return gw.traumaOverrideStage(input);
+    });
 }
 
 export async function traumaExtractFormViaGateway({ projectKey, sessionKey, rawText, caseHistory }) {
-    const gw = await ensureGateway();
-    if (typeof gw.traumaExtractForm !== 'function') {
-        throw new Error('The active gateway does not support trauma form extraction.');
-    }
-    return gw.traumaExtractForm({ projectKey, sessionKey, rawText, caseHistory });
+    return withUserGateway(async (gw) => {
+        if (typeof gw.traumaExtractForm !== 'function') {
+            throw new Error('The active gateway does not support trauma form extraction.');
+        }
+        return gw.traumaExtractForm({ projectKey, sessionKey, rawText, caseHistory });
+    });
 }
+
+// Test-only hook (never exported in production).
+export const __testing = (process.env.NODE_ENV === 'test' || process.env.VITEST)
+    ? {
+        touchSession(sessionKey, patch = {}, projectKey) {
+            const state = ensureSessionState(sessionKey, projectKey ?? resolveScopedHome(), 'web');
+            Object.assign(state, patch);
+            return state;
+        },
+    }
+    : undefined;
