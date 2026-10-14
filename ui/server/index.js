@@ -844,7 +844,7 @@ app.get('/api/projects/:projectName/sessions', authenticateToken, async (req, re
     try {
         const { limit = 5, offset = 0 } = req.query;
         const result = await getSessions(req.params.projectName, parseInt(limit), parseInt(offset));
-        applyCustomSessionNames(result.sessions, 'pilotdeck');
+        applyCustomSessionNames(0, result.sessions, 'pilotdeck');
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -927,7 +927,7 @@ app.delete('/api/projects/:projectName/sessions/:sessionId', authenticateToken, 
             parentSessionId: req.query.parentSessionId || null,
             relativeTranscriptPath: req.query.relativeTranscriptPath || null,
         });
-        sessionNamesDb.deleteName(sessionId, 'pilotdeck');
+        sessionNamesDb.deleteName(0, sessionId, 'pilotdeck');
         console.log(`[API] Session ${sessionId} deleted successfully`);
         res.json({ success: true });
     } catch (error) {
@@ -954,7 +954,7 @@ app.put('/api/sessions/:sessionId/rename', authenticateToken, async (req, res) =
         if (!provider || !VALID_PROVIDERS.includes(provider)) {
             return res.status(400).json({ error: `Provider must be one of: ${VALID_PROVIDERS.join(', ')}` });
         }
-        sessionNamesDb.setName(safeSessionId, provider, summary.trim());
+        sessionNamesDb.setName(0, safeSessionId, provider, summary.trim());
         res.json({ success: true });
     } catch (error) {
         console.error(`[API] Error renaming session ${req.params.sessionId}:`, error);

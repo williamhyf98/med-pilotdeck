@@ -4,6 +4,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { resolvePilotHome } from '../utils/pilotPaths.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -22,42 +23,31 @@ const c = {
     dim: (text) => `${colors.dim}${text}${colors.reset}`,
 };
 
-// Use DATABASE_PATH environment variable if set, otherwise use default location
-const DB_PATH = process.env.DATABASE_PATH || path.join(__dirname, 'auth.db');
+const PILOT_ROOT = resolvePilotHome(process.env);
+const DB_PATH = process.env.DATABASE_PATH?.trim()
+  ? path.resolve(process.env.DATABASE_PATH.trim())
+  : path.join(PILOT_ROOT, 'system', 'auth.db');
 const INIT_SQL_PATH = path.join(__dirname, 'init.sql');
 
-// Ensure database directory exists if custom path is provided
-if (process.env.DATABASE_PATH) {
-  const dbDir = path.dirname(DB_PATH);
-  try {
-    if (!fs.existsSync(dbDir)) {
-      fs.mkdirSync(dbDir, { recursive: true });
-      console.log(`Created database directory: ${dbDir}`);
-    }
-  } catch (error) {
-    console.error(`Failed to create database directory ${dbDir}:`, error.message);
-    throw error;
-  }
-}
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
-// As part of 1.19.2 we are introducing a new location for auth.db. The below handles exisitng moving legacy database from install directory to new location
-const LEGACY_DB_PATH = path.join(__dirname, 'auth.db');
-if (DB_PATH !== LEGACY_DB_PATH && !fs.existsSync(DB_PATH) && fs.existsSync(LEGACY_DB_PATH)) {
-  try {
-    fs.copyFileSync(LEGACY_DB_PATH, DB_PATH);
-    console.log(`[MIGRATION] Copied database from ${LEGACY_DB_PATH} to ${DB_PATH}`);
-    for (const suffix of ['-wal', '-shm']) {
-      if (fs.existsSync(LEGACY_DB_PATH + suffix)) {
-        fs.copyFileSync(LEGACY_DB_PATH + suffix, DB_PATH + suffix);
-      }
-    }
-  } catch (err) {
-    console.warn(`[MIGRATION] Could not copy legacy database: ${err.message}`);
+// One-time: an older single-user install kept auth.db at <PILOT_ROOT>/auth.db.
+// Copy it into system/ so accounts survive the upgrade. The install-directory
+// copy that used to live here was removed on purpose (it could resurrect a
+// stale database from the source tree).
+const ROOT_LEGACY_DB_PATH = path.join(PILOT_ROOT, 'auth.db');
+if (DB_PATH !== ROOT_LEGACY_DB_PATH && !fs.existsSync(DB_PATH) && fs.existsSync(ROOT_LEGACY_DB_PATH)) {
+  fs.copyFileSync(ROOT_LEGACY_DB_PATH, DB_PATH);
+  for (const suffix of ['-wal', '-shm']) {
+    if (fs.existsSync(ROOT_LEGACY_DB_PATH + suffix)) fs.copyFileSync(ROOT_LEGACY_DB_PATH + suffix, DB_PATH + suffix);
   }
+  console.log(`[MIGRATION] Copied ${ROOT_LEGACY_DB_PATH} → ${DB_PATH}`);
 }
 
 // Create database connection
 const db = new Database(DB_PATH);
+db.pragma('journal_mode = WAL');
+db.pragma('busy_timeout = 5000');
 
 // app_config must exist before any other module imports (auth.js reads the JWT secret at load time).
 // runMigrations() also creates this table, but it runs too late for existing installations
@@ -100,6 +90,45 @@ const runMigrations = () => {
       db.exec('ALTER TABLE users ADD COLUMN has_completed_onboarding BOOLEAN DEFAULT 0');
     }
 
+    if (!columnNames.includes('role')) {
+      console.log('Running migration: Adding role column');
+      db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'");
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)');
+    if (!columnNames.includes('token_version')) {
+      console.log('Running migration: Adding token_version column');
+      db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0');
+    }
+
+    const sessionNameCols = db.prepare('PRAGMA table_info(session_names)').all().map((c) => c.name);
+    if (sessionNameCols.length > 0 && !sessionNameCols.includes('user_id')) {
+      console.log('Running migration: Adding user_id to session_names');
+      db.exec(`
+        CREATE TABLE session_names_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL DEFAULT 0,
+          session_id TEXT NOT NULL,
+          provider TEXT NOT NULL DEFAULT 'claude',
+          custom_name TEXT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(user_id, session_id, provider)
+        );
+        INSERT INTO session_names_new (id, user_id, session_id, provider, custom_name, created_at, updated_at)
+          SELECT id, 0, session_id, provider, custom_name, created_at, updated_at FROM session_names;
+        DROP TABLE session_names;
+        ALTER TABLE session_names_new RENAME TO session_names;
+        CREATE INDEX IF NOT EXISTS idx_session_names_lookup ON session_names(user_id, session_id, provider);
+      `);
+    }
+
+    db.exec(`CREATE TABLE IF NOT EXISTS system_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+    db.exec("INSERT OR IGNORE INTO system_settings (key, value) VALUES ('allow_public_registration', 'true')");
+
     db.exec(`
       CREATE TABLE IF NOT EXISTS user_notification_preferences (
         user_id INTEGER PRIMARY KEY,
@@ -139,14 +168,15 @@ const runMigrations = () => {
     // Create session_names table if it doesn't exist (for existing installations)
     db.exec(`CREATE TABLE IF NOT EXISTS session_names (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL DEFAULT 0,
       session_id TEXT NOT NULL,
       provider TEXT NOT NULL DEFAULT 'claude',
       custom_name TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(session_id, provider)
+      UNIQUE(user_id, session_id, provider)
     )`);
-    db.exec('CREATE INDEX IF NOT EXISTS idx_session_names_lookup ON session_names(session_id, provider)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_session_names_lookup ON session_names(user_id, session_id, provider)');
 
     console.log('Database migrations completed successfully');
   } catch (error) {
@@ -181,24 +211,15 @@ const userDb = {
   },
 
   // Create a new user
-  createUser: (username, passwordHash) => {
-    try {
-      const stmt = db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)');
-      const result = stmt.run(username, passwordHash);
-      return { id: result.lastInsertRowid, username };
-    } catch (err) {
-      throw err;
-    }
+  createUser: (username, passwordHash, role = 'user') => {
+    const stmt = db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)');
+    const result = stmt.run(username, passwordHash, role);
+    return { id: result.lastInsertRowid, username, role };
   },
 
-  // Get user by username
+  // Get user by username (does not filter is_active; callers decide)
   getUserByUsername: (username) => {
-    try {
-      const row = db.prepare('SELECT * FROM users WHERE username = ? AND is_active = 1').get(username);
-      return row;
-    } catch (err) {
-      throw err;
-    }
+    return db.prepare('SELECT * FROM users WHERE username = ?').get(username);
   },
 
   // Update last login time (non-fatal — logged but not thrown)
@@ -210,14 +231,42 @@ const userDb = {
     }
   },
 
-  // Get user by ID
+  // Get user by ID (does not filter is_active; callers decide)
   getUserById: (userId) => {
-    try {
-      const row = db.prepare('SELECT id, username, created_at, last_login FROM users WHERE id = ? AND is_active = 1').get(userId);
-      return row;
-    } catch (err) {
-      throw err;
-    }
+    return db.prepare(
+      'SELECT id, username, role, token_version, is_active, created_at, last_login FROM users WHERE id = ?',
+    ).get(userId);
+  },
+
+  getAdminUser: () => {
+    return db.prepare(
+      "SELECT id, username, role, token_version, is_active, created_at, last_login FROM users WHERE role = 'admin' AND is_active = 1 ORDER BY id LIMIT 1",
+    ).get();
+  },
+
+  countActiveAdmins: () => {
+    return db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND is_active = 1").get().n;
+  },
+
+  listUsers: () => {
+    return db.prepare('SELECT id, username, role, is_active, created_at, last_login FROM users ORDER BY id').all();
+  },
+
+  bumpTokenVersion: (userId) => {
+    db.prepare('UPDATE users SET token_version = token_version + 1 WHERE id = ?').run(userId);
+    return db.prepare('SELECT token_version FROM users WHERE id = ?').get(userId).token_version;
+  },
+
+  setRole: (userId, role) => {
+    db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, userId);
+  },
+
+  setActive: (userId, isActive) => {
+    db.prepare('UPDATE users SET is_active = ? WHERE id = ?').run(isActive ? 1 : 0, userId);
+  },
+
+  updatePasswordHash: (userId, passwordHash) => {
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, userId);
   },
 
   getFirstUser: () => {
@@ -515,51 +564,51 @@ const pushSubscriptionsDb = {
   }
 };
 
-// Session custom names database operations
+// Session custom names database operations (scoped per user)
 const sessionNamesDb = {
   // Set (insert or update) a custom session name
-  setName: (sessionId, provider, customName) => {
+  setName: (userId, sessionId, provider, customName) => {
     db.prepare(`
-      INSERT INTO session_names (session_id, provider, custom_name)
-      VALUES (?, ?, ?)
-      ON CONFLICT(session_id, provider)
+      INSERT INTO session_names (user_id, session_id, provider, custom_name)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(user_id, session_id, provider)
       DO UPDATE SET custom_name = excluded.custom_name, updated_at = CURRENT_TIMESTAMP
-    `).run(sessionId, provider, customName);
+    `).run(userId, sessionId, provider, customName);
   },
 
   // Get a single custom session name
-  getName: (sessionId, provider) => {
+  getName: (userId, sessionId, provider) => {
     const row = db.prepare(
-      'SELECT custom_name FROM session_names WHERE session_id = ? AND provider = ?'
-    ).get(sessionId, provider);
+      'SELECT custom_name FROM session_names WHERE user_id = ? AND session_id = ? AND provider = ?'
+    ).get(userId, sessionId, provider);
     return row?.custom_name || null;
   },
 
   // Batch lookup — returns Map<sessionId, customName>
-  getNames: (sessionIds, provider) => {
+  getNames: (userId, sessionIds, provider) => {
     if (!sessionIds.length) return new Map();
     const placeholders = sessionIds.map(() => '?').join(',');
     const rows = db.prepare(
       `SELECT session_id, custom_name FROM session_names
-       WHERE session_id IN (${placeholders}) AND provider = ?`
-    ).all(...sessionIds, provider);
+       WHERE user_id = ? AND session_id IN (${placeholders}) AND provider = ?`
+    ).all(userId, ...sessionIds, provider);
     return new Map(rows.map(r => [r.session_id, r.custom_name]));
   },
 
   // Delete a custom session name
-  deleteName: (sessionId, provider) => {
+  deleteName: (userId, sessionId, provider) => {
     return db.prepare(
-      'DELETE FROM session_names WHERE session_id = ? AND provider = ?'
-    ).run(sessionId, provider).changes > 0;
+      'DELETE FROM session_names WHERE user_id = ? AND session_id = ? AND provider = ?'
+    ).run(userId, sessionId, provider).changes > 0;
   },
 };
 
 // Apply custom session names from the database (overrides CLI-generated summaries)
-function applyCustomSessionNames(sessions, provider) {
+function applyCustomSessionNames(userId, sessions, provider) {
   if (!sessions?.length) return;
   try {
     const ids = sessions.map(s => s.id);
-    const customNames = sessionNamesDb.getNames(ids, provider);
+    const customNames = sessionNamesDb.getNames(userId, ids, provider);
     for (const session of sessions) {
       const custom = customNames.get(session.id);
       if (custom) session.summary = custom;
@@ -596,6 +645,19 @@ const appConfigDb = {
   }
 };
 
+const systemSettingsDb = {
+  get: (key, fallback = null) => {
+    const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(key);
+    return row ? row.value : fallback;
+  },
+  set: (key, value) => {
+    db.prepare(
+      'INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP',
+    ).run(key, String(value));
+  },
+  isPublicRegistrationAllowed: () => systemSettingsDb.get('allow_public_registration', 'true') !== 'false',
+};
+
 // Backward compatibility - keep old names pointing to new system
 const githubTokensDb = {
   createGithubToken: (userId, tokenName, githubToken, description = null) => {
@@ -626,5 +688,6 @@ export {
   sessionNamesDb,
   applyCustomSessionNames,
   appConfigDb,
+  systemSettingsDb,
   githubTokensDb // Backward compatibility
 };

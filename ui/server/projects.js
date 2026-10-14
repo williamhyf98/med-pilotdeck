@@ -394,7 +394,7 @@ async function getProjects(progressCallback = null) {
         const sessions = (sessionsResult.sessions || []).map((session) =>
             toLegacySession(session, name),
         );
-        applyCustomSessionNames(sessions, 'claude');
+        applyCustomSessionNames(0, sessions, 'claude');
 
         const taskmaster = await detectTaskMaster(workspacePath).catch(() => ({
             hasTaskmaster: false,

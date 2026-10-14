@@ -108,7 +108,7 @@ function resolveSessionName(event) {
     return null;
   }
 
-  return normalizeSessionName(sessionNamesDb.getName(event.sessionId, event.provider));
+  return normalizeSessionName(sessionNamesDb.getName(0, event.sessionId, event.provider));
 }
 
 function buildPushBody(event) {
