@@ -86,7 +86,9 @@ prepare_environment() {
   export PILOTDECK_SKIP_BROWSER_OPEN=1
   export PILOTDECK_GATEWAY_PORT="${PILOTDECK_GATEWAY_PORT:-18789}"
   export SERVER_PORT="${SERVER_PORT:-3010}"
-  export PILOTDECK_GATEWAY_URL="${PILOTDECK_GATEWAY_URL:-ws://127.0.0.1:${PILOTDECK_GATEWAY_PORT}/ws}"
+  # The UI server starts one Gateway per user on demand; this is only the first
+  # port its pool tries, so there is no single gateway URL to export.
+  export PILOTDECK_GATEWAY_PORT_BASE="${PILOTDECK_GATEWAY_PORT_BASE:-$PILOTDECK_GATEWAY_PORT}"
 
   mkdir -p \
     "$RUNTIME_CACHE_DIR/tmp" "$RUNTIME_CACHE_DIR/xdg" "$RUNTIME_CACHE_DIR/npm" \

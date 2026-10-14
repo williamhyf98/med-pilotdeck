@@ -563,7 +563,7 @@ ln -s ../../users/<B> ./peek && cat peek/memory/global/*.md
 现有 `src/tool/builtin/filesystem/pathSafety.ts` 已对 `read_file`、`write_file`、`edit_file`、`glob`、`grep` 做范围校验，允许范围为当前 workspace 与 `$PILOT_HOME` 下若干固定子目录。多用户后 `$PILOT_HOME` 即用户 home，因此这套校验天然成为「只许在自己家里」。需补三处：
 
 1. **堵掉 bypass**：第 28 行 `permissionMode === "bypassPermissions"` 时直接放行。Web 模式下该分支改为仍然执行范围校验，只跳过交互确认。CLI 本机模式保留原语义。
-2. **realpath 比对**：所有「是否在根目录内」的判断先对候选路径与根目录做 `realpath`，再比较前缀。符号链接目标在用户 home 之外则拒绝。目标不存在的路径（写入新文件）对其父目录做 realpath。
+2. **realpath 比对**：所有「是否在根目录内」的判断先对候选路径与根目录做 `realpath`，再比较前缀。符号链接目标在用户 home 之外则拒绝。目标不存在的路径（写入新文件）对其父目录做 realpath。注意 §4 的 `users/<id>/plugins → ../../plugins` 符号链接使得 `users/<id>/plugins/../pilotdeck.yaml` 实际解析到系统级配置文件，因此纯字面量（lexical）的前缀比较不足以防护，必须先 realpath 再比较。
 3. **统一入口**：新增 `assertWithinUserHome(candidate, context)`，`pathSafety.ts` 与下述插件桥共用。错误码 `PATH_OUTSIDE_USER_HOME`，返回给模型的消息只说「路径不在允许范围内」，不回显真实根路径。
 
 插件工具：`src/mcp/runtime/PluginToToolBridge.ts` 在把参数交给插件前，对 schema 中标记为路径类型的字段调用同一校验；`plugins/med-tools/server/app.py` 里接受绝对路径直接透传的分支一并收口，服务端二次校验 `PILOT_HOME` 前缀。

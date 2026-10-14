@@ -294,7 +294,7 @@ PilotDeck 读取 `~/.pilotdeck/pilotdeck.yaml`。如果本机还没有配置文�
 node scripts/bootstrap-pilotdeck-config.mjs
 ```
 
-该命令会初始化 `~/.pilotdeck/pilotdeck.yaml`，让 Gateway 可以启动并进入首次 onboarding。随后打开 Web UI，在 onboarding/设置面板中完成 Provider 和 API Key 配置。
+该命令会初始化 `~/.pilotdeck/pilotdeck.yaml`，让每用户 Gateway 可以启动并进入首次 onboarding。随后打开 Web UI，在 onboarding/设置面板中完成 Provider 和 API Key 配置。
 
 注意：首次生成的配置只是占位配置，包含 `_placeholder/_placeholder`、`https://placeholder.invalid` 和 `PLACEHOLDER_RUN_ONBOARDING_TO_REPLACE`。它的作用是让 Gateway 和 Web UI 可以启动；在填写真实 Provider、API Key 和模型前，UI 仍会进入 onboarding，这是预期行为。
 
@@ -318,10 +318,12 @@ npm run start
 
 打开 <http://localhost:3001>。
 
-如果默认端口已被占用，可以通过环境变量换端口，例如：
+只需要启动 UI 服务，不需要单独启动 Gateway：UI 服务会在每个登录用户第一次请求时为其拉起一个 Gateway，用户闲置后再回收。
+
+如果默认端口已被占用，可以通过环境变量换端口。`PILOTDECK_GATEWAY_PORT_BASE` 是 Gateway 池尝试的第一个端口，后续用户依次占用其上的空闲端口：
 
 ```bash
-SERVER_PORT=3002 PILOTDECK_GATEWAY_PORT=18790 PILOTDECK_GATEWAY_URL=ws://127.0.0.1:18790/ws npm run start
+SERVER_PORT=3002 PILOTDECK_GATEWAY_PORT_BASE=18900 npm run start
 ```
 
 ## 常见问题
@@ -332,7 +334,7 @@ SERVER_PORT=3002 PILOTDECK_GATEWAY_PORT=18790 PILOTDECK_GATEWAY_URL=ws://127.0.0
 - `pnpm install --frozen-lockfile` 下载 npm 包超时：运行 `pnpm config set registry https://registry.npmmirror.com` 后重试。
 - macOS 出现 `ModuleNotFoundError: No module named 'distutils'`：一键安装脚本会尝试自动选择兼容 Python；手动运行 npm 命令时，可用 `PYTHON=/usr/bin/python3 corepack pnpm install --frozen-lockfile` 重试，或切换到其他带 `distutils` 的 Python。
 - macOS 缺少编译工具：不需要完整 Xcode，但 `xcrun --find clang` 必须可用。可运行 `xcode-select --install` 重新安装 Xcode Command Line Tools；如果已安装但状态异常，可运行 `sudo xcode-select --reset` 后重试。
-- 启动时报 `EADDRINUSE`：默认 `3001` 或 `18789` 已被占用，设置 `SERVER_PORT`、`PILOTDECK_GATEWAY_PORT` 和 `PILOTDECK_GATEWAY_URL` 后重试。
+- 启动时报 `EADDRINUSE`：默认 UI 端口 `3001` 已被占用，设置 `SERVER_PORT` 后重试；若每用户 Gateway 端口也冲突，再设置 `PILOTDECK_GATEWAY_PORT_BASE`。
 - 已有 `~/.pilotdeck/pilotdeck.yaml` 但仍进入 onboarding：检查配置里是否仍是 `PLACEHOLDER_RUN_ONBOARDING_TO_REPLACE` 或 `_placeholder/_placeholder`，需要替换为真实 Provider、API Key 和模型。
 - 缺少演示图片/视频：安装 Git LFS 后，在仓库根目录运行 `git lfs pull`。
 - 提示找不到 `rg`：安装 ripgrep 以启用完整的文件/搜索工具能力。

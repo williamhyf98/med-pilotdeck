@@ -154,49 +154,17 @@ if [ -n "${PILOTDECK_PROXY:-}" ]; then
   echo "[pilotdeck-docker] Proxy set to $PILOTDECK_PROXY"
 fi
 
-echo "[pilotdeck-docker] Starting PilotDeck (gateway + UI server)..."
+echo "[pilotdeck-docker] Starting PilotDeck UI server..."
 echo "[pilotdeck-docker] Config: $CONFIG_FILE"
 echo "[pilotdeck-docker] UI will be available at http://0.0.0.0:${SERVER_PORT:-3001}"
 
-# ── Remove stale auth token so the bridge never uses a leftover value ──
+# Remove stale auth tokens so a pooled gateway never reuses a leftover value.
 rm -f "$PILOT_HOME/server-token"
 
-# ── Start gateway + UI server via concurrently ────────────────────────
-# The bridge retries for PILOTDECK_BRIDGE_TIMEOUT ms (default 30s) which
-# may be too short on cold Docker starts. We first wait for the gateway
-# health endpoint before launching the bridge, eliminating the race.
+# No standalone gateway is pre-started here: the UI server's Gateway pool spawns
+# one `pilotdeck server` child per user on that user's first request
+# (PILOTDECK_GATEWAY_PORT_BASE sets the first port it tries), so there is a
+# single process to supervise.
 cd /app
 
-GATEWAY_PORT="${PILOTDECK_GATEWAY_PORT:-18789}"
-GATEWAY_HEALTH_URL="http://127.0.0.1:${GATEWAY_PORT}/health"
-GATEWAY_READY_TIMEOUT="${PILOTDECK_GATEWAY_READY_TIMEOUT:-120}"
-
-wait_for_gateway() {
-  echo "[pilotdeck-docker] Waiting for gateway to become ready (timeout=${GATEWAY_READY_TIMEOUT}s)..."
-  local elapsed=0
-  while [ "$elapsed" -lt "$GATEWAY_READY_TIMEOUT" ]; do
-    if curl -sf "$GATEWAY_HEALTH_URL" > /dev/null 2>&1; then
-      echo "[pilotdeck-docker] Gateway is ready (took ${elapsed}s)."
-      return 0
-    fi
-    sleep 1
-    elapsed=$((elapsed + 1))
-  done
-  echo "[pilotdeck-docker] WARNING: Gateway did not become ready within ${GATEWAY_READY_TIMEOUT}s, starting bridge anyway." >&2
-  return 0
-}
-
-node dist/src/cli/pilotdeck.js server &
-GATEWAY_PID=$!
-
-wait_for_gateway
-
-node --import tsx ui/server/index.js &
-BRIDGE_PID=$!
-
-# If either process exits, kill the other and propagate the exit code.
-wait -n $GATEWAY_PID $BRIDGE_PID 2>/dev/null
-EXIT_CODE=$?
-kill $GATEWAY_PID $BRIDGE_PID 2>/dev/null
-wait $GATEWAY_PID $BRIDGE_PID 2>/dev/null
-exit $EXIT_CODE
+exec node --import tsx ui/server/index.js

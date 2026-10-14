@@ -509,7 +509,7 @@ for (`$i = 0; `$i -lt `$args.Count; `$i++) {
 `$env:PILOTDECK_CONFIG_PATH = `$ConfigPath
 `$env:SERVER_PORT = [string](Find-FreePort `$ServerPort)
 `$env:PILOTDECK_GATEWAY_PORT = [string](Find-FreePort `$GatewayPort)
-`$env:PILOTDECK_GATEWAY_URL = "ws://127.0.0.1:`$env:PILOTDECK_GATEWAY_PORT/ws"
+`$env:PILOTDECK_GATEWAY_PORT_BASE = `$env:PILOTDECK_GATEWAY_PORT
 & node (Join-Path `$InstallDir 'scripts\bootstrap-pilotdeck-config.mjs')
 Write-Host "pilotdeck: starting at http://localhost:`$env:SERVER_PORT"
 Set-Location (Join-Path `$InstallDir 'ui')
@@ -537,7 +537,7 @@ Write-CmdLauncher
 $env:PILOTDECK_CONFIG_PATH = $ConfigPath
 $env:SERVER_PORT = [string](Find-FreePort $ServerPort)
 $env:PILOTDECK_GATEWAY_PORT = [string](Find-FreePort $GatewayPort)
-$env:PILOTDECK_GATEWAY_URL = "ws://127.0.0.1:$env:PILOTDECK_GATEWAY_PORT/ws"
+$env:PILOTDECK_GATEWAY_PORT_BASE = $env:PILOTDECK_GATEWAY_PORT
 Bootstrap-Config
 
 Write-Host ''
@@ -546,7 +546,7 @@ Write-Host "  App location: $InstallDir"
 Write-Host "  Config file:  $ConfigPath"
 Write-Host "  CLI command:  pilotdeck"
 Write-Host "  UI:           http://localhost:$env:SERVER_PORT"
-Write-Host "  Gateway:      $env:PILOTDECK_GATEWAY_URL"
+Write-Host "  Gateway ports: from $env:PILOTDECK_GATEWAY_PORT, one per user, started on demand"
 Write-Host ''
 Write-Host 'Open the Web UI to finish onboarding: choose a provider, paste an API key, and pick a model.'
 Write-Host ''
