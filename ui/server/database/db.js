@@ -269,15 +269,6 @@ const userDb = {
     db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, userId);
   },
 
-  getFirstUser: () => {
-    try {
-      const row = db.prepare('SELECT id, username, created_at, last_login FROM users WHERE is_active = 1 LIMIT 1').get();
-      return row;
-    } catch (err) {
-      throw err;
-    }
-  },
-
   updateGitConfig: (userId, gitName, gitEmail) => {
     try {
       const stmt = db.prepare('UPDATE users SET git_name = ?, git_email = ? WHERE id = ?');

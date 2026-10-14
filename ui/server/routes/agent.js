@@ -29,7 +29,7 @@ const validateExternalApiKey = (req, res, next) => {
   // Trust the request and use the default user context.
   if (IS_PLATFORM) {
     try {
-      const user = userDb.getFirstUser();
+      const user = userDb.getAdminUser();
       if (!user) {
         return res.status(500).json({ error: 'Platform mode: No user found in database' });
       }
