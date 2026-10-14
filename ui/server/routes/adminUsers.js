@@ -4,6 +4,7 @@ import bcrypt from 'bcrypt';
 import { randomBytes } from 'node:crypto';
 import { userDb, systemSettingsDb } from '../database/db.js';
 import { isReservedUsername } from '../services/adminBootstrap.js';
+import { ensureUserHomeSkeleton } from '../utils/pilotPaths.js';
 
 const fail = (res, status, code, error) => res.status(status).json({ error, code });
 const toPublic = (u) => ({ id: u.id, username: u.username, role: u.role, isActive: Number(u.is_active) === 1, createdAt: u.created_at, lastLogin: u.last_login });
@@ -41,6 +42,7 @@ export function createAdminUsersRouter({ onUserRevoked = () => {} } = {}) {
     if (isReservedUsername(username)) return fail(res, 403, 'RESERVED_USERNAME', 'This username is reserved');
     if (userDb.getUserByUsername(username)) return fail(res, 409, 'USERNAME_TAKEN', 'Username already exists');
     const created = userDb.createUser(username, await bcrypt.hash(password, 12), role);
+    ensureUserHomeSkeleton(created.id);
     res.status(201).json({ user: toPublic(userDb.getUserById(created.id)) });
   }));
 

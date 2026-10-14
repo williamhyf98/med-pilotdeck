@@ -137,11 +137,14 @@ import { ensureAdminUser } from './services/adminBootstrap.js';
 import { runServerStartupBeforeListen, startServerAfterStartup } from './services/server-startup.js';
 import { validateApiKey, authenticateToken, authenticateWebSocket } from './middleware/auth.js';
 import { requireAdmin } from './middleware/requireAdmin.js';
+import { runWithUserScope, userScopeMiddleware } from './middleware/userScope.js';
 import { createAdminUsersRouter } from './routes/adminUsers.js';
 import { DISABLE_LOCAL_AUTH, IS_PLATFORM } from './constants/config.js';
 import { getConnectableHost } from '../shared/networkHosts.js';
 import { contentDispositionAttachment } from './utils/downloadHeaders.js';
 import { createSessionWatchRegistry } from './session-watch-registry.js';
+
+const requireUser = [authenticateToken, userScopeMiddleware];
 
 // PilotDeck-only mode: chat execution always goes through src/gateway via
 // cursor-cli, openai-codex, gemini-cli) has been removed.
@@ -516,67 +519,67 @@ app.use('/api/auth', authRoutes);
 
 // Filled in by Task 11 (closes the user's WebSockets and recycles their Gateway).
 let revokeUserRuntime = (_userId) => {};
-app.use('/api/admin', authenticateToken, requireAdmin, createAdminUsersRouter({
+app.use('/api/admin', authenticateToken, userScopeMiddleware, requireAdmin, createAdminUsersRouter({
     onUserRevoked: (userId) => revokeUserRuntime(userId),
 }));
 
 // Projects API Routes (protected)
-app.use('/api/projects', authenticateToken, projectsRoutes);
+app.use('/api/projects', ...requireUser, projectsRoutes);
 
 // Git API Routes (protected)
-app.use('/api/git', authenticateToken, gitRoutes);
+app.use('/api/git', ...requireUser, gitRoutes);
 
 // MCP API Routes (protected)
-app.use('/api/mcp', authenticateToken, mcpRoutes);
+app.use('/api/mcp', ...requireUser, mcpRoutes);
 
 // TaskMaster API Routes (protected)
-app.use('/api/taskmaster', authenticateToken, taskmasterRoutes);
+app.use('/api/taskmaster', ...requireUser, taskmasterRoutes);
 
 // Memory API Routes (protected)
-app.use('/api/memory', authenticateToken, memoryRoutes);
+app.use('/api/memory', ...requireUser, memoryRoutes);
 
 // MCP utilities
-app.use('/api/mcp-utils', authenticateToken, mcpUtilsRoutes);
+app.use('/api/mcp-utils', ...requireUser, mcpUtilsRoutes);
 
 // Commands API Routes (protected)
-app.use('/api/commands', authenticateToken, commandsRoutes);
+app.use('/api/commands', ...requireUser, commandsRoutes);
 
 // Skills API Routes (protected) — list/edit/install skills surfaced in the
 // top-right Skills tab. Backed by bundled skills, ~/.pilotdeck/skills/, and
 // project-level .pilotdeck/skills/ via PilotDeck plugin runtime.
-app.use('/api/skills', authenticateToken, skillsRoutes);
+app.use('/api/skills', ...requireUser, skillsRoutes);
 
 // Managed workspace and deleted-project archive storage (P7.1).
-app.use('/api/storage', authenticateToken, storageRoutes);
+app.use('/api/storage', ...requireUser, storageRoutes);
 
 // Settings API Routes (protected)
-app.use('/api/settings', authenticateToken, settingsRoutes);
+app.use('/api/settings', ...requireUser, settingsRoutes);
 
 // PilotDeck unified YAML config routes (protected)
-app.use('/api/config', authenticateToken, configRoutes);
+app.use('/api/config', ...requireUser, configRoutes);
 
 // Gateway IM channel setup routes (protected)
-app.use('/api/gateway', authenticateToken, gatewayRoutes);
+app.use('/api/gateway', ...requireUser, gatewayRoutes);
 
 // User API Routes (protected)
-app.use('/api/user', authenticateToken, userRoutes);
+app.use('/api/user', ...requireUser, userRoutes);
 
 // Plugins API Routes (protected)
-app.use('/api/plugins', authenticateToken, pluginsRoutes);
+app.use('/api/plugins', ...requireUser, pluginsRoutes);
 
 // Unified session messages route (protected) — PilotDeck-only.
-app.use('/api/sessions', authenticateToken, messagesRoutes);
+app.use('/api/sessions', ...requireUser, messagesRoutes);
 
 // Agent API Routes (uses API key authentication)
 app.use('/api/agent', agentRoutes);
 
 // Self-update API Routes (protected)
-app.use('/api/update', authenticateToken, updateRoutes);
+app.use('/api/update', ...requireUser, updateRoutes);
 
 // Legacy four-provider config endpoints have been removed. The runtime
 // model is read from PilotDeck config; fall back to a static stub so any
 // older frontend code paths render without crashing.
-app.get('/api/agents/runtime-config', authenticateToken, (_req, res) => {
+app.get('/api/agents/runtime-config', ...requireUser, (_req, res) => {
     const permSettings = readPermissionSettings();
     res.json({
         pilotdeck: { provider: 'pilotdeck' },
@@ -604,7 +607,7 @@ for (const removedPrefix of PROVIDER_REMOVED_PATHS) {
 // frontend back-compat (Dashboard tab + useRouterSettings) but the data
 // now comes from `src/router/stats/TokenStatsCollector` via the
 
-app.get('/api/ccr/dashboard', authenticateToken, (_req, res) => {
+app.get('/api/ccr/dashboard', ...requireUser, (_req, res) => {
     try {
         res.json(getRouterDashboardData());
     } catch (error) {
@@ -613,7 +616,7 @@ app.get('/api/ccr/dashboard', authenticateToken, (_req, res) => {
     }
 });
 
-app.get('/api/always-on/events', authenticateToken, async (req, res) => {
+app.get('/api/always-on/events', ...requireUser, async (req, res) => {
     try {
         const limit = Number.parseInt(req.query?.limit || '', 10);
         const since = req.query?.since || undefined;
@@ -628,7 +631,7 @@ app.get('/api/always-on/events', authenticateToken, async (req, res) => {
     }
 });
 
-app.get('/api/always-on/cron-jobs', authenticateToken, async (_req, res) => {
+app.get('/api/always-on/cron-jobs', ...requireUser, async (_req, res) => {
     try {
         const result = await getProjectCronJobsOverview();
         res.json(result);
@@ -638,7 +641,7 @@ app.get('/api/always-on/cron-jobs', authenticateToken, async (_req, res) => {
     }
 });
 
-app.post('/api/always-on/cron-jobs', authenticateToken, async (req, res) => {
+app.post('/api/always-on/cron-jobs', ...requireUser, async (req, res) => {
     try {
         const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
         const rawProjectKey = typeof req.body?.projectKey === 'string' ? req.body.projectKey : '';
@@ -679,7 +682,7 @@ app.post('/api/always-on/cron-jobs', authenticateToken, async (req, res) => {
     }
 });
 
-app.post('/api/always-on/cron-jobs/:taskId/run-now', authenticateToken, async (req, res) => {
+app.post('/api/always-on/cron-jobs/:taskId/run-now', ...requireUser, async (req, res) => {
     try {
         const gateway = await getPilotDeckGateway();
         const rawProjectKey = req.body?.projectKey || req.query?.projectKey || undefined;
@@ -696,7 +699,7 @@ app.post('/api/always-on/cron-jobs/:taskId/run-now', authenticateToken, async (r
     }
 });
 
-app.post('/api/always-on/cron-jobs/:taskId/stop', authenticateToken, async (req, res) => {
+app.post('/api/always-on/cron-jobs/:taskId/stop', ...requireUser, async (req, res) => {
     try {
         const gateway = await getPilotDeckGateway();
         const rawProjectKey = req.body?.projectKey || req.query?.projectKey || undefined;
@@ -713,7 +716,7 @@ app.post('/api/always-on/cron-jobs/:taskId/stop', authenticateToken, async (req,
     }
 });
 
-app.delete('/api/always-on/cron-jobs/:taskId', authenticateToken, async (req, res) => {
+app.delete('/api/always-on/cron-jobs/:taskId', ...requireUser, async (req, res) => {
     try {
         const gateway = await getPilotDeckGateway();
         const rawProjectKey = req.body?.projectKey || req.query?.projectKey || undefined;
@@ -731,7 +734,7 @@ app.delete('/api/always-on/cron-jobs/:taskId', authenticateToken, async (req, re
     }
 });
 
-app.get('/api/ccr/health', authenticateToken, (_req, res) => {
+app.get('/api/ccr/health', ...requireUser, (_req, res) => {
     res.json({
         status: 'ok',
         timestamp: new Date().toISOString(),
@@ -741,7 +744,7 @@ app.get('/api/ccr/health', authenticateToken, (_req, res) => {
     });
 });
 
-app.get('/api/ccr/config', authenticateToken, (_req, res) => {
+app.get('/api/ccr/config', ...requireUser, (_req, res) => {
     // The legacy CCR YAML schema is no longer the source of truth for
     // model routing — that lives in PilotDeck config now. Return null so
     // the legacy useRouterSettings hook simply renders the "no config"
@@ -749,7 +752,7 @@ app.get('/api/ccr/config', authenticateToken, (_req, res) => {
     res.json(null);
 });
 
-app.get('/api/ccr/stats/summary', authenticateToken, (_req, res) => {
+app.get('/api/ccr/stats/summary', ...requireUser, (_req, res) => {
     try {
         res.json(getRouterStatsSummary());
     } catch (error) {
@@ -757,7 +760,7 @@ app.get('/api/ccr/stats/summary', authenticateToken, (_req, res) => {
     }
 });
 
-app.get('/api/ccr/stats/sessions/:sessionId', authenticateToken, (req, res) => {
+app.get('/api/ccr/stats/sessions/:sessionId', ...requireUser, (req, res) => {
     try {
         const stats = getRouterSessionStats(req.params.sessionId);
         if (!stats) {
@@ -769,7 +772,7 @@ app.get('/api/ccr/stats/sessions/:sessionId', authenticateToken, (req, res) => {
     }
 });
 
-app.post('/api/ccr/stats/reset', authenticateToken, (_req, res) => {
+app.post('/api/ccr/stats/reset', ...requireUser, (_req, res) => {
     // Reset would require reaching into per-project TokenStatsCollector
     // instances; that is not exposed today. Surface a clear hint instead
     // of silently no-oping.
@@ -779,14 +782,14 @@ app.post('/api/ccr/stats/reset', authenticateToken, (_req, res) => {
     });
 });
 
-app.put('/api/ccr/config', authenticateToken, (_req, res) => {
+app.put('/api/ccr/config', ...requireUser, (_req, res) => {
     res.status(501).json({
         error: 'not_implemented',
         message: 'Routing configuration is owned by PilotDeck config (~/.pilotdeck/pilotdeck.yaml). Edit it directly via /api/config.',
     });
 });
 
-app.get('/memory-dashboard', authenticateToken, (req, res) => {
+app.get('/memory-dashboard', ...requireUser, (req, res) => {
     const indexPath = path.join(MEMORY_DASHBOARD_DIR, 'index.html');
     if (!fs.existsSync(indexPath)) {
         res.status(404).type('text/plain').send('Memory dashboard assets not bundled.');
@@ -795,7 +798,7 @@ app.get('/memory-dashboard', authenticateToken, (req, res) => {
     res.sendFile(indexPath);
 });
 
-app.use('/memory-dashboard', authenticateToken, express.static(MEMORY_DASHBOARD_DIR, {
+app.use('/memory-dashboard', ...requireUser, express.static(MEMORY_DASHBOARD_DIR, {
     setHeaders: (res, filePath) => {
         if (filePath.endsWith('.html')) {
             res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -839,7 +842,7 @@ app.use(express.static(path.join(__dirname, '../dist'), {
 // /api/system/update was the V1 "Update available" banner backend; the
 // VersionUpgradeModal that consumed it was removed during the V1 cleanup.
 
-app.get('/api/projects', authenticateToken, async (req, res) => {
+app.get('/api/projects', ...requireUser, async (req, res) => {
     try {
         const projects = await getProjects(broadcastProgress);
         res.json(projects);
@@ -848,7 +851,7 @@ app.get('/api/projects', authenticateToken, async (req, res) => {
     }
 });
 
-app.get('/api/projects/:projectName/sessions', authenticateToken, async (req, res) => {
+app.get('/api/projects/:projectName/sessions', ...requireUser, async (req, res) => {
     try {
         const { limit = 5, offset = 0 } = req.query;
         const result = await getSessions(req.params.projectName, parseInt(limit), parseInt(offset));
@@ -859,7 +862,7 @@ app.get('/api/projects/:projectName/sessions', authenticateToken, async (req, re
     }
 });
 
-app.get('/api/trauma/cases/:sessionId', authenticateToken, async (req, res) => {
+app.get('/api/trauma/cases/:sessionId', ...requireUser, async (req, res) => {
     try {
         const projectKey = typeof req.query.projectKey === 'string' ? req.query.projectKey : '';
         if (!projectKey) {
@@ -875,7 +878,7 @@ app.get('/api/trauma/cases/:sessionId', authenticateToken, async (req, res) => {
     }
 });
 
-app.post('/api/trauma/cases/:sessionId/override', authenticateToken, async (req, res) => {
+app.post('/api/trauma/cases/:sessionId/override', ...requireUser, async (req, res) => {
     try {
         const body = req.body ?? {};
         const snapshot = await traumaOverrideStageViaGateway({
@@ -894,7 +897,7 @@ app.post('/api/trauma/cases/:sessionId/override', authenticateToken, async (req,
     }
 });
 
-app.post('/api/trauma/cases/:sessionId/extract', authenticateToken, async (req, res) => {
+app.post('/api/trauma/cases/:sessionId/extract', ...requireUser, async (req, res) => {
     try {
         const body = req.body ?? {};
         const projectKey = typeof body.projectKey === 'string' ? body.projectKey : '';
@@ -915,7 +918,7 @@ app.post('/api/trauma/cases/:sessionId/extract', authenticateToken, async (req, 
 });
 
 // Rename project endpoint
-app.put('/api/projects/:projectName/rename', authenticateToken, async (req, res) => {
+app.put('/api/projects/:projectName/rename', ...requireUser, async (req, res) => {
     try {
         const { displayName } = req.body;
         await renameProject(req.params.projectName, displayName);
@@ -926,7 +929,7 @@ app.put('/api/projects/:projectName/rename', authenticateToken, async (req, res)
 });
 
 // Delete session endpoint
-app.delete('/api/projects/:projectName/sessions/:sessionId', authenticateToken, async (req, res) => {
+app.delete('/api/projects/:projectName/sessions/:sessionId', ...requireUser, async (req, res) => {
     try {
         const { projectName, sessionId } = req.params;
         console.log(`[API] Deleting session: ${sessionId} from project: ${projectName}`);
@@ -945,7 +948,7 @@ app.delete('/api/projects/:projectName/sessions/:sessionId', authenticateToken, 
 });
 
 // Rename session endpoint
-app.put('/api/sessions/:sessionId/rename', authenticateToken, async (req, res) => {
+app.put('/api/sessions/:sessionId/rename', ...requireUser, async (req, res) => {
     try {
         const { sessionId } = req.params;
         const safeSessionId = String(sessionId).replace(/[^a-zA-Z0-9._-]/g, '');
@@ -971,7 +974,7 @@ app.put('/api/sessions/:sessionId/rename', authenticateToken, async (req, res) =
 });
 
 // Delete project endpoint (P7: chats+memory deleted; workspace archived)
-app.delete('/api/projects/:projectName', authenticateToken, async (req, res) => {
+app.delete('/api/projects/:projectName', ...requireUser, async (req, res) => {
     try {
         const { projectName } = req.params;
         const force = req.query.force === 'true';
@@ -987,7 +990,7 @@ app.delete('/api/projects/:projectName', authenticateToken, async (req, res) => 
 });
 
 // Create project endpoint (legacy: link an external path)
-app.post('/api/projects/create', authenticateToken, async (req, res) => {
+app.post('/api/projects/create', ...requireUser, async (req, res) => {
     try {
         const { path: projectPath } = req.body;
 
@@ -1004,7 +1007,7 @@ app.post('/api/projects/create', authenticateToken, async (req, res) => {
 });
 
 // Create system-managed project (displayName + type). No external path.
-app.post('/api/projects/create-system', authenticateToken, async (req, res) => {
+app.post('/api/projects/create-system', ...requireUser, async (req, res) => {
     try {
         const displayName = typeof req.body?.displayName === 'string'
             ? req.body.displayName
@@ -1026,7 +1029,7 @@ app.post('/api/projects/create-system', authenticateToken, async (req, res) => {
 });
 
 // Search conversations content (SSE streaming)
-app.get('/api/search/conversations', authenticateToken, async (req, res) => {
+app.get('/api/search/conversations', ...requireUser, async (req, res) => {
     const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
     const parsedLimit = Number.parseInt(String(req.query.limit), 10);
     const limit = Number.isNaN(parsedLimit) ? 50 : Math.max(1, Math.min(parsedLimit, 100));
@@ -1429,7 +1432,7 @@ function getSafeZipFilename(projectName) {
 }
 
 // Browse filesystem endpoint for project suggestions - uses existing getFileTree
-app.get('/api/browse-filesystem', authenticateToken, async (req, res) => {
+app.get('/api/browse-filesystem', ...requireUser, async (req, res) => {
     try {
         const { path: dirPath } = req.query;
 
@@ -1518,7 +1521,7 @@ app.get('/api/browse-filesystem', authenticateToken, async (req, res) => {
     }
 });
 
-app.post('/api/create-folder', authenticateToken, async (req, res) => {
+app.post('/api/create-folder', ...requireUser, async (req, res) => {
     try {
         const { path: folderPath } = req.body;
         if (!folderPath) {
@@ -1559,7 +1562,7 @@ app.post('/api/create-folder', authenticateToken, async (req, res) => {
 });
 
 // Read file content endpoint
-app.get('/api/projects/:projectName/file', authenticateToken, async (req, res) => {
+app.get('/api/projects/:projectName/file', ...requireUser, async (req, res) => {
     try {
         const { projectName } = req.params;
         const { filePath } = req.query;
@@ -1599,7 +1602,7 @@ app.get('/api/projects/:projectName/file', authenticateToken, async (req, res) =
 });
 
 // Serve raw file bytes for previews and downloads.
-app.get(['/api/projects/:projectName/files/content', '/api/projects/:projectName/files/content/volume.nii', '/api/projects/:projectName/files/content/volume.nii.gz'], authenticateToken, async (req, res) => {
+app.get(['/api/projects/:projectName/files/content', '/api/projects/:projectName/files/content/volume.nii', '/api/projects/:projectName/files/content/volume.nii.gz'], ...requireUser, async (req, res) => {
     try {
         const { projectName } = req.params;
         const { path: filePath } = req.query;
@@ -1653,7 +1656,7 @@ app.get(['/api/projects/:projectName/files/content', '/api/projects/:projectName
 
 // Decode a bounded set of DICOM frames for the file viewer. The source file
 // never leaves the project directory and is never returned as raw text.
-app.get('/api/projects/:projectName/files/preview/dicom', authenticateToken, dicomPreviewRateLimiter, async (req, res) => {
+app.get('/api/projects/:projectName/files/preview/dicom', ...requireUser, dicomPreviewRateLimiter, async (req, res) => {
     try {
         const { projectName } = req.params;
         const { path: filePath } = req.query;
@@ -1703,7 +1706,7 @@ app.get('/api/projects/:projectName/files/preview/dicom', authenticateToken, dic
     }
 });
 
-app.get('/api/office-preview/status', authenticateToken, officePreviewStatusRateLimiter, async (req, res) => {
+app.get('/api/office-preview/status', ...requireUser, officePreviewStatusRateLimiter, async (req, res) => {
     try {
         const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
         const configuredPreview = getConfiguredOfficePreviewSettings();
@@ -1735,7 +1738,7 @@ app.get('/api/office-preview/status', authenticateToken, officePreviewStatusRate
 // Convert Office files to PDF for lightweight read-only preview.
 // This is an optional fallback for legacy Office/PPT formats; it only works
 // when LibreOffice/soffice is available on the host.
-app.get('/api/projects/:projectName/files/preview/pdf', authenticateToken, officePreviewPdfRateLimiter, async (req, res) => {
+app.get('/api/projects/:projectName/files/preview/pdf', ...requireUser, officePreviewPdfRateLimiter, async (req, res) => {
     try {
         const { projectName } = req.params;
         const { path: filePath } = req.query;
@@ -1798,7 +1801,7 @@ app.get('/api/projects/:projectName/files/preview/pdf', authenticateToken, offic
 // Preserve workbook semantics for spreadsheet previews. The manifest exposes
 // visible worksheet tabs, while each worksheet is rendered as its own PDF so
 // multi-page sheets remain grouped under one tab in the UI.
-app.get('/api/projects/:projectName/files/preview/spreadsheet/manifest', authenticateToken, officePreviewPdfRateLimiter, async (req, res) => {
+app.get('/api/projects/:projectName/files/preview/spreadsheet/manifest', ...requireUser, officePreviewPdfRateLimiter, async (req, res) => {
     try {
         const { projectName } = req.params;
         const { path: filePath } = req.query;
@@ -1841,7 +1844,7 @@ app.get('/api/projects/:projectName/files/preview/spreadsheet/manifest', authent
     }
 });
 
-app.get('/api/projects/:projectName/files/preview/spreadsheet/data', authenticateToken, officePreviewPdfRateLimiter, async (req, res) => {
+app.get('/api/projects/:projectName/files/preview/spreadsheet/data', ...requireUser, officePreviewPdfRateLimiter, async (req, res) => {
     try {
         const { projectName } = req.params;
         const { path: filePath } = req.query;
@@ -1888,7 +1891,7 @@ app.get('/api/projects/:projectName/files/preview/spreadsheet/data', authenticat
     }
 });
 
-app.get('/api/projects/:projectName/files/preview/spreadsheet/sheet', authenticateToken, officePreviewPdfRateLimiter, async (req, res) => {
+app.get('/api/projects/:projectName/files/preview/spreadsheet/sheet', ...requireUser, officePreviewPdfRateLimiter, async (req, res) => {
     try {
         const { projectName } = req.params;
         const { path: filePath, sheet: sheetIndex } = req.query;
@@ -1941,7 +1944,7 @@ app.get('/api/projects/:projectName/files/preview/spreadsheet/sheet', authentica
 
 // Serve project files through a stable project-root URL so generated HTML can
 // load sibling CSS, JS and image assets with normal relative paths.
-app.get('/api/projects/:projectName/preview/*', authenticateToken, async (req, res) => {
+app.get('/api/projects/:projectName/preview/*', ...requireUser, async (req, res) => {
     try {
         const { projectName } = req.params;
         const relativeFilePath = req.params[0] || 'index.html';
@@ -1977,7 +1980,7 @@ app.get('/api/projects/:projectName/preview/*', authenticateToken, async (req, r
 });
 
 // Download the complete project as a zip archive.
-app.get('/api/projects/:projectName/download', authenticateToken, async (req, res) => {
+app.get('/api/projects/:projectName/download', ...requireUser, async (req, res) => {
     try {
         const { projectName } = req.params;
         const projectRoot = await extractProjectDirectory(projectName).catch(() => null);
@@ -2020,7 +2023,7 @@ app.get('/api/projects/:projectName/download', authenticateToken, async (req, re
 });
 
 // Save file content endpoint
-app.put('/api/projects/:projectName/file', authenticateToken, async (req, res) => {
+app.put('/api/projects/:projectName/file', ...requireUser, async (req, res) => {
     try {
         const { projectName } = req.params;
         const { filePath, content } = req.body;
@@ -2076,7 +2079,7 @@ app.put('/api/projects/:projectName/file', authenticateToken, async (req, res) =
     }
 });
 
-app.get('/api/projects/:projectName/files', authenticateToken, async (req, res) => {
+app.get('/api/projects/:projectName/files', ...requireUser, async (req, res) => {
     try {
 
         // Using fsPromises from import
@@ -2154,7 +2157,7 @@ function validateFilename(name) {
 }
 
 // POST /api/projects/:projectName/files/create - Create new file or directory
-app.post('/api/projects/:projectName/files/create', authenticateToken, async (req, res) => {
+app.post('/api/projects/:projectName/files/create', ...requireUser, async (req, res) => {
     try {
         const { projectName } = req.params;
         const { path: parentPath, type, name } = req.body;
@@ -2231,7 +2234,7 @@ app.post('/api/projects/:projectName/files/create', authenticateToken, async (re
 });
 
 // PUT /api/projects/:projectName/files/rename - Rename file or directory
-app.put('/api/projects/:projectName/files/rename', authenticateToken, async (req, res) => {
+app.put('/api/projects/:projectName/files/rename', ...requireUser, async (req, res) => {
     try {
         const { projectName } = req.params;
         const { oldPath, newName } = req.body;
@@ -2308,7 +2311,7 @@ app.put('/api/projects/:projectName/files/rename', authenticateToken, async (req
 });
 
 // DELETE /api/projects/:projectName/files - Delete file or directory
-app.delete('/api/projects/:projectName/files', authenticateToken, async (req, res) => {
+app.delete('/api/projects/:projectName/files', ...requireUser, async (req, res) => {
     try {
         const { projectName } = req.params;
         const { path: targetPath, type } = req.body;
@@ -2554,7 +2557,7 @@ const uploadFilesHandler = async (req, res) => {
     });
 };
 
-app.post('/api/projects/:projectName/files/upload', authenticateToken, uploadFilesHandler);
+app.post('/api/projects/:projectName/files/upload', ...requireUser, uploadFilesHandler);
 
 /**
  * Proxy an authenticated client WebSocket to a plugin's internal WS server.
@@ -2610,7 +2613,7 @@ wss.on('connection', (ws, request) => {
     const pathname = urlObj.pathname;
 
     if (pathname === '/shell') {
-        handleShellConnection(ws);
+        handleShellConnection(ws, request);
     } else if (pathname === '/ws') {
         handleChatConnection(ws, request);
     } else if (pathname.startsWith('/plugin-ws/')) {
@@ -2684,7 +2687,8 @@ function handleChatConnection(ws, request) {
         send: (data) => broadcastChatFrame(data, ws, userId),
     };
 
-    ws.on('message', async (message) => {
+    const scope = { userId, role: request?.user?.role ?? 'user' };
+    ws.on('message', (message) => runWithUserScope(scope, async () => {
         try {
             const data = JSON.parse(message);
 
@@ -2871,7 +2875,7 @@ function handleChatConnection(ws, request) {
                 error: error.message
             });
         }
-    });
+    }));
 
     const cleanup = () => {
         if (cleanedUp) return;
@@ -2892,14 +2896,16 @@ function handleChatConnection(ws, request) {
 }
 
 // Handle shell WebSocket connections
-function handleShellConnection(ws) {
+function handleShellConnection(ws, request) {
     console.log('🐚 Shell client connected');
     let shellProcess = null;
     let ptySessionKey = null;
     let urlDetectionBuffer = '';
     const announcedAuthUrls = new Set();
 
-    ws.on('message', async (message) => {
+    const shellUserId = request?.user?.id ?? request?.user?.userId ?? null;
+    const shellScope = { userId: shellUserId, role: request?.user?.role ?? 'user' };
+    ws.on('message', (message) => runWithUserScope(shellScope, async () => {
         try {
             const data = JSON.parse(message);
             console.log('📨 Shell message received:', data.type);
@@ -3233,7 +3239,7 @@ function handleShellConnection(ws) {
                 }));
             }
         }
-    });
+    }));
 
     ws.on('close', () => {
         console.log('🔌 Shell client disconnected');
@@ -3395,7 +3401,7 @@ async function moveUploadedAttachmentWithRelativePath(file, attachmentDir, relat
 // can operate on the same bytes by path; other files are staged by path only.
 // Optional form field `relativePaths` (JSON string array) preserves folder trees
 // for med-tools multi-source folder uploads.
-app.post('/api/projects/:projectName/upload-attachments', authenticateToken, async (req, res) => {
+app.post('/api/projects/:projectName/upload-attachments', ...requireUser, async (req, res) => {
     let multerUpload;
     try {
         const multer = (await import('multer')).default;
@@ -3564,7 +3570,7 @@ app.post('/api/projects/:projectName/upload-attachments', authenticateToken, asy
 });
 
 // Image upload endpoint
-app.post('/api/projects/:projectName/upload-images', authenticateToken, async (req, res) => {
+app.post('/api/projects/:projectName/upload-images', ...requireUser, async (req, res) => {
     try {
         const multer = (await import('multer')).default;
         const path = (await import('path')).default;
@@ -3649,7 +3655,7 @@ app.post('/api/projects/:projectName/upload-images', authenticateToken, async (r
 });
 
 // Get token usage for a specific session
-app.get('/api/projects/:projectName/sessions/:sessionId/token-usage', authenticateToken, async (req, res) => {
+app.get('/api/projects/:projectName/sessions/:sessionId/token-usage', ...requireUser, async (req, res) => {
     try {
         const { projectName, sessionId } = req.params;
         const { provider = 'pilotdeck' } = req.query;

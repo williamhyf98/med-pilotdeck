@@ -204,6 +204,14 @@ export function resolvePilotHome(env: PilotPathEnv = process.env): string {
   return normalizeHomePath(env.PILOT_HOME ?? DEFAULT_PILOT_HOME);
 }
 
+export function resolveUserHome(userId: string, env: PilotPathEnv = process.env): string {
+  const id = String(userId ?? "").trim();
+  if (!id || /[\\/]/.test(id) || id === "." || id === ".." || id.includes("..")) {
+    throw new Error(`Invalid userId for path resolution: ${JSON.stringify(userId)}`);
+  }
+  return resolve(resolvePilotHome(env), "users", id);
+}
+
 export function getPilotConfigFilePath(pilotHome: string): string {
   return resolve(pilotHome, PILOT_CONFIG_FILE_NAME);
 }

@@ -13,9 +13,10 @@
  * versa.
  */
 import { homedir } from 'node:os';
-import { resolve, isAbsolute } from 'node:path';
+import { resolve, isAbsolute, join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { requireUserScope } from '../middleware/userScope.js';
 
 export const DEFAULT_PILOT_HOME = '~/.pilotdeck';
 export const GENERAL_WORKSPACE_ID = 'general';
@@ -129,6 +130,52 @@ function normalizeHomePath(p) {
  */
 export function resolvePilotHome(env = process.env) {
     return normalizeHomePath(env.PILOT_HOME ?? DEFAULT_PILOT_HOME);
+}
+
+/**
+ * System root (the shared `PILOT_HOME`). Alias of `resolvePilotHome` that
+ * expresses "system root" semantics; per-user data lives under
+ * `<root>/users/<userId>`.
+ */
+export function resolvePilotRoot(env = process.env) {
+    return resolvePilotHome(env);
+}
+
+function assertSafeUserId(userId) {
+    const id = userId === null || userId === undefined ? '' : String(userId).trim();
+    if (!id || /[\\/]/.test(id) || id === '.' || id === '..' || id.includes('..')) {
+        throw new Error(`Invalid userId for path resolution: ${JSON.stringify(userId)}`);
+    }
+    return id;
+}
+
+/** `<root>/users/<userId>`. Rejects empty ids and ids with `/`, `\` or `..`. */
+export function resolveUserHome(userId, env = process.env) {
+    return join(resolvePilotRoot(env), 'users', assertSafeUserId(userId));
+}
+
+/** User home for the current request scope. Throws `USER_SCOPE_MISSING` outside one. */
+export function resolveScopedHome(env = process.env) {
+    return resolveUserHome(requireUserScope().userId, env);
+}
+
+const USER_HOME_SKELETON = [
+    'projects', 'workspaces', 'memory', 'skills', 'archives', 'logs',
+    join('.pilotdeck', 'tool-results'), join('.tmp', 'chat-attachments'),
+];
+
+/** Create the per-user directory layout (idempotent). Returns the user home. */
+export function ensureUserHomeSkeleton(userId, env = process.env) {
+    const home = resolveUserHome(userId, env);
+    for (const rel of USER_HOME_SKELETON) mkdirSync(join(home, rel), { recursive: true });
+    const marker = join(home, '.legacy-bundled-skills-migrated-v1');
+    if (!existsSync(marker)) writeFileSync(marker, '');
+    const sharedPlugins = join(resolvePilotRoot(env), 'plugins');
+    const link = join(home, 'plugins');
+    if (existsSync(sharedPlugins) && !existsSync(link)) {
+        symlinkSync(join('..', '..', 'plugins'), link, 'dir');
+    }
+    return home;
 }
 
 /**

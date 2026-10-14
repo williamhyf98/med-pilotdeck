@@ -4,6 +4,7 @@ import { userDb, systemSettingsDb } from '../database/db.js';
 import { generateToken, authenticateToken } from '../middleware/auth.js';
 import { DISABLE_LOCAL_AUTH } from '../constants/config.js';
 import { isReservedUsername } from '../services/adminBootstrap.js';
+import { ensureUserHomeSkeleton } from '../utils/pilotPaths.js';
 
 const router = express.Router();
 const SALT_ROUNDS = 12;
@@ -46,6 +47,7 @@ router.post('/register', async (req, res) => {
       if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return fail(res, 409, 'USERNAME_TAKEN', 'Username already exists');
       throw error;
     }
+    ensureUserHomeSkeleton(user.id);
     const full = userDb.getUserById(user.id);
     userDb.updateLastLogin(user.id);
     res.json({ success: true, user: publicUser(full), token: generateToken(full) });

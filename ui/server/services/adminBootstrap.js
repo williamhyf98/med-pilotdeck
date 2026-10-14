@@ -1,5 +1,6 @@
 // ui/server/services/adminBootstrap.js
 import bcrypt from 'bcrypt';
+import { ensureUserHomeSkeleton } from '../utils/pilotPaths.js';
 
 export const ADMIN_USERNAME = 'admin';
 export const ADMIN_DEFAULT_PASSWORD = 'passok';
@@ -20,13 +21,15 @@ export async function ensureAdminUser({
   env = process.env,
   bcryptHash = (password) => bcrypt.hash(password, 12),
   log = console.log,
+  ensureHome = ensureUserHomeSkeleton,
 } = {}) {
   if (!userDb.hasUsers()) {
     const fromEnv = typeof env.PILOTDECK_ADMIN_PASSWORD === 'string' ? env.PILOTDECK_ADMIN_PASSWORD : '';
     const password = fromEnv.length > 0 ? fromEnv : ADMIN_DEFAULT_PASSWORD;
     const usedDefaultPassword = password === ADMIN_DEFAULT_PASSWORD && fromEnv.length === 0;
     const hash = await bcryptHash(password);
-    userDb.createUser(ADMIN_USERNAME, hash, 'admin');
+    const admin = userDb.createUser(ADMIN_USERNAME, hash, 'admin');
+    ensureHome(admin.id);
     log(`[INFO] Created administrator account "${ADMIN_USERNAME}".`);
     if (usedDefaultPassword) {
       log('[WARN] Administrator is using the default password. Set PILOTDECK_ADMIN_PASSWORD or change it after first login.');
