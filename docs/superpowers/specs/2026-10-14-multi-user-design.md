@@ -30,6 +30,7 @@
 - 用户间共享项目、团队角色、SSO、共享技能目录
 - 跨用户记忆
 - 管理员浏览他人数据的任何入口
+- Agent 工具权限策略的收紧（Web 默认 `skipPermissions`、同用户跨项目访问、删除类操作询问、文件变更透明化）。2026-10-14 评审后决定**推迟到多用户完成之后**，见 §17
 
 ---
 
@@ -637,3 +638,21 @@ bwrap
 - 战创伤 Runner 直接调用 `tool.execute()` 的路径同样经过 `commandRunner.ts`，自动受沙箱约束，无需单独处理。
 - 子代理、`sessions_spawn` 派生的会话继承父会话的 `userHome` 与沙箱实例，不能通过嵌套获得更宽的范围。
 - 管理员的 Agent 与普通用户使用**同一套**沙箱配置。管理员身份只影响 UI 服务器侧的管理接口，不放宽 Agent 能力（与 D11 一致）。
+
+---
+
+## 17. 后续事项（本期不做）
+
+**Agent 工具权限策略。** 2026-10-14 盘点：系统共 26 个工具，其中 14 个内置通用工具、12 个 med-tools 医学工具；真正能触及机器的是 `read_file`、`write_file`、`edit_file`、`glob`、`grep`、`bash` 六个。引擎有 default / plan / bypassPermissions 三档模式，但 `ui/server/services/permissionSettings.js` 的默认值 `skipPermissions: true` 使 Web 对话始终以 bypassPermissions 运行，文件范围校验与询问全部跳过。
+
+多用户完成后再评审以下规则（当时的建议尺度，未定稿）：
+
+| 操作 | 当前项目 workspace 内 | 同用户其他项目 | 用户 home 外 |
+|---|---|---|---|
+| 读、搜索 | 放行 | 询问，一次允许整个会话 | 拒绝（§16 兜底） |
+| 新建、修改文件 | 放行 | 询问 | 拒绝 |
+| 删除、覆盖已有文件 | 询问 | 询问 | 拒绝 |
+| bash 硬禁止清单 | 拒绝 | 拒绝 | 拒绝 |
+| med-tools 工具 | 放行，路径参数同样校验 | 询问 | 拒绝 |
+
+配套事项：Web 默认 `skipPermissions` 改为 false；每轮对话结束列出本轮修改的文件并支持查看差异 / 撤销（可复用 `FileArtifactCollector`）。
