@@ -70,7 +70,7 @@ import {
   clearProjectDirectoryCache,
   searchConversations,
 } from './projects.js';
-import { resolveScopedHome, resolveProjectChatDir, sanitizeSessionIdForPath, resolveLinkedRepoPath, resolveGatewayProjectKey } from './utils/pilotPaths.js';
+import { resolveScopedHome, resolvePilotRoot, resolveProjectChatDir, sanitizeSessionIdForPath, resolveLinkedRepoPath, resolveGatewayProjectKey } from './utils/pilotPaths.js';
 import {
     runChatViaGateway,
     abortViaGateway,
@@ -153,13 +153,12 @@ const VALID_PROVIDERS = ['pilotdeck'];
 // File-system watchers for the chat transcript root maintained by
 // PilotDeck. Provider-specific watchers (.pilotdeck) were dropped along with the four provider adapters.
 // .gemini) were dropped along with the four provider adapters.
+// Evaluated inside setupProjectsWatcher(): per-user project dirs live under
+// <PILOT_HOME>/users/<userId>/projects.
 const PROVIDER_WATCH_PATHS = [
     {
         provider: 'pilotdeck',
-        rootPath: path.join(
-            process.env.PILOT_HOME || path.join(os.homedir(), '.pilotdeck'),
-            'projects',
-        ),
+        getRootPath: () => path.join(resolvePilotRoot(), 'users'),
     },
 ];
 const WATCHER_IGNORED_PATTERNS = [
@@ -173,7 +172,7 @@ const WATCHER_IGNORED_PATTERNS = [
 ];
 const WATCHER_DEBOUNCE_MS = 300;
 let projectsWatchers = [];
-let projectsWatcherDebounceTimer = null;
+const projectsWatcherTimers = new Map(); // userId -> debounce timer
 const connectedClients = new Set();
 const sessionWatchRegistry = createSessionWatchRegistry();
 registerAlwaysOnNotificationForwarding(connectedClients, (sessionId, frame) => {
@@ -183,7 +182,7 @@ registerAlwaysOnNotificationForwarding(connectedClients, (sessionId, frame) => {
     // watches its displayed session, so that registry is the routing authority.
     broadcastToSessionWatchers(sessionId, frame, undefined);
 });
-let isGetProjectsRunning = false; // Flag to prevent reentrant calls
+const projectsRefreshRunning = new Map(); // userId -> true while getProjects() runs (prevents reentrant calls)
 
 function normalizeSessionId(value) {
     if (typeof value !== 'string') return null;
@@ -237,17 +236,20 @@ function broadcastToSessionWatchers(sessionId, frame, userId, excludeWs = null) 
     });
 }
 
-// Broadcast progress to all connected WebSocket clients
-function broadcastProgress(progress) {
-    const message = JSON.stringify({
-        type: 'loading_progress',
-        ...progress
-    });
-    connectedClients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) {
-            client.send(message);
-        }
-    });
+// Build a progress callback that only reaches the given user's WebSocket clients
+function makeProgressBroadcaster(userId) {
+    return (progress) => {
+        const message = JSON.stringify({
+            type: 'loading_progress',
+            ...progress
+        });
+        connectedClients.forEach(client => {
+            if (String(client.__pilotdeckUserId) !== String(userId)) return;
+            if (client.readyState === WebSocket.OPEN) {
+                client.send(message);
+            }
+        });
+    };
 }
 
 // Broadcasts ~/.pilotdeck/pilotdeck.yaml reload events (from UI saves or external file edits)
@@ -266,10 +268,10 @@ process.on('pilotdeck:config-broadcast', broadcastConfigReloaded);
 async function setupProjectsWatcher() {
     const chokidar = (await import('chokidar')).default;
 
-    if (projectsWatcherDebounceTimer) {
-        clearTimeout(projectsWatcherDebounceTimer);
-        projectsWatcherDebounceTimer = null;
+    for (const timer of projectsWatcherTimers.values()) {
+        clearTimeout(timer);
     }
+    projectsWatcherTimers.clear();
 
     await Promise.all(
         projectsWatchers.map(async (watcher) => {
@@ -283,58 +285,73 @@ async function setupProjectsWatcher() {
     projectsWatchers = [];
 
     const debouncedUpdate = (eventType, filePath, provider, rootPath) => {
-        if (projectsWatcherDebounceTimer) {
-            clearTimeout(projectsWatcherDebounceTimer);
+        // The first path segment under <root>/users is the owning user's id.
+        const userId = path.relative(rootPath, filePath).split(path.sep)[0];
+        if (!userId || userId === '.' || userId.startsWith('..')) return;
+
+        const pending = projectsWatcherTimers.get(userId);
+        if (pending) {
+            clearTimeout(pending);
         }
 
-        projectsWatcherDebounceTimer = setTimeout(async () => {
-            // Prevent reentrant calls
-            if (isGetProjectsRunning) {
+        projectsWatcherTimers.set(userId, setTimeout(async () => {
+            projectsWatcherTimers.delete(userId);
+            // Prevent reentrant calls (per user)
+            if (projectsRefreshRunning.get(userId)) {
                 return;
             }
 
             try {
-                isGetProjectsRunning = true;
+                projectsRefreshRunning.set(userId, true);
 
                 // Clear project directory cache when files change
                 clearProjectDirectoryCache();
 
-                // Get updated projects list
-                const updatedProjects = await getProjects(broadcastProgress);
+                await runWithUserScope({ userId, role: 'user' }, async () => {
+                    // Get updated projects list for this user only
+                    const updatedProjects = await getProjects(makeProgressBroadcaster(userId));
 
-                // Notify all connected clients about the project changes
-                const updateMessage = JSON.stringify({
-                    type: 'projects_updated',
-                    projects: updatedProjects,
-                    timestamp: new Date().toISOString(),
-                    changeType: eventType,
-                    changedFile: path.relative(rootPath, filePath),
-                    watchProvider: provider
-                });
+                    // Notify only this user's connected clients about the project changes
+                    const updateMessage = JSON.stringify({
+                        type: 'projects_updated',
+                        projects: updatedProjects,
+                        timestamp: new Date().toISOString(),
+                        changeType: eventType,
+                        changedFile: path.relative(rootPath, filePath),
+                        watchProvider: provider
+                    });
 
-                connectedClients.forEach(client => {
-                    if (client.readyState === WebSocket.OPEN) {
-                        client.send(updateMessage);
-                    }
+                    connectedClients.forEach(client => {
+                        if (String(client.__pilotdeckUserId) !== String(userId)) return;
+                        if (client.readyState === WebSocket.OPEN) {
+                            client.send(updateMessage);
+                        }
+                    });
                 });
 
             } catch (error) {
                 console.error('[ERROR] Error handling project changes:', error);
             } finally {
-                isGetProjectsRunning = false;
+                projectsRefreshRunning.delete(userId);
             }
-        }, WATCHER_DEBOUNCE_MS);
+        }, WATCHER_DEBOUNCE_MS));
     };
 
-    for (const { provider, rootPath } of PROVIDER_WATCH_PATHS) {
+    for (const { provider, getRootPath } of PROVIDER_WATCH_PATHS) {
+        const rootPath = getRootPath();
         try {
             // chokidar v4 emits ENOENT via the "error" event for missing roots and will not auto-recover.
             // Ensure provider folders exist before creating the watcher so watching stays active.
             await fsPromises.mkdir(rootPath, { recursive: true });
 
             // Initialize chokidar watcher with optimized settings
+            // Only users/<id>/projects/** matters; workspaces/memory are large and irrelevant.
+            const onlyUserProjects = (p) => {
+                const segs = path.relative(rootPath, p).split(path.sep);
+                return segs.length >= 2 && segs[1] !== 'projects' && segs[1] !== '';
+            };
             const watcher = chokidar.watch(rootPath, {
-                ignored: WATCHER_IGNORED_PATTERNS,
+                ignored: [...WATCHER_IGNORED_PATTERNS, onlyUserProjects],
                 persistent: true,
                 ignoreInitial: true, // Don't fire events for existing files on startup
                 followSymlinks: false,
@@ -844,7 +861,7 @@ app.use(express.static(path.join(__dirname, '../dist'), {
 
 app.get('/api/projects', ...requireUser, async (req, res) => {
     try {
-        const projects = await getProjects(broadcastProgress);
+        const projects = await getProjects(makeProgressBroadcaster(requireUserScope().userId));
         res.json(projects);
     } catch (error) {
         res.status(500).json({ error: error.message });

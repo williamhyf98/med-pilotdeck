@@ -32,6 +32,8 @@ describe('projects.js under user scope', () => {
     await runWithUserScope({ userId: 2, role: 'user' }, () => createSystemProject({ displayName: 'B', type: 'general_medicine' }));
     const forA = await runWithUserScope({ userId: 1, role: 'user' }, () => getProjects());
     expect(forA.map((p) => p.displayName)).toEqual(['A']);
+    const forB = await runWithUserScope({ userId: 2, role: 'user' }, () => getProjects());
+    expect(forB.map((p) => p.displayName)).toEqual(['B']);
   });
   it('throws without a scope instead of using the root', async () => {
     const { getProjects } = await import('./projects.js');
