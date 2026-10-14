@@ -212,7 +212,9 @@ export function resolveUserHome(userId: string, env: PilotPathEnv = process.env)
   return resolve(resolvePilotHome(env), "users", id);
 }
 
-export function getPilotConfigFilePath(pilotHome: string): string {
+export function getPilotConfigFilePath(pilotHome: string, env: PilotPathEnv = process.env): string {
+  const override = env.PILOTDECK_CONFIG_PATH?.trim();
+  if (override) return resolve(override);
   return resolve(pilotHome, PILOT_CONFIG_FILE_NAME);
 }
 

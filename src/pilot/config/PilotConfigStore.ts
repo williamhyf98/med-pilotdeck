@@ -152,6 +152,6 @@ class DefaultPilotConfigStore implements PilotConfigStore {
   private getWatchedPaths(): string[] {
     const env = this.options.env ?? process.env;
     const pilotHome = resolvePilotHome(env);
-    return [getPilotConfigFilePath(pilotHome)];
+    return [getPilotConfigFilePath(pilotHome, env)];
   }
 }

@@ -50,7 +50,7 @@ export function loadPilotConfig(options: PilotConfigLoadOptions = {}): PilotConf
     });
   }
 
-  const defaultConfigPath = getPilotConfigFilePath(pilotHome);
+  const defaultConfigPath = getPilotConfigFilePath(pilotHome, env);
   const defaultConfig = readYamlSource(defaultConfigPath, "default", 10, loadedAt, diagnostics, sources);
 
   const envConfig = readEnvOverrides(env);
