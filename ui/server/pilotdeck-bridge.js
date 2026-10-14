@@ -207,6 +207,25 @@ export function isGatewayUnavailableError(error) {
     return /gateway websocket (closed|is not connected)|failed to connect to gateway websocket|gateway hello timed out|gateway closed during hello|gateway connect failed|gateway for user .* (exited|did not become ready)|too many active users/i.test(message);
 }
 
+/**
+ * Classify an error from a gateway call for an HTTP response.
+ *
+ * Pool errors already carry `status: 503`, but a lease whose socket was closed
+ * underneath it (revocation, LRU eviction, a crashed child) surfaces as a plain
+ * `Error`. Both mean "the gateway is not there right now" — a 503 the client
+ * may retry, never a 500. Returns null when the error is something else.
+ */
+export function toGatewayHttpError(error) {
+    if (error?.status === 503 || isGatewayUnavailableError(error)) {
+        return {
+            status: 503,
+            code: typeof error?.code === 'string' ? error.code : 'GATEWAY_UNAVAILABLE',
+            message: error instanceof Error ? error.message : String(error),
+        };
+    }
+    return null;
+}
+
 export function getPilotDeckRepoRoot() {
     return REPO_ROOT;
 }

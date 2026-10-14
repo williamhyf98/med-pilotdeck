@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolvePilotRoot, ensureUserHomeSkeleton } from '../utils/pilotPaths.js';
@@ -47,7 +47,39 @@ export function defaultFindFreePort(startAt, isReserved = () => false) {
   });
 }
 
-export function defaultSpawnGateway({ userHome, port, env, configPath, tokenPath }) {
+/** Start times reported by `ps` are whole seconds; allow for rounding plus clock skew. */
+const PID_START_SLACK_MS = 5_000;
+
+/**
+ * Describe a pid the way `reapOrphans` needs it: is it still there, what is the
+ * executable called, and when did it start. `ps -o lstart=,comm=` is available
+ * on both macOS and Linux. Returns null when the process is gone (or when ps is
+ * unavailable, in which case we refuse to signal rather than guess).
+ */
+export function defaultInspectProcess(pid) {
+  let result;
+  try {
+    result = spawnSync('ps', ['-o', 'lstart=,comm=', '-p', String(pid)], { encoding: 'utf8' });
+  } catch {
+    return null;
+  }
+  if (result.error || result.status !== 0) return null;
+  const line = String(result.stdout ?? '').trim().split('\n').find((l) => l.trim().length > 0);
+  if (!line) return null;
+  // `lstart` is a fixed 5-field date ("Tue Oct 14 20:19:30 2026"); whatever
+  // follows is the command name.
+  const parts = line.trim().split(/\s+/);
+  if (parts.length < 6) return null;
+  const startedAt = Date.parse(parts.slice(0, 5).join(' '));
+  const comm = parts.slice(5).join(' ');
+  return { comm, startedAtMs: Number.isNaN(startedAt) ? null : startedAt };
+}
+
+// The auth token is NOT passed through the environment: the engine reads it
+// from `$PILOT_HOME/server-token`, which is exactly where `ensureToken` writes
+// it (<userHome>/server-token). A documented deviation from spec §4, which
+// placed it under system/.
+export function defaultSpawnGateway({ userHome, port, env, configPath }) {
   const distEntry = path.join(REPO_ROOT, 'dist', 'src', 'cli', 'pilotdeck.js');
   const args = fs.existsSync(distEntry)
     ? [distEntry, 'server']
@@ -56,7 +88,6 @@ export function defaultSpawnGateway({ userHome, port, env, configPath, tokenPath
     ...env,
     PILOT_HOME: userHome,
     PILOTDECK_GATEWAY_PORT: String(port),
-    PILOTDECK_GATEWAY_TOKEN_PATH: tokenPath ?? path.join(userHome, 'server-token'),
     PILOTDECK_CONFIG_PATH: configPath,
     PILOTDECK_DISABLE_ALWAYS_ON: '1',
   };
@@ -77,6 +108,7 @@ export function createGatewayPool(options = {}) {
   const spawnGateway = options.spawnGateway ?? defaultSpawnGateway;
   const connectGateway = options.connectGateway ?? defaultConnectGateway;
   const findFreePort = options.findFreePort ?? defaultFindFreePort;
+  const inspectProcess = options.inspectProcess ?? defaultInspectProcess;
   const now = options.now ?? (() => Date.now());
   const setTimer = options.setTimer ?? setTimeout;
   const clearTimer = options.clearTimer ?? clearTimeout;
@@ -119,11 +151,37 @@ export function createGatewayPool(options = {}) {
     }
   }
 
+  /**
+   * A pid recorded in a previous run may have been recycled by the OS and now
+   * belong to something else entirely, so never signal one without checking
+   * that it still looks like the gateway we recorded: same kind of process
+   * (node) and started no earlier than we wrote it down.
+   */
+  function isReapableGatewayPid(pid, startedAt) {
+    const info = inspectProcess(pid);
+    if (!info) {
+      log(`[gateway-pool] skipped orphan pid ${pid}: process is gone`);
+      return false;
+    }
+    const comm = path.basename(String(info.comm ?? '').trim());
+    if (!/^node/.test(comm)) {
+      log(`[gateway-pool] skipped orphan pid ${pid}: not a node process (comm=${comm || 'unknown'})`);
+      return false;
+    }
+    const recordedMs = Date.parse(String(startedAt ?? ''));
+    if (!Number.isNaN(recordedMs) && info.startedAtMs != null && info.startedAtMs < recordedMs - PID_START_SLACK_MS) {
+      log(`[gateway-pool] skipped orphan pid ${pid}: started before we recorded it (pid is recycled)`);
+      return false;
+    }
+    return true;
+  }
+
   function reapOrphans() {
     try {
       const data = JSON.parse(fs.readFileSync(pidFile, 'utf8'));
-      for (const { pid } of Object.values(data)) {
+      for (const { pid, startedAt } of Object.values(data)) {
         if (!Number.isInteger(pid) || pid <= 1) continue;
+        if (!isReapableGatewayPid(pid, startedAt)) continue;
         try { process.kill(pid, 'SIGTERM'); log(`[gateway-pool] reaped orphan gateway pid ${pid}`); } catch { /* already gone */ }
       }
     } catch { /* no pid file */ }
@@ -274,12 +332,15 @@ export function createGatewayPool(options = {}) {
       const onGone = () => {
         entry.exited = true;
         if (entries.get(userId) === entry && entry.state !== 'stopping' && entry.state !== 'starting') {
-          // Unexpected exit of a ready instance.
+          // Unexpected exit of a ready instance. It counts towards the breaker
+          // exactly like a failed start: a gateway that crashes on every first
+          // request would otherwise be respawned forever.
           entry.state = 'stopping';
           if (entry.idleTimer) { clearTimer(entry.idleTimer); entry.idleTimer = null; }
           entries.delete(userId);
           releasePort(entry); // the child is gone, its port is free
           try { entry.gateway?.close?.(); } catch { /* ignore */ }
+          recordFailure(userId);
           log(`[gateway-pool] gateway for user ${userId} exited unexpectedly`);
         }
         writePidFile();
@@ -338,7 +399,16 @@ export function createGatewayPool(options = {}) {
       await stopEntry(entry, 'start-failed');
       throw poolError('GATEWAY_UNAVAILABLE', `Gateway for user ${userId} exited during startup`);
     }
-    failures.delete(userId);
+    if (entry.revoked) {
+      // markRevoked landed while this entry was `starting`: the lease would
+      // otherwise be handed out to a user whose token was just revoked.
+      await stopEntry(entry, 'revoked');
+      throw poolError('GATEWAY_UNAVAILABLE', `Gateway for user ${userId} was revoked during startup`);
+    }
+    // A successful start does NOT clear the failure count: the breaker counts
+    // failures inside BREAKER_WINDOW_MS and only the window's expiry forgets
+    // them. Clearing here would make the breaker unreachable for a gateway that
+    // becomes ready and then crashes on every request.
     entry.state = 'idle';
     entry.idleSince = now();
     log(`[gateway-pool] gateway ready for user ${userId} on ${url}`);

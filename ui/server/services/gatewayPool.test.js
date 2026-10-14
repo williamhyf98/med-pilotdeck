@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createGatewayPool } from './gatewayPool.js';
 
 let root; let clock; let timers;
+// Any fixed wall-clock instant; only used as the `startedAt` the pid file records.
+const clockStartIso = '2026-10-14T12:00:00.000Z';
 function makeFakes({ failUsers = new Set(), connectDelayMs = 0, killExitDelayMs = 0, connectFails = false, findFreePort: customFindFreePort } = {}) {
   const spawned = []; const closed = [];
   let nextPort = 20000;
@@ -46,10 +48,13 @@ function makeClock() {
 beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'pd-pool-')); clock = makeClock(); });
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
-const mk = (fakes, config = {}) => createGatewayPool({
+const mk = (fakes, config = {}, extra = {}) => createGatewayPool({
   env: { PILOT_HOME: root }, config: { maxInstances: 2, idleTimeoutMs: 1000, startTimeoutMs: 500, maxWaiting: 1, ...config },
   spawnGateway: fakes.spawnGateway, connectGateway: fakes.connectGateway, findFreePort: fakes.findFreePort,
   now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer, log: () => {},
+  // Never let a unit test signal a real pid.
+  inspectProcess: () => null,
+  ...extra,
 });
 
 describe('gatewayPool', () => {
@@ -229,6 +234,123 @@ describe('gatewayPool', () => {
       await expect(pool.acquire(9)).rejects.toMatchObject({ code: 'GATEWAY_UNAVAILABLE' });
       (await pool.acquire(1)).release();
       expect(f.spawned.map((x) => x.port)).toEqual([20000, 20000]);
+    });
+  });
+
+  describe('post-ready crash', () => {
+    // A child that dies only after connectGateway resolved: the entry is
+    // already idle/busy, so this is not a start failure.
+    function crashAfterReady(f, index) {
+      f.spawned[index].child.emit('exit', 1, null);
+    }
+
+    it('respawns after an unexpected exit of a ready instance', async () => {
+      const f = makeFakes(); const pool = mk(f);
+      const lease = await pool.acquire(1);
+      expect(pool.snapshot()[0].state).toBe('busy');
+      crashAfterReady(f, 0);
+      await Promise.resolve();
+      expect(pool.snapshot()).toEqual([]);
+      lease.release();
+      const next = await pool.acquire(1);
+      expect(f.spawnGateway).toHaveBeenCalledTimes(2);
+      next.release();
+    });
+
+    it('counts post-ready crashes towards the breaker and stops respawning', async () => {
+      const f = makeFakes(); const pool = mk(f);
+      for (let i = 0; i < 3; i += 1) {
+        const lease = await pool.acquire(1);
+        lease.release();                    // idle
+        expect(pool.snapshot()[0].state).toBe('idle');
+        crashAfterReady(f, i);
+        await Promise.resolve();
+        expect(pool.snapshot()).toEqual([]);
+      }
+      expect(f.spawnGateway).toHaveBeenCalledTimes(3);
+      await expect(pool.acquire(1)).rejects.toMatchObject({ code: 'GATEWAY_UNAVAILABLE', status: 503 });
+      expect(f.spawnGateway).toHaveBeenCalledTimes(3); // the breaker, not another child
+    });
+
+    it('forgets crashes once the breaker window has passed', async () => {
+      const f = makeFakes(); const pool = mk(f, { idleTimeoutMs: 60 * 60_000 });
+      for (let i = 0; i < 3; i += 1) {
+        (await pool.acquire(1)).release();
+        crashAfterReady(f, i);
+        await Promise.resolve();
+      }
+      await expect(pool.acquire(1)).rejects.toMatchObject({ code: 'GATEWAY_UNAVAILABLE' });
+      await clock.advance(10 * 60_000 + 1);
+      const lease = await pool.acquire(1);
+      expect(f.spawnGateway).toHaveBeenCalledTimes(4);
+      lease.release();
+    });
+  });
+
+  it('a revocation that lands while the instance is starting never hands out a lease', async () => {
+    let resolveConnect;
+    const f = makeFakes();
+    f.connectGateway.mockImplementation(async ({ url }) => {
+      await new Promise((r) => { resolveConnect = r; });
+      return { url, close: vi.fn(() => f.closed.push(url)) };
+    });
+    const pool = mk(f);
+    const p = pool.acquire(1);
+    p.catch(() => {});
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    expect(pool.snapshot()[0].state).toBe('starting');
+    pool.markRevoked(1);
+    resolveConnect();
+    await expect(p).rejects.toMatchObject({ code: 'GATEWAY_UNAVAILABLE', status: 503 });
+    expect(f.spawned[0].child.kill).toHaveBeenCalled();
+    expect(pool.snapshot()).toEqual([]);
+  });
+
+  describe('reapOrphans pid verification', () => {
+    function seedPidFile(entry) {
+      fs.mkdirSync(path.join(root, 'system'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'system', 'gateway-pids.json'), JSON.stringify({ 1: entry }));
+    }
+    const recordedAt = new Date(clockStartIso).toISOString();
+
+    function reapWith(inspectProcess) {
+      const killed = [];
+      const realKill = process.kill;
+      process.kill = (pid, signal) => { killed.push([pid, signal]); };
+      try {
+        mk(makeFakes(), {}, { inspectProcess });
+      } finally {
+        process.kill = realKill;
+      }
+      return killed;
+    }
+
+    it('signals a pid that still looks like the gateway we recorded', () => {
+      seedPidFile({ pid: 4242, port: 20000, startedAt: recordedAt });
+      const killed = reapWith(() => ({ comm: '/usr/local/bin/node', startedAtMs: Date.parse(recordedAt) + 1000 }));
+      expect(killed).toEqual([[4242, 'SIGTERM']]);
+    });
+
+    it('skips a pid that is gone', () => {
+      seedPidFile({ pid: 4242, port: 20000, startedAt: recordedAt });
+      expect(reapWith(() => null)).toEqual([]);
+    });
+
+    it('skips a pid that is not a node process', () => {
+      seedPidFile({ pid: 4242, port: 20000, startedAt: recordedAt });
+      expect(reapWith(() => ({ comm: 'postgres', startedAtMs: Date.parse(recordedAt) }))).toEqual([]);
+    });
+
+    it('skips a recycled pid that started before we recorded it', () => {
+      seedPidFile({ pid: 4242, port: 20000, startedAt: recordedAt });
+      const killed = reapWith(() => ({ comm: 'node', startedAtMs: Date.parse(recordedAt) - 60_000 }));
+      expect(killed).toEqual([]);
+    });
+
+    it('tolerates whole-second rounding in the reported start time', () => {
+      seedPidFile({ pid: 4242, port: 20000, startedAt: recordedAt });
+      const killed = reapWith(() => ({ comm: 'node', startedAtMs: Date.parse(recordedAt) - 900 }));
+      expect(killed).toEqual([[4242, 'SIGTERM']]);
     });
   });
 

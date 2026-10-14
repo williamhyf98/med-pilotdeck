@@ -24,6 +24,68 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllEnvs(); fs.rmSync(root, { recursive: true, force: true }); });
 
+describe('gateway errors become 503, never 500', () => {
+  function fakeRes() {
+    const captured = {};
+    return {
+      captured,
+      status(code) { captured.status = code; return this; },
+      json(body) { captured.body = body; return this; },
+    };
+  }
+
+  // A lease whose socket was closed underneath it (revoke / LRU evict / crashed
+  // child) throws a plain Error with no status: it must still read as 503.
+  it('a closed gateway socket surfaces through sendRouteError as 503', async () => {
+    const { runWithUserScope } = await import('./middleware/userScope.js');
+    const { withUserGateway } = await import('./pilotdeck-bridge.js');
+    const { sendRouteError } = await import('./utils/routeErrors.js');
+
+    const error = await runWithUserScope({ userId: 7, role: 'user' }, () => withUserGateway(async (gw) => {
+      gw.listProjects = () => { throw new Error('gateway websocket closed'); };
+      return gw.listProjects();
+    })).then(() => null, (e) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.status).toBeUndefined();   // the pool never saw this one
+    expect(released).toEqual(['7']);        // the lease is still returned
+
+    const res = fakeRes();
+    sendRouteError(res, error);
+    expect(res.captured.status).toBe(503);
+    expect(res.captured.body).toEqual({ error: 'gateway websocket closed', code: 'GATEWAY_UNAVAILABLE' });
+  });
+
+  it('keeps the pool error code when the pool itself refused', async () => {
+    const { toGatewayHttpError } = await import('./pilotdeck-bridge.js');
+    const { sendRouteError } = await import('./utils/routeErrors.js');
+    const poolError = Object.assign(new Error('Too many active users; please try again shortly'), {
+      code: 'GATEWAY_POOL_EXHAUSTED', status: 503,
+    });
+    expect(toGatewayHttpError(poolError)).toMatchObject({ status: 503, code: 'GATEWAY_POOL_EXHAUSTED' });
+    const res = fakeRes();
+    sendRouteError(res, poolError);
+    expect(res.captured.status).toBe(503);
+    expect(res.captured.body.code).toBe('GATEWAY_POOL_EXHAUSTED');
+  });
+
+  it('leaves non-gateway failures alone', async () => {
+    const { toGatewayHttpError } = await import('./pilotdeck-bridge.js');
+    const { sendRouteError } = await import('./utils/routeErrors.js');
+    expect(toGatewayHttpError(new Error('ENOENT: no such file'))).toBeNull();
+    const res = fakeRes();
+    sendRouteError(res, new Error('ENOENT: no such file'));
+    expect(res.captured.status).toBe(500);
+    expect(res.captured.body).toEqual({ error: 'ENOENT: no such file' });
+
+    const notFound = Object.assign(new Error('nope'), { status: 404, code: 'PROJECT_NOT_FOUND' });
+    const res2 = fakeRes();
+    sendRouteError(res2, notFound);
+    expect(res2.captured.status).toBe(404);
+    expect(res2.captured.body).toEqual({ error: 'nope', code: 'PROJECT_NOT_FOUND' });
+  });
+});
+
 describe('pilotdeck-bridge under user scope', () => {
   it('getPilotDeckGateway acquires the scoped user\'s gateway and releases the lease', async () => {
     const { runWithUserScope } = await import('./middleware/userScope.js');

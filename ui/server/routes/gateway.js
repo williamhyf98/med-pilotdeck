@@ -5,7 +5,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { suppressNextWatchEvent } from '../services/pilotdeckConfigWatcher.js';
 import { reloadPilotDeckConfig } from '../services/pilotdeckConfigReloader.js';
 import { readPilotDeckConfigFile } from '../services/pilotdeckConfig.js';
-import { getPilotDeckGateway } from '../pilotdeck-bridge.js';
+import { getPilotDeckGateway, toGatewayHttpError } from '../pilotdeck-bridge.js';
 import { resolvePilotRoot } from '../utils/pilotPaths.js';
 
 const router = express.Router();
@@ -434,6 +434,18 @@ router.post('/weixin/qr-begin', async (_req, res) => {
 
     res.json({ ok: true, requestedAt: result.requestedAt || requestedAt });
   } catch (error) {
+    // A gateway that is unavailable (pool breaker, revoked lease, closed
+    // socket) is a retryable 503, not a 200 the client reads as "credentials
+    // rejected".
+    const gatewayError = toGatewayHttpError(error);
+    if (gatewayError) {
+      return res.status(gatewayError.status).json({
+        ok: false,
+        requestedAt,
+        code: gatewayError.code,
+        error: gatewayError.message,
+      });
+    }
     res.json({ ok: false, requestedAt, error: error.message || '请求微信后台通道准备二维码失败' });
   }
 });
