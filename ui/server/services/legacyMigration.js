@@ -33,6 +33,9 @@ async function copyIntoSnapshot(from, dest) {
     await fsp.symlink(await fsp.readlink(from), dest);
     return;
   }
+  // FIFOs, sockets and device nodes carry no data worth snapshotting, and
+  // opening a FIFO for the copy fallback would block forever.
+  if (!stat.isFile()) return;
   try {
     await fsp.link(from, dest);
   } catch {
@@ -130,6 +133,10 @@ const INSERT_CREDENTIAL = `INSERT OR IGNORE INTO user_credentials
   (user_id, credential_name, credential_type, credential_value, description, created_at, is_active)
   VALUES (@userId, @name, @type, @value, @description, COALESCE(@createdAt, CURRENT_TIMESTAMP), @isActive)`;
 const flag = (value) => (value === 0 || value === false || value === '0' ? 0 : 1);
+// user_credentials has no unique constraint, so INSERT OR IGNORE cannot dedupe a
+// resumed run: look the row up first.
+const CREDENTIAL_EXISTS = `SELECT 1 FROM user_credentials
+  WHERE user_id = @userId AND credential_type = @type AND credential_value = @value LIMIT 1`;
 
 /**
  * The no-login era had exactly one account (`local`), so its API keys and
@@ -153,29 +160,35 @@ function importLegacyOwnedRows(legacy, adminId, log) {
     return;
   }
   if (usernames.length === 0) return;
-  let keys = 0;
-  if (hasTable(legacy, 'api_keys')) {
-    const insert = db.prepare(INSERT_API_KEY);
-    for (const row of legacy.prepare('SELECT * FROM api_keys').all()) {
+  const keyRows = hasTable(legacy, 'api_keys') ? legacy.prepare('SELECT * FROM api_keys').all() : [];
+  const credentialRows = hasTable(legacy, 'user_credentials') ? legacy.prepare('SELECT * FROM user_credentials').all() : [];
+  // One transaction: a resumed run after a mid-import failure must not leave a
+  // half-imported key set, and the credential lookup below keeps it idempotent.
+  const importAll = db.transaction(() => {
+    let keys = 0;
+    const insertKey = db.prepare(INSERT_API_KEY);
+    for (const row of keyRows) {
       if (!row.api_key) continue;
-      keys += insert.run({
+      keys += insertKey.run({
         userId: adminId, keyName: row.key_name ?? 'legacy', apiKey: row.api_key,
         createdAt: row.created_at ?? null, lastUsed: row.last_used ?? null, isActive: flag(row.is_active),
       }).changes;
     }
-  }
-  let credentials = 0;
-  if (hasTable(legacy, 'user_credentials')) {
-    const insert = db.prepare(INSERT_CREDENTIAL);
-    for (const row of legacy.prepare('SELECT * FROM user_credentials').all()) {
+    let credentials = 0;
+    const exists = db.prepare(CREDENTIAL_EXISTS);
+    const insertCredential = db.prepare(INSERT_CREDENTIAL);
+    for (const row of credentialRows) {
       if (!row.credential_type || !row.credential_value) continue;
-      credentials += insert.run({
+      if (exists.get({ userId: adminId, type: row.credential_type, value: row.credential_value })) continue;
+      credentials += insertCredential.run({
         userId: adminId, name: row.credential_name ?? row.credential_type, type: row.credential_type,
         value: row.credential_value, description: row.description ?? null,
         createdAt: row.created_at ?? null, isActive: flag(row.is_active),
       }).changes;
     }
-  }
+    return { keys, credentials };
+  });
+  const { keys, credentials } = importAll();
   log(`[migration] imported ${keys} api key(s) and ${credentials} credential(s) from legacy auth.db`);
 }
 

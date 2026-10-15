@@ -61,6 +61,12 @@ export function ensureUserGitConfigFile(userId, env = process.env) {
   if (fs.existsSync(file)) return file;
   const row = userDb.getGitConfig(userId);
   if (!row?.git_name || !row?.git_email) return file;
+  // Rows saved before validation existed may hold anything; a line break would
+  // make git reject the whole file ("bad config line") for every command.
+  if (!isValidGitName(row.git_name) || GIT_NAME_FORBIDDEN.test(row.git_email)) {
+    console.warn(`[git] user ${userId}: stored git identity is not writable to .gitconfig; ask the user to save it again`);
+    return file;
+  }
   try {
     return writeUserGitConfigFile(userId, row.git_name, row.git_email, env);
   } catch (error) {

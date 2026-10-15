@@ -1421,8 +1421,13 @@ export class InProcessGateway implements Gateway {
   }
 
   async traumaGetCase(input: GatewayTraumaCaseInput) {
-    if (!this.options.traumaCaseReader || !isTraumaProject(input.projectKey)) {
+    if (!this.options.traumaCaseReader) {
       throw new Error("war_trauma case reader is not configured");
+    }
+    // A project that is not a war_trauma project simply has no case. Answer
+    // like the registry's reader does instead of turning the read into a 500.
+    if (!isTraumaProject(input.projectKey)) {
+      return { current: null, snapshots: [] };
     }
     return this.options.traumaCaseReader(input);
   }

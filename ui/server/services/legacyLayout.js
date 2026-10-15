@@ -47,7 +47,12 @@ export function hasOtherUserHomes(root, adminId) {
   const dir = path.join(root, 'users');
   let names;
   try { names = fs.readdirSync(dir); } catch { return false; }
-  return names.some((name) => name !== String(adminId));
+  // Only real home directories count: a Finder-created .DS_Store or a stray
+  // file must not make a genuine legacy root look multi-user.
+  return names.some((name) => {
+    if (name === String(adminId) || name.startsWith('.')) return false;
+    try { return fs.statSync(path.join(dir, name)).isDirectory(); } catch { return false; }
+  });
 }
 
 export function planLegacyMigration({ root, adminId, env = process.env }) {

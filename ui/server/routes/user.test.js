@@ -116,6 +116,16 @@ describe('per-user git identity', () => {
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
   });
 
+  it('GET refuses to backfill a pre-validation row that would break git (line break in the name)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { request } = await createUserApp({ gitConfigRow: { git_name: 'Ada\n[core]\n\tsshCommand = x', git_email: 'ada@example.com' } });
+    const data = await request('/api/user/git-config');
+    expect(data.success).toBe(true);
+    expect(fs.existsSync(path.join(root, 'users', '1', '.gitconfig'))).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('not writable to .gitconfig'));
+    warn.mockRestore();
+  });
+
   it('GET writes nothing when the users row has no identity yet', async () => {
     const { request } = await createUserApp({ gitConfigRow: { git_name: 'Ada', git_email: '' } });
     await request('/api/user/git-config');

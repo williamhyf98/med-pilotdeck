@@ -275,6 +275,52 @@ describe('legacy migration', () => {
     expect(lines.join('\n')).toContain('imported 1 api key(s) and 1 credential(s) from legacy auth.db');
   });
 
+  it('does not duplicate api keys or credentials when a failed run is retried', async () => {
+    seedLegacyRoot();
+    const { db, migrateLegacyStorage, admin } = await boot();
+    const realRename = fs.promises.rename;
+    // First attempt: the account data is imported, then the very first move
+    // step (.pilotdeck sorts before auth.db) fails, so the legacy db is still
+    // at the root when the operator retries.
+    const spy = vi.spyOn(fs.promises, 'rename').mockImplementation(async (a, b) => {
+      if (/[\\/]\.pilotdeck([\\/]|$)/.test(String(a))) throw new Error('EIO');
+      return realRename(a, b);
+    });
+    await expect(migrateLegacyStorage({ userDb: db.userDb, log: () => {} })).rejects.toMatchObject({ code: 'LEGACY_MIGRATION_FAILED' });
+    expect(fs.existsSync(path.join(root, 'auth.db'))).toBe(true); // archive step never ran
+    spy.mockRestore();
+
+    const lines = [];
+    await migrateLegacyStorage({ userDb: db.userDb, log: (m) => lines.push(m) });
+    expect(db.apiKeysDb.getApiKeys(admin.id)).toHaveLength(1);
+    expect(db.credentialsDb.getCredentials(admin.id)).toHaveLength(1);
+    expect(lines.join('\n')).toContain('imported 0 api key(s) and 0 credential(s) from legacy auth.db');
+  });
+
+  it('skips FIFOs and other special files while snapshotting instead of blocking on them', async () => {
+    if (process.platform === 'win32') return;
+    seedLegacyRoot();
+    const { execFileSync } = await import('node:child_process');
+    const fifo = path.join(root, '.tmp', 'pipe');
+    fs.mkdirSync(path.dirname(fifo), { recursive: true });
+    execFileSync('mkfifo', [fifo]);
+    const { db, migrateLegacyStorage, admin } = await boot();
+    const result = await migrateLegacyStorage({ userDb: db.userDb, log: () => {} });
+    expect(fs.existsSync(path.join(result.snapshotDir, '.tmp', 'pipe'))).toBe(false);
+    // the live tree is renamed, not copied, so the FIFO itself travels with .tmp/
+    expect(fs.lstatSync(path.join(root, 'users', String(admin.id), '.tmp', 'pipe')).isFIFO()).toBe(true);
+  });
+
+  it('ignores dotfiles and plain files under users/ when deciding whether the root is already multi-user', async () => {
+    seedLegacyRoot();
+    const { db, migrateLegacyStorage, admin } = await boot();
+    fs.writeFileSync(path.join(root, 'users', '.DS_Store'), '');
+    fs.writeFileSync(path.join(root, 'users', 'notes.txt'), 'x');
+    const result = await migrateLegacyStorage({ userDb: db.userDb, log: () => {} });
+    expect(result.skipped).toBeFalsy();
+    expect(fs.existsSync(path.join(root, 'users', String(admin.id), 'memory', 'global', 'UserIdentity', 'profile.md'))).toBe(true);
+  });
+
   it('imports nothing but warns by name when the legacy db held several accounts', async () => {
     seedLegacyRoot();
     const legacy = new Database(path.join(root, 'auth.db'));
