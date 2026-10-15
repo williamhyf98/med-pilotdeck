@@ -96,6 +96,23 @@ describe('per-user git identity', () => {
     expect(fs.existsSync(path.join(root, 'users', '1', '.gitconfig'))).toBe(false);
   });
 
+  it('backfills <userHome>/.gitconfig from the users row on GET (pre-upgrade identities)', async () => {
+    const { request } = await createUserApp({ gitConfigRow: { git_name: 'A "B"', git_email: 'ada@example.com' } });
+
+    const data = await request('/api/user/git-config');
+
+    expect(data).toMatchObject({ success: true, gitName: 'A "B"', gitEmail: 'ada@example.com' });
+    const file = path.join(root, 'users', '1', '.gitconfig');
+    expect(fs.readFileSync(file, 'utf8')).toBe('[user]\n\tname = "A \\"B\\""\n\temail = "ada@example.com"\n');
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  it('GET writes nothing when the users row has no identity yet', async () => {
+    const { request } = await createUserApp({ gitConfigRow: { git_name: 'Ada', git_email: '' } });
+    await request('/api/user/git-config');
+    expect(fs.existsSync(path.join(root, 'users', '1', '.gitconfig'))).toBe(false);
+  });
+
   it('GET returns empty strings instead of falling back to the host git identity', async () => {
     const { request, spawnSpy, execSpy } = await createUserApp();
 
@@ -108,7 +125,7 @@ describe('per-user git identity', () => {
   });
 });
 
-async function createUserApp({ onUpdateGitConfig = () => {} } = {}) {
+async function createUserApp({ onUpdateGitConfig = () => {}, gitConfigRow = null } = {}) {
   const spawnSpy = vi.fn(() => { throw new Error('git must not be spawned'); });
   const execSpy = vi.fn(() => { throw new Error('git must not be exec-ed'); });
   const childProcessMock = { spawn: spawnSpy, exec: execSpy };
@@ -119,7 +136,7 @@ async function createUserApp({ onUpdateGitConfig = () => {} } = {}) {
   }));
   vi.doMock('../database/db.js', () => ({
     userDb: {
-      getGitConfig: () => null,
+      getGitConfig: () => gitConfigRow,
       updateGitConfig: (...args) => onUpdateGitConfig(...args),
       completeOnboarding: () => undefined,
       hasCompletedOnboarding: () => false,

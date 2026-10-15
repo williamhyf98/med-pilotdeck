@@ -4,6 +4,8 @@ import path from 'path';
 import { promises as fs } from 'fs';
 import { extractProjectDirectory } from '../projects.js';
 import { resolveScopedHome, resolveLinkedRepoPath } from '../utils/pilotPaths.js';
+import { ensureUserGitConfigFile, userGitConfigPath } from '../services/userGitConfig.js';
+import { requireUserScope } from '../middleware/userScope.js';
 
 async function resolveRepoProjectPath(projectName) {
   const pilotHome = resolveScopedHome();
@@ -14,10 +16,21 @@ import { runChatViaGateway } from '../pilotdeck-bridge.js';
 const router = express.Router();
 const COMMIT_DIFF_CHARACTER_LIMIT = 500_000;
 
+// Every `git` the UI server runs on a user's behalf must read THAT user's
+// identity, never the operator's `~/.gitconfig`: otherwise whoever runs the
+// server signs everyone's commits. The file may legitimately be missing — git
+// then reports "Author identity unknown", which is the honest failure.
+function gitEnvForCurrentUser() {
+  const { userId } = requireUserScope();
+  return { ...process.env, GIT_CONFIG_GLOBAL: userGitConfigPath(userId) };
+}
+
 function spawnAsync(command, args, options = {}) {
+  const env = options.env ?? (command === 'git' ? gitEnvForCurrentUser() : undefined);
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       ...options,
+      env,
       shell: false,
       windowsHide: process.platform === 'win32',
     });
@@ -541,6 +554,8 @@ router.post('/initial-commit', async (req, res) => {
       // No HEAD - this is good, we can create initial commit
     }
 
+    ensureUserGitConfigFile(requireUserScope().userId);
+
     // Add all files
     await spawnAsync('git', ['add', '.'], { cwd: projectPath });
 
@@ -577,7 +592,8 @@ router.post('/commit', async (req, res) => {
     // Validate git repository
     await validateGitRepository(projectPath);
     const repositoryRootPath = await getRepositoryRootPath(projectPath);
-    
+    ensureUserGitConfigFile(requireUserScope().userId);
+
     // Stage selected files
     for (const file of files) {
       const { repositoryRelativeFilePath } = await resolveRepositoryFilePath(projectPath, file);
