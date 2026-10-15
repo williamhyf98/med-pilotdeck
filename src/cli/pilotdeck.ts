@@ -16,6 +16,7 @@ import {
   type SkillMigrationSourceKind,
 } from "../extension/skills/index.js";
 import { loadPilotConfig, resolvePilotHome } from "../pilot/index.js";
+import { startRetentionTimer } from "../pilot/retention.js";
 import { createLocalGateway } from "./createLocalGateway.js";
 import { applyCliHome } from "./homeGuard.js";
 import { startPilotDeckServer } from "./pilotdeckServer.js";
@@ -422,8 +423,14 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     if (server.tokenPath) {
       console.log(`Token: ${server.tokenPath}`);
     }
+    const retention = startRetentionTimer({
+      pilotHome,
+      config: snapshot.config.multiUser.retention,
+      log: console.log,
+    });
     const stop = async () => {
       try {
+        retention.stop();
         await channelStatePersistence.flush();
         console.log(`[telemetry] shutdown snapshot ${JSON.stringify(telemetry.snapshot())}`);
         disposeGateway();

@@ -281,6 +281,54 @@ function broadcastConfigReloaded(payload) {
 process.on('pilotdeck:config-broadcast', broadcastConfigReloaded);
 
 
+// One-time startup cleanup of the chat-attachment upload temp dir
+// (os.tmpdir()/pilotdeck-chat-attachments/<userId>): drop files older than 7 days
+// and the per-user directories left empty. Never follows symlinks, never throws.
+const CHAT_UPLOAD_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+async function cleanupStaleChatUploads() {
+    const root = path.join(os.tmpdir(), 'pilotdeck-chat-attachments');
+    let removedFiles = 0;
+    let removedDirs = 0;
+    try {
+        const rootStat = await fsPromises.lstat(root).catch(() => null);
+        if (!rootStat || !rootStat.isDirectory()) return;
+        const cutoff = Date.now() - CHAT_UPLOAD_MAX_AGE_MS;
+        const walk = async (dir) => {
+            let empty = true;
+            for (const entry of await fsPromises.readdir(dir, { withFileTypes: true })) {
+                const p = path.join(dir, entry.name);
+                try {
+                    if (entry.isSymbolicLink()) { empty = false; continue; }
+                    if (entry.isDirectory()) {
+                        if (await walk(p)) {
+                            await fsPromises.rmdir(p);
+                            removedDirs += 1;
+                        } else {
+                            empty = false;
+                        }
+                        continue;
+                    }
+                    const st = await fsPromises.lstat(p);
+                    if (st.mtimeMs < cutoff) {
+                        await fsPromises.rm(p, { force: true });
+                        removedFiles += 1;
+                    } else {
+                        empty = false;
+                    }
+                } catch {
+                    empty = false;
+                }
+            }
+            return empty;
+        };
+        await walk(root);
+    } catch (error) {
+        console.warn(`[uploads] stale attachment cleanup failed: ${error?.message || error}`);
+        return;
+    }
+    console.log(`[uploads] stale attachment cleanup: removed ${removedFiles} file(s), ${removedDirs} empty dir(s)`);
+}
+
 async function setupProjectsWatcher() {
     const chokidar = (await import('chokidar')).default;
 
@@ -4155,6 +4203,9 @@ async function startServer() {
 
                     // Start watching the projects folder for changes
                     await setupProjectsWatcher();
+
+                    // One-time cleanup of stale chat-attachment uploads in the OS temp dir.
+                    cleanupStaleChatUploads().catch(() => {});
 
                     // Start background memory scheduler for auto index/dream.
                     startMemoryScheduler();

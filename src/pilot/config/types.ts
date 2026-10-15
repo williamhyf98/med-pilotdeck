@@ -1,3 +1,4 @@
+import type { MultiUserConfig } from "./parseMultiUserConfig.js";
 import type { AlwaysOnConfig } from "../../always-on/config/parseAlwaysOnConfig.js";
 import type { CronConfig } from "../../cron/config/parseCronConfig.js";
 import type { ModelConfig } from "../../model/protocol/canonical.js";
@@ -48,6 +49,7 @@ export type PilotRawConfig = {
   tools?: unknown;
   telemetry?: unknown;
   proxy?: unknown;
+  multiUser?: unknown;
   webui?: unknown;
 };
 
@@ -255,6 +257,7 @@ export type PilotConfig = {
   tools?: PilotToolsConfig;
   telemetry?: PilotTelemetryConfig;
   proxy?: PilotProxyConfig;
+  multiUser: MultiUserConfig;
 };
 
 export type PilotConfigSnapshot = {

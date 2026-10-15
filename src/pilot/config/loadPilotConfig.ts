@@ -11,6 +11,7 @@ import { mergeConfigSources } from "./merge.js";
 import { parseMemoryConfig } from "./parseMemoryConfig.js";
 import { parseAdaptersConfig, parseGatewayConfig } from "./parseGatewayConfig.js";
 import { parseToolsConfig } from "./parseToolsConfig.js";
+import { parseMultiUserConfig } from "./parseMultiUserConfig.js";
 import { parseRouterConfig } from "../../router/config/parseRouterConfig.js";
 import { redactConfig } from "./redact.js";
 import {
@@ -126,6 +127,7 @@ export function loadPilotConfig(options: PilotConfigLoadOptions = {}): PilotConf
   const alwaysOn = parseAlwaysOnConfig(rawConfig.alwaysOn, diagnostics);
   const cron = parseCronConfig(rawConfig.cron, diagnostics);
   const tools = parseToolsConfig(rawConfig.tools, diagnostics);
+  const multiUser = parseMultiUserConfig(rawConfig.multiUser, diagnostics);
   const telemetry = parseTelemetryConfig(rawConfig.telemetry);
   const proxy = parseProxyConfig(rawConfig, diagnostics);
   throwConfigErrorIfFatal(diagnostics);
@@ -144,6 +146,7 @@ export function loadPilotConfig(options: PilotConfigLoadOptions = {}): PilotConf
     tools,
     telemetry,
     proxy,
+    multiUser,
   });
   return deepFreeze({
     version: options.version ?? 1,
@@ -166,6 +169,7 @@ export function loadPilotConfig(options: PilotConfigLoadOptions = {}): PilotConf
       ...(tools ? { tools } : {}),
       telemetry,
       ...(proxy ? { proxy } : {}),
+      multiUser,
     },
   });
 }
@@ -313,6 +317,7 @@ function validateTopLevel(rawConfig: PilotRawConfig, diagnostics: PilotConfigDia
     "cron",
     "tools",
     "proxy",
+    "multiUser",
     // Reserved namespace for ui/server (Web UI Express bridge). The PilotDeck
     // gateway does not parse `webui.*` itself but tolerates it so a single
     // ~/.pilotdeck/pilotdeck.yaml can carry both gateway-side and ui-side

@@ -7,6 +7,7 @@ export {
 export { classifyConfigChanges, diffConfigSnapshots } from "./classifyChanges.js";
 export { mergeConfigSources } from "./merge.js";
 export { redactConfig } from "./redact.js";
+export { parseMultiUserConfig, DEFAULT_RETENTION, type MultiUserConfig, type RetentionConfig } from "./parseMultiUserConfig.js";
 export { parseAdaptersConfig, parseGatewayConfig } from "./parseGatewayConfig.js";
 export {
   PilotConfigError,
