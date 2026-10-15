@@ -12,8 +12,26 @@ const router = express.Router();
 // last person to save it signed everyone else's commits. It now lives in the
 // `users` row plus `<userHome>/.gitconfig`, which each user's gateway child
 // process picks up through `GIT_CONFIG_GLOBAL` (see services/gatewayPool.js).
+// `.gitconfig` is an INI-like format: a bare `\n[core]\n` or a `#` in the value
+// would let a user append sections (e.g. `[core] sshCommand = …`) to a file
+// their own gateway then reads. Reject the characters that could start one,
+// and still write the value quoted so nothing else can be misread.
+const GIT_NAME_MAX = 128;
+const GIT_NAME_FORBIDDEN = /[\r\n\[\]#;]/;
+
+function isValidGitName(value) {
+  return typeof value === 'string'
+    && value.length <= GIT_NAME_MAX
+    && !GIT_NAME_FORBIDDEN.test(value);
+}
+
+/** git's own quoting: a double-quoted value with `\` and `"` backslash-escaped. */
+function quoteGitValue(value) {
+  return `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
 function renderGitConfig(gitName, gitEmail) {
-  return `[user]\n\tname = ${gitName}\n\temail = ${gitEmail}\n`;
+  return `[user]\n\tname = ${quoteGitValue(gitName)}\n\temail = ${quoteGitValue(gitEmail)}\n`;
 }
 
 router.get('/git-config', authenticateToken, async (req, res) => {
@@ -44,10 +62,18 @@ router.post('/git-config', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Git name and email are required' });
     }
 
-    // Validate email format
+    // Validate email format. The regex already rules out newlines, brackets and
+    // `#` in the address, so the name is the only free-form field.
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(gitEmail)) {
       return res.status(400).json({ error: 'Invalid email format' });
+    }
+
+    if (!isValidGitName(gitName)) {
+      return res.status(400).json({
+        error: `Git name must be at most ${GIT_NAME_MAX} characters and must not contain line breaks or any of [ ] # ;`,
+        code: 'INVALID_GIT_NAME',
+      });
     }
 
     userDb.updateGitConfig(userId, gitName, gitEmail);

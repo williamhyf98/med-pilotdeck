@@ -309,6 +309,31 @@ describe('maskRawYamlText', () => {
         expect(masked).toContain('  - apiKey: ********');
     });
 
+    it('masks header keys that hold the credential in their value', async () => {
+        const { maskRawYamlText, maskSecrets } = await import('./pilotdeckConfig.js');
+        // None of these keys END in api_key/token/secret/..., so the suffix
+        // rule alone let `Bearer sk-…` through both maskers.
+        const raw = [
+            '      headers:',
+            '        Authorization: Bearer sk-hdr',
+            '        Proxy-Authorization: Basic sk-proxy',
+            '        Cookie: session=sk-cookie',
+            '        X-Api-Key: sk-xhdr',
+            '        X-Auth-Token: sk-xtoken',
+            '        Accept: application/json',
+            '',
+        ].join('\n');
+        const masked = maskRawYamlText(raw);
+        for (const leak of ['sk-hdr', 'sk-proxy', 'sk-cookie', 'sk-xhdr', 'sk-xtoken']) {
+            expect(masked).not.toContain(leak);
+        }
+        expect(masked).toContain('Accept: application/json');
+        expect(masked).toContain('        Authorization: ********');
+
+        expect(maskSecrets({ headers: { Authorization: 'Bearer sk-hdr', Accept: 'application/json' } }))
+            .toEqual({ headers: { Authorization: '********', Accept: 'application/json' } });
+    });
+
     it('masks the parse error message, which quotes the offending source lines', async () => {
         const { readPilotDeckConfigFile } = await import('./pilotdeckConfig.js');
         const dir = mkdtempSync(join(tmpdir(), 'pilotdeck-parse-'));

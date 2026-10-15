@@ -26,6 +26,9 @@ const CONFIG_YAML = [
   '      protocol: openai',
   '      url: https://example.invalid/v1',
   '      apiKey: sk-secret',
+  '      headers:',
+  '        Authorization: Bearer sk-hdr',
+  '        X-Api-Key: sk-xhdr',
   '      models:',
   '        m1: {}',
   '',
@@ -152,6 +155,17 @@ describe('admin gating matrix', () => {
     expect(JSON.stringify(body)).not.toContain('sk-secret');
     expect(body.hasApiKey).toBe(true);
     expect(body.provider.apiKey).toBe('********');
+  });
+
+  it('never returns an Authorization-style header value, parsed or raw', async () => {
+    const body = await (await call('admin', 'GET', '/api/config')).json();
+    const text = JSON.stringify(body);
+    // `Authorization` does not END in a secret-looking word, so the key-suffix
+    // rule alone used to let `Bearer sk-…` straight through in both views.
+    expect(text).not.toContain('sk-hdr');
+    expect(text).not.toContain('sk-xhdr');
+    expect(text).not.toContain('sk-secret');
+    expect(body.config.model.providers.p1.headers.Authorization).toBe('********');
   });
 
   it('a broken YAML is returned masked', async () => {

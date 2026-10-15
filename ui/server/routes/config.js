@@ -396,7 +396,10 @@ router.post('/validate', (req, res) => {
     const validation = validatePilotDeckConfig(config);
     res.status(validation.valid ? 200 : 400).json(validation);
   } catch (error) {
-    res.status(400).json({ valid: false, errors: [error instanceof Error ? error.message : String(error)], warnings: [] });
+    // A YAML parse failure quotes the offending source lines back, which here
+    // are the lines the caller just submitted — mask before echoing them.
+    const message = maskRawYamlText(error instanceof Error ? error.message : String(error));
+    res.status(400).json({ valid: false, errors: [message], warnings: [] });
   }
 });
 

@@ -32,7 +32,16 @@ function defaultConfigPath() { return path.join(pilotHomeDir(), 'pilotdeck.yaml'
 export const MASK = '********';
 
 const SECRET_KEY_RE = /(api[_-]?key|token|secret|password|auth[_-]?token|access[_-]?token|bot[_-]?token|app[_-]?token|encoding[_-]?aes[_-]?key)$/i;
-const SECRET_EXACT_KEYS = new Set(['key', 'apiKey', 'api_key', 'authToken', 'accessToken']);
+// Compared lower-cased, so `APIKEY` and `Authorization` are caught too.
+// The HTTP header names matter because a provider may carry its credential in
+// `headers:` rather than `apiKey:` — and none of them *end* in a secret-looking
+// word, so SECRET_KEY_RE alone lets `Authorization: Bearer sk-…` through.
+const SECRET_EXACT_KEYS = new Set([
+  'key', 'apikey', 'api_key', 'authtoken', 'accesstoken',
+  'authorization', 'proxy-authorization', 'proxyauthorization', 'proxy_authorization',
+  'cookie', 'set-cookie', 'setcookie', 'set_cookie',
+  'x-api-key', 'x-auth-token',
+]);
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -348,7 +357,8 @@ export function validatePilotDeckConfig(config) {
 // ─── Secret masking ──────────────────────────────────────────────────────────
 
 function isSecretKey(key) {
-  return SECRET_EXACT_KEYS.has(key) || SECRET_KEY_RE.test(key);
+  if (typeof key !== 'string') return false;
+  return SECRET_EXACT_KEYS.has(key.toLowerCase()) || SECRET_KEY_RE.test(key);
 }
 
 export function maskSecrets(value) {

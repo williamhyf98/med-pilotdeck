@@ -303,13 +303,41 @@ function buildWorkspaceSnapshot(repository, {
   };
 }
 
-function buildDashboardSnapshot(service, repository, { query = '', selectedProjectId = '', projectPath = '' } = {}) {
+// Global memory policy — maintenance cadence, reasoning mode and the
+// auto-index / auto-dream intervals — lives in pilotdeck.yaml and belongs to
+// the administrator: `GET/POST /settings` carries `requireAdmin`. The same
+// block used to walk out through the siblings, because `/overview`,
+// `/snapshot` and every `dashboard` payload embed `service.overview()` and
+// `service.getSettings()`. For a non-admin caller those fields are removed and
+// only what is actually theirs survives: whether memory is switched on, and
+// whether the scheduler happens to be running.
+function isAdminRequest(req) {
+  return req?.user?.role === 'admin';
+}
+
+/** `IndexingSettings` is entirely policy, so a user sees only the on/off flag. */
+function publicSettings() {
+  return { enabled: getMemorySchedulerStatus().enabled };
+}
+
+function publicScheduler(scheduler) {
+  return { enabled: scheduler?.enabled !== false, running: Boolean(scheduler?.running) };
+}
+
+/** Drops `maintenanceMode` (and narrows a nested `scheduler`) for non-admins. */
+function scopeOverview(req, overview) {
+  if (isAdminRequest(req) || !overview || typeof overview !== 'object') return overview;
+  const { maintenanceMode, scheduler, ...rest } = overview;
+  return scheduler === undefined ? rest : { ...rest, scheduler: publicScheduler(scheduler) };
+}
+
+function buildDashboardSnapshot(req, service, repository, { query = '', selectedProjectId = '', projectPath = '' } = {}) {
   return {
-    overview: {
+    overview: scopeOverview(req, {
       ...service.overview(),
       scheduler: getMemorySchedulerStatus(),
-    },
-    settings: service.getSettings?.() ?? getGlobalMemorySettings(),
+    }),
+    settings: isAdminRequest(req) ? (service.getSettings?.() ?? getGlobalMemorySettings()) : publicSettings(),
     workspace: buildWorkspaceSnapshot(repository, {
       query,
       limit: 200,
@@ -405,10 +433,10 @@ router.get('/identity', async (req, res) =>
 
 router.get('/overview', async (req, res) =>
   withMemoryService(req, res, async ({ service }) => {
-    res.json({
+    res.json(scopeOverview(req, {
       ...service.overview(),
       scheduler: getMemorySchedulerStatus(),
-    });
+    }));
   }),
 );
 
@@ -430,7 +458,7 @@ router.post('/index/run', async (req, res) =>
     const result = await runManualMemoryFlush(service, dataDir, { reason: 'manual' });
     res.json({
       ...result,
-      dashboard: buildDashboardSnapshot(service, repository, {
+      dashboard: buildDashboardSnapshot(req, service, repository, {
         query: getQuery(req),
         selectedProjectId: getSelectedProjectId(req),
         projectPath,
@@ -444,7 +472,7 @@ router.post('/dream/run', async (req, res) =>
     const result = await runManualMemoryDream(service, dataDir);
     res.json({
       ...result,
-      dashboard: buildDashboardSnapshot(service, repository, {
+      dashboard: buildDashboardSnapshot(req, service, repository, {
         query: getQuery(req),
         selectedProjectId: getSelectedProjectId(req),
         projectPath,
@@ -458,7 +486,7 @@ router.post('/dream/rollback-last', async (req, res) =>
     const result = await rollbackLastMemoryDream(service, dataDir);
     res.json({
       ...result,
-      dashboard: buildDashboardSnapshot(service, repository, {
+      dashboard: buildDashboardSnapshot(req, service, repository, {
         query: getQuery(req),
         selectedProjectId: getSelectedProjectId(req),
         projectPath,
@@ -469,7 +497,12 @@ router.post('/dream/rollback-last', async (req, res) =>
 
 router.get('/snapshot', async (req, res) =>
   withMemoryService(req, res, async ({ service }) => {
-    res.json(service.snapshot(parseLimit(req.query.limit, 24)));
+    const snapshot = service.snapshot(parseLimit(req.query.limit, 24));
+    if (isAdminRequest(req)) {
+      res.json(snapshot);
+      return;
+    }
+    res.json({ ...snapshot, overview: scopeOverview(req, snapshot.overview), settings: publicSettings() });
   }),
 );
 
@@ -710,7 +743,7 @@ router.post('/clear', async (req, res) => {
       const { projectPath, service } = await getMemoryServiceForRequest(req);
       res.json({
         ...result,
-        dashboard: buildDashboardSnapshot(service, service.repository, {
+        dashboard: buildDashboardSnapshot(req, service, service.repository, {
           query: getQuery(req),
           selectedProjectId: getSelectedProjectId(req),
           projectPath,
@@ -728,7 +761,7 @@ router.post('/clear', async (req, res) => {
     const result = service.clear(scope);
     res.json({
       ...result,
-      dashboard: buildDashboardSnapshot(service, repository, {
+      dashboard: buildDashboardSnapshot(req, service, repository, {
         query: getQuery(req),
         selectedProjectId: getSelectedProjectId(req),
         projectPath,

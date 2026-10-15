@@ -27,7 +27,7 @@ afterEach(() => {
 
 describe('memory clear route', () => {
   it('returns a dashboard snapshot after clearing all memory with project context', async () => {
-    const { request, clearAllMemoryData, getMemoryServiceForRequest } = await createMemoryApp();
+    const { request, clearAllMemoryData, getMemoryServiceForRequest } = await createMemoryApp({ role: 'admin' });
 
     const result = await request('/api/memory/clear?projectPath=/tmp/pilotdeck-project', {
       method: 'POST',
@@ -59,6 +59,7 @@ describe('memory clear route', () => {
         },
         settings: {
           reasoningMode: 'answer_first',
+          maintenanceMode: 'interval',
           autoIndexIntervalMinutes: 30,
           autoDreamIntervalMinutes: 60,
         },
@@ -80,6 +81,48 @@ describe('memory clear route', () => {
         dreamTraces: [],
       },
     });
+  });
+});
+
+describe('global memory policy is administrator-only on the sibling routes', () => {
+  const POLICY_KEYS = ['maintenanceMode', 'reasoningMode', 'autoIndexIntervalMinutes', 'autoDreamIntervalMinutes'];
+  const policyKeysIn = (body) => POLICY_KEYS.filter((key) => JSON.stringify(body).includes(`"${key}"`));
+
+  it('strips the policy from /overview for a user and keeps it for an admin', async () => {
+    const asUser = await (await createMemoryApp()).request('/api/memory/overview?projectPath=/tmp/pilotdeck-project');
+    expect(asUser.status).toBe(200);
+    expect(policyKeysIn(asUser.body)).toEqual([]);
+    expect(asUser.body.totalMemories).toBe(0);
+    // Only whether memory is on and whether the scheduler is ticking.
+    expect(asUser.body.scheduler).toEqual({ enabled: true, running: false });
+
+    vi.resetModules();
+    const asAdmin = await (await createMemoryApp({ role: 'admin' })).request('/api/memory/overview?projectPath=/tmp/pilotdeck-project');
+    expect(policyKeysIn(asAdmin.body)).toEqual(['maintenanceMode']);
+    expect(asAdmin.body.scheduler.intervalMs).toBe(60000);
+  });
+
+  it('strips the policy from /snapshot for a user', async () => {
+    const asUser = await (await createMemoryApp()).request('/api/memory/snapshot?projectPath=/tmp/pilotdeck-project');
+    expect(asUser.status).toBe(200);
+    expect(policyKeysIn(asUser.body)).toEqual([]);
+    expect(asUser.body.settings).toEqual({ enabled: true });
+
+    vi.resetModules();
+    const asAdmin = await (await createMemoryApp({ role: 'admin' })).request('/api/memory/snapshot?projectPath=/tmp/pilotdeck-project');
+    expect(policyKeysIn(asAdmin.body).sort()).toEqual([...POLICY_KEYS].sort());
+  });
+
+  it('strips the policy from an embedded dashboard payload for a user', async () => {
+    const { request } = await createMemoryApp();
+    const result = await request('/api/memory/clear?projectPath=/tmp/pilotdeck-project', {
+      method: 'POST',
+      body: JSON.stringify({ scope: 'all_memory', projectPath: '/tmp/pilotdeck-project' }),
+    });
+    expect(result.status).toBe(200);
+    expect(policyKeysIn(result.body)).toEqual([]);
+    expect(result.body.dashboard.settings).toEqual({ enabled: true });
+    expect(result.body.dashboard.overview.scheduler).toEqual({ enabled: true, running: false });
   });
 });
 
@@ -269,7 +312,7 @@ describe('memory settings route', () => {
   });
 });
 
-async function createMemoryApp() {
+async function createMemoryApp({ role = 'user' } = {}) {
   const clearAllMemoryData = vi.fn(async () => ({
     scope: 'all_memory',
     clearedAt: '2026-07-09T00:00:00.000Z',
@@ -292,9 +335,21 @@ async function createMemoryApp() {
     listMemoryEntries: vi.fn(() => []),
     getMemoryRecordsByIds: vi.fn(() => []),
   };
+  const indexingSettings = {
+    reasoningMode: 'answer_first',
+    maintenanceMode: 'interval',
+    autoIndexIntervalMinutes: 30,
+    autoDreamIntervalMinutes: 60,
+  };
   const service = {
     repository,
-    overview: vi.fn(() => ({ totalMemories: 0 })),
+    overview: vi.fn(() => ({ totalMemories: 0, maintenanceMode: indexingSettings.maintenanceMode })),
+    getSettings: vi.fn(() => ({ ...indexingSettings })),
+    snapshot: vi.fn(() => ({
+      entries: [],
+      overview: { totalMemories: 0, maintenanceMode: indexingSettings.maintenanceMode },
+      settings: { ...indexingSettings },
+    })),
     getUserSummary: vi.fn(() => ({ summary: 'empty' })),
     listCaseTraces: vi.fn(() => []),
     listIndexTraces: vi.fn(() => []),
@@ -355,7 +410,7 @@ async function createMemoryApp() {
   const app = express();
   app.use(express.json());
   // Production mounts memory routes behind requireUser, i.e. inside a user scope.
-  app.use('/api/memory', (req, _res, next) => { req.user = { id: 'u1', role: 'user' }; next(); }, userScopeMiddleware, memoryRoutes);
+  app.use('/api/memory', (req, _res, next) => { req.user = { id: 'u1', role }; next(); }, userScopeMiddleware, memoryRoutes);
 
   return {
     clearAllMemoryData,

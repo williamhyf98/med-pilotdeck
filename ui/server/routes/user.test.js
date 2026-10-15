@@ -50,7 +50,40 @@ describe('per-user git identity', () => {
     expect(execSpy).not.toHaveBeenCalled();
 
     const gitconfig = fs.readFileSync(path.join(root, 'users', '1', '.gitconfig'), 'utf8');
-    expect(gitconfig).toBe('[user]\n\tname = Ada\n\temail = ada@example.com\n');
+    expect(gitconfig).toBe('[user]\n\tname = "Ada"\n\temail = "ada@example.com"\n');
+  });
+
+  it('refuses a name that could forge a .gitconfig section, and writes nothing', async () => {
+    const saved = [];
+    const { request } = await createUserApp({ onUpdateGitConfig: (...a) => saved.push(a) });
+
+    for (const gitName of [
+      'Ada\n[core]\n\tsshCommand = touch /tmp/pwned',
+      'Ada\r[core]',
+      'Ada [core]',
+      '[core]',
+      'Ada # comment',
+      'Ada; sneaky',
+      'A'.repeat(129),
+    ]) {
+      const data = await request('/api/user/git-config', {
+        method: 'POST',
+        body: JSON.stringify({ gitName, gitEmail: 'ada@example.com' }),
+      });
+      expect(data.code).toBe('INVALID_GIT_NAME');
+      expect(fs.existsSync(path.join(root, 'users', '1', '.gitconfig'))).toBe(false);
+    }
+    expect(saved).toEqual([]);
+  });
+
+  it('escapes quotes and backslashes in an otherwise valid name', async () => {
+    const { request } = await createUserApp();
+    await request('/api/user/git-config', {
+      method: 'POST',
+      body: JSON.stringify({ gitName: 'A "B" C\\D', gitEmail: 'ada@example.com' }),
+    });
+    const gitconfig = fs.readFileSync(path.join(root, 'users', '1', '.gitconfig'), 'utf8');
+    expect(gitconfig).toBe('[user]\n\tname = "A \\"B\\" C\\\\D"\n\temail = "ada@example.com"\n');
   });
 
   it('rejects an invalid email before writing anything', async () => {

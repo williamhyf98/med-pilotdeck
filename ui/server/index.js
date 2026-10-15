@@ -96,7 +96,7 @@ import {
 // Route-error → HTTP mapping (gateway 503s included) lives in its own module so
 // it is unit-testable; index.js boots a server at import time.
 import { sendRouteError } from './utils/routeErrors.js';
-import { bindConnectionScope, runMessageInScope, closeUserSockets, sendToAdminSockets, SOCKET_ROLE } from './services/wsScope.js';
+import { bindConnectionScope, runMessageInScope, closeUserSockets, sendToAdminSockets, SOCKET_ROLE, SOCKET_USER_ID } from './services/wsScope.js';
 import sessionManager from './sessionManager.js';
 // The /api mount table (and the auth chain of every endpoint) lives here.
 import { buildApiRouter } from './apiRouter.js';
@@ -200,7 +200,7 @@ function broadcastChatFrame(frame, originWs, userId) {
         const watchers = sessionWatchRegistry.getWatchers(frameSessionId);
         watchers.forEach((client) => {
             if (client.readyState !== WebSocket.OPEN) return;
-            if ((client.__pilotdeckUserId ?? null) !== userId) return;
+            if ((client[SOCKET_USER_ID] ?? null) !== userId) return;
             client.send(payload);
             delivered.add(client);
         });
@@ -216,7 +216,7 @@ function broadcastChatFrame(frame, originWs, userId) {
     if (delivered.size === 0) {
         connectedClients.forEach((client) => {
             if (client.readyState !== WebSocket.OPEN) return;
-            if ((client.__pilotdeckUserId ?? null) !== userId) return;
+            if ((client[SOCKET_USER_ID] ?? null) !== userId) return;
             client.send(payload);
         });
     }
@@ -232,7 +232,7 @@ function broadcastToSessionWatchers(sessionId, frame, userId, excludeWs = null) 
         if (client.readyState !== WebSocket.OPEN) return;
         // `undefined` denotes a gateway-originated event with no submitting
         // user. Its recipient set is already constrained by the session watch.
-        if (userId !== undefined && (client.__pilotdeckUserId ?? null) !== userId) return;
+        if (userId !== undefined && (client[SOCKET_USER_ID] ?? null) !== userId) return;
         client.send(payload);
     });
 }
@@ -245,7 +245,7 @@ function makeProgressBroadcaster(userId) {
             ...progress
         });
         connectedClients.forEach(client => {
-            if (String(client.__pilotdeckUserId) !== String(userId)) return;
+            if (String(client[SOCKET_USER_ID]) !== String(userId)) return;
             if (client.readyState === WebSocket.OPEN) {
                 client.send(message);
             }
@@ -368,7 +368,7 @@ async function setupProjectsWatcher() {
                     });
 
                     connectedClients.forEach(client => {
-                        if (String(client.__pilotdeckUserId) !== String(userId)) return;
+                        if (String(client[SOCKET_USER_ID]) !== String(userId)) return;
                         if (client.readyState === WebSocket.OPEN) {
                             client.send(updateMessage);
                         }
@@ -2698,7 +2698,7 @@ class WebSocketWriter {
         // by handing subsequent frames to the user's replacement connection.
         connectedClients.forEach((client) => {
             if (client.readyState !== 1) return; // WebSocket.OPEN
-            if (client.__pilotdeckUserId !== this.userId) return;
+            if (client[SOCKET_USER_ID] !== this.userId) return;
             client.send(message);
         });
     }
@@ -2732,7 +2732,7 @@ function handleChatConnection(ws, request) {
 
     // Add to connected clients for project updates
     const userId = request?.user?.id ?? request?.user?.userId ?? null;
-    ws.__pilotdeckUserId = userId;
+    ws[SOCKET_USER_ID] = userId;
     // Frozen at handshake time next to the user id; `broadcastConfigReloaded`
     // filters on it so system config never reaches a non-admin socket.
     ws[SOCKET_ROLE] = scope.role;
