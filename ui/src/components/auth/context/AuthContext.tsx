@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { IS_PLATFORM, DISABLE_LOCAL_AUTH } from '../../../constants/config';
+import { IS_PLATFORM } from '../../../constants/config';
 import { api } from '../../../utils/api';
 import { clearStorageForUser, getStorageUserId, setStorageUserId, setStorageUserRole } from '../../../utils/safeStorage';
 import { AUTH_ERROR_MESSAGES, AUTH_TOKEN_STORAGE_KEY } from '../constants';
@@ -26,8 +26,24 @@ const clearStoredToken = () => {
 };
 
 const EXPECTED_REVOKE_WINDOW_MS = 5000;
+// No-login mode: the server answers every request as the administrator. The
+// storage namespace keeps the stable id 'local' (preferences must not move when
+// the admin is renamed); only the display name is taken from the server.
 const LOCAL_ADMIN_USER: AuthUser = { id: 'local', username: 'local-user', role: 'admin' };
 const PLATFORM_USER: AuthUser = { id: 'platform', username: 'platform-user', role: 'admin' };
+
+/** No-login mode: ask the server which account it acts as, falling back to the placeholder. */
+async function resolveLocalAdminUser(): Promise<AuthUser> {
+  try {
+    const response = await api.auth.user();
+    if (!response.ok) return LOCAL_ADMIN_USER;
+    const payload = await parseJsonSafely<AuthUserPayload>(response);
+    const username = payload?.user?.username;
+    return username ? { ...LOCAL_ADMIN_USER, username } : LOCAL_ADMIN_USER;
+  } catch {
+    return LOCAL_ADMIN_USER;
+  }
+}
 
 export function useAuth(): AuthContextValue {
   const context = useContext(AuthContext);
@@ -87,7 +103,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       if (statusPayload?.authDisabled) {
         setAuthDisabled(true);
-        applyUser(LOCAL_ADMIN_USER);
+        applyUser(await resolveLocalAdminUser());
         return;
       }
 
@@ -120,9 +136,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, [applyUser, clearSession]);
 
   useEffect(() => {
-    if (IS_PLATFORM || DISABLE_LOCAL_AUTH) {
+    if (IS_PLATFORM) {
       setAuthDisabled(true);
-      applyUser(DISABLE_LOCAL_AUTH ? LOCAL_ADMIN_USER : PLATFORM_USER);
+      applyUser(PLATFORM_USER);
       setIsLoading(false);
       return;
     }

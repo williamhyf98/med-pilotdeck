@@ -28,14 +28,9 @@ export default defineConfig(({ mode }) => {
   const localNodeModules = (...segments) =>
     path.resolve(process.cwd(), 'node_modules', ...segments)
 
-  const disableLocalAuth =
-    env.PILOTDECK_DISABLE_LOCAL_AUTH !== '0' &&
-    env.PILOTDECK_DISABLE_LOCAL_AUTH !== 'false'
-
+  // The auth mode (no-login vs multi-user) is NOT baked into the bundle: the
+  // frontend asks GET /api/auth/status at runtime, so one build serves both.
   return {
-    define: {
-      'import.meta.env.VITE_DISABLE_LOCAL_AUTH': JSON.stringify(disableLocalAuth ? 'true' : 'false'),
-    },
     plugins: [react()],
     resolve: {
       alias: {

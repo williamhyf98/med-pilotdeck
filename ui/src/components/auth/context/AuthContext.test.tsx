@@ -9,7 +9,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock);
   vi.resetModules();
   // The app defaults to no-login mode; these tests exercise the real login flow.
-  vi.doMock('../../../constants/config', () => ({ IS_PLATFORM: false, DISABLE_LOCAL_AUTH: false }));
+  vi.doMock('../../../constants/config', () => ({ IS_PLATFORM: false }));
 });
 afterEach(() => {
   cleanup();
@@ -39,12 +39,36 @@ async function loadAuth() {
 }
 
 describe('AuthContext (multi-user)', () => {
-  it('uses a local admin user in no-login mode', async () => {
-    vi.doMock('../../../constants/config', () => ({ IS_PLATFORM: false, DISABLE_LOCAL_AUTH: true }));
+  it('takes no-login mode from /api/auth/status and shows the server account name', async () => {
+    fetchMock.mockImplementation((url: string) =>
+      url.endsWith('/api/auth/status')
+        ? json(200, { authDisabled: true, registrationOpen: false })
+        : json(200, { user: { id: 1, username: 'admin', role: 'admin' } }),
+    );
+    const { AuthProvider, Probe } = await loadAuth();
+    render(<AuthProvider><Probe /></AuthProvider>);
+    await waitFor(() => expect(screen.getByText('admin:admin:true')).toBeTruthy());
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/api/auth/user'))).toBe(true);
+    // the storage namespace stays 'local' regardless of the admin's name
+    expect(localStorage.getItem('pilotdeck-storage-user')).toBe('local');
+  });
+
+  it('falls back to the placeholder name when /api/auth/user fails in no-login mode', async () => {
+    fetchMock.mockImplementation((url: string) =>
+      url.endsWith('/api/auth/status') ? json(200, { authDisabled: true }) : json(500, {}),
+    );
     const { AuthProvider, Probe } = await loadAuth();
     render(<AuthProvider><Probe /></AuthProvider>);
     await waitFor(() => expect(screen.getByText('local-user:admin:true')).toBeTruthy());
-    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('shows the login screen when the server requires login, whatever the build flags say', async () => {
+    fetchMock.mockImplementation((url: string) =>
+      url.endsWith('/api/auth/status') ? json(200, { authDisabled: false, registrationOpen: true }) : json(401, {}),
+    );
+    const { AuthProvider, Probe } = await loadAuth();
+    render(<AuthProvider><Probe /></AuthProvider>);
+    await waitFor(() => expect(screen.getByText('anon:true')).toBeTruthy());
   });
 
   it('exposes registrationOpen when logged out', async () => {
