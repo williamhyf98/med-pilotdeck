@@ -194,6 +194,26 @@ export const api = {
     }),
   },
 
+  // Admin endpoints (admin role required)
+  admin: {
+    listUsers: () => authenticatedFetch('/api/admin/users'),
+    createUser: (username, password, role) => authenticatedFetch('/api/admin/users', {
+      method: 'POST',
+      body: JSON.stringify({ username, password, role }),
+    }),
+    patchUser: (id, patch) => authenticatedFetch(`/api/admin/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+    resetPassword: (id) => authenticatedFetch(`/api/admin/users/${id}/reset-password`, { method: 'POST' }),
+    deleteUser: (id) => authenticatedFetch(`/api/admin/users/${id}`, { method: 'DELETE' }),
+    getRegistration: () => authenticatedFetch('/api/admin/settings/registration'),
+    setRegistration: (allow) => authenticatedFetch('/api/admin/settings/registration', {
+      method: 'PUT',
+      body: JSON.stringify({ allowPublicRegistration: allow }),
+    }),
+  },
+
   // Protected endpoints
   // config endpoint removed - no longer needed (frontend uses window.location)
   projects: () => authenticatedFetch('/api/projects'),

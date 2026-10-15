@@ -19,7 +19,7 @@ import PrivacySections from "./privacy";
 import AboutSections from "./about";
 import OfficePreviewSections from "./officePreview";
 import AccountSettings from "./account";
-import UsersSettingsPlaceholder from "./users/UsersSettingsPlaceholder";
+import UsersSettings from "./users";
 
 type SettingsContentProps = {
   selectedKey: SettingsMenuKey;
@@ -82,7 +82,7 @@ export default function SettingsContent({
         {selectedKey === "account" ? (
           <AccountSettings title={title} />
         ) : selectedKey === "users" ? (
-          <UsersSettingsPlaceholder title={title} />
+          <UsersSettings title={title} />
         ) : isGeneral ? (
           <GeneralSections title={title} />
         ) : selectedKey === "agentModel" ? (
