@@ -17,11 +17,12 @@ import { userDb } from '../database/db.js';
 import { resolveUserHome } from '../utils/pilotPaths.js';
 
 export const GIT_NAME_MAX = 128;
-// `.gitconfig` is an INI-like format: a bare `\n[core]\n` or a `#` in the value
-// would let a user append sections (e.g. `[core] sshCommand = …`) to a file
-// their own gateway then reads. Reject the characters that could start one,
-// and still write the value quoted so nothing else can be misread.
-export const GIT_NAME_FORBIDDEN = /[\r\n\[\]#;]/;
+// `.gitconfig` is an INI-like format: only a line break can start a new section
+// (e.g. `\n[core]\n sshCommand = …`) in a file the user's own gateway then
+// reads, so line breaks are the only characters that must be rejected. `[`,
+// `]`, `#` and `;` are ordinary characters inside the quoted value we write —
+// and real names contain them (`Zhang (张) #2`), so refusing them was wrong.
+export const GIT_NAME_FORBIDDEN = /[\r\n]/;
 
 export function isValidGitName(value) {
   return typeof value === 'string'

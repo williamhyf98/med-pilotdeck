@@ -59,13 +59,25 @@ const MENU_ITEMS_FULL: SettingsMenuItemI18n[] = [
   { key: "users", labelKey: "settingsPage.menu.users" },
 ];
 
-export function getMenuItems(isAdmin: boolean): SettingsMenuItemI18n[] {
-  return isAdmin ? MENU_ITEMS_FULL : MENU_ITEMS_USER;
+// In no-login mode there are no accounts to manage (spec 8), so the admin
+// menu drops the user-management page even though the single local user is
+// treated as an administrator everywhere else.
+export function getMenuItems(
+  isAdmin: boolean,
+  authDisabled = false,
+): SettingsMenuItemI18n[] {
+  if (!isAdmin) return MENU_ITEMS_USER;
+  return authDisabled
+    ? MENU_ITEMS_FULL.filter((item) => item.key !== "users")
+    : MENU_ITEMS_FULL;
 }
 
 /** Flat list of every selectable menu key for the role. */
-export function getSelectableMenuKeys(isAdmin: boolean): SettingsMenuKey[] {
-  return getMenuItems(isAdmin).flatMap((item) =>
+export function getSelectableMenuKeys(
+  isAdmin: boolean,
+  authDisabled = false,
+): SettingsMenuKey[] {
+  return getMenuItems(isAdmin, authDisabled).flatMap((item) =>
     item.children?.length ? item.children.map((child) => child.key) : [item.key],
   );
 }
@@ -95,8 +107,11 @@ export default function SettingsSidebar({
   mobileVisible = true,
 }: SettingsSidebarProps) {
   const { t } = useTranslation("settings");
-  const { isAdmin } = useAuth();
-  const items = useMemo(() => getMenuItems(isAdmin), [isAdmin]);
+  const { isAdmin, authDisabled } = useAuth();
+  const items = useMemo(
+    () => getMenuItems(isAdmin, authDisabled),
+    [isAdmin, authDisabled],
+  );
 
   return (
     <aside

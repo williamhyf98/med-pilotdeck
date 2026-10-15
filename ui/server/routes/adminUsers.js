@@ -31,7 +31,7 @@ function wouldRemoveLastAdmin(target, patch) {
   return losesAdmin && userDb.countActiveAdmins() <= 1;
 }
 
-export function createAdminUsersRouter({ onUserRevoked = () => {} } = {}) {
+export function createAdminUsersRouter({ onUserRevoked = () => {}, stopUserRuntime = async () => {} } = {}) {
   const router = express.Router();
 
   router.get('/users', guard(async (_req, res) => {
@@ -59,6 +59,11 @@ export function createAdminUsersRouter({ onUserRevoked = () => {} } = {}) {
     if (req.body?.role === 'admin' || req.body?.role === 'user') patch.role = req.body.role;
     if (typeof req.body?.isActive === 'boolean') patch.isActive = req.body.isActive;
     if (Object.keys(patch).length === 0) return fail(res, 400, 'NO_CHANGES', 'Nothing to update');
+    // Only the *effective* change counts: re-sending the current role/state must
+    // not log the user out of every device they have open.
+    if (patch.role === target.role) delete patch.role;
+    if (patch.isActive === (Number(target.is_active) === 1)) delete patch.isActive;
+    if (Object.keys(patch).length === 0) return res.json({ user: toPublic(target) });
     if (wouldRemoveLastAdmin(target, patch)) return fail(res, 409, 'LAST_ADMIN', 'Cannot remove the last administrator');
     if (patch.role !== undefined) userDb.setRole(target.id, patch.role);
     if (patch.isActive !== undefined) userDb.setActive(target.id, patch.isActive);
@@ -80,6 +85,9 @@ export function createAdminUsersRouter({ onUserRevoked = () => {} } = {}) {
     userDb.setActive(target.id, false);
     userDb.bumpTokenVersion(target.id);
     onUserRevoked(target.id);
+    // The Gateway child holds open file handles under the home: wait for it to
+    // exit before renaming, or it keeps writing into the archived directory.
+    await stopUserRuntime(target.id);
 
     let archived = false;
     const home = resolveUserHome(target.id);

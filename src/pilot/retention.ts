@@ -118,6 +118,7 @@ async function pruneArchives(
   if (!existsSync(dir)) return;
   assertInsideHome(dir, home);
   const cutoff = now - cfg.archiveMaxAgeDays * DAY;
+  const expired: string[] = [];
   for (const entry of await fsp.readdir(dir, { withFileTypes: true })) {
     const name = entry.name;
     if (!entry.isDirectory()) continue; // symlinks and stray files are never touched
@@ -132,6 +133,15 @@ async function pruneArchives(
       continue;
     }
     if (when >= cutoff) continue;
+    expired.push(name);
+  }
+  if (expired.length === 0) return;
+  // Say what is about to go before it goes: a deletion nobody announced is the
+  // one a user reports as "my archive vanished".
+  const shown = expired.slice(0, 20).join(", ");
+  const rest = expired.length - 20;
+  log(`[retention] removing ${expired.length} expired project archive(s): ${shown}${rest > 0 ? `, +${rest} more` : ""}`);
+  for (const name of expired) {
     const p = join(dir, name);
     assertInsideHome(p, home);
     await fsp.rm(p, { recursive: true, force: true });

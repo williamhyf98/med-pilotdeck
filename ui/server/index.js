@@ -91,11 +91,13 @@ import {
     registerAlwaysOnNotificationForwarding,
     getSessionTokenBudget,
     revokeUserGateway,
+    stopUserGateway,
     shutdownGatewayPool,
 } from './pilotdeck-bridge.js';
 // Route-error → HTTP mapping (gateway 503s included) lives in its own module so
 // it is unit-testable; index.js boots a server at import time.
 import { sendRouteError } from './utils/routeErrors.js';
+import { shapeOfficePreviewStatus } from './utils/officePreviewStatus.js';
 import { bindConnectionScope, runMessageInScope, closeUserSockets, sendToAdminSockets, SOCKET_ROLE, SOCKET_USER_ID } from './services/wsScope.js';
 import sessionManager from './sessionManager.js';
 // The /api mount table (and the auth chain of every endpoint) lives here.
@@ -604,6 +606,7 @@ app.use('/api', buildApiRouter({
     userScopeMiddleware,
     requireAdmin,
     onUserRevoked: (userId) => revokeUserRuntime(userId),
+    stopUserRuntime: (userId) => stopUserGateway(userId),
     inline: {
         agentsRuntimeConfig,
         ccrDashboard,
@@ -1770,7 +1773,9 @@ app.get('/api/office-preview/status', ...requireUser, officePreviewStatusRateLim
             getLibreOfficeStatus({ forceRefresh }),
             getLibreOfficeCandidateStatuses({ forceRefresh }),
         ]);
-        res.json({
+        // Non-admins get availability only: binary paths and the candidate
+        // scan are host detail that belongs to the operator.
+        res.json(shapeOfficePreviewStatus({
             service: configuredPreview.service,
             configuredBinaryPath: configuredPreview.binaryPath,
             libreOffice: {
@@ -1781,7 +1786,7 @@ app.get('/api/office-preview/status', ...requireUser, officePreviewStatusRateLim
                 OFFICE_PREVIEW_SERVICE_BUILTIN,
                 OFFICE_PREVIEW_SERVICE_LIBREOFFICE,
             ],
-        });
+        }, req.user?.role));
     } catch (error) {
         console.error('Error reading Office preview status:', error);
         res.status(500).json({

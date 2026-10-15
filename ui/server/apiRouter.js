@@ -68,6 +68,7 @@ export function buildApiRouter({
   userScopeMiddleware,
   requireAdmin,
   onUserRevoked = () => {},
+  stopUserRuntime = async () => {},
   inline = {},
 }) {
   const api = express.Router();
@@ -78,7 +79,7 @@ export function buildApiRouter({
   api.use('/auth', authRoutes);
 
   // ── System administration ─────────────────────────────────────────────
-  api.use('/admin', ...requireAdminChain, createAdminUsersRouter({ onUserRevoked }));
+  api.use('/admin', ...requireAdminChain, createAdminUsersRouter({ onUserRevoked, stopUserRuntime }));
   // pilotdeck.yaml holds every provider API key; MCP/gateway/update change what
   // the server runs. None of it is per-user data.
   api.use('/config', ...requireAdminChain, configRoutes);

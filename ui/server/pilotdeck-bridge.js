@@ -199,6 +199,12 @@ export function revokeUserGateway(userId) {
     poolInstance.markRevoked(userId);
 }
 
+/** Awaitable counterpart of `revokeUserGateway`: resolves once the child is gone. */
+export async function stopUserGateway(userId) {
+    if (!poolInstance) return;
+    await poolInstance.stopUser(userId);
+}
+
 export async function shutdownGatewayPool() {
     if (poolInstance) await poolInstance.shutdown();
 }

@@ -43,10 +43,15 @@ function normalizeWebVersionResult(payload: any): DesktopVersionCheckResult {
 }
 
 // A deep link may name a page the role cannot see (e.g. `config:models` for a
-// normal user); fall back to the general page instead of rendering admin UI.
-function resolveMenuKey(tab: string | undefined, isAdmin: boolean): SettingsMenuKey {
+// normal user, or `users` in no-login mode); fall back to the general page
+// instead of rendering UI the current mode does not offer.
+function resolveMenuKey(
+  tab: string | undefined,
+  isAdmin: boolean,
+  authDisabled: boolean,
+): SettingsMenuKey {
   const key = mapInitialTabToMenuKey(tab);
-  return getSelectableMenuKeys(isAdmin).includes(key) ? key : "general";
+  return getSelectableMenuKeys(isAdmin, authDisabled).includes(key) ? key : "general";
 }
 
 function SettingsInner({
@@ -55,12 +60,12 @@ function SettingsInner({
   projects = [],
   initialTab,
 }: SettingsProps) {
-  const { isAdmin } = useAuth();
+  const { isAdmin, authDisabled } = useAuth();
   const isDesktopApp =
     typeof window !== "undefined" && !!(window as any).pilotdeckDesktop;
   const initialKey = useMemo(
-    () => resolveMenuKey(initialTab, isAdmin),
-    [initialTab, isAdmin],
+    () => resolveMenuKey(initialTab, isAdmin, authDisabled),
+    [initialTab, isAdmin, authDisabled],
   );
   const [selectedKey, setSelectedKey] =
     useState<SettingsMenuKey>(initialKey);
@@ -110,12 +115,12 @@ function SettingsInner({
 
   useEffect(() => {
     if (!isOpen) return;
-    const nextKey = resolveMenuKey(initialTab, isAdmin);
+    const nextKey = resolveMenuKey(initialTab, isAdmin, authDisabled);
     setSelectedKey(nextKey);
     setMobileNavigationOpen(nextKey === "general");
     // The update endpoints are admin-only.
     if (isAdmin) void checkVersion();
-  }, [isOpen, initialTab, isAdmin, checkVersion]);
+  }, [isOpen, initialTab, isAdmin, authDisabled, checkVersion]);
 
   const selectMenuItem = useCallback((key: SettingsMenuKey) => {
     setSelectedKey(key);

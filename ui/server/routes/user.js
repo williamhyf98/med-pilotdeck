@@ -50,7 +50,7 @@ router.post('/git-config', authenticateToken, async (req, res) => {
 
     if (!isValidGitName(gitName)) {
       return res.status(400).json({
-        error: `Git name must be at most ${GIT_NAME_MAX} characters and must not contain line breaks or any of [ ] # ;`,
+        error: `Git name must be at most ${GIT_NAME_MAX} characters and must not contain line breaks`,
         code: 'INVALID_GIT_NAME',
       });
     }

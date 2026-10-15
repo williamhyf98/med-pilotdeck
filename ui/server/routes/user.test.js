@@ -60,10 +60,6 @@ describe('per-user git identity', () => {
     for (const gitName of [
       'Ada\n[core]\n\tsshCommand = touch /tmp/pwned',
       'Ada\r[core]',
-      'Ada [core]',
-      '[core]',
-      'Ada # comment',
-      'Ada; sneaky',
       'A'.repeat(129),
     ]) {
       const data = await request('/api/user/git-config', {
@@ -74,6 +70,19 @@ describe('per-user git identity', () => {
       expect(fs.existsSync(path.join(root, 'users', '1', '.gitconfig'))).toBe(false);
     }
     expect(saved).toEqual([]);
+  });
+
+  it('accepts brackets, hashes and semicolons: the value is written quoted', async () => {
+    const { request } = await createUserApp();
+    for (const gitName of ['Ada [core]', '[core]', 'Ada # 2', 'Ada; Lovelace']) {
+      const data = await request('/api/user/git-config', {
+        method: 'POST',
+        body: JSON.stringify({ gitName, gitEmail: 'ada@example.com' }),
+      });
+      expect(data).toMatchObject({ success: true, gitName });
+      expect(fs.readFileSync(path.join(root, 'users', '1', '.gitconfig'), 'utf8'))
+        .toBe(`[user]\n\tname = "${gitName}"\n\temail = "ada@example.com"\n`);
+    }
   });
 
   it('escapes quotes and backslashes in an otherwise valid name', async () => {

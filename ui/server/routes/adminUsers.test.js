@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-let root; let server; let base; let adminToken; let userToken; let revoked;
+let root; let server; let base; let adminToken; let userToken; let revoked; let stopped;
 beforeEach(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'pd-admin-'));
   vi.stubEnv('PILOT_HOME', root); vi.stubEnv('DATABASE_PATH', ''); vi.stubEnv('PILOTDECK_DISABLE_LOCAL_AUTH', '0');
@@ -17,9 +17,12 @@ beforeEach(async () => {
   const { generateToken, authenticateToken } = await import('../middleware/auth.js');
   const { requireAdmin } = await import('../middleware/requireAdmin.js');
   const { createAdminUsersRouter } = await import('./adminUsers.js');
-  revoked = [];
+  revoked = []; stopped = [];
   const app = express(); app.use(express.json());
-  app.use('/api/admin', authenticateToken, requireAdmin, createAdminUsersRouter({ onUserRevoked: (id) => revoked.push(id) }));
+  app.use('/api/admin', authenticateToken, requireAdmin, createAdminUsersRouter({
+    onUserRevoked: (id) => revoked.push(id),
+    stopUserRuntime: async (id) => { await new Promise((r) => setTimeout(r, 10)); stopped.push({ id, at: Date.now() }); },
+  }));
   server = app.listen(0); base = `http://127.0.0.1:${server.address().port}`;
   adminToken = generateToken(db.userDb.getAdminUser());
   const alice = db.userDb.createUser('alice', 'x', 'user');
@@ -66,6 +69,26 @@ describe('admin users API', () => {
     expect(revoked).toEqual([alice.id]);
     expect((await call('GET', '/api/admin/users', null, userToken)).status).toBe(401);
   });
+  it('is a no-op when the patch changes nothing: no token bump, no revoke', async () => {
+    const { users } = await (await call('GET', '/api/admin/users', null, adminToken)).json();
+    const alice = users.find((u) => u.username === 'alice');
+    const res = await call('PATCH', `/api/admin/users/${alice.id}`, { role: 'user', isActive: true }, adminToken);
+    expect(res.status).toBe(200);
+    expect((await res.json()).user).toMatchObject({ id: alice.id, role: 'user', isActive: true });
+    expect(revoked).toEqual([]);
+    // the untouched session still works
+    expect((await call('GET', '/api/admin/users', null, userToken)).status).toBe(403);
+  });
+
+  it('still applies (and revokes) when only one of the two fields changes', async () => {
+    const { users } = await (await call('GET', '/api/admin/users', null, adminToken)).json();
+    const alice = users.find((u) => u.username === 'alice');
+    const res = await call('PATCH', `/api/admin/users/${alice.id}`, { role: 'admin', isActive: true }, adminToken);
+    expect(res.status).toBe(200);
+    expect((await res.json()).user).toMatchObject({ role: 'admin' });
+    expect(revoked).toEqual([alice.id]);
+  });
+
   it('protects the last admin', async () => {
     const { users } = await (await call('GET', '/api/admin/users', null, adminToken)).json();
     const admin = users.find((u) => u.username === 'admin');
@@ -102,6 +125,21 @@ describe('admin users API', () => {
     const refused = await call('DELETE', `/api/admin/users/${admin.id}`, null, adminToken);
     expect(refused.status).toBe(409);
     expect((await refused.json()).code).toBe('LAST_ADMIN');
+  });
+
+  it('DELETE waits for the user Gateway to stop before moving the home away', async () => {
+    const { users } = await (await call('GET', '/api/admin/users', null, adminToken)).json();
+    const alice = users.find((u) => u.username === 'alice');
+    fs.mkdirSync(path.join(root, 'users', String(alice.id)), { recursive: true });
+    const res = await call('DELETE', `/api/admin/users/${alice.id}`, null, adminToken);
+    expect(res.status).toBe(200);
+    expect(stopped.map((s) => s.id)).toEqual([alice.id]);
+    const archived = fs.readdirSync(path.join(root, 'archives', 'users'));
+    expect(archived).toHaveLength(1);
+    // the rename only happened once the pool had reported the child gone
+    expect(fs.statSync(path.join(root, 'archives', 'users', archived[0])).mtimeMs)
+      .toBeGreaterThanOrEqual(stopped[0].at - 1000);
+    expect(fs.existsSync(path.join(root, 'users', String(alice.id)))).toBe(false);
   });
 
   it('DELETE on an unknown user is 404 and never touches the filesystem', async () => {

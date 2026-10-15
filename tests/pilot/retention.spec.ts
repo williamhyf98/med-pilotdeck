@@ -50,6 +50,22 @@ test("removes project archives older than archiveMaxAgeDays by their name timest
   rmSync(h, { recursive: true, force: true });
 });
 
+test("logs the archives it is about to remove, by name, capped at 20", async () => {
+  const h = home();
+  const fmt = (d) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  const stamp = fmt(new Date(Date.now() - 40 * DAY));
+  for (let i = 0; i < 23; i += 1) mkdirSync(join(h, "archives/projects", `general_med-p${i}-${stamp}`));
+  const lines = [];
+  const r = await runRetention({ pilotHome: h, config: DEFAULT_RETENTION, log: (m) => lines.push(m) });
+  assert.equal(r.removedArchives.length, 23);
+  const line = lines.find((l) => l.startsWith("[retention] removing "));
+  assert.ok(line, `no removal line in ${JSON.stringify(lines)}`);
+  assert.match(line, /^\[retention\] removing 23 expired project archive\(s\): /);
+  assert.match(line, /\+3 more$/);
+  assert.equal(line.split(", ").length, 21);
+  rmSync(h, { recursive: true, force: true });
+});
+
 test("never deletes through a symlink that escapes the home", async () => {
   const h = home(); const outside = mkdtempSync(join(tmpdir(), "pd-out-"));
   writeFileSync(join(outside, "secret.txt"), "s"); old(join(outside, "secret.txt"), 30);

@@ -5,8 +5,8 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (k: string) => k }
 
 import { getMenuItems } from './SettingsSidebar';
 
-const flatKeys = (isAdmin: boolean) =>
-  getMenuItems(isAdmin).flatMap((i) => (i.children ? i.children.map((c) => c.key) : [i.key]));
+const flatKeys = (isAdmin: boolean, authDisabled = false) =>
+  getMenuItems(isAdmin, authDisabled).flatMap((i) => (i.children ? i.children.map((c) => c.key) : [i.key]));
 
 describe('settings menu by role', () => {
   it('normal users see only account/general/agentMemory/privacy', () => {
@@ -36,5 +36,12 @@ describe('settings menu by role', () => {
       'about',
       'users',
     ]);
+  });
+
+  it('hides the user-management page in no-login mode (spec 8)', () => {
+    expect(flatKeys(true, true)).not.toContain('users');
+    // everything else the admin menu offers is still there
+    expect(flatKeys(true, true)).toEqual(flatKeys(true).filter((k) => k !== 'users'));
+    expect(flatKeys(false, true)).toEqual(['account', 'general', 'agentMemory', 'privacy']);
   });
 });
