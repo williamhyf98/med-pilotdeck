@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createProjectId } from '../utils/pilotPaths.js';
 import { seedLegacyRoot as seed } from '../testUtils/legacyRoot.js';
@@ -256,6 +257,46 @@ describe('legacy migration', () => {
     expect(start).toBe(0);
     expect(done).toBe(1);
     expect(lines[0]).toContain(result.snapshotDir);
+  });
+
+  it('imports the lone legacy account\'s api keys and credentials onto the admin', async () => {
+    seedLegacyRoot();
+    const { db, migrateLegacyStorage, admin } = await boot();
+    const lines = [];
+    await migrateLegacyStorage({ userDb: db.userDb, log: (m) => lines.push(m) });
+    const keys = db.apiKeysDb.getApiKeys(admin.id);
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).toMatchObject({ key_name: 'cli', api_key: 'ck_legacykey', is_active: 1 });
+    expect(keys[0].created_at).toBe('2026-01-01 00:00:00');
+    const creds = db.credentialsDb.getCredentials(admin.id);
+    expect(creds).toHaveLength(1);
+    expect(creds[0]).toMatchObject({ credential_name: 'github', credential_type: 'github_token', description: 'old token' });
+    expect(db.credentialsDb.getActiveCredential(admin.id, 'github_token')).toBe('ghp_legacy');
+    expect(lines.join('\n')).toContain('imported 1 api key(s) and 1 credential(s) from legacy auth.db');
+  });
+
+  it('imports nothing but warns by name when the legacy db held several accounts', async () => {
+    seedLegacyRoot();
+    const legacy = new Database(path.join(root, 'auth.db'));
+    legacy.exec(`INSERT INTO users (username, password_hash) VALUES ('alice', 'h2');
+      INSERT INTO api_keys (user_id, key_name, api_key) VALUES (2, 'alice-cli', 'ck_alicekey');
+      INSERT INTO user_credentials (user_id, credential_name, credential_type, credential_value) VALUES (2, 'gl', 'gitlab_token', 'glpat_alice');`);
+    legacy.close();
+    const { db, migrateLegacyStorage, admin } = await boot();
+    const lines = [];
+    await migrateLegacyStorage({ userDb: db.userDb, log: (m) => lines.push(m) });
+    expect(db.apiKeysDb.getApiKeys(admin.id)).toEqual([]);
+    expect(db.credentialsDb.getCredentials(admin.id)).toEqual([]);
+    const warning = lines.filter((l) => /WARNING|local|alice|legacy-auth\.db/.test(l)).join('\n');
+    expect(warning).toContain('local');
+    expect(warning).toContain('alice');
+    expect(warning).toContain('legacy-auth.db');
+    // never the secrets themselves
+    expect(lines.join('\n')).not.toContain('ck_alicekey');
+    expect(lines.join('\n')).not.toContain('glpat_alice');
+    expect(lines.join('\n')).not.toContain('h2');
+    // session names are still imported: they are not account-scoped secrets
+    expect(db.sessionNamesDb.getName(admin.id, 'web:s_1', 'pilotdeck')).toBe('旧名字');
   });
 
   it('refuses to run on a born-multi-user root: users/ holds another account (spec 9.1)', async () => {

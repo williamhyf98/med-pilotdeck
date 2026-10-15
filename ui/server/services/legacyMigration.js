@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { ensureUserHomeSkeleton, resolvePilotRoot } from '../utils/pilotPaths.js';
-import { sessionNamesDb } from '../database/db.js';
+import { db, sessionNamesDb } from '../database/db.js';
 import { LEGACY_DONE_MARKER, HISTORY_DIR, detectLegacyLayout, hasOtherUserHomes, planLegacyMigration } from './legacyLayout.js';
 
 export { LEGACY_DONE_MARKER, detectLegacyLayout, planLegacyMigration };
@@ -109,18 +109,81 @@ async function assertNoResidue(plan) {
   }
 }
 
-function importLegacySessionNames(legacyDbPath, adminId) {
+const hasTable = (legacy, name) => Boolean(
+  legacy.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name),
+);
+
+function importSessionNames(legacy, adminId) {
+  if (!hasTable(legacy, 'session_names')) return 0;
+  let count = 0;
+  for (const row of legacy.prepare('SELECT session_id, provider, custom_name FROM session_names').all()) {
+    if (sessionNamesDb.getName(adminId, row.session_id, row.provider)) continue;
+    sessionNamesDb.setName(adminId, row.session_id, row.provider, row.custom_name);
+    count += 1;
+  }
+  return count;
+}
+
+const INSERT_API_KEY = `INSERT OR IGNORE INTO api_keys (user_id, key_name, api_key, created_at, last_used, is_active)
+  VALUES (@userId, @keyName, @apiKey, COALESCE(@createdAt, CURRENT_TIMESTAMP), @lastUsed, @isActive)`;
+const INSERT_CREDENTIAL = `INSERT OR IGNORE INTO user_credentials
+  (user_id, credential_name, credential_type, credential_value, description, created_at, is_active)
+  VALUES (@userId, @name, @type, @value, @description, COALESCE(@createdAt, CURRENT_TIMESTAMP), @isActive)`;
+const flag = (value) => (value === 0 || value === false || value === '0' ? 0 : 1);
+
+/**
+ * The no-login era had exactly one account (`local`), so its API keys and
+ * stored credentials are unambiguously the administrator's and are imported.
+ * With several legacy accounts there is no safe owner: nothing is imported and
+ * the operator is told, by username, what has to be re-created by hand. The
+ * legacy database itself is archived either way (see the plan's `archive` step).
+ */
+function importLegacyOwnedRows(legacy, adminId, log) {
+  if (!hasTable(legacy, 'users')) return;
+  const usernames = legacy.prepare('SELECT username FROM users ORDER BY id').all().map((r) => r.username);
+  if (usernames.length > 1) {
+    const archived = path.join(HISTORY_DIR, 'legacy-auth.db');
+    log('[migration] ======================================================================');
+    log(`[migration] WARNING: the legacy auth.db held ${usernames.length} accounts: ${usernames.join(', ')}`);
+    log('[migration] Their API keys and stored credentials were NOT imported: there is no');
+    log('[migration] safe way to decide which of them the administrator inherits.');
+    log(`[migration] The whole legacy database was archived to ${archived}.`);
+    log('[migration] The administrator must re-create these accounts and their API keys.');
+    log('[migration] ======================================================================');
+    return;
+  }
+  if (usernames.length === 0) return;
+  let keys = 0;
+  if (hasTable(legacy, 'api_keys')) {
+    const insert = db.prepare(INSERT_API_KEY);
+    for (const row of legacy.prepare('SELECT * FROM api_keys').all()) {
+      if (!row.api_key) continue;
+      keys += insert.run({
+        userId: adminId, keyName: row.key_name ?? 'legacy', apiKey: row.api_key,
+        createdAt: row.created_at ?? null, lastUsed: row.last_used ?? null, isActive: flag(row.is_active),
+      }).changes;
+    }
+  }
+  let credentials = 0;
+  if (hasTable(legacy, 'user_credentials')) {
+    const insert = db.prepare(INSERT_CREDENTIAL);
+    for (const row of legacy.prepare('SELECT * FROM user_credentials').all()) {
+      if (!row.credential_type || !row.credential_value) continue;
+      credentials += insert.run({
+        userId: adminId, name: row.credential_name ?? row.credential_type, type: row.credential_type,
+        value: row.credential_value, description: row.description ?? null,
+        createdAt: row.created_at ?? null, isActive: flag(row.is_active),
+      }).changes;
+    }
+  }
+  log(`[migration] imported ${keys} api key(s) and ${credentials} credential(s) from legacy auth.db`);
+}
+
+function importLegacyAccountData(legacyDbPath, adminId, log) {
   const legacy = new Database(legacyDbPath, { readonly: true, fileMustExist: true });
   try {
-    const hasTable = legacy.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='session_names'").get();
-    if (!hasTable) return 0;
-    let count = 0;
-    for (const row of legacy.prepare('SELECT session_id, provider, custom_name FROM session_names').all()) {
-      if (sessionNamesDb.getName(adminId, row.session_id, row.provider)) continue;
-      sessionNamesDb.setName(adminId, row.session_id, row.provider, row.custom_name);
-      count += 1;
-    }
-    return count;
+    log(`[migration] imported ${importSessionNames(legacy, adminId)} session name(s) from legacy auth.db`);
+    importLegacyOwnedRows(legacy, adminId, log);
   } finally {
     legacy.close();
   }
@@ -154,7 +217,7 @@ export async function migrateLegacyStorage({ userDb, env = process.env, log = co
   // Import before the legacy db file is moved away; skipped when already imported.
   const legacyDb = path.join(root, 'auth.db');
   if (fs.existsSync(legacyDb)) {
-    try { log(`[migration] imported ${importLegacySessionNames(legacyDb, admin.id)} session name(s) from legacy auth.db`); }
+    try { importLegacyAccountData(legacyDb, admin.id, log); }
     catch (error) { throw fail('reading legacy auth.db', error); }
     // the read-only open may have created -wal/-shm sidecars after the plan was made
     for (const name of ['auth.db-wal', 'auth.db-shm']) {
