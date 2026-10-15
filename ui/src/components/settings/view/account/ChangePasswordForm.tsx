@@ -23,7 +23,7 @@ export default function ChangePasswordForm() {
       setSuccess(false);
 
       if (next.length < MIN_PASSWORD_LENGTH) {
-        setError(t("register.errors.weakPassword"));
+        setError(t("password.errors.tooShort"));
         return;
       }
       if (next !== confirm) {

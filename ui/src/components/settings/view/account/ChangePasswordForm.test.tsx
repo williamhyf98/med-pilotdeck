@@ -40,7 +40,7 @@ describe('ChangePasswordForm', () => {
     fill('old1234', '12345', '12345');
     fireEvent.click(screen.getByRole('button', { name: 'password.submit' }));
     expect(changePassword).not.toHaveBeenCalled();
-    expect(screen.getByText('register.errors.weakPassword')).toBeTruthy();
+    expect(screen.getByText('password.errors.tooShort')).toBeTruthy();
   });
 
   it('shows the server error and no success message on failure', async () => {
