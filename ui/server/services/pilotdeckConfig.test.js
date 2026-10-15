@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     buildDefaultPilotDeckConfig,
     buildRuntimeEnv,
@@ -9,6 +9,7 @@ import {
     readMultiUserConfig,
     readPilotDeckConfigFile,
     sanitizeProviderCredentials,
+    __resetLegacyDbWarning,
     validatePilotDeckConfig,
 } from './pilotdeckConfig.js';
 
@@ -25,11 +26,36 @@ it('ignores a pre-multi-user databasePath that points at the legacy <root>/auth.
     // Plan 1 leaves the legacy single-user database alone; db.js then applies
     // its own default instead of opening and migrating it in place.
     const home = process.env.PILOT_HOME || join(homedir(), '.pilotdeck');
+    __resetLegacyDbWarning();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
     expect(buildRuntimeEnv({ webui: { runtime: { databasePath: 'auth.db' } } }).DATABASE_PATH).toBeUndefined();
     expect(buildRuntimeEnv({ webui: { runtime: { databasePath: './auth.db' } } }).DATABASE_PATH).toBeUndefined();
     expect(buildRuntimeEnv({ webui: { runtime: { databasePath: join(home, 'auth.db') } } }).DATABASE_PATH).toBeUndefined();
     // An explicit path elsewhere is still an operator choice and is honoured.
     expect(buildRuntimeEnv({ webui: { runtime: { databasePath: '/var/db/pd.db' } } }).DATABASE_PATH).toBe('/var/db/pd.db');
+    } finally { warn.mockRestore(); __resetLegacyDbWarning(); }
+});
+
+it('warns once when webui.runtime.databasePath points at the legacy root auth.db', () => {
+    __resetLegacyDbWarning();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+        const env = buildRuntimeEnv({ webui: { runtime: { databasePath: 'auth.db' } } });
+        expect(env.DATABASE_PATH).toBeUndefined();
+        buildRuntimeEnv({ webui: { runtime: { databasePath: 'auth.db' } } });
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0][0]).toMatch(/legacy .*auth\.db.*ignored/);
+    } finally { warn.mockRestore(); __resetLegacyDbWarning(); }
+});
+
+it('does not warn for a deliberate non-legacy databasePath', () => {
+    __resetLegacyDbWarning();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+        buildRuntimeEnv({ webui: { runtime: { databasePath: '/var/db/pd.db' } } });
+        expect(warn).not.toHaveBeenCalled();
+    } finally { warn.mockRestore(); }
 });
 
 it('defaults databasePath to the system directory', () => {
@@ -270,7 +296,7 @@ describe('readMultiUserConfig', () => {
     it('returns pool defaults when the yaml has no multiUser block', () => {
         useTempConfig(null);
         expect(readMultiUserConfig().gatewayPool).toEqual({
-            maxInstances: 30, idleTimeoutMs: 30 * 60_000, startTimeoutMs: 60_000, maxWaiting: 20, portBase: 18800,
+            maxInstances: 30, idleTimeoutMs: 30 * 60_000, startTimeoutMs: 60_000, maxWaiting: 20, portBase: 18800, healthyAfterMs: 5 * 60_000,
         });
     });
 

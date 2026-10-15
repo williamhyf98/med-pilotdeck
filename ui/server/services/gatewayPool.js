@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { resolvePilotRoot, ensureUserHomeSkeleton } from '../utils/pilotPaths.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-const DEFAULTS = { maxInstances: 30, idleTimeoutMs: 30 * 60_000, startTimeoutMs: 60_000, maxWaiting: 20, portBase: 18800 };
+const DEFAULTS = { maxInstances: 30, idleTimeoutMs: 30 * 60_000, startTimeoutMs: 60_000, maxWaiting: 20, portBase: 18800, healthyAfterMs: 5 * 60_000 };
 const BREAKER_FAILURES = 3;
 const BREAKER_WINDOW_MS = 10 * 60_000;
 const STOP_GRACE_MS = 5_000;
@@ -429,6 +429,7 @@ export function createGatewayPool(options = {}) {
     // becomes ready and then crashes on every request.
     entry.state = 'idle';
     entry.idleSince = now();
+    entry.readySince = now(); // kept across busy/idle transitions; see release()
     log(`[gateway-pool] gateway ready for user ${userId} on ${url}`);
     return entry;
   }
@@ -480,6 +481,9 @@ export function createGatewayPool(options = {}) {
         released = true;
         entry.leases -= 1;
         if (entry.leases > 0 || entry.state === 'stopping') return;
+        // An instance that stayed healthy for healthyAfterMs forgives past
+        // start failures; a gateway that crashes soon after becoming ready never does.
+        if (entry.readySince != null && now() - entry.readySince >= config.healthyAfterMs) failures.delete(userId);
         if (entry.revoked) { void stopEntry(entry, 'revoked'); return; }
         entry.state = 'idle';
         entry.idleSince = now();

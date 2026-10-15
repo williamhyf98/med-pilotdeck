@@ -166,6 +166,14 @@ const WATCHER_DEBOUNCE_MS = 300;
 let projectsWatchers = [];
 const projectsWatcherTimers = new Map(); // userId -> debounce timer
 const connectedClients = new Set();
+// Shell and plugin-ws sockets. They are not chat clients (no notification
+// fan-out), but they must still die with the user's session on revoke/shutdown.
+const auxClients = new Set();
+function trackAuxSocket(ws, scope) {
+    ws[SOCKET_USER_ID] = scope.userId;
+    auxClients.add(ws);
+    ws.on('close', () => auxClients.delete(ws));
+}
 const sessionWatchRegistry = createSessionWatchRegistry();
 // Always-On gateway notifications are subscribed per user gateway, and only in
 // single-user (no-login) mode — see startAlwaysOnForwardingForLocalUser().
@@ -582,6 +590,7 @@ app.use('/api', validateApiKey);
 let revokeUserRuntime = (userId) => {
     const id = String(userId);
     closeUserSockets(connectedClients, id);
+    closeUserSockets(auxClients, id);
     revokeUserGateway(id);
 };
 app.locals.revokeUserRuntime = (id) => revokeUserRuntime(id);
@@ -2608,9 +2617,17 @@ app.post('/api/projects/:projectName/files/upload', ...requireUser, uploadFilesH
 
 /**
  * Proxy an authenticated client WebSocket to a plugin's internal WS server.
- * Auth is enforced by verifyClient before this function is reached.
+ * Auth is enforced by verifyClient before this function is reached; the
+ * connection is additionally bound to the user so revocation closes it.
  */
-function handlePluginWsProxy(clientWs, pathname) {
+function handlePluginWsProxy(clientWs, pathname, request) {
+    const pluginScope = bindConnectionScope(request);
+    if (!pluginScope) {
+        console.log('[WARN] Plugin WebSocket without an authenticated user; refusing');
+        try { clientWs.close(4401, 'UNAUTHENTICATED'); } catch { /* already closed */ }
+        return;
+    }
+    trackAuxSocket(clientWs, pluginScope);
     const pluginName = pathname.replace('/plugin-ws/', '');
     if (!pluginName || /[^a-zA-Z0-9_-]/.test(pluginName)) {
         clientWs.close(4400, 'Invalid plugin name');
@@ -2664,7 +2681,7 @@ wss.on('connection', (ws, request) => {
     } else if (pathname === '/ws') {
         handleChatConnection(ws, request);
     } else if (pathname.startsWith('/plugin-ws/')) {
-        handlePluginWsProxy(ws, pathname);
+        handlePluginWsProxy(ws, pathname, request);
     } else {
         console.log('[WARN] Unknown WebSocket path:', pathname);
         ws.close();
@@ -2979,6 +2996,7 @@ function handleShellConnection(ws, request) {
         return;
     }
     ws[SOCKET_ROLE] = shellScope.role;
+    trackAuxSocket(ws, shellScope);
     ws.on('message', runMessageInScope(shellScope, async (message) => {
         try {
             const data = JSON.parse(message);
@@ -4224,7 +4242,7 @@ async function startServer() {
                 } finally {
                     // Then the HTTP server. WebSocket clients are told to go away
                     // (1001) first, otherwise their connections keep close() pending.
-                    for (const client of connectedClients) {
+                    for (const client of [...connectedClients, ...auxClients]) {
                         try { client.close(1001, 'SERVER_SHUTDOWN'); } catch { /* already closed */ }
                     }
                     console.log('[INFO] Gateways stopped, closing HTTP server...');

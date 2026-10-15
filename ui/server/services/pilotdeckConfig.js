@@ -410,6 +410,10 @@ function providerProtocolToMemoryApi(protocol) {
   return 'openai-completions';
 }
 
+// The legacy-path warning is emitted once per process; the hook lets tests reset it.
+let warnedLegacyDbPath = false;
+export function __resetLegacyDbWarning() { warnedLegacyDbPath = false; }
+
 export function buildRuntimeEnv(config) {
   const normalized = normalizePilotDeckConfig(config);
   const main = resolveModel(normalized, normalized.agent.model, { allowMissing: true });
@@ -432,7 +436,12 @@ export function buildRuntimeEnv(config) {
   const databasePath = runtime.databasePath
     ? path.resolve(pilotHomeDir(), expandTilde(runtime.databasePath))
     : '';
-  if (databasePath && databasePath !== path.join(pilotHomeDir(), 'auth.db')) env.DATABASE_PATH = databasePath;
+  if (databasePath && databasePath !== path.join(pilotHomeDir(), 'auth.db')) {
+    env.DATABASE_PATH = databasePath;
+  } else if (databasePath && !warnedLegacyDbPath) {
+    console.warn('[config] webui.runtime.databasePath points at the legacy <root>/auth.db and is ignored; the account database lives at system/auth.db');
+    warnedLegacyDbPath = true;
+  }
   if (runtime.workspacesRoot) env.WORKSPACES_ROOT = path.resolve(pilotHomeDir(), expandTilde(runtime.workspacesRoot));
   const proxyUrl = normalized.proxy?.url
     || (typeof normalized.proxy === 'string' ? normalized.proxy : '')
@@ -592,6 +601,7 @@ export function readMultiUserConfig() {
       idleTimeoutMs: Number(mu.gatewayPool?.idleTimeoutMs) || 30 * 60_000,
       startTimeoutMs: Number(mu.gatewayPool?.startTimeoutMs) || 60_000,
       maxWaiting: Number(mu.gatewayPool?.maxWaiting) || 20,
+      healthyAfterMs: Number(mu.gatewayPool?.healthyAfterMs) || 5 * 60_000,
       portBase: Number(process.env.PILOTDECK_GATEWAY_PORT_BASE) || Number(mu.gatewayPool?.portBase) || 18800,
     },
   };

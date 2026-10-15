@@ -33,7 +33,7 @@ function makeFakes({ failUsers = new Set(), connectDelayMs = 0, killExitDelayMs 
     return gw;
   });
   const findFreePort = customFindFreePort ?? vi.fn(async () => nextPort++);
-  return { spawned, closed, spawnGateway, connectGateway, findFreePort };
+  return { spawned, closed, spawnGateway, connectGateway, findFreePort, failUsers };
 }
 function makeClock() {
   let now = 1_000_000; const pending = [];
@@ -112,6 +112,34 @@ describe('gatewayPool', () => {
     }
     await expect(pool.acquire(9)).rejects.toMatchObject({ code: 'GATEWAY_UNAVAILABLE' });
     expect(f.spawnGateway).toHaveBeenCalledTimes(3);
+  });
+
+  it('clears the breaker only after a sustained healthy lease', async () => {
+    const f = makeFakes({ failUsers: new Set(['9']) }); const pool = mk(f, { healthyAfterMs: 1000 });
+    for (let i = 0; i < 2; i += 1) await expect(pool.acquire(9)).rejects.toMatchObject({ code: 'GATEWAY_UNAVAILABLE' });
+    f.failUsers.delete('9');
+    const short = await pool.acquire(9); await clock.advance(500); short.release(); // healthy for 500 ms: not enough
+    const long = await pool.acquire(9); await clock.advance(1500); long.release(); // healthy >= 1000 ms: reset
+    expect(f.spawnGateway).toHaveBeenCalledTimes(3);
+    f.failUsers.add('9'); await pool.stopUser(9);
+    // Three post-reset failures are needed to trip the breaker. Without the reset
+    // the 1st would already be the 3rd consecutive failure and the 2nd acquire
+    // would be rejected by the open breaker without spawning.
+    for (let i = 0; i < 3; i += 1) await expect(pool.acquire(9)).rejects.toMatchObject({ code: 'GATEWAY_UNAVAILABLE' });
+    expect(f.spawnGateway).toHaveBeenCalledTimes(6);
+    await expect(pool.acquire(9)).rejects.toMatchObject({ code: 'GATEWAY_UNAVAILABLE' });
+    expect(f.spawnGateway).toHaveBeenCalledTimes(6); // now the breaker is open
+  });
+
+  it('does not clear the breaker after a lease shorter than healthyAfterMs', async () => {
+    const f = makeFakes({ failUsers: new Set(['9']) }); const pool = mk(f, { healthyAfterMs: 1000 });
+    for (let i = 0; i < 2; i += 1) await expect(pool.acquire(9)).rejects.toMatchObject({ code: 'GATEWAY_UNAVAILABLE' });
+    f.failUsers.delete('9');
+    const short = await pool.acquire(9); await clock.advance(500); short.release();
+    f.failUsers.add('9'); await pool.stopUser(9);
+    await expect(pool.acquire(9)).rejects.toMatchObject({ code: 'GATEWAY_UNAVAILABLE' }); // 3rd consecutive failure
+    await expect(pool.acquire(9)).rejects.toMatchObject({ code: 'GATEWAY_UNAVAILABLE' }); // breaker open, no spawn
+    expect(f.spawnGateway).toHaveBeenCalledTimes(4);
   });
 
   it('times out a start that never connects', async () => {

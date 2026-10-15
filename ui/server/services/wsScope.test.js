@@ -80,6 +80,14 @@ describe('runMessageInScope', () => {
 });
 
 describe('closeUserSockets', () => {
+  it('works independently on the chat set and the aux set', () => {
+    const mk = (uid) => ({ readyState: 1, [SOCKET_USER_ID]: uid, close: vi.fn() });
+    const chat = new Set([mk(1), mk(2)]); const aux = new Set([mk(2), mk(3)]);
+    closeUserSockets(chat, 2); closeUserSockets(aux, 2);
+    expect([...chat].map((s) => s.close.mock.calls.length)).toEqual([0, 1]);
+    expect([...aux].map((s) => s.close.mock.calls.length)).toEqual([1, 0]);
+  });
+
   // Review Focus 2: revoking B must not disturb A.
   it('closes only the named user\'s open sockets, with 4401 TOKEN_REVOKED', () => {
     const a = fakeSocket(1);
