@@ -50,6 +50,7 @@ import {
 import { createNormalizedMessage } from './pilotdeck-message.js';
 import { readPermissionSettings } from './services/permissionSettings.js';
 import { createGatewayPool } from './services/gatewayPool.js';
+import { DISABLE_LOCAL_AUTH } from './constants/config.js';
 import { readMultiUserConfig } from './services/pilotdeckConfig.js';
 import { requireUserScope, runWithUserScope } from './middleware/userScope.js';
 import { resolveScopedHome } from './utils/pilotPaths.js';
@@ -167,7 +168,7 @@ const WEB_DEFAULT_PERMISSION_MODE =
 
 let poolInstance = null;
 function pool() {
-    if (!poolInstance) poolInstance = createGatewayPool({ config: readMultiUserConfig().gatewayPool });
+    if (!poolInstance) poolInstance = createGatewayPool({ config: readMultiUserConfig().gatewayPool, multiUser: !DISABLE_LOCAL_AUTH });
     return poolInstance;
 }
 

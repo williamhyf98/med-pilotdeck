@@ -17,6 +17,7 @@ import {
 } from "../extension/skills/index.js";
 import { loadPilotConfig, resolvePilotHome } from "../pilot/index.js";
 import { createLocalGateway } from "./createLocalGateway.js";
+import { applyCliHome } from "./homeGuard.js";
 import { startPilotDeckServer } from "./pilotdeckServer.js";
 import { installGlobalProxy, reinstallGlobalProxy } from "./proxy.js";
 import { isAlwaysOnDisabled } from "./serverFeatureFlags.js";
@@ -27,6 +28,10 @@ await installGlobalProxy();
 
 async function main(argv = process.argv.slice(2)): Promise<void> {
   const command = argv[0];
+  // The `server` subcommand gets its PILOT_HOME explicitly (from the pool or the
+  // operator) and is never rewritten. Every other subcommand run against a
+  // multi-user system root is redirected to the administrator's home.
+  if (command !== "server") applyCliHome(process.env, console.log);
   if (command === "server") {
     const projectRoot = process.cwd();
     const env = process.env;

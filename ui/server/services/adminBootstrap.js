@@ -1,6 +1,8 @@
 // ui/server/services/adminBootstrap.js
 import bcrypt from 'bcrypt';
-import { ensureUserHomeSkeleton } from '../utils/pilotPaths.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { ensureUserHomeSkeleton, resolvePilotRoot } from '../utils/pilotPaths.js';
 
 export const ADMIN_USERNAME = 'admin';
 export const ADMIN_DEFAULT_PASSWORD = 'passok';
@@ -16,6 +18,8 @@ export function isReservedUsername(username) {
  *   starts from a fresh PILOT_HOME or promotes an account by hand; the
  *   data-migration command arrives in the next plan).
  * - Existing admin → do nothing. Passwords are never re-synced on startup.
+ * Whenever an active admin exists, `<root>/system/admin-home` is (re)written with
+ * that admin's home directory, so the CLI/TUI can find it (src/cli/homeGuard.ts).
  */
 export async function ensureAdminUser({
   userDb,
@@ -30,7 +34,7 @@ export async function ensureAdminUser({
     const usedDefaultPassword = password === ADMIN_DEFAULT_PASSWORD && fromEnv.length === 0;
     const hash = await bcryptHash(password);
     const admin = userDb.createUser(ADMIN_USERNAME, hash, 'admin');
-    ensureHome(admin.id);
+    writeAdminHome(env, ensureHome(admin.id));
     log(`[INFO] Created administrator account "${ADMIN_USERNAME}".`);
     if (usedDefaultPassword) {
       log('[WARN] Administrator is using the default password. Set PILOTDECK_ADMIN_PASSWORD or change it after first login.');
@@ -49,5 +53,14 @@ export async function ensureAdminUser({
     throw error;
   }
 
+  const admin = userDb.getAdminUser();
+  writeAdminHome(env, ensureHome(admin.id));
   return { created: false, usedDefaultPassword: false };
+}
+
+/** Absolute path of the admin's home, one line, overwritten on every startup. */
+function writeAdminHome(env, adminHome) {
+  const file = path.join(resolvePilotRoot(env), 'system', 'admin-home');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${path.resolve(adminHome)}\n`);
 }

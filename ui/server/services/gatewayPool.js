@@ -79,19 +79,31 @@ export function defaultInspectProcess(pid) {
 // from `$PILOT_HOME/server-token`, which is exactly where `ensureToken` writes
 // it (<userHome>/server-token). A documented deviation from spec §4, which
 // placed it under system/.
-export function defaultSpawnGateway({ userHome, port, env, configPath }) {
-  const distEntry = path.join(REPO_ROOT, 'dist', 'src', 'cli', 'pilotdeck.js');
-  const args = fs.existsSync(distEntry)
-    ? [distEntry, 'server']
-    : ['--import', './scripts/register-deploy-env.mjs', '--import', 'tsx', 'src/cli/pilotdeck.ts', 'server'];
+/**
+ * Environment for a pooled gateway child. `PILOTDECK_DISABLE_ALWAYS_ON` keeps
+ * the shared-pilotdeck.yaml background subsystems (always-on, cron, IM) from
+ * being started once per user, so it is only set in multi-user mode; in
+ * no-login mode the single admin gateway keeps them.
+ */
+export function buildGatewayChildEnv({ env, userHome, port, configPath, multiUser = true }) {
   const childEnv = {
     ...env,
     PILOT_HOME: userHome,
     PILOTDECK_GATEWAY_PORT: String(port),
     PILOTDECK_CONFIG_PATH: configPath,
-    PILOTDECK_DISABLE_ALWAYS_ON: '1',
   };
+  if (multiUser === true) childEnv.PILOTDECK_DISABLE_ALWAYS_ON = '1';
+  else delete childEnv.PILOTDECK_DISABLE_ALWAYS_ON;
   delete childEnv.PILOTDECK_GATEWAY_URL;
+  return childEnv;
+}
+
+export function defaultSpawnGateway({ userHome, port, env, configPath, multiUser = true }) {
+  const distEntry = path.join(REPO_ROOT, 'dist', 'src', 'cli', 'pilotdeck.js');
+  const args = fs.existsSync(distEntry)
+    ? [distEntry, 'server']
+    : ['--import', './scripts/register-deploy-env.mjs', '--import', 'tsx', 'src/cli/pilotdeck.ts', 'server'];
+  const childEnv = buildGatewayChildEnv({ env, userHome, port, configPath, multiUser });
   return spawn(process.execPath, args, { cwd: REPO_ROOT, env: childEnv, stdio: ['ignore', 'inherit', 'inherit'] });
 }
 
@@ -106,6 +118,8 @@ export function createGatewayPool(options = {}) {
   const env = options.env ?? process.env;
   const config = { ...DEFAULTS, ...(options.config ?? {}) };
   const spawnGateway = options.spawnGateway ?? defaultSpawnGateway;
+  // Multi-user by default; the bridge passes `false` in no-login mode.
+  const multiUser = options.multiUser !== false;
   const connectGateway = options.connectGateway ?? defaultConnectGateway;
   const findFreePort = options.findFreePort ?? defaultFindFreePort;
   const inspectProcess = options.inspectProcess ?? defaultInspectProcess;
@@ -323,7 +337,7 @@ export function createGatewayPool(options = {}) {
       entry.port = port;
       const { token, tokenPath } = ensureToken(userHome);
 
-      entry.child = spawnGateway({ userId, userHome, port: entry.port, tokenPath, env, configPath });
+      entry.child = spawnGateway({ userId, userHome, port: entry.port, tokenPath, env, configPath, multiUser });
       if (entry.state === 'stopping') {
         // Defensive: a child that appeared after stopEntry resolved is never left running.
         try { entry.child.kill('SIGTERM'); } catch { /* ignore */ }

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createGatewayPool } from './gatewayPool.js';
+import { createGatewayPool, buildGatewayChildEnv } from './gatewayPool.js';
 
 let root; let clock; let timers;
 // Any fixed wall-clock instant; only used as the `startedAt` the pid file records.
@@ -360,5 +360,36 @@ describe('gatewayPool', () => {
     await pool.shutdown();
     expect(f.closed).toHaveLength(2);
     expect(JSON.parse(fs.readFileSync(path.join(root, 'system', 'gateway-pids.json'), 'utf8'))).toEqual({});
+  });
+});
+
+describe('gatewayPool always-on flag by mode', () => {
+  const base = { env: { PILOTDECK_DISABLE_ALWAYS_ON: 'inherited', PILOTDECK_GATEWAY_URL: 'http://x' }, userHome: '/h/users/1', port: 20001, configPath: '/h/pilotdeck.yaml' };
+
+  it('multi-user child env disables always-on / cron / IM', () => {
+    const env = buildGatewayChildEnv({ ...base, multiUser: true });
+    expect(env.PILOTDECK_DISABLE_ALWAYS_ON).toBe('1');
+    expect(env.PILOT_HOME).toBe('/h/users/1');
+    expect(env.PILOTDECK_GATEWAY_URL).toBeUndefined();
+  });
+
+  it('no-login child env leaves always-on enabled (even if the parent env set the flag)', () => {
+    const env = buildGatewayChildEnv({ ...base, multiUser: false });
+    expect('PILOTDECK_DISABLE_ALWAYS_ON' in env).toBe(false);
+    expect(env.PILOTDECK_GATEWAY_PORT).toBe('20001');
+    expect(env.PILOTDECK_CONFIG_PATH).toBe('/h/pilotdeck.yaml');
+  });
+
+  it('the pool hands its multiUser mode to spawnGateway (default true)', async () => {
+    const seen = [];
+    for (const [extra, expected] of [[{}, true], [{ multiUser: true }, true], [{ multiUser: false }, false]]) {
+      const f = makeFakes();
+      const pool = mk(f, {}, extra);
+      const lease = await pool.acquire(1);
+      seen.push([expected, f.spawnGateway.mock.calls[0][0].multiUser]);
+      lease.release();
+      await pool.shutdown();
+    }
+    for (const [expected, actual] of seen) expect(actual).toBe(expected);
   });
 });
