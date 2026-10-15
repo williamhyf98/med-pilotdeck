@@ -236,12 +236,14 @@ describe('memory settings route', () => {
     });
     expect(invalid.status).toBe(400);
   });
-  it('is administrator-only: a regular user can neither read nor write it', async () => {
+  it('a regular user reads only the on/off flag and cannot write it', async () => {
     const { request, writePilotDeckConfig } = await createMemorySettingsApp({ memory: {} }, { role: 'user' });
 
+    // The embedded dashboard fetches settings at boot for every user; a 403
+    // used to abort its whole boot. Users get the flag, never the policy.
     const read = await request('/api/memory/settings?projectPath=/tmp/pilotdeck-project');
-    expect(read.status).toBe(403);
-    expect(read.body.code).toBe('ADMIN_REQUIRED');
+    expect(read.status).toBe(200);
+    expect(read.body).toEqual({ enabled: true });
 
     const write = await request('/api/memory/settings?projectPath=/tmp/pilotdeck-project', {
       method: 'POST', body: JSON.stringify({ maintenanceMode: 'immediate' }),

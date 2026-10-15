@@ -103,6 +103,7 @@ import sessionManager from './sessionManager.js';
 // The /api mount table (and the auth chain of every endpoint) lives here.
 import { buildApiRouter } from './apiRouter.js';
 import { MEMORY_DASHBOARD_DIR } from './routes/memory.js';
+import { buildMemoryDashboardRouter } from './routes/memoryDashboard.js';
 import {
     OFFICE_PREVIEW_SERVICE_BUILTIN,
     OFFICE_PREVIEW_SERVICE_LIBREOFFICE,
@@ -852,33 +853,9 @@ function ccrConfigPut(_req, res) {
     });
 }
 
-app.get('/memory-dashboard', ...requireUser, (req, res) => {
-    const indexPath = path.join(MEMORY_DASHBOARD_DIR, 'index.html');
-    if (!fs.existsSync(indexPath)) {
-        res.status(404).type('text/plain').send('Memory dashboard assets not bundled.');
-        return;
-    }
-    res.sendFile(indexPath);
-});
-
-app.use('/memory-dashboard', ...requireUser, express.static(MEMORY_DASHBOARD_DIR, {
-    setHeaders: (res, filePath) => {
-        if (filePath.endsWith('.html')) {
-            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-            res.setHeader('Pragma', 'no-cache');
-            res.setHeader('Expires', '0');
-        }
-    }
-}));
-
-// Hard 404 boundary: anything still asking for /memory-dashboard/* after the
-// static middleware is a missing asset. Without this, the request would fall
-// through to the SPA wildcard below and return the PilotDeck shell index.html,
-// which the MemoryPanel iframe then renders — recursively nesting the entire
-// app inside itself (see bug: "嵌套显示 + general memory 多次出现").
-app.use('/memory-dashboard', (_req, res) => {
-    res.status(404).type('text/plain').send('Not found in memory-dashboard.');
-});
+// The embedded Memory Dashboard (iframe): the document is authenticated via
+// the token in its URL; its static JS/CSS is public (see routes/memoryDashboard.js).
+app.use('/memory-dashboard', buildMemoryDashboardRouter({ dir: MEMORY_DASHBOARD_DIR, requireUser }));
 
 // Serve public files (like api-docs.html)
 app.use(express.static(path.join(__dirname, '../public')));

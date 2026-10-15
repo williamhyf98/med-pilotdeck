@@ -441,12 +441,16 @@ router.get('/overview', async (req, res) =>
 );
 
 // Memory settings are global: they live in pilotdeck.yaml and affect every
-// user's gateway, so only an administrator may read or change them.
+// user's gateway, so only an administrator may change them. Reading is open
+// to every signed-in user (the embedded dashboard fetches it at boot), but a
+// non-admin only learns the on/off flag, never the policy values.
 router.route('/settings')
-  .get(requireAdmin, async (req, res) =>
-    withMemoryService(req, res, async ({ service }) => {
+  .get(async (req, res) => {
+    if (!isAdminRequest(req)) return res.json(publicSettings());
+    return withMemoryService(req, res, async ({ service }) => {
       res.json(service.getSettings?.() ?? getGlobalMemorySettings());
-    }))
+    });
+  })
   .post(requireAdmin, async (req, res) =>
     withMemoryService(req, res, async ({ service }) => {
       const settings = await saveGlobalMemorySettings(req.body ?? {});

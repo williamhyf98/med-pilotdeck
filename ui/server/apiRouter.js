@@ -92,7 +92,8 @@ export function buildApiRouter({
   api.use('/projects', ...requireUser, projectsRoutes);
   api.use('/git', ...requireUser, gitRoutes);
   api.use('/taskmaster', ...requireUser, taskmasterRoutes);
-  // `GET/POST /memory/settings` is global and carries its own `requireAdmin`.
+  // `POST /memory/settings` is global and carries its own `requireAdmin`;
+  // GET answers everyone but strips policy fields for non-admins.
   api.use('/memory', ...requireUser, memoryRoutes);
   api.use('/commands', ...requireUser, commandsRoutes);
   api.use('/skills', ...requireUser, skillsRoutes);

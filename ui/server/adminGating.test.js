@@ -101,7 +101,7 @@ const ADMIN_ONLY = [
   ['GET', '/api/mcp/config'], ['GET', '/api/mcp-utils/all-servers'], ['GET', '/api/update/status'], ['GET', '/api/gateway/status'],
   ['PUT', '/api/plugins/med-tools/enable'], ['POST', '/api/plugins/install'], ['POST', '/api/plugins/med-tools/update'],
   ['DELETE', '/api/plugins/med-tools'],
-  ['GET', '/api/memory/settings'], ['POST', '/api/memory/settings'],
+  ['POST', '/api/memory/settings'],
   ['GET', '/api/ccr/dashboard'], ['GET', '/api/ccr/health'], ['GET', '/api/ccr/config'],
   ['GET', '/api/ccr/stats/summary'], ['GET', '/api/ccr/stats/sessions/s1'], ['POST', '/api/ccr/stats/reset'],
   ['PUT', '/api/ccr/config'],
@@ -115,6 +115,7 @@ const USER_OK = [
   ['GET', '/api/settings/api-keys'],
   ['GET', '/api/user/git-config'],
   ['GET', '/api/memory/overview'],
+  ['GET', '/api/memory/settings'],
   ['POST', '/api/skills/list'],
   ['GET', '/api/storage'],
   ['POST', '/api/commands/list'],
@@ -143,6 +144,15 @@ describe('admin gating matrix', () => {
       });
       expect(`${method} ${p} -> ${res.status}`).toBe(`${method} ${p} -> 401`);
     }
+  });
+
+  it('GET /api/memory/settings gives a user only the on/off flag', async () => {
+    const user = await (await call('alice', 'GET', '/api/memory/settings')).json();
+    expect(Object.keys(user)).toEqual(['enabled']);
+    // The admin path goes through the memory service; here it may be absent,
+    // but it must never be the trimmed user shape.
+    const admin = await (await call('admin', 'GET', '/api/memory/settings')).json();
+    expect(Object.keys(admin)).not.toEqual(['enabled']);
   });
 
   it('/api/auth stays public', async () => {

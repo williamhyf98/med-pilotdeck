@@ -19,26 +19,6 @@ const validateApiKey = (req, res, next) => {
   next();
 };
 
-function extractDashboardRefererToken(req) {
-  const refererHeader = req.headers.referer || req.headers.referrer;
-  if (!refererHeader || Array.isArray(refererHeader)) {
-    return null;
-  }
-
-  try {
-    const refererUrl = new URL(
-      refererHeader,
-      `${req.protocol}://${req.get('host')}`,
-    );
-    if (!refererUrl.pathname.startsWith('/memory-dashboard')) {
-      return null;
-    }
-    return refererUrl.searchParams.get('token');
-  } catch {
-    return null;
-  }
-}
-
 function denied(res, status, code, error) {
   return res.status(status).json({ error, code });
 }
@@ -71,9 +51,6 @@ const authenticateToken = async (req, res, next) => {
   let token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
   // Also check query param for SSE endpoints (EventSource can't set headers)
   if (!token && req.query.token) token = req.query.token;
-  // Memory dashboard static assets inherit the iframe document URL as Referer,
-  // but do not inherit the query string onto app.js/app.css requests.
-  if (!token) token = extractDashboardRefererToken(req);
   if (!token) return denied(res, 401, 'NO_TOKEN', 'Access denied. No token provided.');
 
   let decoded;

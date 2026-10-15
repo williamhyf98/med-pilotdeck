@@ -250,12 +250,17 @@ describe('Plan 2 regressions', () => {
       const call = (who, method, p) => fetch(`${gbase}${p}`, {
         method, headers: { Authorization: `Bearer ${tokens[who]}`, 'Content-Type': 'application/json' }, body: method === 'GET' ? undefined : '{}',
       });
-      for (const [method, p] of [['GET', '/api/config'], ['GET', '/api/memory/settings'], ['PUT', '/api/plugins/med-tools/enable']]) {
+      for (const [method, p] of [['GET', '/api/config'], ['POST', '/api/memory/settings'], ['PUT', '/api/plugins/med-tools/enable']]) {
         const u = await call('alice', method, p);
         expect(`${method} ${p} -> ${u.status}`).toBe(`${method} ${p} -> 403`);
         expect((await u.json()).code).toBe('ADMIN_REQUIRED');
         expect((await call('admin', method, p)).status).not.toBe(403);
       }
+      // Reading memory settings is open (the embedded dashboard needs it at
+      // boot) but a user only ever sees the on/off flag, never the policy.
+      const settings = await call('alice', 'GET', '/api/memory/settings');
+      expect(settings.status).toBe(200);
+      expect(Object.keys(await settings.json())).toEqual(['enabled']);
     } finally {
       await new Promise((r) => gated.close(r));
     }
