@@ -80,8 +80,76 @@ describe('legacy migration', () => {
     expect(first.skipped).toBe(false);
     expect(fs.existsSync(path.join(home, 'projects/general_med/general_med-aaa/meta.json'))).toBe(true);
     expect(fs.existsSync(path.join(root, 'system/migration/history/conflicts/projects/general_med'))).toBe(false);
+    expect(first.applied).toContainEqual(expect.objectContaining({ name: 'projects', action: 'move' }));
+    expect(first.applied).toContainEqual(expect.objectContaining({ name: `projects/${createProjectId(root)}`, action: 'move' }));
+    expect(first.applied).toContainEqual(expect.objectContaining({ name: 'router', action: 'drop' }));
     const second = await migrateLegacyStorage({ userDb: db.userDb, log: () => {} });
     expect(second).toMatchObject({ skipped: true, reason: 'marker-present' });
+  });
+
+  it('records skip/already-migrated when a whole top-level entry was moved before the crash', async () => {
+    seedLegacyRoot();
+    const { db, migrateLegacyStorage, admin } = await boot();
+    const home = path.join(root, 'users', String(admin.id));
+    fs.rmSync(path.join(home, 'memory'), { recursive: true });
+    fs.renameSync(path.join(root, 'memory'), path.join(home, 'memory'));
+    const result = await migrateLegacyStorage({ userDb: db.userDb, log: () => {} });
+    expect(result.applied).toContainEqual(expect.objectContaining({ name: 'memory', action: 'skip', reason: 'already-migrated' }));
+    expect(fs.readFileSync(path.join(home, 'memory/global/UserIdentity/profile.md'), 'utf8')).toBe('# me');
+    expect(fs.existsSync(path.join(root, 'system/migration/history/conflicts/memory'))).toBe(false);
+    expect(fs.existsSync(path.join(root, 'system/migration/legacy-done.json'))).toBe(true);
+  });
+
+  it('keeps the home copy and archives the legacy copy when a child exists on both sides after a partial move', async () => {
+    seedLegacyRoot();
+    const { db, migrateLegacyStorage, admin } = await boot();
+    const home = path.join(root, 'users', String(admin.id));
+    fs.mkdirSync(path.join(home, 'skills/my-skill'), { recursive: true });
+    fs.writeFileSync(path.join(home, 'skills/my-skill/SKILL.md'), 'HOME');
+    await migrateLegacyStorage({ userDb: db.userDb, log: () => {} });
+    expect(fs.readFileSync(path.join(home, 'skills/my-skill/SKILL.md'), 'utf8')).toBe('HOME');
+    expect(fs.readFileSync(path.join(root, 'system/migration/history/conflicts/skills/my-skill/SKILL.md'), 'utf8')).toContain('my-skill');
+  });
+
+  it('never follows symlinks while merging: a link is moved intact when free, archived when the name is taken', async () => {
+    seedLegacyRoot();
+    const external = fs.mkdtempSync(path.join(os.tmpdir(), 'pd-ext-'));
+    try {
+      fs.writeFileSync(path.join(external, 'keep.txt'), 'EXT');
+      fs.symlinkSync(external, path.join(root, 'skills/linked'), 'dir');
+      fs.symlinkSync(external, path.join(root, 'skills/free-link'), 'dir');
+      const { db, migrateLegacyStorage, admin } = await boot();
+      const home = path.join(root, 'users', String(admin.id));
+      fs.mkdirSync(path.join(home, 'skills/linked'), { recursive: true });
+      await migrateLegacyStorage({ userDb: db.userDb, log: () => {} });
+      expect(fs.readFileSync(path.join(external, 'keep.txt'), 'utf8')).toBe('EXT');
+      expect(fs.readdirSync(external)).toEqual(['keep.txt']);
+      expect(fs.lstatSync(path.join(home, 'skills/free-link')).isSymbolicLink()).toBe(true);
+      expect(fs.lstatSync(path.join(root, 'system/migration/history/conflicts/skills/linked')).isSymbolicLink()).toBe(true);
+      expect(fs.readdirSync(path.join(home, 'skills/linked'))).toEqual([]);
+      expect(fs.existsSync(path.join(root, 'skills'))).toBe(false);
+    } finally {
+      fs.rmSync(external, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when residue is left behind even though no step threw', async () => {
+    seedLegacyRoot();
+    const { db, migrateLegacyStorage } = await boot();
+    const realRename = fs.promises.rename;
+    vi.spyOn(fs.promises, 'rename').mockImplementation(async (a, b) => {
+      if (String(a).endsWith(path.join('logs', 'trauma-agent.jsonl'))) return undefined; // silently does nothing
+      return realRename(a, b);
+    });
+    await expect(migrateLegacyStorage({ userDb: db.userDb, log: () => {} })).rejects.toMatchObject({ code: 'LEGACY_MIGRATION_FAILED', message: expect.stringContaining('residue') });
+    expect(fs.existsSync(path.join(root, 'system/migration/legacy-done.json'))).toBe(false);
+  });
+
+  it('wraps planning-phase errors as LEGACY_MIGRATION_FAILED (dangling symlink at root)', async () => {
+    const { db, migrateLegacyStorage } = await boot();
+    fs.symlinkSync(path.join(root, 'does-not-exist'), path.join(root, 'skills'));
+    await expect(migrateLegacyStorage({ userDb: db.userDb, log: () => {} })).rejects.toMatchObject({ code: 'LEGACY_MIGRATION_FAILED' });
+    expect(fs.existsSync(path.join(root, 'system/migration/legacy-done.json'))).toBe(false);
   });
 
   it('does nothing on a fresh root', async () => {
