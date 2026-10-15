@@ -42,6 +42,7 @@ import { filterProjectsByType, resolveProjectType } from './appShellSelection';
 import medAssistantLogo from '../../assets/med-assistant-logo.png';
 import medAssistantLogoCommand from '../../assets/med-assistant-logo-command.png';
 import { isScopedStorageKey, safeLocalStorage } from '../../utils/safeStorage';
+import SidebarAccountArea from './SidebarAccountArea';
 
 const asTimestamp = (value: unknown): number => {
   if (typeof value === 'number') return value;
@@ -249,7 +250,7 @@ export type SidebarV2Props = {
   onOpenProjectFiles?: (project: Project) => void;
   onRequestDeleteProject: (project: Project) => void;
   onRequestDeleteSession: (project: Project, session: ProjectSession) => void;
-  onShowSettings: () => void;
+  onShowSettings: (initialTab?: string) => void;
   onDeselectProject?: () => void;
   onResetProjectSessionPreview?: (projectName: string) => void;
   onCollapse?: () => void;
@@ -1157,9 +1158,10 @@ export default function SidebarV2({
       </div>
 
       <div className="border-t border-border px-2 pb-2 pt-2">
+        <SidebarAccountArea onOpenAccount={() => onShowSettings('account')} />
         <button
           type="button"
-          onClick={onShowSettings}
+          onClick={() => onShowSettings()}
           aria-label={t('sidebar:actions.settings', { defaultValue: 'Settings' }) as string}
           title={t('sidebar:actions.settings', { defaultValue: 'Settings' }) as string}
           className="flex h-9 w-full items-center justify-start gap-2 rounded-lg px-6 text-[13px] font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"

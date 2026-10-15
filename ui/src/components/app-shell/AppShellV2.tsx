@@ -378,7 +378,11 @@ export default function AppShellV2() {
     }
   }, [isConnected, selectedSession?.id, sendMessage]);
 
-  const onShowSettings = useCallback(() => setShowSettings(true), [setShowSettings]);
+  // Always (re)set the landing tab so a previous deep link does not stick.
+  const onShowSettings = useCallback(
+    (initialTab?: string) => openSettings(initialTab),
+    [openSettings],
+  );
   const onCloseSettings = useCallback(() => setShowSettings(false), [setShowSettings]);
   const onMenuClick = useCallback(() => setSidebarOpen(true), [setSidebarOpen]);
   const onCollapseSidebar = useCallback(() => {

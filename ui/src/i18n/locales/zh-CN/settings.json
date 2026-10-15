@@ -58,6 +58,7 @@
     "backToApp": "返回应用",
     "backToSettings": "返回设置",
     "menu": {
+      "account": "账号",
       "general": "通用",
       "modelPool": "模型池",
       "agent": "智能体",
@@ -73,9 +74,11 @@
       "officePreview": "Office 预览",
       "privacy": "安全隐私",
       "advanced": "高级",
-      "about": "关于"
+      "about": "关于",
+      "users": "用户管理"
     },
     "titles": {
+      "account": "账号",
       "general": "通用",
       "modelPool": "模型池",
       "agent": "智能体",
@@ -91,7 +94,8 @@
       "officePreview": "扩展 / Office 预览",
       "privacy": "安全隐私",
       "advanced": "高级",
-      "about": "关于"
+      "about": "关于",
+      "users": "用户管理"
     },
     "contentComingSoon": {
       "title": "右侧内容区待接入",

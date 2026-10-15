@@ -41,7 +41,7 @@ import zhRouting from './locales/zh-CN/routing.json';
 import zhCodeEditor from './locales/zh-CN/codeEditor.json';
 
 import { languages } from './languages.js';
-import { STORAGE_USER_CHANGED_EVENT, safeLocalStorage } from '../utils/safeStorage';
+import { STORAGE_USER_CHANGED_EVENT, getStorageUserRole, safeLocalStorage } from '../utils/safeStorage';
 
 const DEFAULT_LANGUAGE = 'zh-CN';
 const LANGUAGE_STORAGE_KEY = 'userLanguage';
@@ -145,6 +145,8 @@ if (typeof window !== 'undefined') {
 }
 
 function syncAlwaysOnLanguage(lng) {
+  // /api/config is admin-only; a normal user would just get a 403.
+  if (getStorageUserRole() !== 'admin') return;
   const alwaysOnLang = lng === 'zh-CN' ? 'zh-CN' : 'en';
   authenticatedFetch('/api/config')
     .then((r) => r.json())

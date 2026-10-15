@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { usePilotDeckConfig } from "../../../../hooks/usePilotDeckConfig";
+import { useAuth } from "../../../auth/context/AuthContext";
 import {
   ConfigSaveError,
   PageSectionHeader,
@@ -396,7 +397,19 @@ function MemorySection({
   );
 }
 
-export default function AgentMemorySections({
+// Normal users only manage their own memory data. The enable switch, model and
+// maintenance policy live in the system config (admin-only, never loaded for
+// them), so those controls are not rendered at all.
+function UserAgentMemorySections({ title, projects }: AgentMemorySectionsProps) {
+  return (
+    <div className="space-y-6">
+      <h2 className="text-2xl font-semibold text-foreground">{title}</h2>
+      <MemoryDataSection projects={projects} />
+    </div>
+  );
+}
+
+function AdminAgentMemorySections({
   title,
   projects,
 }: AgentMemorySectionsProps) {
@@ -442,5 +455,14 @@ export default function AgentMemorySections({
       <MemorySection config={parsedConfig} onChange={onFormChange} />
       <MemoryDataSection projects={projects} />
     </div>
+  );
+}
+
+export default function AgentMemorySections(props: AgentMemorySectionsProps) {
+  const { isAdmin } = useAuth();
+  return isAdmin ? (
+    <AdminAgentMemorySections {...props} />
+  ) : (
+    <UserAgentMemorySections {...props} />
   );
 }

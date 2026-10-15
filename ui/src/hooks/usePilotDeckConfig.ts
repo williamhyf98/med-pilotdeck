@@ -389,6 +389,7 @@ function usePilotDeckConfigState() {
   const dismissExternalNotice = useCallback(() => setExternalChangeNotice(null), []);
 
   return {
+    readOnly: false as boolean,
     path,
     raw,
     revision,
@@ -428,10 +429,41 @@ export function PilotDeckConfigProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * Controller handed out when no provider is mounted (normal users: the
+ * provider is the only thing that fetches /api/config, which is admin-only).
+ * Read-only and empty; every mutator is a no-op.
+ */
+const READ_ONLY_EMPTY_CONTROLLER: PilotDeckConfigController = {
+  readOnly: true,
+  path: '',
+  // The real controller always holds a string once loaded; here nothing was
+  // loaded at all. Consumers reachable without a provider must not read it.
+  raw: null as unknown as string,
+  revision: '',
+  setRaw: () => {},
+  restoreRawIfCurrent: () => false,
+  exists: false,
+  validation: null,
+  reload: null,
+  configDisabled: false,
+  parseError: null,
+  lastReloadInfo: null,
+  isDirty: false,
+  externalChangeNotice: null,
+  dismissExternalNotice: () => {},
+  loading: false,
+  saving: false,
+  opening: false,
+  error: null,
+  message: null,
+  refresh: async () => {},
+  save: async () => ({ ok: false, error: 'Config is read-only' }),
+  reloadConfig: async () => {},
+  openFile: async () => {},
+};
+
 export function usePilotDeckConfig(): PilotDeckConfigController {
   const controller = useContext(PilotDeckConfigContext);
-  if (!controller) {
-    throw new Error('usePilotDeckConfig must be used within PilotDeckConfigProvider');
-  }
-  return controller;
+  return controller ?? READ_ONLY_EMPTY_CONTROLLER;
 }

@@ -18,6 +18,8 @@ import ModelPoolSections from "./modelPool";
 import PrivacySections from "./privacy";
 import AboutSections from "./about";
 import OfficePreviewSections from "./officePreview";
+import AccountSettings from "./account";
+import UsersSettingsPlaceholder from "./users/UsersSettingsPlaceholder";
 
 type SettingsContentProps = {
   selectedKey: SettingsMenuKey;
@@ -29,6 +31,8 @@ type SettingsContentProps = {
 };
 
 const MENU_TITLE_KEYS: Record<SettingsMenuKey, string> = {
+  account: "settingsPage.titles.account",
+  users: "settingsPage.titles.users",
   general: "settingsPage.titles.general",
   modelPool: "settingsPage.titles.modelPool",
   agent: "settingsPage.titles.agent",
@@ -75,7 +79,11 @@ export default function SettingsContent({
           <ChevronLeft className="h-4 w-4" />
           {t("settingsPage.backToSettings")}
         </button>
-        {isGeneral ? (
+        {selectedKey === "account" ? (
+          <AccountSettings title={title} />
+        ) : selectedKey === "users" ? (
+          <UsersSettingsPlaceholder title={title} />
+        ) : isGeneral ? (
           <GeneralSections title={title} />
         ) : selectedKey === "agentModel" ? (
           <AgentModelSections title={title} />

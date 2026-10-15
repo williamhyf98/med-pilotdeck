@@ -6,6 +6,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../../types/app';
 import SidebarV2 from './SidebarV2';
 
+vi.mock('../auth/context/AuthContext', () => ({
+  useAuth: () => ({
+    user: { id: 1, username: 'tester', role: 'admin' },
+    isAdmin: true,
+    authDisabled: false,
+    logout: vi.fn(),
+  }),
+}));
+
 const generalMed: Project = {
   name: 'general_med-clinic',
   displayName: '门诊随访',
@@ -153,5 +162,16 @@ describe('SidebarV2 type tabs (P3)', () => {
     expect(memoryButton.getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(memoryButton);
     expect(onSelectTab).toHaveBeenCalledWith('chat');
+  });
+
+  it('opens settings on the default tab from the Settings button and on the account tab from the account area', () => {
+    const onShowSettings = vi.fn();
+    renderSidebar(generalMed, [generalMed], { onShowSettings });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(onShowSettings).toHaveBeenLastCalledWith();
+
+    fireEvent.click(screen.getByText('tester'));
+    expect(onShowSettings).toHaveBeenLastCalledWith('account');
   });
 });

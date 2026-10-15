@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PilotDeckConfigProvider } from "../../hooks/usePilotDeckConfig";
 import { authenticatedFetch } from "../../utils/api";
+import { useAuth } from "../auth/context/AuthContext";
 import type { SettingsProps } from "./shared/types";
 import type { SettingsMenuKey } from "./types";
 import { mapInitialTabToMenuKey } from "./navigation";
-import SettingsSidebar from "./view/SettingsSidebar";
+import SettingsSidebar, { getSelectableMenuKeys } from "./view/SettingsSidebar";
 import SettingsContent from "./view/SettingsContent";
 
 export type DesktopVersionCheckResult = {
@@ -41,17 +42,25 @@ function normalizeWebVersionResult(payload: any): DesktopVersionCheckResult {
   };
 }
 
+// A deep link may name a page the role cannot see (e.g. `config:models` for a
+// normal user); fall back to the general page instead of rendering admin UI.
+function resolveMenuKey(tab: string | undefined, isAdmin: boolean): SettingsMenuKey {
+  const key = mapInitialTabToMenuKey(tab);
+  return getSelectableMenuKeys(isAdmin).includes(key) ? key : "general";
+}
+
 function SettingsInner({
   isOpen,
   onClose,
   projects = [],
   initialTab,
 }: SettingsProps) {
+  const { isAdmin } = useAuth();
   const isDesktopApp =
     typeof window !== "undefined" && !!(window as any).pilotdeckDesktop;
   const initialKey = useMemo(
-    () => mapInitialTabToMenuKey(initialTab),
-    [initialTab],
+    () => resolveMenuKey(initialTab, isAdmin),
+    [initialTab, isAdmin],
   );
   const [selectedKey, setSelectedKey] =
     useState<SettingsMenuKey>(initialKey);
@@ -101,11 +110,12 @@ function SettingsInner({
 
   useEffect(() => {
     if (!isOpen) return;
-    const nextKey = mapInitialTabToMenuKey(initialTab);
+    const nextKey = resolveMenuKey(initialTab, isAdmin);
     setSelectedKey(nextKey);
     setMobileNavigationOpen(nextKey === "general");
-    void checkVersion();
-  }, [isOpen, initialTab, checkVersion]);
+    // The update endpoints are admin-only.
+    if (isAdmin) void checkVersion();
+  }, [isOpen, initialTab, isAdmin, checkVersion]);
 
   const selectMenuItem = useCallback((key: SettingsMenuKey) => {
     setSelectedKey(key);
@@ -142,9 +152,15 @@ function SettingsInner({
 }
 
 export default function Settings(props: SettingsProps) {
-  return (
+  const { isAdmin } = useAuth();
+  // The provider is what fetches /api/config, which is admin-only. Normal
+  // users get no provider, and usePilotDeckConfig() then yields a read-only
+  // empty state without any request.
+  return isAdmin ? (
     <PilotDeckConfigProvider>
       <SettingsInner {...props} />
     </PilotDeckConfigProvider>
+  ) : (
+    <SettingsInner {...props} />
   );
 }

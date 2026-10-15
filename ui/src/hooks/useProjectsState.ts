@@ -900,7 +900,10 @@ export function useProjectsState({
       isLoading: isLoadingProjects,
       loadingProgress,
       onRefresh: handleSidebarRefresh,
-      onShowSettings: () => setShowSettings(true),
+      onShowSettings: (tab?: string) => {
+        setSettingsInitialTab(tab ?? 'appearance');
+        setShowSettings(true);
+      },
       showSettings,
       settingsInitialTab,
       onCloseSettings: () => setShowSettings(false),

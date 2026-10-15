@@ -168,5 +168,14 @@
     "deleting": "Deleting…",
     "allConversationsDeleted": "All conversations will be permanently deleted.",
     "cannotUndo": "This action cannot be undone."
+  },
+  "account": {
+    "open": "Account",
+    "logout": "Sign out",
+    "roleAdmin": "Administrator",
+    "roleUser": "User",
+    "localMode": "Local mode",
+    "username": "Username",
+    "role": "Role"
   }
 }

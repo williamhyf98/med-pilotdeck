@@ -168,5 +168,14 @@
     "deleting": "删除中…",
     "allConversationsDeleted": "所有对话将被永久删除。",
     "cannotUndo": "此操作无法撤销。"
+  },
+  "account": {
+    "open": "账号",
+    "logout": "退出登录",
+    "roleAdmin": "管理员",
+    "roleUser": "普通用户",
+    "localMode": "本机模式",
+    "username": "用户名",
+    "role": "角色"
   }
 }

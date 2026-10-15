@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { IS_PLATFORM, DISABLE_LOCAL_AUTH } from '../../../constants/config';
 import { api } from '../../../utils/api';
-import { clearStorageForUser, getStorageUserId, setStorageUserId } from '../../../utils/safeStorage';
+import { clearStorageForUser, getStorageUserId, setStorageUserId, setStorageUserRole } from '../../../utils/safeStorage';
 import { AUTH_ERROR_MESSAGES, AUTH_TOKEN_STORAGE_KEY } from '../constants';
 import type {
   AuthContextValue,
@@ -56,6 +56,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // The storage namespace must switch before any child renders with the new
   // user, otherwise their initial state would be read from the wrong prefix.
   const applyUser = useCallback((nextUser: AuthUser | null) => {
+    // Role first: switching the namespace fires listeners (language sync) that
+    // consult it.
+    setStorageUserRole(nextUser?.role ?? null);
     setStorageUserId(nextUser?.id ?? null);
     setUserState(nextUser);
   }, []);

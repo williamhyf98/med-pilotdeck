@@ -58,6 +58,7 @@
     "backToApp": "Back to app",
     "backToSettings": "Back to settings",
     "menu": {
+      "account": "Account",
       "general": "General",
       "modelPool": "Model Pool",
       "agent": "Agents",
@@ -73,9 +74,11 @@
       "officePreview": "Office Preview",
       "privacy": "Security & Privacy",
       "advanced": "Advanced",
-      "about": "About"
+      "about": "About",
+      "users": "User management"
     },
     "titles": {
+      "account": "Account",
       "general": "General",
       "modelPool": "Model Pool",
       "agent": "Agents",
@@ -91,7 +94,8 @@
       "officePreview": "Extensions / Office Preview",
       "privacy": "Security & Privacy",
       "advanced": "Advanced",
-      "about": "About"
+      "about": "About",
+      "users": "User management"
     },
     "contentComingSoon": {
       "title": "Right panel content is not connected yet",

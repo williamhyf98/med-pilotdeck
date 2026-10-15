@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Shield } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { usePilotDeckConfig } from "../../../../hooks/usePilotDeckConfig";
+import { useAuth } from "../../../auth/context/AuthContext";
 import {
   PILOTDECK_SETTINGS_KEY,
   fetchPilotDeckPermissionSettings,
@@ -33,6 +34,9 @@ type PrivacySectionsProps = {
 
 export default function PrivacySections({ title }: PrivacySectionsProps) {
   const { t } = useTranslation("settings");
+  const { isAdmin } = useAuth();
+  // Without a provider (normal users) this is a read-only empty controller:
+  // nothing is fetched from, or written to, the admin-only /api/config.
   const { raw, setRaw, save, loading, error } = usePilotDeckConfig();
   const [allowedTools, setAllowedTools] = useState<string[]>([]);
   const [disallowedTools, setDisallowedTools] = useState<string[]>([]);
@@ -41,7 +45,10 @@ export default function PrivacySections({ title }: PrivacySectionsProps) {
   const [newBlocked, setNewBlocked] = useState("");
   const [banner, setBanner] = useState<StatusBanner>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const telemetryEnabled = useMemo(() => readTelemetryEnabled(raw), [raw]);
+  const telemetryEnabled = useMemo(
+    () => (isAdmin ? readTelemetryEnabled(raw) : false),
+    [isAdmin, raw],
+  );
 
   const reload = useCallback(() => {
     const settings = getPilotDeckSettings();
@@ -110,12 +117,13 @@ export default function PrivacySections({ title }: PrivacySectionsProps) {
 
   const handleTelemetryToggle = useCallback(
     (value: boolean) => {
+      if (!isAdmin) return;
       const nextRaw = setTelemetryEnabled(raw, value);
       if (!nextRaw) return;
       setRaw(nextRaw);
       void save();
     },
-    [raw, save, setRaw],
+    [isAdmin, raw, save, setRaw],
   );
 
   useEffect(() => {
@@ -228,7 +236,7 @@ export default function PrivacySections({ title }: PrivacySectionsProps) {
   return (
     <div className="space-y-6">
       <h2 className="text-2xl font-semibold text-foreground">{title}</h2>
-      <ConfigSaveError error={error} />
+      {isAdmin ? <ConfigSaveError error={error} /> : null}
       <PageSectionHeader title={t("permissions.controlTitle")} />
 
       <PermissionControlSection
@@ -263,11 +271,13 @@ export default function PrivacySections({ title }: PrivacySectionsProps) {
         icon={AlertTriangle}
       />
 
-      <TelemetrySection
-        enabled={telemetryEnabled}
-        loading={loading}
-        onToggle={handleTelemetryToggle}
-      />
+      {isAdmin ? (
+        <TelemetrySection
+          enabled={telemetryEnabled}
+          loading={loading}
+          onToggle={handleTelemetryToggle}
+        />
+      ) : null}
     </div>
   );
 }

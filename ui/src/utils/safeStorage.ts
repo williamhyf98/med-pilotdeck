@@ -46,6 +46,17 @@ export const scopedStorageKey = (key: string): string =>
 
 export const getStorageUserId = (): StorageUserId => storageUserId;
 
+// Role of the signed-in user, kept in memory only (never persisted) so callers
+// outside React can skip admin-only requests that a normal user would get a
+// 403 for. It is unknown (`null`) until the auth context has resolved the user.
+let storageUserRole: string | null = null;
+
+export const setStorageUserRole = (role: string | null | undefined): void => {
+  storageUserRole = role ?? null;
+};
+
+export const getStorageUserRole = (): string | null => storageUserRole;
+
 const shouldMigrate = (key: string) =>
   MIGRATED_KEYS.has(key) || MIGRATED_PREFIXES.some((prefix) => key.startsWith(prefix));
 

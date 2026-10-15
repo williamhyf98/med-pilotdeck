@@ -21,6 +21,10 @@ export function mapInitialTabToMenuKey(
 
   const [base, section] = normalized.split(":", 2);
   switch (base) {
+    case "account":
+      return "account";
+    case "users":
+      return "users";
     case "permissions":
       return "privacy";
     case "mcp":

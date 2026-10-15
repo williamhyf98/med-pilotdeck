@@ -4,7 +4,7 @@ import { useWebSocket } from '../../../contexts/WebSocketContext';
 import { CLAUDE_MODELS } from '../../../../shared/modelConstants';
 import type { PendingPermissionRequest, PermissionMode } from '../types/types';
 import type { ProjectSession } from '../../../types/app';
-import { safeLocalStorage } from '../../../utils/safeStorage';
+import { getStorageUserRole, safeLocalStorage } from '../../../utils/safeStorage';
 
 interface UseChatProviderStateArgs {
   selectedSession: ProjectSession | null;
@@ -156,17 +156,20 @@ export function useChatProviderState({ selectedSession }: UseChatProviderStateAr
         console.error('Error loading runtime config:', error);
       });
 
-    authenticatedFetch('/api/config')
-      .then((response) => response.json())
-      .then((data) => {
-        if (cancelled) {
-          return;
-        }
-        setThinkingModelContext(readThinkingModelContext(data?.config));
-      })
-      .catch((error) => {
-        console.error('Error loading PilotDeck config:', error);
-      });
+    // /api/config is admin-only; normal users get no thinking-model context.
+    if (getStorageUserRole() === 'admin') {
+      authenticatedFetch('/api/config')
+        .then((response) => response.json())
+        .then((data) => {
+          if (cancelled) {
+            return;
+          }
+          setThinkingModelContext(readThinkingModelContext(data?.config));
+        })
+        .catch((error) => {
+          console.error('Error loading PilotDeck config:', error);
+        });
+    }
 
     return () => {
       cancelled = true;
