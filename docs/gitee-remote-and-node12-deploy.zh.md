@@ -59,8 +59,9 @@ node12 现场信息：
 | 分支 | `feat/skill-flow-chat`（开发），`develop`（集成） |
 | 端口（`scripts/config.env`） | API 3020，Gateway 18800，Vite 5170。18789 被别人占用，`~/medpilotdeck` 旧实例占着 3030 / 18799 / 5179 |
 | 系统 Node | `/usr/bin/node` 是 v12，不能用。必须靠 `.runtime/node`（v22.23.2） |
-| 主模型 / 医疗 VLM | vLLM，`http://10.31.112.13:8030/v1`（G9-V-Med）、`http://10.31.112.13:8040/v1`（Qwen3.8-27B） |
-| Embedding | `http://10.31.112.13:65507/v1`，`qwen3-vl-embedding` |
+| 主模型 | vLLM 在 node36：`http://10.31.112.47:18000/v1`，对外模型 ID 是 **`/private/models/Qwen3.8-27B`**（带路径；写成 `Qwen3.8-27B` 会 404）。yaml 里引用写 `qwen//private/models/Qwen3.8-27B` |
+| 医疗 VLM | `http://10.31.112.13:8030/v1`（G9-V-Med，本机 vLLM，不常驻） |
+| Embedding | node36：`http://10.31.112.47:18002/v1`，模型 ID `qwen3-vl-embedding`，dim 2048 |
 | RAG 检索服务 | `http://127.0.0.1:18080`，由 `~/rag4medpilotdeck/UltraRAG/script/rag_api.py` 提供 |
 | RADAR / DeepChest | `https://10.31.112.13:18120` / `:18130`，默认 `MED_SPECIALIZED_CT_ENABLED=0` |
 
@@ -128,6 +129,8 @@ webui:
 
 旧文件里 `databasePath` / `workspacesRoot` 指向同事的目录，不改会把 auth.db 写到别人家。
 
+同时把主模型和 embedding 指到 node36（见 §2 表格）：`model.providers.qwen.url` 改为 `http://10.31.112.47:18000/v1`，`models` 下的键名必须是 vLLM 对外的 `/private/models/Qwen3.8-27B`，所有 `agent.model` / `router.*` 里的引用写成 `qwen//private/models/Qwen3.8-27B`（第一个 `/` 之前是 provider，之后整段是模型 ID）；`embedding.apiBase` / `endpoint` 改为 `http://10.31.112.47:18002/v1[/embeddings]`，`allowedHosts` 加上 `10.31.112.47`。如果以后 vLLM 用 `--served-model-name Qwen3.8-27B` 启动，键名和引用就能改回短名。
+
 ### 2.5 启动、验证、停止
 
 ```bash
@@ -149,7 +152,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3020/      # API，200
 curl -s http://127.0.0.1:18800/health                                # Gateway
 ```
 
-笔记本浏览器访问时先打隧道：`ssh -L 5170:127.0.0.1:5170 -L 3020:127.0.0.1:3020 node12`，再开 `http://localhost:5170`。
+笔记本开着 VPN 时直接访问服务器地址即可：`http://10.31.112.13:5170`（Vite 和 API 都监听 0.0.0.0；Gateway 18800 只监听本机回环，由 API 服务代理）。没有 VPN 时再打隧道：`ssh -L 5170:127.0.0.1:5170 -L 3020:127.0.0.1:3020 node12`，然后开 `http://localhost:5170`。
 
 停止：
 
@@ -190,7 +193,8 @@ bash scripts/stop-local.sh && bash scripts/start-local.sh
 | 现象 | 处理 |
 |------|------|
 | bootstrap 一开始就报 `Cannot find module 'node:path'` | 系统 Node 太旧（node12 是 v12）。已修 `scripts/lib-local-runtime.sh`，让它优先用 `.runtime/node`；拉到含该修复的版本即可 |
-| `LLM_CHECK` 主模型 `✗`，`fetch failed` | `10.31.112.13:8030` / `8040` 的 vLLM 没在跑。`curl http://10.31.112.13:8040/v1/models` 为空就是服务没起来；起 vLLM，或临时 `SKIP_LLM_CHECK=1` |
+| `LLM_CHECK` 主模型 `✗`，`fetch failed` 或 404 `does not exist` | 先 `curl http://10.31.112.47:18000/v1/models` 看服务是否在、模型 ID 是否仍是 `/private/models/Qwen3.8-27B`；yaml 里的键名和引用必须与之完全一致。服务没起来可临时 `SKIP_LLM_CHECK=1` |
+| `local/G9-V-Med ✗` | node12 本机 8030 的 G9 vLLM 没起；只影响医疗 VLM 解析，主对话不受影响 |
 | `port(s) already in use` | 改 `scripts/config.env`，别碰别人占的 18789 |
 | `git push` 报 LFS 相关错误 | 这次提交碰到了 §1.1 的两个大文件。`git reset HEAD~ -- plugins/med-tools/data/rag` 把它们从提交里拿掉 |
 | `git pull` 后 RAG 文件变成几百字节 | LFS 指针覆盖了真实文件。按 §2.2 重新 `cp` 一次 |
