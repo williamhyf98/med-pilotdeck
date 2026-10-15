@@ -93,13 +93,7 @@ prepare_environment() {
   mkdir -p \
     "$RUNTIME_CACHE_DIR/tmp" "$RUNTIME_CACHE_DIR/xdg" "$RUNTIME_CACHE_DIR/npm" \
     "$RUNTIME_CACHE_DIR/pip" "$OFFLINE_STATE_DIR" "$OFFLINE_LOG_DIR" \
-    "$PILOT_HOME/plugins" "$PILOT_HOME/skills" "$PILOT_HOME/projects" \
-    "$PILOT_HOME/memory" "$PILOT_HOME/cron" "$PILOT_HOME/logs" \
-    "$PILOT_HOME/workspaces/general/inbox" \
-    "$PILOT_HOME/workspaces/general/exports" \
-    "$PILOT_HOME/workspaces/general/scratch/qa" \
-    "$PILOT_HOME/workspaces/general/scratch/work" \
-    "$PILOT_HOME/workspaces/general/scratch/preview"
+    "$PILOT_HOME/plugins" "$PILOT_HOME/system"
 
   local med_link="$PILOT_HOME/plugins/med-tools"
   if [[ -d "$PILOTDECK_ROOT/plugins/med-tools" ]]; then

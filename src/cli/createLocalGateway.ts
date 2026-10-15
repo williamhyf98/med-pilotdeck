@@ -107,6 +107,7 @@ import type {
 import { createRouterRuntime, type RouterRuntime } from "../router/index.js";
 import { SessionRouterStore } from "../router/session/SessionRouterStore.js";
 import type { RouterEventBus, RouterEvent } from "../router/protocol/events.js";
+import { shouldWriteRouterEvents } from "../router/routerEventFlags.js";
 import type { EdgeClawMemoryProvider } from "../context/index.js";
 import { loadBuiltinPlugins } from "../extension/plugins/builtin/loadBuiltinPlugins.js";
 import { SkillManager, createSkillDraftStation, migrateLegacyBundledSkillCopies } from "../extension/skills/index.js";
@@ -1060,6 +1061,20 @@ class ProjectRuntimeRegistry {
   }
 
   private buildRouterEventBus(): RouterEventBus {
+    const self = this;
+    const broadcast = (event: RouterEvent): void => {
+      if (event.type === "pilotdeck_router_retry_progress") {
+        try {
+          self.gateway?.broadcastRetryProgress(event);
+        } catch { /* best-effort */ }
+      }
+    };
+    // `<pilotHome>/router/events.jsonl` is a debug aid (PILOTDECK_ROUTER_DEBUG=1).
+    // Without the flag nothing touches the disk, but retry progress is still
+    // pushed to connected clients: that is a live feature, not a log.
+    if (!shouldWriteRouterEvents(this.options.env)) {
+      return { emit: broadcast };
+    }
     const pilotHome = this.options.pilotHome;
     const routerDir = joinPath(pilotHome, "router");
     try { mkdirSyncFs(routerDir, { recursive: true }); } catch { /* exists */ }
@@ -1070,17 +1085,12 @@ class ProjectRuntimeRegistry {
         renameSync(oldPath, eventsPath);
       }
     } catch { /* best-effort migration */ }
-    const self = this;
     return {
       emit(event: RouterEvent) {
         try {
           appendFileSync(eventsPath, JSON.stringify(event) + "\n");
         } catch { /* best-effort, never crash the agent loop */ }
-        if (event.type === "pilotdeck_router_retry_progress") {
-          try {
-            self.gateway?.broadcastRetryProgress(event);
-          } catch { /* best-effort */ }
-        }
+        broadcast(event);
       },
     };
   }

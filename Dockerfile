@@ -67,14 +67,11 @@ COPY --from=builder /build/ui/scripts/ ui/scripts/
 COPY --from=builder /build/ui/shared/ ui/shared/
 COPY --from=builder /build/ui/vite.config.js ui/vite.config.js
 
-# Create PilotDeck state/workspace directories used by the gateway, UI server,
-# permissions, skills/plugins, memory, auth, and router stats.
+# Create the shared PilotDeck dirs (plugins, system db). Per-user data lives
+# under users/<id>/ and is created by the server on demand.
 RUN mkdir -p \
-    /root/.pilotdeck/projects \
-    /root/.pilotdeck/router \
-    /root/.pilotdeck/skills \
     /root/.pilotdeck/plugins \
-    /root/.pilotdeck/memory \
+    /root/.pilotdeck/system \
     /workspace
 
 # Entrypoint

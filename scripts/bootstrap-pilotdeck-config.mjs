@@ -179,16 +179,7 @@ function ensurePilotHomeLayout(pilotHome) {
   const dirs = [
     pilotHome,
     join(pilotHome, 'plugins'),
-    join(pilotHome, 'skills'),
-    join(pilotHome, 'projects'),
-    join(pilotHome, 'memory'),
-    join(pilotHome, 'cron'),
-    join(pilotHome, 'logs'),
-    join(pilotHome, 'workspaces', 'general', 'inbox'),
-    join(pilotHome, 'workspaces', 'general', 'exports'),
-    join(pilotHome, 'workspaces', 'general', 'scratch', 'qa'),
-    join(pilotHome, 'workspaces', 'general', 'scratch', 'work'),
-    join(pilotHome, 'workspaces', 'general', 'scratch', 'preview'),
+    join(pilotHome, 'system'),
   ];
   for (const dir of dirs) {
     mkdirSync(dir, { recursive: true });

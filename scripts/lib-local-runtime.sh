@@ -101,18 +101,9 @@ ensure_runtime_dirs() {
 
 # Empty (or existing) project-local Pilot home; link in-repo med-tools plugin.
 ensure_project_pilot_home() {
-  mkdir -p \
-    "${PILOT_HOME_DIR}/plugins" \
-    "${PILOT_HOME_DIR}/skills" \
-    "${PILOT_HOME_DIR}/projects" \
-    "${PILOT_HOME_DIR}/memory" \
-    "${PILOT_HOME_DIR}/cron" \
-    "${PILOT_HOME_DIR}/logs" \
-    "${PILOT_HOME_DIR}/workspaces/general/inbox" \
-    "${PILOT_HOME_DIR}/workspaces/general/exports" \
-    "${PILOT_HOME_DIR}/workspaces/general/scratch/qa" \
-    "${PILOT_HOME_DIR}/workspaces/general/scratch/work" \
-    "${PILOT_HOME_DIR}/workspaces/general/scratch/preview"
+  # Only the shared dirs: per-user data lives under users/<id>/ and is created
+  # by the server, so the old root skeleton is deliberately not pre-created.
+  mkdir -p "${PILOT_HOME_DIR}/plugins" "${PILOT_HOME_DIR}/system"
 
   local med_src="${PILOTDECK_ROOT}/plugins/med-tools"
   local med_link="${PILOT_HOME_DIR}/plugins/med-tools"

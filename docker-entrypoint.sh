@@ -4,12 +4,7 @@ set -euo pipefail
 PILOT_HOME="${PILOT_HOME:-/root/.pilotdeck}"
 CONFIG_FILE="$PILOT_HOME/pilotdeck.yaml"
 
-mkdir -p \
-  "$PILOT_HOME/projects" \
-  "$PILOT_HOME/router" \
-  "$PILOT_HOME/skills" \
-  "$PILOT_HOME/plugins" \
-  "$PILOT_HOME/memory"
+mkdir -p "$PILOT_HOME/plugins" "$PILOT_HOME/system"
 
 if [ -d "$CONFIG_FILE" ]; then
   echo "[pilotdeck-docker] ERROR: $CONFIG_FILE is a directory, not a config file." >&2
@@ -157,9 +152,6 @@ fi
 echo "[pilotdeck-docker] Starting PilotDeck UI server..."
 echo "[pilotdeck-docker] Config: $CONFIG_FILE"
 echo "[pilotdeck-docker] UI will be available at http://0.0.0.0:${SERVER_PORT:-3001}"
-
-# Remove stale auth tokens so a pooled gateway never reuses a leftover value.
-rm -f "$PILOT_HOME/server-token"
 
 # No standalone gateway is pre-started here: the UI server's Gateway pool spawns
 # one `pilotdeck server` child per user on that user's first request

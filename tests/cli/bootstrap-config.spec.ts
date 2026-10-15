@@ -25,10 +25,13 @@ test("config bootstrap creates pilotdeck.yaml and home layout without copying bu
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const configPath = join(pilotHome, "pilotdeck.yaml");
     assert.equal(existsSync(configPath), true);
-    assert.equal(existsSync(join(pilotHome, "skills")), true);
     assert.equal(existsSync(join(pilotHome, "plugins")), true);
-    // Layout dirs only — do not copy repo skills into user storage.
-    assert.equal(existsSync(join(pilotHome, "skills", "pdf")), false);
+    assert.equal(existsSync(join(pilotHome, "system")), true);
+    // Shared dirs only: the old single-user skeleton (skills/projects/memory/...)
+    // is no longer pre-created; per-user data lives under users/<id>/.
+    for (const legacy of ["skills", "projects", "memory", "cron", "logs", "workspaces"]) {
+      assert.equal(existsSync(join(pilotHome, legacy)), false, legacy);
+    }
     const yaml = readFileSync(configPath, "utf8");
     assert.match(yaml, /schemaVersion:\s*1/);
     assert.match(yaml, /agent:\s*\n\s*model:/);
