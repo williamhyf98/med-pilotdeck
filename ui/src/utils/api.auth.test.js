@@ -42,6 +42,18 @@ describe('authenticatedFetch auth handling', () => {
     expect(events).toEqual([]);
   });
 
+  it('does not delete a newer token when a stale-token request is revoked', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      // A password change stored a fresh token while this request was in flight.
+      localStorage.setItem('auth-token', 'new');
+      return new Response(JSON.stringify({ code: 'TOKEN_REVOKED' }), { status: 401 });
+    }));
+    const { authenticatedFetch } = await import('./api.js');
+    await authenticatedFetch('/api/projects');
+    expect(localStorage.getItem('auth-token')).toBe('new');
+    expect(events).toEqual([]);
+  });
+
   it('keeps the response body readable after a 401 was inspected', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ code: 'NO_TOKEN', error: 'nope' }), { status: 401 })));
     const { authenticatedFetch } = await import('./api.js');

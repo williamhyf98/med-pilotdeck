@@ -70,7 +70,9 @@ export const authenticatedFetch = (url, options = {}) => {
       // settled state and the caller can still read the original body.
       try {
         const body = await response.clone().json();
-        if (SESSION_ENDED_CODES.includes(body?.code)) {
+        // A response to a request sent with an older token must not sign out
+        // (or delete) a newer session, e.g. right after a password change.
+        if (SESSION_ENDED_CODES.includes(body?.code) && localStorage.getItem('auth-token') === token) {
           localStorage.removeItem('auth-token');
           window.dispatchEvent(new CustomEvent('pilotdeck:auth-revoked', { detail: { code: body.code } }));
         }

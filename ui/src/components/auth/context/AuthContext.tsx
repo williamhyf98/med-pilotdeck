@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { IS_PLATFORM, DISABLE_LOCAL_AUTH } from '../../../constants/config';
 import { api } from '../../../utils/api';
 import { clearStorageForUser, getStorageUserId, setStorageUserId } from '../../../utils/safeStorage';
@@ -25,6 +25,7 @@ const clearStoredToken = () => {
   localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
 };
 
+const EXPECTED_REVOKE_WINDOW_MS = 5000;
 const LOCAL_ADMIN_USER: AuthUser = { id: 'local', username: 'local-user', role: 'admin' };
 const PLATFORM_USER: AuthUser = { id: 'platform', username: 'platform-user', role: 'admin' };
 
@@ -45,6 +46,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [authDisabled, setAuthDisabled] = useState(false);
   const [sessionEndedCode, setSessionEndedCode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Password change and logout make the server revoke the token (closing our own
+  // socket with 4401). That revoke is self-inflicted, not a session end.
+  const expectedRevokeUntilRef = useRef(0);
+  const expectRevoke = useCallback(() => {
+    expectedRevokeUntilRef.current = Date.now() + EXPECTED_REVOKE_WINDOW_MS;
+  }, []);
 
   // The storage namespace must switch before any child renders with the new
   // user, otherwise their initial state would be read from the wrong prefix.
@@ -124,6 +131,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // silently refreshed tokens arrive as window events from non-React code.
   useEffect(() => {
     const onRevoked = (event: Event) => {
+      if (Date.now() < expectedRevokeUntilRef.current) return;
       const code = (event as CustomEvent<{ code?: string }>).detail?.code ?? 'TOKEN_REVOKED';
       clearStorageForUser(getStorageUserId());
       clearSession();
@@ -194,6 +202,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const changePassword = useCallback<AuthContextValue['changePassword']>(
     async (currentPassword, newPassword) => {
       try {
+        expectRevoke();
         const response = await api.auth.changePassword(currentPassword, newPassword);
         const payload = await parseJsonSafely<AuthSessionPayload>(response);
 
@@ -213,12 +222,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
         return { success: false, error: AUTH_ERROR_MESSAGES.networkError };
       }
     },
-    [],
+    [expectRevoke],
   );
 
   const logout = useCallback<AuthContextValue['logout']>(async () => {
+    const wipeId = getStorageUserId();
     if (readStoredToken()) {
       try {
+        expectRevoke();
         await api.auth.logout();
       } catch (caughtError) {
         console.error('Logout endpoint error:', caughtError);
@@ -226,9 +237,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
 
     window.dispatchEvent(new Event('pilotdeck:auth-logout'));
-    clearStorageForUser(getStorageUserId());
+    clearStorageForUser(wipeId);
     clearSession();
-  }, [clearSession]);
+  }, [clearSession, expectRevoke]);
 
   const refreshOnboardingStatus = useCallback(async () => {
     // Onboarding LLM setup has been removed; kept as a no-op for API compatibility.

@@ -103,4 +103,55 @@ describe('safeLocalStorage user namespacing', () => {
     window.removeEventListener('pilotdeck:storage-user-changed', h);
     expect(seen).toEqual([{ userId: 5 }, { userId: null }]);
   });
+
+  it('clearStorageForUser(null) is a no-op; anon needs the explicit sentinel', () => {
+    localStorage.setItem('anon:themeMode', 'dark');
+    localStorage.setItem('u1:themeMode', 'warm');
+    clearStorageForUser(null);
+    clearStorageForUser(undefined);
+    expect(localStorage.getItem('anon:themeMode')).toBe('dark');
+    expect(localStorage.getItem('u1:themeMode')).toBe('warm');
+    clearStorageForUser('anon');
+    expect(localStorage.getItem('anon:themeMode')).toBeNull();
+    expect(localStorage.getItem('u1:themeMode')).toBe('warm');
+  });
+
+  describe('pre-upgrade unprefixed keys', () => {
+    it('moves them to the first user once, then never again', () => {
+      localStorage.setItem('draft_input_x:new', 'hello');
+      localStorage.setItem('themeMode', 'dark');
+      localStorage.setItem('pilotdeck:customSessionTitles', '{"s":"t"}');
+      localStorage.setItem('auth-token', 'tok');
+      localStorage.setItem('u9:keep', '1');
+      setStorageUserId(1);
+      expect(localStorage.getItem('u1:draft_input_x:new')).toBe('hello');
+      expect(localStorage.getItem('u1:themeMode')).toBe('dark');
+      expect(localStorage.getItem('u1:pilotdeck:customSessionTitles')).toBe('{"s":"t"}');
+      expect(localStorage.getItem('draft_input_x:new')).toBeNull();
+      expect(localStorage.getItem('themeMode')).toBeNull();
+      expect(localStorage.getItem('pilotdeck:customSessionTitles')).toBeNull();
+      expect(localStorage.getItem('auth-token')).toBe('tok');
+      expect(localStorage.getItem('u9:keep')).toBe('1');
+      expect(localStorage.getItem('pilotdeck-storage-migrated-v1')).toBe('1');
+
+      setStorageUserId(2);
+      expect(localStorage.getItem('u2:draft_input_x:new')).toBeNull();
+      expect(localStorage.getItem('u2:themeMode')).toBeNull();
+    });
+
+    it('is a no-op once the marker is present', () => {
+      localStorage.setItem('pilotdeck-storage-migrated-v1', '1');
+      localStorage.setItem('themeMode', 'dark');
+      setStorageUserId(1);
+      expect(localStorage.getItem('u1:themeMode')).toBeNull();
+      expect(localStorage.getItem('themeMode')).toBe('dark');
+    });
+
+    it('does not run for the anonymous namespace', () => {
+      localStorage.setItem('themeMode', 'dark');
+      setStorageUserId(null);
+      expect(localStorage.getItem('themeMode')).toBe('dark');
+      expect(localStorage.getItem('pilotdeck-storage-migrated-v1')).toBeNull();
+    });
+  });
 });

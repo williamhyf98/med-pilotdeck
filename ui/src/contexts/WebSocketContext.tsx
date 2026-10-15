@@ -103,10 +103,10 @@ const useWebSocketProviderState = (): WebSocketContextType => {
 
     const connect = () => {
       if (unmountedRef.current || connectIdRef.current !== id) return;
-      setReconnectInfo((prev) => ({ ...prev, status: 'reconnecting' }));
       // Without a session (logged out, or auth still loading) the gateway would
       // only answer 4401, so stay offline until a token (or no-login mode) exists.
       if (!IS_PLATFORM && !token && !authDisabled) return;
+      setReconnectInfo((prev) => ({ ...prev, status: 'reconnecting' }));
       try {
         const wsUrl = buildWebSocketUrl(token);
         if (!wsUrl) return console.warn('No authentication token found for WebSocket connection');

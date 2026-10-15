@@ -128,4 +128,71 @@ describe('AuthContext (multi-user)', () => {
     expect(localStorage.getItem('auth-token')).toBeNull();
     expect(localStorage.getItem('u1:themeMode')).toBeNull();
   });
+
+  const revoke = () =>
+    window.dispatchEvent(new CustomEvent('pilotdeck:auth-revoked', { detail: { code: 'TOKEN_REVOKED' } }));
+
+  async function loadSession() {
+    const mod = await import('./AuthContext');
+    const handle: { auth: ReturnType<typeof mod.useAuth> | null } = { auth: null };
+    function SessionProbe() {
+      const a = mod.useAuth();
+      handle.auth = a;
+      return <div>{a.isLoading ? 'loading' : a.user ? `in:${a.sessionEndedCode ?? 'none'}` : `out:${a.sessionEndedCode ?? 'none'}`}</div>;
+    }
+    render(<mod.AuthProvider><SessionProbe /></mod.AuthProvider>);
+    await waitFor(() => expect(screen.getByText(/^in:/)).toBeTruthy());
+    return handle;
+  }
+
+  it('keeps the session and namespace when the server revokes the old token after a password change', async () => {
+    localStorage.setItem('auth-token', 'old');
+    localStorage.setItem('u1:themeMode', 'dark');
+    fetchMock.mockImplementation((url: string) => {
+      if (url.endsWith('/status')) return json(200, {});
+      if (url.endsWith('/api/auth/password')) {
+        // The gateway closes our own socket with 4401 before the response arrives.
+        revoke();
+        return json(200, { success: true, token: 'new' });
+      }
+      return json(200, { user: { id: 1, username: 'alice', role: 'user' } });
+    });
+    const handle = await loadSession();
+    let result: unknown;
+    await act(async () => { result = await handle.auth!.changePassword('a', 'b'); });
+    expect(result).toEqual({ success: true });
+    expect(screen.getByText('in:none')).toBeTruthy();
+    expect(handle.auth!.token).toBe('new');
+    expect(localStorage.getItem('auth-token')).toBe('new');
+    expect(localStorage.getItem('u1:themeMode')).toBe('dark');
+  });
+
+  it('logout wipes only the user namespace and shows no revoked notice', async () => {
+    localStorage.setItem('auth-token', 't');
+    localStorage.setItem('u1:themeMode', 'dark');
+    localStorage.setItem('anon:themeMode', 'warm');
+    fetchMock.mockImplementation((url: string) => {
+      if (url.endsWith('/status')) return json(200, {});
+      if (url.endsWith('/api/auth/logout')) {
+        revoke();
+        return json(200, { success: true });
+      }
+      return json(200, { user: { id: 1, username: 'alice', role: 'user' } });
+    });
+    const handle = await loadSession();
+    await act(async () => { await handle.auth!.logout(); });
+    await waitFor(() => expect(screen.getByText('out:none')).toBeTruthy());
+    expect(localStorage.getItem('u1:themeMode')).toBeNull();
+    expect(localStorage.getItem('anon:themeMode')).toBe('warm');
+    expect(localStorage.getItem('auth-token')).toBeNull();
+  });
+
+  it('still treats an unexpected revoke as a session end', async () => {
+    localStorage.setItem('auth-token', 't');
+    fetchMock.mockImplementation((url: string) =>
+      url.endsWith('/status') ? json(200, {}) : json(200, { user: { id: 1, username: 'alice', role: 'user' } }));
+    await loadSession();
+    act(() => { revoke(); });
+    await waitFor(() => expect(screen.getByText('out:TOKEN_REVOKED')).toBeTruthy());
+  });
 });

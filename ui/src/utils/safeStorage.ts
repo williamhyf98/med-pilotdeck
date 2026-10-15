@@ -15,7 +15,10 @@ export const STORAGE_USER_CHANGED_EVENT = 'pilotdeck:storage-user-changed';
 // script in index.html and the very first render read the right namespace
 // after a page reload, before /api/auth/user has answered.
 const LAST_USER_KEY = 'pilotdeck-storage-user';
-const UNSCOPED_KEYS = new Set(['auth-token', LAST_USER_KEY]);
+// Set once pre-upgrade (unprefixed) keys have been moved into a user namespace.
+const LEGACY_MIGRATED_KEY = 'pilotdeck-storage-migrated-v1';
+const UNSCOPED_KEYS = new Set(['auth-token', LAST_USER_KEY, LEGACY_MIGRATED_KEY]);
+const SCOPED_KEY_PATTERN = /^(anon:|u(\d+|local|platform):)/;
 
 // Per-browser preferences chosen before login that a user keeps on first login.
 const MIGRATED_KEYS = new Set([
@@ -46,15 +49,27 @@ export const getStorageUserId = (): StorageUserId => storageUserId;
 const shouldMigrate = (key: string) =>
   MIGRATED_KEYS.has(key) || MIGRATED_PREFIXES.some((prefix) => key.startsWith(prefix));
 
+// Keys written before namespacing existed belong to the single pre-upgrade
+// user; the first account to sign in afterwards takes them over, once.
+const migrateLegacyKeys = (id: string | number) => {
+  if (localStorage.getItem(LEGACY_MIGRATED_KEY)) return;
+  const userPrefix = prefixFor(id);
+  for (const k of Object.keys(localStorage)) {
+    if (UNSCOPED_KEYS.has(k) || SCOPED_KEY_PATTERN.test(k)) continue;
+    const value = localStorage.getItem(k);
+    if (value !== null) localStorage.setItem(`${userPrefix}${k}`, value);
+    localStorage.removeItem(k);
+  }
+  localStorage.setItem(LEGACY_MIGRATED_KEY, '1');
+};
+
 const migrateAnonPreferences = (id: string | number) => {
   const userPrefix = prefixFor(id);
-  const keys = Object.keys(localStorage);
-  if (keys.some((k) => k.startsWith(userPrefix))) return;
   const anonPrefix = prefixFor(null);
-  for (const k of keys) {
+  for (const k of Object.keys(localStorage)) {
     if (!k.startsWith(anonPrefix)) continue;
     const bare = k.slice(anonPrefix.length);
-    if (!shouldMigrate(bare)) continue;
+    if (!shouldMigrate(bare) || localStorage.getItem(`${userPrefix}${bare}`) !== null) continue;
     const value = localStorage.getItem(k);
     if (value !== null) localStorage.setItem(`${userPrefix}${bare}`, value);
   }
@@ -72,7 +87,9 @@ export const setStorageUserId = (id: StorageUserId): void => {
       localStorage.removeItem(LAST_USER_KEY);
     } else {
       localStorage.setItem(LAST_USER_KEY, String(normalized));
-      migrateAnonPreferences(normalized);
+      const hadStoredKeys = Object.keys(localStorage).some((k) => k.startsWith(prefixFor(normalized)));
+      migrateLegacyKeys(normalized);
+      if (!hadStoredKeys) migrateAnonPreferences(normalized);
     }
   } catch (error) {
     console.error('localStorage user namespace error:', error);
@@ -80,8 +97,14 @@ export const setStorageUserId = (id: StorageUserId): void => {
   window.dispatchEvent(new CustomEvent(STORAGE_USER_CHANGED_EVENT, { detail: { userId: normalized } }));
 };
 
-export const clearStorageForUser = (id: StorageUserId | undefined): void => {
-  const prefix = prefixFor(id);
+/**
+ * Removes every key in a user's namespace. A missing id is a no-op (it must
+ * never fall through to the anon namespace); wiping anon needs the explicit
+ * `'anon'` sentinel.
+ */
+export const clearStorageForUser = (id: StorageUserId | 'anon' | undefined): void => {
+  if (id == null) return;
+  const prefix = id === 'anon' ? 'anon:' : prefixFor(id);
   try {
     for (const k of Object.keys(localStorage)) {
       if (k.startsWith(prefix)) localStorage.removeItem(k);
