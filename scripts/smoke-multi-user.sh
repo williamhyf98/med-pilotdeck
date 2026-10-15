@@ -23,6 +23,14 @@ while [ $# -gt 0 ]; do
 done
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 WAIT=60   # seconds for every wait loop
+
+# --- pre-flight (nothing below may touch a process or directory we do not own) ---
+while [ "${ROOT%/}" != "$ROOT" ]; do ROOT=${ROOT%/}; done
+TMPBASE=${TMPDIR:-/tmp}; while [ "${TMPBASE%/}" != "$TMPBASE" ]; do TMPBASE=${TMPBASE%/}; done
+case "$ROOT" in /*) ;; *) echo "--root must be an absolute path (got '$ROOT')" >&2; exit 1;; esac
+case "$ROOT" in "$TMPBASE"/?*|/tmp/?*) ;; *) echo "--root must be a directory under $TMPBASE or /tmp (got '$ROOT')" >&2; exit 1;; esac
+case "$ROOT" in *..*) echo "--root must not contain '..'" >&2; exit 1;; esac
+case "$ROOT" in "$REPO"/*) echo "--root must not be inside the repo" >&2; exit 1;; esac
 # Bookkeeping (logs, pid, ws markers) lives OUTSIDE the root: the boot-time migration
 # archives unknown root entries, which would swallow server.pid/server.log.
 RUN="$ROOT.run"
@@ -30,34 +38,46 @@ RUN="$ROOT.run"
 for reserved in 3020 5170 18800; do
   [ "$PORT" != "$reserved" ] && [ "$GW" != "$reserved" ] || { echo "refusing to use reserved port $reserved" >&2; exit 1; }
 done
-case "$ROOT" in "$REPO/.pilotdeck-home"*) echo "refusing to use .pilotdeck-home as the root" >&2; exit 1;; esac
 
+OWNED=0     # becomes 1 only once pre-flight passed; gates every kill and rm in cleanup
 STARTED=0
 fail() { echo "SMOKE FAIL: $*"; exit 1; }
 listener() { lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true; }
-leftovers() { pgrep -f "$ROOT" 2>/dev/null | grep -vx "$$" | grep -vx "$PPID" || true; }
+alive() { kill -0 "$1" 2>/dev/null; }
+
+# Terminate only pids this script recorded (server wrapper, server node, gateway children).
+kill_recorded() {
+  local f p pids=""
+  for f in "$RUN/server.pid" "$RUN/node.pid" "$RUN/gw.pids"; do
+    [ -f "$f" ] && pids="$pids $(cat "$f")"
+  done
+  for p in $pids; do alive "$p" && kill -TERM "$p" 2>/dev/null; done
+  sleep 1
+  for p in $pids; do alive "$p" && kill -KILL "$p" 2>/dev/null; done
+}
 
 cleanup() {
   local rc=$?
   set +e
-  if [ "$rc" -ne 0 ] && [ "$STARTED" = 1 ]; then
-    for log in "$RUN"/server.log "$RUN"/server2.log; do
-      [ -f "$log" ] && { echo "--- tail $log ---"; tail -n 25 "$log"; }
-    done
+  if [ "$OWNED" = 1 ]; then
+    if [ "$rc" -ne 0 ] && [ "$STARTED" = 1 ]; then
+      for log in "$RUN"/server.log "$RUN"/server2.log; do
+        [ -f "$log" ] && { echo "--- tail $log ---"; tail -n 60 "$log"; }
+      done
+    fi
+    kill_recorded
+    if [ "$KEEP" = 1 ]; then echo "kept $ROOT (logs and pid in $RUN)"
+    elif [ "$rc" -ne 0 ]; then echo "failed run left in place for inspection: $ROOT (logs in $RUN)"
+    else rm -rf "$ROOT" "$RUN"; fi
   fi
-  local l; l=$(listener); [ -n "$l" ] && kill -TERM "$l" 2>/dev/null
-  [ -f "$RUN/server.pid" ] && kill -TERM "$(cat "$RUN/server.pid")" 2>/dev/null
-  sleep 1
-  l=$(leftovers); [ -n "$l" ] && { kill -TERM $l 2>/dev/null; sleep 1; l=$(leftovers); [ -n "$l" ] && kill -KILL $l 2>/dev/null; }
-  l=$(listener); [ -n "$l" ] && kill -KILL "$l" 2>/dev/null
-  if [ "$KEEP" = 1 ]; then echo "kept $ROOT (logs and pid in $RUN)"; else rm -rf "$ROOT" "$RUN"; fi
   exit "$rc"
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
-[ -z "$(listener)" ] || { echo "port $PORT is already in use" >&2; exit 1; }
+[ -z "$(listener)" ] || { echo "port $PORT is already in use; refusing to start (the other process is left untouched)" >&2; exit 1; }
 [ -f "$REPO/.pilotdeck-home/pilotdeck.yaml" ] || { echo "missing $REPO/.pilotdeck-home/pilotdeck.yaml (needed for model config)" >&2; exit 1; }
+OWNED=1
 
 rm -rf "$ROOT" "$RUN"; mkdir -p "$ROOT" "$RUN"
 cp "$REPO/.pilotdeck-home/pilotdeck.yaml" "$ROOT/"
@@ -77,16 +97,23 @@ start_server() { # $1 = log file
   STARTED=1
   ( cd "$REPO" && nohup npm --prefix ui run dev:server > "$1" 2>&1 & echo $! > "$RUN/server.pid" )
   local i
-  for i in $(seq 1 $WAIT); do curl -sf "localhost:$PORT/api/auth/status" >/dev/null && return 0; sleep 1; done
+  for i in $(seq 1 $WAIT); do
+    if curl -sf "localhost:$PORT/api/auth/status" >/dev/null; then
+      # the port was verified free before we started, so its listener is our server's node process
+      listener > "$RUN/node.pid"
+      return 0
+    fi
+    sleep 1
+  done
   fail "server did not come up within ${WAIT}s ($1)"
 }
 stop_server() {
-  local l p; l=$(listener); p=$(cat "$RUN/server.pid")
-  [ -n "$l" ] && kill -TERM "$l" 2>/dev/null || true
+  local p n; p=$(cat "$RUN/server.pid"); n=$(cat "$RUN/node.pid" 2>/dev/null || true)
+  [ -z "$n" ] || kill -TERM "$n" 2>/dev/null || true
   kill -TERM "$p" 2>/dev/null || true
   local i
   for i in $(seq 1 $WAIT); do
-    if [ -z "$(listener)" ] && ! kill -0 "$p" 2>/dev/null; then return 0; fi
+    if [ -z "$(listener)" ] && ! alive "$p" && { [ -z "$n" ] || ! alive "$n"; }; then rm -f "$RUN/server.pid" "$RUN/node.pid"; return 0; fi
     sleep 1
   done
   fail "server did not shut down within ${WAIT}s"
@@ -118,7 +145,11 @@ if get /api/projects "$ADM" | grep -q '病例A'; then fail "admin's list leaks a
 echo "== gating"
 [ "$(code "localhost:$PORT/api/config" -H "Authorization: Bearer $A")" = 403 ] || fail "user reached /api/config"
 [ "$(code "localhost:$PORT/api/config" -H "Authorization: Bearer $ADM")" = 200 ] || fail "admin blocked from /api/config"
-if get /api/config "$ADM" | grep -q 'sk-'; then fail "api key leaked in /api/config"; fi
+if grep -q 'sk-' "$ROOT/pilotdeck.yaml"; then
+  if get /api/config "$ADM" | grep -q 'sk-'; then fail "api key leaked in /api/config"; fi
+else
+  echo "notice: copied pilotdeck.yaml carries no 'sk-' key; skipping the key-masking assertion"
+fi
 
 echo "== revoke closes sockets"
 BOB_ID=$(get /api/admin/users "$ADM" | json ".users.find(u=>u.username==='bob').id") || fail "cannot read bob's id"
@@ -134,7 +165,14 @@ WSPID=$!
 for i in $(seq 1 $((WAIT * 2))); do [ -f "$RUN/ws-open" ] && break; sleep 0.5; done
 [ -f "$RUN/ws-open" ] || fail "bob's websocket never opened"
 # the gateway pool spawns children on first authenticated request: record their pid file state
-echo "pid file before shutdown: $(tr -d '\n ' < "$ROOT/system/gateway-pids.json" 2>/dev/null || echo missing)"
+PIDFILE="$ROOT/system/gateway-pids.json"
+[ -f "$PIDFILE" ] || fail "gateway pid file missing before shutdown"
+echo "pid file before revoke: $(tr -d '\n ' < "$PIDFILE")"
+pidfile_pids() { node -pe "Object.values(JSON.parse(require('fs').readFileSync('$PIDFILE','utf8'))).map(e=>e.pid).join(' ')"; }
+pidfile_count() { node -pe "Object.keys(JSON.parse(require('fs').readFileSync('$PIDFILE','utf8'))).length"; }
+# admin + alice + bob each hit /api/projects, so each must hold a gateway child
+[ "$(pidfile_count)" -ge 3 ] || fail "expected >=3 gateway children (admin+alice+bob) before revoke, pid file: $(cat "$PIDFILE")"
+pidfile_pids > "$RUN/gw.pids"
 [ "$(code -X PATCH "localhost:$PORT/api/admin/users/$BOB_ID" -H "Authorization: Bearer $ADM" -H 'content-type: application/json' -d '{"isActive":false}')" = 200 ] || fail "deactivating bob failed"
 for i in $(seq 1 $((WAIT * 2))); do [ -f "$RUN/ws-close" ] && break; sleep 0.5; done
 wait "$WSPID" || true
@@ -142,17 +180,27 @@ wait "$WSPID" || true
 [ "$(code "localhost:$PORT/api/projects" -H "Authorization: Bearer $B")" = 401 ] || fail "bob still authorized"
 
 echo "== shutdown"
+echo "pid file before shutdown: $(tr -d '\n ' < "$PIDFILE")"
+GWPIDS=$( { cat "$RUN/gw.pids"; echo; pidfile_pids; } | tr -s ' \n' '\n\n' | sort -u | grep -E '^[0-9]+$' || true )
+[ -n "$GWPIDS" ] || fail "no gateway pids recorded before shutdown"
+echo "$GWPIDS" > "$RUN/gw.pids"
+echo "gateway pids to verify dead: $(echo $GWPIDS)"
 stop_server
-[ -f "$ROOT/system/gateway-pids.json" ] || fail "pid file missing after shutdown"
-[ "$(node -pe "Object.keys(JSON.parse(require('fs').readFileSync('$ROOT/system/gateway-pids.json','utf8'))).length")" = 0 ] || fail "pid file not empty after shutdown: $(cat "$ROOT/system/gateway-pids.json")"
-echo "pid file after shutdown: $(tr -d '\n ' < "$ROOT/system/gateway-pids.json")"
-[ -z "$(leftovers)" ] || fail "leftover gateway process: $(leftovers | tr '\n' ' ')"
+[ -f "$PIDFILE" ] || fail "pid file missing after shutdown"
+[ "$(pidfile_count)" = 0 ] || fail "pid file not empty after shutdown: $(cat "$PIDFILE")"
+echo "pid file after shutdown: $(tr -d '\n ' < "$PIDFILE")"
+for i in $(seq 1 20); do
+  still=""; for g in $GWPIDS; do alive "$g" && still="$still $g"; done
+  [ -z "$still" ] && break; sleep 1
+done
+[ -z "$still" ] || fail "gateway process(es) still alive 20s after shutdown:$still"
+rm -f "$RUN/gw.pids"
 
 echo "== boot 2 (no-login mode, same root)"
 STARTED=1
 # subshell: the unset must not leak into later steps
 ( unset PILOTDECK_DISABLE_LOCAL_AUTH; start_server "$RUN/server2.log"
   curl -s "localhost:$PORT/api/projects" | grep -q '旧病例' || fail "no-login mode does not show admin's projects" )
+[ -f "$RUN/server.pid" ] || fail "second boot did not record its server pid"
 stop_server
-[ -z "$(leftovers)" ] || fail "leftover process after second boot: $(leftovers | tr '\n' ' ')"
 echo "SMOKE OK"
