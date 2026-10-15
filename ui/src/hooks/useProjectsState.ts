@@ -10,6 +10,7 @@ import type {
   ProjectsUpdatedMessage,
 } from '../types/app';
 import { isBackgroundTaskSession } from '../types/app';
+import { safeLocalStorage } from '../utils/safeStorage';
 
 type UseProjectsStateArgs = {
   sessionId?: string;
@@ -265,7 +266,7 @@ const isValidTab = (tab: string): tab is AppTab => {
 
 const readPersistedTab = (): AppTab => {
   try {
-    const stored = localStorage.getItem('activeTab');
+    const stored = safeLocalStorage.getItem('activeTab');
     if (stored === 'home') {
       return 'chat';
     }
@@ -292,7 +293,7 @@ export function useProjectsState({
 
   useEffect(() => {
     try {
-      localStorage.setItem('activeTab', activeTab);
+      safeLocalStorage.setItem('activeTab', activeTab);
     } catch {
       // Silently ignore storage errors
     }

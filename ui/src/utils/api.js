@@ -31,6 +31,8 @@ const appendAuthToken = (url) => {
   return `${url}${separator}token=${encodeURIComponent(token)}`;
 };
 
+const SESSION_ENDED_CODES = ['TOKEN_REVOKED', 'USER_DISABLED', 'INVALID_TOKEN', 'USER_NOT_FOUND'];
+
 // Utility function for authenticated API calls
 export const authenticatedFetch = (url, options = {}) => {
   const token = localStorage.getItem('auth-token');
@@ -56,10 +58,25 @@ export const authenticatedFetch = (url, options = {}) => {
       ...defaultHeaders,
       ...fetchOptions.headers,
     },
-  }).then((response) => {
+  }).then(async (response) => {
     const refreshedToken = response.headers.get('X-Refreshed-Token');
     if (refreshedToken) {
       localStorage.setItem('auth-token', refreshedToken);
+      window.dispatchEvent(new CustomEvent('pilotdeck:token-refreshed', { detail: { token: refreshedToken } }));
+    }
+    if (response.status === 401) {
+      // Only a dead session (not e.g. BAD_CREDENTIALS) signs the user out.
+      // The body is parsed from a clone before returning so listeners see a
+      // settled state and the caller can still read the original body.
+      try {
+        const body = await response.clone().json();
+        if (SESSION_ENDED_CODES.includes(body?.code)) {
+          localStorage.removeItem('auth-token');
+          window.dispatchEvent(new CustomEvent('pilotdeck:auth-revoked', { detail: { code: body.code } }));
+        }
+      } catch {
+        // Non-JSON 401 body: nothing to act on.
+      }
     }
     if (!suppressServerErrorToast && response.status >= 500) {
       window.dispatchEvent(new CustomEvent('pilotdeck:toast', {
@@ -169,6 +186,10 @@ export const api = {
     }),
     user: () => authenticatedFetch('/api/auth/user'),
     logout: () => authenticatedFetch('/api/auth/logout', { method: 'POST' }),
+    changePassword: (currentPassword, newPassword) => authenticatedFetch('/api/auth/password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
   },
 
   // Protected endpoints

@@ -41,6 +41,7 @@ import {
 import { filterProjectsByType, resolveProjectType } from './appShellSelection';
 import medAssistantLogo from '../../assets/med-assistant-logo.png';
 import medAssistantLogoCommand from '../../assets/med-assistant-logo-command.png';
+import { isScopedStorageKey, safeLocalStorage } from '../../utils/safeStorage';
 
 const asTimestamp = (value: unknown): number => {
   if (typeof value === 'number') return value;
@@ -67,7 +68,7 @@ const useProjectSortOrder = (): ProjectSortOrder => {
   useEffect(() => {
     const refresh = () => setOrder(readProjectSortOrder());
     const onStorage = (event: StorageEvent) => {
-      if (event.key === 'pilotdeck-settings') refresh();
+      if (isScopedStorageKey(event.key, 'pilotdeck-settings')) refresh();
     };
     window.addEventListener('pilotdeck-settings-changed', refresh);
     window.addEventListener('storage', onStorage);
@@ -336,7 +337,7 @@ export default function SidebarV2({
   const SIDEBAR_WIDTH_STORAGE_KEY = 'sidebar-v2-width';
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     if (typeof window === 'undefined') return SIDEBAR_DEFAULT_WIDTH;
-    const stored = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    const stored = safeLocalStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
     const parsed = stored ? Number(stored) : NaN;
     if (!Number.isFinite(parsed)) return SIDEBAR_DEFAULT_WIDTH;
     return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, parsed));
@@ -370,7 +371,7 @@ export default function SidebarV2({
           const aside = document.querySelector<HTMLElement>('aside[data-sidebar-v2-root]');
           const width = aside?.offsetWidth;
           if (width && Number.isFinite(width)) {
-            window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(Math.round(width)));
+            safeLocalStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(Math.round(width)));
           }
         } catch {
           // localStorage may be unavailable in some environments — ignore.
@@ -1218,7 +1219,7 @@ export default function SidebarV2({
         onDoubleClick={() => {
           setSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
           try {
-            window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(SIDEBAR_DEFAULT_WIDTH));
+            safeLocalStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(SIDEBAR_DEFAULT_WIDTH));
           } catch {
             // ignore
           }

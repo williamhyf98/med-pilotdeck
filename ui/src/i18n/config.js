@@ -41,6 +41,7 @@ import zhRouting from './locales/zh-CN/routing.json';
 import zhCodeEditor from './locales/zh-CN/codeEditor.json';
 
 import { languages } from './languages.js';
+import { STORAGE_USER_CHANGED_EVENT, safeLocalStorage } from '../utils/safeStorage';
 
 const DEFAULT_LANGUAGE = 'zh-CN';
 const LANGUAGE_STORAGE_KEY = 'userLanguage';
@@ -52,11 +53,11 @@ const DEFAULT_MIGRATION_KEY = 'userLanguageDefaultMigratedTo';
 
 const getSavedLanguage = () => {
   try {
-    const saved = localStorage.getItem(LANGUAGE_STORAGE_KEY);
-    if (localStorage.getItem(DEFAULT_MIGRATION_KEY) !== DEFAULT_LANGUAGE) {
-      localStorage.setItem(DEFAULT_MIGRATION_KEY, DEFAULT_LANGUAGE);
+    const saved = safeLocalStorage.getItem(LANGUAGE_STORAGE_KEY);
+    if (safeLocalStorage.getItem(DEFAULT_MIGRATION_KEY) !== DEFAULT_LANGUAGE) {
+      safeLocalStorage.setItem(DEFAULT_MIGRATION_KEY, DEFAULT_LANGUAGE);
       if (!saved || saved === 'en') {
-        localStorage.setItem(LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE);
+        safeLocalStorage.setItem(LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE);
         return DEFAULT_LANGUAGE;
       }
     }
@@ -118,20 +119,30 @@ i18n
     },
 
     detection: {
-      order: ['localStorage'],
-      lookupLocalStorage: 'userLanguage',
-      caches: ['localStorage'],
+      // Language is read/written through the per-user safeLocalStorage
+      // (getSavedLanguage + the languageChanged handler below); the
+      // detector must not touch the unscoped `userLanguage` key itself.
+      order: [],
+      caches: [],
     },
   });
 
 i18n.on('languageChanged', (lng) => {
   try {
-    localStorage.setItem('userLanguage', lng);
+    safeLocalStorage.setItem('userLanguage', lng);
   } catch (error) {
     console.error('Failed to save language preference:', error);
   }
   syncAlwaysOnLanguage(lng);
 });
+
+// The preference is per user; once the signed-in user changes, adopt theirs.
+if (typeof window !== 'undefined') {
+  window.addEventListener(STORAGE_USER_CHANGED_EVENT, () => {
+    const next = getSavedLanguage();
+    if (next !== i18n.language) i18n.changeLanguage(next);
+  });
+}
 
 function syncAlwaysOnLanguage(lng) {
   const alwaysOnLang = lng === 'zh-CN' ? 'zh-CN' : 'en';

@@ -34,6 +34,7 @@ import { api } from '../../../utils/api';
 import MainContentStateView from './subcomponents/MainContentStateView';
 import ErrorBoundary from './ErrorBoundary';
 import ToolSidePanel from './subcomponents/ToolSidePanel';
+import { safeLocalStorage } from '../../../utils/safeStorage';
 
 const AlwaysOnV2 = React.lazy(() => import('../../main-content-v2/AlwaysOnV2'));
 const CronV2 = React.lazy(() => import('../../main-content-v2/CronV2'));
@@ -111,7 +112,7 @@ function summarizeTraumaForm(form: TurnFormInput): string {
 
 function readStoredToolPanelWidth(): number {
   try {
-    const stored = Number(localStorage.getItem(TOOL_PANEL_STORAGE_KEY));
+    const stored = Number(safeLocalStorage.getItem(TOOL_PANEL_STORAGE_KEY));
     return Number.isFinite(stored) && stored > 0 ? stored : TOOL_PANEL_DEFAULT_WIDTH;
   } catch {
     return TOOL_PANEL_DEFAULT_WIDTH;
@@ -838,7 +839,7 @@ function SplitBody(props: SplitBodyProps) {
 
   useEffect(() => {
     try {
-      localStorage.setItem(TOOL_PANEL_STORAGE_KEY, String(Math.round(toolPanelWidth)));
+      safeLocalStorage.setItem(TOOL_PANEL_STORAGE_KEY, String(Math.round(toolPanelWidth)));
     } catch {
       // The panel remains usable when localStorage is unavailable.
     }

@@ -4,6 +4,7 @@ import { useWebSocket } from '../../../contexts/WebSocketContext';
 import { CLAUDE_MODELS } from '../../../../shared/modelConstants';
 import type { PendingPermissionRequest, PermissionMode } from '../types/types';
 import type { ProjectSession } from '../../../types/app';
+import { safeLocalStorage } from '../../../utils/safeStorage';
 
 interface UseChatProviderStateArgs {
   selectedSession: ProjectSession | null;
@@ -33,7 +34,7 @@ const COMPOSER_PERMISSION_MODES: PermissionMode[] = [
 ];
 
 function readStoredPermissionMode(key: string): PermissionMode | null {
-  const stored = localStorage.getItem(key);
+  const stored = safeLocalStorage.getItem(key);
   if (!stored) return null;
   return COMPOSER_PERMISSION_MODES.includes(stored as PermissionMode)
     ? (stored as PermissionMode)
@@ -82,7 +83,7 @@ export function useChatProviderState({ selectedSession }: UseChatProviderStateAr
   });
   const [pendingPermissionRequests, setPendingPermissionRequests] = useState<PendingPermissionRequest[]>([]);
   const [model, setModel] = useState<string>(() => {
-    return localStorage.getItem('pilotdeck-model') || CLAUDE_MODELS.DEFAULT;
+    return safeLocalStorage.getItem('pilotdeck-model') || CLAUDE_MODELS.DEFAULT;
   });
   const [modelOptions, setModelOptions] = useState<ModelOption[]>(DEFAULT_MODEL_OPTIONS);
   const [thinkingModelContext, setThinkingModelContext] = useState<ThinkingModelContext | null>(null);
@@ -133,21 +134,21 @@ export function useChatProviderState({ selectedSession }: UseChatProviderStateAr
         const runtimeDefaultModel = typeof data?.claude?.defaultModel === 'string' && data.claude.defaultModel.trim()
           ? data.claude.defaultModel.trim()
           : CLAUDE_MODELS.DEFAULT;
-        const storedModel = localStorage.getItem('pilotdeck-model')?.trim() || '';
+        const storedModel = safeLocalStorage.getItem('pilotdeck-model')?.trim() || '';
         const hasStoredModel = runtimeOptions.some((option: ModelOption) => option.value === storedModel);
         const shouldReuseStoredModel = hasStoredModel && storedModel !== CLAUDE_MODELS.DEFAULT;
         const nextModel = shouldReuseStoredModel ? storedModel : runtimeDefaultModel;
 
         setModelOptions(runtimeOptions);
         setModel(nextModel);
-        localStorage.setItem('pilotdeck-model', nextModel);
+        safeLocalStorage.setItem('pilotdeck-model', nextModel);
 
         const backendMode = data?.permissions?.effectiveMode;
         if (backendMode && COMPOSER_PERMISSION_MODES.includes(backendMode as PermissionMode)) {
           const storedPerm = readStoredPermissionMode(DEFAULT_PERMISSION_MODE_KEY);
           if (!storedPerm || storedPerm === 'default') {
             setPermissionModeState(backendMode as PermissionMode);
-            localStorage.setItem(DEFAULT_PERMISSION_MODE_KEY, backendMode);
+            safeLocalStorage.setItem(DEFAULT_PERMISSION_MODE_KEY, backendMode);
           }
         }
       })
@@ -185,10 +186,10 @@ export function useChatProviderState({ selectedSession }: UseChatProviderStateAr
       : 'default';
 
     setPermissionModeState(normalizedMode);
-    localStorage.setItem(DEFAULT_PERMISSION_MODE_KEY, normalizedMode);
+    safeLocalStorage.setItem(DEFAULT_PERMISSION_MODE_KEY, normalizedMode);
 
     if (selectedSession?.id) {
-      localStorage.setItem(`permissionMode-${selectedSession.id}`, normalizedMode);
+      safeLocalStorage.setItem(`permissionMode-${selectedSession.id}`, normalizedMode);
     }
   }, [selectedSession?.id]);
 

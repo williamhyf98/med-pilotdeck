@@ -10,20 +10,20 @@ describe('project sorting preference', () => {
   });
 
   it('migrates old alphabetical defaults without losing other settings', () => {
-    localStorage.setItem('pilotdeck-settings', JSON.stringify({ projectSortOrder: 'name', allowedTools: ['Read'] }));
+    localStorage.setItem('anon:pilotdeck-settings', JSON.stringify({ projectSortOrder: 'name', allowedTools: ['Read'] }));
     expect(readProjectSortPreference()).toBe('date');
-    expect(JSON.parse(localStorage.getItem('pilotdeck-settings')!).allowedTools).toEqual(['Read']);
+    expect(JSON.parse(localStorage.getItem('anon:pilotdeck-settings')!).allowedTools).toEqual(['Read']);
   });
 
   it('preserves explicit choices made after migration', () => {
     readProjectSortPreference();
-    const settings = JSON.parse(localStorage.getItem('pilotdeck-settings')!);
-    localStorage.setItem('pilotdeck-settings', JSON.stringify({ ...settings, projectSortOrder: 'name' }));
+    const settings = JSON.parse(localStorage.getItem('anon:pilotdeck-settings')!);
+    localStorage.setItem('anon:pilotdeck-settings', JSON.stringify({ ...settings, projectSortOrder: 'name' }));
     expect(readProjectSortPreference()).toBe('name');
   });
 
   it('falls back to recent activity for invalid stored settings', () => {
-    localStorage.setItem('pilotdeck-settings', 'invalid');
+    localStorage.setItem('anon:pilotdeck-settings', 'invalid');
     expect(readProjectSortPreference()).toBe('date');
   });
 });

@@ -1,6 +1,7 @@
 import type { PilotDeckSettings } from '../types/types';
 import { authenticatedFetch } from '../../../utils/api.js';
 import { readProjectSortPreference } from '../../../utils/projectSortPreference';
+import { safeLocalStorage } from '../../../utils/safeStorage';
 
 export const PILOTDECK_SETTINGS_KEY = 'pilotdeck-settings';
 
@@ -9,46 +10,13 @@ export const getDraftInputStorageKey = (
   sessionId?: string | null,
 ): string => `draft_input_${projectName}:${sessionId || 'new'}`;
 
-export const safeLocalStorage = {
-  setItem: (key: string, value: string) => {
-    try {
-      localStorage.setItem(key, value);
-    } catch (error: any) {
-      if (error?.name === 'QuotaExceededError') {
-        console.warn('localStorage quota exceeded, clearing old data');
-
-        const keys = Object.keys(localStorage);
-        const draftKeys = keys.filter((k) => k.startsWith('draft_input_'));
-        draftKeys.forEach((k) => {
-          localStorage.removeItem(k);
-        });
-
-        try {
-          localStorage.setItem(key, value);
-        } catch (retryError) {
-          console.error('Failed to save to localStorage even after cleanup:', retryError);
-        }
-      } else {
-        console.error('localStorage error:', error);
-      }
-    }
-  },
-  getItem: (key: string): string | null => {
-    try {
-      return localStorage.getItem(key);
-    } catch (error) {
-      console.error('localStorage getItem error:', error);
-      return null;
-    }
-  },
-  removeItem: (key: string) => {
-    try {
-      localStorage.removeItem(key);
-    } catch (error) {
-      console.error('localStorage removeItem error:', error);
-    }
-  },
-};
+export {
+  clearStorageForUser,
+  isScopedStorageKey,
+  safeLocalStorage,
+  scopedStorageKey,
+  setStorageUserId,
+} from '../../../utils/safeStorage';
 
 // When localStorage has no cached permission settings, fall back to the
 // conservative default (false). The authoritative value lives on disk

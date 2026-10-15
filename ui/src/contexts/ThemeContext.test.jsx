@@ -36,7 +36,7 @@ describe('ThemeProvider product themes', () => {
   });
 
   it('restores the warm theme without enabling dark compatibility', () => {
-    localStorage.setItem('themeMode', 'warm');
+    localStorage.setItem('anon:themeMode', 'warm');
 
     render(<ThemeProvider><ThemeProbe /></ThemeProvider>);
 
@@ -51,10 +51,10 @@ describe('ThemeProvider product themes', () => {
 
     expect(screen.getByTestId('theme').textContent).toBe('warm');
     expect(document.documentElement.getAttribute('data-theme')).toBe('warm');
-    expect(localStorage.getItem('themeMode')).toBe('warm');
+    expect(localStorage.getItem('anon:themeMode')).toBe('warm');
 
     unmount();
-    localStorage.setItem('themeMode', 'system');
+    localStorage.setItem('anon:themeMode', 'system');
     render(<ThemeProvider><ThemeProbe /></ThemeProvider>);
 
     expect(screen.getByTestId('theme').textContent).toBe('warm');
@@ -70,11 +70,11 @@ describe('ThemeProvider product themes', () => {
     expect(screen.getByTestId('dark').textContent).toBe('true');
     expect(document.documentElement.getAttribute('data-theme')).toBe('command');
     expect(document.documentElement.classList.contains('dark')).toBe(true);
-    expect(localStorage.getItem('themeMode')).toBe('command');
+    expect(localStorage.getItem('anon:themeMode')).toBe('command');
   });
 
   it('removes the product theme attribute when returning to a legacy mode', () => {
-    localStorage.setItem('themeMode', 'command');
+    localStorage.setItem('anon:themeMode', 'command');
     render(<ThemeProvider><ThemeProbe /></ThemeProvider>);
 
     act(() => screen.getByRole('button', { name: 'light' }).click());

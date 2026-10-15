@@ -190,7 +190,7 @@ function ChatInterfaceV2({
     if (!nextModel || nextModel === model) return;
     setModel(nextModel);
     try {
-      localStorage.setItem('pilotdeck-model', nextModel);
+      safeLocalStorage.setItem('pilotdeck-model', nextModel);
     } catch {
       // The active chat still uses the in-memory override.
     }
@@ -211,9 +211,9 @@ function ChatInterfaceV2({
 
   const selectPermissionMode = useCallback((mode: typeof permissionMode) => {
     setPermissionModeRaw(mode);
-    localStorage.setItem('permissionMode-default', mode);
+    safeLocalStorage.setItem('permissionMode-default', mode);
     if (selectedSession?.id) {
-      localStorage.setItem(`permissionMode-${selectedSession.id}`, mode);
+      safeLocalStorage.setItem(`permissionMode-${selectedSession.id}`, mode);
     }
   }, [setPermissionModeRaw, selectedSession?.id]);
 

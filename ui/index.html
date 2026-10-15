@@ -26,7 +26,10 @@
     <script>
       (() => {
         try {
-          const theme = localStorage.getItem('themeMode') || localStorage.getItem('theme') || 'system';
+          // Preferences are namespaced per user (see src/utils/safeStorage.ts).
+          const lastUser = localStorage.getItem('pilotdeck-storage-user');
+          const scope = lastUser ? 'u' + lastUser + ':' : 'anon:';
+          const theme = localStorage.getItem(scope + 'themeMode') || localStorage.getItem(scope + 'theme') || 'system';
           const prefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches;
           const isDark = theme === 'dark' || theme === 'command' || (theme === 'system' && prefersDark);
           if (theme === 'warm' || theme === 'command') {

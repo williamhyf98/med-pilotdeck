@@ -1,10 +1,11 @@
 type ShellConnectionOverlayProps = {
-  mode: 'loading' | 'connect' | 'connecting';
+  mode: 'loading' | 'connect' | 'connecting' | 'denied';
   description: string;
   loadingLabel: string;
   connectLabel: string;
   connectTitle: string;
   connectingLabel: string;
+  deniedLabel: string;
   onConnect: () => void;
 };
 
@@ -15,12 +16,21 @@ export default function ShellConnectionOverlay({
   connectLabel,
   connectTitle,
   connectingLabel,
+  deniedLabel,
   onConnect,
 }: ShellConnectionOverlayProps) {
   if (mode === 'loading') {
     return (
       <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-90">
         <div className="text-white">{loadingLabel}</div>
+      </div>
+    );
+  }
+
+  if (mode === 'denied') {
+    return (
+      <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-90 p-4">
+        <p className="max-w-sm text-center text-sm text-yellow-400" role="alert">{deniedLabel}</p>
       </div>
     );
   }

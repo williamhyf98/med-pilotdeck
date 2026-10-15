@@ -438,6 +438,7 @@
     },
     "loading": "正在加载终端...",
     "connecting": "正在连接到 Shell...",
+    "adminOnly": "仅管理员可用终端",
     "startSession": "启动新的 PilotDeck 会话",
     "resumeSession": "恢复会话：{{displayName}}...",
     "runCommand": "在 {{projectName}} 中运行 {{command}}",

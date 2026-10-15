@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { IS_PLATFORM, DISABLE_LOCAL_AUTH } from '../../../constants/config';
 import { api } from '../../../utils/api';
+import { clearStorageForUser, getStorageUserId, setStorageUserId } from '../../../utils/safeStorage';
 import { AUTH_ERROR_MESSAGES, AUTH_TOKEN_STORAGE_KEY } from '../constants';
 import type {
   AuthContextValue,
@@ -24,6 +25,9 @@ const clearStoredToken = () => {
   localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
 };
 
+const LOCAL_ADMIN_USER: AuthUser = { id: 'local', username: 'local-user', role: 'admin' };
+const PLATFORM_USER: AuthUser = { id: 'platform', username: 'platform-user', role: 'admin' };
+
 export function useAuth(): AuthContextValue {
   const context = useContext(AuthContext);
   if (!context) {
@@ -34,23 +38,32 @@ export function useAuth(): AuthContextValue {
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
-  const [user, setUser] = useState<AuthUser | null>(null);
+  const [user, setUserState] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(() => readStoredToken());
   const [isLoading, setIsLoading] = useState(true);
-  const [needsSetup, setNeedsSetup] = useState(false);
+  const [registrationOpen, setRegistrationOpen] = useState(false);
+  const [authDisabled, setAuthDisabled] = useState(false);
+  const [sessionEndedCode, setSessionEndedCode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const setSession = useCallback((nextUser: AuthUser, nextToken: string) => {
-    setUser(nextUser);
-    setToken(nextToken);
-    persistToken(nextToken);
+  // The storage namespace must switch before any child renders with the new
+  // user, otherwise their initial state would be read from the wrong prefix.
+  const applyUser = useCallback((nextUser: AuthUser | null) => {
+    setStorageUserId(nextUser?.id ?? null);
+    setUserState(nextUser);
   }, []);
 
+  const setSession = useCallback((nextUser: AuthUser, nextToken: string) => {
+    applyUser(nextUser);
+    setToken(nextToken);
+    persistToken(nextToken);
+  }, [applyUser]);
+
   const clearSession = useCallback(() => {
-    setUser(null);
+    applyUser(null);
     setToken(null);
     clearStoredToken();
-  }, []);
+  }, [applyUser]);
 
   const checkAuthStatus = useCallback(async () => {
     try {
@@ -60,20 +73,18 @@ export function AuthProvider({ children }: AuthProviderProps) {
       const statusResponse = await api.auth.status();
       const statusPayload = await parseJsonSafely<AuthStatusPayload>(statusResponse);
 
+      setRegistrationOpen(Boolean(statusPayload?.registrationOpen));
+
       if (statusPayload?.authDisabled) {
-        setUser({ username: 'local' });
-        setNeedsSetup(false);
+        setAuthDisabled(true);
+        applyUser(LOCAL_ADMIN_USER);
         return;
       }
 
-      if (statusPayload?.needsSetup) {
-        setNeedsSetup(true);
-        return;
-      }
+      setAuthDisabled(false);
 
-      setNeedsSetup(false);
-
-      if (!token) {
+      if (!readStoredToken()) {
+        applyUser(null);
         return;
       }
 
@@ -89,25 +100,46 @@ export function AuthProvider({ children }: AuthProviderProps) {
         return;
       }
 
-      setUser(userPayload.user);
+      applyUser(userPayload.user);
     } catch (caughtError) {
       console.error('[Auth] Auth status check failed:', caughtError);
       setError(AUTH_ERROR_MESSAGES.authStatusCheckFailed);
     } finally {
       setIsLoading(false);
     }
-  }, [clearSession, token]);
+  }, [applyUser, clearSession]);
 
   useEffect(() => {
     if (IS_PLATFORM || DISABLE_LOCAL_AUTH) {
-      setUser({ username: DISABLE_LOCAL_AUTH ? 'local-user' : 'platform-user' });
-      setNeedsSetup(false);
+      setAuthDisabled(true);
+      applyUser(DISABLE_LOCAL_AUTH ? LOCAL_ADMIN_USER : PLATFORM_USER);
       setIsLoading(false);
       return;
     }
 
     void checkAuthStatus();
-  }, [checkAuthStatus]);
+  }, [applyUser, checkAuthStatus]);
+
+  // Server-side session end (401 with a revoked code, WebSocket 4401) and
+  // silently refreshed tokens arrive as window events from non-React code.
+  useEffect(() => {
+    const onRevoked = (event: Event) => {
+      const code = (event as CustomEvent<{ code?: string }>).detail?.code ?? 'TOKEN_REVOKED';
+      clearStorageForUser(getStorageUserId());
+      clearSession();
+      setSessionEndedCode(code);
+    };
+    const onTokenRefreshed = (event: Event) => {
+      const nextToken = (event as CustomEvent<{ token?: string }>).detail?.token;
+      if (nextToken) setToken(nextToken);
+    };
+    window.addEventListener('pilotdeck:auth-revoked', onRevoked);
+    window.addEventListener('pilotdeck:token-refreshed', onTokenRefreshed);
+    return () => {
+      window.removeEventListener('pilotdeck:auth-revoked', onRevoked);
+      window.removeEventListener('pilotdeck:token-refreshed', onTokenRefreshed);
+    };
+  }, [clearSession]);
 
   const login = useCallback<AuthContextValue['login']>(
     async (username, password) => {
@@ -122,8 +154,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
           return { success: false, error: message };
         }
 
+        setSessionEndedCode(null);
         setSession(payload.user, payload.token);
-        setNeedsSetup(false);
         return { success: true };
       } catch (caughtError) {
         console.error('Login error:', caughtError);
@@ -147,8 +179,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
           return { success: false, error: message };
         }
 
+        setSessionEndedCode(null);
         setSession(payload.user, payload.token);
-        setNeedsSetup(false);
         return { success: true };
       } catch (caughtError) {
         console.error('Registration error:', caughtError);
@@ -159,16 +191,44 @@ export function AuthProvider({ children }: AuthProviderProps) {
     [setSession],
   );
 
-  const logout = useCallback(() => {
-    const tokenToInvalidate = token;
-    clearSession();
+  const changePassword = useCallback<AuthContextValue['changePassword']>(
+    async (currentPassword, newPassword) => {
+      try {
+        const response = await api.auth.changePassword(currentPassword, newPassword);
+        const payload = await parseJsonSafely<AuthSessionPayload>(response);
 
-    if (tokenToInvalidate) {
-      void api.auth.logout().catch((caughtError: unknown) => {
+        if (!response.ok || !payload?.token) {
+          return {
+            success: false,
+            error: resolveApiErrorMessage(payload, AUTH_ERROR_MESSAGES.passwordChangeFailed),
+          };
+        }
+
+        // Changing the password bumps the token version; adopt the new token.
+        setToken(payload.token);
+        persistToken(payload.token);
+        return { success: true };
+      } catch (caughtError) {
+        console.error('Change password error:', caughtError);
+        return { success: false, error: AUTH_ERROR_MESSAGES.networkError };
+      }
+    },
+    [],
+  );
+
+  const logout = useCallback<AuthContextValue['logout']>(async () => {
+    if (readStoredToken()) {
+      try {
+        await api.auth.logout();
+      } catch (caughtError) {
         console.error('Logout endpoint error:', caughtError);
-      });
+      }
     }
-  }, [clearSession, token]);
+
+    window.dispatchEvent(new Event('pilotdeck:auth-logout'));
+    clearStorageForUser(getStorageUserId());
+    clearSession();
+  }, [clearSession]);
 
   const refreshOnboardingStatus = useCallback(async () => {
     // Onboarding LLM setup has been removed; kept as a no-op for API compatibility.
@@ -179,15 +239,33 @@ export function AuthProvider({ children }: AuthProviderProps) {
       user,
       token,
       isLoading,
-      needsSetup,
+      needsSetup: false,
+      registrationOpen,
+      authDisabled,
+      isAdmin: user?.role === 'admin',
+      sessionEndedCode,
       hasCompletedOnboarding: true,
       error,
       login,
       register,
+      changePassword,
       logout,
       refreshOnboardingStatus,
     }),
-    [error, isLoading, login, logout, needsSetup, refreshOnboardingStatus, register, token, user],
+    [
+      authDisabled,
+      changePassword,
+      error,
+      isLoading,
+      login,
+      logout,
+      refreshOnboardingStatus,
+      register,
+      registrationOpen,
+      sessionEndedCode,
+      token,
+      user,
+    ],
   );
 
   return <AuthContext.Provider value={contextValue}>{children}</AuthContext.Provider>;

@@ -112,7 +112,7 @@ describe('MainAreaV2 dashboard switcher', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
 
     expect(screen.getByTitle('Renamed conversation').textContent).toBe('Renamed conversation');
-    expect(JSON.parse(localStorage.getItem('pilotdeck:customSessionTitles') || '{}')).toEqual({
+    expect(JSON.parse(localStorage.getItem('anon:pilotdeck:customSessionTitles') || '{}')).toEqual({
       'session-1': 'Renamed conversation',
     });
   });
@@ -126,7 +126,7 @@ describe('MainAreaV2 dashboard switcher', () => {
     fireEvent.keyDown(input, { key: 'Escape' });
 
     expect(screen.getByTitle('Searchable chat').textContent).toBe('Searchable chat');
-    expect(localStorage.getItem('pilotdeck:customSessionTitles')).toBeNull();
+    expect(localStorage.getItem('anon:pilotdeck:customSessionTitles')).toBeNull();
   });
 
   it('keeps the header search state in sync and returns from Files to chat', async () => {

@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import AuthErrorAlert from './AuthErrorAlert';
 import AuthInputField from './AuthInputField';
 import AuthScreenLayout from './AuthScreenLayout';
+import RegisterForm from './RegisterForm';
 
 type LoginFormState = {
   username: string;
@@ -23,7 +24,8 @@ const initialState: LoginFormState = {
  */
 export default function LoginForm() {
   const { t } = useTranslation('auth');
-  const { login } = useAuth();
+  const { login, registrationOpen, sessionEndedCode } = useAuth();
+  const [mode, setMode] = useState<'login' | 'register'>('login');
 
   const [formState, setFormState] = useState<LoginFormState>(initialState);
   const [errorMessage, setErrorMessage] = useState('');
@@ -54,6 +56,17 @@ export default function LoginForm() {
     [formState.password, formState.username, login, t],
   );
 
+  if (mode === 'register') {
+    return <RegisterForm onBack={() => setMode('login')} />;
+  }
+
+  const sessionNotice =
+    sessionEndedCode === 'USER_DISABLED'
+      ? t('errors.disabled')
+      : sessionEndedCode
+        ? t('errors.revoked')
+        : '';
+
   return (
     <AuthScreenLayout
       title={t('login.title')}
@@ -82,7 +95,7 @@ export default function LoginForm() {
           autoComplete="current-password"
         />
 
-        <AuthErrorAlert errorMessage={errorMessage} />
+        <AuthErrorAlert errorMessage={errorMessage || sessionNotice} />
 
         <button
           type="submit"
@@ -91,6 +104,16 @@ export default function LoginForm() {
         >
           {isSubmitting ? t('login.loading') : t('login.submit')}
         </button>
+
+        {registrationOpen ? (
+          <button
+            type="button"
+            onClick={() => setMode('register')}
+            className="w-full text-center text-sm text-muted-foreground hover:text-foreground"
+          >
+            {t('login.registerLink')}
+          </button>
+        ) : null}
       </form>
     </AuthScreenLayout>
   );

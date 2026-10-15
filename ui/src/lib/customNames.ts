@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Project, ProjectSession } from '../types/app';
 import { stripDocumentSelectionPromptBlock } from '../types/documentSelection';
+import { isScopedStorageKey, safeLocalStorage } from '../utils/safeStorage';
 
 /**
  * UI-only rename overlay for project + session display names.
@@ -24,7 +25,7 @@ type NameMap = Record<string, string>;
 
 function readMap(key: string): NameMap {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = safeLocalStorage.getItem(key);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === 'object' ? (parsed as NameMap) : {};
@@ -34,7 +35,7 @@ function readMap(key: string): NameMap {
 }
 
 function writeMap(key: string, map: NameMap): void {
-  localStorage.setItem(key, JSON.stringify(map));
+  safeLocalStorage.setItem(key, JSON.stringify(map));
   // Dispatch a synthetic event so same-tab listeners can refresh — the
   // native `storage` event only fires across tabs, so we always emit our
   // own here and additionally listen to `storage` for the cross-tab case.
@@ -121,7 +122,7 @@ export function useCustomNamesVersion(): number {
   useEffect(() => {
     const handler = () => setVersion((v) => v + 1);
     const storageHandler = (event: StorageEvent) => {
-      if (event.key === PROJECT_KEY || event.key === SESSION_KEY) handler();
+      if (isScopedStorageKey(event.key, PROJECT_KEY) || isScopedStorageKey(event.key, SESSION_KEY)) handler();
     };
     window.addEventListener(CHANGE_EVENT, handler);
     window.addEventListener('storage', storageHandler);

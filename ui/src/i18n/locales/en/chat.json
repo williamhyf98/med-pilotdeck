@@ -454,6 +454,7 @@
     },
     "loading": "Loading terminal...",
     "connecting": "Connecting to shell...",
+    "adminOnly": "The terminal is available to administrators only.",
     "startSession": "Start a new PilotDeck session",
     "resumeSession": "Resume session: {{displayName}}...",
     "runCommand": "Run {{command}} in {{projectName}}",

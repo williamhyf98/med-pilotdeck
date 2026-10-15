@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { safeLocalStorage } from '../utils/safeStorage';
 
 /**
  * Custom hook to persist state in localStorage.
@@ -13,7 +14,7 @@ function useLocalStorage(key, initialValue) {
       return initialValue;
     }
     try {
-      const item = window.localStorage.getItem(key);
+      const item = safeLocalStorage.getItem(key);
       return item ? JSON.parse(item) : initialValue;
     } catch (error) {
       console.log(error);
@@ -28,7 +29,7 @@ function useLocalStorage(key, initialValue) {
     try {
       const valueToStore =
         value instanceof Function ? value(storedValue) : value;
-      window.localStorage.setItem(key, JSON.stringify(valueToStore));
+      safeLocalStorage.setItem(key, JSON.stringify(valueToStore));
       setStoredValue(valueToStore);
     } catch (error) {
       console.log(error);

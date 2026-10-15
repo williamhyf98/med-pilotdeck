@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { STORAGE_USER_CHANGED_EVENT, safeLocalStorage } from '../utils/safeStorage';
 
 const ThemeContext = createContext();
 const THEME_MODE_KEY = 'themeMode';
@@ -15,12 +16,12 @@ const normalizeThemeMode = (value) => (
 );
 
 const readInitialThemeMode = () => {
-  const storedMode = localStorage.getItem(THEME_MODE_KEY);
+  const storedMode = safeLocalStorage.getItem(THEME_MODE_KEY);
   const savedMode = normalizeThemeMode(storedMode);
   if (savedMode) return savedMode;
   if (storedMode === 'system') return 'warm';
 
-  const legacyTheme = normalizeThemeMode(localStorage.getItem(LEGACY_THEME_KEY));
+  const legacyTheme = normalizeThemeMode(safeLocalStorage.getItem(LEGACY_THEME_KEY));
   if (legacyTheme) return legacyTheme;
 
   return 'warm';
@@ -42,6 +43,14 @@ export const useTheme = () => {
 export const ThemeProvider = ({ children }) => {
   const [themeMode, setThemeMode] = useState(readInitialThemeMode);
   const [isDarkMode, setIsDarkMode] = useState(() => resolveThemeMode(readInitialThemeMode()));
+
+  // The preference lives in the per-user storage namespace; re-read it when
+  // the signed-in user (and therefore the namespace) changes.
+  useEffect(() => {
+    const reload = () => setThemeMode(readInitialThemeMode());
+    window.addEventListener(STORAGE_USER_CHANGED_EVENT, reload);
+    return () => window.removeEventListener(STORAGE_USER_CHANGED_EVENT, reload);
+  }, []);
 
   // Update document class and localStorage when theme changes
   useEffect(() => {
@@ -82,8 +91,8 @@ export const ThemeProvider = ({ children }) => {
       }
     }
 
-    localStorage.setItem(THEME_MODE_KEY, themeMode);
-    localStorage.setItem(LEGACY_THEME_KEY, themeMode);
+    safeLocalStorage.setItem(THEME_MODE_KEY, themeMode);
+    safeLocalStorage.setItem(LEGACY_THEME_KEY, themeMode);
   }, [themeMode]);
 
   const toggleDarkMode = () => {

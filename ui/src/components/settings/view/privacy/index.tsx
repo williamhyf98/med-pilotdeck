@@ -6,6 +6,7 @@ import {
   PILOTDECK_SETTINGS_KEY,
   fetchPilotDeckPermissionSettings,
   getPilotDeckSettings,
+  isScopedStorageKey,
   safeLocalStorage,
 } from "../../../chat/utils/chatStorage";
 import type { PilotDeckSettings } from "../../../chat/types/types";
@@ -63,7 +64,7 @@ export default function PrivacySections({ title }: PrivacySectionsProps) {
       });
 
     const onStorage = (event: StorageEvent) => {
-      if (event.key === PILOTDECK_SETTINGS_KEY) reload();
+      if (isScopedStorageKey(event.key, PILOTDECK_SETTINGS_KEY)) reload();
     };
     const onCustom = () => reload();
     window.addEventListener("storage", onStorage);

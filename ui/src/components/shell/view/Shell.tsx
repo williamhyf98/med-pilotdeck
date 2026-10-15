@@ -52,6 +52,7 @@ export default function Shell({
     terminalContainerRef,
     terminalRef,
     wsRef,
+    deniedReason,
     isConnected,
     isInitialized,
     isConnecting,
@@ -243,7 +244,15 @@ export default function Shell({
       })
     : t('shell.startCli', { projectName: selectedProject.displayName });
 
-  const overlayMode = !isInitialized ? 'loading' : isConnecting ? 'connecting' : !isConnected ? 'connect' : null;
+  const overlayMode = !isInitialized
+    ? 'loading'
+    : deniedReason
+      ? 'denied'
+      : isConnecting
+        ? 'connecting'
+        : !isConnected
+          ? 'connect'
+          : null;
   const overlayDescription = overlayMode === 'connecting' ? connectingDescription : readyDescription;
 
   return (
@@ -281,6 +290,7 @@ export default function Shell({
             connectLabel={t('shell.actions.connect')}
             connectTitle={t('shell.actions.connectTitle')}
             connectingLabel={t('shell.connecting')}
+            deniedLabel={t('shell.adminOnly')}
             onConnect={connectToShell}
           />
         )}

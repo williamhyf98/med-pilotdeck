@@ -6,6 +6,7 @@ import type {
   ProjectSortOrder,
   SettingsMainTab,
 } from "../types";
+import { safeLocalStorage } from '../../../../utils/safeStorage';
 
 type UseSettingsControllerArgs = {
   isOpen: boolean;
@@ -31,11 +32,11 @@ const parseJson = <T>(value: string | null, fallback: T): T => {
 
 const readCodeEditorSettings = (): CodeEditorSettingsState => ({
   theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
-  wordWrap: localStorage.getItem("codeEditorWordWrap") === "true",
-  showMinimap: localStorage.getItem("codeEditorShowMinimap") !== "false",
-  lineNumbers: localStorage.getItem("codeEditorLineNumbers") !== "false",
+  wordWrap: safeLocalStorage.getItem("codeEditorWordWrap") === "true",
+  showMinimap: safeLocalStorage.getItem("codeEditorShowMinimap") !== "false",
+  lineNumbers: safeLocalStorage.getItem("codeEditorLineNumbers") !== "false",
   fontSize:
-    localStorage.getItem("codeEditorFontSize") ??
+    safeLocalStorage.getItem("codeEditorFontSize") ??
     DEFAULT_CODE_EDITOR_SETTINGS.fontSize,
 });
 
@@ -60,17 +61,17 @@ export function useSettingsController({
   }, [isOpen, initialTab]);
 
   useEffect(() => {
-    localStorage.setItem("codeEditorTheme", codeEditorSettings.theme);
-    localStorage.setItem("codeEditorWordWrap", String(codeEditorSettings.wordWrap));
-    localStorage.setItem(
+    safeLocalStorage.setItem("codeEditorTheme", codeEditorSettings.theme);
+    safeLocalStorage.setItem("codeEditorWordWrap", String(codeEditorSettings.wordWrap));
+    safeLocalStorage.setItem(
       "codeEditorShowMinimap",
       String(codeEditorSettings.showMinimap),
     );
-    localStorage.setItem(
+    safeLocalStorage.setItem(
       "codeEditorLineNumbers",
       String(codeEditorSettings.lineNumbers),
     );
-    localStorage.setItem("codeEditorFontSize", codeEditorSettings.fontSize);
+    safeLocalStorage.setItem("codeEditorFontSize", codeEditorSettings.fontSize);
     window.dispatchEvent(new Event("codeEditorSettingsChanged"));
   }, [codeEditorSettings]);
 
@@ -78,10 +79,10 @@ export function useSettingsController({
     setProjectSortOrderState(value);
     try {
       const existing = parseJson<Record<string, unknown>>(
-        localStorage.getItem("pilotdeck-settings"),
+        safeLocalStorage.getItem("pilotdeck-settings"),
         {},
       );
-      localStorage.setItem(
+      safeLocalStorage.setItem(
         "pilotdeck-settings",
         JSON.stringify({
           ...existing,

@@ -1,4 +1,5 @@
 import { useEffect, useReducer, useRef } from 'react';
+import { isScopedStorageKey, safeLocalStorage } from '../utils/safeStorage';
 
 type UiPreferences = {
   showProcessTrace: boolean;
@@ -70,7 +71,7 @@ const parseBoolean = (value: unknown, fallback: boolean): boolean => {
 
 const readLegacyPreference = (key: UiPreferenceKey, fallback: boolean): boolean => {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = safeLocalStorage.getItem(key);
     if (raw === null) return fallback;
 
     // Supports values written by both JSON.stringify and plain strings.
@@ -87,7 +88,7 @@ const readInitialPreferences = (storageKey: string): UiPreferences => {
   }
 
   try {
-    const raw = localStorage.getItem(storageKey);
+    const raw = safeLocalStorage.getItem(storageKey);
 
     if (raw) {
       const parsed = JSON.parse(raw);
@@ -163,7 +164,7 @@ export function useUiPreferences(storageKey = 'uiPreferences') {
       return;
     }
 
-    localStorage.setItem(storageKey, JSON.stringify(state));
+    safeLocalStorage.setItem(storageKey, JSON.stringify(state));
 
     window.dispatchEvent(
       new CustomEvent<SyncEventDetail>(SYNC_EVENT, {
@@ -189,7 +190,7 @@ export function useUiPreferences(storageKey = 'uiPreferences') {
     };
 
     const handleStorageChange = (event: StorageEvent) => {
-      if (event.key !== storageKey || event.newValue === null) {
+      if (!isScopedStorageKey(event.key, storageKey) || event.newValue === null) {
         return;
       }
 
