@@ -132,6 +132,7 @@ import { ensureAdminUser } from './services/adminBootstrap.js';
 import { migrateLegacyStorage } from './services/legacyMigration.js';
 
 import { runServerStartupBeforeListen, startServerAfterStartup } from './services/server-startup.js';
+import { checkMedicalPlugin, checkDeployEnv } from './services/startupChecks.js';
 import { validateApiKey, authenticateToken, authenticateWebSocket } from './middleware/auth.js';
 import { requireAdmin } from './middleware/requireAdmin.js';
 import { runWithUserScope, userScopeMiddleware, requireUserScope } from './middleware/userScope.js';
@@ -4117,6 +4118,10 @@ async function startServer() {
                     migrateLegacyStorageFn: () => migrateLegacyStorage({ userDb, log: (m) => console.log(`${c.info('[INFO]')} ${m}`) }),
                     configureWebPushFn: configureWebPush
                 });
+                // Things the launch scripts normally prepare; loud when started by hand.
+                const warn = (m) => console.warn(`${c.warn('[WARN]')} ${m}`);
+                checkMedicalPlugin({ root: resolvePilotRoot(), repoRoot: REPO_ROOT, log: warn });
+                checkDeployEnv({ log: warn });
             },
             listenFn: async () => {
                 // Check if running in production mode (dist folder exists)
