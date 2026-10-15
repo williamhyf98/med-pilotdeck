@@ -125,6 +125,7 @@ import { closeMemoryServices, startMemoryScheduler, stopMemoryScheduler } from '
 import { createNormalizedMessage } from './pilotdeck-message.js';
 import { startEnabledPluginServers, stopAllPlugins, getPluginPort } from './utils/plugin-process-manager.js';
 import { initializeDatabase, sessionNamesDb, applyCustomSessionNames, userDb } from './database/db.js';
+import { canRefreshProjectsFor } from './services/projectsWatcherGuard.js';
 import { configureWebPush } from './services/vapid-keys.js';
 import { ensureAdminUser } from './services/adminBootstrap.js';
 import { migrateLegacyStorage } from './services/legacyMigration.js';
@@ -352,6 +353,12 @@ async function setupProjectsWatcher() {
 
         projectsWatcherTimers.set(userId, setTimeout(async () => {
             projectsWatcherTimers.delete(userId);
+            // A deleted account's home is renamed into archives/users, which fires
+            // unlink events here; refreshing for it would spawn a Gateway and
+            // recreate the home. Disabled accounts get no refresh either.
+            if (!canRefreshProjectsFor(userId, { userDb })) {
+                return;
+            }
             // Prevent reentrant calls (per user)
             if (projectsRefreshRunning.get(userId)) {
                 return;
