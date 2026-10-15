@@ -1,6 +1,7 @@
 export async function runServerStartupBeforeListen({
   initializeDatabaseFn,
   ensureAdminUserFn,
+  migrateLegacyStorageFn,
   configureWebPushFn
 }) {
   if (typeof initializeDatabaseFn !== 'function') {
@@ -9,12 +10,16 @@ export async function runServerStartupBeforeListen({
   if (typeof ensureAdminUserFn !== 'function') {
     throw new TypeError('ensureAdminUserFn is required');
   }
+  if (typeof migrateLegacyStorageFn !== 'function') {
+    throw new TypeError('migrateLegacyStorageFn is required');
+  }
   if (typeof configureWebPushFn !== 'function') {
     throw new TypeError('configureWebPushFn is required');
   }
 
   await initializeDatabaseFn();
   await ensureAdminUserFn();
+  await migrateLegacyStorageFn();
   configureWebPushFn();
 }
 

@@ -139,6 +139,7 @@ import { startEnabledPluginServers, stopAllPlugins, getPluginPort } from './util
 import { initializeDatabase, sessionNamesDb, applyCustomSessionNames, userDb } from './database/db.js';
 import { configureWebPush } from './services/vapid-keys.js';
 import { ensureAdminUser } from './services/adminBootstrap.js';
+import { migrateLegacyStorage } from './services/legacyMigration.js';
 
 import { runServerStartupBeforeListen, startServerAfterStartup } from './services/server-startup.js';
 import { validateApiKey, authenticateToken, authenticateWebSocket } from './middleware/auth.js';
@@ -4095,6 +4096,7 @@ async function startServer() {
                 await runServerStartupBeforeListen({
                     initializeDatabaseFn: initializeDatabase,
                     ensureAdminUserFn: () => ensureAdminUser({ userDb }),
+                    migrateLegacyStorageFn: () => migrateLegacyStorage({ userDb, log: (m) => console.log(`${c.info('[INFO]')} ${m}`) }),
                     configureWebPushFn: configureWebPush
                 });
             },
@@ -4223,6 +4225,10 @@ async function startServer() {
     } catch (error) {
         if (error?.code === 'NO_ACTIVE_ADMIN') {
             console.error(`${c.warn('[ERROR]')} ${error.message}`);
+            process.exit(1);
+        }
+        if (error?.code === 'LEGACY_MIGRATION_FAILED') {
+            console.error(`${c.warn('[ERROR]')} ${error.message}`, error.cause?.message ?? '');
             process.exit(1);
         }
         console.error('[ERROR] Failed to start server:', error);
