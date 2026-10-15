@@ -18,6 +18,14 @@ import { runWithUserScope } from '../middleware/userScope.js';
 export const SOCKET_USER_ID = '__pilotdeckUserId';
 
 /**
+ * The role the socket was opened with. Server-side broadcasts that carry
+ * system-level data (notably `config:reloaded`, which embeds pilotdeck.yaml)
+ * must reach administrators only, so the role is frozen onto the socket at
+ * handshake time next to the user id.
+ */
+export const SOCKET_ROLE = '__pilotdeckRole';
+
+/**
  * Freeze the scope of an authenticated upgrade request. Returns null when the
  * request carries no user — the caller must then reject the connection
  * (`verifyClient` is the actual gate; this is the belt-and-braces check).
@@ -54,6 +62,26 @@ export function runMessageInScope(scope, handler, { onError } = {}) {
 function report(error, onError) {
   if (onError) onError(error);
   else console.error('[ws] message handler failed:', error instanceof Error ? error.message : error);
+}
+
+/**
+ * Send `message` to the open sockets opened by an administrator, and only
+ * those. Used for `config:reloaded`, whose payload embeds the shared
+ * pilotdeck.yaml (provider base URLs, adapter settings, masked credentials) —
+ * a broadcast to every connected client would hand that to every user.
+ *
+ * A socket with no recorded role is not an admin, so a connection bound before
+ * the role was frozen fails closed.
+ */
+export function sendToAdminSockets(clients, message) {
+  let sent = 0;
+  for (const client of clients ?? []) {
+    if (client?.[SOCKET_ROLE] !== 'admin') continue;
+    // 1 = OPEN; anything else cannot take a frame.
+    if (client.readyState !== 1) continue;
+    try { client.send(message); sent += 1; } catch { /* socket died mid-send */ }
+  }
+  return sent;
 }
 
 /**

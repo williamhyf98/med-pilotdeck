@@ -10,6 +10,8 @@ import {
   configToYaml,
   getPilotDeckConfigPath,
   hasUnresolvedMaskedSecrets,
+  MASK,
+  maskRawYamlText,
   maskSecrets,
   parseConfigYaml,
   preserveMaskedSecrets,
@@ -195,7 +197,9 @@ function serializeConfigResponse(record, reloadResult = null) {
     return {
       exists: record.exists,
       path: record.configPath,
-      raw: record.raw,
+      // The document did not parse, so `rawYamlToMaskedString` cannot be used.
+      // Mask line-wise instead — an unparseable file must not leak API keys.
+      raw: maskRawYamlText(record.raw),
       revision: configRevision(record.raw),
       config: maskSecrets(record.config),
       configDisabled: true,
@@ -596,7 +600,7 @@ router.get('/provider', (_req, res) => {
     const record = readPilotDeckConfigFile();
     const providers = record.config?.model?.providers;
     if (!providers || typeof providers !== 'object') {
-      return res.json({ exists: false, provider: null });
+      return res.json({ exists: false, hasApiKey: false, provider: null });
     }
 
     const mainRef = typeof record.config?.agent?.model === 'string'
@@ -620,16 +624,21 @@ router.get('/provider', (_req, res) => {
           : '';
       }
     }
-    if (!providerId) return res.json({ exists: false, provider: null });
+    if (!providerId) return res.json({ exists: false, hasApiKey: false, provider: null });
 
     const provider = providers[providerId] || {};
 
+    // The key itself never leaves the server; the UI only needs to know
+    // whether one is configured.
+    const hasApiKey = Boolean(typeof provider.apiKey === 'string' && provider.apiKey.trim());
     res.json({
       exists: true,
+      hasApiKey,
       provider: {
         type: provider.protocol || '',
         baseUrl: provider.url || '',
-        apiKey: provider.apiKey || '',
+        apiKey: hasApiKey ? MASK : '',
+        hasApiKey,
         model: modelId,
       },
     });

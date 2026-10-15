@@ -82,6 +82,48 @@ describe('admin users API', () => {
     expect(password).toHaveLength(12);
     expect(revoked).toEqual([alice.id]);
   });
+  it('DELETE deactivates, revokes, archives the home and refuses the last admin', async () => {
+    const { users } = await (await call('GET', '/api/admin/users', null, adminToken)).json();
+    const alice = users.find((u) => u.username === 'alice');
+    fs.mkdirSync(path.join(root, 'users', String(alice.id), 'projects'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'users', String(alice.id), 'projects', 'note.txt'), 'hello');
+    const res = await call('DELETE', `/api/admin/users/${alice.id}`, null, adminToken);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.archived).toBe(true);
+    expect(body.user).toMatchObject({ id: alice.id, isActive: false });
+    expect(revoked).toContain(alice.id);
+    expect(fs.existsSync(path.join(root, 'users', String(alice.id)))).toBe(false);
+    const archived = fs.readdirSync(path.join(root, 'archives', 'users'));
+    expect(archived.some((n) => n.startsWith(`${alice.id}-`))).toBe(true);
+    // The archive keeps the data: this is a soft delete.
+    expect(fs.readFileSync(path.join(root, 'archives', 'users', archived[0], 'projects', 'note.txt'), 'utf8')).toBe('hello');
+    const admin = users.find((u) => u.username === 'admin');
+    const refused = await call('DELETE', `/api/admin/users/${admin.id}`, null, adminToken);
+    expect(refused.status).toBe(409);
+    expect((await refused.json()).code).toBe('LAST_ADMIN');
+  });
+
+  it('DELETE on an unknown user is 404 and never touches the filesystem', async () => {
+    const res = await call('DELETE', '/api/admin/users/9999', null, adminToken);
+    expect(res.status).toBe(404);
+    expect((await res.json()).code).toBe('USER_NOT_FOUND');
+    expect(fs.existsSync(path.join(root, 'archives', 'users'))).toBe(false);
+  });
+
+  it('DELETE is refused for non-admins', async () => {
+    const { users } = await (await call('GET', '/api/admin/users', null, adminToken)).json();
+    const alice = users.find((u) => u.username === 'alice');
+    expect((await call('DELETE', `/api/admin/users/${alice.id}`, null, userToken)).status).toBe(403);
+  });
+
+  it('list carries storageBytes', async () => {
+    const { users } = await (await call('GET', '/api/admin/users', null, adminToken)).json();
+    const alice = users.find((u) => u.username === 'alice');
+    expect(users.every((u) => typeof u.storageBytes === 'number')).toBe(true);
+    expect(alice.storageBytes).toBe(0);
+  });
+
   it('toggles registration', async () => {
     expect((await (await call('GET', '/api/admin/settings/registration', null, adminToken)).json()).allowPublicRegistration).toBe(true);
     await call('PUT', '/api/admin/settings/registration', { allowPublicRegistration: false }, adminToken);

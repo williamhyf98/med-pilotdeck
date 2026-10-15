@@ -1,10 +1,14 @@
 // ui/server/routes/adminUsers.js
 import express from 'express';
 import bcrypt from 'bcrypt';
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { userDb, systemSettingsDb } from '../database/db.js';
 import { isReservedUsername } from '../services/adminBootstrap.js';
-import { ensureUserHomeSkeleton } from '../utils/pilotPaths.js';
+import { getUserStorageBytes, invalidateStorageCache } from '../services/storageUsage.js';
+import { ensureUserHomeSkeleton, resolvePilotRoot, resolveUserHome } from '../utils/pilotPaths.js';
 
 const fail = (res, status, code, error) => res.status(status).json({ error, code });
 const toPublic = (u) => ({ id: u.id, username: u.username, role: u.role, isActive: Number(u.is_active) === 1, createdAt: u.created_at, lastLogin: u.last_login });
@@ -30,8 +34,10 @@ function wouldRemoveLastAdmin(target, patch) {
 export function createAdminUsersRouter({ onUserRevoked = () => {} } = {}) {
   const router = express.Router();
 
-  router.get('/users', guard((_req, res) => {
-    res.json({ users: userDb.listUsers().map(toPublic) });
+  router.get('/users', guard(async (_req, res) => {
+    const rows = userDb.listUsers().map(toPublic);
+    const sizes = await Promise.all(rows.map((u) => getUserStorageBytes(u.id)));
+    res.json({ users: rows.map((u, i) => ({ ...u, storageBytes: sizes[i] })) });
   }));
 
   router.post('/users', guard(async (req, res) => {
@@ -59,6 +65,33 @@ export function createAdminUsersRouter({ onUserRevoked = () => {} } = {}) {
     userDb.bumpTokenVersion(target.id);
     onUserRevoked(target.id);
     res.json({ user: toPublic(userDb.getUserById(target.id)) });
+  }));
+
+  // Deleting a user is a soft delete: the account is deactivated and its
+  // sessions revoked immediately, but the home directory is *moved* to
+  // `<root>/archives/users/<id>-<timestamp>/` rather than erased, so an
+  // accidental click does not destroy a researcher's data.
+  router.delete('/users/:id', guard(async (req, res) => {
+    const target = userDb.getUserById(Number(req.params.id));
+    if (!target) return fail(res, 404, 'USER_NOT_FOUND', 'User not found');
+    if (wouldRemoveLastAdmin(target, { isActive: false })) {
+      return fail(res, 409, 'LAST_ADMIN', 'Cannot remove the last administrator');
+    }
+    userDb.setActive(target.id, false);
+    userDb.bumpTokenVersion(target.id);
+    onUserRevoked(target.id);
+
+    let archived = false;
+    const home = resolveUserHome(target.id);
+    if (fs.existsSync(home)) {
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const dest = path.join(resolvePilotRoot(), 'archives', 'users', `${target.id}-${stamp}`);
+      await fsp.mkdir(path.dirname(dest), { recursive: true });
+      await fsp.rename(home, dest);
+      archived = true;
+    }
+    invalidateStorageCache(target.id);
+    res.json({ user: toPublic(userDb.getUserById(target.id)), archived });
   }));
 
   router.post('/users/:id/reset-password', guard(async (req, res) => {

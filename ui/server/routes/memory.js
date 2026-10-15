@@ -9,6 +9,7 @@ import {
   readPilotDeckConfigFile,
   writePilotDeckConfig,
 } from '../services/pilotdeckConfig.js';
+import { requireAdmin } from '../middleware/requireAdmin.js';
 import { reloadPilotDeckConfig } from '../services/pilotdeckConfigReloader.js';
 import { suppressNextWatchEvent } from '../services/pilotdeckConfigWatcher.js';
 import {
@@ -411,12 +412,14 @@ router.get('/overview', async (req, res) =>
   }),
 );
 
+// Memory settings are global: they live in pilotdeck.yaml and affect every
+// user's gateway, so only an administrator may read or change them.
 router.route('/settings')
-  .get(async (req, res) =>
+  .get(requireAdmin, async (req, res) =>
     withMemoryService(req, res, async ({ service }) => {
       res.json(service.getSettings?.() ?? getGlobalMemorySettings());
     }))
-  .post(async (req, res) =>
+  .post(requireAdmin, async (req, res) =>
     withMemoryService(req, res, async ({ service }) => {
       const settings = await saveGlobalMemorySettings(req.body ?? {});
       res.json(settings);

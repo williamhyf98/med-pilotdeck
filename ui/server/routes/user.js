@@ -1,55 +1,33 @@
 import express from 'express';
+import fsPromises from 'node:fs/promises';
+import path from 'node:path';
 import { userDb } from '../database/db.js';
 import { authenticateToken } from '../middleware/auth.js';
-import { getSystemGitConfig } from '../utils/gitConfig.js';
-import { spawn } from 'child_process';
+import { resolveScopedHome } from '../utils/pilotPaths.js';
 
 const router = express.Router();
 
-function spawnAsync(command, args, options = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      ...options,
-      shell: false,
-      windowsHide: process.platform === 'win32',
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (data) => { stdout += data.toString(); });
-    child.stderr.on('data', (data) => { stderr += data.toString(); });
-    child.on('error', (error) => { reject(error); });
-    child.on('close', (code) => {
-      if (code === 0) { resolve({ stdout, stderr }); return; }
-      const error = new Error(`Command failed: ${command} ${args.join(' ')}`);
-      error.code = code;
-      error.stdout = stdout;
-      error.stderr = stderr;
-      reject(error);
-    });
-  });
+// A user's git identity is theirs alone. Before multi-user it was applied with
+// `git config --global`, which wrote the *server account's* identity — so the
+// last person to save it signed everyone else's commits. It now lives in the
+// `users` row plus `<userHome>/.gitconfig`, which each user's gateway child
+// process picks up through `GIT_CONFIG_GLOBAL` (see services/gatewayPool.js).
+function renderGitConfig(gitName, gitEmail) {
+  return `[user]\n\tname = ${gitName}\n\temail = ${gitEmail}\n`;
 }
 
 router.get('/git-config', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
-    let gitConfig = userDb.getGitConfig(userId);
+    const gitConfig = userDb.getGitConfig(userId);
 
-    // If database is empty, try to get from system git config
-    if (!gitConfig || (!gitConfig.git_name && !gitConfig.git_email)) {
-      const systemConfig = await getSystemGitConfig();
-
-      // If system has values, save them to database for this user
-      if (systemConfig.git_name || systemConfig.git_email) {
-        userDb.updateGitConfig(userId, systemConfig.git_name, systemConfig.git_email);
-        gitConfig = systemConfig;
-        console.log(`Auto-populated git config from system for user ${userId}: ${systemConfig.git_name} <${systemConfig.git_email}>`);
-      }
-    }
-
+    // No fallback to the host's global git identity: that is the operator's
+    // name and email, not this user's, and leaking it is both wrong and a
+    // small disclosure of who runs the server.
     res.json({
       success: true,
-      gitName: gitConfig?.git_name || null,
-      gitEmail: gitConfig?.git_email || null
+      gitName: gitConfig?.git_name || '',
+      gitEmail: gitConfig?.git_email || '',
     });
   } catch (error) {
     console.error('Error getting git config:', error);
@@ -57,7 +35,6 @@ router.get('/git-config', authenticateToken, async (req, res) => {
   }
 });
 
-// Apply git config globally via git config --global
 router.post('/git-config', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -76,11 +53,11 @@ router.post('/git-config', authenticateToken, async (req, res) => {
     userDb.updateGitConfig(userId, gitName, gitEmail);
 
     try {
-      await spawnAsync('git', ['config', '--global', 'user.name', gitName]);
-      await spawnAsync('git', ['config', '--global', 'user.email', gitEmail]);
-      console.log(`Applied git config globally: ${gitName} <${gitEmail}>`);
-    } catch (gitError) {
-      console.error('Error applying git config:', gitError);
+      const home = resolveScopedHome();
+      await fsPromises.mkdir(home, { recursive: true });
+      await fsPromises.writeFile(path.join(home, '.gitconfig'), renderGitConfig(gitName, gitEmail), 'utf8');
+    } catch (writeError) {
+      console.error('Error writing per-user .gitconfig:', writeError);
     }
 
     res.json({

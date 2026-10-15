@@ -281,3 +281,55 @@ describe('readMultiUserConfig', () => {
         expect(readMultiUserConfig().gatewayPool.portBase).toBe(21000);
     });
 });
+
+describe('maskRawYamlText', () => {
+    it('masks secret-looking values in YAML that cannot be parsed', async () => {
+        const { maskRawYamlText } = await import('./pilotdeckConfig.js');
+        const broken = [
+            'providers:',
+            '  - apiKey: sk-leak',
+            '    api_key: "sk-quoted-leak"',
+            '    token: ghp_leak',
+            '    appSecret: shh',
+            '    password: hunter2',
+            '    url: https://example.invalid/v1',
+            '  bad: [',
+            '',
+        ].join('\n');
+        const masked = maskRawYamlText(broken);
+        expect(masked).not.toContain('sk-leak');
+        expect(masked).not.toContain('sk-quoted-leak');
+        expect(masked).not.toContain('ghp_leak');
+        expect(masked).not.toContain('shh');
+        expect(masked).not.toContain('hunter2');
+        // Structure and non-secret values survive, so the editor still shows the
+        // broken document the user has to repair.
+        expect(masked).toContain('url: https://example.invalid/v1');
+        expect(masked).toContain('  bad: [');
+        expect(masked).toContain('  - apiKey: ********');
+    });
+
+    it('masks the parse error message, which quotes the offending source lines', async () => {
+        const { readPilotDeckConfigFile } = await import('./pilotdeckConfig.js');
+        const dir = mkdtempSync(join(tmpdir(), 'pilotdeck-parse-'));
+        tempDirs.push(dir);
+        const previous = process.env.PILOT_HOME;
+        process.env.PILOT_HOME = dir;
+        try {
+            writeFileSync(join(dir, 'pilotdeck.yaml'), 'providers:\n  - apiKey: sk-leak\n  bad: [\n');
+            const record = readPilotDeckConfigFile();
+            expect(record.parseError).toBeTruthy();
+            expect(JSON.stringify(record.parseError)).not.toContain('sk-leak');
+        } finally {
+            if (previous === undefined) delete process.env.PILOT_HOME;
+            else process.env.PILOT_HOME = previous;
+        }
+    });
+
+    it('leaves empty values and non-strings alone', async () => {
+        const { maskRawYamlText } = await import('./pilotdeckConfig.js');
+        expect(maskRawYamlText('apiKey:\ntoken:\n')).toBe('apiKey:\ntoken:\n');
+        expect(maskRawYamlText('')).toBe('');
+        expect(maskRawYamlText(null)).toBe('');
+    });
+});

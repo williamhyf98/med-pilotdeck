@@ -29,7 +29,7 @@ const CONFIG_VERSION = 1;
 // per-user home. Functions (not constants) so nothing is resolved at import time.
 function pilotHomeDir() { return resolvePilotRoot(); }
 function defaultConfigPath() { return path.join(pilotHomeDir(), 'pilotdeck.yaml'); }
-const MASK = '********';
+export const MASK = '********';
 
 const SECRET_KEY_RE = /(api[_-]?key|token|secret|password|auth[_-]?token|access[_-]?token|bot[_-]?token|app[_-]?token|encoding[_-]?aes[_-]?key)$/i;
 const SECRET_EXACT_KEYS = new Set(['key', 'apiKey', 'api_key', 'authToken', 'accessToken']);
@@ -562,7 +562,10 @@ export function readPilotDeckConfigFile() {
       raw,
       config: buildDefaultPilotDeckConfig(),
       rawYaml: null,
-      parseError: error instanceof Error ? error.message : String(error),
+      // The YAML parser quotes the offending source lines back in its
+      // message, so an unparseable file would otherwise leak `apiKey: sk-…`
+      // through every surface that reports the parse error.
+      parseError: maskRawYamlText(error instanceof Error ? error.message : String(error)),
     };
   }
   const config = normalizePilotDeckConfig(parsed);
@@ -751,6 +754,31 @@ export function configToYaml(config) {
 export function rawYamlToMaskedString(rawYaml) {
   const obj = isRecord(rawYaml) ? rawYaml : {};
   return stringifyYaml(maskSecrets(obj), { lineWidth: 0 });
+}
+
+// `rawYamlToMaskedString` needs a parsed document. When pilotdeck.yaml does not
+// parse, the UI still shows the raw text so the user can repair it — and that
+// text must not carry credentials. Mask line-wise instead: any `key: value`
+// whose key looks secret (same predicate as `maskSecrets`) keeps its key,
+// indentation, list dash and trailing comment, and loses only the value.
+const RAW_SECRET_LINE_RE = /^(\s*(?:-\s*)?)(['"]?)([A-Za-z0-9_.\-]+)\2(\s*:\s*)(.*)$/;
+
+export function maskRawYamlText(rawText) {
+  if (typeof rawText !== 'string' || rawText === '') return '';
+  return rawText
+    .split('\n')
+    .map((line) => {
+      const match = RAW_SECRET_LINE_RE.exec(line);
+      if (!match) return line;
+      const [, indent, quote, key, separator, value] = match;
+      if (!isSecretKey(key)) return line;
+      if (value.trim() === '') return line;
+      // Keep a trailing `# comment` so the document still reads the same.
+      const commentAt = value.search(/\s#/);
+      const comment = commentAt >= 0 ? value.slice(commentAt) : '';
+      return `${indent}${quote}${key}${quote}${separator}${MASK}${comment}`;
+    })
+    .join('\n');
 }
 
 export function parseConfigYaml(raw) {

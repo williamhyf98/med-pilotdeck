@@ -96,20 +96,11 @@ import {
 // Route-error → HTTP mapping (gateway 503s included) lives in its own module so
 // it is unit-testable; index.js boots a server at import time.
 import { sendRouteError } from './utils/routeErrors.js';
-import { bindConnectionScope, runMessageInScope, closeUserSockets } from './services/wsScope.js';
+import { bindConnectionScope, runMessageInScope, closeUserSockets, sendToAdminSockets, SOCKET_ROLE } from './services/wsScope.js';
 import sessionManager from './sessionManager.js';
-import gitRoutes from './routes/git.js';
-import authRoutes from './routes/auth.js';
-import mcpRoutes from './routes/mcp.js';
-import taskmasterRoutes from './routes/taskmaster.js';
-import memoryRoutes, { MEMORY_DASHBOARD_DIR } from './routes/memory.js';
-import mcpUtilsRoutes from './routes/mcp-utils.js';
-import commandsRoutes from './routes/commands.js';
-import skillsRoutes from './routes/skills.js';
-import storageRoutes from './routes/storage.js';
-import settingsRoutes from './routes/settings.js';
-import configRoutes from './routes/config.js';
-import gatewayRoutes from './routes/gateway.js';
+// The /api mount table (and the auth chain of every endpoint) lives here.
+import { buildApiRouter } from './apiRouter.js';
+import { MEMORY_DASHBOARD_DIR } from './routes/memory.js';
 import {
     OFFICE_PREVIEW_SERVICE_BUILTIN,
     OFFICE_PREVIEW_SERVICE_LIBREOFFICE,
@@ -127,12 +118,7 @@ import {
 } from './services/spreadsheetPreview.js';
 import { startPilotDeckConfigWatcher, stopPilotDeckConfigWatcher } from './services/pilotdeckConfigWatcher.js';
 import { getAlwaysOnDashboardEvents } from './services/always-on-events.js';
-import agentRoutes from './routes/agent.js';
-import updateRoutes from './routes/update.js';
-import projectsRoutes, { WORKSPACES_ROOT, validateWorkspacePath } from './routes/projects.js';
-import userRoutes from './routes/user.js';
-import pluginsRoutes from './routes/plugins.js';
-import messagesRoutes from './routes/messages.js';
+import { WORKSPACES_ROOT, validateWorkspacePath } from './routes/projects.js';
 import { closeMemoryServices, startMemoryScheduler, stopMemoryScheduler } from './services/memoryService.js';
 import { createNormalizedMessage } from './pilotdeck-message.js';
 import { startEnabledPluginServers, stopAllPlugins, getPluginPort } from './utils/plugin-process-manager.js';
@@ -145,7 +131,6 @@ import { runServerStartupBeforeListen, startServerAfterStartup } from './service
 import { validateApiKey, authenticateToken, authenticateWebSocket } from './middleware/auth.js';
 import { requireAdmin } from './middleware/requireAdmin.js';
 import { runWithUserScope, userScopeMiddleware, requireUserScope } from './middleware/userScope.js';
-import { createAdminUsersRouter } from './routes/adminUsers.js';
 import { DISABLE_LOCAL_AUTH, IS_PLATFORM } from './constants/config.js';
 import { getConnectableHost } from '../shared/networkHosts.js';
 import { contentDispositionAttachment } from './utils/downloadHeaders.js';
@@ -268,15 +253,12 @@ function makeProgressBroadcaster(userId) {
     };
 }
 
-// Broadcasts ~/.pilotdeck/pilotdeck.yaml reload events (from UI saves or external file edits)
-// to every connected WebSocket client so open Settings tabs refresh instantly.
+// Broadcasts ~/.pilotdeck/pilotdeck.yaml reload events (from UI saves or external
+// file edits) so open Settings tabs refresh instantly. The payload embeds the
+// system configuration, so it goes to administrators' sockets only — a regular
+// user's tab must not learn what the shared pilotdeck.yaml contains.
 function broadcastConfigReloaded(payload) {
-    const message = JSON.stringify({ type: 'config:reloaded', ...payload });
-    connectedClients.forEach((client) => {
-        if (client.readyState === WebSocket.OPEN) {
-            client.send(message);
-        }
-    });
+    sendToAdminSockets(connectedClients, JSON.stringify({ type: 'config:reloaded', ...payload }));
 }
 process.on('pilotdeck:config-broadcast', broadcastConfigReloaded);
 
@@ -604,70 +586,34 @@ let revokeUserRuntime = (userId) => {
 };
 app.locals.revokeUserRuntime = (id) => revokeUserRuntime(id);
 
-// Authentication routes (public)
-app.use('/api/auth', authRoutes);
-
-app.use('/api/admin', authenticateToken, userScopeMiddleware, requireAdmin, createAdminUsersRouter({
+// The whole /api mount table, including its authentication chains, lives in
+// apiRouter.js so it can be asserted by tests (see adminGating.test.js);
+// index.js only supplies the middleware and the handlers that still close over
+// its module state.
+app.use('/api', buildApiRouter({
+    authenticateToken,
+    userScopeMiddleware,
+    requireAdmin,
     onUserRevoked: (userId) => revokeUserRuntime(userId),
+    inline: {
+        agentsRuntimeConfig,
+        ccrDashboard,
+        ccrHealth,
+        ccrConfig,
+        ccrStatsSummary,
+        ccrSessionStats,
+        ccrStatsReset,
+        ccrConfigPut,
+        browseFilesystem,
+        createFolder,
+        createProjectManual,
+    },
 }));
-
-// Projects API Routes (protected)
-app.use('/api/projects', ...requireUser, projectsRoutes);
-
-// Git API Routes (protected)
-app.use('/api/git', ...requireUser, gitRoutes);
-
-// MCP API Routes (protected)
-app.use('/api/mcp', ...requireUser, mcpRoutes);
-
-// TaskMaster API Routes (protected)
-app.use('/api/taskmaster', ...requireUser, taskmasterRoutes);
-
-// Memory API Routes (protected)
-app.use('/api/memory', ...requireUser, memoryRoutes);
-
-// MCP utilities
-app.use('/api/mcp-utils', ...requireUser, mcpUtilsRoutes);
-
-// Commands API Routes (protected)
-app.use('/api/commands', ...requireUser, commandsRoutes);
-
-// Skills API Routes (protected) — list/edit/install skills surfaced in the
-// top-right Skills tab. Backed by bundled skills, ~/.pilotdeck/skills/, and
-// project-level .pilotdeck/skills/ via PilotDeck plugin runtime.
-app.use('/api/skills', ...requireUser, skillsRoutes);
-
-// Managed workspace and deleted-project archive storage (P7.1).
-app.use('/api/storage', ...requireUser, storageRoutes);
-
-// Settings API Routes (protected)
-app.use('/api/settings', ...requireUser, settingsRoutes);
-
-// PilotDeck unified YAML config routes (protected)
-app.use('/api/config', ...requireUser, configRoutes);
-
-// Gateway IM channel setup routes (protected)
-app.use('/api/gateway', ...requireUser, gatewayRoutes);
-
-// User API Routes (protected)
-app.use('/api/user', ...requireUser, userRoutes);
-
-// Plugins API Routes (protected)
-app.use('/api/plugins', ...requireUser, pluginsRoutes);
-
-// Unified session messages route (protected) — PilotDeck-only.
-app.use('/api/sessions', ...requireUser, messagesRoutes);
-
-// Agent API Routes (uses API key authentication)
-app.use('/api/agent', agentRoutes);
-
-// Self-update API Routes (protected)
-app.use('/api/update', ...requireUser, updateRoutes);
 
 // Legacy four-provider config endpoints have been removed. The runtime
 // model is read from PilotDeck config; fall back to a static stub so any
 // older frontend code paths render without crashing.
-app.get('/api/agents/runtime-config', ...requireUser, (_req, res) => {
+function agentsRuntimeConfig(_req, res) {
     const permSettings = readPermissionSettings();
     res.json({
         pilotdeck: { provider: 'pilotdeck' },
@@ -676,7 +622,7 @@ app.get('/api/agents/runtime-config', ...requireUser, (_req, res) => {
             effectiveMode: permSettings.skipPermissions ? 'bypassPermissions' : 'default',
         },
     });
-});
+}
 
 // Provider-specific endpoints removed by the PilotDeck-only migration.
 // Returning a structured error keeps any stragglers in the UI from
@@ -695,14 +641,14 @@ for (const removedPrefix of PROVIDER_REMOVED_PATHS) {
 // frontend back-compat (Dashboard tab + useRouterSettings) but the data
 // now comes from `src/router/stats/TokenStatsCollector` via the
 
-app.get('/api/ccr/dashboard', ...requireUser, (_req, res) => {
+function ccrDashboard(_req, res) {
     try {
         res.json(getRouterDashboardData());
     } catch (error) {
         console.error('[router-dashboard] failed:', error);
         res.status(500).json({ error: error?.message || 'router-dashboard failed' });
     }
-});
+}
 
 // Always-on tasks are tied to a single shared gateway; disabled in multi-user
 // mode (DISABLE_LOCAL_AUTH keeps the original single-user behaviour).
@@ -832,7 +778,7 @@ app.delete('/api/always-on/cron-jobs/:taskId', ...requireUser, async (req, res) 
     }
 });
 
-app.get('/api/ccr/health', ...requireUser, (_req, res) => {
+function ccrHealth(_req, res) {
     res.json({
         status: 'ok',
         timestamp: new Date().toISOString(),
@@ -840,25 +786,25 @@ app.get('/api/ccr/health', ...requireUser, (_req, res) => {
         embedded: true,
         backend: 'pilotdeck-router',
     });
-});
+}
 
-app.get('/api/ccr/config', ...requireUser, (_req, res) => {
+function ccrConfig(_req, res) {
     // The legacy CCR YAML schema is no longer the source of truth for
     // model routing — that lives in PilotDeck config now. Return null so
     // the legacy useRouterSettings hook simply renders the "no config"
     // empty state instead of a config editor.
     res.json(null);
-});
+}
 
-app.get('/api/ccr/stats/summary', ...requireUser, (_req, res) => {
+function ccrStatsSummary(_req, res) {
     try {
         res.json(getRouterStatsSummary());
     } catch (error) {
         res.status(500).json({ error: error?.message || 'router-stats-summary failed' });
     }
-});
+}
 
-app.get('/api/ccr/stats/sessions/:sessionId', ...requireUser, (req, res) => {
+function ccrSessionStats(req, res) {
     try {
         const stats = getRouterSessionStats(req.params.sessionId);
         if (!stats) {
@@ -868,9 +814,9 @@ app.get('/api/ccr/stats/sessions/:sessionId', ...requireUser, (req, res) => {
     } catch (error) {
         res.status(500).json({ error: error?.message || 'router-stats-session failed' });
     }
-});
+}
 
-app.post('/api/ccr/stats/reset', ...requireUser, (_req, res) => {
+function ccrStatsReset(_req, res) {
     // Reset would require reaching into per-project TokenStatsCollector
     // instances; that is not exposed today. Surface a clear hint instead
     // of silently no-oping.
@@ -878,14 +824,14 @@ app.post('/api/ccr/stats/reset', ...requireUser, (_req, res) => {
         error: 'not_implemented',
         message: 'Per-project router stats reset is not exposed yet; restart the PilotDeck server to clear in-memory state.',
     });
-});
+}
 
-app.put('/api/ccr/config', ...requireUser, (_req, res) => {
+function ccrConfigPut(_req, res) {
     res.status(501).json({
         error: 'not_implemented',
         message: 'Routing configuration is owned by PilotDeck config (~/.pilotdeck/pilotdeck.yaml). Edit it directly via /api/config.',
     });
-});
+}
 
 app.get('/memory-dashboard', ...requireUser, (req, res) => {
     const indexPath = path.join(MEMORY_DASHBOARD_DIR, 'index.html');
@@ -1088,7 +1034,9 @@ app.delete('/api/projects/:projectName', ...requireUser, async (req, res) => {
 });
 
 // Create project endpoint (legacy: link an external path)
-app.post('/api/projects/create', ...requireUser, async (req, res) => {
+// Admin-only: it registers an arbitrary host path as a project, which is a
+// filesystem reach outside the caller's own home.
+async function createProjectManual(req, res) {
     try {
         const { path: projectPath } = req.body;
 
@@ -1102,7 +1050,7 @@ app.post('/api/projects/create', ...requireUser, async (req, res) => {
         console.error('Error creating project:', error);
         res.status(500).json({ error: error.message });
     }
-});
+}
 
 // Create system-managed project (displayName + type). No external path.
 app.post('/api/projects/create-system', ...requireUser, async (req, res) => {
@@ -1530,7 +1478,8 @@ function getSafeZipFilename(projectName) {
 }
 
 // Browse filesystem endpoint for project suggestions - uses existing getFileTree
-app.get('/api/browse-filesystem', ...requireUser, async (req, res) => {
+// Admin-only: these two walk and write the *host* filesystem, not a user home.
+async function browseFilesystem(req, res) {
     try {
         const { path: dirPath } = req.query;
 
@@ -1617,9 +1566,9 @@ app.get('/api/browse-filesystem', ...requireUser, async (req, res) => {
         console.error('Error browsing filesystem:', error);
         res.status(500).json({ error: 'Failed to browse filesystem' });
     }
-});
+}
 
-app.post('/api/create-folder', ...requireUser, async (req, res) => {
+async function createFolder(req, res) {
     try {
         const { path: folderPath } = req.body;
         if (!folderPath) {
@@ -1657,7 +1606,7 @@ app.post('/api/create-folder', ...requireUser, async (req, res) => {
         console.error('Error creating folder:', error);
         res.status(500).json({ error: 'Failed to create folder' });
     }
-});
+}
 
 // Read file content endpoint
 app.get('/api/projects/:projectName/file', ...requireUser, async (req, res) => {
@@ -2784,6 +2733,9 @@ function handleChatConnection(ws, request) {
     // Add to connected clients for project updates
     const userId = request?.user?.id ?? request?.user?.userId ?? null;
     ws.__pilotdeckUserId = userId;
+    // Frozen at handshake time next to the user id; `broadcastConfigReloaded`
+    // filters on it so system config never reaches a non-admin socket.
+    ws[SOCKET_ROLE] = scope.role;
     connectedClients.add(ws);
     // PilotDeck's cron manager lives inside `pilotdeck server`;
     // no legacy daemon lease is needed.
@@ -3016,6 +2968,17 @@ function handleShellConnection(ws, request) {
         try { ws.close(4401, 'UNAUTHENTICATED'); } catch { /* already closed */ }
         return;
     }
+    // A shell is a server shell: the PTY runs as the server's OS account with
+    // its full filesystem and network reach, which no per-user home scoping can
+    // contain. Administrators only, and refused before any PTY is spawned.
+    // (In no-login mode `authenticateToken` resolves to the admin, so the
+    // single-user terminal keeps working.)
+    if (shellScope.role !== 'admin') {
+        console.log(`[WARN] Shell WebSocket refused for non-admin user ${shellScope.userId}`);
+        try { ws.close(4403, 'ADMIN_REQUIRED'); } catch { /* already closed */ }
+        return;
+    }
+    ws[SOCKET_ROLE] = shellScope.role;
     ws.on('message', runMessageInScope(shellScope, async (message) => {
         try {
             const data = JSON.parse(message);

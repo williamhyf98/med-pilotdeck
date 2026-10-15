@@ -91,6 +91,10 @@ export function buildGatewayChildEnv({ env, userHome, port, configPath, multiUse
     PILOT_HOME: userHome,
     PILOTDECK_GATEWAY_PORT: String(port),
     PILOTDECK_CONFIG_PATH: configPath,
+    // Each user's git identity lives in their own home, so a commit made by
+    // this gateway is signed by its user — never by the server account's
+    // ~/.gitconfig, and never by whoever saved their identity last.
+    GIT_CONFIG_GLOBAL: path.join(userHome, '.gitconfig'),
   };
   if (multiUser === true) childEnv.PILOTDECK_DISABLE_ALWAYS_ON = '1';
   else delete childEnv.PILOTDECK_DISABLE_ALWAYS_ON;

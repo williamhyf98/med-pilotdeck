@@ -1,6 +1,6 @@
 // ui/server/services/wsScope.test.js
 import { describe, expect, it, vi } from 'vitest';
-import { bindConnectionScope, closeUserSockets, runMessageInScope, SOCKET_USER_ID } from './wsScope.js';
+import { bindConnectionScope, closeUserSockets, runMessageInScope, sendToAdminSockets, SOCKET_ROLE, SOCKET_USER_ID } from './wsScope.js';
 import { getUserScope, requireUserScope } from '../middleware/userScope.js';
 
 function fakeSocket(userId, readyState = 1) {
@@ -115,5 +115,39 @@ describe('closeUserSockets', () => {
     expect(ok.closed).toEqual([[4401, 'TOKEN_REVOKED']]);
     expect(closeUserSockets(new Set(), 5)).toBe(0);
     expect(closeUserSockets(undefined, 5)).toBe(0);
+  });
+});
+
+describe('sendToAdminSockets', () => {
+  const roleSocket = (role, readyState = 1) => ({
+    [SOCKET_ROLE]: role,
+    readyState,
+    sent: [],
+    send(message) { this.sent.push(message); },
+  });
+
+  it('delivers only to open admin sockets', () => {
+    const admin = roleSocket('admin');
+    const user = roleSocket('user');
+    const closedAdmin = roleSocket('admin', 3);
+    expect(sendToAdminSockets([admin, user, closedAdmin], 'payload')).toBe(1);
+    expect(admin.sent).toEqual(['payload']);
+    expect(user.sent).toEqual([]);
+    expect(closedAdmin.sent).toEqual([]);
+  });
+
+  it('fails closed for a socket with no recorded role', () => {
+    const unknown = { readyState: 1, sent: [], send(m) { this.sent.push(m); } };
+    expect(sendToAdminSockets([unknown], 'payload')).toBe(0);
+    expect(unknown.sent).toEqual([]);
+  });
+
+  it('survives a throwing send and an empty client set', () => {
+    const angry = { [SOCKET_ROLE]: 'admin', readyState: 1, send: () => { throw new Error('gone'); } };
+    const ok = roleSocket('admin');
+    expect(() => sendToAdminSockets([angry, ok], 'payload')).not.toThrow();
+    expect(ok.sent).toEqual(['payload']);
+    expect(sendToAdminSockets(new Set(), 'payload')).toBe(0);
+    expect(sendToAdminSockets(undefined, 'payload')).toBe(0);
   });
 });

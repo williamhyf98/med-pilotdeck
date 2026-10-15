@@ -193,6 +193,20 @@ describe('memory settings route', () => {
     });
     expect(invalid.status).toBe(400);
   });
+  it('is administrator-only: a regular user can neither read nor write it', async () => {
+    const { request, writePilotDeckConfig } = await createMemorySettingsApp({ memory: {} }, { role: 'user' });
+
+    const read = await request('/api/memory/settings?projectPath=/tmp/pilotdeck-project');
+    expect(read.status).toBe(403);
+    expect(read.body.code).toBe('ADMIN_REQUIRED');
+
+    const write = await request('/api/memory/settings?projectPath=/tmp/pilotdeck-project', {
+      method: 'POST', body: JSON.stringify({ maintenanceMode: 'immediate' }),
+    });
+    expect(write.status).toBe(403);
+    expect(writePilotDeckConfig).not.toHaveBeenCalled();
+  });
+
   it('saves answer_first reasoning mode', async () => {
     const { request, writePilotDeckConfig } = await createMemorySettingsApp({
       memory: {
@@ -351,7 +365,7 @@ async function createMemoryApp() {
   };
 }
 
-async function createMemorySettingsApp(initialConfig) {
+async function createMemorySettingsApp(initialConfig, { role = 'admin' } = {}) {
   let config = structuredClone(initialConfig);
   const writePilotDeckConfig = vi.fn(async (nextConfig) => {
     config = structuredClone(nextConfig);
@@ -391,7 +405,9 @@ async function createMemorySettingsApp(initialConfig) {
   const { default: memoryRoutes } = await import('./memory.js');
   const app = express();
   app.use(express.json());
-  app.use('/api/memory', memoryRoutes);
+  // `/settings` is global configuration and carries `requireAdmin`, which
+  // reads `req.user.role` — the real mount puts authenticateToken in front.
+  app.use('/api/memory', (req, _res, next) => { req.user = { id: 1, role }; next(); }, memoryRoutes);
 
   return {
     writePilotDeckConfig,
