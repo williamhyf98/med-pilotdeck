@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { TraumaCasePayload } from '../domain/types';
+import { authenticatedFetch } from '../../../utils/api';
 
 export function useCaseStore(projectKey?: string, sessionId?: string) {
   const [data, setData] = useState<TraumaCasePayload>({
@@ -17,7 +18,9 @@ export function useCaseStore(projectKey?: string, sessionId?: string) {
     }
     setLoading(true);
     try {
-      const response = await fetch(
+      // Same auth path as every other API call: a bare fetch carried no token,
+      // which the server rejects as soon as login is required.
+      const response = await authenticatedFetch(
         `/api/trauma/cases/${encodeURIComponent(sessionId)}?projectKey=${encodeURIComponent(projectKey)}`,
       );
       if (!response.ok) {
