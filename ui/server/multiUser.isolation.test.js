@@ -170,3 +170,94 @@ describe('A/B isolation', () => {
     expect(fs.existsSync(path.join(root, 'projects'))).toBe(false);
   });
 });
+
+describe('Plan 2 regressions', () => {
+  it('legacy data migrated at boot lands in admin\'s home only', async () => {
+    // Fresh root seeded with the single-user layout BEFORE the database opens,
+    // then the real startup order: initializeDatabase -> ensureAdminUser -> migrateLegacyStorage.
+    const legacyRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pd-iso-legacy-'));
+    let legacyServer;
+    try {
+      const { seedLegacyRoot } = await import('./testUtils/legacyRoot.js');
+      seedLegacyRoot(legacyRoot);
+      // the first boot pinned DATABASE_PATH to its own root; clear it so system/auth.db follows the new PILOT_HOME
+      vi.stubEnv('PILOT_HOME', legacyRoot); vi.stubEnv('DATABASE_PATH', '');
+      vi.resetModules();
+      vi.doMock('./services/gatewayPool.js', () => ({ createGatewayPool: () => pool }));
+      const db = await import('./database/db.js'); await db.initializeDatabase();
+      const { ensureAdminUser } = await import('./services/adminBootstrap.js');
+      await ensureAdminUser({ userDb: db.userDb, log: () => {} });
+      const { migrateLegacyStorage } = await import('./services/legacyMigration.js');
+      const result = await migrateLegacyStorage({ userDb: db.userDb, log: () => {} });
+      expect(result.skipped).toBeFalsy();
+
+      const { authenticateToken, generateToken } = await import('./middleware/auth.js');
+      const { userScopeMiddleware } = await import('./middleware/userScope.js');
+      const projects = await import('./projects.js');
+      const app = express(); app.use(express.json());
+      app.get('/api/projects', authenticateToken, userScopeMiddleware, async (_req, res) => res.json({ projects: await projects.getProjects() }));
+      legacyServer = app.listen(0);
+      const url = `http://127.0.0.1:${legacyServer.address().port}/api/projects`;
+      const admin = db.userDb.getAdminUser();
+      const alice = db.userDb.createUser('alice', 'x', 'user');
+      const list = async (user) => (await (await fetch(url, { headers: { Authorization: `Bearer ${generateToken(user)}` } })).json()).projects;
+
+      const adminNames = (await list(admin)).map((p) => p.name);
+      expect(adminNames).toContain('general_med-aaa');
+      expect(adminNames).toContain('trauma_med-bbb');
+      expect(await list(db.userDb.getUserById(alice.id))).toEqual([]);
+
+      expect(fs.existsSync(path.join(legacyRoot, 'projects'))).toBe(false);
+      expect(fs.existsSync(path.join(legacyRoot, 'users', String(admin.id), 'projects', 'general_med', 'general_med-aaa', 'meta.json'))).toBe(true);
+      expect(fs.existsSync(path.join(legacyRoot, 'users', String(alice.id), 'projects', 'general_med', 'general_med-aaa'))).toBe(false);
+      expect(fs.existsSync(path.join(legacyRoot, 'system', 'migration', 'legacy-done.json'))).toBe(true);
+    } finally {
+      if (legacyServer) await new Promise((r) => legacyServer.close(r));
+      fs.rmSync(legacyRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('revoked user loses chat and shell sockets', async () => {
+    const { SOCKET_USER_ID, closeUserSockets } = await import('./services/wsScope.js');
+    const fakeSocket = (userId) => ({ [SOCKET_USER_ID]: String(userId), readyState: 1, close: vi.fn() });
+    const aliceChat = fakeSocket(tokens.ids.alice);
+    const aliceShell = fakeSocket(tokens.ids.alice);
+    const bobChat = fakeSocket(tokens.ids.bob);
+    const connectedClients = new Set([aliceChat, bobChat]);
+    const auxClients = new Set([aliceShell]);
+
+    // revokeUserRuntime sweeps both sets, as index.js does
+    closeUserSockets(connectedClients, tokens.ids.alice, { code: 4401, reason: 'TOKEN_REVOKED' });
+    closeUserSockets(auxClients, tokens.ids.alice, { code: 4401, reason: 'TOKEN_REVOKED' });
+
+    expect(aliceChat.close).toHaveBeenCalledWith(4401, 'TOKEN_REVOKED');
+    expect(aliceShell.close).toHaveBeenCalledWith(4401, 'TOKEN_REVOKED');
+    expect(bobChat.close).not.toHaveBeenCalled();
+  });
+
+  it('normal user cannot reach system config even through the settings page endpoints', async () => {
+    const { authenticateToken } = await import('./middleware/auth.js');
+    const { userScopeMiddleware } = await import('./middleware/userScope.js');
+    const { requireAdmin } = await import('./middleware/requireAdmin.js');
+    const { buildApiRouter } = await import('./apiRouter.js');
+    const inline = Object.fromEntries(['agentsRuntimeConfig', 'ccrDashboard', 'ccrHealth', 'ccrConfig', 'ccrStatsSummary', 'ccrSessionStats',
+      'ccrStatsReset', 'ccrConfigPut', 'browseFilesystem', 'createFolder', 'createProjectManual'].map((key) => [key, (_req, res) => res.json({})]));
+    const app = express(); app.use(express.json());
+    app.use('/api', buildApiRouter({ authenticateToken, userScopeMiddleware, requireAdmin, inline }));
+    const gated = app.listen(0);
+    try {
+      const gbase = `http://127.0.0.1:${gated.address().port}`;
+      const call = (who, method, p) => fetch(`${gbase}${p}`, {
+        method, headers: { Authorization: `Bearer ${tokens[who]}`, 'Content-Type': 'application/json' }, body: method === 'GET' ? undefined : '{}',
+      });
+      for (const [method, p] of [['GET', '/api/config'], ['GET', '/api/memory/settings'], ['PUT', '/api/plugins/med-tools/enable']]) {
+        const u = await call('alice', method, p);
+        expect(`${method} ${p} -> ${u.status}`).toBe(`${method} ${p} -> 403`);
+        expect((await u.json()).code).toBe('ADMIN_REQUIRED');
+        expect((await call('admin', method, p)).status).not.toBe(403);
+      }
+    } finally {
+      await new Promise((r) => gated.close(r));
+    }
+  });
+});
