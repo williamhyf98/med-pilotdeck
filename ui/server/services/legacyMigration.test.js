@@ -17,6 +17,20 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); fs.rmSync(root, { re
 
 const seedLegacyRoot = () => seed(root);
 
+// Every regular file under `dir`, as `relative path -> contents`. `skip` names
+// top-level entries the migration never snapshots (keep/system/snapshot set).
+function fileMap(dir, skip = [], rel = '') {
+  const out = {};
+  for (const entry of fs.readdirSync(path.join(dir, rel), { withFileTypes: true })) {
+    const next = rel ? path.join(rel, entry.name) : entry.name;
+    if (!rel && skip.includes(entry.name)) continue;
+    if (entry.isDirectory()) Object.assign(out, fileMap(dir, skip, next));
+    else if (entry.isFile()) out[next] = fs.readFileSync(path.join(dir, next), 'utf8');
+  }
+  return out;
+}
+const SNAPSHOT_SKIP = ['users', 'system', 'archives', 'plugins', 'pilotdeck.yaml', 'pilotdeck.yaml.bak-1'];
+
 async function boot() {
   const db = await import('../database/db.js'); await db.initializeDatabase();
   const { ensureAdminUser } = await import('./adminBootstrap.js');
@@ -203,6 +217,45 @@ describe('legacy migration', () => {
     expect(fs.existsSync(path.join(root, 'system/migration/history/unknown/archives'))).toBe(false);
     // the snapshot carries the moved archive too
     expect(fs.existsSync(path.join(result.snapshotDir, 'archives/projects/general_med-aaa-20260101T000000Z/snap.json'))).toBe(true);
+  });
+
+  it('snapshots every entry even when hardlinking is unsupported (EXDEV)', async () => {
+    seedLegacyRoot();
+    const { db, migrateLegacyStorage } = await boot();
+    const before = fileMap(root, SNAPSHOT_SKIP);
+    vi.spyOn(fs.promises, 'link').mockRejectedValue(Object.assign(new Error('EXDEV'), { code: 'EXDEV' }));
+    const result = await migrateLegacyStorage({ userDb: db.userDb, log: () => {} });
+    expect(Object.keys(before).length).toBeGreaterThan(5);
+    expect(fileMap(result.snapshotDir)).toEqual(before);
+  });
+
+  it('hardlinks snapshot files instead of copying their bytes', async () => {
+    seedLegacyRoot();
+    const { db, migrateLegacyStorage } = await boot();
+    const source = path.join(root, 'memory/global/UserIdentity/profile.md');
+    try {
+      fs.linkSync(source, path.join(root, '.link-probe'));
+      fs.rmSync(path.join(root, '.link-probe'));
+    } catch {
+      return; // this filesystem cannot hardlink; the completeness test above still applies
+    }
+    const sourceIno = fs.statSync(source).ino;
+    const result = await migrateLegacyStorage({ userDb: db.userDb, log: () => {} });
+    const copied = path.join(result.snapshotDir, 'memory/global/UserIdentity/profile.md');
+    expect(fs.existsSync(copied)).toBe(true);
+    expect(fs.statSync(copied).ino).toBe(sourceIno);
+  });
+
+  it('announces the snapshot before copying and confirms it afterwards', async () => {
+    seedLegacyRoot();
+    const { db, migrateLegacyStorage } = await boot();
+    const lines = [];
+    const result = await migrateLegacyStorage({ userDb: db.userDb, log: (m) => lines.push(m) });
+    const start = lines.findIndex((l) => /snapshotting \d+ entries into /.test(l));
+    const done = lines.findIndex((l) => l.includes('snapshot at '));
+    expect(start).toBe(0);
+    expect(done).toBe(1);
+    expect(lines[0]).toContain(result.snapshotDir);
   });
 
   it('refuses to run on a born-multi-user root: users/ holds another account (spec 9.1)', async () => {

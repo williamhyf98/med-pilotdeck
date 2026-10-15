@@ -16,21 +16,40 @@ function fail(message, cause) {
   return error;
 }
 
-const CLONE_FALLBACK_CODES = new Set(['ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EXDEV']);
-
+// Spec 9.2 step 1 wants a hardlink copy: on the same filesystem the snapshot
+// then costs no extra bytes. `fsp.cp` cannot hardlink, and COPYFILE_FICLONE
+// silently degrades to a full byte copy inside Node, so walk the tree here and
+// try `link` per file first. Symlinks are recreated, never followed.
 async function copyIntoSnapshot(from, dest) {
+  const stat = await fsp.lstat(from);
+  if (stat.isDirectory()) {
+    await fsp.mkdir(dest, { recursive: true });
+    for (const child of await fsp.readdir(from)) {
+      await copyIntoSnapshot(path.join(from, child), path.join(dest, child));
+    }
+    return;
+  }
+  if (stat.isSymbolicLink()) {
+    await fsp.symlink(await fsp.readlink(from), dest);
+    return;
+  }
   try {
-    await fsp.cp(from, dest, { recursive: true, mode: fs.constants.COPYFILE_FICLONE, errorOnExist: false, force: false });
-  } catch (error) {
-    // Filesystems without reflink support (e.g. ext4): fall back to a plain copy.
-    if (!CLONE_FALLBACK_CODES.has(error?.code)) throw error;
-    await fsp.cp(from, dest, { recursive: true, errorOnExist: false, force: false });
+    await fsp.link(from, dest);
+  } catch {
+    // cross-device, hardlink-less filesystem, link limit reached, …: copy the
+    // bytes (FICLONE is a free win where the filesystem supports reflinks).
+    await fsp.copyFile(from, dest, fs.constants.COPYFILE_FICLONE);
   }
 }
 
-async function snapshot(root, plan, snapshotName) {
+function snapshotSteps(plan) {
+  return plan.filter((step) => step.action !== 'keep' && step.action !== 'skip' && fs.existsSync(step.from));
+}
+
+async function snapshot(root, plan, snapshotName, log) {
   const dir = path.join(root, 'archives', snapshotName);
   await fsp.mkdir(dir, { recursive: true });
+  log(`[migration] legacy layout detected; snapshotting ${snapshotSteps(plan).length} entries into ${dir} ...`);
   for (const step of plan) {
     if (step.action === 'keep' || step.action === 'skip' || !fs.existsSync(step.from)) continue;
     const dest = path.join(dir, path.relative(root, step.from));
@@ -129,8 +148,8 @@ export async function migrateLegacyStorage({ userDb, env = process.env, log = co
     throw error?.code === 'LEGACY_MIGRATION_FAILED' ? error : fail('planning', error);
   }
   const snapshotName = `legacy-${now().toISOString().replace(/[:.]/g, '-')}`;
-  const snapshotDir = await snapshot(root, plan, snapshotName);
-  log(`[migration] legacy layout detected; snapshot at ${snapshotDir}`);
+  const snapshotDir = await snapshot(root, plan, snapshotName, log);
+  log(`[migration] snapshot at ${snapshotDir}`);
 
   // Import before the legacy db file is moved away; skipped when already imported.
   const legacyDb = path.join(root, 'auth.db');
