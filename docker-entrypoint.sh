@@ -80,7 +80,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
       - glob
       - read_skill
   stats:
-    enabled: true"
+    enabled: false"
 
   if [ "$PROVIDER" = "$LIGHT_PROVIDER" ]; then
     # Same provider for both models
