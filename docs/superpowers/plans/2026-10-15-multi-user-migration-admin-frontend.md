@@ -1944,3 +1944,67 @@ git commit -m "test(multi-user): 迁移与门禁回归用例；脚本化端到�
 - Task 1–10 全部勾选；`npm --prefix ui test`、`npm --prefix ui run typecheck`、`npm --prefix ui run build`、`npm test` 通过；`scripts/smoke-multi-user.sh` 打印 `SMOKE OK`。
 - 使用者按 Task 10 Step 4 走查五步无异常。
 - 明确不在本计划：用户目录沙箱（spec §16，计划三）；Agent 工具权限策略（spec §17，多用户完成后再议）；跨用户记忆、共享技能、SSO（spec §1.3）。
+
+## 执行记录（2026-10-15，subagent-driven 执行，分支 feat/multi-user-v2，提交范围 b0a9ffb..33de507）
+
+全部 10 个任务完成，每个任务经独立评审（spec 符合性 + 代码质量）与修复循环；Task 1、2、5、7、8、10 各走了一轮修复，Task 3、4、6、9 首评即通过。整分支终审：一轮（opus）给出 APPROVED WITH FIXES：1 Critical + 3 Important + 7 Minor；单轮修复（5 个提交 4a5020a..33de507）后定向复审全部通过，无新增 Critical/Important。验证：UI 套件 148 文件 / 1070 通过，引擎套件 661 通过，typecheck（含模块级 home 扫描）通过，UI build 通过，`scripts/smoke-multi-user.sh` 在隔离根 `/tmp/pd-plan2`（端口 3151 / 19200+）上打印 `SMOKE OK`。使用者的 `.pilotdeck-home` 与 3020/5170/18800 全程未触碰。
+
+### 执行期间的裁决（按时间顺序，每条含出错代价）
+
+- Ruling: work directly in this checkout on feat/multi-user-v2 (same as Plan 1) — the user's dev server runs from here on 3020/5170/18800; all implementer boots use /tmp roots and ports 3151+/19200+ — cost if wrong: an intermediate commit lands on the branch the dev server runs from (recoverable).
+- Ruling: `seedLegacyRoot()` lives in a shared test helper `ui/server/testUtils/legacyRoot.js` created in Task 1 and imported by both legacyMigration.test.js and multiUser.isolation.test.js — why: T10 cannot import from another test file — cost if wrong: none.
+- Ruling: migrate-user-storage.mjs exits 0 when `--assign-admin` was given (promotion done or planned) even if there is no legacy data to move; exit 2 "nothing-to-do" only applies when no promotion was requested — why: the brief's test 3 requires it and a promotion is itself useful work — cost if wrong: operators scripting on exit codes see 0 for "only promoted".
+- Ruling (plan defect, Task 1): the migration snapshot dir lives inside legacy `archives/`, so snapshotting/moving `archives/` would recurse into itself → `archives/legacy-*` excluded from snapshot/move/detect (+test); conflict archives get a unique suffix on re-run; file/dir type mismatches are archived, not thrown — cost if wrong: an operator-created `archives/legacy-*` entry is never migrated.
+- Resolved by controller (Task 1): reviewer flagged "renamed general container unreadable until pilotPaths defaults re-scope" — Plan 1 Task 7 already resolves request-time paths via resolveScopedHome(); no action.
+- Ruling (Task 2): `--dry-run` must be zero-write → db-free `legacyLayout.js` split out; dry-run never imports db.js; `--seed-user-for-test` only honoured under NODE_ENV=test; parseArgs errors reported as JSON; Docker-generated config sets `router.stats.enabled: false` — cost if wrong: none (behaviour-preserving split).
+- Ruling (Task 5): non-admin callers of /api/memory/snapshot and /overview get only `{ enabled }` under settings (policy fields stripped) — why: spec D10 "维护策略全部管理员" — cost if wrong: a normal user's memory page must not render policy fields (Task 8 hides them).
+- Ruling (Task 5→6): shell-socket revocation (Important #4 of the Task 5 review) carried to Task 6's `auxClients` instead of a Task 5 fix round — why: Task 6 owns that wiring — cost if wrong: one task window where a revoked admin's shell socket stays open.
+- Ruling (Task 7): one-time marker-gated migration moves all unprefixed non-UNSCOPED localStorage keys into the first logged-in user's namespace (`pilotdeck-storage-migrated-v1`) — why: user-authored drafts/renames are not re-derivable; on single→multi upgrade the first login is the incumbent — cost if wrong: on a shared browser the first person to log in after upgrade inherits the previous single user's local prefs/drafts.
+- Ruling (Task 7 Critical fix): the server closes the caller's own socket with 4401 on logout and password change; the frontend treats 4401 as a revoke only outside a 5 s "expected revoke" window, the 401 handler only deletes the token when it equals the one that failed, and logout never wipes the `anon:` namespace — cost if wrong: a genuine revoke arriving inside the window is handled on the next request instead of instantly.
+- Ruling (Task 8): the two remaining non-admin `/api/config` reads (i18n alwaysOn language sync; thinking-model context) are role-gated through an in-memory `setStorageUserRole/getStorageUserRole` in safeStorage, set from AuthContext — why: both modules live outside React context; a 403 per language change is noise and a leak signal — cost if wrong: non-admins lose the always-on language sync (admin-only feature anyway).
+- Ruling (Task 8 fix): the Office preview status fallback that hits `/api/config` runs only for admins — cost if wrong: non-admins see the default preview status when the dedicated endpoint fails.
+- Ruling (Task 9): reset-password is disabled on the acting admin's own row (a self-reset would revoke the acting session); use the account page instead — cost if wrong: none.
+- Resolved by controller (Task 10): the plan-doc execution record is appended by the controller at finish (as in Plan 1), not by the Task 10 implementer.
+- Ruling (Task 10 fix): the smoke script only kills pids it recorded (`server.pid`, `node.pid`, `gw.pids`), sets `OWNED=1` only after the busy-port pre-flight passes, validates `--root` (absolute, under TMPDIR or /tmp, not the repo, not `/tmp` itself), keeps the root and tails 60 log lines on failure, and skips the masking assertion with a notice when the yaml holds no `sk-` key — cost if wrong: none.
+
+### 终审
+终审发现与处理（提交范围 406a1cb..33de507）：
+
+- C1（Critical，已修）：迁移只检查 `legacy-done.json`，没有实现 spec §9.1 的「`users/` 为空」门禁，且整个 `archives/` 被列为搬入项；一个天生多用户的系统在管理员删除用户后重启，会把 `archives/users/<id>-*` 整体搬进管理员目录。修复：`users/` 下除 `users/<adminId>` 外有任何条目即跳过；`archives` 改为只搬 `archives/projects` 子目录，其他子项原地不动；脚本 dry-run 同步。
+- I1（Important，已修）：快照没有硬链接层，`COPYFILE_FICLONE` 在 ext4/overlay 上静默退化为整份复制。修复：逐文件 `link`，失败才 `copyFile`；复制前先打印条目数。注意：硬链接意味着快照与搬入后的文件共享 inode，原地改写会同步改到快照（spec §9.2 原文如此，可接受）。
+- I2（Important，按裁决有界修复）：旧 `auth.db` 仅导入 session_names。修复：旧库恰有一个账号（免登录时代的 `local`）时把它的 `api_keys` 与 `user_credentials` 导入管理员；多账号则打印醒目警告（仅列用户名），账号需管理员重建。保留「归档 + 导入」而非 spec §9.2 第 3 步的整文件搬移（与 §9.1 的初始化顺序冲突，已记为偏差）。
+- I3（Important，已修）：UI 服务端自己执行的 git 命令没有带 `GIT_CONFIG_GLOBAL`，容器内提交会报 Author identity unknown；升级前保存的身份也没有回填。修复：`services/userGitConfig.js`，`routes/git.js` 的每次 git spawn 注入用户 `.gitconfig`，`GET /git-config` 与提交前惰性回填；不 include 宿主机全局配置。
+- M1/M2/M3/M4(最小)/M6/M7（已修）：无变化的 PATCH 不再吊销；DELETE 先等待该用户 Gateway 停止再搬目录；office-preview 状态对普通用户不再返回宿主机路径；保留清理前打印将删除的归档名；git 姓名只禁换行；免登录模式隐藏「用户管理」。
+- M5（搁置）：管理员用户列表同步遍历全部目录统计体积（60 s 缓存）；spec §5.6 要求异步可缓存。
+- §10.5 存储页「立即清空」按钮与待删条目数（搁置）：本计划只加了删除前日志。
+- D12 偏差（保留）：CLI/TUI 在多用户根下自动落到管理员目录而非提示退出（计划文件表已认可；能跑 CLI 的人本就拥有服务账号）。
+
+定向复审后搁置的残留小项（未阻塞）：
+- 迁移中断后重跑，`user_credentials` 会重复导入（该表无唯一约束，`INSERT OR IGNORE` 不去重）；建议先查后插并包事务。
+- `.gitconfig` 回填不再校验旧库里的 git 姓名/邮箱；若旧行含换行，该用户的所有 git 命令会报 bad config line（应在 `ensureUserGitConfigFile` 内校验后再写）。
+- 快照复制退化到 `copyFile` 时遇到 FIFO 可能阻塞（仅跨文件系统且 `.tmp/` 内有 FIFO 时）。
+- `hasOtherUserHomes` 对 `users/` 下任何杂项（含 `.DS_Store`）都会跳过迁移并只打一行日志。
+
+### 交给计划三 / 后续的事项
+
+- 插件通道未按用户隔离：`/plugin-ws/<name>` 与 `/api/plugins/:name/rpc/*` 是任何已登录用户进入共享插件进程的通道（计划一已有；spec D10/§16 的后续）。
+- 被吊销管理员的分离式 shell PTY 可存活至 PTY_SESSION_TIMEOUT（30 min），且 PTY key 不含用户分量（任一管理员可重连）→ 在 4401 时杀 PTY 并按用户建 key。
+- `plugins` 符号链接给了 Gateway 一条到 `<root>/pilotdeck.yaml` 的词法路径 → 计划三的 realpath 校验需求（已记入 spec §16.2）。
+- `commands.js` 的 `/model`、`/cost`、`/status` 向普通用户暴露 provider id 与模型名；`/update` 检查执行固定 `git fetch`（D10 后续）。
+- `maskRawYamlText` 按行锚定：block scalar / flow map / 被 YAML 截断的错误行可逃逸（仅管理员可见的面）。
+- 带碰撞后缀的归档目录 `<id>-<ts>-<base36>` 永不过期（保留正则锚定在 `Z$`）。
+- 普通用户 RegisterForm 直接渲染英文服务端错误串 → 按 code 映射 i18n。
+- 旧用户此前保存过的 git 身份没有回填到 `.gitconfig`（需手动再保存一次）。
+
+### 各任务评审中记录的次要问题（未阻塞合并）
+
+- Task 1: a persistent migration failure mints a fresh full snapshot per boot (cheap on APFS via FICLONE, costly on plain copy; prior snapshots are copied into the new one); EXDEV cross-device moves fail closed with no copy fallback; spurious `skip/already-migrated` records for skeleton-created entries; no test for -wal/-shm sidecar archiving; swallowed rmdir remains (backstopped by assertNoResidue); no server-startup test pins the startup order.
+- Task 2: existing-DB dry-run WAL branch likely untested; dry-run copy not atomic vs a live writer; `--dry-run` + `--seed` silently ignores seed; router stats (stats.jsonl) still create `router/` when `router.stats.enabled` is true (per-user under the pool; default off).
+- Task 3: homeGuard edge cases (stale pointer dir, empty pointer, `~` root) unpinned; admin-home write failure aborts startup (acceptable); pre-existing `gatewaySetup.ts` saveWeixinCredentials mkdirs `~/.pilotdeck` but writes to weixinCredsPath().
+- Task 4: retention test gaps (home-itself rejection, symlinked roots, tool-results untouched, stale .N prune, overlap guard); empty-dir removal has no age floor; float/near-zero retention values accepted; UI temp cleanup untested; retention config captured at start (no hot reload).
+- Task 5: DELETE user rename failure after deactivation → bare 500 (return archived:false instead); no self-target guard on DELETE/PATCH server-side (UI guards); last disabled admin's home can be archived.
+- Task 6: `readySince` is cumulative-from-ready (looser than "持有租约累计"); trackAuxSocket runs before plugin-name validation (harmless).
+- Task 7: token-refresh reconnect drops frames emitted during the handshake window; shell 4401 sets no deniedRef; a stale-token 401 on page load wipes preferences (spec-compliant but punitive — consider splitting cache vs preferences); legacy-key migration has no per-key try/catch (quota failure mid-loop leaves the marker unset); no test for legacy+anon coexisting; expected-revoke window never cleared (harmless).
+- Task 8: admin's first-load always-on language mirror skipped because role is null at i18n init; useChatProviderState config fetch has `[]` deps (relies on ProtectedRoute remount); READ_ONLY config controller save() is a silent no-op.
+- Task 9: isSelf uses strict `===` between number|string auth id and number API id (use String() both sides); create dialog lacks client-side ≥3/≥6 validation; no loading/empty state; refresh ignores getRegistration failure; stale actionError not cleared on cancel; dialogs lack focus trap/Escape; third private formatBytes copy.
+- Task 10: sockets test re-implements the index.js two-set sweep (cannot catch removal of the auxClients line); if boot 1 never comes up only the npm wrapper pid is recorded (node child could be orphaned); the `sk-` masking assertion is skipped on the repo yaml (no key present) so key masking is not exercised by the smoke today.
