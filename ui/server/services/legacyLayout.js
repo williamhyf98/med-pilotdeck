@@ -9,20 +9,45 @@ import { createProjectId, resolveUserHome } from '../utils/pilotPaths.js';
 export const LEGACY_DONE_MARKER = path.join('system', 'migration', 'legacy-done.json');
 export const HISTORY_DIR = path.join('system', 'migration', 'history');
 
-const MOVE_ENTRIES = ['projects', 'workspaces', 'memory', 'skills', 'archives', 'logs', '.pilotdeck', '.tmp', '.legacy-bundled-skills-migrated-v1'];
+const MOVE_ENTRIES = ['projects', 'workspaces', 'memory', 'skills', 'logs', '.pilotdeck', '.tmp', '.legacy-bundled-skills-migrated-v1'];
+// `archives/` is root-owned (it also holds the migration snapshots and
+// `archives/users/<id>-<ts>` soft-deleted homes). Only `archives/projects/`
+// is user data (spec 9.4), so it is handled as a child-level move.
+const ARCHIVES_CHILD = path.join('archives', 'projects');
 const DROP_ENTRIES = ['router', 'telemetry', 'cron', 'server-token'];
 const ARCHIVE_ENTRIES = ['migration-backups', 'migration-reports', '.workspace-migration-v1.json'];
-const KEEP_ENTRIES = ['pilotdeck.yaml', 'plugins', 'system', 'users'];
+const KEEP_ENTRIES = ['pilotdeck.yaml', 'plugins', 'system', 'users', 'archives'];
 const isKept = (name) => KEEP_ENTRIES.includes(name) || name.startsWith('pilotdeck.yaml.bak');
 const isAuthDb = (name) => name === 'auth.db' || name === 'auth.db-wal' || name === 'auth.db-shm';
+
+/** `archives/projects` only: a missing (or dangling) path is simply "not legacy". */
+function isNonEmptyDirOrFalse(target) {
+  try { return fs.statSync(target).isDirectory() && fs.readdirSync(target).length > 0; } catch { return false; }
+}
 
 export function detectLegacyLayout(root) {
   if (!fs.existsSync(root)) return { present: false, entries: [] };
   const entries = fs.readdirSync(root).filter((name) => !isKept(name));
+  // statSync (not lstat) on purpose: a dangling symlink named like a legacy
+  // directory throws here and fails the migration closed.
   const dataDirs = entries.filter((n) => MOVE_ENTRIES.includes(n)
     && fs.statSync(path.join(root, n)).isDirectory()
     && fs.readdirSync(path.join(root, n)).length > 0);
-  return { present: dataDirs.length > 0 || entries.some(isAuthDb), entries };
+  const legacyArchives = isNonEmptyDirOrFalse(path.join(root, ARCHIVES_CHILD));
+  return { present: dataDirs.length > 0 || legacyArchives || entries.some(isAuthDb), entries };
+}
+
+/**
+ * Spec 9.1: the migration may only run while `<root>/users/` is empty. The
+ * administrator's own home is created before detection runs, so "empty" means
+ * "nothing but `users/<adminId>`". Kept here (db-free) so `--dry-run` can ask
+ * the same question without opening the system database.
+ */
+export function hasOtherUserHomes(root, adminId) {
+  const dir = path.join(root, 'users');
+  let names;
+  try { names = fs.readdirSync(dir); } catch { return false; }
+  return names.some((name) => name !== String(adminId));
 }
 
 export function planLegacyMigration({ root, adminId, env = process.env }) {
@@ -40,6 +65,11 @@ export function planLegacyMigration({ root, adminId, env = process.env }) {
     }
     if (MOVE_ENTRIES.includes(name)) { plan.push({ name, action: 'move', from, to: path.join(home, name), reason: 'user data' }); continue; }
     plan.push({ name, action: 'archive', from, to: path.join(history, 'unknown', name), reason: 'unknown entry' });
+  }
+  if (isNonEmptyDirOrFalse(path.join(root, ARCHIVES_CHILD))) {
+    plan.push({ name: ARCHIVES_CHILD, action: 'move', from: path.join(root, ARCHIVES_CHILD), to: path.join(home, ARCHIVES_CHILD), reason: 'user data' });
+  } else if (fs.existsSync(path.join(home, ARCHIVES_CHILD))) {
+    plan.push({ name: ARCHIVES_CHILD, action: 'skip', from: path.join(root, ARCHIVES_CHILD), to: path.join(home, ARCHIVES_CHILD), reason: 'already-migrated' });
   }
   // Top-level user-data entries already moved into the home by an earlier, interrupted run.
   const present = new Set(plan.map((step) => step.name));

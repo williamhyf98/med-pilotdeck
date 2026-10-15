@@ -5,7 +5,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { ensureUserHomeSkeleton, resolvePilotRoot } from '../utils/pilotPaths.js';
 import { sessionNamesDb } from '../database/db.js';
-import { LEGACY_DONE_MARKER, HISTORY_DIR, detectLegacyLayout, planLegacyMigration } from './legacyLayout.js';
+import { LEGACY_DONE_MARKER, HISTORY_DIR, detectLegacyLayout, hasOtherUserHomes, planLegacyMigration } from './legacyLayout.js';
 
 export { LEGACY_DONE_MARKER, detectLegacyLayout, planLegacyMigration };
 
@@ -36,16 +36,7 @@ async function snapshot(root, plan, snapshotName) {
     const dest = path.join(dir, path.relative(root, step.from));
     try {
       await fsp.mkdir(path.dirname(dest), { recursive: true });
-      if (step.name === 'archives') {
-        // the snapshot lives inside archives/: copy children individually, skipping snapshots
-        for (const child of await fsp.readdir(step.from)) {
-          if (child === snapshotName) continue;
-          await fsp.mkdir(dest, { recursive: true });
-          await copyIntoSnapshot(path.join(step.from, child), path.join(dest, child));
-        }
-      } else {
-        await copyIntoSnapshot(step.from, dest);
-      }
+      await copyIntoSnapshot(step.from, dest);
     } catch (error) {
       throw fail(`snapshot of ${step.name}`, error);
     }
@@ -86,17 +77,14 @@ async function moveMerging(from, to, conflictDir, skipChild = () => false) {
 }
 
 // After the apply loop nothing of a `move` step may remain (an empty leftover dir is removed).
-async function assertNoResidue(plan, snapshotName) {
+async function assertNoResidue(plan) {
   for (const step of plan) {
     if (step.action !== 'move') continue;
     const stat = await lstatOrNull(step.from);
     if (!stat) continue;
-    if (stat.isDirectory()) {
-      const rest = (await fsp.readdir(step.from)).filter((c) => !(step.name === 'archives' && c === snapshotName));
-      if (rest.length === 0) {
-        if (step.name !== 'archives') await fsp.rmdir(step.from);
-        continue;
-      }
+    if (stat.isDirectory() && (await fsp.readdir(step.from)).length === 0) {
+      await fsp.rmdir(step.from);
+      continue;
     }
     throw fail(`residue left at ${step.from}`);
   }
@@ -128,6 +116,13 @@ export async function migrateLegacyStorage({ userDb, env = process.env, log = co
     if (!detectLegacyLayout(root).present) return { skipped: true, reason: 'no-legacy-layout' };
     admin = userDb.getAdminUser();
     if (!admin) throw fail('no active administrator to own the legacy data');
+    // Spec 9.1: a system that already carries other accounts was never
+    // single-user. Re-running the migration there would relocate root-owned
+    // directories (notably `archives/users/*`) into the admin's home.
+    if (hasOtherUserHomes(root, admin.id)) {
+      log('[migration] skipped: <root>/users/ already holds other accounts; the legacy migration only runs on a single-user root');
+      return { skipped: true, reason: 'users-populated' };
+    }
     ensureUserHomeSkeleton(admin.id, env);
     plan = planLegacyMigration({ root, adminId: admin.id, env });
   } catch (error) {
@@ -160,12 +155,7 @@ export async function migrateLegacyStorage({ userDb, env = process.env, log = co
     }
     try {
       if (step.action === 'move') {
-        await moveMerging(
-          step.from,
-          step.to,
-          path.join(root, HISTORY_DIR, 'conflicts', path.relative(root, step.from)),
-          step.name === 'archives' ? (child) => child === snapshotName : undefined,
-        );
+        await moveMerging(step.from, step.to, path.join(root, HISTORY_DIR, 'conflicts', path.relative(root, step.from)));
       } else if (step.action === 'archive') {
         await fsp.mkdir(path.dirname(step.to), { recursive: true });
         await fsp.rename(step.from, step.to);
@@ -179,7 +169,7 @@ export async function migrateLegacyStorage({ userDb, env = process.env, log = co
     }
   }
   try {
-    await assertNoResidue(plan, snapshotName);
+    await assertNoResidue(plan);
   } catch (error) {
     throw error?.code === 'LEGACY_MIGRATION_FAILED' ? error : fail('verifying residue', error);
   }

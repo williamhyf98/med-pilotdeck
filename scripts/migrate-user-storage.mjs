@@ -43,6 +43,7 @@ const nothingToDo = () => {
   // A requested promotion counts as work done even when there is no legacy data.
   finish(values['assign-admin'] ? 0 : 2);
 };
+const skip = (reason) => { report.skipReason = reason; return nothingToDo(); };
 const bcryptFromUi = () => createRequire(new URL('../ui/package.json', import.meta.url))('bcrypt');
 
 /**
@@ -77,7 +78,7 @@ function readAccountsForDryRun(root, assignAdmin) {
 }
 
 async function dryRun() {
-  const { detectLegacyLayout, planLegacyMigration, LEGACY_DONE_MARKER } = await import('../ui/server/services/legacyLayout.js');
+  const { detectLegacyLayout, hasOtherUserHomes, planLegacyMigration, LEGACY_DONE_MARKER } = await import('../ui/server/services/legacyLayout.js');
   const { resolvePilotRoot } = await import('../ui/server/utils/pilotPaths.js');
   const root = resolvePilotRoot(process.env);
   const { fresh, admin, target } = readAccountsForDryRun(root, values['assign-admin']);
@@ -90,6 +91,8 @@ async function dryRun() {
   if (fs.existsSync(path.join(root, LEGACY_DONE_MARKER)) || !detectLegacyLayout(root).present) return nothingToDo();
   // The first account created in an empty users table gets id 1.
   const adminId = admin?.id ?? target?.id ?? 1;
+  // Spec 9.1: only a single-user root may be migrated.
+  if (hasOtherUserHomes(root, adminId)) return skip('users-populated');
   report.plan = planLegacyMigration({ root, adminId }).map(({ name, action, to, reason }) => ({ name, action, to: to ?? null, reason }));
   return finish(0);
 }
@@ -136,7 +139,7 @@ async function main() {
   }
   const result = await migrateLegacyStorage({ userDb, log });
   report.result = result;
-  if (result.skipped) return nothingToDo();
+  if (result.skipped) return skip(result.reason);
   return finish(0);
 }
 

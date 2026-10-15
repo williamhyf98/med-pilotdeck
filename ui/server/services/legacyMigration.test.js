@@ -172,15 +172,57 @@ describe('legacy migration', () => {
     expect(fs.existsSync(path.join(root, 'memory/global/UserIdentity/profile.md'))).toBe(true);
   });
 
-  it('keeps the snapshot when the legacy root has its own archives/ directory', async () => {
+  it('leaves every archives/ child except projects/ in place (spec 9.4)', async () => {
     seedLegacyRoot();
     fs.mkdirSync(path.join(root, 'archives/old-run'), { recursive: true });
     fs.writeFileSync(path.join(root, 'archives/old-run/a.txt'), 'x');
     const { db, migrateLegacyStorage, admin } = await boot();
     const result = await migrateLegacyStorage({ userDb: db.userDb, log: () => {} });
     const home = path.join(root, 'users', String(admin.id));
-    expect(fs.existsSync(path.join(home, 'archives/old-run/a.txt'))).toBe(true);
+    // only `archives/projects/` is user data; anything else under archives/ is root-owned
+    expect(fs.readFileSync(path.join(root, 'archives/old-run/a.txt'), 'utf8')).toBe('x');
+    expect(fs.existsSync(path.join(home, 'archives/old-run'))).toBe(false);
     expect(fs.existsSync(result.snapshotDir)).toBe(true);
     expect(fs.existsSync(path.join(home, 'archives', path.basename(result.snapshotDir)))).toBe(false);
+  });
+
+  it('moves only archives/projects into the home and never archives the other children as unknown', async () => {
+    seedLegacyRoot();
+    fs.mkdirSync(path.join(root, 'archives/projects/general_med-aaa-20260101T000000Z'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'archives/projects/general_med-aaa-20260101T000000Z/snap.json'), '{}');
+    fs.mkdirSync(path.join(root, 'archives/legacy-old'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'archives/legacy-old/keep.txt'), 'keep');
+    const { db, migrateLegacyStorage, admin } = await boot();
+    const result = await migrateLegacyStorage({ userDb: db.userDb, log: () => {} });
+    const home = path.join(root, 'users', String(admin.id));
+    expect(result.applied).toContainEqual(expect.objectContaining({ name: 'archives/projects', action: 'move' }));
+    expect(result.applied.some((s) => s.name === 'archives')).toBe(false);
+    expect(fs.readFileSync(path.join(home, 'archives/projects/general_med-aaa-20260101T000000Z/snap.json'), 'utf8')).toBe('{}');
+    expect(fs.existsSync(path.join(root, 'archives/projects'))).toBe(false);
+    expect(fs.readFileSync(path.join(root, 'archives/legacy-old/keep.txt'), 'utf8')).toBe('keep');
+    expect(fs.existsSync(path.join(root, 'system/migration/history/unknown/archives'))).toBe(false);
+    // the snapshot carries the moved archive too
+    expect(fs.existsSync(path.join(result.snapshotDir, 'archives/projects/general_med-aaa-20260101T000000Z/snap.json'))).toBe(true);
+  });
+
+  it('refuses to run on a born-multi-user root: users/ holds another account (spec 9.1)', async () => {
+    // a system that was never single-user: the only "legacy" shape left is a stray root dir
+    fs.mkdirSync(path.join(root, 'memory/global'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'memory/global/a.md'), '# me');
+    const archived = path.join(root, 'archives/users/7-2026-01-01T00-00-00-000Z/projects');
+    fs.mkdirSync(archived, { recursive: true });
+    fs.writeFileSync(path.join(archived, 'x'), 'x');
+    const { db, migrateLegacyStorage, admin } = await boot();
+    fs.mkdirSync(path.join(root, 'users/7/projects'), { recursive: true });
+    const lines = [];
+    const result = await migrateLegacyStorage({ userDb: db.userDb, log: (m) => lines.push(m) });
+    expect(result).toMatchObject({ skipped: true, reason: 'users-populated' });
+    expect(lines).toHaveLength(1);
+    // nothing was snapshotted, archived or moved
+    expect(fs.readdirSync(path.join(root, 'archives')).some((n) => n.startsWith('legacy-'))).toBe(false);
+    expect(fs.readFileSync(path.join(archived, 'x'), 'utf8')).toBe('x');
+    expect(fs.readFileSync(path.join(root, 'memory/global/a.md'), 'utf8')).toBe('# me');
+    expect(fs.existsSync(path.join(root, 'users', String(admin.id), 'memory/global/a.md'))).toBe(false);
+    expect(fs.existsSync(path.join(root, 'system/migration/legacy-done.json'))).toBe(false);
   });
 });

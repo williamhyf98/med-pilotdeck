@@ -51,6 +51,10 @@ test('dry-run against an existing database leaves every file untouched', () => {
   const root = mkdtempSync(join(tmpdir(), 'pd-cli-'));
   assert.equal(run(['--pilot-home', root, '--seed-user-for-test', 'doc1']).status, 0);
   mkdirSync(join(root, 'projects/p1'), { recursive: true }); writeFileSync(join(root, 'projects/p1/m.json'), '{}');
+  // A still-legacy root has no per-user homes yet; seeding created one for the
+  // (now deactivated) bootstrap admin. With it present the spec 9.1 guard would
+  // correctly refuse the migration, which the next test covers.
+  rmSync(join(root, 'users'), { recursive: true, force: true });
   const before = snapshotTree(root);
   const authBefore = readFileSync(join(root, 'system/auth.db'));
   const r = run(['--pilot-home', root, '--assign-admin', 'doc1', '--dry-run']);
@@ -116,5 +120,25 @@ test('users without an administrator fail with one JSON report and exit 1', () =
   const missing = run(['--pilot-home', root, '--assign-admin', 'ghost']);
   assert.equal(missing.status, 1);
   assert.match(JSON.parse(missing.stdout).error, /no such user: ghost/);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('dry-run refuses a root whose users/ already holds other accounts, and writes nothing', () => {
+  const root = mkdtempSync(join(tmpdir(), 'pd-cli-'));
+  // born-multi-user: admin home + a second account, plus a soft-deleted home under archives/
+  mkdirSync(join(root, 'users/1/projects'), { recursive: true });
+  mkdirSync(join(root, 'users/7/projects'), { recursive: true });
+  mkdirSync(join(root, 'archives/users/7-2026-01-01T00-00-00-000Z/projects'), { recursive: true });
+  writeFileSync(join(root, 'archives/users/7-2026-01-01T00-00-00-000Z/projects/x'), 'x');
+  mkdirSync(join(root, 'memory/global'), { recursive: true });
+  writeFileSync(join(root, 'memory/global/a.md'), 'x');
+  const before = snapshotTree(root);
+  const r = run(['--pilot-home', root, '--dry-run']);
+  assert.equal(r.status, 2, r.stderr);
+  const report = JSON.parse(r.stdout);
+  assert.equal(report.skipReason, 'users-populated');
+  assert.equal(report.plan, undefined);
+  assert.deepEqual(snapshotTree(root), before);
+  assert.ok(!existsSync(join(root, 'system')));
   rmSync(root, { recursive: true, force: true });
 });
