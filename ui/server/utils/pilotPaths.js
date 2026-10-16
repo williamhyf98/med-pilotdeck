@@ -13,7 +13,8 @@
  * versa.
  */
 import { homedir } from 'node:os';
-import { resolve, isAbsolute, join, sep } from 'node:path';
+import { resolve, isAbsolute, join, sep, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { requireUserScope } from '../middleware/userScope.js';
@@ -186,43 +187,19 @@ export function assertPathInUserHome(targetPath, userHome, forWrite = false) {
 }
 
 /**
- * Check if `target` is under a shared read-only root (<appRoot>/skills/ or <appRoot>/plugins/).
- * Returns true for paths that should be readable even outside userHome in multi-user mode.
+ * True when `target` (already realpath-resolved) lies under the shared, read-only
+ * `<appRoot>/skills` or `<appRoot>/plugins` trees. appRoot is three levels above
+ * this file (ui/server/utils), matching how routes/skills.js locates bundled skills.
  */
 function isUnderSharedReadOnlyRoot(target) {
     if (!target) return false;
-    try {
-        // Resolve appRoot from the repository root (same logic as sandbox)
-        const appRoot = resolveAppRootForWhitelist();
-        const skillsRoot = resolve(appRoot, 'skills');
-        const pluginsRoot = resolve(appRoot, 'plugins');
-
-        return isWithin(target, skillsRoot) || isWithin(target, pluginsRoot);
-    } catch {
-        // If appRoot cannot be resolved, fail closed (deny access)
-        return false;
-    }
-}
-
-/**
- * Resolve the application root directory (repository root containing package.json).
- * Mirrors the logic from src/tool/builtin/bash/sandbox/bwrap.ts#resolveAppRoot.
- */
-function resolveAppRootForWhitelist() {
-    let dir = resolve(__dirname);
-    for (;;) {
-        try {
-            // Check if package.json exists at this level
-            if (existsSync(join(dir, 'package.json'))) return dir;
-        } catch {
-            // Continue searching upward
-        }
-        const parent = resolve(dir, '..');
-        if (parent === dir) {
-            throw new Error(`cannot locate package.json above ${__dirname}`);
-        }
-        dir = parent;
-    }
+    const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+    return ['skills', 'plugins'].some((name) => {
+        const root = join(appRoot, name);
+        let real = root;
+        try { real = realpathSync(root); } catch { /* keep lexical root */ }
+        return isWithin(target, real);
+    });
 }
 
 function isWithin(candidate, root) {

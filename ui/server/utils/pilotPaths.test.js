@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { realpathSync } from 'node:fs';
 import {
@@ -216,7 +216,19 @@ describe('assertPathInUserHome', () => {
         }
     });
 
-    // NOTE: White-list tests for skills/ and plugins/ read access are verified through
-    // integration tests (tests/skill-e2e) rather than unit tests, as they require
-    // the real appRoot structure to exist.
+    it('allows reading the shared skills and plugins trees, read-only', () => {
+        const root = mkdtempSync(join(tmpdir(), 'pd-path-shared-'));
+        try {
+            const userHome = join(root, 'users', '1');
+            mkdirSync(userHome, { recursive: true });
+            const repo = resolve(__dirname, '..', '..', '..');
+            expect(() => assertPathInUserHome(join(repo, 'skills', 'pdf', 'SKILL.md'), userHome)).not.toThrow();
+            expect(() => assertPathInUserHome(join(repo, 'plugins', 'med-tools', 'plugin.json'), userHome)).not.toThrow();
+            expect(() => assertPathInUserHome(join(repo, 'skills', 'pdf', 'SKILL.md'), userHome, true)).toThrow(/PATH_OUT_OF_BOUNDS/);
+            expect(() => assertPathInUserHome(join(repo, 'package.json'), userHome)).toThrow(/PATH_OUT_OF_BOUNDS/);
+            expect(() => assertPathInUserHome(join(repo, 'skills', '..', 'src'), userHome)).toThrow(/PATH_OUT_OF_BOUNDS/);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
 });

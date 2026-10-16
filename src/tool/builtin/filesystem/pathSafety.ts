@@ -1,5 +1,5 @@
 import path from "node:path";
-import { lstatSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { PilotDeckToolRuntimeContext } from "../../protocol/types.js";
@@ -148,7 +148,7 @@ function userHomeViolation(
     // - <appRoot>/skills/ (bundled and medical skills)
     // - <appRoot>/plugins/ (shared MCP plugins)
     if (!options?.forWrite && realTarget) {
-      if (isUnderSharedReadOnlyRoot(realTarget, env)) {
+      if (isUnderSharedReadOnlyRoot(realTarget)) {
         return undefined; // Allow read access to shared resources
       }
     }
@@ -158,46 +158,26 @@ function userHomeViolation(
 }
 
 /**
- * Check if `target` is under a shared read-only root (<appRoot>/skills/ or <appRoot>/plugins/).
- * Returns true for paths that should be readable even outside PILOT_HOME in multi-user mode.
+ * True when `target` (already realpath-resolved) lies under the shared, read-only
+ * `<appRoot>/skills` or `<appRoot>/plugins` trees. Roots are realpath-resolved too,
+ * so symlinked install locations compare correctly.
  */
-function isUnderSharedReadOnlyRoot(target: string, env: NodeJS.ProcessEnv): boolean {
-  try {
-    // Resolve appRoot from the repository root (same logic as sandbox)
-    const appRoot = resolveAppRootForWhitelist();
-    const skillsRoot = path.resolve(appRoot, "skills");
-    const pluginsRoot = path.resolve(appRoot, "plugins");
-
-    return isPathWithinRoot(target, skillsRoot) || isPathWithinRoot(target, pluginsRoot);
-  } catch {
-    // If appRoot cannot be resolved, fail closed (deny access)
-    return false;
-  }
+function isUnderSharedReadOnlyRoot(target: string): boolean {
+  const appRoot = resolveAppRootForWhitelist();
+  if (!appRoot) return false;
+  return ["skills", "plugins"].some((name) => {
+    const root = path.join(appRoot, name);
+    return isPathWithinRoot(target, safeRealpath(root) ?? root);
+  });
 }
 
-/**
- * Resolve the application root directory (repository root containing package.json).
- * Mirrors the logic from src/tool/builtin/bash/sandbox/bwrap.ts#resolveAppRoot.
- */
-function resolveAppRootForWhitelist(): string {
-  // Get the directory of this module
-  const dirname = (importMeta: ImportMeta): string => {
-    return path.dirname(fileURLToPath(importMeta.url));
-  };
-
-  let dir = path.resolve(dirname(import.meta));
+/** Nearest ancestor of this module that contains package.json (works for src/ and dist/ layouts). */
+function resolveAppRootForWhitelist(): string | undefined {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
   for (;;) {
-    try {
-      // Check if package.json exists at this level
-      const fs = require("node:fs");
-      if (fs.existsSync(path.join(dir, "package.json"))) return dir;
-    } catch {
-      // Continue searching upward
-    }
+    if (existsSync(path.join(dir, "package.json"))) return dir;
     const parent = path.dirname(dir);
-    if (parent === dir) {
-      throw new Error(`cannot locate package.json above ${dirname(import.meta)}`);
-    }
+    if (parent === dir) return undefined;
     dir = parent;
   }
 }

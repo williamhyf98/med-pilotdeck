@@ -2,10 +2,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile, mkdir, symlink } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { resolvePilotDeckWorkspacePath } from "../../dist/src/tool/builtin/filesystem/pathSafety.js";
-import { skillPathForModel } from "../../dist/src/tool/builtin/readSkill.js";
+import { resolvePilotDeckWorkspacePath } from "../../src/tool/builtin/filesystem/pathSafety.js";
+import { skillPathForModel } from "../../src/tool/builtin/readSkill.js";
 
 const MULTI_USER_ENV = { PILOTDECK_DISABLE_LOCAL_AUTH: "false" };
 
@@ -125,6 +125,38 @@ test("read_skill path is shown relative to the skills root, never absolute", () 
   assert.equal(skillPathForModel("relative/SKILL.md", "x"), "relative/SKILL.md");
 });
 
-// NOTE: White-list tests for skills/ and plugins/ read access are verified through
-// integration tests (tests/skill-e2e) rather than unit tests, as they require
-// the real appRoot structure to exist.
+// npm test runs from the repository root (same convention as tests/tool/diagram-skill.spec.ts).
+const REPO_ROOT = resolve(process.cwd());
+
+test("multi-user allows reading shared skills and plugins trees (read-only whitelist)", async () => {
+  await withHome(async ({ pilotHome, workspace }) => {
+    for (const shared of [join(REPO_ROOT, "skills", "pdf", "SKILL.md"), join(REPO_ROOT, "skills", "pdf", "references")]) {
+      const result = resolvePilotDeckWorkspacePath(shared, context({ cwd: workspace, pilotHome }), { mustExist: true });
+      assert.equal(result.ok, true, `expected read allowed for ${shared}`);
+    }
+    const plugin = join(REPO_ROOT, "plugins", "med-tools", "plugin.json");
+    const pluginResult = resolvePilotDeckWorkspacePath(plugin, context({ cwd: workspace, pilotHome }), { mustExist: true });
+    assert.equal(pluginResult.ok, true);
+  });
+});
+
+test("multi-user shared-tree whitelist is read-only", async () => {
+  await withHome(async ({ pilotHome, workspace }) => {
+    const result = resolvePilotDeckWorkspacePath(
+      join(REPO_ROOT, "skills", "pdf", "SKILL.md"),
+      context({ cwd: workspace, pilotHome }),
+      { forWrite: true },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, "path_not_allowed");
+  });
+});
+
+test("multi-user whitelist does not open the rest of the app root or ../ escapes out of skills/", async () => {
+  await withHome(async ({ pilotHome, workspace }) => {
+    for (const outside of [join(REPO_ROOT, "package.json"), join(REPO_ROOT, "skills", "..", "src", "cli", "pilotdeck.ts")]) {
+      const result = resolvePilotDeckWorkspacePath(outside, context({ cwd: workspace, pilotHome }), { mustExist: true });
+      assert.equal(result.ok, false, `expected rejection for ${outside}`);
+    }
+  });
+});
