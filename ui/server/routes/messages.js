@@ -15,7 +15,8 @@
  */
 
 import express from 'express';
-import { getPilotDeckGateway } from '../pilotdeck-bridge.js';
+import { getPilotDeckGateway, currentSanitizeOptions } from '../pilotdeck-bridge.js';
+import { sanitizeValue } from '../utils/pathSanitization.js';
 import { createNormalizedMessage } from '../pilotdeck-message.js';
 import { resolveScopedHome, resolveGatewayProjectKey } from '../utils/pilotPaths.js';
 
@@ -60,7 +61,9 @@ router.get('/:sessionId/messages', async (req, res) => {
         : {}),
     });
 
-    const messages = result.messages.map((message) => mapWebMessageToNormalized(message, sessionId));
+    const sanitizeOptions = currentSanitizeOptions();
+    const rawMessages = result.messages.map((message) => mapWebMessageToNormalized(message, sessionId));
+    const messages = sanitizeOptions ? sanitizeValue(rawMessages, sanitizeOptions) : rawMessages;
     const totalKnown = typeof result.total === 'number' ? result.total : messages.length + offset;
     const hasMore = result.nextCursor !== undefined && result.nextCursor !== null;
 
@@ -178,9 +181,11 @@ router.get('/:sessionId/subagent/:subagentId/messages', async (req, res) => {
         : {}),
     });
 
-    const messages = result.messages.map((message) =>
+    const sanitizeOptions = currentSanitizeOptions();
+    const rawMessages = result.messages.map((message) =>
       mapWebMessageToNormalized(message, `${sessionId}::sub::${subagentId}`)
     );
+    const messages = sanitizeOptions ? sanitizeValue(rawMessages, sanitizeOptions) : rawMessages;
 
     return res.json({
       messages,

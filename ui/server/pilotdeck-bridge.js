@@ -48,12 +48,13 @@ import {
     isVisibleFailureStatusDetail,
 } from '../../src/status/agentStatus.js';
 import { createNormalizedMessage } from './pilotdeck-message.js';
+import { createSanitizingWriter, sanitizeValue, scopedSanitizeOptions } from './utils/pathSanitization.js';
 import { readPermissionSettings } from './services/permissionSettings.js';
 import { createGatewayPool } from './services/gatewayPool.js';
 import { DISABLE_LOCAL_AUTH } from './constants/config.js';
 import { readMultiUserConfig } from './services/pilotdeckConfig.js';
 import { requireUserScope, runWithUserScope } from './middleware/userScope.js';
-import { resolveScopedHome } from './utils/pilotPaths.js';
+import { resolveScopedHome, resolvePilotRoot } from './utils/pilotPaths.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1364,12 +1365,26 @@ export function sanitizeTraumaAttachments(value, projectRoot) {
  * @param {{send: (msg: object) => void}} writer Existing writer.
  * @param {string} provider Provider hint (kept for legacy frame branding).
  */
+/** Path-sanitization options for the scoped user, or null in single-user local mode. */
+export function currentSanitizeOptions() {
+    return scopedSanitizeOptions({
+        disableLocalAuth: DISABLE_LOCAL_AUTH,
+        userId: DISABLE_LOCAL_AUTH ? undefined : requireUserScope().userId,
+        pilotRoot: resolvePilotRoot(),
+    });
+}
+
 export async function runChatViaGateway(
     command,
     options = {},
-    writer,
+    rawWriter,
     provider = 'pilotdeck',
 ) {
+    // Multi-user: every frame leaving for the browser (assistant text, tool
+    // input/output, errors) is stripped of absolute server paths. Single-user
+    // local mode keeps real paths, which are the user's own.
+    const sanitizeOptions = currentSanitizeOptions();
+    const writer = sanitizeOptions ? createSanitizingWriter(rawWriter, sanitizeOptions) : rawWriter;
     const projectKey = resolveGatewayProjectKey(
         options.projectPath || options.cwd || resolveScopedHome(),
         resolveScopedHome(),
@@ -1696,7 +1711,9 @@ export async function getActiveTurnSnapshotFramesViaGateway(sessionId, provider 
         if (typeof gw.getActiveTurnSnapshot !== 'function') return [];
         const snapshot = await gw.getActiveTurnSnapshot({ sessionKey: sessionId });
         if (!snapshot?.active || !Array.isArray(snapshot.events)) return [];
-        return snapshot.events.flatMap((event) => gatewayEventToFrames(event, sessionId, provider) || []);
+        const frames = snapshot.events.flatMap((event) => gatewayEventToFrames(event, sessionId, provider) || []);
+        const sanitizeOptions = currentSanitizeOptions();
+        return sanitizeOptions ? sanitizeValue(frames, sanitizeOptions) : frames;
     });
 }
 
