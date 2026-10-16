@@ -18,6 +18,7 @@ import {
 import { loadPilotConfig, resolvePilotHome } from "../pilot/index.js";
 import { startRetentionTimer } from "../pilot/retention.js";
 import { createLocalGateway } from "./createLocalGateway.js";
+import { initializeSandbox } from "../tool/builtin/bash/commandRunner.js";
 import { applyCliHome } from "./homeGuard.js";
 import { startPilotDeckServer } from "./pilotdeckServer.js";
 import { installGlobalProxy, reinstallGlobalProxy } from "./proxy.js";
@@ -55,6 +56,9 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     if (backgroundDisabled) {
       console.log("[server] always-on, cron and IM channels disabled (PILOTDECK_DISABLE_ALWAYS_ON)");
     }
+
+    // bash 沙箱必须在任何子系统（always-on / cron）与监听端口之前就绪。
+    await initializeSandbox(snapshot.config.multiUser, env);
 
     let alwaysOn: AlwaysOnManager | undefined;
     let cron: CronManager | undefined;

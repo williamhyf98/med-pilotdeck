@@ -1,4 +1,5 @@
-import { BwrapSandbox } from "./bwrap.js";
+import { dirname } from "node:path";
+import { BwrapSandbox, resolveAppRoot } from "./bwrap.js";
 import { NoneSandbox } from "./none.js";
 import { SandboxExecSandbox } from "./sandboxExec.js";
 
@@ -19,16 +20,31 @@ export interface SelectSandboxOptions {
   multiUserEnabled: boolean;
   allowUnsandboxed?: boolean;
   platform: NodeJS.Platform;
+  /** false = 网络隔离（仅 bwrap 使用）。默认 true。 */
+  network?: boolean;
+  /** 额外只读挂载的绝对路径（仅 bwrap 使用）。默认 []。 */
+  extraReadOnlyBinds?: string[];
 }
+
+export type BwrapFactoryOptions = {
+  network: boolean;
+  extraReadOnlyBinds: string[];
+};
 
 /** 可替换的实现工厂，便于测试注入探测结果；生产代码使用默认工厂。 */
 export interface SandboxFactories {
-  bwrap(): CommandSandbox;
+  bwrap(options: BwrapFactoryOptions): CommandSandbox;
   "sandbox-exec"(): CommandSandbox;
 }
 
 const DEFAULT_FACTORIES: SandboxFactories = {
-  bwrap: () => new BwrapSandbox(),
+  bwrap: (options) =>
+    new BwrapSandbox({
+      appRoot: resolveAppRoot(),
+      nodeBinDir: dirname(process.execPath),
+      network: options.network,
+      extraBinds: options.extraReadOnlyBinds,
+    }),
   "sandbox-exec": () => new SandboxExecSandbox(),
 };
 
@@ -40,10 +56,14 @@ function nativeKindFor(platform: NodeJS.Platform): NativeKind | undefined {
   return undefined;
 }
 
-function instantiate(kind: "bwrap" | "sandbox-exec" | "none", factories: SandboxFactories): CommandSandbox {
+function instantiate(
+  kind: "bwrap" | "sandbox-exec" | "none",
+  factories: SandboxFactories,
+  bwrapOptions: BwrapFactoryOptions,
+): CommandSandbox {
   switch (kind) {
     case "bwrap":
-      return factories.bwrap();
+      return factories.bwrap(bwrapOptions);
     case "sandbox-exec":
       return factories["sandbox-exec"]();
     case "none":
@@ -65,14 +85,18 @@ async function resolveSandbox(
   options: SelectSandboxOptions,
   factories: SandboxFactories,
 ): Promise<{ sandbox: CommandSandbox; fallbackReason?: string }> {
+  const bwrapOptions: BwrapFactoryOptions = {
+    network: options.network ?? true,
+    extraReadOnlyBinds: options.extraReadOnlyBinds ?? [],
+  };
   if (options.configuredKind) {
-    return { sandbox: instantiate(options.configuredKind, factories) };
+    return { sandbox: instantiate(options.configuredKind, factories, bwrapOptions) };
   }
   const native = nativeKindFor(options.platform);
   if (!native) {
     return { sandbox: new NoneSandbox(), fallbackReason: `no OS sandbox available on ${options.platform}` };
   }
-  const candidate = instantiate(native, factories);
+  const candidate = instantiate(native, factories, bwrapOptions);
   const failure = await probeFailureReason(candidate);
   if (failure === undefined) return { sandbox: candidate };
   return { sandbox: new NoneSandbox(), fallbackReason: `${native} unavailable: ${failure}` };

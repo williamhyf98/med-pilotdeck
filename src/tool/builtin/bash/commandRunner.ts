@@ -1,9 +1,14 @@
 import { spawn } from "node:child_process";
 import { TextDecoder } from "node:util";
+import type { MultiUserConfig } from "../../../pilot/config/parseMultiUserConfig.js";
+import { resolvePilotHome } from "../../../pilot/paths.js";
+import { selectSandbox, type CommandSandbox } from "./sandbox/index.js";
 
 export type PilotDeckCommandOptions = {
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  /** 用户 home（沙箱可写根）。缺省时取 env 中的 PILOT_HOME。 */
+  userHome?: string;
   timeoutMs: number;
   signal?: AbortSignal;
   /** Called on each stdout chunk as it arrives. Errors thrown by the callback are swallowed. */
@@ -26,6 +31,55 @@ export type PilotDeckCommandRunner = {
 
 type SpawnShell = typeof spawn;
 
+/** 模块级沙箱实例：为 null 时 bash 直接交给 shell 执行（与引入沙箱前一致）。 */
+let _sandbox: CommandSandbox | null = null;
+
+export function getCommandSandbox(): CommandSandbox | null {
+  return _sandbox;
+}
+
+export function setCommandSandbox(sandbox: CommandSandbox | null): void {
+  _sandbox = sandbox;
+}
+
+/**
+ * Gateway 启动时调用：按配置选择沙箱、执行 probe() 自检并设置模块级实例。
+ * 显式配置的实现自检失败直接抛错；多用户模式下落到 none 的拒绝由 selectSandbox 负责。
+ */
+export async function initializeSandbox(config: MultiUserConfig, env: NodeJS.ProcessEnv): Promise<CommandSandbox> {
+  const multiUserEnabled = isMultiUserLoginEnabled(env);
+  const sandboxConfig = config.sandbox ?? {};
+  const sandbox = await selectSandbox({
+    configuredKind: sandboxConfig.kind,
+    multiUserEnabled,
+    allowUnsandboxed: sandboxConfig.allowUnsandboxed,
+    platform: process.platform,
+    network: sandboxConfig.network,
+    extraReadOnlyBinds: sandboxConfig.extraReadOnlyBinds,
+  });
+  let probe: { ok: true } | { ok: false; reason: string };
+  try {
+    probe = await sandbox.probe();
+  } catch (err) {
+    probe = { ok: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+  if (!probe.ok && sandbox.kind !== "none") {
+    throw new Error(`sandbox ${sandbox.kind} failed its startup probe: ${probe.reason}`);
+  }
+  if (sandbox.kind === "none" && multiUserEnabled) {
+    console.warn("[sandbox] Multi-user mode running without an OS sandbox (multiUser.sandbox.allowUnsandboxed: true). This is UNSAFE for production.");
+  }
+  setCommandSandbox(sandbox);
+  console.log(`[sandbox] ${sandbox.kind} (${probe.ok ? "ok" : probe.reason})`);
+  return sandbox;
+}
+
+/** 与 ui/server/constants/config.js 的 DISABLE_LOCAL_AUTH 判定一致：仅显式设为 0 / false 时为多用户（登录）模式。 */
+function isMultiUserLoginEnabled(env: NodeJS.ProcessEnv): boolean {
+  const value = env.PILOTDECK_DISABLE_LOCAL_AUTH;
+  return value === "0" || value === "false";
+}
+
 export class NodeShellCommandRunner implements PilotDeckCommandRunner {
   constructor(private readonly spawnShell: SpawnShell = spawn) {}
 
@@ -33,14 +87,36 @@ export class NodeShellCommandRunner implements PilotDeckCommandRunner {
     const startedAt = Date.now();
     return new Promise((resolve, reject) => {
       const isWindows = process.platform === "win32";
-      const child = this.spawnShell(command, {
-        cwd: options.cwd,
-        env: options.env,
-        shell: true,
-        detached: !isWindows,
-        windowsHide: isWindows,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      // Windows 上的沙箱只会是 none，其 /bin/sh 不存在，保持原来的 shell（cmd.exe）执行方式。
+      const sandbox = _sandbox && !(isWindows && _sandbox.kind === "none") ? _sandbox : null;
+      // bwrap 的 --new-session 会调用 setsid()，而 detached 子进程在 spawn 时已是进程组组长，
+      // setsid() 会以 EPERM 失败。因此 bwrap 不使用独立进程组，改为对 bwrap 进程本身发信号；
+      // --unshare-pid + --die-with-parent 保证沙箱内的进程随之结束。
+      const detached = !isWindows && sandbox?.kind !== "bwrap";
+      const launch = sandbox
+        ? sandbox.wrap(command, {
+            cwd: options.cwd,
+            userHome: options.userHome ?? resolvePilotHome(options.env ?? process.env),
+            env: options.env ?? process.env,
+          })
+        : undefined;
+      const child = launch
+        ? this.spawnShell(launch.file, launch.args, {
+            cwd: options.cwd,
+            env: options.env,
+            shell: false,
+            detached,
+            windowsHide: isWindows,
+            stdio: ["ignore", "pipe", "pipe"],
+          })
+        : this.spawnShell(command, {
+            cwd: options.cwd,
+            env: options.env,
+            shell: true,
+            detached,
+            windowsHide: isWindows,
+            stdio: ["ignore", "pipe", "pipe"],
+          });
 
       let stdout = "";
       let stderr = "";
@@ -60,9 +136,11 @@ export class NodeShellCommandRunner implements PilotDeckCommandRunner {
             killer.unref();
           } catch { /* best-effort */ }
         } else {
-          try { process.kill(-pid, "SIGTERM"); } catch { /* already dead */ }
+          // detached 时 pid 即进程组号，整组发信号；否则只能针对 pid 本身。
+          const target = detached ? -pid : pid;
+          try { process.kill(target, "SIGTERM"); } catch { /* already dead */ }
           setTimeout(() => {
-            try { process.kill(-pid, "SIGKILL"); } catch { /* already dead */ }
+            try { process.kill(target, "SIGKILL"); } catch { /* already dead */ }
           }, 3000).unref();
         }
       }
