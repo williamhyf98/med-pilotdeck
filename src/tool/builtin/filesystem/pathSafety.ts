@@ -1,6 +1,7 @@
 import path from "node:path";
 import { lstatSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import type { PilotDeckToolRuntimeContext } from "../../protocol/types.js";
 import type { PilotDeckToolError } from "../../protocol/errors.js";
 import { toolError } from "../../protocol/errors.js";
@@ -27,7 +28,7 @@ export function resolvePilotDeckWorkspacePath(
 
   // Multi-user hard boundary: applies in every permission mode, including
   // bypassPermissions, so a per-user Gateway can never touch paths outside its home.
-  const userHomeError = userHomeViolation(absolutePath, context);
+  const userHomeError = userHomeViolation(absolutePath, context, options);
   if (userHomeError) {
     return { ok: false, error: userHomeError };
   }
@@ -127,17 +128,78 @@ export function isPathWithinRoot(candidate: string, root: string): boolean {
  * path must resolve, following symlinks, to somewhere inside PILOT_HOME (the
  * user home of the per-user Gateway). Returns a generic error that does not
  * echo the real root or the caller's path. Local single-user mode is unchanged.
+ *
+ * **Read-only whitelist**: For read operations (`forWrite` undefined/false), paths
+ * under `<appRoot>/skills/` and `<appRoot>/plugins/` are allowed even though
+ * they are outside PILOT_HOME, enabling Agent to access shared skill references.
  */
-function userHomeViolation(absolutePath: string, context: PilotDeckToolRuntimeContext): PilotDeckToolError | undefined {
+function userHomeViolation(
+  absolutePath: string,
+  context: PilotDeckToolRuntimeContext,
+  options?: { forWrite?: boolean },
+): PilotDeckToolError | undefined {
   const env = context.env ?? process.env;
   if (!isMultiUserLoginEnabled(env)) return undefined;
   const home = path.resolve(env.PILOT_HOME ?? path.join(homedir(), ".pilotdeck"));
   const realHome = resolveForContainment(home) ?? home;
   const realTarget = resolveForContainment(absolutePath);
   if (!realTarget || !isPathWithinRoot(realTarget, realHome)) {
+    // For read operations in multi-user mode, allow access to shared resources:
+    // - <appRoot>/skills/ (bundled and medical skills)
+    // - <appRoot>/plugins/ (shared MCP plugins)
+    if (!options?.forWrite && realTarget) {
+      if (isUnderSharedReadOnlyRoot(realTarget, env)) {
+        return undefined; // Allow read access to shared resources
+      }
+    }
     return toolError("path_not_allowed", "Path is not within the allowed scope.");
   }
   return undefined;
+}
+
+/**
+ * Check if `target` is under a shared read-only root (<appRoot>/skills/ or <appRoot>/plugins/).
+ * Returns true for paths that should be readable even outside PILOT_HOME in multi-user mode.
+ */
+function isUnderSharedReadOnlyRoot(target: string, env: NodeJS.ProcessEnv): boolean {
+  try {
+    // Resolve appRoot from the repository root (same logic as sandbox)
+    const appRoot = resolveAppRootForWhitelist();
+    const skillsRoot = path.resolve(appRoot, "skills");
+    const pluginsRoot = path.resolve(appRoot, "plugins");
+
+    return isPathWithinRoot(target, skillsRoot) || isPathWithinRoot(target, pluginsRoot);
+  } catch {
+    // If appRoot cannot be resolved, fail closed (deny access)
+    return false;
+  }
+}
+
+/**
+ * Resolve the application root directory (repository root containing package.json).
+ * Mirrors the logic from src/tool/builtin/bash/sandbox/bwrap.ts#resolveAppRoot.
+ */
+function resolveAppRootForWhitelist(): string {
+  // Get the directory of this module
+  const dirname = (importMeta: ImportMeta): string => {
+    return path.dirname(fileURLToPath(importMeta.url));
+  };
+
+  let dir = path.resolve(dirname(import.meta));
+  for (;;) {
+    try {
+      // Check if package.json exists at this level
+      const fs = require("node:fs");
+      if (fs.existsSync(path.join(dir, "package.json"))) return dir;
+    } catch {
+      // Continue searching upward
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      throw new Error(`cannot locate package.json above ${dirname(import.meta)}`);
+    }
+    dir = parent;
+  }
 }
 
 function isMultiUserLoginEnabled(env: NodeJS.ProcessEnv): boolean {

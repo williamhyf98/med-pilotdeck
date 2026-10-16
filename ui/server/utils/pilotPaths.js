@@ -159,19 +159,70 @@ export function resolveUserHome(userId, env = process.env) {
  * inside `userHome` (also symlink-resolved). `../` escapes and symlinks that
  * point outward are rejected. The message never echoes either path.
  *
+ * **Read-only whitelist**: For read operations (`forWrite` undefined/false), paths
+ * under `<appRoot>/skills/` and `<appRoot>/plugins/` are allowed even though
+ * they are outside userHome, enabling Agent to access shared skill references.
+ *
+ * @param {boolean} [forWrite=false] - Set to true when validating write operations
  * @returns {string} The lexically resolved target path.
  */
-export function assertPathInUserHome(targetPath, userHome) {
+export function assertPathInUserHome(targetPath, userHome, forWrite = false) {
     const resolved = resolve(targetPath);
     const realTarget = realpathForContainment(resolved);
     const realHome = realpathForContainment(resolve(userHome)) ?? resolve(userHome);
     if (realTarget === undefined || !isWithin(realTarget, realHome)) {
+        // For read operations in multi-user mode, allow access to shared resources:
+        // - <appRoot>/skills/ (bundled and medical skills)
+        // - <appRoot>/plugins/ (shared MCP plugins)
+        if (!forWrite && isUnderSharedReadOnlyRoot(realTarget)) {
+            return resolved; // Allow read access to shared resources
+        }
         throw Object.assign(new Error('PATH_OUT_OF_BOUNDS: path is outside the user home'), {
             code: 'PATH_OUT_OF_BOUNDS',
             path: targetPath,
         });
     }
     return resolved;
+}
+
+/**
+ * Check if `target` is under a shared read-only root (<appRoot>/skills/ or <appRoot>/plugins/).
+ * Returns true for paths that should be readable even outside userHome in multi-user mode.
+ */
+function isUnderSharedReadOnlyRoot(target) {
+    if (!target) return false;
+    try {
+        // Resolve appRoot from the repository root (same logic as sandbox)
+        const appRoot = resolveAppRootForWhitelist();
+        const skillsRoot = resolve(appRoot, 'skills');
+        const pluginsRoot = resolve(appRoot, 'plugins');
+
+        return isWithin(target, skillsRoot) || isWithin(target, pluginsRoot);
+    } catch {
+        // If appRoot cannot be resolved, fail closed (deny access)
+        return false;
+    }
+}
+
+/**
+ * Resolve the application root directory (repository root containing package.json).
+ * Mirrors the logic from src/tool/builtin/bash/sandbox/bwrap.ts#resolveAppRoot.
+ */
+function resolveAppRootForWhitelist() {
+    let dir = resolve(__dirname);
+    for (;;) {
+        try {
+            // Check if package.json exists at this level
+            if (existsSync(join(dir, 'package.json'))) return dir;
+        } catch {
+            // Continue searching upward
+        }
+        const parent = resolve(dir, '..');
+        if (parent === dir) {
+            throw new Error(`cannot locate package.json above ${__dirname}`);
+        }
+        dir = parent;
+    }
 }
 
 function isWithin(candidate, root) {

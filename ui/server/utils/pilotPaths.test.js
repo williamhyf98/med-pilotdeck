@@ -215,4 +215,8 @@ describe('assertPathInUserHome', () => {
             rmSync(root, { recursive: true, force: true });
         }
     });
+
+    // NOTE: White-list tests for skills/ and plugins/ read access are verified through
+    // integration tests (tests/skill-e2e) rather than unit tests, as they require
+    // the real appRoot structure to exist.
 });

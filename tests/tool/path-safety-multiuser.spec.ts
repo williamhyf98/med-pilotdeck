@@ -4,8 +4,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile, mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { resolvePilotDeckWorkspacePath } from "../../src/tool/builtin/filesystem/pathSafety.js";
-import { skillPathForModel } from "../../src/tool/builtin/readSkill.js";
+import { resolvePilotDeckWorkspacePath } from "../../dist/src/tool/builtin/filesystem/pathSafety.js";
+import { skillPathForModel } from "../../dist/src/tool/builtin/readSkill.js";
 
 const MULTI_USER_ENV = { PILOTDECK_DISABLE_LOCAL_AUTH: "false" };
 
@@ -124,3 +124,7 @@ test("read_skill path is shown relative to the skills root, never absolute", () 
   assert.equal(skillPathForModel("/abs/no/marker/SKILL.md", "med-baz"), "med-baz/SKILL.md");
   assert.equal(skillPathForModel("relative/SKILL.md", "x"), "relative/SKILL.md");
 });
+
+// NOTE: White-list tests for skills/ and plugins/ read access are verified through
+// integration tests (tests/skill-e2e) rather than unit tests, as they require
+// the real appRoot structure to exist.
