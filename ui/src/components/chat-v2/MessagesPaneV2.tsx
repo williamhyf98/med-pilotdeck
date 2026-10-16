@@ -38,6 +38,8 @@ import {
   type LiveProcessGroup,
   type RenderableMessageItem,
 } from './processGrouping';
+import { getStorageUserId } from '../../utils/safeStorage';
+import { sanitizeUserIdFor } from '../../utils/pathSanitization';
 
 type DiffLine = { type: string; content: string; lineNum: number };
 
@@ -530,6 +532,7 @@ function MessagesPaneV2({
   forkParentSessionTitle = null,
   lastTurnEdit,
 }: MessagesPaneV2Props) {
+  const sanitizeForUserId = sanitizeUserIdFor(getStorageUserId());
   const resolvedPlanModeActive = planModeActive || runMode === 'plan';
   const { t } = useTranslation('chat');
   const messageKeyMapRef = useRef<WeakMap<ChatMessage, string>>(new WeakMap());
@@ -1176,7 +1179,7 @@ function MessagesPaneV2({
     const isLatestGroup = liveProcessGroups[liveProcessGroups.length - 1]?.id === group.id;
     const step = getLiveProcessGroupStep(group, t, group.isRunning && isLatestGroup ? liveStatusStep : null);
     const showWebFetchWaiting = shouldShowWebFetchWaitingHint(group, resolvedPlanModeActive);
-    const toolSteps = getLiveProcessToolNameSteps(group);
+    const toolSteps = getLiveProcessToolNameSteps(group, { sanitizeForUserId });
     const defaultExpanded = false;
     const expanded = isProcessExpanded(group.id, defaultExpanded);
     const { beforeStatusMessages, statusDetailMessages } = splitLiveProcessGroupDetailMessages(group);
@@ -1213,6 +1216,7 @@ function MessagesPaneV2({
     liveStatusStep,
     resolvedPlanModeActive,
     renderLiveProcessDetailMessages,
+    sanitizeForUserId,
     t,
   ]);
 

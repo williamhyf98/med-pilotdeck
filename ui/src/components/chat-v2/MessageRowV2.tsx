@@ -26,6 +26,8 @@ import { Markdown } from '../chat/view/subcomponents/Markdown';
 import { formatUsageLimitText } from '../chat/utils/chatFormatting';
 import { extractCitationsFromContent } from '../chat/utils/citationDetails';
 import { ProcessTrace } from './ProcessTrace';
+import { getStorageUserId } from '../../utils/safeStorage';
+import { sanitizeUserIdFor } from '../../utils/pathSanitization';
 import {
   buildProcessToolSteps,
   formatCompletedProcessTitle,
@@ -780,9 +782,10 @@ function ProcessSummaryRow({
   t: TFunction<'chat'>;
 }) {
   const trace = useMemo(() => processSummaryToTrace(message, t), [message, t]);
+  const sanitizeForUserId = sanitizeUserIdFor(getStorageUserId());
   const toolSteps = useMemo(
-    () => (detailMessages.length > 0 ? buildProcessToolSteps(detailMessages) : trace.steps),
-    [detailMessages, trace.steps],
+    () => (detailMessages.length > 0 ? buildProcessToolSteps(detailMessages, { sanitizeForUserId }) : trace.steps),
+    [detailMessages, trace.steps, sanitizeForUserId],
   );
   const label = useMemo(
     () => (detailMessages.length > 0 && hasTraumaRunnerSteps(detailMessages)

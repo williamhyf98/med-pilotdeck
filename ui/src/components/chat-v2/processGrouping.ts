@@ -3,6 +3,7 @@ import type { ChatMessage, ChatRunMode } from '../chat/types/types';
 import { isReadOnlyModeToolDeny } from '../chat/utils/chatPermissions';
 import type { ProcessTraceMetric, ProcessTraceStep } from './ProcessTrace';
 import { formatProcessDuration } from './processTraceUtils';
+import { sanitizePathsClient } from '../../utils/pathSanitization';
 
 export type ProcessAttachmentImage = {
   data: string;
@@ -1590,7 +1591,29 @@ export function getLiveProcessGroupStep(
  * Build a vertical timeline step list for process panels.
  * Includes tool name + short target (path / pattern / command) and optional result summary.
  */
-export function buildProcessToolSteps(messages: ChatMessage[]): ProcessTraceStep[] {
+export type ProcessStepOptions = {
+  /** Multi-user: current user id. When set, user-specific path segments are hidden. */
+  sanitizeForUserId?: string | number | null;
+};
+
+export function buildProcessToolSteps(
+  messages: ChatMessage[],
+  options: ProcessStepOptions = {},
+): ProcessTraceStep[] {
+  const steps = buildProcessToolStepsRaw(messages);
+  if (options.sanitizeForUserId === undefined || options.sanitizeForUserId === null) return steps;
+  const userId = options.sanitizeForUserId;
+  const clean = (value: string | undefined) => (value === undefined ? value : sanitizePathsClient(value, userId));
+  return steps.map((step) => ({
+    ...step,
+    target: clean(step.target),
+    context: clean(step.context),
+    detail: clean(step.detail),
+    resultDetail: clean(step.resultDetail),
+  }));
+}
+
+function buildProcessToolStepsRaw(messages: ChatMessage[]): ProcessTraceStep[] {
   const steps: ProcessTraceStep[] = [];
   const seen = new Set<string>();
 
@@ -1646,8 +1669,11 @@ export function buildProcessToolSteps(messages: ChatMessage[]): ProcessTraceStep
   return steps;
 }
 
-export function getLiveProcessToolNameSteps(group: LiveProcessGroup): ProcessTraceStep[] {
-  return buildProcessToolSteps(group.messages);
+export function getLiveProcessToolNameSteps(
+  group: LiveProcessGroup,
+  options: ProcessStepOptions = {},
+): ProcessTraceStep[] {
+  return buildProcessToolSteps(group.messages, options);
 }
 
 export function processSummaryToTrace(
