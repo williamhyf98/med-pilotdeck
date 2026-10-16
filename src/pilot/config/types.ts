@@ -4,6 +4,20 @@ import type { CronConfig } from "../../cron/config/parseCronConfig.js";
 import type { ModelConfig } from "../../model/protocol/canonical.js";
 import type { RouterConfig } from "../../router/config/schema.js";
 
+/**
+ * `multiUser.sandbox`：bash 工具的操作系统级沙箱配置（spec §16.3）。
+ * `kind` 未设置时由 `selectSandbox()` 自动探测。
+ */
+export interface SandboxConfig {
+  kind?: "bwrap" | "sandbox-exec" | "none";
+  /** 多用户模式下允许落到 none（无沙箱）。默认 false。 */
+  allowUnsandboxed?: boolean;
+  /** false = 网络隔离（bwrap --unshare-net）。默认 true（不隔离）。 */
+  network?: boolean;
+  /** 额外只读挂载的绝对路径（系统程序）。默认 []。 */
+  extraReadOnlyBinds?: string[];
+}
+
 export type PilotConfigSourceKind = "default" | "project" | "env";
 export type PilotConfigSourcePhase = "bootstrap" | "merge";
 export type PilotConfigDiagnosticSeverity = "info" | "warning" | "error" | "fatal";
