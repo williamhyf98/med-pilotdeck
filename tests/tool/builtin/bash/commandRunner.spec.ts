@@ -123,3 +123,37 @@ test("initializeSandbox accepts an explicit unsandboxed opt-in in multi-user mod
   assert.equal(sandbox.kind, "none");
   assert.equal(getCommandSandbox(), sandbox);
 });
+
+test("startup probe: a configured sandbox-exec is probed by initializeSandbox and logged as (ok) on success", {
+  skip: process.platform !== "darwin" && "sandbox-exec probe succeeds only on macOS; the failure branch is covered below",
+}, async () => {
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (...args: unknown[]) => {
+    logs.push(args.map(String).join(" "));
+  };
+  try {
+    const sandbox = await initializeSandbox(
+      { retention: {} as MultiUserConfig["retention"], sandbox: { kind: "sandbox-exec" } } as MultiUserConfig,
+      {},
+    );
+    assert.equal(sandbox.kind, "sandbox-exec");
+    assert.ok(logs.includes("[sandbox] sandbox-exec (ok)"), `unexpected startup log: ${logs.join(" | ")}`);
+    assert.equal(getCommandSandbox(), sandbox);
+  } finally {
+    console.log = originalLog;
+  }
+});
+
+test("startup probe: a configured sandbox-exec that cannot run fails startup with the probe reason", {
+  skip: process.platform === "darwin" && "only meaningful where sandbox-exec is absent",
+}, async () => {
+  await assert.rejects(
+    initializeSandbox(
+      { retention: {} as MultiUserConfig["retention"], sandbox: { kind: "sandbox-exec" } } as MultiUserConfig,
+      {},
+    ),
+    /sandbox sandbox-exec failed its startup probe: sandbox-exec not found/,
+  );
+  assert.equal(getCommandSandbox(), null);
+});

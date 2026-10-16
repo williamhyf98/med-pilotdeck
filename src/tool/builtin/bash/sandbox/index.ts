@@ -45,7 +45,11 @@ const DEFAULT_FACTORIES: SandboxFactories = {
       network: options.network,
       extraBinds: options.extraReadOnlyBinds,
     }),
-  "sandbox-exec": () => new SandboxExecSandbox(),
+  "sandbox-exec": () =>
+    new SandboxExecSandbox({
+      appRoot: resolveAppRoot(),
+      nodeBinDir: dirname(process.execPath),
+    }),
 };
 
 type NativeKind = "bwrap" | "sandbox-exec";
