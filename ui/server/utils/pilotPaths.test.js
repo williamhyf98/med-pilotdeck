@@ -1,7 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { realpathSync } from 'node:fs';
 import {
     createCollisionResistantProjectId as createCoreCollisionId,
     createProjectId as createCoreProjectId,
@@ -13,6 +14,7 @@ import {
     resolveProjectStorageId,
     resolveWorkspaceId,
     resolveAssociatedProjectPath,
+    assertPathInUserHome,
 } from './pilotPaths.js';
 import { getAlwaysOnRoot } from '../services/always-on-paths.js';
 import { runWithUserScope } from '../middleware/userScope.js';
@@ -120,6 +122,96 @@ describe('UI project storage ID resolution', () => {
             } else {
                 process.env.PILOT_HOME = previousPilotHome;
             }
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+});
+
+describe('assertPathInUserHome', () => {
+    it('allows paths inside userHome and the home itself', () => {
+        const root = mkdtempSync(join(tmpdir(), 'pd-path-ok-'));
+        try {
+            const userHome = join(root, 'users', '1');
+            mkdirSync(join(userHome, 'projects', 'p1'), { recursive: true });
+            expect(() => assertPathInUserHome(join(userHome, 'projects', 'p1'), userHome)).not.toThrow();
+            expect(() => assertPathInUserHome(userHome, userHome)).not.toThrow();
+            // Not-yet-existing file inside home is allowed.
+            expect(() => assertPathInUserHome(join(userHome, 'projects', 'new.txt'), userHome)).not.toThrow();
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects paths outside userHome, including ../ escapes and sibling homes', () => {
+        const root = mkdtempSync(join(tmpdir(), 'pd-path-out-'));
+        try {
+            const userHome = join(root, 'users', '1');
+            mkdirSync(userHome, { recursive: true });
+            expect(() => assertPathInUserHome(join(root, 'users', '2', 'projects'), userHome)).toThrow(/PATH_OUT_OF_BOUNDS/);
+            expect(() => assertPathInUserHome(join(root, 'system'), userHome)).toThrow(/PATH_OUT_OF_BOUNDS/);
+            expect(() => assertPathInUserHome(join(userHome, '..', '2', 'projects'), userHome)).toThrow(/PATH_OUT_OF_BOUNDS/);
+            expect(() => assertPathInUserHome('../2/projects', userHome)).toThrow(/PATH_OUT_OF_BOUNDS/);
+            // Sibling whose name shares the home prefix must not pass.
+            expect(() => assertPathInUserHome(`${userHome}2/x`, userHome)).toThrow(/PATH_OUT_OF_BOUNDS/);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('does not echo the real root in the error message', () => {
+        const root = mkdtempSync(join(tmpdir(), 'pd-path-msg-'));
+        try {
+            const userHome = join(root, 'users', '1');
+            mkdirSync(userHome, { recursive: true });
+            let caught;
+            try {
+                assertPathInUserHome(join(root, 'system'), userHome);
+            } catch (error) {
+                caught = error;
+            }
+            expect(caught.code).toBe('PATH_OUT_OF_BOUNDS');
+            expect(caught.message).not.toContain(root);
+            expect(caught.message).not.toContain(userHome);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('resolves symlinks and rejects escapes', () => {
+        const tmpRoot = mkdtempSync(join(tmpdir(), 'pd-path-'));
+        try {
+            const userHome = join(tmpRoot, 'users', '1');
+            mkdirSync(userHome, { recursive: true });
+            mkdirSync(join(tmpRoot, 'system'));
+            symlinkSync(join(tmpRoot, 'system'), join(userHome, 'escape'));
+            expect(() => assertPathInUserHome(join(userHome, 'escape'), userHome)).toThrow(/PATH_OUT_OF_BOUNDS/);
+            // A file reached through the escaping link is also outside.
+            expect(() => assertPathInUserHome(join(userHome, 'escape', 'x.txt'), userHome)).toThrow(/PATH_OUT_OF_BOUNDS/);
+        } finally {
+            rmSync(tmpRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects a dangling symlink that points outward (write would create the target)', () => {
+        const tmpRoot = mkdtempSync(join(tmpdir(), 'pd-path-dangle-'));
+        try {
+            const userHome = join(tmpRoot, 'users', '1');
+            mkdirSync(userHome, { recursive: true });
+            symlinkSync(join(tmpRoot, 'system', 'new.conf'), join(userHome, 'dangling'));
+            expect(() => assertPathInUserHome(join(userHome, 'dangling'), userHome)).toThrow(/PATH_OUT_OF_BOUNDS/);
+        } finally {
+            rmSync(tmpRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('accepts a home reached through a symlinked tmp prefix (macOS /var -> /private/var)', () => {
+        const root = mkdtempSync(join(tmpdir(), 'pd-path-prefix-'));
+        try {
+            const userHome = join(root, 'users', '1');
+            mkdirSync(join(userHome, 'projects'), { recursive: true });
+            const viaRealRoot = join(realpathSync(root), 'users', '1', 'projects');
+            expect(() => assertPathInUserHome(viaRealRoot, userHome)).not.toThrow();
+        } finally {
             rmSync(root, { recursive: true, force: true });
         }
     });

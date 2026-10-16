@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { PilotDeckToolDefinition, PilotDeckToolRuntimeContext } from "../protocol/types.js";
 import { isMedicalSkillAvailable } from "../../pilot/medicalCapabilities.js";
 
@@ -45,7 +46,7 @@ export function createReadSkillTool(deps: ReadSkillDeps): PilotDeckToolDefinitio
         const text = [
           "<skill>",
           `<name>${escapeXmlText(selected.name)}</name>`,
-          `<path>${escapeXmlText(selected.path)}</path>`,
+          `<path>${escapeXmlText(skillPathForModel(selected.path, selected.name))}</path>`,
           content,
           "</skill>",
         ].join("\n");
@@ -67,6 +68,20 @@ export function createReadSkillTool(deps: ReadSkillDeps): PilotDeckToolDefinitio
 function shortSkillName(value: string): string {
   const separator = value.lastIndexOf(":");
   return separator >= 0 ? value.slice(separator + 1) : value;
+}
+
+/**
+ * Never expose the absolute install location of a skill to the model. Returns the
+ * path relative to the skills root (the segment after the last `/skills/`), or
+ * `<skill-dir>/SKILL.md` when the path carries no such marker.
+ */
+export function skillPathForModel(skillPath: string, skillName: string): string {
+  const normalized = skillPath.replace(/\\/g, "/");
+  const marker = "/skills/";
+  const index = normalized.lastIndexOf(marker);
+  if (index >= 0) return normalized.slice(index + marker.length);
+  if (!path.isAbsolute(skillPath)) return normalized;
+  return `${skillName}/SKILL.md`;
 }
 
 function escapeXmlText(value: string): string {

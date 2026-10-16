@@ -27,7 +27,7 @@ test("read_skill returns the resolved SKILL.md path with the skill body", async 
     assert.equal(first.text, [
         "<skill>",
         "<name>spreadsheets</name>",
-        "<path>/opt/pilotdeck/skills/spreadsheets/SKILL.md</path>",
+        "<path>spreadsheets/SKILL.md</path>",
         "# Spreadsheet workflow",
         "</skill>",
     ].join("\n"));

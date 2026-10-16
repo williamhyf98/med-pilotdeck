@@ -13,9 +13,9 @@
  * versa.
  */
 import { homedir } from 'node:os';
-import { resolve, isAbsolute, join } from 'node:path';
+import { resolve, isAbsolute, join, sep } from 'node:path';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { requireUserScope } from '../middleware/userScope.js';
 
 export const DEFAULT_PILOT_HOME = '~/.pilotdeck';
@@ -152,6 +152,55 @@ function assertSafeUserId(userId) {
 /** `<root>/users/<userId>`. Rejects empty ids and ids with `/`, `\` or `..`. */
 export function resolveUserHome(userId, env = process.env) {
     return join(resolvePilotRoot(env), 'users', assertSafeUserId(userId));
+}
+
+/**
+ * Throws `PATH_OUT_OF_BOUNDS` unless `targetPath`, with symlinks resolved, lies
+ * inside `userHome` (also symlink-resolved). `../` escapes and symlinks that
+ * point outward are rejected. The message never echoes either path.
+ *
+ * @returns {string} The lexically resolved target path.
+ */
+export function assertPathInUserHome(targetPath, userHome) {
+    const resolved = resolve(targetPath);
+    const realTarget = realpathForContainment(resolved);
+    const realHome = realpathForContainment(resolve(userHome)) ?? resolve(userHome);
+    if (realTarget === undefined || !isWithin(realTarget, realHome)) {
+        throw Object.assign(new Error('PATH_OUT_OF_BOUNDS: path is outside the user home'), {
+            code: 'PATH_OUT_OF_BOUNDS',
+            path: targetPath,
+        });
+    }
+    return resolved;
+}
+
+function isWithin(candidate, root) {
+    return candidate === root || candidate.startsWith(root + sep);
+}
+
+/**
+ * Realpath of the deepest existing ancestor plus the non-existent tail.
+ * Returns undefined for a dangling symlink (fail closed).
+ */
+function realpathForContainment(target) {
+    let current = resolve(target);
+    const tail = [];
+    for (;;) {
+        try {
+            return join(realpathSync(current), ...tail.reverse());
+        } catch {
+            // Not resolvable: fall through to the ancestor check below.
+        }
+        try {
+            if (lstatSync(current).isSymbolicLink()) return undefined;
+        } catch {
+            // Does not exist at all: keep walking up.
+        }
+        const parent = resolve(current, '..');
+        if (parent === current) return resolve(target);
+        tail.push(current.slice(parent.length).replace(/^[\\/]+/, ''));
+        current = parent;
+    }
 }
 
 /** User home for the current request scope. Throws `USER_SCOPE_MISSING` outside one. */

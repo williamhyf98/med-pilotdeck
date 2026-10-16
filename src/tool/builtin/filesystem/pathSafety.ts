@@ -1,5 +1,5 @@
 import path from "node:path";
-import { realpathSync, statSync } from "node:fs";
+import { lstatSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import type { PilotDeckToolRuntimeContext } from "../../protocol/types.js";
 import type { PilotDeckToolError } from "../../protocol/errors.js";
@@ -24,6 +24,13 @@ export function resolvePilotDeckWorkspacePath(
   }
 
   const absolutePath = path.resolve(path.isAbsolute(inputPath) ? inputPath : path.join(context.cwd, inputPath));
+
+  // Multi-user hard boundary: applies in every permission mode, including
+  // bypassPermissions, so a per-user Gateway can never touch paths outside its home.
+  const userHomeError = userHomeViolation(absolutePath, context);
+  if (userHomeError) {
+    return { ok: false, error: userHomeError };
+  }
 
   if (context.permissionMode === "bypassPermissions") {
     const relativePath = path.relative(context.cwd, absolutePath) || ".";
@@ -113,6 +120,56 @@ export function toWorkspaceRelativePath(absolutePath: string, root: string): str
 export function isPathWithinRoot(candidate: string, root: string): boolean {
   const relative = path.relative(root, candidate);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+/**
+ * In multi-user mode (PILOTDECK_DISABLE_LOCAL_AUTH=0|false) every file tool
+ * path must resolve, following symlinks, to somewhere inside PILOT_HOME (the
+ * user home of the per-user Gateway). Returns a generic error that does not
+ * echo the real root or the caller's path. Local single-user mode is unchanged.
+ */
+function userHomeViolation(absolutePath: string, context: PilotDeckToolRuntimeContext): PilotDeckToolError | undefined {
+  const env = context.env ?? process.env;
+  if (!isMultiUserLoginEnabled(env)) return undefined;
+  const home = path.resolve(env.PILOT_HOME ?? path.join(homedir(), ".pilotdeck"));
+  const realHome = resolveForContainment(home) ?? home;
+  const realTarget = resolveForContainment(absolutePath);
+  if (!realTarget || !isPathWithinRoot(realTarget, realHome)) {
+    return toolError("path_not_allowed", "Path is not within the allowed scope.");
+  }
+  return undefined;
+}
+
+function isMultiUserLoginEnabled(env: NodeJS.ProcessEnv): boolean {
+  const value = env.PILOTDECK_DISABLE_LOCAL_AUTH;
+  return value === "0" || value === "false";
+}
+
+/**
+ * Realpath of `target`, resolving the deepest existing ancestor and re-appending
+ * the non-existent tail (so new files can be checked before they exist).
+ * Returns undefined for a dangling symlink, which is treated as outside (fail closed).
+ */
+function resolveForContainment(target: string): string | undefined {
+  let current = path.resolve(target);
+  const tail: string[] = [];
+  for (;;) {
+    const real = safeRealpath(current);
+    if (real) return path.join(real, ...tail.reverse());
+    if (isSymbolicLink(current)) return undefined;
+    const parent = path.dirname(current);
+    if (parent === current) return path.resolve(target);
+    tail.push(path.basename(current));
+    current = parent;
+  }
+}
+
+function isSymbolicLink(value: string): boolean {
+  try {
+    return lstatSync(value).isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 function isWriteDenied(relativePath: string): boolean {

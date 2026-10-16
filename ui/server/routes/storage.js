@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import mime from 'mime-types';
 import {
+    assertPathInUserHome,
     PROJECT_TYPE_KEYS,
     resolveScopedHome,
 } from '../utils/pilotPaths.js';
@@ -36,6 +37,14 @@ function assertInside(root, target) {
     const relative = path.relative(path.resolve(root), path.resolve(target));
     if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) return;
     throw invalidInput('Path is outside the managed storage root');
+}
+
+function assertWithinUserHome(target, pilotHome) {
+    try {
+        assertPathInUserHome(target, pilotHome);
+    } catch {
+        throw invalidInput('Path is outside the managed storage root');
+    }
 }
 
 function previewKind(filename) {
@@ -184,8 +193,13 @@ async function resolveManagedFile(pilotHome, input) {
     }
     const target = path.resolve(groupRoot, input.path);
     assertInside(groupRoot, target);
-    const [realRoot, realTarget] = await Promise.all([fs.realpath(groupRoot), fs.realpath(target)]);
+    const [realRoot, realTarget, realHome] = await Promise.all([
+        fs.realpath(groupRoot),
+        fs.realpath(target),
+        fs.realpath(pilotHome),
+    ]);
     assertInside(realRoot, realTarget);
+    assertWithinUserHome(realTarget, realHome);
     const stat = await fs.lstat(realTarget);
     if (!stat.isFile() || stat.isSymbolicLink()) throw invalidInput('Target is not a regular file');
     return { groupRoot: realRoot, target: realTarget, stat };
@@ -213,6 +227,7 @@ function normalizeDeleteTargets(pilotHome, targets) {
         }
         const absolutePath = path.resolve(groupRoot, target.path);
         assertInside(groupRoot, absolutePath);
+        assertWithinUserHome(absolutePath, pilotHome);
         return { ...target };
     });
 }

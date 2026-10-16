@@ -29,7 +29,8 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
 import { getPilotDeckGateway } from '../pilotdeck-bridge.js';
-import { resolveScopedHome, isGeneralProjectKey, resolveLinkedRepoPath, resolveGatewayProjectKey } from '../utils/pilotPaths.js';
+import { DISABLE_LOCAL_AUTH } from '../constants/config.js';
+import { assertPathInUserHome, resolveScopedHome, isGeneralProjectKey, resolveLinkedRepoPath, resolveGatewayProjectKey } from '../utils/pilotPaths.js';
 import { moveDirectoryAcrossDevicesSafe } from '../utils/fileMoves.js';
 import { recommendSkills } from '../utils/skillRecommend.js';
 
@@ -165,6 +166,15 @@ function classifySkillPath(skillPath, projectPath = null) {
     const slug = segments[0];
     if (!safeSlug(slug)) {
       return { ok: false, reason: `Invalid slug "${slug}"` };
+    }
+    // Multi-user only: user and project skills must resolve inside the user home
+    // (symlink-aware). Local mode keeps symlink-mode imports from anywhere.
+    if (!DISABLE_LOCAL_AUTH && (scope === 'user' || scope === 'project')) {
+      try {
+        assertPathInUserHome(abs, resolveScopedHome());
+      } catch {
+        return { ok: false, reason: 'skillPath is not inside any known skills root' };
+      }
     }
     return { ok: true, scope, slug };
   }
