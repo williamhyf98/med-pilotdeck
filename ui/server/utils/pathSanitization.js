@@ -68,6 +68,11 @@ export function sanitizePaths(text, { userId, pilotRoot, appRoot = defaultAppRoo
 
     let result = text;
     for (const [pattern, replacement] of rules) result = result.replace(pattern, replacement);
+
+    // Path compression: ~/xxx/yyy/zzz.ext → zzz.ext
+    // Only process paths already replaced to ~ prefix, preserve filename
+    result = result.replace(/~\/[^\s"'<>)}\]]*?\/([^\s"'<>)}\]/]+\.[a-zA-Z0-9]+)/g, '$1');
+
     return result;
 }
 
