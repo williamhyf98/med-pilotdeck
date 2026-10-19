@@ -23,6 +23,9 @@ const SKILL_DISPLAY_NAMES: Record<string, string> = {
   'med-medical': '医疗附件解析',
   'med-trauma-assist': '战创伤知识问答',
   'med-trauma-stage-plan': '战创伤分阶段救治方案',
+  'med-dicom-router': '医学影像路由',
+  'med-radar-ct': '腹部CT分析',
+  'med-deepchest-3dmedagent': '胸部CT分析',
   'meeting-recorder-assistant': '会议录音与纪要',
   'minimax-pdf': '精美 PDF 制作',
   notion: 'Notion 内容管理',
@@ -44,6 +47,5 @@ const SKILL_DISPLAY_NAMES: Record<string, string> = {
 export function skillDisplayName(skill: { slug: string; name: string }): string {
   const mapped = SKILL_DISPLAY_NAMES[skill.slug.toLowerCase()];
   if (mapped) return mapped;
-  if (/\p{Script=Han}/u.test(skill.name)) return skill.name;
-  return `自定义技能：${skill.name}`;
+  return skill.name;
 }
