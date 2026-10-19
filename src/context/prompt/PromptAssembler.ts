@@ -114,6 +114,10 @@ export class PromptAssembler {
       "",
       promptCopy.automationPolicyTitle,
       promptCopy.automationPolicyBody,
+      "",
+      "## 输出约束",
+      "",
+      "不要在回答中提及模型版本号或技术实现细节（如「本分析由 XXX 模型生成」、「使用了 XXX 技术」）。诊断依据和医学结论应基于临床证据，而非技术来源。",
     ];
 
     const permissionLine = formatPermissionMode(input.permissionMode);
@@ -150,7 +154,14 @@ export class PromptAssembler {
     lines.push("<user-context>");
     lines.push(`cwd: ${input.cwd}`);
     lines.push(promptCopy.cwdRelativePathRule);
-    lines.push(`model: ${input.provider}/${input.model}`);
+
+    // In multi-user mode, hide model name from system prompt
+    const isMultiUser = process.env.PILOTDECK_DISABLE_LOCAL_AUTH === '0' ||
+                        process.env.PILOTDECK_DISABLE_LOCAL_AUTH === 'false';
+    if (!isMultiUser) {
+      lines.push(`model: ${input.provider}/${input.model}`);
+    }
+
     lines.push(`permission_mode: ${input.permissionMode}`);
     if (input.runMode) {
       lines.push(`run_mode: ${input.runMode}`);
