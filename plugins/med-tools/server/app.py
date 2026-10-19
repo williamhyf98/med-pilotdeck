@@ -499,6 +499,10 @@ async def med_parse_medical(
         tool_name="med_parse_medical",
     )
     await flush_text()
+    # Remove model-related fields before returning
+    payload.pop('model', None)
+    payload.pop('primary_model', None)
+    payload.pop('fallback_model', None)
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -529,14 +533,16 @@ def med_image_route(
         intensity_units: Confirmed voxel units (HU, UNKNOWN or OTHER), if known.
         requested_model: Explicitly requested model (radar or deepchest), if any.
     """
-    return json.dumps(
-        route_image(
-            path, max_files=max(1, min(int(max_files or 512), 2048)),
-            modality=modality, body_region=body_region,
-            intensity_units=intensity_units, requested_model=requested_model,
-        ),
-        ensure_ascii=False, indent=2,
+    result = route_image(
+        path, max_files=max(1, min(int(max_files or 512), 2048)),
+        modality=modality, body_region=body_region,
+        intensity_units=intensity_units, requested_model=requested_model,
     )
+    # Remove model-related fields before returning
+    result.pop('model', None)
+    result.pop('primary_model', None)
+    result.pop('fallback_model', None)
+    return json.dumps(result, ensure_ascii=False, indent=2)
 
 
 @mcp.tool()
@@ -553,6 +559,10 @@ def med_dicom_route(path: str, max_files: int = 512) -> str:
     bounded_max_files = max(1, min(int(max_files or 512), 2048))
     result = route_image(path, max_files=bounded_max_files)
     result["tool"] = "med_dicom_route"
+    # Remove model-related fields before returning
+    result.pop('model', None)
+    result.pop('primary_model', None)
+    result.pop('fallback_model', None)
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
@@ -733,6 +743,10 @@ async def med_radar_analyze_ct(
         total=3,
         message="__PILOTDECK_MEDICAL_STAGE__:artifacts",
     )
+    # Remove model-related fields before returning
+    payload.pop('model', None)
+    payload.pop('primary_model', None)
+    payload.pop('fallback_model', None)
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -760,6 +774,10 @@ async def med_deepchest_submit(path: str, question: str, body_region: str,
     from .deepchest import call_deepchest
     result = await asyncio.to_thread(call_deepchest, 'submit', path=path, question=question,
                                     body_region=body_region, modality=modality, intensity_units=intensity_units)
+    # Remove model-related fields before returning
+    result.pop('model', None)
+    result.pop('primary_model', None)
+    result.pop('fallback_model', None)
     return json.dumps(result, ensure_ascii=False)
 
 
@@ -780,6 +798,10 @@ async def med_deepchest_job(job_id: str, wait_seconds: int = 30, continuation_mo
         if result.get('status') not in ('waiting', 'running', 'uploading') or asyncio.get_running_loop().time() >= deadline:
             result['ok'] = result.get('status') == 'succeeded'
             result['continuation_mode'] = _normalize_continuation_mode(continuation_mode)
+            # Remove model-related fields before returning
+            result.pop('model', None)
+            result.pop('primary_model', None)
+            result.pop('fallback_model', None)
             return json.dumps(result, ensure_ascii=False)
         await asyncio.sleep(min(3, max(0, deadline - asyncio.get_running_loop().time())))
 
@@ -901,6 +923,10 @@ async def med_trauma_stage_plan(
     )
     await flush_text()
     payload["tool"] = "med_trauma_stage_plan"
+    # Remove model-related fields before returning
+    payload.pop('model', None)
+    payload.pop('primary_model', None)
+    payload.pop('fallback_model', None)
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 

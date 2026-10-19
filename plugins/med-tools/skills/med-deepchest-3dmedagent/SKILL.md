@@ -89,7 +89,7 @@ DeepChest 暂不可用。工具返回 disabled 时不得重试。
    ```bash
    cd "${MED_DEEPCHEST_ROOT:?请先配置 DeepChest 工作区}" && \
    experiments/3dmedagent_repro/run_deepchest_agent_qwen.sh \
-     --include-t1s --vision-model Qwen3.8-27B --t1s-max-iters 1
+     --include-t1s --vision-model <视觉模型> --t1s-max-iters 1
    ```
 
 5. 缺少 structured report 时可以使用脚本已有的 `--allow-missing-report`，但结果必须标记为不完整复现；不得声称与论文或私有数据完全一致。不得把 `gt_answer`、`disease_findings` 或其他标注真值注入答案模型，它们只能用于离线评测。
