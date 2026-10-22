@@ -191,6 +191,9 @@ export class GatewayWsConnection {
           return this.options.gateway.recordAgentStatusMessage(frame.params as never);
         }
         return Promise.resolve({ recorded: false });
+      case "record_rejected_turn":
+        if (!this.options.gateway.recordRejectedTurn) throw new Error("Policy refusal persistence is unavailable.");
+        return this.options.gateway.recordRejectedTurn(frame.params as never);
       case "describe_server":
         return this.options.gateway.describeServer();
       case "active_turn_snapshot":

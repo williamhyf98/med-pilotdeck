@@ -146,6 +146,15 @@ export type GatewayRecordAgentStatusMessageInput = {
   status: AgentStatusMessageInput;
 };
 
+export type GatewayRecordRejectedTurnInput = {
+  sessionKey: string;
+  projectKey: string;
+  channelKey: string;
+  runId: string;
+  userText: string;
+  reply: string;
+};
+
 type GatewayTurnScopedEventMetadata = {
   /**
    * Stable id of the active turn that produced this event. Turn-scoped events
@@ -474,6 +483,7 @@ export interface Gateway {
   newSession(input: NewSessionInput): Promise<{ sessionKey: string }>;
   closeSession(input: { sessionKey: string; reason?: string }): Promise<void>;
   recordAgentStatusMessage?(input: GatewayRecordAgentStatusMessageInput): Promise<{ recorded: boolean }>;
+  recordRejectedTurn?(input: GatewayRecordRejectedTurnInput): Promise<{ recorded: boolean }>;
   describeServer(): Promise<GatewayServerInfo>;
   getActiveTurnSnapshot?(input: GatewayActiveTurnSnapshotInput): Promise<GatewayActiveTurnSnapshot>;
   cronCreate(input: CronCreateInput): Promise<CronCreateResult>;

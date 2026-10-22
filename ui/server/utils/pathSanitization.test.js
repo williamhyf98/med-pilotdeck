@@ -7,7 +7,7 @@ const opts = { userId: 123, pilotRoot: root, appRoot: app, hostHomes: ['/home/de
 
 describe('sanitizePaths', () => {
     it('maps the current user home to ~', () => {
-        expect(sanitizePaths('/data/pilotdeck/users/123/projects/p1/file.txt', opts)).toBe('~/projects/p1/file.txt');
+        expect(sanitizePaths('/data/pilotdeck/users/123/projects/p1/file.txt', opts)).toBe('file.txt');
         expect(sanitizePaths('/data/pilotdeck/users/123', opts)).toBe('~');
     });
 
@@ -59,6 +59,27 @@ describe('sanitizePaths', () => {
 });
 
 describe('sanitizeValue', () => {
+    it('preserves user text and attachment labels while sanitizing assistant and tool output', () => {
+        const raw = '/data/pilotdeck/users/456/report.nii';
+        const messages = [
+            { kind: 'text', role: 'user', content: `请检查 ${raw}`, attachments: [{ name: raw }] },
+            { kind: 'text', role: 'assistant', content: `无法检查 ${raw}` },
+            { kind: 'tool_use', toolInput: { path: raw } },
+        ];
+        const output = sanitizeValue(messages, opts);
+        expect(output[0]).toEqual(messages[0]);
+        expect(output[1].content).not.toContain(raw);
+        expect(output[2].toolInput.path).not.toContain(raw);
+    });
+    it('keeps a user-authored question but cleans server-generated attachment paths', () => {
+        const path = '/data/pilotdeck/users/456/private.nii';
+        const user = { kind: 'text', role: 'user', content: `解释 ${path}`,
+            attachments: [{ name: '我的影像.nii', path }] };
+        const clean = sanitizeValue(user, opts);
+        expect(clean.content).toBe(user.content);
+        expect(clean.attachments[0].name).toBe('我的影像.nii');
+        expect(clean.attachments[0].path).not.toBe(path);
+    });
     it('cleans strings deeply inside frames without mutating the input', () => {
         const frame = { kind: 'tool_result', content: 'ls /data/pilotdeck/users/456', nested: [{ p: '/data/pilotdeck/system/auth.db' }], n: 3 };
         const out = sanitizeValue(frame, opts);

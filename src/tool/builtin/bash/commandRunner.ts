@@ -3,6 +3,10 @@ import { TextDecoder } from "node:util";
 import type { MultiUserConfig } from "../../../pilot/config/parseMultiUserConfig.js";
 import { resolvePilotHome } from "../../../pilot/paths.js";
 import { selectSandbox, type CommandSandbox } from "./sandbox/index.js";
+import { grantForms, skillCacheEnv } from "./sandbox/grants.js";
+import { resolveAppRoot } from "./sandbox/bwrap.js";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
 
 export type PilotDeckCommandOptions = {
   cwd: string;
@@ -57,6 +61,12 @@ export async function initializeSandbox(config: MultiUserConfig, env: NodeJS.Pro
     network: sandboxConfig.network,
     extraReadOnlyBinds: sandboxConfig.extraReadOnlyBinds,
   });
+  if (multiUserEnabled && sandbox.kind !== "none") {
+    if (!env.PILOT_HOME || !isAbsolute(env.PILOT_HOME)) {
+      throw new Error("Multi-user sandbox requires an absolute PILOT_HOME.");
+    }
+    assertSandboxGrantsSafe(sandbox, env.PILOT_HOME);
+  }
   let probe: { ok: true } | { ok: false; reason: string };
   try {
     probe = await sandbox.probe();
@@ -72,6 +82,55 @@ export async function initializeSandbox(config: MultiUserConfig, env: NodeJS.Pro
   setCommandSandbox(sandbox);
   console.log(`[sandbox] ${sandbox.kind} (${probe.ok ? "ok" : probe.reason})`);
   return sandbox;
+}
+
+/** Verify the actual OS grants, not the assumed layout of the application. */
+export function assertSandboxGrantsSafe(sandbox: CommandSandbox, userHome: string): void {
+  const home = resolve(userHome);
+  const users = dirname(home);
+  const dataRoot = dirname(users);
+  if (users === dataRoot || home === users || !existsSync(users) || dirname(home) !== users || users.split(/[\\/]/).at(-1) !== "users") {
+    throw new Error("Invalid per-user PILOT_HOME for sandbox authorization.");
+  }
+  const protectedPaths = [dataRoot, users, join(dataRoot, "system"), join(dataRoot, "pilotdeck.yaml")];
+  const otherHomes = readdirSync(users).filter((id) => id !== home.split(/[\\/]/).at(-1))
+    .map((id) => join(users, id));
+  const own = grantForms(home);
+  const covered = (candidate: string, grant: string) => {
+    const rel = relative(grant, candidate);
+    return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  };
+  const grants = sandbox.grants(home);
+  for (const grant of [...grants.readOnly, ...grants.writable]) {
+    for (const form of grantForms(grant)) {
+      for (const protectedPath of protectedPaths) {
+        for (const target of grantForms(protectedPath)) {
+          if (covered(target, form) && !own.some((root) => covered(form, root))) {
+            throw new Error(`Unsafe sandbox grant ${form} covers protected location ${target}.`);
+          }
+        }
+      }
+      for (const other of otherHomes) {
+        for (const target of grantForms(other)) {
+          if (covered(target, form) || covered(form, target)) {
+            throw new Error(`Unsafe sandbox grant ${form} overlaps another user home ${target}.`);
+          }
+        }
+      }
+    }
+  }
+  // macOS allows literal stat() on selected ancestors to traverse into shared
+  // runtimes. These literals do not grant directory contents; reject any that
+  // point inside protected data (except the current user's home).
+  for (const grant of grants.metadataOnly ?? []) {
+    for (const form of grantForms(grant)) {
+      if (own.some((root) => covered(form, root))) continue;
+      if ([...protectedPaths, ...otherHomes].some((target) =>
+        grantForms(target).some((protectedForm) => covered(form, protectedForm)))) {
+        throw new Error(`Unsafe sandbox metadata grant ${form} overlaps protected data.`);
+      }
+    }
+  }
 }
 
 /** 与 ui/server/constants/config.js 的 DISABLE_LOCAL_AUTH 判定一致：仅显式设为 0 / false 时为多用户（登录）模式。 */
@@ -100,10 +159,17 @@ export class NodeShellCommandRunner implements PilotDeckCommandRunner {
             env: options.env ?? process.env,
           })
         : undefined;
+      const spawnEnv = sandbox?.kind === "sandbox-exec"
+        ? { ...options.env, HOME: options.userHome ?? resolvePilotHome(options.env ?? process.env),
+            PILOT_HOME: options.userHome ?? resolvePilotHome(options.env ?? process.env),
+            XDG_CACHE_HOME: join(options.userHome ?? resolvePilotHome(options.env ?? process.env), ".cache"),
+            TMPDIR: join(options.userHome ?? resolvePilotHome(options.env ?? process.env), ".tmp"),
+            ...skillCacheEnv(resolveAppRoot()) }
+        : options.env;
       const child = launch
         ? this.spawnShell(launch.file, launch.args, {
             cwd: options.cwd,
-            env: options.env,
+            env: spawnEnv,
             shell: false,
             detached,
             windowsHide: isWindows,

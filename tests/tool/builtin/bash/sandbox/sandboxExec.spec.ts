@@ -22,7 +22,7 @@ function withTempDir(fn: (dir: string) => void): void {
   }
 }
 
-test("wrap() generates the profile at userHome/.tmp/sandbox.sb and returns the spec argv", () => {
+test("wrap() passes an inline profile that the user cannot replace", () => {
   withTempDir((tmpHome) => {
     const s = new SandboxExecSandbox(config);
     assert.equal(existsSync(join(tmpHome, ".tmp")), false, ".tmp is created lazily, not up front");
@@ -30,8 +30,8 @@ test("wrap() generates the profile at userHome/.tmp/sandbox.sb and returns the s
     const profilePath = join(tmpHome, ".tmp", "sandbox.sb");
     assert.equal(s.kind, "sandbox-exec");
     assert.equal(file, "/usr/bin/sandbox-exec");
-    assert.deepEqual(args, ["-f", profilePath, "/bin/sh", "-c", "echo test"]);
-    assert.ok(existsSync(profilePath));
+    assert.deepEqual(args, ["-p", buildSandboxProfile(config, tmpHome), "/bin/sh", "-c", "echo test"]);
+    assert.ok(!existsSync(profilePath));
   });
 });
 
@@ -44,12 +44,22 @@ test("profile content follows spec 16.5 and includes the user home, app root and
     assert.ok(profile.includes("(allow process-exec process-fork signal)"));
     assert.ok(profile.includes("(allow sysctl-read mach-lookup)"));
     assert.ok(profile.includes("(allow network*)"));
+    assert.ok(profile.includes('(allow file-read-metadata (literal "/Users")'));
     assert.ok(profile.includes(`(subpath "${tmpHome}")`));
-    assert.ok(profile.includes('(subpath "/app")'));
     assert.ok(profile.includes('(subpath "/usr/bin")'));
-    assert.ok(profile.includes('(subpath "/private/tmp")'));
-    assert.ok(profile.includes('(subpath "/private/var/folders")'));
+    assert.ok(!profile.includes('(subpath "/app")'));
+    assert.ok(!profile.includes('(subpath "/private/tmp")'));
   });
+});
+
+test("every literal metadata grant in the profile is reported to the startup guard", () => {
+  const sandbox = new SandboxExecSandbox(config);
+  const profile = buildSandboxProfile(config, "/data/users/2");
+  const metadataLine = profile.split("\n").find((line) => line.startsWith("(allow file-read-metadata "));
+  assert.ok(metadataLine);
+  for (const literal of metadataLine.matchAll(/\(literal "([^"]+)"\)/g)) {
+    assert.ok(sandbox.grants("/data/users/2").metadataOnly?.includes(literal[1]));
+  }
 });
 
 test("profile grants writes only under userHome, system temp dirs and /dev/null", () => {
@@ -58,7 +68,7 @@ test("profile grants writes only under userHome, system temp dirs and /dev/null"
     const writeLine = profile.split("\n").find((line) => line.startsWith("(allow file* "));
     assert.ok(writeLine, "file* rule present");
     assert.ok(writeLine.includes('(literal "/dev/null")'));
-    assert.ok(!writeLine.includes('(subpath "/app")'), "app root is read-only");
+    assert.ok(!writeLine.includes('(subpath "/app")'), "app root is not granted");
     assert.ok(!writeLine.includes('(subpath "/usr/bin")'), "node bin dir is read-only");
   });
 });
@@ -77,8 +87,10 @@ test("a symlinked userHome is granted in both its raw and resolved forms", () =>
 
 test("SBPL special characters in paths are escaped", () => {
   withTempDir((tmpHome) => {
-    const profile = buildSandboxProfile({ appRoot: '/app"x\\y', nodeBinDir: "/usr/bin" }, tmpHome);
-    assert.ok(profile.includes('(subpath "/app\\"x\\\\y")'));
+    mkdirSync(join(tmpHome, 'skills'));
+    const profile = buildSandboxProfile({ appRoot: tmpHome, nodeBinDir: '/usr/bin' }, join(tmpHome, 'users', '1'));
+    assert.ok(profile.includes(`(subpath "${join(tmpHome, 'skills')}")`));
+    assert.ok(!profile.includes(`(subpath "${tmpHome}")`));
   });
 });
 

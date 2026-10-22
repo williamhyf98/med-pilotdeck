@@ -10,6 +10,7 @@ type Native = "bwrap" | "sandbox-exec";
 
 class FakeSandbox implements CommandSandbox {
   probeCalls = 0;
+  grants() { return { readOnly: [], writable: [] }; }
   constructor(
     readonly kind: Native,
     private readonly outcome: ProbeOutcome,

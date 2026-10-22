@@ -34,6 +34,7 @@ import type {
   GatewayEvent,
   GatewayPermissionDecisionInput,
   GatewayRecordAgentStatusMessageInput,
+  GatewayRecordRejectedTurnInput,
   GatewaySessionPermissionGrantInput,
   GatewayServerInfo,
   GatewaySubmitTurnInput,
@@ -389,6 +390,26 @@ type ActiveTurnReplay = {
 };
 
 export class InProcessGateway implements Gateway {
+  async recordRejectedTurn(input: GatewayRecordRejectedTurnInput): Promise<{ recorded: boolean }> {
+    if (!input.sessionKey || !input.projectKey || !input.runId || typeof input.userText !== "string"
+      || typeof input.reply !== "string" || input.reply.length > 2048) {
+      throw new Error("Invalid policy refusal turn.");
+    }
+    if (!this.router.beginTurn(input.sessionKey, input.runId)) {
+      throw new Error("Session already has an active turn.");
+    }
+    try {
+      const session = await this.router.getOrCreate({
+        sessionKey: input.sessionKey,
+        projectKey: input.projectKey,
+        channelKey: input.channelKey,
+      });
+      await session.recordRejectedTurn(input.runId, input.userText, input.reply);
+      return { recorded: true };
+    } finally {
+      this.router.endTurn(input.sessionKey, input.runId);
+    }
+  }
   private readonly now: () => Date;
   private readonly uuid: () => string;
   /**

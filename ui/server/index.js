@@ -53,7 +53,7 @@ import pty from 'node-pty';
 import fetch from 'node-fetch';
 import mime from 'mime-types';
 import JSZip from 'jszip';
-import { readPermissionSettings } from './services/permissionSettings.js';
+import { getWebPermissionMode } from './services/webPermissionMode.js';
 import { getDefaultPtyShell } from './utils/defaultShell.js';
 import { getOpenUrlSpawnCommand } from './utils/processSpawn.js';
 
@@ -635,12 +635,12 @@ app.use('/api', buildApiRouter({
 // model is read from PilotDeck config; fall back to a static stub so any
 // older frontend code paths render without crashing.
 function agentsRuntimeConfig(_req, res) {
-    const permSettings = readPermissionSettings();
+    const effectiveMode = getWebPermissionMode();
     res.json({
         pilotdeck: { provider: 'pilotdeck' },
         permissions: {
-            skipPermissions: permSettings.skipPermissions,
-            effectiveMode: permSettings.skipPermissions ? 'bypassPermissions' : 'default',
+            skipPermissions: effectiveMode === 'bypassPermissions',
+            effectiveMode,
         },
     });
 }
@@ -961,11 +961,12 @@ app.post('/api/trauma/cases/:sessionId/extract', ...requireUser, async (req, res
 // Rename project endpoint
 app.put('/api/projects/:projectName/rename', ...requireUser, async (req, res) => {
     try {
-        const { displayName } = req.body;
+        const { displayName } = req.body ?? {};
         await renameProject(req.params.projectName, displayName);
         res.json({ success: true });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.status(error.code === 'invalid_input' ? 400 : error.code === 'project_not_found' ? 404 : 500)
+            .json({ error: error.message });
     }
 });
 

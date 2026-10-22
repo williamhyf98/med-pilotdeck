@@ -145,6 +145,8 @@ export type CanonicalContentBlock =
 export type CanonicalMessageMetadata = {
   /** True for messages injected by the system (e.g. JSON self-correct prompts). */
   synthetic?: boolean;
+  /** Persisted for Web history only; excluded from model-context replay. */
+  webOnly?: boolean;
   /** Synthetic prompt that should be consumed by the next assistant response only. */
   transient?: boolean;
   /** Stable id used by the agent loop to expire transient synthetic prompts. */

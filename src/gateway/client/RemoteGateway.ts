@@ -109,6 +109,10 @@ export class RemoteGateway implements Gateway {
     return (await this.client.request("record_agent_status_message", input)) as { recorded: boolean };
   }
 
+  async recordRejectedTurn(input: import("../protocol/types.js").GatewayRecordRejectedTurnInput): Promise<{ recorded: boolean }> {
+    return (await this.client.request("record_rejected_turn", input)) as { recorded: boolean };
+  }
+
   async describeServer(): Promise<GatewayServerInfo> {
     return (await this.client.request("describe_server", {})) as GatewayServerInfo;
   }

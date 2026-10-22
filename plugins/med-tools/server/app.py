@@ -13,6 +13,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from .dicom_router import _is_nifti, route_image, specialized_ct_enabled
 from .parsers import SUPPORTED_SUFFIXES, collect_medical_files, parse_medical_file
 from .vlm_client import analyze_medical_with_vlm, get_vlm_config
+from .path_safety import assert_path_in_user_home, assert_input_tree_in_user_home
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 MEDICAL_PROMPT_PATH = PLUGIN_ROOT / "prompts" / "medical_read.md"
@@ -471,6 +472,7 @@ async def med_parse_medical(
         skip_vlm: If true, only parse; do not call the 27B model.
         continuation_mode: "terminal" or "material" (default "terminal").
     """
+    assert_input_tree_in_user_home(path)
     streamed_chars = 0
     pending_chunks: List[str] = []
 
@@ -533,6 +535,7 @@ def med_image_route(
         intensity_units: Confirmed voxel units (HU, UNKNOWN or OTHER), if known.
         requested_model: Explicitly requested model (radar or deepchest), if any.
     """
+    assert_input_tree_in_user_home(path)
     result = route_image(
         path, max_files=max(1, min(int(max_files or 512), 2048)),
         modality=modality, body_region=body_region,
@@ -556,6 +559,7 @@ def med_dicom_route(path: str, max_files: int = 512) -> str:
         path: Absolute or relative path to a medical imaging file or directory.
         max_files: Maximum directory files to inspect (1-2048, default 512).
     """
+    assert_input_tree_in_user_home(path)
     bounded_max_files = max(1, min(int(max_files or 512), 2048))
     result = route_image(path, max_files=bounded_max_files)
     result["tool"] = "med_dicom_route"
@@ -721,6 +725,7 @@ async def med_radar_analyze_ct(
         study_context: Known region/contrast context, e.g. "contrast-enhanced
             abdominal CT". Leave empty when unknown; never guess metadata.
     """
+    assert_input_tree_in_user_home(path)
     if not specialized_ct_enabled():
         return _disabled_specialized_tool("med_radar_analyze_ct")
     from .radar import run_radar_analysis
@@ -769,6 +774,7 @@ async def med_deepchest_submit(path: str, question: str, body_region: str,
     Returns job_id; use med_deepchest_job until succeeded/failed. Do not resubmit.
     Include the original question and current presentation preferences in question.
     """
+    assert_input_tree_in_user_home(path)
     if not specialized_ct_enabled():
         return _disabled_specialized_tool("med_deepchest_submit")
     from .deepchest import call_deepchest
@@ -891,7 +897,9 @@ async def med_trauma_stage_plan(
         image_paths: Optional absolute paths to ordinary injury photos for the medical model.
         max_images: Max images to send (default 8, max 16).
     """
-    from .trauma_stage_plan import generate_stage_plan_stream
+    from .trauma_stage_plan import generate_stage_plan_stream, _normalize_image_paths
+    for image_path in _normalize_image_paths(image_paths):
+        assert_path_in_user_home(image_path)
 
     streamed_chars = 0
     pending_chunks: List[str] = []

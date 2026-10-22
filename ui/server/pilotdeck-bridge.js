@@ -49,7 +49,8 @@ import {
 } from '../../src/status/agentStatus.js';
 import { createNormalizedMessage } from './pilotdeck-message.js';
 import { createSanitizingWriter, sanitizeValue, scopedSanitizeOptions } from './utils/pathSanitization.js';
-import { readPermissionSettings } from './services/permissionSettings.js';
+import { isExplicitCrossUserAccessRequest } from './utils/crossUserRequestGuard.js';
+import { getWebPermissionMode } from './services/webPermissionMode.js';
 import { createGatewayPool } from './services/gatewayPool.js';
 import { DISABLE_LOCAL_AUTH } from './constants/config.js';
 import { readMultiUserConfig } from './services/pilotdeckConfig.js';
@@ -60,6 +61,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const TRUSTED_GATEWAY_TURN_OPTIONS = Symbol('pilotdeck.trustedGatewayTurnOptions');
+const ACCESS_REFUSAL_REPLY = '抱歉，我无法访问该位置。它不属于您当前账号的工作区；为了保护各用户的资料，系统禁止读取或修改其他账号及系统目录中的内容，也无法确认该位置是否存在。如果您有需要我处理的材料（检查报告、影像文件、病例描述等），可以直接上传到当前对话中。请勿通过复制文件或更换工具等方式绕过访问限制。';
 
 // Per-session / per-user keyed state. All keys carry the user id via stateKey()
 // so two users never share an entry. (stateKey is a hoisted function declaration.)
@@ -156,17 +158,9 @@ function isVisibleFailureAgentStatus(event) {
 }
 
 /**
- * Default permission mode for sessions started from the Web UI. We use
- * `default` so PilotDeck's `Permission.decide()` fully evaluates rules
- * + tool semantics — read-only tools allow, side-effecting tools either
- * surface an interactive `permission_request` (resolved via the banner)
- * or short-circuit on an allow rule the user accumulated this session.
- * Override with `PILOTDECK_WEB_PERMISSION_MODE`.
+ * The web permission mode is selected by the server for every account.
+ * Sandbox and path checks remain in force even when confirmations are bypassed.
  */
-const WEB_DEFAULT_PERMISSION_MODE =
-    process.env.PILOTDECK_WEB_PERMISSION_MODE || 'default';
-
-
 let poolInstance = null;
 function pool() {
     if (!poolInstance) poolInstance = createGatewayPool({ config: readMultiUserConfig().gatewayPool, multiUser: !DISABLE_LOCAL_AUTH });
@@ -416,12 +410,6 @@ function uiFilesToAttachments(files) {
     return out.length > 0 ? out : undefined;
 }
 
-function normalizePermissionMode(value) {
-    if (value === undefined || value === null || value === '') return undefined;
-    if (value === 'default' || value === 'plan' || value === 'bypassPermissions') return value;
-    return 'default';
-}
-
 function normalizeRunMode(value) {
     if (value === undefined || value === null || value === '') return undefined;
     if (value === 'agent' || value === 'plan' || value === 'ask') return value;
@@ -449,7 +437,7 @@ export function getGatewayTurnSafetyOverrides(options) {
         turnOverrides.provider = selectedModel.slice(0, separator);
         turnOverrides.model = selectedModel.slice(separator + 1);
     }
-    if (options?.thinking && typeof options.thinking === 'object' && !Array.isArray(options.thinking)) {
+    if (trusted && options?.thinking && typeof options.thinking === 'object' && !Array.isArray(options.thinking)) {
         turnOverrides.thinking = options.thinking;
     }
     if (options?.turnOverrides && typeof options.turnOverrides === 'object' && !Array.isArray(options.turnOverrides)) {
@@ -517,18 +505,10 @@ export function getGatewayTurnSafetyOverrides(options) {
 }
 
 function resolvePermissionMode(options) {
-    const explicit = normalizePermissionMode(options?.permissionMode || options?.mode);
-    // A literal "default" from the chat composer is the implicit
-    // no-special-mode position of the per-turn picker, not a real
-    // per-turn override. Let the user-level skipPermissions toggle
-    // win over it. Genuine non-default picks (plan / bypassPermissions)
-    // still take precedence — they're a deliberate per-turn decision.
-    if (explicit && explicit !== 'default') return explicit;
-    const persisted = readPermissionSettings();
-    if (persisted.skipPermissions === true) {
-        return 'bypassPermissions';
-    }
-    return explicit || normalizePermissionMode(WEB_DEFAULT_PERMISSION_MODE) || 'default';
+    // Browser-provided permission modes are untrusted, including values
+    // persisted in older sessions. Plan is a separate, visible run mode.
+    if (normalizeRunMode(options?.runMode) === 'plan') return 'plan';
+    return getWebPermissionMode();
 }
 
 /**
@@ -1411,6 +1391,37 @@ export async function runChatViaGateway(
         );
     }
 
+    // Give a fixed response before the model sees a protected path. This also
+    // prevents the model from suggesting the user copy somebody else's file.
+    if (sanitizeOptions && isExplicitCrossUserAccessRequest(command, {
+        userId: sanitizeOptions.userId,
+        pilotRoot: sanitizeOptions.pilotRoot,
+    })) {
+        const runId = typeof options?.runId === 'string' && options.runId.trim()
+            ? options.runId.trim() : randomUUID();
+        try {
+            await withUserGateway(async (gw) => {
+                if (!gw.recordRejectedTurn) throw new Error('Gateway does not support policy refusal persistence.');
+                const result = await gw.recordRejectedTurn({
+                    sessionKey, projectKey, channelKey, runId,
+                    userText: command ?? '', reply: ACCESS_REFUSAL_REPLY,
+                });
+                if (result?.recorded !== true) throw new Error('Policy refusal was not persisted.');
+            });
+            writer.send(createNormalizedMessage({ provider, sessionId: sessionKey, runId,
+                kind: 'stream_delta', content: ACCESS_REFUSAL_REPLY }));
+            writer.send(createNormalizedMessage({ provider, sessionId: sessionKey, runId, kind: 'stream_end' }));
+            writer.send(createNormalizedMessage({ provider, sessionId: sessionKey, runId,
+                kind: 'complete', exitCode: 0, success: true }));
+        } catch (error) {
+            console.error('[pilotdeck-bridge] failed to persist policy refusal:', error);
+            writer.send(createNormalizedMessage({ provider, sessionId: sessionKey, runId,
+                kind: 'error', code: 'policy_refusal_persist_failed',
+                content: '无法保存本轮拒绝记录，请稍后重试。' }));
+        }
+        return;
+    }
+
     const requestedRunId = typeof options?.runId === 'string' && options.runId.trim()
         ? options.runId.trim()
         : undefined;
@@ -1424,7 +1435,7 @@ export async function runChatViaGateway(
         ...(uiFilesToAttachments(options?.attachments) || []),
     ];
     const resolvedMode = resolvePermissionMode(options);
-    const basePermissionMode = normalizePermissionMode(options?.basePermissionMode);
+    const basePermissionMode = resolvedMode === 'plan' ? getWebPermissionMode() : undefined;
     const runMode = normalizeRunMode(options?.runMode) || (resolvedMode === 'plan' ? 'plan' : 'agent');
     const traumaForm = sanitizeTraumaFormInput(options?.traumaForm);
     const traumaRawInput = typeof options?.traumaRawInput === 'string' ? options.traumaRawInput : undefined;
@@ -1617,6 +1628,7 @@ export async function runChatViaGateway(
         state.hasVisibleFailureStatus = true;
         sendBridgeStatusEvent(writer, statusEvent, sessionKey, provider);
     } finally {
+        writer.discardPending?.();
         clearActiveRunIfCurrent(state, runId);
     }
 }

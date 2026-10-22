@@ -1314,7 +1314,7 @@ button:disabled {
   border-radius: var(--radius-md);
   background: var(--card);
   padding: 12px 12px 10px 14px;
-  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
 }
 
 .entry-card::before,
@@ -1346,9 +1346,28 @@ button:disabled {
 
 .entry-card:hover,
 .trace-card:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
   border-color: var(--border-strong);
+}
+
+.entry-card--clickable:focus-visible {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+  border-color: var(--border-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .entry-card,
+  .trace-card {
+    transition: none;
+  }
+
+  .entry-card:hover,
+  .trace-card:hover,
+  .entry-card--clickable:focus-visible {
+    transform: none;
+  }
 }
 
 .entry-head,

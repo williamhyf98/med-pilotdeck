@@ -2,6 +2,7 @@ import { dirname } from "node:path";
 import { BwrapSandbox, resolveAppRoot } from "./bwrap.js";
 import { NoneSandbox } from "./none.js";
 import { SandboxExecSandbox } from "./sandboxExec.js";
+import type { SandboxGrants } from "./grants.js";
 
 /**
  * bash 工具的操作系统级沙箱适配层（spec §16.3）。
@@ -13,6 +14,8 @@ export interface CommandSandbox {
   wrap(command: string, options: { cwd: string; userHome: string; env: NodeJS.ProcessEnv }): { file: string; args: string[] };
   /** 启动时自检：二进制存在、能执行 `true`，失败则返回原因 */
   probe(): Promise<{ ok: true } | { ok: false; reason: string }>;
+  /** Effective filesystem grants for this user's command (including canonical symlink targets). */
+  grants(userHome: string): SandboxGrants;
 }
 
 export interface SelectSandboxOptions {

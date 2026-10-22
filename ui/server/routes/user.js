@@ -7,8 +7,30 @@ import {
   isValidGitName,
   writeUserGitConfigFile,
 } from '../services/userGitConfig.js';
+import { InvalidUiPreferences, readUserUiPreferences, updateUserUiPreferences } from '../services/userUiPreferences.js';
 
 const router = express.Router();
+
+router.get('/preferences', authenticateToken, async (req, res) => {
+  try {
+    res.json({ preferences: await readUserUiPreferences(req.user.id) });
+  } catch (error) {
+    console.error('Error reading user preferences:', error);
+    res.status(500).json({ error: 'Failed to read preferences' });
+  }
+});
+
+router.patch('/preferences', authenticateToken, async (req, res) => {
+  try {
+    res.json({ preferences: await updateUserUiPreferences(req.user.id, req.body) });
+  } catch (error) {
+    if (error instanceof InvalidUiPreferences) {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error('Error saving user preferences:', error);
+    res.status(500).json({ error: 'Failed to save preferences' });
+  }
+});
 
 router.get('/git-config', authenticateToken, async (req, res) => {
   try {

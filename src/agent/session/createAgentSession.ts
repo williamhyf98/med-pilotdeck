@@ -107,6 +107,7 @@ export function createAgentSessionWithStorage(options: CreateAgentSessionOptions
       turnRunner,
       cwd: runtimeContext.cwd,
       transcriptPath: runtimeContext.transcriptPath,
+      transcript,
       uuid: dependencies.uuid,
       initialState: options.initialState,
       replayEvents: options.replayEvents,

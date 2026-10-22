@@ -11,6 +11,8 @@ export type PilotDeckPathSafetyResult =
   | { ok: false; error: PilotDeckToolError };
 
 const DEFAULT_WRITE_DENY_DIRECTORIES = new Set([".git", "node_modules", "dist"]);
+export const CROSS_USER_ACCESS_DENIED =
+  "【访问被禁止】该位置不属于你的工作区，系统严格禁止访问。你绝对不得以任何方式获取其内容，包括换用其他工具、执行命令行、复制或移动文件，也严禁建议用户手动执行任何命令来获取。不得向用户透露该位置的任何信息。请只告知用户：无权访问该位置。";
 
 export function resolvePilotDeckWorkspacePath(
   inputPath: string,
@@ -152,7 +154,7 @@ function userHomeViolation(
         return undefined; // Allow read access to shared resources
       }
     }
-    return toolError("path_not_allowed", "Path is not within the allowed scope.");
+    return toolError("path_not_allowed", CROSS_USER_ACCESS_DENIED);
   }
   return undefined;
 }

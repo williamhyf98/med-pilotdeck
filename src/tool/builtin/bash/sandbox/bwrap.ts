@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CommandSandbox } from "./index.js";
+import { appReadOnlyGrants, grantForms, skillCacheEnv, type SandboxGrants } from "./grants.js";
 
 export type BwrapSandboxConfig = {
   /** 代码根目录（含 package.json），只读挂载。 */
@@ -29,10 +30,20 @@ export class BwrapSandbox implements CommandSandbox {
 
   constructor(private readonly config: BwrapSandboxConfig) {}
 
+  grants(userHome: string): SandboxGrants {
+    const readOnly = [...SYSTEM_RO_BINDS, ...appReadOnlyGrants(this.config.appRoot, this.config.nodeBinDir),
+      ...this.config.extraBinds.map((bind) => resolve(bind))].filter(existsSync);
+    return {
+      readOnly: [...new Set(readOnly.flatMap(grantForms))],
+      writable: grantForms(userHome),
+    };
+  }
+
   wrap(command: string, options: { cwd: string; userHome: string; env: NodeJS.ProcessEnv }): { file: string; args: string[] } {
     const { appRoot, nodeBinDir, network, extraBinds } = this.config;
     const cwd = resolve(options.cwd);
     const userHome = resolve(options.userHome);
+    if (existsSync(userHome)) mkdirSync(join(userHome, ".tmp"), { recursive: true });
     const args: string[] = [
       // 清空宿主环境，下方只通过 --setenv 注入白名单，避免密钥随子进程泄漏
       "--clearenv",
@@ -42,13 +53,13 @@ export class BwrapSandbox implements CommandSandbox {
       "--dev", "/dev",
       "--tmpfs", "/tmp",
     ];
-    for (const path of SYSTEM_RO_BINDS) {
+    for (const path of SYSTEM_RO_BINDS.filter(existsSync)) {
+      args.push("--ro-bind", path, path);
+    }
+    for (const path of appReadOnlyGrants(appRoot, nodeBinDir)) {
       args.push("--ro-bind", path, path);
     }
     args.push(
-      // 代码与 Node
-      "--ro-bind", appRoot, appRoot,
-      "--ro-bind", nodeBinDir, nodeBinDir,
       // 用户 home 是唯一可写区域
       "--bind", userHome, userHome,
       // 隔离与生命周期
@@ -64,15 +75,19 @@ export class BwrapSandbox implements CommandSandbox {
     }
     for (const bind of extraBinds) {
       const path = resolve(bind);
+      if (!existsSync(path)) continue;
       args.push("--ro-bind", path, path);
     }
     for (const key of PASSTHROUGH_ENV_KEYS) {
       const value = options.env[key];
       if (value) args.push("--setenv", key, value);
     }
+    for (const [key, value] of Object.entries(skillCacheEnv(appRoot))) {
+      args.push("--setenv", key, value);
+    }
     args.push(
       "--setenv", "HOME", userHome,
-      "--setenv", "TMPDIR", "/tmp",
+      "--setenv", "TMPDIR", join(userHome, ".tmp"),
       "--setenv", "PILOT_HOME", userHome,
     );
     args.push("/bin/sh", "-c", command);

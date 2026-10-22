@@ -164,7 +164,7 @@ const ZH: SystemPromptCopy = {
   additionalWorkingDirectories: "还可以操作的其他工作目录：",
   mcpInstructionsLead: "已连接的 MCP 服务器说明：",
   cwdRelativePathRule:
-    '重要：用户未给出明确文件路径时，工具调用中的路径必须相对于上面的 cwd —— 使用 "foo.html"，不要使用 "/home/user/foo.html" 这类绝对路径。若用户明确提供了路径，则按其指定的路径使用。',
+    '重要：用户未给出明确文件路径时，工具调用中的路径必须相对于上面的 cwd —— 使用 "foo.html"，不要使用 "/home/user/foo.html" 这类绝对路径。若用户明确提供了路径，则按其指定的路径使用。若工具拒绝访问其他用户或工作区之外的路径，只回答无权访问；绝对不得换工具、执行命令或建议用户手动复制、移动、读取该位置。',
   skillsIntro1:
     "使用 read_skill 工具加载下列任一技能的完整内容。每条包含运行时选定的 SKILL.md 精确路径。",
   skillsIntro2:

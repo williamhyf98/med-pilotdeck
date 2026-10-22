@@ -10,6 +10,10 @@ import {
 } from "../../../../src/tool/builtin/bash/commandRunner.js";
 import type { CommandSandbox } from "../../../../src/tool/builtin/bash/sandbox/index.js";
 import type { MultiUserConfig } from "../../../../src/pilot/config/parseMultiUserConfig.js";
+import { assertSandboxGrantsSafe } from "../../../../src/tool/builtin/bash/commandRunner.js";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 type SpawnCall = { file: string; args: string[]; options: SpawnOptions };
 
@@ -36,6 +40,7 @@ function fakeSandbox(kind: CommandSandbox["kind"] = "bwrap"): CommandSandbox & {
   return {
     kind,
     wrapCalls,
+    grants: () => ({ readOnly: [], writable: [] }),
     wrap(command, options) {
       wrapCalls.push({ command, options });
       return { file: "/fake/sandbox-launcher", args: ["--wrapped", command] };
@@ -156,4 +161,48 @@ test("startup probe: a configured sandbox-exec that cannot run fails startup wit
     /sandbox sandbox-exec failed its startup probe: sandbox-exec not found/,
   );
   assert.equal(getCommandSandbox(), null);
+});
+
+test("startup guard rejects root-wide and symlinked grants but accepts specific app directories", () => {
+  const root = mkdtempSync(join(tmpdir(), "sb-grant-"));
+  try {
+    const home = join(root, "data", "users", "2");
+    mkdirSync(home, { recursive: true });
+    mkdirSync(join(root, "data", "users", "3", "workspaces"), { recursive: true });
+    mkdirSync(join(root, "skills"));
+    symlinkSync(join(root, "data"), join(root, "shortcut"));
+    const withGrant = (readOnly: string[]): CommandSandbox => ({
+      kind: "bwrap", grants: () => ({ readOnly, writable: [home] }),
+      wrap: () => ({ file: "bwrap", args: [] }), probe: async () => ({ ok: true }),
+    });
+    assert.doesNotThrow(() => assertSandboxGrantsSafe(withGrant([join(root, "skills")]), home));
+    for (const grant of [root, join(root, "data"), join(root, "shortcut"), join(root, "data", "users")]) {
+      assert.throws(() => assertSandboxGrantsSafe(withGrant([grant]), home), /Unsafe sandbox grant/);
+    }
+    assert.throws(() => assertSandboxGrantsSafe(withGrant([join(root, "data", "users", "3", "workspaces")]), home), /Unsafe sandbox grant/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("startup guard permits ancestor metadata but rejects literal metadata inside protected data", () => {
+  const root = mkdtempSync(join(tmpdir(), "sb-meta-"));
+  try {
+    const home = join(root, "data", "users", "2");
+    mkdirSync(home, { recursive: true });
+    mkdirSync(join(root, "data", "users", "3"), { recursive: true });
+    const sandbox = (metadataOnly: string[]): CommandSandbox => ({
+      kind: "sandbox-exec",
+      grants: () => ({ readOnly: [], writable: [home], metadataOnly }),
+      wrap: () => ({ file: "/usr/bin/sandbox-exec", args: [] }),
+      probe: async () => ({ ok: true }),
+    });
+    assert.doesNotThrow(() => assertSandboxGrantsSafe(sandbox([root, home]), home));
+    for (const target of [join(root, "data"), join(root, "data", "system", "auth.db"),
+      join(root, "data", "users", "3"), join(root, "data", "users", "3", "secret")]) {
+      assert.throws(() => assertSandboxGrantsSafe(sandbox([target]), home), /Unsafe sandbox metadata grant/);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

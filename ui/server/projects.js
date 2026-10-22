@@ -29,6 +29,7 @@ import {
 import { mapLegacySessionPresentation } from '../../src/web/server/legacySessionPresentation.js';
 import {
     resolveScopedHome,
+    assertPathInUserHome,
     createProjectId,
     createCollisionResistantProjectId,
     sanitizeSessionIdForPath,
@@ -39,6 +40,7 @@ import {
     resolveProjectChatDir,
     resolveTypedProjectDir,
     projectTypeKeyFromMetaType,
+    projectTypeKeyFromProjectId,
     PROJECT_TYPE_KEY_SET,
     GENERAL_WORKSPACE_ID,
     ensureWorkspaceLayout,
@@ -552,9 +554,51 @@ async function allocateProjectIdForPath(absolutePath, pilotHome) {
     return createCollisionResistantProjectId(absolutePath);
 }
 
-async function renameProject(_projectName, _displayName) {
-    // PilotDeck does not yet expose a rename API. Display names are derived
-    // from the project's basename today, so this is a no-op.
+async function renameProject(projectName, displayName) {
+    const name = typeof displayName === 'string' ? displayName.trim() : '';
+    if (!name) {
+        const error = new Error('displayName is required');
+        error.code = 'invalid_input';
+        throw error;
+    }
+    if (typeof projectName !== 'string' || !projectName || projectName === '.' || projectName === '..'
+        || projectName.includes('/') || projectName.includes('\\')) {
+        const error = new Error('Invalid project name');
+        error.code = 'invalid_input';
+        throw error;
+    }
+    const pilotHome = resolveScopedHome();
+    const metaFile = projectMetaPath(pilotHome, projectName);
+    assertPathInUserHome(metaFile, pilotHome, true);
+    let meta = await readProjectMeta(pilotHome, projectName);
+    if (!meta) {
+        const typeKey = projectTypeKeyFromProjectId(projectName);
+        const projectDir = resolveTypedProjectDir(projectName, pilotHome);
+        const stat = await fs.stat(projectDir).catch((error) => {
+            if (error?.code === 'ENOENT') return null;
+            throw error;
+        });
+        if (stat?.isDirectory() && typeKey) {
+            meta = {
+                id: projectName,
+                type: typeKey === 'trauma_med' ? PROJECT_TYPES.WAR_TRAUMA : PROJECT_TYPES.GENERAL_MEDICINE,
+                kind: 'system',
+            };
+        }
+    }
+    if (!meta || (meta.id && meta.id !== projectName) || !isAllowedProjectType(meta.type)) {
+        const error = new Error('Project not found');
+        error.code = 'project_not_found';
+        throw error;
+    }
+    const temporary = `${metaFile}.${randomBytes(6).toString('hex')}.tmp`;
+    try {
+        await fs.writeFile(temporary, `${JSON.stringify({ ...meta, displayName: name }, null, 2)}\n`,
+            { flag: 'wx', mode: 0o600 });
+        await fs.rename(temporary, metaFile);
+    } finally {
+        await fs.rm(temporary, { force: true });
+    }
     return { success: true };
 }
 

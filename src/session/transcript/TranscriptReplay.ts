@@ -61,18 +61,24 @@ export function replayTranscriptEntries(entries: AgentTranscriptEntry[]): AgentT
     switch (entry.type) {
       case "accepted_input":
         if (!beforeBoundary) {
-          messages.push(...cloneMessages(entry.messages));
-          events.push({
-            type: "input_accepted",
-            sessionId: entry.sessionId,
-            turnId: entry.turnId,
-            messages: cloneMessages(entry.messages),
-          });
+          const replayMessages = entry.messages.filter((message) => message.metadata?.webOnly !== true);
+          if (replayMessages.length > 0) {
+            messages.push(...cloneMessages(replayMessages));
+            events.push({
+              type: "input_accepted",
+              sessionId: entry.sessionId,
+              turnId: entry.turnId,
+              messages: cloneMessages(replayMessages),
+            });
+          }
         }
         break;
       case "assistant_message":
       case "tool_result_message":
       case "durable_message":
+        // Policy denials are visible in Web history but must never replay the
+        // rejected path or request into a later model turn.
+        if (entry.message.metadata?.webOnly === true) break;
         if (!completedTurnIds.has(entry.turnId)) {
           diagnostics.push({
             code: "transcript_entry_invalid",

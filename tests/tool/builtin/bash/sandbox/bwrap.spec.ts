@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BwrapSandbox, resolveAppRoot } from "../../../../../src/tool/builtin/bash/sandbox/bwrap.js";
@@ -13,16 +13,8 @@ const baseConfig = {
   extraBinds: ["/opt/libreoffice"],
 };
 
-const SYSTEM_RO = [
-  "--ro-bind", "/usr", "/usr",
-  "--ro-bind", "/lib", "/lib",
-  "--ro-bind", "/lib64", "/lib64",
-  "--ro-bind", "/bin", "/bin",
-  "--ro-bind", "/sbin", "/sbin",
-  "--ro-bind", "/etc/alternatives", "/etc/alternatives",
-  "--ro-bind", "/etc/ssl", "/etc/ssl",
-  "--ro-bind", "/etc/resolv.conf", "/etc/resolv.conf",
-];
+const SYSTEM_RO = ["/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc/alternatives", "/etc/ssl", "/etc/resolv.conf"]
+  .filter(existsSync).flatMap((path) => ["--ro-bind", path, path]);
 
 test("bwrap wrap() produces the exact argv skeleton from spec 16.4", () => {
   const sandbox = new BwrapSandbox(baseConfig);
@@ -39,8 +31,12 @@ test("bwrap wrap() produces the exact argv skeleton from spec 16.4", () => {
     "--dev", "/dev",
     "--tmpfs", "/tmp",
     ...SYSTEM_RO,
-    "--ro-bind", "/app", "/app",
-    "--ro-bind", "/opt/node/bin", "/opt/node/bin",
+    ...(["dist", "node_modules", "skills", "plugins", ".runtime/node", ".runtime/python",
+      ".runtime/cache/xdg/pilotdeck-docx", ".runtime/cache/xdg/pilotdeck-pptx",
+      ".runtime/cache/xdg/pilotdeck-spreadsheets"]
+      .map((part) => join(baseConfig.appRoot, part)).filter(existsSync)
+      .flatMap((path) => ["--ro-bind", path, path])),
+    "--ro-bind", baseConfig.nodeBinDir, baseConfig.nodeBinDir,
     "--bind", "/home/u1", "/home/u1",
     "--unshare-pid",
     "--unshare-ipc",
@@ -48,11 +44,10 @@ test("bwrap wrap() produces the exact argv skeleton from spec 16.4", () => {
     "--die-with-parent",
     "--new-session",
     "--chdir", "/home/u1/projects",
-    "--ro-bind", "/opt/libreoffice", "/opt/libreoffice",
     "--setenv", "PATH", "/usr/bin:/bin",
     "--setenv", "LANG", "C.UTF-8",
     "--setenv", "HOME", "/home/u1",
-    "--setenv", "TMPDIR", "/tmp",
+    "--setenv", "TMPDIR", "/home/u1/.tmp",
     "--setenv", "PILOT_HOME", "/home/u1",
     "/bin/sh", "-c", "echo test",
   ]);
@@ -78,21 +73,30 @@ test("only the user home is writable: userHome is the sole --bind", () => {
   assert.deepEqual(writable, ["/home/u1"]);
 });
 
-test("adds --unshare-net only when network is disabled", () => {
+test("adds --unshare-net only when network is disabled", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "bwrap-net-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const userHome = join(root, "user");
   const open = new BwrapSandbox({ ...baseConfig, network: true });
-  assert.ok(!open.wrap("true", { cwd: "/tmp", userHome: "/home/u", env: {} }).args.includes("--unshare-net"));
+  assert.ok(!open.wrap("true", { cwd: "/tmp", userHome, env: {} }).args.includes("--unshare-net"));
 
   const isolated = new BwrapSandbox({ ...baseConfig, network: false, extraBinds: [] });
-  const { args } = isolated.wrap("true", { cwd: "/tmp", userHome: "/home/u", env: {} });
+  const { args } = isolated.wrap("true", { cwd: "/tmp", userHome, env: {} });
   assert.ok(args.includes("--unshare-net"));
 });
 
-test("extra read-only binds are normalized with path.resolve", () => {
-  const sandbox = new BwrapSandbox({ ...baseConfig, extraBinds: ["/opt/libreoffice/", "/opt/x/../y"] });
-  const { args } = sandbox.wrap("true", { cwd: "/home/u", userHome: "/home/u", env: {} });
-  assert.ok(args.includes("/opt/libreoffice"));
-  assert.ok(!args.includes("/opt/libreoffice/"));
-  assert.ok(args.includes("/opt/y"));
+test("extra read-only binds are normalized, and absent paths are skipped", () => {
+  const root = mkdtempSync(join(tmpdir(), "bwrap-extra-"));
+  try {
+    const sandbox = new BwrapSandbox({ ...baseConfig, extraBinds: [`${root}/`, "/opt/x/../y"] });
+    const userHome = join(root, "user");
+    const { args } = sandbox.wrap("true", { cwd: userHome, userHome, env: {} });
+    assert.ok(args.includes(root));
+    assert.ok(!args.includes(`${root}/`));
+    assert.ok(!args.includes("/opt/y"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("tmpfs /tmp is mounted before binds so a userHome under /tmp stays visible", () => {
@@ -134,4 +138,24 @@ test("probe succeeds when bwrap is installed and can run /bin/true", {
 }, async () => {
   const result = await new BwrapSandbox(baseConfig).probe();
   assert.deepEqual(result, { ok: true });
+});
+
+test("only existing app subdirectories are mounted, and no root or data directory is exposed", () => {
+  const root = mkdtempSync(join(tmpdir(), "bwrap-app-"));
+  try {
+    for (const part of ["dist", "skills", "plugins", "node_modules", ".pilotdeck-home/users/2"]) {
+      mkdirSync(join(root, part), { recursive: true });
+    }
+    const home = join(root, ".pilotdeck-home", "users", "2");
+    const sandbox = new BwrapSandbox({ ...baseConfig, appRoot: root, extraBinds: [join(root, "missing")] });
+    const { args } = sandbox.wrap("true", { cwd: home, userHome: home, env: {} });
+    const grants = sandbox.grants(home);
+    assert.ok(!grants.readOnly.includes(root));
+    assert.ok(!grants.readOnly.includes(join(root, ".pilotdeck-home")));
+    assert.ok(grants.readOnly.includes(join(root, "skills")));
+    assert.ok(!args.includes(join(root, "missing")));
+    assert.ok(!args.includes(join(root, ".pilotdeck-home")));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

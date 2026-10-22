@@ -14,6 +14,7 @@ import {
 } from "./AgentSessionState.js";
 import type { AgentTranscriptWriterState } from "../../session/transcript/TranscriptWriter.js";
 import type { AgentLoopSeedState } from "../loop/AgentLoop.js";
+import type { AgentTranscriptWriter } from "../../session/transcript/TranscriptWriter.js";
 
 export type AgentSessionOptions = {
   sessionId: string;
@@ -24,6 +25,7 @@ export type AgentSessionOptions = {
   initialState?: AgentSessionStateShape;
   replayEvents?: AgentEvent[];
   lifecycle?: LifecycleRuntime;
+  transcript?: AgentTranscriptWriter;
 };
 
 export type AgentSessionRuntimeReloadSnapshot = {
@@ -39,6 +41,27 @@ export class AgentSession {
 
   constructor(private readonly options: AgentSessionOptions) {
     this.state = options.initialState ?? createInitialAgentSessionState(options.sessionId);
+  }
+
+  /** Persist a policy refusal as a complete web turn, without running a model.
+   * Web-only messages appear in the transcript but are excluded from model replay.
+   */
+  async recordRejectedTurn(turnId: string, userText: string, reply: string): Promise<void> {
+    const transcript = this.options.transcript;
+    if (!transcript) throw new Error("Session transcript unavailable for policy refusal.");
+    const metadata = { purpose: "policy_denial", webOnly: true };
+    await transcript.recordAcceptedInput(this.state.sessionId, turnId, [{
+      role: "user", content: [{ type: "text", text: userText }], metadata,
+    }]);
+    await transcript.recordDurableMessage(this.state.sessionId, turnId, {
+      role: "assistant", content: [{ type: "text", text: reply }], metadata,
+    });
+    const timestamp = new Date().toISOString();
+    await transcript.recordTurnResult(this.state.sessionId, turnId, {
+      type: "success", sessionId: this.state.sessionId, turnId,
+      stopReason: "completed", usage: {}, permissionDenials: [], turns: 0,
+      startedAt: timestamp, completedAt: timestamp,
+    });
   }
 
   async *submit(input: AgentInput, submitOptions: AgentSubmitOptions = {}): AsyncGenerator<AgentEvent, void, unknown> {

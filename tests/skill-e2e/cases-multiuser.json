@@ -1,0 +1,266 @@
+{
+  "_comment": "多用户基线用例（Task 12.0）。tier 1 = bash 脚本技能；tier 2 = 医学插件技能；tier 3 = 纯提示词技能。attachments.from 相对 tests/skill-e2e/fixtures。",
+  "cases": [
+    {
+      "id": "pdf",
+      "kind": "document",
+      "skill": "pdf",
+      "tier": 1,
+      "timeoutMs": 300000,
+      "message": "帮我生成成一个pdf吧，文件名称就叫病例报告，里面写着标题【病例报告】即可",
+      "expectBashNeedle": "pdf.sh make",
+      "forbidBashNeedles": ["scaffold", "pdf.sh fix", "fallback-create"],
+      "expectOutputGlob": "*.pdf",
+      "expectOutputUnder": "exports"
+    },
+    {
+      "id": "pdf-from-text",
+      "kind": "document",
+      "skill": "pdf",
+      "tier": 1,
+      "timeoutMs": 300000,
+      "message": "把下面这段救治方案生成成一个pdf，标题用「救治方案」。\n\n### 伤员发生地\n1. 立即直接压迫止血，必要时上止血带并标注时间。\n2. 开放气道，观察呼吸与神志。\n3. 快速后送并交接伤情。",
+      "expectBashNeedle": "pdf.sh make",
+      "forbidBashNeedles": ["scaffold", "pdf.sh fix", "fallback-create"],
+      "expectOutputGlob": "*.pdf",
+      "expectOutputUnder": "exports"
+    },
+    {
+      "id": "docx",
+      "kind": "document",
+      "skill": "docx",
+      "tier": 1,
+      "timeoutMs": 300000,
+      "message": "帮我生成一个 Word，文件名就叫病例报告，里面标题写【病例报告】即可",
+      "expectBashNeedle": "docx.sh make",
+      "forbidBashNeedles": ["scaffold", "docx.sh fix", "fallback-create", "fallback-patch"],
+      "expectOutputGlob": "*.docx",
+      "expectOutputUnder": "exports"
+    },
+    {
+      "id": "pptx",
+      "kind": "document",
+      "skill": "pptx",
+      "tier": 1,
+      "timeoutMs": 300000,
+      "message": "帮我做一份 PPT，讲战创伤四级救治，大概三页就行",
+      "expectBashNeedle": "pptx.sh make",
+      "forbidBashNeedles": ["scaffold", "pptx.sh fix", "fallback-create"],
+      "expectOutputGlob": "*.pptx",
+      "expectOutputUnder": "exports"
+    },
+    {
+      "id": "spreadsheets",
+      "kind": "document",
+      "skill": "spreadsheets",
+      "tier": 1,
+      "timeoutMs": 300000,
+      "message": "帮我生成一份 excel，内容是战创伤救治清单：现场评估、控制出血、快速后送",
+      "expectBashNeedle": "spreadsheet.sh make",
+      "forbidBashNeedles": ["scaffold", "spreadsheet.sh fix", "fallback-create"],
+      "expectOutputGlob": "*.xlsx",
+      "expectOutputUnder": "exports"
+    },
+    {
+      "id": "diagram-maker",
+      "kind": "document",
+      "skill": "diagram-maker",
+      "tier": 1,
+      "timeoutMs": 180000,
+      "message": "把战创伤急救止血方式的流程画成一个图",
+      "expectBashNeedle": "diagram.sh make",
+      "forbidBashNeedles": ["scaffold", "diagram.sh fix"],
+      "expectOutputGlob": "*.svg",
+      "expectOutputUnder": "exports"
+    },
+    {
+      "id": "pathleak-pwd",
+      "kind": "document",
+      "skill": "bash",
+      "tier": 1,
+      "requireSkillLoad": false,
+      "timeoutMs": 180000,
+      "message": "请调用 bash 工具执行 pwd，然后在当前工作目录写入 plan3-baseline.txt，内容为 only-baseline，再用 bash 读回文件内容",
+      "expectToolsCalled": ["bash"],
+      "expectOutputGlob": "*.txt",
+      "expectAssistantContains": ["only-baseline"]
+    },
+    {
+      "id": "med-trauma-assist",
+      "kind": "medical",
+      "skill": "med-trauma-assist",
+      "tier": 2,
+      "timeoutMs": 180000,
+      "message": "如何对战创伤执行现场止血急救",
+      "expectTools": ["mcp__med-tools__med_trauma_rag_query"],
+      "forbidTools": ["mcp__med-tools__med_trauma_stage_plan"],
+      "needsRemote": "med-rag 检索服务"
+    },
+    {
+      "id": "med-trauma-stage-plan",
+      "kind": "medical",
+      "skill": "med-trauma-stage-plan",
+      "tier": 2,
+      "requireSkillLoad": false,
+      "timeoutMs": 420000,
+      "attachments": [
+        { "name": "wse_0820_00_injury.jpg", "from": "wse_0820_00_injury.jpg", "mimeType": "image/jpeg" }
+      ],
+      "message": "【伤情背景】上午在前沿阵地遭近距离致伤因素待创面图判断击中受伤区域，伤后即诉受伤区域疼痛、胸闷、呼吸费力。\n【具体表现】伤员仰卧位，意识烦躁但可应答，面色苍白，表情痛苦，出冷汗，呼吸急促，言语断续，诉胸痛、气短、口渴，无呕吐。\n【生命体征】血压82/54 mmHg，心率136次/分，呼吸32次/分，体温36.1℃，血氧饱和度86%。\n【影像】附该伤员战创伤创面图片一张，创面部位、伤类、伤型和严重程度以图片判读为准。\n\n请按伤员发生地生成正式救治方案。",
+      "expectTools": ["mcp__med-tools__med_trauma_stage_plan"],
+      "forbidTools": ["ask_user_question"],
+      "expectToolArgNeedles": [
+        { "tool": "mcp__med-tools__med_trauma_stage_plan", "needle": "伤员发生地" },
+        { "tool": "mcp__med-tools__med_trauma_stage_plan", "needle": "image_paths" }
+      ],
+      "requireStagePlanBehavior": true,
+      "needsRemote": "医学视觉模型服务"
+    },
+    {
+      "id": "med-trauma-stage-plan-ask",
+      "kind": "medical",
+      "skill": "med-trauma-stage-plan",
+      "tier": 2,
+      "requireSkillLoad": false,
+      "timeoutMs": 180000,
+      "attachments": [
+        { "name": "wse_0820_00_injury.jpg", "from": "wse_0820_00_injury.jpg", "mimeType": "image/jpeg" }
+      ],
+      "message": "【伤情背景】上午在前沿阵地遭近距离致伤因素待创面图判断击中受伤区域，伤后即诉受伤区域疼痛、胸闷、呼吸费力。\n【具体表现】伤员仰卧位，意识烦躁但可应答，面色苍白，表情痛苦，出冷汗，呼吸急促，言语断续，诉胸痛、气短、口渴，无呕吐。\n【生命体征】血压82/54 mmHg，心率136次/分，呼吸32次/分，体温36.1℃，血氧饱和度86%。\n【影像】附该伤员战创伤创面图片一张，创面部位、伤类、伤型和严重程度以图片判读为准。\n\n给我生成对应的救治方案吧",
+      "expectToolsCalled": ["ask_user_question"],
+      "forbidTools": ["mcp__med-tools__med_trauma_stage_plan"],
+      "abortAfterToolCall": "ask_user_question",
+      "canPrompt": true,
+      "allowEmptyAssistant": true
+    },
+    {
+      "id": "med-medical",
+      "kind": "medical",
+      "skill": "med-medical",
+      "tier": 2,
+      "timeoutMs": 240000,
+      "attachments": [
+        { "name": "admission-note.xml", "from": "medical-batch/admission-note.xml", "mimeType": "application/xml" },
+        { "name": "ultrasound.dcm", "from": "medical-batch/ultrasound.dcm", "mimeType": "application/dicom" }
+      ],
+      "message": "这是后续病人战场救治修复后，过了一段长时间后做的检查报告，帮我分析一下病人病情吧\n\n附件目录：{{BATCH_DIR}}",
+      "expectTools": ["mcp__med-tools__med_parse_medical"],
+      "requireBatchDirArg": true,
+      "needsRemote": "医学视觉模型服务"
+    },
+    {
+      "id": "med-dicom-router",
+      "kind": "medical",
+      "skill": "med-dicom-router",
+      "tier": 2,
+      "requireSkillLoad": false,
+      "timeoutMs": 180000,
+      "attachments": [
+        { "name": "ultrasound.dcm", "from": "medical-batch/ultrasound.dcm", "mimeType": "application/dicom" }
+      ],
+      "message": "请先对附件里的 DICOM 文件做影像路由预检，告诉我它应该交给哪个医学技能处理，不要直接解析内容。\n\n附件目录：{{BATCH_DIR}}",
+      "expectToolsCalled": ["mcp__med-tools__med_image_route"],
+      "allowEmptyAssistant": false
+    },
+    {
+      "id": "med-case-report",
+      "kind": "medical",
+      "skill": "med-case-report",
+      "tier": 2,
+      "timeoutMs": 240000,
+      "message": "男，58岁。胸痛伴出汗2小时，心电图提示前壁ST段抬高，肌钙蛋白升高。请按模版生成病例报告。",
+      "forbidTools": ["mcp__med-tools__med_trauma_stage_plan"],
+      "expectAssistantContains": ["【病例综合摘要】", "【建议诊断方向】", "【不确定性声明】"]
+    },
+    {
+      "id": "med-radar-ct",
+      "kind": "medical",
+      "skill": "med-radar-ct",
+      "tier": 2,
+      "timeoutMs": 240000,
+      "attachments": [
+        { "name": "ultrasound.dcm", "from": "medical-batch/ultrasound.dcm", "mimeType": "application/dicom" }
+      ],
+      "message": "请加载腹部CT分析技能，并调用 med_radar_status 检查 RADAR 服务是否可用，只报告状态。",
+      "expectToolsCalled": ["mcp__med-tools__med_radar_status"],
+      "needsRemote": "RADAR 服务（MED_SPECIALIZED_CT_ENABLED）"
+    },
+    {
+      "id": "med-deepchest",
+      "kind": "medical",
+      "skill": "med-deepchest-3dmedagent",
+      "tier": 2,
+      "timeoutMs": 240000,
+      "message": "请加载胸部CT分析技能，并调用 med_deepchest_status 检查 DeepChest 服务是否可用，只报告状态。",
+      "expectToolsCalled": ["mcp__med-tools__med_deepchest_status"],
+      "needsRemote": "DeepChest 服务（MED_SPECIALIZED_CT_ENABLED）"
+    },
+    {
+      "id": "frontend-slides",
+      "kind": "prompt",
+      "skill": "frontend-slides",
+      "tier": 3,
+      "timeoutMs": 300000,
+      "message": "用网页演示技能，把「战创伤四级救治」做成一页自包含的 HTML 概览，内容简短即可，直接写到 exports 目录。",
+      "expectToolsCalled": ["write_file"],
+      "expectOutputGlob": "*.html",
+      "expectOutputUnder": "exports"
+    },
+    {
+      "id": "med-role-emergency",
+      "kind": "prompt",
+      "skill": "med-role-emergency",
+      "tier": 3,
+      "timeoutMs": 180000,
+      "message": "请以急诊科诊疗助手的身份，简要说明胸痛患者的急诊初步评估流程。"
+    },
+    {
+      "id": "med-role-critical-care",
+      "kind": "prompt",
+      "skill": "med-role-critical-care",
+      "tier": 3,
+      "timeoutMs": 180000,
+      "message": "请以重症医学诊疗助手的身份，简要说明脓毒性休克的液体复苏原则。"
+    },
+    {
+      "id": "med-role-orthopedics",
+      "kind": "prompt",
+      "skill": "med-role-orthopedics",
+      "tier": 3,
+      "timeoutMs": 180000,
+      "message": "请以骨科诊疗助手的身份，简要说明开放性骨折的急诊处理要点。"
+    },
+    {
+      "id": "med-role-radiology",
+      "kind": "prompt",
+      "skill": "med-role-radiology",
+      "tier": 3,
+      "timeoutMs": 180000,
+      "message": "请以影像科判读助手的身份，简要说明胸部X线读片的基本顺序。"
+    },
+    {
+      "id": "med-role-laboratory",
+      "kind": "prompt",
+      "skill": "med-role-laboratory",
+      "tier": 3,
+      "timeoutMs": 180000,
+      "message": "请以检验结果分析助手的身份，简要说明血常规中白细胞升高的常见解读思路。"
+    },
+    {
+      "id": "med-role-laboratory-with-values",
+      "kind": "prompt",
+      "skill": "med-role-laboratory",
+      "tier": 3,
+      "timeoutMs": 180000,
+      "message": "我有一份血常规检验报告：白细胞 18.2×10⁹/L，中性粒细胞 85%，CRP 46 mg/L。请先调用 read_skill 加载 med-role-laboratory，再按该技能的检验科框架分析上述具体数值、标本局限和复查建议。"
+    },
+    {
+      "id": "med-role-burn",
+      "kind": "prompt",
+      "skill": "med-role-burn",
+      "tier": 3,
+      "timeoutMs": 180000,
+      "message": "请以烧伤科诊疗助手的身份，简要说明烧伤面积的九分法估算。"
+    }
+  ]
+}

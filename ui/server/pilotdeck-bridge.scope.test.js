@@ -3,18 +3,23 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-let root; const acquired = []; const released = []; let acquireError = null;
+let root; const acquired = []; const released = []; const submitted = []; let acquireError = null;
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'pd-bridge-'));
   vi.stubEnv('PILOT_HOME', root);
   vi.resetModules();
-  acquired.length = 0; released.length = 0; acquireError = null;
+  acquired.length = 0; released.length = 0; submitted.length = 0; acquireError = null;
   vi.doMock('./services/gatewayPool.js', () => ({
     createGatewayPool: () => ({
       acquire: async (userId) => {
         if (acquireError) throw acquireError;
         acquired.push(String(userId));
-        const gateway = { userId: String(userId), abortTurn: vi.fn(async () => {}), close: vi.fn() };
+        const gateway = { userId: String(userId), abortTurn: vi.fn(async () => {}),
+          submitTurn: async function* (input) {
+            submitted.push({ userId: String(userId), input });
+            yield { type: 'turn_completed', runId: input.runId };
+          },
+          recordRejectedTurn: vi.fn(async () => ({ recorded: true })), close: vi.fn() };
         return { gateway, runtimeId: `${userId}:1`, release: () => released.push(String(userId)) };
       },
       markRevoked: vi.fn(), shutdown: vi.fn(async () => {}), snapshot: () => [],
@@ -87,6 +92,31 @@ describe('gateway errors become 503, never 500', () => {
 });
 
 describe('pilotdeck-bridge under user scope', () => {
+  it('applies the server permission mode to every account, ignoring forged browser modes', async () => {
+    const { runWithUserScope } = await import('./middleware/userScope.js');
+    const { runChatViaGateway } = await import('./pilotdeck-bridge.js');
+    const writer = { send: () => {} };
+    await runWithUserScope({ userId: 1, role: 'user' }, () =>
+      runChatViaGateway('hello', {
+        permissionMode: 'plan', mode: 'default', basePermissionMode: 'plan',
+      }, writer));
+    await runWithUserScope({ userId: 2, role: 'admin' }, () =>
+      runChatViaGateway('hello', { permissionMode: 'default', mode: 'plan', basePermissionMode: 'default' }, writer));
+    expect(submitted.map(({ input }) => [input.mode, input.runMode, input.basePermissionMode]))
+      .toEqual([['bypassPermissions', 'agent', undefined], ['bypassPermissions', 'agent', undefined]]);
+
+    vi.stubEnv('PILOTDECK_WEB_PERMISSION_MODE', 'default');
+    await runWithUserScope({ userId: 2, role: 'admin' }, () =>
+      runChatViaGateway('hello', { mode: 'bypassPermissions' }, writer));
+    expect(submitted.at(-1).input).toMatchObject({ mode: 'default', runMode: 'agent' });
+    expect(submitted.at(-1).input.basePermissionMode).toBeUndefined();
+
+    await runWithUserScope({ userId: 1, role: 'user' }, () =>
+      runChatViaGateway('hello', { runMode: 'plan', mode: 'bypassPermissions', basePermissionMode: 'bypassPermissions' }, writer));
+    expect(submitted.at(-1).input).toMatchObject({
+      mode: 'plan', runMode: 'plan', basePermissionMode: 'default', allowPlanModeTools: true,
+    });
+  });
   it('getPilotDeckGateway acquires the scoped user\'s gateway and releases the lease', async () => {
     const { runWithUserScope } = await import('./middleware/userScope.js');
     const { getPilotDeckGateway } = await import('./pilotdeck-bridge.js');
@@ -134,5 +164,19 @@ describe('pilotdeck-bridge under user scope', () => {
     const status = frames.find((f) => f.kind === 'agent_status' || f.event === 'gateway_unavailable' || JSON.stringify(f).includes('gateway_unavailable'));
     expect(status).toBeTruthy();
     expect(JSON.stringify(frames)).toContain('gateway_unavailable');
+  });
+  it('explicit cross-user access is answered by the server without acquiring a gateway', async () => {
+    vi.stubEnv('PILOTDECK_DISABLE_LOCAL_AUTH', 'false');
+    const { runWithUserScope } = await import('./middleware/userScope.js');
+    const { runChatViaGateway } = await import('./pilotdeck-bridge.js');
+    const frames = [];
+    await runWithUserScope({ userId: 9, role: 'user' }, () =>
+      runChatViaGateway(`请 cat ${root}/users/10/private.txt`, {}, { send: (frame) => frames.push(frame) }));
+    expect(acquired).toEqual(['9']);
+    expect(released).toEqual(['9']);
+    expect(frames.filter((frame) => frame.kind === 'stream_delta').map((frame) => frame.content).join(''))
+      .toContain('可以直接上传到当前对话中');
+    expect(frames.some((frame) => frame.kind === 'complete')).toBe(true);
+    expect(JSON.stringify(frames)).not.toContain('/users/10/');
   });
 });

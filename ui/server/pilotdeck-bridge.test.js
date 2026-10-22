@@ -128,7 +128,7 @@ describe('getGatewayTurnSafetyOverrides', () => {
         });
     });
 
-    it('forwards registered model and thinking controls without exposing endpoints', () => {
+    it('ignores browser thinking controls while forwarding registered model controls', () => {
         expect(getGatewayTurnSafetyOverrides({
             model: 'openai/medical-model',
             profile: 'medical:general',
@@ -146,7 +146,6 @@ describe('getGatewayTurnSafetyOverrides', () => {
             turnOverrides: {
                 provider: 'openai',
                 model: 'medical-model',
-                thinking: { enabled: true, mode: 'medium' },
             },
         });
     });
@@ -159,6 +158,7 @@ describe('getGatewayTurnSafetyOverrides', () => {
                 metadata: { task: 'trauma-analysis' },
             },
             maxTurns: 1,
+            thinking: { enabled: true, mode: 'medium' },
         });
         expect(getGatewayTurnSafetyOverrides(trusted)).toEqual({
             profile: 'medical:trauma',
@@ -166,6 +166,7 @@ describe('getGatewayTurnSafetyOverrides', () => {
             turnOverrides: {
                 allowedTools: ['mcp__medical__rag'],
                 metadata: { task: 'trauma-analysis' },
+                thinking: { enabled: true, mode: 'medium' },
             },
         });
     });

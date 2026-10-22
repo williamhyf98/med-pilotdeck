@@ -198,8 +198,9 @@ rm -f "$RUN/gw.pids"
 
 echo "== boot 2 (no-login mode, same root)"
 STARTED=1
-# subshell: the unset must not leak into later steps
-( unset PILOTDECK_DISABLE_LOCAL_AUTH; start_server "$RUN/server2.log"
+# Explicitly select no-login mode: an unset variable can be repopulated from
+# config/deploy.env during startup on machines whose default is login mode.
+( export PILOTDECK_DISABLE_LOCAL_AUTH=1; start_server "$RUN/server2.log"
   curl -s "localhost:$PORT/api/projects" | grep -q '旧病例' || fail "no-login mode does not show admin's projects" )
 [ -f "$RUN/server.pid" ] || fail "second boot did not record its server pid"
 stop_server

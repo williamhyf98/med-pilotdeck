@@ -2,16 +2,18 @@
 # scripts/sandbox-negative-test.sh — 沙箱负向测试：尝试越界，确认被拒绝
 set -euo pipefail
 
-ROOT=/tmp/pd-sandbox
+ROOT=
 PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --root)
+      [ $# -ge 2 ] || { echo "--root requires a path" >&2; exit 1; }
       ROOT=$2
       shift 2
       ;;
     --platform)
+      [ $# -ge 2 ] || { echo "--platform requires a value" >&2; exit 1; }
       PLATFORM=$2
       shift 2
       ;;
@@ -27,71 +29,73 @@ if [ "$PLATFORM" != "linux" ]; then
   exit 0
 fi
 
+REPO=$(cd -P "$(dirname "$0")/.." && pwd)
+if [ -n "$ROOT" ]; then
+  case "$ROOT" in /tmp/?*) ;; *) echo "--root must be under /tmp" >&2; exit 1 ;; esac
+  case "$ROOT" in *..*|*'//'*) echo "--root must not contain '..' or '//'" >&2; exit 1 ;; esac
+  TMP_ROOT=$(cd -P /tmp && pwd)
+  ROOT_PARENT=$(cd -P "$(dirname "$ROOT")" && pwd) || { echo "--root parent must exist" >&2; exit 1; }
+  case "$ROOT_PARENT" in "$TMP_ROOT"|"$TMP_ROOT"/*) ;; *) echo "--root parent resolves outside /tmp" >&2; exit 1 ;; esac
+  case "$ROOT_PARENT" in "$REPO"|"$REPO"/*) echo "--root must not be inside the repo" >&2; exit 1 ;; esac
+  if [ -e "$ROOT" ] || [ -L "$ROOT" ]; then
+    echo "--root already exists; refusing to replace it: $ROOT" >&2
+    exit 1
+  fi
+  mkdir -- "$ROOT"
+else
+  ROOT=$(mktemp -d /tmp/pd-sandbox.XXXXXX)
+fi
+trap 'rm -rf -- "$ROOT"' EXIT
+
 echo "=== Sandbox Negative Tests ==="
 echo "ROOT: $ROOT"
 echo "PLATFORM: $PLATFORM"
 echo ""
 
-REPO=$(cd "$(dirname "$0")/.." && pwd)
-rm -rf "$ROOT"
 mkdir -p "$ROOT/users/1" "$ROOT/users/2" "$ROOT/system"
 echo "secret" > "$ROOT/system/auth.db"
 echo "other-user-data" > "$ROOT/users/2/secret.txt"
+echo "owned-data" > "$ROOT/users/1/accessible.txt"
 
-echo "TEST 1: read /root/.ssh (expect: permission denied)"
-if bwrap \
-  --ro-bind /usr /usr \
-  --ro-bind /lib /lib \
-  --ro-bind /lib64 /lib64 \
-  --ro-bind /bin /bin \
-  --bind "$ROOT/users/1" "$ROOT/users/1" \
-  --proc /proc \
-  --dev /dev \
-  --unshare-pid \
-  --die-with-parent \
-  /bin/sh -c "cat /root/.ssh/id_rsa 2>&1" | grep -q "Permission denied\|cannot open\|No such file"; then
-  echo "  ✓ PASS: read /root/.ssh denied"
-else
-  echo "  ✗ FAIL: read /root/.ssh succeeded"
-  exit 1
-fi
+sandbox() {
+  bwrap \
+    --ro-bind /usr /usr \
+    --ro-bind /lib /lib \
+    --ro-bind /lib64 /lib64 \
+    --ro-bind /bin /bin \
+    --bind "$ROOT/users/1" "$ROOT/users/1" \
+    --proc /proc \
+    --dev /dev \
+    --unshare-pid \
+    --die-with-parent \
+    "$@"
+}
 
-echo "TEST 2: write ../users/2/ (expect: no such file or directory)"
-if bwrap \
-  --ro-bind /usr /usr \
-  --ro-bind /lib /lib \
-  --ro-bind /lib64 /lib64 \
-  --ro-bind /bin /bin \
-  --bind "$ROOT/users/1" "$ROOT/users/1" \
-  --proc /proc \
-  --dev /dev \
-  --unshare-pid \
-  --die-with-parent \
-  /bin/sh -c "cd '$ROOT/users/1' && echo hijack > ../2/hijack.txt 2>&1" | grep -q "No such file or directory\|cannot create"; then
-  echo "  ✓ PASS: write ../users/2/ denied"
-else
-  echo "  ✗ FAIL: write ../users/2/ succeeded"
-  exit 1
-fi
+fail() { echo "  FAIL: $*" >&2; exit 1; }
 
-echo "TEST 3: access <root>/system/auth.db (expect: no such file)"
-if bwrap \
-  --ro-bind /usr /usr \
-  --ro-bind /lib /lib \
-  --ro-bind /lib64 /lib64 \
-  --ro-bind /bin /bin \
-  --bind "$ROOT/users/1" "$ROOT/users/1" \
-  --proc /proc \
-  --dev /dev \
-  --unshare-pid \
-  --die-with-parent \
-  /bin/sh -c "cat '$ROOT/system/auth.db' 2>&1" | grep -q "No such file or directory\|cannot open"; then
-  echo "  ✓ PASS: access system/auth.db denied"
-else
-  echo "  ✗ FAIL: access system/auth.db succeeded"
-  exit 1
-fi
+echo "CONTROL: read own file (expect: owned-data)"
+own_result=$(sandbox /bin/cat "$ROOT/users/1/accessible.txt" 2>&1) || fail "bwrap could not read own file: $own_result"
+[ "$own_result" = owned-data ] || fail "own file read returned unexpected output: $own_result"
 
-rm -rf "$ROOT"
+expect_denied() {
+  local label=$1 pattern=$2 output
+  shift 2
+  echo "$label"
+  if output=$(sandbox "$@" 2>&1); then
+    fail "$label unexpectedly succeeded: $output"
+  fi
+  printf '%s\n' "$output" | grep -Eiq -- "$pattern" || fail "$label failed for a different reason: $output"
+  echo "  PASS: access denied"
+}
+
+expect_denied "TEST 1: read /root/.ssh" \
+  'Permission denied|cannot open|No such file' /bin/cat /root/.ssh/id_rsa
+expect_denied "TEST 2: write ../users/2/" \
+  'Permission denied|cannot create|No such file' \
+  /bin/sh -c 'cd "$1" && printf hijack > ../2/hijack.txt' sh "$ROOT/users/1"
+[ ! -e "$ROOT/users/2/hijack.txt" ] || fail "other user file was created"
+expect_denied "TEST 3: access <root>/system/auth.db" \
+  'Permission denied|cannot open|No such file' /bin/cat "$ROOT/system/auth.db"
+
 echo ""
 echo "=== NEGATIVE TESTS PASS ==="

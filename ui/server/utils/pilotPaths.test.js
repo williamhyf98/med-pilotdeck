@@ -147,12 +147,12 @@ describe('assertPathInUserHome', () => {
         try {
             const userHome = join(root, 'users', '1');
             mkdirSync(userHome, { recursive: true });
-            expect(() => assertPathInUserHome(join(root, 'users', '2', 'projects'), userHome)).toThrow(/PATH_OUT_OF_BOUNDS/);
-            expect(() => assertPathInUserHome(join(root, 'system'), userHome)).toThrow(/PATH_OUT_OF_BOUNDS/);
-            expect(() => assertPathInUserHome(join(userHome, '..', '2', 'projects'), userHome)).toThrow(/PATH_OUT_OF_BOUNDS/);
-            expect(() => assertPathInUserHome('../2/projects', userHome)).toThrow(/PATH_OUT_OF_BOUNDS/);
+            expect(() => assertPathInUserHome(join(root, 'users', '2', 'projects'), userHome)).toThrow(/访问被禁止/);
+            expect(() => assertPathInUserHome(join(root, 'system'), userHome)).toThrow(/访问被禁止/);
+            expect(() => assertPathInUserHome(join(userHome, '..', '2', 'projects'), userHome)).toThrow(/访问被禁止/);
+            expect(() => assertPathInUserHome('../2/projects', userHome)).toThrow(/访问被禁止/);
             // Sibling whose name shares the home prefix must not pass.
-            expect(() => assertPathInUserHome(`${userHome}2/x`, userHome)).toThrow(/PATH_OUT_OF_BOUNDS/);
+            expect(() => assertPathInUserHome(`${userHome}2/x`, userHome)).toThrow(/访问被禁止/);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
@@ -184,9 +184,9 @@ describe('assertPathInUserHome', () => {
             mkdirSync(userHome, { recursive: true });
             mkdirSync(join(tmpRoot, 'system'));
             symlinkSync(join(tmpRoot, 'system'), join(userHome, 'escape'));
-            expect(() => assertPathInUserHome(join(userHome, 'escape'), userHome)).toThrow(/PATH_OUT_OF_BOUNDS/);
+            expect(() => assertPathInUserHome(join(userHome, 'escape'), userHome)).toThrow(/访问被禁止/);
             // A file reached through the escaping link is also outside.
-            expect(() => assertPathInUserHome(join(userHome, 'escape', 'x.txt'), userHome)).toThrow(/PATH_OUT_OF_BOUNDS/);
+            expect(() => assertPathInUserHome(join(userHome, 'escape', 'x.txt'), userHome)).toThrow(/访问被禁止/);
         } finally {
             rmSync(tmpRoot, { recursive: true, force: true });
         }
@@ -198,7 +198,7 @@ describe('assertPathInUserHome', () => {
             const userHome = join(tmpRoot, 'users', '1');
             mkdirSync(userHome, { recursive: true });
             symlinkSync(join(tmpRoot, 'system', 'new.conf'), join(userHome, 'dangling'));
-            expect(() => assertPathInUserHome(join(userHome, 'dangling'), userHome)).toThrow(/PATH_OUT_OF_BOUNDS/);
+            expect(() => assertPathInUserHome(join(userHome, 'dangling'), userHome)).toThrow(/访问被禁止/);
         } finally {
             rmSync(tmpRoot, { recursive: true, force: true });
         }
@@ -224,9 +224,9 @@ describe('assertPathInUserHome', () => {
             const repo = resolve(__dirname, '..', '..', '..');
             expect(() => assertPathInUserHome(join(repo, 'skills', 'pdf', 'SKILL.md'), userHome)).not.toThrow();
             expect(() => assertPathInUserHome(join(repo, 'plugins', 'med-tools', 'plugin.json'), userHome)).not.toThrow();
-            expect(() => assertPathInUserHome(join(repo, 'skills', 'pdf', 'SKILL.md'), userHome, true)).toThrow(/PATH_OUT_OF_BOUNDS/);
-            expect(() => assertPathInUserHome(join(repo, 'package.json'), userHome)).toThrow(/PATH_OUT_OF_BOUNDS/);
-            expect(() => assertPathInUserHome(join(repo, 'skills', '..', 'src'), userHome)).toThrow(/PATH_OUT_OF_BOUNDS/);
+            expect(() => assertPathInUserHome(join(repo, 'skills', 'pdf', 'SKILL.md'), userHome, true)).toThrow(/访问被禁止/);
+            expect(() => assertPathInUserHome(join(repo, 'package.json'), userHome)).toThrow(/访问被禁止/);
+            expect(() => assertPathInUserHome(join(repo, 'skills', '..', 'src'), userHome)).toThrow(/访问被禁止/);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }

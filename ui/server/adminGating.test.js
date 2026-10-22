@@ -107,6 +107,7 @@ const ADMIN_ONLY = [
   ['PUT', '/api/ccr/config'],
   ['GET', '/api/browse-filesystem'], ['POST', '/api/create-folder'], ['POST', '/api/projects/create'],
   ['GET', '/api/admin/users'],
+  ['PUT', '/api/settings/permissions'],
 ];
 
 const USER_OK = [
@@ -114,6 +115,7 @@ const USER_OK = [
   ['GET', '/api/agents/runtime-config'],
   ['GET', '/api/settings/api-keys'],
   ['GET', '/api/user/git-config'],
+  ['GET', '/api/user/preferences'], ['PATCH', '/api/user/preferences'],
   ['GET', '/api/memory/overview'],
   ['GET', '/api/memory/settings'],
   ['POST', '/api/skills/list'],
@@ -122,6 +124,23 @@ const USER_OK = [
 ];
 
 describe('admin gating matrix', () => {
+  it('persists UI preferences per account across requests, without allowing another token to read them', async () => {
+    const alicePatch = await fetch(`${base}/api/user/preferences`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${tokens.alice}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ themeMode: 'dark', userLanguage: 'en' }),
+    });
+    expect(alicePatch.status).toBe(200);
+    expect((await alicePatch.json()).preferences).toEqual({ themeMode: 'dark', userLanguage: 'en' });
+    const aliceRead = await call('alice', 'GET', '/api/user/preferences');
+    expect((await aliceRead.json()).preferences).toEqual({ themeMode: 'dark', userLanguage: 'en' });
+    const adminRead = await call('admin', 'GET', '/api/user/preferences');
+    expect((await adminRead.json()).preferences).toBeNull();
+    const userFiles = fs.readdirSync(path.join(root, 'users'), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(root, 'users', entry.name, 'ui-preferences.json'));
+    expect(userFiles.filter((file) => fs.existsSync(file))).toHaveLength(1);
+  });
   it.each(ADMIN_ONLY)('%s %s is 403 ADMIN_REQUIRED for a user and not 403 for admin', async (method, p) => {
     const u = await call('alice', method, p);
     expect(u.status).toBe(403);

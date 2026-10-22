@@ -1,9 +1,29 @@
 // @ts-nocheck
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import test from "node:test";
 import { expandMcpString, expandMcpConfig } from "../../src/mcp/config/expandPlaceholders.js";
 import { parsePluginMcpServers } from "../../src/mcp/runtime/parsePluginMcpServers.js";
+test("bundled medical MCP receives its scoped home and login mode explicitly", () => {
+    const previousHome = process.env.PILOT_HOME;
+    const previousMode = process.env.PILOTDECK_DISABLE_LOCAL_AUTH;
+    try {
+        process.env.PILOT_HOME = "/data/pilotdeck/users/2";
+        process.env.PILOTDECK_DISABLE_LOCAL_AUTH = "0";
+        const plugin = JSON.parse(readFileSync("plugins/med-tools/plugin.json", "utf8"));
+        const { servers } = parsePluginMcpServers(plugin.mcpServers);
+        assert.equal(servers.length, 1);
+        assert.equal(servers[0].transport, "stdio");
+        assert.equal(servers[0].env?.PILOT_HOME, "/data/pilotdeck/users/2");
+        assert.equal(servers[0].env?.PILOTDECK_DISABLE_LOCAL_AUTH, "0");
+    } finally {
+        if (previousHome === undefined) delete process.env.PILOT_HOME;
+        else process.env.PILOT_HOME = previousHome;
+        if (previousMode === undefined) delete process.env.PILOTDECK_DISABLE_LOCAL_AUTH;
+        else process.env.PILOTDECK_DISABLE_LOCAL_AUTH = previousMode;
+    }
+});
 test("expandMcpString expands ${env:*} placeholders", () => {
     process.env.PILOTDECK_TEST_TOKEN = "secret123";
     try {

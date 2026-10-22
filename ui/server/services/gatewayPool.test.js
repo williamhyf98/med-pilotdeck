@@ -398,12 +398,14 @@ describe('gatewayPool always-on flag by mode', () => {
     const env = buildGatewayChildEnv({ ...base, multiUser: true });
     expect(env.PILOTDECK_DISABLE_ALWAYS_ON).toBe('1');
     expect(env.PILOT_HOME).toBe('/h/users/1');
+    expect(env.PILOTDECK_DISABLE_LOCAL_AUTH).toBe('0');
     expect(env.PILOTDECK_GATEWAY_URL).toBeUndefined();
   });
 
   it('no-login child env leaves always-on enabled (even if the parent env set the flag)', () => {
     const env = buildGatewayChildEnv({ ...base, multiUser: false });
     expect('PILOTDECK_DISABLE_ALWAYS_ON' in env).toBe(false);
+    expect(env.PILOTDECK_DISABLE_LOCAL_AUTH).toBe('1');
     expect(env.PILOTDECK_GATEWAY_PORT).toBe('20001');
     expect(env.PILOTDECK_CONFIG_PATH).toBe('/h/pilotdeck.yaml');
   });
