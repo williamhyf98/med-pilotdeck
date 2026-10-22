@@ -1146,4 +1146,19 @@ git commit -m "docs(plan3): 执行记录——沙箱与路径清洗完成，node
 
 ## 执行记录
 
-（由执行者完成后填写）
+### Task 9 node12 阶段性验收（2026-10-22；尚未完成）
+
+- 实际环境是 Ubuntu 22.04.2 LTS / x86_64，非计划预设的 Kylin/UOS ARM64；使用仓库运行时 Node v22.23.2、bubblewrap 0.6.1，Linux 多用户预检找到 `/usr/bin/bwrap`。
+- 本地 HEAD `fbbf2a6` 加未提交的后续代码，仅同步到远端隔离副本 `/tmp/pd-task9-src.ZN9VXl`；测试数据根 `/tmp/pd-task9-data.ASqG4F`、UI 端口 127.0.0.1:3151、Gateway 端口 19200 起。远端原仓库停在 `f256196` 且有用户修改，现有 3020/18800 服务未改动；Step 1 的 push/fetch/pull **未做**，不能将隔离测试等同于远端原仓库部署。
+- 实际 Gateway 日志为 `[sandbox] bwrap (ok)`。前一轮用产品 `BwrapSandbox.wrap()` 实测：自有 `$PWD/exports` 和 `$PWD/scratch/qa` 可写，其他用户及系统数据库读写和符号链接绕过被拒；受保护文件未变化。
+- `scripts/sandbox-negative-test.sh` 原版把预期拒绝的非零退出码通过 `pipefail` 误判成失败，还会删除已有 `--root`。本轮补了 3 项回归并修复；node12 回归 3/3，真实 bwrap 正向对照可读自有文件，`/root/.ssh`、其他用户目录写入、`system/auth.db` 三项负向测试均通过；旧测试目录被拒绝覆盖。产品 bwrap 单测 26 通过、1 跳过；UI 路径清洗定向测试 30/30 通过。
+- 认证 UI → 每用户 Gateway → 沙箱 → WebSocket 功能验收：PPTX、XLSX、`pathleak-pwd` 通过；DOCX 首轮因隔离副本 `.runtime` 符号链接指向原仓库、venv Python 绝对链接目标未挂载而失败。在**隔离数据根配置**给该 Python 运行时补只读挂载并重启隔离服务后，DOCX 复跑通过并生成 `exports/病例报告.docx`；PPTX、XLSX 产物也在测试用户工作区确认。原始文档报告：`tests/skill-e2e/work/multiuser-2026-10-22T06-40-43-387Z/`、`tests/skill-e2e/work/multiuser-2026-10-22T07-01-45-459Z/`（均在远端隔离副本）。
+- 战创伤 Runner 走认证 UI/WebSocket：48 秒完成，12 个步骤，病例持久化为第 1 轮，有快照；用户可见帧未检出该账号绝对目录。原始记录在远端 `/tmp/pd-task9-run.gEevWq/trauma-acceptance.json`。前述文档回合用户可见输出也均未检出该路径，但首帧 `projects_updated` 元数据仍含**当前用户**的绝对工作区路径，需单独定义是否调整项目 API。
+- 前端浏览器实际渲染的“思考/错误”路径仍**未验收**：本轮浏览器连接无可用浏览器；定向单测覆盖相应流式片段与错误清洗，但不能冒充浏览器验收。Task 12 原表格/检验科泛问句完整回归仍不满足其规范；不因本次 Linux 单项通过而勾选 Task 12。Task 9 待 Step 1、浏览器路径核查及正式部署复验后才能标记完成。
+
+### 本地整理与回归（2026-10-22；Task 9/10/12 仍未完成）
+
+- 基于 `fbbf2a6` 按依赖分组提交安全隔离与服务端修复 `a23abfc`、前端功能及动画 `33fdcc5`；排除了插件测试产生的 `_derived/art_*.txt` 文件。登录页素材随前端提交保留。
+- `npm --prefix ui test`：164 文件、1198 项通过；`npm --prefix ui run typecheck`、`npm --prefix ui run build` 通过（构建有大文件 chunk 提示）；引擎 `npm test` 用独立 `PILOT_HOME` 且未设置跳过 bootstrap：734 通过、2 个平台跳过；独立 Python venv 中的插件 pytest：146 通过、23 subtests 通过；负向脚本测试 3/3。测试不代表完整的在线技能回归。
+- `scripts/smoke-multi-user.sh` 初次在第二轮无登录模式检查失败：宿主 `config/deploy.env` 重新补全脚本 `unset` 的认证变量；脚本现显式设置 `PILOTDECK_DISABLE_LOCAL_AUTH=1`，使用新的临时根、UI 端口 3157 与 Gateway 起始端口 19360 复跑后打印 `SMOKE OK`。两轮只操作临时数据与隔离端口。
+- 本地回归不能代替 node12 正式同步与浏览器实际渲染核查；Task 7、9、10、12 状态暂不改为完成。
