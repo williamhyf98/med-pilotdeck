@@ -17,6 +17,7 @@ import { SUBSTAGE_ORDER, SUBSTAGE_TO_MAIN } from './domain/stageConfig';
 import MemoDetailPanel from './MemoDetailPanel';
 import { useCaseStore } from './store/useCaseStore';
 import TraumaComposer from './TraumaComposer';
+import TraumaNewConversationEmptyState from './TraumaNewConversationEmptyState';
 import TreatmentTree, { type TreePosition } from './TreatmentTree';
 
 const INITIAL_POSITION: TreePosition = {
@@ -48,6 +49,8 @@ type TraumaWorkspaceProps = {
   onNavigateToChatMessage?: (runId: string) => void | Promise<void>;
   runtimePanel?: ReactNode;
   conversationOnly?: boolean;
+  noProject?: boolean;
+  onCreateProject?: () => void;
 };
 
 export default function TraumaWorkspace({
@@ -61,6 +64,8 @@ export default function TraumaWorkspace({
   onNavigateToChatMessage,
   runtimePanel,
   conversationOnly = false,
+  noProject = false,
+  onCreateProject,
 }: TraumaWorkspaceProps) {
   const [selectedMemoId, setSelectedMemoId] = useState<string | null>(null);
   const autoOpenedPendingRunRef = useRef<string | null>(null);
@@ -139,7 +144,14 @@ export default function TraumaWorkspace({
   const traumaComposerSlot = useMemo(() => (
     <div data-chat-composer-slot className="workspace-dock-surface min-h-0 shrink-0 px-6 pb-6 pt-3">
       <div className="mx-auto w-full max-w-[720px]">
-        <TraumaComposer
+        {noProject ? (
+          <div className="text-center">
+            <button type="button" onClick={onCreateProject}
+              className="inline-flex h-9 items-center justify-center rounded-md bg-primary px-4 text-[13px] font-medium text-primary-foreground hover:opacity-90">
+              创建项目
+            </button>
+          </div>
+        ) : <TraumaComposer
           key={`${currentCase?.caseId ?? 'unpersisted'}:${resetKey}`}
           projectKey={projectKey}
           sessionId={sessionId}
@@ -147,7 +159,7 @@ export default function TraumaWorkspace({
           onSubmit={onSubmitForm}
           onAbort={onAbortTurn}
           submitting={submitting}
-        />
+        />}
       </div>
     </div>
   ), [
@@ -155,6 +167,8 @@ export default function TraumaWorkspace({
     currentCase?.currentSubStage,
     onAbortTurn,
     onSubmitForm,
+    noProject,
+    onCreateProject,
     projectKey,
     resetKey,
     sessionId,
@@ -164,9 +178,11 @@ export default function TraumaWorkspace({
     if (!runtimePanel) {
       return (
         <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-transparent">
-          <div className="flex min-h-0 items-center justify-center px-6 text-center text-[12px] text-muted-foreground">
-            等待对话区初始化…
-          </div>
+          {noProject
+            ? <div className="min-h-0 overflow-y-auto"><TraumaNewConversationEmptyState noProject /></div>
+            : <div className="flex min-h-0 items-center justify-center px-6 text-center text-[12px] text-muted-foreground">
+                等待对话区初始化…
+              </div>}
           {traumaComposerSlot}
         </div>
       );
@@ -186,6 +202,7 @@ export default function TraumaWorkspace({
   }, [
     runtimePanel,
     traumaComposerSlot,
+    noProject,
   ]);
 
   useEffect(() => {

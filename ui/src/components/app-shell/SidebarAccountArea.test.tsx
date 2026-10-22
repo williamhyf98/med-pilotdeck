@@ -57,6 +57,8 @@ describe('SidebarAccountArea', () => {
     authState = { user: { id: 1, username: 'root', role: 'admin' }, isAdmin: true, logout, authDisabled: false };
     render(<SidebarAccountArea onOpenSettings={() => {}} />);
     expect(screen.getByText('sidebar:account.roleAdmin').closest('button')).toBeNull();
+    const accountRow = screen.getByText('root').closest('div.flex.items-center');
+    expect(accountRow?.className).toContain('py-4');
   });
 
   it('shows the local-mode badge and no logout button when login is disabled', () => {

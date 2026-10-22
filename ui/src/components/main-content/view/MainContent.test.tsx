@@ -195,6 +195,22 @@ afterEach(() => {
 });
 
 describe('MainContent file workspace routing', () => {
+  it('retains the war-trauma introduction and empty workflow with no projects', () => {
+    const onCreateProject = vi.fn();
+    const empty = { ...propsFor('chat'), projects: [], selectedProject: null, onCreateProject };
+    const { rerender } = render(<MainContent {...empty} workspaceType="general_medicine" />);
+    expect(screen.getByRole('heading', { name: '通用医学智能助手' })).toBeTruthy();
+
+    rerender(<MainContent {...empty} workspaceType="war_trauma" />);
+    expect(screen.getByRole('heading', { name: '战创伤救治推演助手' })).toBeTruthy();
+    expect(screen.getByText('分级救治全过程')).toBeTruthy();
+    expect(screen.getByText('等待首轮推演')).toBeTruthy();
+    expect(screen.queryByTestId('general-medicine-capability-grid')).toBeNull();
+    expect(screen.queryByLabelText('本轮伤情自由输入')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '创建项目' }));
+    expect(onCreateProject).toHaveBeenCalledOnce();
+  });
+
   it('routes every chat file open into the Files workbench', async () => {
     const setActiveTab = vi.fn();
     const { rerender } = render(<MainContent {...propsFor('files', setActiveTab)} />);

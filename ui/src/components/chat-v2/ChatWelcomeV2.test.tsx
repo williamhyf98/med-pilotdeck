@@ -41,9 +41,29 @@ describe('ChatWelcomeV2', () => {
         onCreateProject={onCreateProject}
       />,
     );
-    expect(screen.getByRole('heading', { name: '战创伤医学智能助手' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '战创伤救治推演助手' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: '通用医学智能助手' })).toBeNull();
     expect(screen.queryByRole('textbox')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '创建项目' }));
+    expect(onCreateProject).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the trauma introduction and empty workflow when there are no projects', () => {
+    const onCreateProject = vi.fn();
+    const { rerender } = render(
+      <MainContentStateView mode="empty" workspaceType="general_medicine" isMobile={false} onMenuClick={() => {}} onCreateProject={onCreateProject} />,
+    );
+    expect(screen.getByRole('heading', { name: '通用医学智能助手' })).toBeTruthy();
+    rerender(
+      <MainContentStateView mode="empty" workspaceType="war_trauma" isMobile={false} onMenuClick={() => {}} onCreateProject={onCreateProject} />,
+    );
+    expect(screen.getByRole('heading', { name: '战创伤救治推演助手' })).toBeTruthy();
+    expect(screen.getByText('分级救治全过程')).toBeTruthy();
+    expect(screen.getByText('等待首轮推演')).toBeTruthy();
+    expect(screen.getByText('描述伤情')).toBeTruthy();
+    expect(screen.queryByTestId('general-medicine-capability-grid')).toBeNull();
+    expect(screen.queryByLabelText('本轮伤情自由输入')).toBeNull();
+    expect(screen.queryByText(/从下方输入框提交第一轮信息后/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '创建项目' }));
     expect(onCreateProject).toHaveBeenCalledOnce();
   });

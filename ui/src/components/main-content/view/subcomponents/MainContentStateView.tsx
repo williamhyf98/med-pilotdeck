@@ -1,4 +1,5 @@
 import ChatWelcomeV2 from '../../../chat-v2/ChatWelcomeV2';
+import TraumaWorkspace from '../../../trauma-workspace/TraumaWorkspace';
 import { useTranslation } from 'react-i18next';
 import type { MainContentStateViewProps } from '../../types/types';
 
@@ -20,10 +21,15 @@ export default function MainContentStateView({
             <span>{t('mainContent.loading', { defaultValue: 'Loading…' })}</span>
           </div>
         </div>
+      ) : workspaceType === 'war_trauma' ? (
+        <TraumaWorkspace
+          resetKey="trauma:no-project"
+          noProject
+          onCreateProject={onCreateProject}
+        />
       ) : (
         <ChatWelcomeV2
           selectedProject={null}
-          welcomeTitle={workspaceType === 'war_trauma' ? '战创伤医学智能助手' : undefined}
           composerSlot={null}
           onCreateProject={onCreateProject}
         />
