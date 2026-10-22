@@ -6,6 +6,7 @@ import {
   CODE_EDITOR_STORAGE_KEYS,
 } from '../constants/settings';
 import { safeLocalStorage } from '../../../utils/safeStorage';
+import { UI_PREFERENCES_HYDRATED_EVENT } from '../../auth/UserPreferenceSync';
 
 const readBoolean = (storageKey: string, defaultValue: boolean, falseValue = 'false') => {
   const value = safeLocalStorage.getItem(storageKey);
@@ -61,10 +62,12 @@ export const useCodeEditorSettings = () => {
 
     window.addEventListener('storage', refreshFromStorage);
     window.addEventListener(CODE_EDITOR_SETTINGS_CHANGED_EVENT, refreshFromStorage);
+    window.addEventListener(UI_PREFERENCES_HYDRATED_EVENT, refreshFromStorage);
 
     return () => {
       window.removeEventListener('storage', refreshFromStorage);
       window.removeEventListener(CODE_EDITOR_SETTINGS_CHANGED_EVENT, refreshFromStorage);
+      window.removeEventListener(UI_PREFERENCES_HYDRATED_EVENT, refreshFromStorage);
     };
   }, []);
 

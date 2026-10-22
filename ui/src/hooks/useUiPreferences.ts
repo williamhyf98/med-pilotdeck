@@ -1,5 +1,6 @@
 import { useEffect, useReducer, useRef } from 'react';
 import { isScopedStorageKey, safeLocalStorage } from '../utils/safeStorage';
+import { UI_PREFERENCES_HYDRATED_EVENT } from '../components/auth/UserPreferenceSync';
 
 type UiPreferences = {
   showProcessTrace: boolean;
@@ -214,10 +215,18 @@ export function useUiPreferences(storageKey = 'uiPreferences') {
 
     window.addEventListener('storage', handleStorageChange);
     window.addEventListener(SYNC_EVENT, handleSyncEvent as EventListener);
+    const handleHydration = (event: Event) => {
+      dispatch({
+        type: 'reset',
+        value: (event as CustomEvent<Partial<UiPreferences>>).detail,
+      });
+    };
+    window.addEventListener(UI_PREFERENCES_HYDRATED_EVENT, handleHydration);
 
     return () => {
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener(SYNC_EVENT, handleSyncEvent as EventListener);
+      window.removeEventListener(UI_PREFERENCES_HYDRATED_EVENT, handleHydration);
     };
   }, [storageKey]);
 

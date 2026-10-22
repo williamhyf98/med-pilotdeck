@@ -60,7 +60,7 @@ export const authenticatedFetch = (url, options = {}) => {
     },
   }).then(async (response) => {
     const refreshedToken = response.headers.get('X-Refreshed-Token');
-    if (refreshedToken) {
+    if (refreshedToken && localStorage.getItem('auth-token') === token) {
       localStorage.setItem('auth-token', refreshedToken);
       window.dispatchEvent(new CustomEvent('pilotdeck:token-refreshed', { detail: { token: refreshedToken } }));
     }
@@ -269,7 +269,7 @@ export const api = {
     return authenticatedFetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages${queryString ? `?${queryString}` : ''}`);
   },
   renameProject: (projectName, displayName) =>
-    authenticatedFetch(`/api/projects/${projectName}/rename`, {
+    authenticatedFetch(`/api/projects/${encodeURIComponent(projectName)}/rename`, {
       method: 'PUT',
       body: JSON.stringify({ displayName }),
     }),

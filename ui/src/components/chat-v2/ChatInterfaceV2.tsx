@@ -179,7 +179,6 @@ function ChatInterfaceV2({
     model,
     setModel,
     permissionMode,
-    setPermissionMode: setPermissionModeRaw,
     thinkingModelContext,
     pendingPermissionRequests,
     setPendingPermissionRequests,
@@ -208,14 +207,6 @@ function ChatInterfaceV2({
       return 'agent';
     });
   }, []);
-
-  const selectPermissionMode = useCallback((mode: typeof permissionMode) => {
-    setPermissionModeRaw(mode);
-    safeLocalStorage.setItem('permissionMode-default', mode);
-    if (selectedSession?.id) {
-      safeLocalStorage.setItem(`permissionMode-${selectedSession.id}`, mode);
-    }
-  }, [setPermissionModeRaw, selectedSession?.id]);
 
   const effectivePermissionMode =
     runMode === 'plan' ? 'plan' : permissionMode;
@@ -930,7 +921,6 @@ function ChatInterfaceV2({
       handlePermissionDecision={handlePermissionDecision}
       handleGrantToolPermission={handleGrantToolPermission}
       permissionMode={permissionMode}
-      onPermissionModeChange={selectPermissionMode}
       runMode={runMode}
       onRunModeChange={setRunMode}
       planModeAvailable={true}

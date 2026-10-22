@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Project, ProjectSession } from '../../../../types/app';
 import { AUTH_TOKEN_STORAGE_KEY } from '../../../auth/constants';
@@ -86,6 +87,26 @@ export function buildMemoryDashboardUrl(
   return `/memory-dashboard/index.html?${params.toString()}`;
 }
 
+function MemoryDashboardFrame({ url, title }: { url: string; title: string }) {
+  const [ready, setReady] = useState(false);
+
+  return (
+    <div className="relative h-full w-full bg-background">
+      {!ready ? (
+        <div className="absolute inset-0 flex items-center justify-center text-[13px] text-muted-foreground">
+          <span className="h-5 w-5 animate-spin rounded-full border-2 border-neutral-300 border-t-neutral-600 dark:border-neutral-600 dark:border-t-neutral-300" aria-hidden="true" />
+        </div>
+      ) : null}
+      <iframe
+        title={title}
+        src={url}
+        onLoad={() => setReady(true)}
+        className={`absolute inset-0 block h-full w-full border-0 bg-background ${ready ? 'pd-memory-ready' : 'invisible'}`}
+      />
+    </div>
+  );
+}
+
 export default function MemoryPanel({ selectedProject, selectedSession = null }: MemoryPanelProps) {
   const { i18n } = useTranslation();
   const { isDarkMode } = useTheme();
@@ -122,13 +143,12 @@ export default function MemoryPanel({ selectedProject, selectedSession = null }:
   // when Memory was previously paired with chat in a split pane.
   return (
     <div className="h-full w-full bg-background">
-      <iframe
+      <MemoryDashboardFrame
         // 按身份重挂 iframe：切项目或切 session 都要重新引导，
         // 否则旧作用域的 app.js 会继续活着（它在模块加载时冻结作用域）。
         key={`${selectedProject.name}:${selectedSession?.id ?? ''}:${memoryLocale}:${memoryTheme}`}
         title={text.title}
-        src={dashboardUrl}
-        className="block h-full w-full border-0 bg-background"
+        url={dashboardUrl}
       />
     </div>
   );

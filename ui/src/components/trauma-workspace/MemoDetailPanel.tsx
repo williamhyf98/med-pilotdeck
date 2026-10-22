@@ -119,7 +119,7 @@ export default function MemoDetailPanel({ memo, isLatest, onClose }: MemoDetailP
             <div
               key={vital.label}
               className={cn(
-                'rounded-md border border-border bg-transparent px-2 py-1.5',
+                'pd-card-lift rounded-md border border-border bg-transparent px-2 py-1.5',
                 vital.abnormal && 'border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/25',
               )}
             >

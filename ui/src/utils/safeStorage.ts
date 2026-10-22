@@ -10,6 +10,11 @@
 type StorageUserId = string | number | null;
 
 export const STORAGE_USER_CHANGED_EVENT = 'pilotdeck:storage-user-changed';
+export const UI_PREFERENCE_CHANGED_EVENT = 'pilotdeck:ui-preference-changed';
+export const PERSISTED_UI_KEYS = new Set([
+  'themeMode', 'userLanguage', 'uiPreferences', 'pilotdeck-settings',
+  'codeEditorWordWrap', 'codeEditorShowMinimap', 'codeEditorLineNumbers', 'codeEditorFontSize',
+]);
 
 // Unscoped marker of the last signed-in user. It lets the pre-React theme
 // script in index.html and the very first render read the right namespace
@@ -20,14 +25,6 @@ const LEGACY_MIGRATED_KEY = 'pilotdeck-storage-migrated-v1';
 const UNSCOPED_KEYS = new Set(['auth-token', LAST_USER_KEY, LEGACY_MIGRATED_KEY]);
 const SCOPED_KEY_PATTERN = /^(anon:|u(\d+|local|platform):)/;
 
-// Per-browser preferences chosen before login that a user keeps on first login.
-const MIGRATED_KEYS = new Set([
-  'themeMode',
-  'userLanguage',
-  'userLanguageDefaultMigratedTo',
-  'pilotdeck-settings',
-]);
-const MIGRATED_PREFIXES = ['codeEditor'];
 
 const readLastUserId = (): StorageUserId => {
   try {
@@ -57,9 +54,6 @@ export const setStorageUserRole = (role: string | null | undefined): void => {
 
 export const getStorageUserRole = (): string | null => storageUserRole;
 
-const shouldMigrate = (key: string) =>
-  MIGRATED_KEYS.has(key) || MIGRATED_PREFIXES.some((prefix) => key.startsWith(prefix));
-
 // Keys written before namespacing existed belong to the single pre-upgrade
 // user; the first account to sign in afterwards takes them over, once.
 const migrateLegacyKeys = (id: string | number) => {
@@ -74,18 +68,6 @@ const migrateLegacyKeys = (id: string | number) => {
   localStorage.setItem(LEGACY_MIGRATED_KEY, '1');
 };
 
-const migrateAnonPreferences = (id: string | number) => {
-  const userPrefix = prefixFor(id);
-  const anonPrefix = prefixFor(null);
-  for (const k of Object.keys(localStorage)) {
-    if (!k.startsWith(anonPrefix)) continue;
-    const bare = k.slice(anonPrefix.length);
-    if (!shouldMigrate(bare) || localStorage.getItem(`${userPrefix}${bare}`) !== null) continue;
-    const value = localStorage.getItem(k);
-    if (value !== null) localStorage.setItem(`${userPrefix}${bare}`, value);
-  }
-};
-
 export const setStorageUserId = (id: StorageUserId): void => {
   const normalized = id ?? null;
   const unchanged =
@@ -98,9 +80,7 @@ export const setStorageUserId = (id: StorageUserId): void => {
       localStorage.removeItem(LAST_USER_KEY);
     } else {
       localStorage.setItem(LAST_USER_KEY, String(normalized));
-      const hadStoredKeys = Object.keys(localStorage).some((k) => k.startsWith(prefixFor(normalized)));
       migrateLegacyKeys(normalized);
-      if (!hadStoredKeys) migrateAnonPreferences(normalized);
     }
   } catch (error) {
     console.error('localStorage user namespace error:', error);
@@ -125,6 +105,20 @@ export const clearStorageForUser = (id: StorageUserId | 'anon' | undefined): voi
   }
 };
 
+/** Remove session drafts and model choices while keeping long-lived UI choices. */
+export const clearSessionStorageForUser = (id: StorageUserId | undefined): void => {
+  if (id == null) return;
+  const prefix = prefixFor(id);
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (!key.startsWith(prefix)) continue;
+      if (!PERSISTED_UI_KEYS.has(key.slice(prefix.length))) localStorage.removeItem(key);
+    }
+  } catch (error) {
+    console.error('localStorage session clear error:', error);
+  }
+};
+
 /** True when a `storage` event key refers to `key` in the current user namespace. */
 export const isScopedStorageKey = (eventKey: string | null, key: string): boolean =>
   eventKey === scopedStorageKey(key);
@@ -132,8 +126,17 @@ export const isScopedStorageKey = (eventKey: string | null, key: string): boolea
 export const safeLocalStorage = {
   setItem: (key: string, value: string) => {
     const scopedKey = scopedStorageKey(key);
+    const ownerId = storageUserId;
     try {
+      if (localStorage.getItem(scopedKey) === value) return;
       localStorage.setItem(scopedKey, value);
+      if (PERSISTED_UI_KEYS.has(key)) {
+        queueMicrotask(() => {
+          window.dispatchEvent(new CustomEvent(UI_PREFERENCE_CHANGED_EVENT, {
+            detail: { userId: ownerId, key },
+          }));
+        });
+      }
     } catch (error: any) {
       if (error?.name === 'QuotaExceededError') {
         console.warn('localStorage quota exceeded, clearing old data');

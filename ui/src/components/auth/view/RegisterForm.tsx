@@ -2,7 +2,6 @@ import { useCallback, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
-import medAssistantLogo from '../../../assets/med-assistant-logo.png';
 import AuthErrorAlert from './AuthErrorAlert';
 import AuthInputField from './AuthInputField';
 import AuthScreenLayout from './AuthScreenLayout';
@@ -92,22 +91,8 @@ export default function RegisterForm({ onBack }: RegisterFormProps) {
   );
 
   return (
-    <AuthScreenLayout
-      title={t('register.title')}
-      description={t('login.description')}
-      footerText="Create an account to access MedPD"
-      logo={
-        <div className="flex items-center justify-center gap-2">
-          <img
-            src={medAssistantLogo}
-            alt="MedPD"
-            className="h-14 w-auto max-w-72 select-none object-contain"
-            draggable={false}
-          />
-        </div>
-      }
-    >
-      <form onSubmit={handleSubmit} className="space-y-4">
+    <AuthScreenLayout title={t('register.title')}>
+      <form onSubmit={handleSubmit} className="auth-screen__form">
         <AuthInputField
           id="username"
           name="username"
@@ -117,6 +102,7 @@ export default function RegisterForm({ onBack }: RegisterFormProps) {
           placeholder={t('login.placeholders.username')}
           isDisabled={isSubmitting}
           autoComplete="username"
+          visuallyHiddenLabel
         />
 
         <AuthInputField
@@ -129,6 +115,7 @@ export default function RegisterForm({ onBack }: RegisterFormProps) {
           isDisabled={isSubmitting}
           type="password"
           autoComplete="new-password"
+          visuallyHiddenLabel
         />
 
         <AuthInputField
@@ -137,10 +124,11 @@ export default function RegisterForm({ onBack }: RegisterFormProps) {
           label={t('register.confirmPassword')}
           value={formState.confirmPassword}
           onChange={(value) => updateField('confirmPassword', value)}
-          placeholder="Confirm your password"
+          placeholder={t('register.confirmPassword')}
           isDisabled={isSubmitting}
           type="password"
           autoComplete="new-password"
+          visuallyHiddenLabel
         />
 
         <AuthErrorAlert errorMessage={errorMessage || (registrationOpen ? '' : t('register.closed'))} />
@@ -148,7 +136,7 @@ export default function RegisterForm({ onBack }: RegisterFormProps) {
         <button
           type="submit"
           disabled={isSubmitting || !registrationOpen}
-          className="w-full rounded-md bg-blue-600 px-4 py-2 font-medium text-white transition-colors duration-200 hover:bg-blue-700 disabled:bg-blue-400"
+          className="auth-screen__submit"
         >
           {isSubmitting ? t('register.loading') : t('register.submit')}
         </button>
@@ -157,7 +145,7 @@ export default function RegisterForm({ onBack }: RegisterFormProps) {
           <button
             type="button"
             onClick={onBack}
-            className="w-full text-center text-sm text-muted-foreground hover:text-foreground"
+            className="auth-screen__link"
           >
             {t('register.back')}
           </button>

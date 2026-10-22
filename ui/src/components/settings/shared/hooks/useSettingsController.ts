@@ -7,6 +7,7 @@ import type {
   SettingsMainTab,
 } from "../types";
 import { safeLocalStorage } from '../../../../utils/safeStorage';
+import { UI_PREFERENCES_HYDRATED_EVENT } from '../../../auth/UserPreferenceSync';
 
 type UseSettingsControllerArgs = {
   isOpen: boolean;
@@ -59,6 +60,15 @@ export function useSettingsController({
 
     setProjectSortOrderState(readProjectSortPreference());
   }, [isOpen, initialTab]);
+
+  useEffect(() => {
+    const reload = () => {
+      setProjectSortOrderState(readProjectSortPreference());
+      setCodeEditorSettings(readCodeEditorSettings());
+    };
+    window.addEventListener(UI_PREFERENCES_HYDRATED_EVENT, reload);
+    return () => window.removeEventListener(UI_PREFERENCES_HYDRATED_EVENT, reload);
+  }, []);
 
   useEffect(() => {
     safeLocalStorage.setItem("codeEditorTheme", codeEditorSettings.theme);

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PilotDeckConfigProvider } from "../../hooks/usePilotDeckConfig";
-import { authenticatedFetch } from "../../utils/api";
 import { useAuth } from "../auth/context/AuthContext";
 import type { SettingsProps } from "./shared/types";
 import type { SettingsMenuKey } from "./types";
 import { mapInitialTabToMenuKey } from "./navigation";
 import SettingsSidebar, { getSelectableMenuKeys } from "./view/SettingsSidebar";
 import SettingsContent from "./view/SettingsContent";
+import { useAnimatedClose } from "../../hooks/useAnimatedPresence";
 
 export type DesktopVersionCheckResult = {
   mode: "desktop" | "web";
@@ -17,30 +17,6 @@ export type DesktopVersionCheckResult = {
   latestPublishedAt: string | null;
   buildTime: string | null;
 };
-
-function normalizeDesktopVersionResult(payload: any): DesktopVersionCheckResult {
-  return {
-    mode: "desktop",
-    hasUpdate: Boolean(payload?.hasUpdate),
-    checkUnavailable: Boolean(payload?.checkUnavailable),
-    currentVersion: payload?.current?.version ?? "unknown",
-    latestVersion: payload?.latest?.version ?? null,
-    latestPublishedAt: payload?.latest?.publishedAt ?? null,
-    buildTime: payload?.current?.buildTime ?? null,
-  };
-}
-
-function normalizeWebVersionResult(payload: any): DesktopVersionCheckResult {
-  return {
-    mode: "web",
-    hasUpdate: Boolean(payload?.hasUpdate),
-    checkUnavailable: Boolean(payload?.checkUnavailable),
-    currentVersion: payload?.localHead ?? "unknown",
-    latestVersion: payload?.remoteHead ?? null,
-    latestPublishedAt: null,
-    buildTime: null,
-  };
-}
 
 // A deep link may name a page the role cannot see (e.g. `config:models` for a
 // normal user, or `users` in no-login mode); fall back to the general page
@@ -72,7 +48,8 @@ function SettingsInner({
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(
     initialKey === "general",
   );
-  const [versionInfo, setVersionInfo] = useState<DesktopVersionCheckResult>({
+  const { closing, requestClose } = useAnimatedClose(onClose, 580);
+  const versionInfo: DesktopVersionCheckResult = {
     mode: isDesktopApp ? "desktop" : "web",
     hasUpdate: false,
     checkUnavailable: false,
@@ -80,47 +57,15 @@ function SettingsInner({
     latestVersion: null,
     latestPublishedAt: null,
     buildTime: null,
-  });
-  const [checkingVersion, setCheckingVersion] = useState(false);
-
-  const checkVersion = useCallback(async () => {
-    setCheckingVersion(true);
-    try {
-      const res = isDesktopApp
-        ? await authenticatedFetch("/api/update/desktop/check", {
-            method: "POST",
-          })
-        : await authenticatedFetch("/api/update/check", {
-            method: "POST",
-          });
-      if (!res.ok) {
-        throw new Error("Failed to check version");
-      }
-      const data = await res.json();
-      setVersionInfo(
-        isDesktopApp
-          ? normalizeDesktopVersionResult(data)
-          : normalizeWebVersionResult(data),
-      );
-    } catch {
-      setVersionInfo((prev) => ({
-        ...prev,
-        hasUpdate: false,
-        checkUnavailable: true,
-      }));
-    } finally {
-      setCheckingVersion(false);
-    }
-  }, [isDesktopApp]);
+  };
 
   useEffect(() => {
     if (!isOpen) return;
     const nextKey = resolveMenuKey(initialTab, isAdmin, authDisabled);
     setSelectedKey(nextKey);
     setMobileNavigationOpen(nextKey === "general");
-    // The update endpoints are admin-only.
-    if (isAdmin) void checkVersion();
-  }, [isOpen, initialTab, isAdmin, authDisabled, checkVersion]);
+    // Updates are handled by operators; opening Settings does not check for releases.
+  }, [isOpen, initialTab, isAdmin, authDisabled]);
 
   const selectMenuItem = useCallback((key: SettingsMenuKey) => {
     setSelectedKey(key);
@@ -132,13 +77,13 @@ function SettingsInner({
   }
 
   return (
-    <div className="modal-backdrop fixed inset-0 z-[9999] flex items-center justify-center bg-background/80 backdrop-blur-sm md:p-4">
-      <div className="relative flex h-full w-full overflow-hidden border border-border bg-background shadow-2xl md:h-[90vh] md:max-w-7xl md:rounded-xl">
+    <div className={`modal-backdrop ${closing ? 'pd-settings-backdrop-exit pointer-events-none' : 'pd-settings-backdrop-enter'} fixed inset-0 z-[9999] flex items-center justify-center bg-background/80 backdrop-blur-sm md:p-4`}>
+      <div className={`${closing ? 'pd-settings-dialog-exit' : 'pd-settings-dialog-enter'} relative flex h-full w-full overflow-hidden border border-border bg-background shadow-2xl md:h-[90vh] md:max-w-7xl md:rounded-xl`}>
         <div className="flex h-full w-full flex-col md:flex-row">
           <SettingsSidebar
             selectedKey={selectedKey}
             onSelect={selectMenuItem}
-            onClose={onClose}
+            onClose={requestClose}
             showAboutDot={versionInfo.hasUpdate}
             mobileVisible={mobileNavigationOpen}
           />
@@ -146,7 +91,7 @@ function SettingsInner({
             selectedKey={selectedKey}
             projects={projects}
             versionInfo={versionInfo}
-            checkingVersion={checkingVersion}
+            checkingVersion={false}
             mobileVisible={!mobileNavigationOpen}
             onOpenMobileNavigation={() => setMobileNavigationOpen(true)}
           />

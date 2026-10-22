@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import ChatWelcomeV2 from './ChatWelcomeV2';
 import MainContentStateView from '../main-content/view/subcomponents/MainContentStateView';
 
@@ -18,6 +18,34 @@ describe('ChatWelcomeV2', () => {
     render(<ChatWelcomeV2 selectedProject={null} composerSlot={null} />);
     expect(screen.getByRole('heading', { name: '通用医学智能助手' })).toBeTruthy();
     expect(screen.getByAltText('通用医学智能助手')).toBeTruthy();
+  });
+
+  it('shows the selected workspace welcome and create action when no project exists', () => {
+    const onCreateProject = vi.fn();
+    const { rerender } = render(
+      <MainContentStateView
+        mode="empty"
+        isMobile={false}
+        onMenuClick={() => {}}
+        onCreateProject={onCreateProject}
+      />,
+    );
+    expect(screen.getByRole('heading', { name: '通用医学智能助手' })).toBeTruthy();
+    expect(screen.queryByRole('textbox')).toBeNull();
+    rerender(
+      <MainContentStateView
+        mode="empty"
+        workspaceType="war_trauma"
+        isMobile={false}
+        onMenuClick={() => {}}
+        onCreateProject={onCreateProject}
+      />,
+    );
+    expect(screen.getByRole('heading', { name: '战创伤医学智能助手' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: '通用医学智能助手' })).toBeNull();
+    expect(screen.queryByRole('textbox')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '创建项目' }));
+    expect(onCreateProject).toHaveBeenCalledOnce();
   });
 
   it('shows the general-medicine capability overview instead of the generic greeting', () => {
@@ -49,5 +77,8 @@ describe('ChatWelcomeV2', () => {
     expect(overview.className).toContain('flex-1');
     expect(composerDock.className).toContain('shrink-0');
     expect(overview.nextElementSibling).toBe(composerDock);
+    const centeredLayout = overview.firstElementChild;
+    expect(centeredLayout?.classList.contains('pd-welcome-enter')).toBe(false);
+    expect(centeredLayout?.firstElementChild?.classList.contains('pd-welcome-enter')).toBe(true);
   });
 });

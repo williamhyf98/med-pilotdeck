@@ -100,6 +100,19 @@ afterEach(() => {
 });
 
 describe('MainAreaV2 dashboard switcher', () => {
+  it('labels the header with the active type when the War Trauma section has no project', () => {
+    const props = {
+      projects: [],
+      workspaceType: 'war_trauma',
+      selectedProject: null,
+      selectedSession: null,
+      activeTab: 'chat',
+      setActiveTab: vi.fn(),
+    } as unknown as ComponentProps<typeof MainAreaV2>;
+    render(<MainAreaV2 {...props} />);
+    expect(screen.getAllByText('战创伤医学').length).toBeGreaterThan(0);
+  });
+
   it('renames the selected session inline after double-clicking the header title', () => {
     render(<Harness withSession />);
 

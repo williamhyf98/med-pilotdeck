@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { api } from '../../utils/api';
+import { useAnimatedClose } from '../../hooks/useAnimatedPresence';
 
 export const SYSTEM_PROJECT_TYPES = [
   { id: 'general_medicine', label: '通用医学' },
@@ -12,18 +13,19 @@ export type SystemProjectTypeId = (typeof SYSTEM_PROJECT_TYPES)[number]['id'];
 type SystemProjectCreateDialogProps = {
   onClose: () => void;
   onCreated: (project: Record<string, unknown>) => void;
-  onOpenLegacyPathWizard?: () => void;
+  initialProjectType?: SystemProjectTypeId;
 };
 
 export default function SystemProjectCreateDialog({
   onClose,
   onCreated,
-  onOpenLegacyPathWizard,
+  initialProjectType = 'general_medicine',
 }: SystemProjectCreateDialogProps) {
   const [displayName, setDisplayName] = useState('');
-  const [projectType, setProjectType] = useState<SystemProjectTypeId>('general_medicine');
+  const [projectType, setProjectType] = useState<SystemProjectTypeId>(initialProjectType);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const { closing, requestClose } = useAnimatedClose(onClose, 580);
 
   const handleSubmit = useCallback(async () => {
     const name = displayName.trim();
@@ -54,12 +56,12 @@ export default function SystemProjectCreateDialog({
   }, [displayName, onCreated, projectType]);
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4">
+    <div className={`${closing ? 'pd-settings-backdrop-exit pointer-events-none' : 'pd-settings-backdrop-enter'} fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4`}>
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="system-project-create-title"
-        className="w-full max-w-md rounded-xl border border-neutral-200 bg-white p-5 shadow-xl dark:border-neutral-700 dark:bg-neutral-900"
+        className={`${closing ? 'pd-settings-dialog-exit' : 'pd-settings-dialog-enter'} w-full max-w-md rounded-xl border border-neutral-200 bg-white p-5 shadow-xl dark:border-neutral-700 dark:bg-neutral-900`}
       >
         <h2 id="system-project-create-title" className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
           创建项目
@@ -94,9 +96,9 @@ export default function SystemProjectCreateDialog({
                   aria-pressed={selected}
                   onClick={() => setProjectType(type.id)}
                   disabled={submitting}
-                  className={`rounded-md border px-3 py-2 text-left text-[13px] transition ${
+                  className={`pd-project-type-card rounded-md border px-3 py-2 text-left text-[13px] shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                     selected
-                      ? 'border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900'
+                      ? 'border-neutral-900 bg-neutral-900 text-white hover:bg-neutral-900 dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-100'
                       : 'border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-800'
                   }`}
                 >
@@ -119,27 +121,12 @@ export default function SystemProjectCreateDialog({
           </p>
         ) : null}
 
-        <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
-          {onOpenLegacyPathWizard ? (
-            <button
-              type="button"
-              className="text-[12px] text-neutral-500 underline-offset-2 hover:underline dark:text-neutral-400"
-              onClick={() => {
-                onClose();
-                onOpenLegacyPathWizard();
-              }}
-              disabled={submitting}
-            >
-              从本地路径添加（旧）
-            </button>
-          ) : (
-            <span />
-          )}
+        <div className="mt-5 flex justify-end">
           <div className="flex gap-2">
             <button
               type="button"
               className="rounded-md px-3 py-1.5 text-[13px] text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
-              onClick={onClose}
+              onClick={requestClose}
               disabled={submitting}
             >
               取消

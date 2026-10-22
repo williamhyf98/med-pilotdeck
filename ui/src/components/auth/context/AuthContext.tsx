@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { IS_PLATFORM } from '../../../constants/config';
 import { api } from '../../../utils/api';
-import { clearStorageForUser, getStorageUserId, setStorageUserId, setStorageUserRole } from '../../../utils/safeStorage';
+import { flushUserPreferenceSaves, USER_PREFERENCES_FLUSH_EVENT } from '../userPreferenceSaveQueue';
+import { clearSessionStorageForUser, getStorageUserId, setStorageUserId, setStorageUserRole } from '../../../utils/safeStorage';
 import { AUTH_ERROR_MESSAGES, AUTH_TOKEN_STORAGE_KEY } from '../constants';
 import type {
   AuthContextValue,
@@ -152,7 +153,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const onRevoked = (event: Event) => {
       if (Date.now() < expectedRevokeUntilRef.current) return;
       const code = (event as CustomEvent<{ code?: string }>).detail?.code ?? 'TOKEN_REVOKED';
-      clearStorageForUser(getStorageUserId());
+      clearSessionStorageForUser(getStorageUserId());
       clearSession();
       setSessionEndedCode(code);
     };
@@ -246,6 +247,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const logout = useCallback<AuthContextValue['logout']>(async () => {
     const wipeId = getStorageUserId();
+    window.dispatchEvent(new Event(USER_PREFERENCES_FLUSH_EVENT));
+    await flushUserPreferenceSaves();
     if (readStoredToken()) {
       try {
         expectRevoke();
@@ -256,7 +259,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
 
     window.dispatchEvent(new Event('pilotdeck:auth-logout'));
-    clearStorageForUser(wipeId);
+    clearSessionStorageForUser(wipeId);
     clearSession();
   }, [clearSession, expectRevoke]);
 

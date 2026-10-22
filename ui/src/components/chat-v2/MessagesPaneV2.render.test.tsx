@@ -575,6 +575,19 @@ describe('MessagesPaneV2 render behavior', () => {
     });
   });
 
+  it('replays the content fade only when the selected conversation changes', () => {
+    const messages = [makeMessage(0)];
+    const view = render(<SessionPaneHarness sessionId="session-a" messages={messages} />);
+    const firstContent = view.container.querySelector('.pd-conversation-enter');
+    expect(firstContent).not.toBeNull();
+
+    view.rerender(<SessionPaneHarness sessionId="session-a" messages={[...messages, makeMessage(1)]} />);
+    expect(view.container.querySelector('.pd-conversation-enter')).toBe(firstContent);
+
+    view.rerender(<SessionPaneHarness sessionId="session-b" messages={[makeMessage(2)]} />);
+    expect(view.container.querySelector('.pd-conversation-enter')).not.toBe(firstContent);
+  });
+
   it('resets completed process expansion when switching conversations', async () => {
     const processMessages: ChatMessage[] = [
       {

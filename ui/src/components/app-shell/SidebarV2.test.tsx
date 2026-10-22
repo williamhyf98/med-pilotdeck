@@ -5,6 +5,11 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../../types/app';
 import SidebarV2 from './SidebarV2';
+import { api } from '../../utils/api';
+
+vi.mock('../../utils/api', () => ({
+  api: { renameProject: vi.fn() },
+}));
 
 vi.mock('../auth/context/AuthContext', () => ({
   useAuth: () => ({
@@ -65,6 +70,7 @@ function renderSidebar(
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  vi.mocked(api.renameProject).mockReset();
 });
 
 describe('SidebarV2 type tabs (P3)', () => {
@@ -100,6 +106,35 @@ describe('SidebarV2 type tabs (P3)', () => {
     expect(props.onCreateProject).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps a renamed project visible after remount using the server name', async () => {
+    vi.mocked(api.renameProject).mockResolvedValue({ ok: true } as Response);
+    const onProjectRenamed = vi.fn();
+    const { unmount } = renderSidebar(generalMed, [generalMed], { onProjectRenamed });
+    fireEvent.contextMenu(screen.getByText('门诊随访'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
+    const input = screen.getByRole('textbox', { name: 'Rename' });
+    fireEvent.change(input, { target: { value: '新门诊项目' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(api.renameProject).toHaveBeenCalledWith(generalMed.name, '新门诊项目'));
+    await waitFor(() => expect(onProjectRenamed).toHaveBeenCalledWith(generalMed.name, '新门诊项目'));
+    unmount();
+    renderSidebar({ ...generalMed, displayName: '新门诊项目' }, [{ ...generalMed, displayName: '新门诊项目' }]);
+    expect(screen.getByText('新门诊项目')).toBeTruthy();
+  });
+
+  it('shows a rename error and keeps the input available if saving fails', async () => {
+    vi.mocked(api.renameProject).mockResolvedValue({
+      ok: false, json: async () => ({ error: '保存失败' }),
+    } as Response);
+    renderSidebar(generalMed, [generalMed]);
+    fireEvent.contextMenu(screen.getByText('门诊随访'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Rename' }), { target: { value: '新名称' } });
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Rename' }), { key: 'Enter' });
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('保存失败'));
+    expect((screen.getByRole('textbox', { name: 'Rename' }) as HTMLInputElement).value).toBe('新名称');
+  });
+
   it('allows creating a project from the War Trauma section', () => {
     const { props } = renderSidebar(generalMed, [generalMed]);
     fireEvent.click(screen.getByRole('tab', { name: 'War Trauma' }));
@@ -107,6 +142,22 @@ describe('SidebarV2 type tabs (P3)', () => {
     expect(screen.getByText('No projects in this type yet. Create one above.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'New Project' }));
     expect(props.onCreateProject).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the empty War Trauma section active when controlled by the workspace', () => {
+    const { rerender, props } = renderSidebar(generalMed, [generalMed], {
+      section: 'general_medicine',
+      onSectionChange: vi.fn(),
+    });
+    fireEvent.click(screen.getByRole('tab', { name: 'War Trauma' }));
+    rerender(
+      <MemoryRouter>
+        <SidebarV2 {...props} selectedProject={null} section="war_trauma" />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('tab', { name: 'War Trauma' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('No projects in this type yet. Create one above.')).toBeTruthy();
+    expect(screen.queryByText('门诊随访')).toBeNull();
   });
 
   it('reports section changes so the workspace background follows the selected type', () => {
@@ -136,8 +187,8 @@ describe('SidebarV2 type tabs (P3)', () => {
     expect(screen.queryByRole('button', { name: 'Dashboard' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Always On' })).toBeNull();
     expect(screen.getByRole('button', { name: '技能' }).closest('.border-t')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Settings' }).parentElement?.className)
-      .toContain('border-t');
+    expect(screen.getByRole('button', { name: 'Settings' }).closest('.border-t'))
+      .not.toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: '记忆' }));
     expect(onSelectTab).toHaveBeenCalledWith('memory');
@@ -164,14 +215,16 @@ describe('SidebarV2 type tabs (P3)', () => {
     expect(onSelectTab).toHaveBeenCalledWith('chat');
   });
 
-  it('opens settings on the default tab from the Settings button and on the account tab from the account area', () => {
+  it('opens settings from the footer while user information remains non-interactive', () => {
     const onShowSettings = vi.fn();
     renderSidebar(generalMed, [generalMed], { onShowSettings });
 
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-    expect(onShowSettings).toHaveBeenLastCalledWith();
+    expect(onShowSettings).toHaveBeenCalledTimes(1);
+    expect(onShowSettings).toHaveBeenCalledWith();
 
     fireEvent.click(screen.getByText('tester'));
-    expect(onShowSettings).toHaveBeenLastCalledWith('account');
+    expect(screen.getByText('tester').closest('button')).toBeNull();
+    expect(onShowSettings).toHaveBeenCalledTimes(1);
   });
 });

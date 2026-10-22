@@ -21,6 +21,7 @@ import type { MainContentProps } from '../types/types';
 import { useTaskMaster } from '../../../contexts/TaskMasterContext';
 import { useTasksSettings } from '../../../contexts/TasksSettingsContext';
 import { useUiPreferences } from '../../../hooks/useUiPreferences';
+import { useAnimatedPresence } from '../../../hooks/useAnimatedPresence';
 import { useEditorSidebar } from '../../code-editor/hooks/useEditorSidebar';
 import EditorSidebar from '../../code-editor/view/EditorSidebar';
 import type { CodeEditorDiffInfo } from '../../code-editor/types/types';
@@ -134,6 +135,7 @@ function createClientRunId(): string {
 
 function MainContent({
   projects,
+  workspaceType = 'general_medicine',
   selectedProject,
   selectedSession,
   activeTab,
@@ -556,6 +558,7 @@ function MainContent({
     return (
       <MainContentStateView
         mode="empty"
+        workspaceType={workspaceType}
         isMobile={isMobile}
         onMenuClick={onMenuClick}
         onCreateProject={onCreateProject}
@@ -808,6 +811,8 @@ function SplitBody(props: SplitBodyProps) {
   // enabled it yet so we don't render a black hole.
   const renderTasksAsTool = activeTab === 'tasks' && shouldShowTasksTab;
   const isFiles = activeTab === 'files';
+  const filesPresence = useAnimatedPresence(isFiles, 480);
+  const previewPresence = useAnimatedPresence(isFiles && hasEditor && Boolean(selectedProject), 480);
   const filesSplitContainerRef = useRef<HTMLDivElement | null>(null);
   const [workbenchWidth, setWorkbenchWidth] = useState(0);
   const [toolPanelWidth, setToolPanelWidth] = useState(readStoredToolPanelWidth);
@@ -929,6 +934,11 @@ function SplitBody(props: SplitBodyProps) {
   const showFullScreenTool = isFullScreenTool && (activeTab !== 'tasks' || shouldShowTasksTab);
   const showChat = !showFullScreenTool;
   const filePreviewExpanded = isFiles && showChat && hasEditor && editorExpanded;
+  const expandedPreviewRef = useRef(false);
+  if (isFiles && hasEditor) expandedPreviewRef.current = editorExpanded;
+  if (!previewPresence.present) expandedPreviewRef.current = false;
+  const previewExpandedDuringExit = filePreviewExpanded
+    || (previewPresence.exiting && expandedPreviewRef.current);
   const isWarTraumaProject = selectedProject
     ? resolveProjectType(selectedProject) === 'war_trauma'
     : false;
@@ -978,7 +988,11 @@ function SplitBody(props: SplitBodyProps) {
       {showFullScreenTool && (
         <div className="flex h-full w-full min-w-0 flex-col overflow-hidden">
           <Suspense fallback={<TabSkeleton />}>
-            {renderTool()}
+            {activeTab === 'skills' || activeTab === 'storage' ? (
+              <div key={activeTab} className="pd-workspace-enter flex h-full min-h-0 w-full min-w-0 flex-col">
+                {renderTool()}
+              </div>
+            ) : renderTool()}
           </Suspense>
         </div>
       )}
@@ -989,9 +1003,9 @@ function SplitBody(props: SplitBodyProps) {
         className={cn(
           'workspace-chat-surface flex min-h-0 min-w-0 flex-1 flex-col',
           !showChat && 'invisible absolute h-0 w-0 overflow-hidden',
-          filePreviewExpanded && 'invisible absolute h-0 w-0 overflow-hidden',
+          previewExpandedDuringExit && 'invisible absolute h-0 w-0 overflow-hidden',
         )}
-        aria-hidden={!showChat || filePreviewExpanded}
+        aria-hidden={!showChat || previewExpandedDuringExit}
       >
         <ErrorBoundary showDetails>
           {isWarTraumaProject ? (
@@ -1013,38 +1027,55 @@ function SplitBody(props: SplitBodyProps) {
         </ErrorBoundary>
       </div>
 
-      {isFiles && showChat && hasEditor && selectedProject ? (
+      {previewPresence.present && showChat && selectedProject ? (
         <aside
           className={cn(
-            'animate-in slide-in-from-right z-20 h-full min-h-0 overflow-hidden border-l border-border bg-background pr-3 shadow-[-12px_0_32px_rgba(15,23,42,0.12)] duration-200',
-            filePreviewExpanded ? 'min-w-0 flex-1' : 'shrink-0',
-            isMobile && 'absolute inset-y-0 right-0 z-40 w-full',
+            'z-20 h-full min-h-0 min-w-0 overflow-hidden border-l border-border bg-background shadow-[-12px_0_32px_rgba(15,23,42,0.12)]',
+            previewPresence.exiting ? 'pd-side-panel-exit pointer-events-none' : 'pd-side-panel-enter',
+            previewExpandedDuringExit && 'pd-side-panel-flex',
+            previewExpandedDuringExit ? 'min-w-0 flex-1' : 'shrink-0',
+            isMobile ? 'absolute inset-y-0 right-0 z-40 w-full' : 'relative',
           )}
-          style={isMobile || filePreviewExpanded ? undefined : { width: filePreviewWidth }}
+          style={{ '--pd-side-width': isMobile ? '100%' : `${filePreviewWidth}px`,
+            '--pd-side-content-width': isMobile
+              ? (workbenchWidth ? `${workbenchWidth}px` : '100vw')
+              : previewExpandedDuringExit
+                ? `${Math.max(FILE_PREVIEW_WIDTH, workbenchWidth - FILES_PANEL_WIDTH)}px`
+                : `${filePreviewWidth}px`,
+            ...(!isMobile && !previewExpandedDuringExit ? { width: filePreviewWidth } : {}) } as React.CSSProperties}
           aria-label="文件预览"
         >
-          <EditorSidebar {...editorSidebarProps} workspaceMode />
+          <div className="pd-side-panel-content h-full pr-3">
+            <EditorSidebar {...editorSidebarProps} workspaceMode />
+          </div>
         </aside>
       ) : null}
 
-      {isFiles && showChat ? (
+      {filesPresence.present && showChat ? (
         <aside
           className={cn(
-            'z-30 h-full min-h-0 shrink-0 overflow-hidden border-l border-border shadow-[-8px_0_24px_rgba(15,23,42,0.06)]',
-            isMobile && 'absolute inset-y-0 right-0 w-full',
+            'z-30 h-full min-h-0 min-w-0 shrink-0 overflow-hidden border-l border-border shadow-[-8px_0_24px_rgba(15,23,42,0.06)]',
+            filesPresence.exiting ? 'pd-side-panel-exit pointer-events-none' : 'pd-side-panel-enter',
+            isMobile ? 'absolute inset-y-0 right-0 w-full' : 'relative',
           )}
-          style={isMobile ? undefined : { width: FILES_PANEL_WIDTH }}
+          style={{ '--pd-side-width': isMobile ? '100%' : `${FILES_PANEL_WIDTH}px`,
+            '--pd-side-content-width': isMobile
+              ? (workbenchWidth ? `${workbenchWidth}px` : '100vw')
+              : `${FILES_PANEL_WIDTH}px`,
+            ...(!isMobile ? { width: FILES_PANEL_WIDTH } : {}) } as React.CSSProperties}
           aria-label="项目文件"
         >
-          <Suspense fallback={<TabSkeleton />}>
-            <FilesV2
-              key={selectedProject?.name ?? ''}
-              selectedProject={selectedProject}
-              onFileOpen={handleFileOpen}
-              activeFilePath={activeFilePath}
-              onClose={() => setActiveTab('chat')}
-            />
-          </Suspense>
+          <div className="pd-side-panel-content h-full">
+            <Suspense fallback={<TabSkeleton />}>
+              <FilesV2
+                key={selectedProject?.name ?? ''}
+                selectedProject={selectedProject}
+                onFileOpen={handleFileOpen}
+                activeFilePath={activeFilePath}
+                onClose={() => setActiveTab('chat')}
+              />
+            </Suspense>
+          </div>
         </aside>
       ) : null}
 

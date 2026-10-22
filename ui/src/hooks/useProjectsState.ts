@@ -368,6 +368,15 @@ export function useProjectsState({
     await fetchProjects({ showLoadingState: false });
   }, [fetchProjects]);
 
+  const updateProjectDisplayName = useCallback((projectName: string, displayName: string) => {
+    setProjects((current) => current.map((project) => (
+      project.name === projectName ? { ...project, displayName } : project
+    )));
+    setSelectedProject((current) => current?.name === projectName
+      ? { ...current, displayName }
+      : current);
+  }, []);
+
   const openSettings = useCallback((tab = 'appearance') => {
     setSettingsInitialTab(tab);
     setShowSettings(true);
@@ -376,13 +385,6 @@ export function useProjectsState({
   useEffect(() => {
     void fetchProjects();
   }, [fetchProjects]);
-
-  // Auto-select the project when there is only one, so the user lands on the new session page
-  useEffect(() => {
-    if (!isLoadingProjects && projects.length === 1 && !selectedProject && !sessionId) {
-      setSelectedProject(projects[0]);
-    }
-  }, [isLoadingProjects, projects, selectedProject, sessionId]);
 
   useEffect(() => {
     if (!latestMessage) {
@@ -947,6 +949,7 @@ export function useProjectsState({
     openSettings,
     fetchProjects,
     refreshProjectsSilently,
+    updateProjectDisplayName,
     sidebarSharedProps,
     handleProjectSelect,
     handleSessionSelect,

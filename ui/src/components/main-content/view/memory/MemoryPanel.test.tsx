@@ -5,7 +5,7 @@
  * 面板的职责到 URL 为止；URL **被消费之后**的行为（作用域冻结、
  * 跨项目写入拦截）在 edgeclaw-memory-core 子包的 dashboardScope 测试里覆盖。
  */
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project, ProjectSession } from '../../../../types/app';
 import MemoryPanel, { buildMemoryDashboardUrl } from './MemoryPanel';
@@ -115,6 +115,24 @@ describe('MemoryPanel', () => {
     const second = screen.getByTitle('Memory 面板');
     expect(second).not.toBe(first);
     expect(queryOf(second.getAttribute('src')).get('sessionId')).toBe('web:s2');
+  });
+
+  it('iframe 加载完成后再展示，切换 session 时重新等待加载', () => {
+    const { rerender } = render(
+      <MemoryPanel selectedProject={project()} selectedSession={session('web:s1')} />,
+    );
+    const first = screen.getByTitle('Memory 面板');
+    expect(first.className).toContain('invisible');
+    fireEvent.load(first);
+    expect(first.className).toContain('pd-memory-ready');
+    expect(first.className).not.toContain('invisible');
+
+    rerender(<MemoryPanel selectedProject={project()} selectedSession={session('web:s2')} />);
+    const second = screen.getByTitle('Memory 面板');
+    expect(second).not.toBe(first);
+    expect(second.className).toContain('invisible');
+    fireEvent.load(second);
+    expect(second.className).toContain('pd-memory-ready');
   });
 
   it('项目缺稳定 id 时给出不可用提示而不是渲染 iframe', () => {

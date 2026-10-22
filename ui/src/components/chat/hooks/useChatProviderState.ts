@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { authenticatedFetch } from '../../../utils/api';
 import { useWebSocket } from '../../../contexts/WebSocketContext';
 import { CLAUDE_MODELS } from '../../../../shared/modelConstants';
@@ -27,19 +27,10 @@ const DEFAULT_MODEL_OPTIONS: ModelOption[] = CLAUDE_MODELS.OPTIONS.map((option) 
   ...option,
 }));
 
-const DEFAULT_PERMISSION_MODE_KEY = 'permissionMode-default';
 const COMPOSER_PERMISSION_MODES: PermissionMode[] = [
   'default',
   'bypassPermissions',
 ];
-
-function readStoredPermissionMode(key: string): PermissionMode | null {
-  const stored = safeLocalStorage.getItem(key);
-  if (!stored) return null;
-  return COMPOSER_PERMISSION_MODES.includes(stored as PermissionMode)
-    ? (stored as PermissionMode)
-    : null;
-}
 
 function readThinkingModelContext(config: unknown): ThinkingModelContext | null {
   const configRecord = config && typeof config === 'object' ? config as Record<string, unknown> : null;
@@ -78,26 +69,13 @@ function readThinkingModelContext(config: unknown): ThinkingModelContext | null 
 
 export function useChatProviderState({ selectedSession }: UseChatProviderStateArgs) {
   const { subscribe } = useWebSocket();
-  const [permissionMode, setPermissionModeState] = useState<PermissionMode>(() => {
-    return readStoredPermissionMode(DEFAULT_PERMISSION_MODE_KEY) || 'default';
-  });
+  const [permissionMode, setPermissionModeState] = useState<PermissionMode>('bypassPermissions');
   const [pendingPermissionRequests, setPendingPermissionRequests] = useState<PendingPermissionRequest[]>([]);
   const [model, setModel] = useState<string>(() => {
     return safeLocalStorage.getItem('pilotdeck-model') || CLAUDE_MODELS.DEFAULT;
   });
   const [modelOptions, setModelOptions] = useState<ModelOption[]>(DEFAULT_MODEL_OPTIONS);
   const [thinkingModelContext, setThinkingModelContext] = useState<ThinkingModelContext | null>(null);
-
-  useEffect(() => {
-    const defaultMode = readStoredPermissionMode(DEFAULT_PERMISSION_MODE_KEY);
-    if (!selectedSession?.id) {
-      setPermissionModeState(defaultMode || 'default');
-      return;
-    }
-
-    const savedMode = readStoredPermissionMode(`permissionMode-${selectedSession.id}`);
-    setPermissionModeState(savedMode || defaultMode || 'default');
-  }, [selectedSession?.id]);
 
   useEffect(() => {
     setPendingPermissionRequests((previous) => {
@@ -145,11 +123,7 @@ export function useChatProviderState({ selectedSession }: UseChatProviderStateAr
 
         const backendMode = data?.permissions?.effectiveMode;
         if (backendMode && COMPOSER_PERMISSION_MODES.includes(backendMode as PermissionMode)) {
-          const storedPerm = readStoredPermissionMode(DEFAULT_PERMISSION_MODE_KEY);
-          if (!storedPerm || storedPerm === 'default') {
-            setPermissionModeState(backendMode as PermissionMode);
-            safeLocalStorage.setItem(DEFAULT_PERMISSION_MODE_KEY, backendMode);
-          }
+          setPermissionModeState(backendMode as PermissionMode);
         }
       })
       .catch((error) => {
@@ -183,35 +157,13 @@ export function useChatProviderState({ selectedSession }: UseChatProviderStateAr
     });
   }, [subscribe]);
 
-  const setPermissionMode = useCallback((nextMode: PermissionMode) => {
-    const normalizedMode = COMPOSER_PERMISSION_MODES.includes(nextMode)
-      ? nextMode
-      : 'default';
-
-    setPermissionModeState(normalizedMode);
-    safeLocalStorage.setItem(DEFAULT_PERMISSION_MODE_KEY, normalizedMode);
-
-    if (selectedSession?.id) {
-      safeLocalStorage.setItem(`permissionMode-${selectedSession.id}`, normalizedMode);
-    }
-  }, [selectedSession?.id]);
-
-  const cyclePermissionMode = useCallback(() => {
-    const currentIndex = COMPOSER_PERMISSION_MODES.indexOf(permissionMode);
-    const nextIndex = (currentIndex + 1) % COMPOSER_PERMISSION_MODES.length;
-    const nextMode = COMPOSER_PERMISSION_MODES[nextIndex];
-    setPermissionMode(nextMode);
-  }, [permissionMode, setPermissionMode]);
-
   return {
     model,
     setModel,
     modelOptions,
     thinkingModelContext,
     permissionMode,
-    setPermissionMode,
     pendingPermissionRequests,
     setPendingPermissionRequests,
-    cyclePermissionMode,
   };
 }

@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import { cn } from '../../lib/utils';
+import { useAnimatedPresence } from '../../hooks/useAnimatedPresence';
 import { TRAUMA_STAGES } from './demoCase';
 import { snapshotsToRounds } from './domain/snapshotAdapter';
 import type { TurnFormInput } from './domain/types';
@@ -89,6 +90,15 @@ export default function TraumaWorkspace({
     () => rounds.find((round) => round.id === selectedMemoId) ?? null,
     [rounds, selectedMemoId],
   );
+  const detailPresence = useAnimatedPresence(Boolean(selectedMemo), 540);
+  const lastMemoRef = useRef(selectedMemo);
+  const detailResetKeyRef = useRef(resetKey);
+  if (detailResetKeyRef.current !== resetKey) {
+    lastMemoRef.current = null;
+    detailResetKeyRef.current = resetKey;
+  }
+  if (selectedMemo) lastMemoRef.current = selectedMemo;
+  const visibleMemo = selectedMemo ?? (detailPresence.present ? lastMemoRef.current : null);
   const pendingMemo = useMemo(() => {
     if (!pendingRun) return null;
     return rounds.find((round) => round.triggerMessageId === pendingRun.runId)
@@ -227,10 +237,8 @@ export default function TraumaWorkspace({
       </div>
 
       <div className={cn(
-        'grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_auto] gap-2 overflow-hidden p-2',
-        selectedMemo
-          ? 'lg:grid-cols-[minmax(0,54fr)_minmax(0,46fr)] lg:grid-rows-1'
-          : 'lg:grid-cols-[minmax(0,1fr)_300px] lg:grid-rows-1 2xl:grid-cols-[minmax(0,80fr)_minmax(0,20fr)]',
+        'trauma-layout grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_auto] gap-2 overflow-hidden p-2 lg:grid-rows-1',
+        selectedMemo && 'trauma-layout--detail',
       )}
       >
         <section
@@ -263,13 +271,13 @@ export default function TraumaWorkspace({
           </header>
 
           <div className={cn(
-            'grid min-h-0 min-w-0 grid-cols-1 overflow-hidden',
-            selectedMemo && 'grid-rows-[minmax(0,44%)_minmax(0,56%)] xl:grid-cols-[minmax(0,38fr)_minmax(0,62fr)] xl:grid-rows-1',
+            'trauma-flow-grid grid min-h-0 min-w-0 overflow-hidden',
+            selectedMemo && 'trauma-flow-grid--detail',
           )}
           >
             <div className={cn(
-              'min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-3',
-              selectedMemo && 'border-b border-border xl:border-b-0 xl:border-r',
+              'trauma-flow-chart min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-3',
+              detailPresence.present && 'border-b border-border xl:border-b-0 xl:border-r',
             )}
             >
               {caseStore.error ? (
@@ -295,11 +303,17 @@ export default function TraumaWorkspace({
               )}
             </div>
 
-            {selectedMemo ? (
-              <aside aria-label="轮次纪要详情" className="trauma-detail-panel workspace-detail-surface min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-3">
+            {visibleMemo && detailPresence.present ? (
+              <aside
+                aria-label="轮次纪要详情"
+                className={cn(
+                  'trauma-detail-panel workspace-detail-surface min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-3',
+                  selectedMemo ? 'trauma-detail-panel--open' : 'trauma-detail-panel--closing pointer-events-none',
+                )}
+              >
                 <MemoDetailPanel
-                  memo={selectedMemo}
-                  isLatest={selectedMemo.round === position.round}
+                  memo={visibleMemo}
+                  isLatest={visibleMemo.round === position.round}
                   onClose={() => setSelectedMemoId(null)}
                 />
               </aside>

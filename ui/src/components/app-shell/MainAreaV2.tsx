@@ -58,6 +58,7 @@ function MainAreaV2Content(props: MainAreaV2Props) {
   const {
     selectedProject,
     selectedSession,
+    workspaceType = 'general_medicine',
     activeTab,
     setActiveTab,
     isSidebarCollapsed,
@@ -95,7 +96,9 @@ function MainAreaV2Content(props: MainAreaV2Props) {
   const sessionSummary = selectedSession ? sessionDisplayTitle(selectedSession) : '';
   const projectName = selectedProject
     ? projectDisplayName(selectedProject)
-    : t('navigation.home', { defaultValue: 'Home' });
+    : workspaceType === 'war_trauma'
+      ? t('sidebar:types.warTrauma', { defaultValue: '战创伤医学' })
+      : t('navigation.home', { defaultValue: 'Home' });
   const headerTitle =
     sessionSummary || (displayActiveTab === FILES_TAB.id ? tabLabel || projectName : projectName);
   const isRenamingSessionTitle = Boolean(

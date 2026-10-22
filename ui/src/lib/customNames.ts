@@ -4,13 +4,12 @@ import { stripDocumentSelectionPromptBlock } from '../types/documentSelection';
 import { isScopedStorageKey, safeLocalStorage } from '../utils/safeStorage';
 
 /**
- * UI-only rename overlay for project + session display names.
+ * Legacy browser rename overlay for project labels, and session display names.
  *
  * Folder names on disk (`project.name`, `session.id`) stay the source of
- * truth — every API call, route, and persistence layer keeps using them.
- * This module just stores a per-user "preferred label" map in localStorage
- * and surfaces it through `projectDisplayName` / `sessionDisplayTitle`,
- * which the UI calls instead of touching the raw fields directly.
+ * truth — every API call and route keeps using them. New project renames are
+ * saved in server metadata; browser project overrides remain readable so
+ * previously renamed projects still show their preferred names.
  *
  * Renames trigger a `customnames:changed` window event and a `storage` event
  * (cross-tab) so every consumer can re-read the override on the next render

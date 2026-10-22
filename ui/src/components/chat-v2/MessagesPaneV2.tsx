@@ -233,7 +233,7 @@ export function filterMessagesForFinalOnly(
 function TraumaNewConversationEmptyState() {
   return (
     <div className="mx-auto flex h-full max-w-[760px] flex-col items-center justify-center px-6 py-10 text-center">
-      <div className="flex w-full flex-col items-center">
+      <div className="pd-welcome-enter flex w-full flex-col items-center">
         <img
           src={medAssistantLogo}
           alt="Trauma Agent"
@@ -255,7 +255,7 @@ function TraumaNewConversationEmptyState() {
           ].map(([step, title, description]) => (
             <div
               key={step}
-              className="rounded-2xl border border-neutral-200/80 bg-white/70 p-4 shadow-sm backdrop-blur dark:border-neutral-800/80 dark:bg-neutral-900/70"
+              className="pd-welcome-card rounded-2xl border border-neutral-200/80 bg-white/70 p-4 shadow-sm backdrop-blur dark:border-neutral-800/80 dark:bg-neutral-900/70"
             >
               <div className="mb-3 inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-red-700 px-2 text-[11px] font-semibold text-white dark:bg-red-500">
                 {step}
@@ -1520,7 +1520,8 @@ function MessagesPaneV2({
         </div>
       ) : (
         <div
-          className="mx-auto max-w-[860px] px-6 py-10"
+          key={messageWindowScope}
+          className="pd-conversation-enter mx-auto max-w-[860px] px-6 py-10"
           data-virtualized-messages={shouldVirtualizeMessages ? 'true' : undefined}
           data-rendered-message-count={windowedMessageItems.length}
           data-total-message-count={keyedMessageItems.length}

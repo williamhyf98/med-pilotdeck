@@ -172,6 +172,9 @@
   "account": {
     "open": "Account",
     "logout": "Sign out",
+    "logoutShort": "Log out",
+    "logoutConfirmTitle": "Sign out?",
+    "logoutConfirmDescription": "Are you sure you want to sign out of this account?",
     "roleAdmin": "Administrator",
     "roleUser": "User",
     "localMode": "Local mode",

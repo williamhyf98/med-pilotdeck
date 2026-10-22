@@ -4,6 +4,7 @@ import type { MainContentStateViewProps } from '../../types/types';
 
 export default function MainContentStateView({
   mode,
+  workspaceType = 'general_medicine',
   onCreateProject,
 }: MainContentStateViewProps) {
   const { t } = useTranslation();
@@ -20,7 +21,12 @@ export default function MainContentStateView({
           </div>
         </div>
       ) : (
-        <ChatWelcomeV2 selectedProject={null} composerSlot={null} onCreateProject={onCreateProject} />
+        <ChatWelcomeV2
+          selectedProject={null}
+          welcomeTitle={workspaceType === 'war_trauma' ? '战创伤医学智能助手' : undefined}
+          composerSlot={null}
+          onCreateProject={onCreateProject}
+        />
       )}
     </div>
   );

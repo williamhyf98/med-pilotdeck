@@ -1,4 +1,4 @@
-import type { AlwaysOnSubTab, AppTab, Project, ProjectSession } from '../../../types/app';
+import type { AlwaysOnSubTab, AppTab, Project, ProjectSession, ProjectType } from '../../../types/app';
 
 export type SessionLifecycleHandler = (sessionId?: string | null) => void;
 
@@ -37,6 +37,7 @@ export type PrdFile = {
 
 export type MainContentProps = {
   projects: Project[];
+  workspaceType?: ProjectType;
   selectedProject: Project | null;
   selectedSession: ProjectSession | null;
   activeTab: AppTab;
@@ -86,6 +87,7 @@ export type MainContentProps = {
 
 export type MainContentStateViewProps = {
   mode: 'loading' | 'empty';
+  workspaceType?: ProjectType;
   isMobile: boolean;
   onMenuClick: () => void;
   onCreateProject?: () => void;

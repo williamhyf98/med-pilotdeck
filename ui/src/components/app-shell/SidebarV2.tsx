@@ -22,7 +22,6 @@ import {
   Pencil,
   Plus,
   GitBranch,
-  Settings as SettingsIcon,
   Sparkles,
   Trash2,
 } from 'lucide-react';
@@ -31,10 +30,12 @@ import type { AppTab, Project, ProjectSession, ProjectType } from '../../types/a
 import { cn } from '../../lib/utils.js';
 import { isImeEnterEvent } from '../../utils/ime';
 import { readProjectSortPreference } from '../../utils/projectSortPreference';
+import { api } from '../../utils/api';
 import {
   projectDisplayName,
   sessionDisplayTitle,
   setProjectCustomName,
+  getProjectCustomName,
   setSessionCustomTitle,
   useCustomNamesVersion,
 } from '../../lib/customNames';
@@ -237,6 +238,7 @@ function SessionStatusIndicator({
 
 export type SidebarV2Props = {
   projects: Project[];
+  section?: ProjectType;
   selectedProject: Project | null;
   selectedSession: ProjectSession | null;
   activeTab: AppTab;
@@ -247,6 +249,7 @@ export type SidebarV2Props = {
   onSelectSession: (project: Project, sessionId: string) => void;
   onStartNewSession: (project: Project | null) => void;
   onCreateProject: () => void;
+  onProjectRenamed?: (projectName: string, displayName: string) => void;
   onOpenProjectFiles?: (project: Project) => void;
   onRequestDeleteProject: (project: Project) => void;
   onRequestDeleteSession: (project: Project, session: ProjectSession) => void;
@@ -290,6 +293,7 @@ const contextMenuPosition = (event: MouseEvent) => {
 
 export default function SidebarV2({
   projects,
+  section,
   selectedProject,
   selectedSession,
   activeTab,
@@ -300,6 +304,7 @@ export default function SidebarV2({
   onSelectSession,
   onStartNewSession,
   onCreateProject,
+  onProjectRenamed,
   onOpenProjectFiles,
   onRequestDeleteProject,
   onRequestDeleteSession,
@@ -320,6 +325,9 @@ export default function SidebarV2({
   const [renamingProject, setRenamingProject] = useState<string | null>(null);
   const [renamingSession, setRenamingSession] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState<string>('');
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [isSavingProjectName, setIsSavingProjectName] = useState(false);
+  const projectRenamePendingRef = useRef(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<SidebarContextMenu | null>(null);
   const [collapsedSessionProjects, setCollapsedSessionProjects] = useState<Set<string>>(new Set());
@@ -328,7 +336,8 @@ export default function SidebarV2({
 
   // P3: sidebar tabs are typed project lists (general medicine / war trauma).
   type SidebarSection = ProjectType;
-  const [activeSection, setActiveSection] = useState<SidebarSection>('general_medicine');
+  const [localSection, setLocalSection] = useState<SidebarSection>('general_medicine');
+  const activeSection = section ?? localSection;
 
   // Resizable sidebar width — clamped to a sensible range and persisted across
   // reloads. Drag-handle on the right edge mutates this on the fly.
@@ -440,7 +449,7 @@ export default function SidebarV2({
     if (currentName === previousName) return;
     const nextSection = resolveProjectType(selectedProject);
     if (!nextSection) return;
-    setActiveSection((current) => (current === nextSection ? current : nextSection));
+    setLocalSection((current) => (current === nextSection ? current : nextSection));
   }, [selectedProject]);
 
   const projectSortOrder = useProjectSortOrder();
@@ -464,7 +473,7 @@ export default function SidebarV2({
   );
 
   const handleSectionClick = useCallback((section: SidebarSection) => {
-    setActiveSection(section);
+    setLocalSection(section);
     onSectionChange?.(section);
   }, [onSectionChange]);
 
@@ -563,6 +572,7 @@ export default function SidebarV2({
     setContextMenu(null);
     setRenamingSession(null);
     setRenamingProject(project.name);
+    setRenameError(null);
     setRenameDraft(projectDisplayName(project));
   }, []);
 
@@ -607,12 +617,40 @@ export default function SidebarV2({
     }
   }, [contextMenu, requestDeleteProject, requestDeleteSession]);
 
-  const commitProjectRename = useCallback(() => {
-    if (!renamingProject) return;
-    setProjectCustomName(renamingProject, renameDraft);
-    setRenamingProject(null);
-    setRenameDraft('');
-  }, [renamingProject, renameDraft]);
+  const commitProjectRename = useCallback(async () => {
+    if (!renamingProject || projectRenamePendingRef.current) return;
+    const name = renameDraft.trim();
+    const project = safeProjects.find((item) => item.name === renamingProject);
+    if (!project) return;
+    if (!name) {
+      setRenameError('请输入项目名称');
+      return;
+    }
+    const needsRemoteSave = name !== project.displayName;
+    const hasLocalOverride = Boolean(getProjectCustomName(renamingProject));
+    projectRenamePendingRef.current = true;
+    setIsSavingProjectName(true);
+    setRenameError(null);
+    try {
+      if (needsRemoteSave) {
+        const response = await api.renameProject(renamingProject, name);
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload?.error || '重命名失败，请重试');
+        }
+      }
+      // Remove any older browser-only override once the server has saved it.
+      if (hasLocalOverride) setProjectCustomName(renamingProject, null);
+      setRenamingProject(null);
+      setRenameDraft('');
+      if (needsRemoteSave || hasLocalOverride) onProjectRenamed?.(renamingProject, name);
+    } catch (error) {
+      setRenameError(error instanceof Error ? error.message : '重命名失败，请重试');
+    } finally {
+      projectRenamePendingRef.current = false;
+      setIsSavingProjectName(false);
+    }
+  }, [renamingProject, renameDraft, safeProjects, onProjectRenamed]);
 
   const commitSessionRename = useCallback(() => {
     if (!renamingSession) return;
@@ -622,6 +660,8 @@ export default function SidebarV2({
   }, [renamingSession, renameDraft]);
 
   const cancelRename = useCallback(() => {
+    if (projectRenamePendingRef.current) return;
+    setRenameError(null);
     setRenamingProject(null);
     setRenamingSession(null);
     setRenameDraft('');
@@ -903,11 +943,19 @@ export default function SidebarV2({
               <input
                 ref={renameInputRef}
                 value={renameDraft}
-                onChange={(event) => setRenameDraft(event.target.value)}
-                onBlur={commitProjectRename}
+                onChange={(event) => {
+                  setRenameDraft(event.target.value);
+                  setRenameError(null);
+                }}
+                onBlur={() => {
+                  if (!renameError) void commitProjectRename();
+                }}
                 onKeyDown={(event) => handleRenameKey(event, 'project')}
                 onClick={(event) => event.stopPropagation()}
-                placeholder={t('sidebar:renamePlaceholder', { defaultValue: 'Rename - empty to reset' }) as string}
+                placeholder={t('sidebar:projects.renamePlaceholder', { defaultValue: '输入项目名称' }) as string}
+                aria-label={t('sidebar:actions.rename', { defaultValue: 'Rename' }) as string}
+                aria-invalid={Boolean(renameError)}
+                disabled={isSavingProjectName}
                 className="w-full rounded-sm border border-neutral-300 bg-white px-1.5 py-0.5 text-[12.5px] text-neutral-900 outline-none focus:border-neutral-500 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
               />
             </div>
@@ -982,6 +1030,9 @@ export default function SidebarV2({
           ) : null}
         </div>
 
+        {isRenaming && renameError ? (
+          <p role="alert" className="px-2 py-1 text-[11px] text-red-600 dark:text-red-400">{renameError}</p>
+        ) : null}
         {isExpanded ? renderSessionRows(project) : null}
       </div>
     );
@@ -1157,18 +1208,8 @@ export default function SidebarV2({
         </div>
       </div>
 
-      <div className="border-t border-border px-2 pb-2 pt-2">
-        <SidebarAccountArea onOpenAccount={() => onShowSettings('account')} />
-        <button
-          type="button"
-          onClick={() => onShowSettings()}
-          aria-label={t('sidebar:actions.settings', { defaultValue: 'Settings' }) as string}
-          title={t('sidebar:actions.settings', { defaultValue: 'Settings' }) as string}
-          className="flex h-9 w-full items-center justify-start gap-2 rounded-lg px-6 text-[13px] font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-        >
-          <SettingsIcon className="h-4 w-4" strokeWidth={1.75} />
-          <span>{t('sidebar:actions.settings', { defaultValue: 'Settings' })}</span>
-        </button>
+      <div className="border-t border-border">
+        <SidebarAccountArea onOpenSettings={() => onShowSettings()} />
       </div>
 
       {contextMenu ? createPortal(

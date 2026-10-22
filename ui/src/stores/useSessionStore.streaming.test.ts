@@ -125,6 +125,46 @@ describe('patchMergedStreamingMessage', () => {
 });
 
 describe('computeMerged', () => {
+  it('replaces a policy refusal with persisted same-turn history and keeps its original position', () => {
+    const reply = '抱歉，无法访问该位置。请上传您的材料。';
+    const realtime = [textMessage('local-refusal', reply, '2026-05-28T00:00:02.000Z', {
+      runId: 'denied-run', turnId: 'denied-run', isFinal: true,
+    })];
+    const server = [
+      textMessage('denied-user', '请求读取外部文件', '2026-05-28T00:00:01.000Z', {
+        role: 'user', turnId: 'denied-run',
+      }),
+      textMessage('denied-reply', reply, '2026-05-28T00:00:02.000Z', {
+        turnId: 'denied-run',
+      }),
+      textMessage('next-user', '下一轮问题', '2026-05-28T00:00:03.000Z', {
+        role: 'user', turnId: 'next-run',
+      }),
+    ];
+    expect(shouldKeepRealtimeAfterServerRefresh(realtime[0], server)).toBe(false);
+    expect(computeMerged(server, realtime).map((message) => message.id)).toEqual([
+      'denied-user', 'denied-reply', 'next-user',
+    ]);
+  });
+  it('keeps two persisted refusals with identical replies in their own turns', () => {
+    const reply = '抱歉，当前账号无权访问该位置。请上传有权使用的材料。';
+    const server = [
+      textMessage('user-1', '第一次请求', '2026-05-28T00:00:01.000Z', {
+        role: 'user', turnId: 'deny-1',
+      }),
+      textMessage('reply-1', reply, '2026-05-28T00:00:02.000Z', { turnId: 'deny-1' }),
+      textMessage('user-2', '第二次请求', '2026-05-28T00:00:03.000Z', {
+        role: 'user', turnId: 'deny-2',
+      }),
+      textMessage('reply-2', reply, '2026-05-28T00:00:04.000Z', { turnId: 'deny-2' }),
+    ];
+    const live = [textMessage('live-2', reply, '2026-05-28T00:00:04.000Z', {
+      runId: 'deny-2', turnId: 'deny-2', isFinal: true,
+    })];
+    expect(computeMerged(server, live).map((message) => message.id)).toEqual([
+      'user-1', 'reply-1', 'user-2', 'reply-2',
+    ]);
+  });
   it('keeps an explicitly stopped realtime turn before a newer server turn', () => {
     const server = [
       textMessage('new-user', '新一轮输入', '2026-05-28T00:00:03.000Z', {

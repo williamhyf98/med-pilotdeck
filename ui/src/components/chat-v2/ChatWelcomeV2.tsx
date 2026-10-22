@@ -54,45 +54,49 @@ export default function ChatWelcomeV2({
       <div className="pd-chat-welcome flex h-full min-h-0 flex-col overflow-hidden bg-transparent">
         <div
           data-testid="general-medicine-overview"
-          className="min-h-0 flex-1 overflow-y-auto"
+          className="pd-chat-welcome__overview min-h-0 flex-1 overflow-y-auto"
         >
           <div className="mx-auto flex min-h-full w-full max-w-[1120px] flex-col items-center justify-center px-5 py-5 text-center sm:px-8">
-            <img
-              src={medAssistantLogo}
-              alt={title}
-              className="mb-2 h-auto w-44 max-w-[60vw] object-contain"
-            />
-            <h1 className="text-balance text-[24px] font-semibold tracking-tight text-neutral-950 dark:text-neutral-50">
-              {title}
-            </h1>
-            <p className="mt-2 max-w-[720px] text-[13px] leading-6 text-neutral-600 dark:text-neutral-300">
-              {welcomeDescription || '支持临床分析、医学资料解读、战创伤辅助，以及 PDF、Word、PPT、表格和可视化内容制作。'}
-            </p>
+            <div className="pd-welcome-enter flex w-full flex-col items-center">
+              <img
+                src={medAssistantLogo}
+                alt={title}
+                width={662}
+                height={207}
+                className="mb-2 h-auto w-44 max-w-[60vw] object-contain"
+              />
+              <h1 className="text-balance text-[24px] font-semibold tracking-tight text-neutral-950 dark:text-neutral-50">
+                {title}
+              </h1>
+              <p className="mt-2 max-w-[720px] text-[13px] leading-6 text-neutral-600 dark:text-neutral-300">
+                {welcomeDescription || '支持临床分析、医学资料解读、战创伤辅助，以及 PDF、Word、PPT、表格和可视化内容制作。'}
+              </p>
 
-            <div
-              data-testid="general-medicine-capability-grid"
-              className="mt-5 grid w-full grid-cols-1 gap-3 text-left sm:grid-cols-2 lg:grid-cols-4"
-            >
-              {GENERAL_MEDICINE_CAPABILITIES.map(({ title, description, Icon, iconClassName }) => (
-                <div
-                  key={title}
-                  className="workspace-panel-surface min-h-[116px] rounded-lg border border-neutral-200/80 p-3.5 shadow-sm dark:border-neutral-800"
-                >
-                  <div className={`flex h-8 w-8 items-center justify-center rounded-md ${iconClassName}`}>
-                    <Icon className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
+              <div
+                data-testid="general-medicine-capability-grid"
+                className="mt-5 grid w-full grid-cols-1 gap-3 text-left sm:grid-cols-2 lg:grid-cols-4"
+              >
+                {GENERAL_MEDICINE_CAPABILITIES.map(({ title, description, Icon, iconClassName }) => (
+                  <div
+                    key={title}
+                    className="pd-welcome-card workspace-panel-surface min-h-[116px] rounded-lg border border-neutral-200/80 p-3.5 shadow-sm dark:border-neutral-800"
+                  >
+                    <div className={`flex h-8 w-8 items-center justify-center rounded-md ${iconClassName}`}>
+                      <Icon className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
+                    </div>
+                    <div className="mt-3 text-[13px] font-semibold text-neutral-900 dark:text-neutral-100">
+                      {title}
+                    </div>
+                    <div className="mt-1 text-[12px] leading-5 text-neutral-500 dark:text-neutral-400">
+                      {description}
+                    </div>
                   </div>
-                  <div className="mt-3 text-[13px] font-semibold text-neutral-900 dark:text-neutral-100">
-                    {title}
-                  </div>
-                  <div className="mt-1 text-[12px] leading-5 text-neutral-500 dark:text-neutral-400">
-                    {description}
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
 
-            <div className="mt-4 text-[12px] text-neutral-500 dark:text-neutral-400">
-              解读这份检查报告，整理为结构化病例报告，并导出为PDF。
+              <div className="mt-4 text-[12px] text-neutral-500 dark:text-neutral-400">
+                解读这份检查报告，整理为结构化病例报告，并导出为PDF。
+              </div>
             </div>
           </div>
         </div>

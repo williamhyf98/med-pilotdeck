@@ -12,19 +12,16 @@ import type {
 import {
   ArrowUp,
   AtSign,
-  Brain,
   Bot,
   Check,
   ChevronDown,
   CircleGauge,
   CircleHelp,
-  Hand,
   ListChecks,
   Loader2,
   Paperclip,
   FolderOpen,
   X,
-  ShieldAlert,
   Sparkles,
   Square,
   type LucideIcon,
@@ -32,8 +29,8 @@ import {
 import type { ChatRunMode, PendingPermissionRequest, PermissionMode } from '../chat/types/types';
 import { MAX_ATTACHMENTS_ERROR_KEY, MEDICAL_FOLDER_WARNING_KEY } from '../chat/hooks/useChatComposerState';
 import type { AttachedMedicalFolder } from '../chat/hooks/useChatComposerState';
-import { thinkingModes, type ThinkingModeId } from '../chat/constants/thinkingModes';
-import { getEffectiveThinkingMode, type ThinkingModeAvailability } from '../chat/constants/thinkingModeAvailability';
+import type { ThinkingModeId } from '../chat/constants/thinkingModes';
+import type { ThinkingModeAvailability } from '../chat/constants/thinkingModeAvailability';
 import PermissionRequestsBanner from '../chat/view/subcomponents/PermissionRequestsBanner';
 import ImageAttachment from '../chat/view/subcomponents/ImageAttachment';
 import CommandMenu from '../chat/view/subcomponents/CommandMenu';
@@ -128,7 +125,6 @@ export type ComposerV2Props = {
     toolName: string;
   }) => { success: boolean };
   permissionMode: PermissionMode;
-  onPermissionModeChange: (mode: PermissionMode) => void;
   runMode: ChatRunMode;
   onRunModeChange: (mode: ChatRunMode) => void;
   planModeAvailable?: boolean;
@@ -195,34 +191,6 @@ type ContextStatus = {
   state: 'ok' | 'warning' | 'blocking' | 'unknown';
   tone: 'normal' | 'amber' | 'red' | 'unknown';
 };
-
-type PermissionModeOption = {
-  mode: PermissionMode;
-  Icon: LucideIcon;
-  labelKey: string;
-  defaultLabel: string;
-  descriptionKey: string;
-  defaultDescription: string;
-};
-
-const PERMISSION_MODE_OPTIONS: PermissionModeOption[] = [
-  {
-    mode: 'default',
-    Icon: Hand,
-    labelKey: 'input.permissions.default',
-    defaultLabel: 'Default Permissions',
-    descriptionKey: 'input.permissions.defaultDescription',
-    defaultDescription: 'Ask before risky operations',
-  },
-  {
-    mode: 'bypassPermissions',
-    Icon: ShieldAlert,
-    labelKey: 'input.permissions.bypassPermissions',
-    defaultLabel: 'Full Access',
-    descriptionKey: 'input.permissions.bypassPermissionsDescription',
-    defaultDescription: 'Skip confirmations and allow full access',
-  },
-];
 
 type RunModeOption = {
   mode: ChatRunMode;
@@ -389,14 +357,9 @@ export default function ComposerV2({
   onCancelBusySendQueue,
   isSubmitPending = false,
   tokenBudget,
-  thinkingMode,
-  thinkingModeAvailability,
-  onThinkingModeChange,
   pendingPermissionRequests,
   handlePermissionDecision,
   handleGrantToolPermission,
-  permissionMode,
-  onPermissionModeChange,
   runMode,
   onRunModeChange,
   planModeAvailable = true,
@@ -414,17 +377,8 @@ export default function ComposerV2({
 }: ComposerV2Props) {
   const { t } = useTranslation('chat');
   const [isContextPopoverOpen, setIsContextPopoverOpen] = useState(false);
-  const [isThinkingModeMenuOpen, setIsThinkingModeMenuOpen] = useState(false);
   const [isRunModeMenuOpen, setIsRunModeMenuOpen] = useState(false);
-  const [isPermissionMenuOpen, setIsPermissionMenuOpen] = useState(false);
-  const permissionSelectorDisabled = runMode === 'plan';
   const attachmentPanelRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (permissionSelectorDisabled) {
-      setIsPermissionMenuOpen(false);
-    }
-  }, [permissionSelectorDisabled]);
 
   const hasBlockingPermissionPanel = pendingPermissionRequests.some(
     (request) => BLOCKING_PERMISSION_TOOLS.has(request.toolName),
@@ -469,22 +423,12 @@ export default function ComposerV2({
         ? (t('input.queueSend', { defaultValue: 'Queue message' }) as string)
         : (t('input.send', { defaultValue: 'Send' }) as string);
   const contextStatus = getContextStatus(tokenBudget);
-  const effectiveThinkingMode = getEffectiveThinkingMode(thinkingMode, thinkingModeAvailability);
-  const selectedThinkingMode = thinkingModes.find((option) => option.id === effectiveThinkingMode) || thinkingModes[0];
-  const SelectedThinkingIcon = selectedThinkingMode.icon || Brain;
-  const selectedPermissionOption =
-    PERMISSION_MODE_OPTIONS.find((option) => option.mode === permissionMode) ||
-    PERMISSION_MODE_OPTIONS[0];
   const selectedRunModeOption =
     RUN_MODE_OPTIONS.find((option) => option.mode === runMode) ||
     RUN_MODE_OPTIONS[0];
   const SelectedRunModeIcon = selectedRunModeOption.Icon;
   const selectedRunModeLabel = t(selectedRunModeOption.labelKey, {
     defaultValue: selectedRunModeOption.defaultLabel,
-  }) as string;
-  const SelectedPermissionIcon = selectedPermissionOption.Icon;
-  const selectedPermissionLabel = t(selectedPermissionOption.labelKey, {
-    defaultValue: selectedPermissionOption.defaultLabel,
   }) as string;
   const contextStatusTitle = contextStatus.known
     ? (contextStatus.state === 'blocking'
@@ -868,113 +812,6 @@ export default function ComposerV2({
                       <Sparkles className="h-4 w-4" strokeWidth={1.75} />
                     </button>
                   ) : null}
-                    <div
-                      className="relative"
-                    onBlur={(event) => {
-                      const nextTarget = event.relatedTarget as Node | null;
-                      if (!nextTarget || !event.currentTarget.contains(nextTarget)) {
-                        setIsPermissionMenuOpen(false);
-                      }
-                    }}
-                  >
-                    <button
-                      type="button"
-                      disabled={permissionSelectorDisabled}
-                      onClick={() => {
-                        if (permissionSelectorDisabled) return;
-                        setIsPermissionMenuOpen((open) => !open);
-                      }}
-                      className={cn(
-                        'pd-composer-icon-button inline-flex h-7 max-w-[132px] items-center justify-center gap-1.5 rounded-md px-2 text-[12px] font-medium transition sm:max-w-[190px]',
-                        permissionSelectorDisabled
-                          ? 'cursor-not-allowed text-neutral-400 opacity-45 dark:text-neutral-500'
-                          : permissionMode === 'bypassPermissions'
-                            ? 'text-amber-600 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950/30'
-                            : 'text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800',
-                      )}
-                      title={t('input.permissions.change', {
-                        defaultValue: 'Select permission mode',
-                      }) as string}
-                      aria-haspopup="menu"
-                      aria-expanded={permissionSelectorDisabled ? false : isPermissionMenuOpen}
-                    >
-                      <SelectedPermissionIcon className="h-4 w-4 shrink-0" strokeWidth={1.9} />
-                      <span className="pd-composer-permission-label truncate">{selectedPermissionLabel}</span>
-                      <ChevronDown
-                        className={cn(
-                          'pd-composer-control-chevron h-3.5 w-3.5 shrink-0 transition-transform',
-                          isPermissionMenuOpen && 'rotate-180',
-                        )}
-                        strokeWidth={2}
-                      />
-                    </button>
-                    {isPermissionMenuOpen ? (
-                      <div
-                        role="menu"
-                        className="absolute bottom-full left-0 z-50 mb-2 w-60 rounded-xl border border-neutral-200 bg-white p-1.5 text-left shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
-                      >
-                        {PERMISSION_MODE_OPTIONS.map((option) => {
-                          const Icon = option.Icon;
-                          const isSelected = permissionMode === option.mode;
-                          const isDangerous = option.mode === 'bypassPermissions';
-                          const label = t(option.labelKey, {
-                            defaultValue: option.defaultLabel,
-                          }) as string;
-                          const description = t(option.descriptionKey, {
-                            defaultValue: option.defaultDescription,
-                          }) as string;
-
-                          return (
-                            <button
-                              key={option.mode}
-                              type="button"
-                              role="menuitemradio"
-                              aria-checked={isSelected}
-                              onMouseDown={(event) => event.preventDefault()}
-                              onClick={() => {
-                                onPermissionModeChange(option.mode);
-                                setIsPermissionMenuOpen(false);
-                              }}
-                              className={cn(
-                                'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition',
-                                isSelected
-                                  ? 'bg-neutral-100 dark:bg-neutral-800'
-                                  : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/70',
-                              )}
-                            >
-                              <Icon
-                                className={cn(
-                                  'h-4 w-4 shrink-0',
-                                  isDangerous
-                                    ? 'text-amber-600 dark:text-amber-400'
-                                    : 'text-neutral-500 dark:text-neutral-400',
-                                )}
-                                strokeWidth={1.9}
-                              />
-                              <span className="min-w-0 flex-1">
-                                <span
-                                  className={cn(
-                                    'block truncate text-[13px] font-medium',
-                                    isDangerous
-                                      ? 'text-amber-700 dark:text-amber-300'
-                                      : 'text-neutral-900 dark:text-neutral-100',
-                                  )}
-                                >
-                                  {label}
-                                </span>
-                                <span className="block truncate text-[11px] text-neutral-500 dark:text-neutral-400">
-                                  {description}
-                                </span>
-                              </span>
-                              {isSelected ? (
-                                <Check className="h-4 w-4 shrink-0 text-neutral-500 dark:text-neutral-300" strokeWidth={2} />
-                              ) : null}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-                  </div>
                   </div>
 
                   {isBusySendQueued ? (
@@ -1071,82 +908,6 @@ export default function ComposerV2({
                               {contextStatusUnknownBodyText}
                             </div>
                           )}
-                        </div>
-                      ) : null}
-                    </div>
-
-                    <div
-                      className="pd-composer-thinking-control relative"
-                      onBlur={(event) => {
-                        const nextTarget = event.relatedTarget as Node | null;
-                        if (!nextTarget || !event.currentTarget.contains(nextTarget)) {
-                          setIsThinkingModeMenuOpen(false);
-                        }
-                      }}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setIsThinkingModeMenuOpen((open) => !open)}
-                        className={cn(
-                          'pd-composer-icon-button inline-flex h-7 max-w-[116px] items-center justify-center gap-1.5 rounded-md px-2 text-[12px] font-medium transition sm:max-w-[140px]',
-                          effectiveThinkingMode === 'default'
-                            ? 'text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800'
-                            : 'text-purple-600 hover:bg-purple-50 dark:text-purple-300 dark:hover:bg-purple-950/30',
-                        )}
-                        title={t('input.thinking.change', { defaultValue: 'Select thinking strength' }) as string}
-                        aria-haspopup="menu"
-                        aria-expanded={isThinkingModeMenuOpen}
-                      >
-                        <SelectedThinkingIcon className="h-4 w-4 shrink-0" strokeWidth={1.9} />
-                        <span className="pd-composer-thinking-label truncate">{selectedThinkingMode.name}</span>
-                        <ChevronDown
-                          className={cn(
-                            'pd-composer-control-chevron h-3.5 w-3.5 shrink-0 transition-transform',
-                            isThinkingModeMenuOpen && 'rotate-180',
-                          )}
-                          strokeWidth={2}
-                        />
-                      </button>
-                      {isThinkingModeMenuOpen ? (
-                        <div
-                          role="menu"
-                          className="absolute bottom-full right-0 z-50 mb-2 w-64 rounded-xl border border-neutral-200 bg-white p-1.5 text-left shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
-                        >
-                          {thinkingModes.map((option) => {
-                            const Icon = option.icon || Brain;
-                            const isSelected = option.id === thinkingMode;
-                            const unavailableReason = thinkingModeAvailability[option.id];
-                            return (
-                              <button
-                                key={option.id}
-                                type="button"
-                                role="menuitemradio"
-                                aria-checked={isSelected}
-                                disabled={Boolean(unavailableReason)}
-                                onClick={() => {
-                                  if (unavailableReason) return;
-                                  onThinkingModeChange(option.id);
-                                  setIsThinkingModeMenuOpen(false);
-                                }}
-                                className={cn(
-                                  'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition',
-                                  isSelected
-                                    ? 'bg-neutral-100 text-neutral-950 dark:bg-neutral-800 dark:text-neutral-50'
-                                    : 'text-neutral-700 hover:bg-neutral-50 dark:text-neutral-200 dark:hover:bg-neutral-800/70',
-                                  unavailableReason && 'cursor-not-allowed opacity-45 hover:bg-transparent dark:hover:bg-transparent',
-                                )}
-                                title={option.name}
-                              >
-                                <Icon className={cn('h-4 w-4 shrink-0', option.color)} strokeWidth={1.9} />
-                                <span className="min-w-0 flex-1">
-                                  <span className="block text-[13px] font-medium">{option.name}</span>
-                                </span>
-                                {isSelected ? (
-                                  <Check className="h-4 w-4 shrink-0 text-neutral-500 dark:text-neutral-300" strokeWidth={2} />
-                                ) : null}
-                              </button>
-                            );
-                          })}
                         </div>
                       ) : null}
                     </div>

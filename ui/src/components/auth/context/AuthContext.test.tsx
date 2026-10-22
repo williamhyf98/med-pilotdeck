@@ -108,7 +108,7 @@ describe('AuthContext (multi-user)', () => {
     });
     await waitFor(() => expect(screen.getByText(/^anon:/)).toBeTruthy());
     expect(localStorage.getItem('auth-token')).toBeNull();
-    expect(localStorage.getItem('u1:themeMode')).toBeNull();
+    expect(localStorage.getItem('u1:themeMode')).toBe('dark');
   });
 
   it('adopts a refreshed token from pilotdeck:token-refreshed', async () => {
@@ -150,7 +150,7 @@ describe('AuthContext (multi-user)', () => {
     await waitFor(() => expect(screen.getByText('out')).toBeTruthy());
     expect(logoutEvents).toHaveLength(1);
     expect(localStorage.getItem('auth-token')).toBeNull();
-    expect(localStorage.getItem('u1:themeMode')).toBeNull();
+    expect(localStorage.getItem('u1:themeMode')).toBe('dark');
   });
 
   const revoke = () =>
@@ -191,7 +191,7 @@ describe('AuthContext (multi-user)', () => {
     expect(localStorage.getItem('u1:themeMode')).toBe('dark');
   });
 
-  it('logout wipes only the user namespace and shows no revoked notice', async () => {
+  it('logout clears temporary user data, preserves their preferences and shows no revoked notice', async () => {
     localStorage.setItem('auth-token', 't');
     localStorage.setItem('u1:themeMode', 'dark');
     localStorage.setItem('anon:themeMode', 'warm');
@@ -206,7 +206,7 @@ describe('AuthContext (multi-user)', () => {
     const handle = await loadSession();
     await act(async () => { await handle.auth!.logout(); });
     await waitFor(() => expect(screen.getByText('out:none')).toBeTruthy());
-    expect(localStorage.getItem('u1:themeMode')).toBeNull();
+    expect(localStorage.getItem('u1:themeMode')).toBe('dark');
     expect(localStorage.getItem('anon:themeMode')).toBe('warm');
     expect(localStorage.getItem('auth-token')).toBeNull();
   });

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { ReactNode } from 'react';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import TraumaWorkspace from './TraumaWorkspace';
 import { initialUiCaseState } from './testFixtures';
@@ -27,6 +27,49 @@ afterEach(() => {
 });
 
 describe('TraumaWorkspace', () => {
+  it('keeps the memo detail mounted while the workflow contracts on close', () => {
+    vi.useFakeTimers();
+    try {
+      const state = initialUiCaseState();
+      state.round = 1;
+      state.memos = [{
+        id: 'memo-close',
+        round: 1,
+        createdAt: state.updatedAt,
+        mainStage: 'battlefield_first_aid',
+        subStage: 'primary_first_aid',
+        title: '查看详情',
+        inputPoints: [],
+        actionPoints: [],
+        conclusion: '观察',
+        snapshotVersion: 1,
+      }];
+      caseStoreMock.current = state;
+      caseStoreMock.snapshots = [{
+        eventType: 'agent_turn', round: 1, createdAt: state.updatedAt,
+        state, response: {
+          naturalLanguageAnswer: '观察',
+          treatmentPlan: [],
+          transition: { status: 'STAY', reason: '继续观察' },
+        },
+      }];
+      const view = render(<TraumaWorkspace resetKey="trauma:detail" runtimePanel={<div>聊天</div>} />);
+      const chart = view.container.querySelector('.trauma-flow-chart');
+      expect(chart).not.toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: /R1查看详情/ }));
+      expect(view.container.querySelector('.trauma-layout--detail')).not.toBeNull();
+      expect(view.container.querySelector('.trauma-flow-grid--detail')?.firstElementChild).toBe(chart);
+      fireEvent.click(screen.getByRole('button', { name: '收起轮次详情' }));
+      expect(view.container.querySelector('.trauma-layout--detail')).toBeNull();
+      expect(view.container.querySelector('.trauma-flow-grid')?.firstElementChild).toBe(chart);
+      expect(screen.getByRole('complementary', { name: '轮次纪要详情' }).className)
+        .toContain('trauma-detail-panel--closing');
+      act(() => vi.advanceTimersByTime(540));
+      expect(screen.queryByRole('complementary', { name: '轮次纪要详情' })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it('injects the trauma composer into a runtime chat panel composer slot', () => {
     function RuntimePanel({ externalComposerSlot }: { externalComposerSlot?: ReactNode }) {
       return (

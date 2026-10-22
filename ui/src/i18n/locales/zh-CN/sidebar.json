@@ -172,6 +172,9 @@
   "account": {
     "open": "账号",
     "logout": "退出登录",
+    "logoutShort": "登出",
+    "logoutConfirmTitle": "确认退出登录？",
+    "logoutConfirmDescription": "确定要退出当前账号吗？",
     "roleAdmin": "管理员",
     "roleUser": "普通用户",
     "localMode": "本机模式",

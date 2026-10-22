@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-i18next', () => ({
@@ -18,34 +18,53 @@ afterEach(() => {
 });
 
 describe('SidebarAccountArea', () => {
-  it('shows username, role badge and a working logout', () => {
+  it('asks for confirmation before signing out and allows cancellation', async () => {
     authState = { user: { id: 2, username: 'alice', role: 'user' }, isAdmin: false, logout, authDisabled: false };
-    render(<SidebarAccountArea onOpenAccount={() => {}} />);
+    const onOpenSettings = vi.fn();
+    render(<SidebarAccountArea onOpenSettings={onOpenSettings} />);
     expect(screen.getByText('alice')).toBeTruthy();
     expect(screen.getByText('sidebar:account.roleUser')).toBeTruthy();
+    expect(screen.getByText('alice').closest('button')).toBeNull();
+    fireEvent.click(screen.getByText('alice'));
+    expect(onOpenSettings).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+    const logoutButton = screen.getByRole('button', { name: 'sidebar:account.logout' });
+    expect(logoutButton.querySelector('svg')).toBeTruthy();
+    expect(logoutButton.textContent).toBe('');
+    expect(logoutButton.className).toContain('rounded-full');
+    fireEvent.click(logoutButton);
+    expect(logout).not.toHaveBeenCalled();
+    expect(screen.getByRole('alertdialog', { name: 'Sign out?' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(logout).not.toHaveBeenCalled();
+    fireEvent.click(logoutButton);
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'sidebar:account.logout' }));
+    await waitFor(() => expect(logout).toHaveBeenCalledOnce());
+  });
+
+  it('dismisses the confirmation with Escape without signing out', () => {
+    authState = { user: { id: 2, username: 'alice', role: 'user' }, isAdmin: false, logout, authDisabled: false };
+    render(<SidebarAccountArea onOpenSettings={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'sidebar:account.logout' }));
-    expect(logout).toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole('alertdialog'), { key: 'Escape' });
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(logout).not.toHaveBeenCalled();
   });
 
   it('shows the admin badge for administrators', () => {
     authState = { user: { id: 1, username: 'root', role: 'admin' }, isAdmin: true, logout, authDisabled: false };
-    render(<SidebarAccountArea onOpenAccount={() => {}} />);
-    expect(screen.getByText('sidebar:account.roleAdmin')).toBeTruthy();
+    render(<SidebarAccountArea onOpenSettings={() => {}} />);
+    expect(screen.getByText('sidebar:account.roleAdmin').closest('button')).toBeNull();
   });
 
   it('shows the local-mode badge and no logout button when login is disabled', () => {
     authState = { user: { id: 'local', username: 'local', role: 'admin' }, isAdmin: true, logout, authDisabled: true };
-    render(<SidebarAccountArea onOpenAccount={() => {}} />);
+    render(<SidebarAccountArea onOpenSettings={() => {}} />);
     expect(screen.getByText('sidebar:account.localMode')).toBeTruthy();
     expect(screen.queryByText('sidebar:account.roleAdmin')).toBeNull();
     expect(screen.queryByRole('button', { name: 'sidebar:account.logout' })).toBeNull();
-  });
-
-  it('opens the account page when the user row is clicked', () => {
-    authState = { user: { id: 2, username: 'alice', role: 'user' }, isAdmin: false, logout, authDisabled: false };
-    const onOpenAccount = vi.fn();
-    render(<SidebarAccountArea onOpenAccount={onOpenAccount} />);
-    fireEvent.click(screen.getByText('alice'));
-    expect(onOpenAccount).toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeTruthy();
   });
 });

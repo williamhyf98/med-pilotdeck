@@ -540,8 +540,8 @@ export default function StorageV2() {
                 : group.id;
 
               return (
-                <article key={`${scope}:${group.id}`} className="overflow-hidden rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
-                  <div className="flex items-center gap-3 px-4 py-3">
+                <article key={`${scope}:${group.id}`} className="rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+                  <div className="pd-card-lift relative z-10 flex items-center gap-3 rounded-xl bg-white px-4 py-3 dark:bg-neutral-900">
                     <input
                       type="checkbox"
                       checked={allSelected}
@@ -588,7 +588,7 @@ export default function StorageV2() {
                   </div>
 
                   {open ? (
-                    <div className="border-t border-neutral-100 dark:border-neutral-800">
+                    <div className="overflow-hidden rounded-b-xl border-t border-neutral-100 dark:border-neutral-800">
                       {group.files.length === 0 ? (
                         <div className="px-12 py-5 text-sm text-neutral-400">
                           {scope === 'workspace' ? '工作区为空' : '归档文件夹为空，可删除整包归档'}

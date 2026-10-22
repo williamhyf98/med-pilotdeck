@@ -4,6 +4,7 @@ import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
 import { I18nextProvider } from 'react-i18next';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { AuthProvider, ProtectedRoute, useAuth } from './components/auth';
+import UserPreferenceSync from './components/auth/UserPreferenceSync';
 import { TaskMasterProvider } from './contexts/TaskMasterContext';
 import { TasksSettingsProvider } from './contexts/TasksSettingsContext';
 import { WebSocketProvider } from './contexts/WebSocketContext';
@@ -32,21 +33,23 @@ export default function App() {
         <ToastProvider>
           <AuthProvider>
             <UserScope>
-              <WebSocketProvider>
-                <PluginsProvider>
-                  <TasksSettingsProvider>
-                    <TaskMasterProvider>
-                      <ProtectedRoute>
-                        <Router basename={window.__ROUTER_BASENAME__ || ''}>
-                          <Routes>
-                            <Route path="*" element={<AppShellV2 />} />
-                          </Routes>
-                        </Router>
-                      </ProtectedRoute>
-                    </TaskMasterProvider>
-                  </TasksSettingsProvider>
-                </PluginsProvider>
-              </WebSocketProvider>
+              <UserPreferenceSync>
+                <WebSocketProvider>
+                  <PluginsProvider>
+                    <TasksSettingsProvider>
+                      <TaskMasterProvider>
+                        <ProtectedRoute>
+                          <Router basename={window.__ROUTER_BASENAME__ || ''}>
+                            <Routes>
+                              <Route path="*" element={<AppShellV2 />} />
+                            </Routes>
+                          </Router>
+                        </ProtectedRoute>
+                      </TaskMasterProvider>
+                    </TasksSettingsProvider>
+                  </PluginsProvider>
+                </WebSocketProvider>
+              </UserPreferenceSync>
             </UserScope>
           </AuthProvider>
         </ToastProvider>

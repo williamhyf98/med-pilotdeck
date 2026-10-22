@@ -217,7 +217,7 @@ export default function TreatmentTree({
                                 aria-current={isCurrentMemo ? 'step' : undefined}
                                 onClick={() => onSelectMemo(memo.id)}
                                 className={cn(
-                                  'w-full rounded-md border px-2.5 py-2 text-left transition',
+                                  'pd-card-lift relative w-full rounded-md border px-2.5 py-2 text-left',
                                   nodeClasses(memoStatus, 'blue'),
                                   'hover:border-neutral-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400',
                                   'dark:hover:border-neutral-600',

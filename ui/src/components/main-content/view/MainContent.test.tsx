@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   onMisroutedFileUrlHandled: vi.fn(),
   chatProps: [] as any[],
   editorExpanded: false,
+  hasEditor: true,
 }));
 
 vi.mock('../../../contexts/TaskMasterContext', () => ({
@@ -54,12 +55,12 @@ vi.mock('../../code-editor/hooks/useEditorSidebar', () => ({
     }],
     activeEditorTabId: 'editor-tab-0',
     activeFilePath: '/workspace/PilotDeck/report.pdf',
-    editingFile: {
+    editingFile: mocks.hasEditor ? {
       name: 'report.pdf',
       path: '/workspace/PilotDeck/report.pdf',
       projectName: 'pilotdeck',
       diffInfo: null,
-    },
+    } : null,
     editorWidth: 600,
     editorExpanded: mocks.editorExpanded,
     hasManualWidth: false,
@@ -184,6 +185,7 @@ beforeEach(() => {
   mocks.onMisroutedFileUrlHandled.mockReset();
   mocks.chatProps.length = 0;
   mocks.editorExpanded = false;
+  mocks.hasEditor = true;
 });
 
 afterEach(() => {
@@ -200,7 +202,9 @@ describe('MainContent file workspace routing', () => {
     expect(await screen.findByTestId('editor-sidebar')).not.toBeNull();
 
     rerender(<MainContent {...propsFor('chat', setActiveTab)} />);
-    expect(screen.queryByTestId('editor-sidebar')).toBeNull();
+    expect(screen.getByRole('complementary', { name: '项目文件' }).className).toContain('pd-side-panel-exit');
+    expect(screen.getByRole('complementary', { name: '文件预览' }).className).toContain('pd-side-panel-exit');
+    await waitFor(() => expect(screen.queryByTestId('editor-sidebar')).toBeNull());
 
     fireEvent.click(screen.getByRole('button', { name: 'Open workspace file' }));
     expect(mocks.handleFileOpen).toHaveBeenCalledWith(
@@ -240,9 +244,28 @@ describe('MainContent file workspace routing', () => {
     const files = screen.getByRole('complementary', { name: '项目文件' });
     expect(preview).not.toBeNull();
     expect(files).not.toBeNull();
+    expect(preview.querySelector('.pd-side-panel-content')).not.toBeNull();
+    expect(files.querySelector('.pd-side-panel-content')).not.toBeNull();
+    expect(preview.style.getPropertyValue('--pd-side-content-width')).toBe('560px');
+    expect(files.style.getPropertyValue('--pd-side-content-width')).toBe('320px');
     expect(preview.nextElementSibling).toBe(files);
     expect(screen.getByTestId('files-explorer')).not.toBeNull();
     expect(screen.getByTestId('editor-sidebar')).not.toBeNull();
+    expect(files.className).toContain('pd-side-panel-enter');
+    expect(preview.className).toContain('pd-side-panel-enter');
+  });
+
+  it('collapses the preview alone when its file tab closes', async () => {
+    const view = render(<MainContent {...propsFor('files')} />);
+    const preview = screen.getByRole('complementary', { name: '文件预览' });
+    mocks.hasEditor = false;
+    view.rerender(<MainContent {...propsFor('files')} />);
+    expect(preview.className).toContain('pd-side-panel-exit');
+    expect(preview.style.getPropertyValue('--pd-side-content-width')).toBe('560px');
+    expect(screen.getByRole('complementary', { name: '项目文件' }).className)
+      .toContain('pd-side-panel-enter');
+    await waitFor(() => expect(screen.queryByRole('complementary', { name: '文件预览' })).toBeNull());
+    expect(screen.getByRole('complementary', { name: '项目文件' })).not.toBeNull();
   });
 
   it.each([false, true])('lets the expanded preview hide the conversation (mobile: %s)', (isMobile) => {
@@ -254,7 +277,8 @@ describe('MainContent file workspace routing', () => {
     const files = screen.getByRole('complementary', { name: '项目文件' });
     expect(chat?.className).toContain('invisible');
     expect(preview.className).toContain('flex-1');
-    expect(preview.getAttribute('style')).toBeNull();
+    expect(preview.style.width).toBe('');
+    expect(preview.querySelector('.pd-side-panel-content')).not.toBeNull();
     expect(preview.nextElementSibling).toBe(files);
   });
 });

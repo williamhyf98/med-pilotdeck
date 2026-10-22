@@ -22,21 +22,16 @@ const MENU_ITEMS_ADMIN: SettingsMenuItemI18n[] = [
       { key: "agentModel", labelKey: "settingsPage.menu.agentModel" },
       { key: "agentRoute", labelKey: "settingsPage.menu.agentRoute" },
       { key: "agentMemory", labelKey: "settingsPage.menu.agentMemory" },
-      { key: "agentResident", labelKey: "settingsPage.menu.agentResident" },
-      { key: "agentSchedule", labelKey: "settingsPage.menu.agentSchedule" },
     ],
   },
   {
     key: "extensions",
     labelKey: "settingsPage.menu.extensions",
     children: [
-      { key: "mcpServers", labelKey: "settingsPage.menu.mcpServers" },
       { key: "officePreview", labelKey: "settingsPage.menu.officePreview" },
     ],
   },
-  { key: "privacy", labelKey: "settingsPage.menu.privacy" },
   { key: "advanced", labelKey: "settingsPage.menu.advanced" },
-  { key: "about", labelKey: "settingsPage.menu.about", showDot: true },
 ];
 
 const ACCOUNT_ITEM: SettingsMenuItemI18n = {
@@ -50,7 +45,6 @@ const MENU_ITEMS_USER: SettingsMenuItemI18n[] = [
   ACCOUNT_ITEM,
   { key: "general", labelKey: "settingsPage.menu.general" },
   { key: "agentMemory", labelKey: "settingsPage.menu.agentMemory" },
-  { key: "privacy", labelKey: "settingsPage.menu.privacy" },
 ];
 
 const MENU_ITEMS_FULL: SettingsMenuItemI18n[] = [

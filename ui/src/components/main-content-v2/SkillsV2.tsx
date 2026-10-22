@@ -633,16 +633,16 @@ function SkillsGrid({
         {items.map((s) => {
           const isActive = activeSlug === s.slug && activeScope === s.scope;
           return (
-            <li key={`${s.scope}:${s.slug}`} className="group relative h-full min-w-0">
+            <li key={`${s.scope}:${s.slug}`} className="group relative h-full min-w-0 transition-transform duration-200 motion-safe:hover:-translate-y-1 motion-safe:focus-within:-translate-y-1">
               <button
                 type="button"
                 onClick={() => onSelect(s)}
                 aria-pressed={isActive}
                 className={cn(
-                  'flex h-full w-full flex-col overflow-hidden rounded-lg border bg-white p-4 pr-11 text-left shadow-sm transition-[border-color,background-color,box-shadow,transform] duration-150 dark:bg-neutral-900',
+                  'flex h-full w-full flex-col overflow-hidden rounded-lg border bg-white p-4 pr-11 text-left shadow-sm transition-[border-color,background-color,box-shadow] duration-200 group-hover:shadow-lg group-focus-within:shadow-lg dark:bg-neutral-900',
                   isActive
                     ? 'border-blue-400 bg-blue-50 text-neutral-900 ring-2 ring-blue-500/10 dark:border-blue-600 dark:bg-blue-950/35 dark:text-neutral-100'
-                    : 'border-neutral-200 text-neutral-800 hover:-translate-y-px hover:border-neutral-300 hover:shadow-md dark:border-neutral-800 dark:text-neutral-200 dark:hover:border-neutral-700',
+                    : 'border-neutral-200 text-neutral-800 hover:border-neutral-300 dark:border-neutral-800 dark:text-neutral-200 dark:hover:border-neutral-700',
                 )}
               >
                 <span className="line-clamp-2 text-sm font-semibold leading-5">{skillDisplayName(s)}</span>

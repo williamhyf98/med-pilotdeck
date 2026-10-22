@@ -8,7 +8,6 @@ import { useDeviceSettings } from '../../hooks/useDeviceSettings';
 import { useSessionProtection } from '../../hooks/useSessionProtection';
 import { useProjectsState } from '../../hooks/useProjectsState';
 import Settings from '../settings/Settings';
-import ProjectCreationWizard from '../project-creation-wizard';
 import SystemProjectCreateDialog from '../project-creation/SystemProjectCreateDialog';
 import { normalizeProjectForSettings, type SettingsProject } from '../../lib/projectSettings';
 import {
@@ -28,6 +27,7 @@ import { api } from '../../utils/api';
 import { resolveMarkdownFileHref } from '../chat/utils/resolveMarkdownFileHref';
 import type { SessionNavigationOptions } from '../main-content/types/types';
 import SidebarV2 from './SidebarV2';
+import DesktopSidebarFrame from './DesktopSidebarFrame';
 import MainAreaV2 from './MainAreaV2';
 import {
   chooseDefaultProject,
@@ -142,6 +142,7 @@ export default function AppShellV2() {
     setShowSettings,
     openSettings,
     refreshProjectsSilently,
+    updateProjectDisplayName,
     sidebarSharedProps,
     handleProjectSelect,
     handleSessionSelect,
@@ -402,14 +403,12 @@ export default function AppShellV2() {
     }
   }, [activeTab, isMobile]);
 
-  // System project create (name + type). Legacy path wizard remains via dialog link.
+  // System project create (name + type).
   const [showNewProject, setShowNewProject] = useState(false);
-  const [showLegacyPathWizard, setShowLegacyPathWizard] = useState(false);
   const handleOpenNewProject = useCallback(() => setShowNewProject(true), []);
   const handleCloseNewProject = useCallback(() => setShowNewProject(false), []);
   const handleProjectCreated = useCallback((project?: Record<string, unknown>) => {
     setShowNewProject(false);
-    setShowLegacyPathWizard(false);
     void refreshProjectsSilently();
 
     // Auto-jump into the new project's empty new-conversation screen so the
@@ -423,6 +422,10 @@ export default function AppShellV2() {
     navigate(`/p/${encodeURIComponent(projectName)}`);
     setActiveTab('chat');
   }, [handleNewSession, navigate, refreshProjectsSilently, setActiveTab]);
+  const handleProjectRenamed = useCallback((projectName: string, displayName: string) => {
+    updateProjectDisplayName(projectName, displayName);
+    void refreshProjectsSilently();
+  }, [refreshProjectsSilently, updateProjectDisplayName]);
 
   // Project deletion (V2): hover-revealed trash button on each row -> confirm dialog
   // -> DELETE /api/projects/:name (force=true). Reuses the shared cleanup callback
@@ -595,6 +598,7 @@ export default function AppShellV2() {
   );
 
   const handleSectionChange = useCallback((section: ProjectType) => {
+    didDefaultProjectRef.current = true;
     setWorkspaceType(section);
 
     const recentTarget = findMostRecentSessionTarget(sidebarSharedProps.projects, section);
@@ -671,6 +675,7 @@ export default function AppShellV2() {
   const sidebar = (
     <SidebarV2
       projects={sidebarSharedProps.projects}
+      section={workspaceType}
       selectedProject={selectedProject}
       selectedSession={selectedSession}
       activeTab={activeTab}
@@ -681,6 +686,7 @@ export default function AppShellV2() {
       onSelectSession={handleSelectSession}
 	      onStartNewSession={handleStartNewSession}
 	      onCreateProject={handleOpenNewProject}
+	      onProjectRenamed={handleProjectRenamed}
 	      onOpenProjectFiles={handleOpenProjectFiles}
 	      onRequestDeleteProject={handleRequestDeleteProject}
 	      onRequestDeleteSession={handleRequestDeleteSession}
@@ -703,11 +709,11 @@ export default function AppShellV2() {
       <ConnectionBanner />
       <div className="flex min-h-0 flex-1">
       {!isMobile ? (
-        desktopSidebarOpen ? sidebar : null
+        <DesktopSidebarFrame open={desktopSidebarOpen}>{sidebar}</DesktopSidebarFrame>
       ) : (
         <div
-          className={`fixed inset-0 z-50 flex transition-opacity duration-150 ease-out ${
-            sidebarOpen ? 'visible opacity-100' : 'invisible opacity-0'
+          className={`fixed inset-0 z-50 flex transition-[opacity,visibility] duration-[420ms] ease-in-out ${
+            sidebarOpen ? 'visible opacity-100' : 'pointer-events-none invisible opacity-0'
           }`}
         >
           <button
@@ -717,7 +723,7 @@ export default function AppShellV2() {
             aria-label="Close sidebar"
           />
           <div
-            className={`relative h-full w-[85vw] max-w-sm transform transition-transform duration-150 ${
+            className={`relative h-full w-[85vw] max-w-sm transform transition-transform duration-[420ms] ${
               sidebarOpen ? 'translate-x-0' : '-translate-x-full'
             }`}
             onClick={(e) => e.stopPropagation()}
@@ -730,6 +736,7 @@ export default function AppShellV2() {
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <MainAreaV2
           projects={sidebarSharedProps.projects}
+          workspaceType={workspaceType}
           selectedProject={selectedProject}
           selectedSession={selectedSession}
           activeTab={activeTab}
@@ -791,17 +798,7 @@ export default function AppShellV2() {
             <SystemProjectCreateDialog
               onClose={handleCloseNewProject}
               onCreated={handleProjectCreated}
-              onOpenLegacyPathWizard={() => setShowLegacyPathWizard(true)}
-            />,
-            document.body,
-          )
-        : null}
-
-      {showLegacyPathWizard
-        ? ReactDOM.createPortal(
-            <ProjectCreationWizard
-              onClose={() => setShowLegacyPathWizard(false)}
-              onProjectCreated={handleProjectCreated}
+              initialProjectType={workspaceType}
             />,
             document.body,
           )

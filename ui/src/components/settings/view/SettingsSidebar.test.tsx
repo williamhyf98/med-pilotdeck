@@ -9,13 +9,13 @@ const flatKeys = (isAdmin: boolean, authDisabled = false) =>
   getMenuItems(isAdmin, authDisabled).flatMap((i) => (i.children ? i.children.map((c) => c.key) : [i.key]));
 
 describe('settings menu by role', () => {
-  it('normal users see only account/general/agentMemory/privacy', () => {
-    expect(flatKeys(false)).toEqual(['account', 'general', 'agentMemory', 'privacy']);
+  it('normal users see only account/general/agentMemory', () => {
+    expect(flatKeys(false)).toEqual(['account', 'general', 'agentMemory']);
   });
 
-  it('admins see everything including users', () => {
+  it('admins see operator settings and users', () => {
     expect(flatKeys(true)).toEqual(
-      expect.arrayContaining(['account', 'users', 'modelPool', 'mcpServers', 'advanced', 'about']),
+      expect.arrayContaining(['account', 'users', 'modelPool', 'advanced', 'officePreview']),
     );
   });
 
@@ -27,13 +27,8 @@ describe('settings menu by role', () => {
       'agentModel',
       'agentRoute',
       'agentMemory',
-      'agentResident',
-      'agentSchedule',
-      'mcpServers',
       'officePreview',
-      'privacy',
       'advanced',
-      'about',
       'users',
     ]);
   });
@@ -42,6 +37,6 @@ describe('settings menu by role', () => {
     expect(flatKeys(true, true)).not.toContain('users');
     // everything else the admin menu offers is still there
     expect(flatKeys(true, true)).toEqual(flatKeys(true).filter((k) => k !== 'users'));
-    expect(flatKeys(false, true)).toEqual(['account', 'general', 'agentMemory', 'privacy']);
+    expect(flatKeys(false, true)).toEqual(['account', 'general', 'agentMemory']);
   });
 });

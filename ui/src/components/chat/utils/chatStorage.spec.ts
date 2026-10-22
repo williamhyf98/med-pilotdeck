@@ -70,7 +70,7 @@ describe('safeLocalStorage user namespacing', () => {
     expect(localStorage.getItem('auth-token')).toBe('tok');
   });
 
-  it('copies anon preferences to a user with no stored keys on first login', () => {
+  it('does not give a new user the anonymous browser preferences', () => {
     localStorage.setItem('anon:themeMode', 'dark');
     localStorage.setItem('anon:userLanguage', 'en');
     localStorage.setItem('anon:userLanguageDefaultMigratedTo', 'zh-CN');
@@ -78,11 +78,11 @@ describe('safeLocalStorage user namespacing', () => {
     localStorage.setItem('anon:codeEditorWordWrap', 'true');
     localStorage.setItem('anon:draft_input_x:new', 'secret');
     setStorageUserId(3);
-    expect(localStorage.getItem('u3:themeMode')).toBe('dark');
-    expect(localStorage.getItem('u3:userLanguage')).toBe('en');
-    expect(localStorage.getItem('u3:userLanguageDefaultMigratedTo')).toBe('zh-CN');
-    expect(localStorage.getItem('u3:pilotdeck-settings')).toBe('{"a":1}');
-    expect(localStorage.getItem('u3:codeEditorWordWrap')).toBe('true');
+    expect(localStorage.getItem('u3:themeMode')).toBeNull();
+    expect(localStorage.getItem('u3:userLanguage')).toBeNull();
+    expect(localStorage.getItem('u3:userLanguageDefaultMigratedTo')).toBeNull();
+    expect(localStorage.getItem('u3:pilotdeck-settings')).toBeNull();
+    expect(localStorage.getItem('u3:codeEditorWordWrap')).toBeNull();
     expect(localStorage.getItem('u3:draft_input_x:new')).toBeNull();
   });
 

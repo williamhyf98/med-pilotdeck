@@ -70,7 +70,7 @@ export default function SettingsContent({
         mobileVisible ? "block" : "hidden",
       )}
     >
-      <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col px-8 pb-6 pt-7">
+      <div key={selectedKey} className="pd-settings-section-enter mx-auto flex min-h-full w-full max-w-5xl flex-col px-8 pb-6 pt-7">
         <button
           type="button"
           onClick={onOpenMobileNavigation}

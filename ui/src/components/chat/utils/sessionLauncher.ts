@@ -7,7 +7,7 @@ import type {
   PilotDeckSettings,
   PermissionMode,
 } from '../types/types';
-import { getPilotDeckSettings, safeLocalStorage } from './chatStorage';
+import { getPilotDeckSettings } from './chatStorage';
 
 export type StartSessionOptions = {
   sendMessage: (message: unknown) => void;
@@ -38,12 +38,6 @@ export type StartSessionOptions = {
   traumaExtract?: boolean;
   traumaAttachments?: Array<{ path: string; name: string }>;
 };
-
-const VALID_PERMISSION_MODES = new Set<PermissionMode>([
-  'default',
-  'bypassPermissions',
-  'plan',
-]);
 
 export const isTemporarySessionId = (sessionId: string | null | undefined) =>
   Boolean(sessionId && sessionId.startsWith('new-session-'));
@@ -80,21 +74,6 @@ export function getNotificationSessionSummary(
   return normalizedFallback.length > 80
     ? `${normalizedFallback.slice(0, 77)}...`
     : normalizedFallback;
-}
-
-export function getStoredPermissionMode(
-  selectedSession: ProjectSession | null,
-): PermissionMode {
-  if (!selectedSession?.id) {
-    return 'default';
-  }
-
-  const stored = safeLocalStorage.getItem(`permissionMode-${selectedSession.id}`);
-  if (stored && VALID_PERMISSION_MODES.has(stored as PermissionMode)) {
-    return stored as PermissionMode;
-  }
-
-  return 'default';
 }
 
 export function getSelectedProjectPath(selectedProject: Project): string {

@@ -68,20 +68,18 @@ export default function LoginForm() {
         : '';
 
   return (
-    <AuthScreenLayout
-      title={t('login.title')}
-      description={t('login.description')}
-      footerText="Enter your credentials to access MedPD"
-    >
-      <form onSubmit={handleSubmit} className="space-y-4">
+    <AuthScreenLayout title={t('login.title')}>
+      <form onSubmit={handleSubmit} className="auth-screen__form">
+        <p className="auth-screen__description">{t('login.description')}</p>
         <AuthInputField
           id="username"
           label={t('login.username')}
           value={formState.username}
           onChange={(value) => updateField('username', value)}
-          placeholder={t('login.placeholders.username')}
+          placeholder={t('login.account')}
           isDisabled={isSubmitting}
           autoComplete="username"
+          visuallyHiddenLabel
         />
 
         <AuthInputField
@@ -89,10 +87,11 @@ export default function LoginForm() {
           label={t('login.password')}
           value={formState.password}
           onChange={(value) => updateField('password', value)}
-          placeholder={t('login.placeholders.password')}
+          placeholder={t('login.password')}
           isDisabled={isSubmitting}
           type="password"
           autoComplete="current-password"
+          visuallyHiddenLabel
         />
 
         <AuthErrorAlert errorMessage={errorMessage || sessionNotice} />
@@ -100,7 +99,7 @@ export default function LoginForm() {
         <button
           type="submit"
           disabled={isSubmitting}
-          className="w-full rounded-md bg-blue-600 px-4 py-2 font-medium text-white transition-colors duration-200 hover:bg-blue-700 disabled:bg-blue-400"
+          className="auth-screen__submit"
         >
           {isSubmitting ? t('login.loading') : t('login.submit')}
         </button>
@@ -109,7 +108,7 @@ export default function LoginForm() {
           <button
             type="button"
             onClick={() => setMode('register')}
-            className="w-full text-center text-sm text-muted-foreground hover:text-foreground"
+            className="auth-screen__link"
           >
             {t('login.registerLink')}
           </button>
