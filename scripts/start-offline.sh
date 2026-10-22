@@ -7,6 +7,8 @@ source "$SCRIPT_DIR/offline-runtime.sh"
 
 prepare_environment
 
+bash "$SCRIPT_DIR/pre-flight-check.sh"
+
 if pid_is_running "$OFFLINE_STATE_DIR/gateway.pid" || pid_is_running "$OFFLINE_STATE_DIR/ui.pid"; then
   echo "PilotDeck is already running. Use scripts/status-offline.sh." >&2
   exit 1

@@ -215,6 +215,10 @@ assert_no_share() {
   fi
 }
 
+check_server_preflight() {
+  bash "${_PILOTDECK_LIB_DIR}/pre-flight-check.sh"
+}
+
 runtime_node() {
   echo "${RUNTIME_NODE_DIR}/bin/node"
 }

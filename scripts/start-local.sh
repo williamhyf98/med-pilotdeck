@@ -107,6 +107,7 @@ if already_running; then
   exit 0
 fi
 
+check_server_preflight
 assert_ports_free
 
 # Create .pilotdeck-home + default pilotdeck.yaml when missing (before LLM check).
