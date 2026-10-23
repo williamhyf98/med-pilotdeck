@@ -6,7 +6,16 @@ import {
   createLibreOfficeConversionWorkspace,
   getWindowsLibreOfficeCandidates,
   isLibreOfficePreviewAllowed,
+  OFFICE_PREVIEW_CACHE_DIR,
 } from './officePreview.js';
+
+describe('Office preview cache location', () => {
+  it('uses an OS-account-specific path instead of the shared legacy cache', () => {
+    expect(path.dirname(OFFICE_PREVIEW_CACHE_DIR)).toBe(path.resolve(tmpdir()));
+    expect(path.basename(OFFICE_PREVIEW_CACHE_DIR)).toMatch(/^pilotdeck-office-preview-cache-[a-f0-9]{16}$/);
+    expect(OFFICE_PREVIEW_CACHE_DIR).not.toBe(path.join(tmpdir(), 'pilotdeck-office-preview-cache'));
+  });
+});
 
 describe('LibreOffice preview routing', () => {
   it('allows legacy files in either mode but requires an explicit selection for modern files', () => {
