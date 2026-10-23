@@ -1015,7 +1015,7 @@ git commit -m "docs(deployment): Linux 生产部署文档与启动前依赖检�
 
 **Steps:**
 
-- [ ] **Step 1: node12 同步代码**
+- [x] **Step 1: node12 同步代码**（2026-10-23 更新至 `b79ada4`，含双预览、缓存隔离及 DOC 预览修复；GitHub、Gitee、node12 目标仓库同步；保留 node12 的 `scripts/config.env` 原有改动）
 
 在本地推送 Plan 3 所有提交到 GitHub 和 Gitee：
 ```bash
@@ -1032,16 +1032,16 @@ git checkout feat/multi-user-v2
 git pull origin feat/multi-user-v2
 ```
 
-- [ ] **Step 2: 安装 bubblewrap**
+- [x] **Step 2: 安装 bubblewrap**（node12 已安装 `/usr/bin/bwrap` 0.6.1；无需重复安装）
 
 ```bash
-# node12 是 Kylin/UOS ARM64，使用 apt
+# node12 实际为 Ubuntu 22.04.2 LTS / x86_64，使用 apt（历史预设 Kylin/UOS ARM64 不符）
 sudo apt update
 sudo apt install bubblewrap
 which bwrap  # 应返回 /usr/bin/bwrap
 ```
 
-- [ ] **Step 3: 功能测试**
+- [x] **Step 3: 功能测试**（2026-10-23 隔离登录实例：DOCX/PPTX/XLSX、路径用例 4/4；战创伤 Runner 完成 12 步并持久化病例；见执行记录）
 
 在 node12 上启动系统（隔离根 `/tmp/pd-plan3`，端口 3151 / 19200+）：
 ```bash
@@ -1058,7 +1058,7 @@ curl -X POST localhost:3151/api/auth/login -H 'content-type: application/json' -
 # 调用战创伤 Runner，确认 bash 工具正常
 ```
 
-- [ ] **Step 4: 负向测试**
+- [x] **Step 4: 负向测试**（演示脚本及产品 `BwrapSandbox.wrap()` 的独立实测均通过；见执行记录）
 
 在 node12 上运行：
 ```bash
@@ -1067,14 +1067,14 @@ bash scripts/sandbox-negative-test.sh --platform linux
 
 Expected: `NEGATIVE TESTS PASS`（所有越界尝试被拒绝）
 
-- [ ] **Step 5: 路径清洗验证**
+- [ ] **Step 5: 路径清洗验证**（2026-10-23 用户同意暂时跳过浏览器检查；未通过、未勾选）
 
 在前端（浏览器访问 node12:3151）：
 1. 调用 bash 工具 `ls -la /绝对路径`，前端显示应为 `~/...`
 2. Agent 思考时输出路径，前端显示清洗后的 `~/...`
 3. 错误消息不泄露其他用户路径
 
-- [ ] **Step 6: 记录验收结果**
+- [x] **Step 6: 记录验收结果**（已记录通过项、元数据路径发现和暂时跳过的浏览器检查；不能将跳过项记作通过）
 
 在本文末尾「执行记录」章节记录：
 - node12 环境：Kylin/UOS ARM64，Node.js 版本，bubblewrap 版本
@@ -1092,7 +1092,7 @@ Expected: `NEGATIVE TESTS PASS`（所有越界尝试被拒绝）
 
 **Steps:**
 
-- [ ] **Step 1: 全量测试**
+- [x] **Step 1: 全量测试**（2026-10-23 本地运行，详见 Task 10 执行记录）
 
 在本地 macOS：
 ```bash
@@ -1105,19 +1105,19 @@ bash scripts/smoke-multi-user.sh
 
 Expected: 全部 PASS
 
-- [ ] **Step 2: 检查 Plan 1/2 回归**
+- [x] **Step 2: 检查 Plan 1/2 回归**（隔离服务的 API/数据根 smoke 通过；双浏览器页面核查仍暂缓）
 
 确认 Plan 3 改动没有破坏 Plan 1/2 功能：
 - 多用户隔离（两个浏览器各自项目）
 - 管理员门禁（普通用户看不到系统配置）
 - 迁移（旧数据归到 admin）
 
-- [ ] **Step 3: Agent 提示词补充**
+- [x] **Step 3: Agent 提示词补充**（中英文默认系统提示均已补充，并经测试先失败后通过）
 
 在引擎侧 Agent 系统提示（`src/agent/systemPrompt.ts` 或类似位置）增加路径约束条款（§D21）：
 > 在所有输出给用户的内容中，永远不要包含绝对路径或包含用户 ID 的路径片段。只使用相对路径（如 `src/main.ts`）或虚拟根路径（如 `~/projects/...`，其中 `~` 代表你的工作目录）。在执行 bash 命令时，优先使用相对路径和 `cd` 切换目录，而不是拼接绝对路径。
 
-- [ ] **Step 4: 填写执行记录**
+- [x] **Step 4: 填写执行记录**（见下文；未完成的浏览器检查及元数据问题单列）
 
 在本文档末尾「执行记录」章节填写：
 - 执行时间、分支、提交范围
@@ -1127,7 +1127,7 @@ Expected: 全部 PASS
 - 搁置的次要问题
 - 交给 Plan 4 / 后续的事项
 
-- [ ] **Step 5: 提交执行记录**
+- [x] **Step 5: 提交执行记录**（按实际验收范围提交 Task 10 本地回归，Task 9/整个 Plan 3 不标记全部通过）
 
 ```bash
 git add docs/superpowers/plans/2026-10-16-multi-user-sandbox-and-path-sanitization.md
@@ -1145,6 +1145,34 @@ git commit -m "docs(plan3): 执行记录——沙箱与路径清洗完成，node
 ---
 
 ## 执行记录
+
+### Task 10 本地回归及阶段性整理（2026-10-23；Task 9 浏览器验收暂缓）
+
+- 执行环境：macOS，本地分支 `feat/multi-user-v2`，起点 `b79ada4`；Task 9 的先前未提交执行记录在本轮保留并追加。最近预览修复 `8815439`、`b79ada4` 已在本轮开始前同步 GitHub、Gitee 和 node12；**本次 Task 10 的提交不自动代表已部署至 node12**。
+- Step 1：`npm --prefix ui test` 166 文件 / 1209 项通过；`npm --prefix ui run typecheck` 通过（含模块级数据根检查 7/7）；`npm --prefix ui run build` 通过（有 bundle 体积提示）；不设 `PILOTDECK_SKIP_BOOTSTRAP`、使用独立 `PILOT_HOME` 的 `npm test` 为 735 通过、2 跳过、0 失败。`bash scripts/smoke-multi-user.sh --root /tmp/pd-task10-smoke-qbjs6_4k --port 62271 --gateway-base 62272` 输出 `SMOKE OK`；成功后脚本清理自己的临时根。测试日志保留在本机 `/tmp/pd-task10-{ui-test,ui-typecheck,ui-build,engine,smoke}-20261023.log`。
+- Step 2：smoke 真实启动隔离登录实例，验证旧项目迁移到 admin、Alice/Bob/Admin 项目列表互不串读、同名项目上传进入各自用户工作区、匿名上传 401、普通用户配置 403 / 管理员 200、停用用户关闭 WebSocket 并回收 Gateway；随后在同一隔离根验证免登录模式仍能看到迁移项目。配置中没有 `sk-` 测试键，故**密钥掩码断言跳过**。这提供服务端和数据根回归证据，**不是两个浏览器的页面隔离验收**。
+- Step 3：按 D21 在 `src/context/prompt/systemPromptCopy.ts` 加入中英文用户可见路径约束，由 `PromptAssembler` 放进默认系统提示；`tests/context/prompt-output-language.spec.ts` 先观察约束缺失导致失败，再在实现后 3/3 通过。提示词只降低模型输出路径的概率；安全边界仍是服务端清洗和沙箱，不能据此断言实际浏览器输出无路径。
+- 完成情况/终审：Task 1–6、8、11 的实现已有记录；Task 7 的思考/错误页面场景、Task 9 Step 5 的真实浏览器检查仍未完成；Task 12 的完整技能回归仍有先前记录的失败/不可测项。本轮未发现全量本地自动化测试失败；Plan 3 完成标准要求的全部任务勾选、前端浏览器路径核查与完整技能回归**尚未达到**，不得称“沙箱与路径清洗全部完成验收”。
+- 裁决（按时间）：(1) Task 10 列“无新增代码”却在 Step 3 要求修改系统提示，依据 D21 执行最小提示词代码改动；若裁决有误，代价是多一个提示词字段及测试，可独立回退。(2) Step 2 采用隔离登录服务的 API/数据根 smoke 核对 Plan 1/2 功能，双浏览器视觉核查维持暂缓；若浏览器显示与服务端不一致，页面问题仍会漏检，须在 Task 9 后续验收补测。(3) 不采用计划 Step 5 原拟的“node12 验收通过”提交标题，因为浏览器 Step 5 未验；若错误宣称通过，会让部署方遗漏安全验收。
+- 搁置的次要问题及后续：构建提示部分 chunk 较大，未在本轮改动；`projects_updated` 项目元数据仍含**当前用户**绝对路径，需界定 API 兼容与清洗边界；正式 4020 实例的技能只读挂载不能从隔离实例通过推定可用。交给后续浏览器验收、Task 12 完整技能回归，以及 Plan 4/离线部署的 LibreOffice Writer/Calc/Impress、字体与转换自检打包。旧计划先前预设 node12 为 Kylin/UOS ARM64，实测为 Ubuntu 22.04.2 x86_64。
+
+### Task 9 node12 双预览同步与正式验收进展（2026-10-23；Step 5 尚未完成）
+
+- `feat/multi-user-v2` 的 Task 9 双预览及后续 DOC 修复已于 2026-10-23 在本地、GitHub、Gitee、node12 目标仓库 `/local_data/huojianfan/med-pilotdeck` 同步至 `b79ada4`（双预览 `85fe1c9`，缓存隔离 `a3b364a`，预览兼容 `8815439`、`b79ada4`）。node12 已具备 LibreOffice Writer、Calc、Impress 7.3.7.2；仓库运行时 Node 22.23.2，bwrap 0.6.1。既有 `scripts/config.env` 修改及 4020 正式多用户服务保留。本地此计划文件先前已有未提交修改，以下记录在其基础上追加。
+- 在隔离数据根 `/tmp/pd-task9-office-accept.iZGMbq`、4153 端口、Gateway 19390 起运行登录模式服务，Gateway 日志确认 `[sandbox] bwrap (ok)`。`scripts/run-skill-e2e-multiuser.ts --only docx,pptx,spreadsheets,pathleak-pwd` 4/4 PASS，失败 0，用户可见帧绝对路径泄露 0；报告位于 node12 仓库 `tests/skill-e2e/work/multiuser-2026-10-23T04-07-16-983Z/`。在用户工作区核实最终 `exports/病例报告.docx` 为 36,870 字节的 OOXML 文件，并有渲染页；PPTX、XLSX 最终文件也存在。DOCX 回合的 `projects_updated` 元数据仍含**当前用户**绝对路径（报告 METADATA_PATH 1），不能表述为所有帧均已清洗。
+- `scripts/run-task9-trauma-acceptance.mjs` 通过：Runner 完成 12 步，病例保存为第 1 轮并产生 1 个快照，用户可见输出帧未泄露该用户工作区绝对路径。`scripts/sandbox-negative-test.sh --platform linux` 通过：自有文件可读，对 `/root/.ssh` 的读取、向其他用户目录写入、读取系统 `auth.db` 均遭拒绝。匿名项目访问 401、普通用户系统配置 403、管理员配置 200、用户 B 看不到用户 A 项目；预览状态接口未登录返回 401。
+- 用本次生成的 DOCX/PPTX/XLSX 在隔离用户工作区转换成真实 DOC/PPT/XLS：三者预览接口均返回 PDF 文件头和 200，范围请求返回 206 且内容长度正确。XLS 工作表清单有「现场评估」「控制出血」「快速后送」三项，每项分别返回可读取的 PDF。默认内置模式下现代 DOCX 的 LibreOffice PDF 接口返回 409，符合现代格式走内置预览的规则。以上是 HTTP 与文件验收，**不等于浏览器视觉渲染验收**。
+- Task 9 Step 5 仍待办：按 Browser 技能连接 node12 页面时，可用浏览器列表为 `[]`，无法实际核查前端工具输出、思考、错误文本的路径显示；不能用 API 或流帧检查替代页面验收。此项未完成前 Task 9 不标记全部通过。Task 12 的完整技能回归另行处理。
+- 2026-10-23 用户同意**暂时跳过** Step 5 浏览器验收；该项标记为 deferred，不能标记为 PASS。Step 6 的验收记录已填写。隔离实例 DOCX 成功使用了该实例配置的只读挂载（仓库 `.runtime/python`、`/etc/libreoffice`、`/etc/fonts`）；4020 正式实例的当前 `pilotdeck.yaml` 没有 `multiUser.sandbox.extraReadOnlyBinds`，因此不能从隔离实例通过推断 4020 中 DOCX 技能也必然可用。本轮仅核对配置，未修改或重启 4020。`projects_updated` 仍带当前用户绝对路径，虽非本轮用户可见文本的失败项，仍需后续评估其元数据边界。
+
+### Task 9 node12 目标仓库复验（2026-10-22；仍未完成）
+
+- 代码同步：本地与 GitHub/Gitee `feat/multi-user-v2` 均为 `3e2cda9`；node12 目标仓库 `/local_data/huojianfan/med-pilotdeck` 同一 HEAD，已 `git fetch origin` 验证 `FETCH_HEAD` 一致。保留服务器已有的 `scripts/config.env` 修改及运行中的 4020 多用户服务（`/health` 为 200）。实际主机为 Ubuntu 22.04.2 LTS / x86_64，仓库 Node v22.23.2，`/usr/bin/bwrap` 0.6.1；不是原步骤预设的 Kylin/UOS ARM64。
+- 在**目标仓库代码**上另用 `/tmp/pd-task9-final.Nn87tk/home` 作为临时数据根、UI 端口 4152、Gateway 起始端口 19370 运行登录模式；Gateway 日志确认 `[sandbox] bwrap (ok)`。独立 `scripts/smoke-multi-user.sh` 使用 `/tmp/pd-task9-smoke-parent.AYa5qd/root`、4151/19350，得到 `SMOKE OK`（含迁移、双用户隔离、管理员门禁、停用及 Gateway 回收）；隔离测试产生的用户和项目不在 4020 真实数据根。隔离根的配置仅增加必要的只读挂载，不修改正式配置。
+- `scripts/sandbox-negative-test.sh --platform linux`：本人文件正向可读，读取 `/root/.ssh`、写入其他用户目录和读取 `system/auth.db` 三项负向均拒绝，`NEGATIVE TESTS PASS`。另用**产品** `BwrapSandbox.wrap()` 和授权检查复测：本人读成功；真实存在的其他用户私有文件、系统数据库及 `/root/.ssh` 均不可读，跨用户写入与符号链接绕过被拒，私有文件内容保持不变。原始结果：`/tmp/pd-task9-final.Nn87tk/product-bwrap-negative-real.log`。该项比演示脚本更接近 Gateway 的真实挂载。
+- 登录 UI -> 每用户 Gateway -> bwrap -> WebSocket：战创伤 Runner 完成 12 步，病例持久化第 1 轮并产生 1 个快照，输出帧未检出当前用户绝对目录（`/tmp/pd-task9-final.Nn87tk/trauma.json`）。文档回归首轮 4 项中 PPTX、XLSX、`pathleak-pwd` 通过并生成各自交付文件，DOCX 未通过；报告 `tests/skill-e2e/work/multiuser-2026-10-22T09-51-23-495Z/`（node12 目标仓库）。匿名 `/api/projects` 为 401，普通用户 `/api/config` 为 403，管理员为 200，用户 B 看不到 A 的项目。
+- **DOCX 阻塞（不算通过）：** 首轮 LibreOffice 在 bwrap 中崩溃；在隔离根只读挂载 `/etc/libreoffice` 后可启动，再加 `/etc/fonts` 后不再报告默认字体配置缺失，但 DOCX `make` 仍报 `Error: source file could not be loaded`。同一候选 DOCX 在宿主机上转换也失败；`libreoffice-writer` 显示 `not-installed`，Writer 组件 `libswlo.so` 缺失，只有 core/impress。两次 DOCX 复跑脚本分别给出 `PASS`、`FAIL`：前一次 `PASS` 只是断言命中内部候选 `.docx`，实际**没有** `exports/病例报告.docx` 且回复说明未完成渲染；后一次也未交付。两个报告：`tests/skill-e2e/work/multiuser-2026-10-22T10-04-54-781Z/`、`tests/skill-e2e/work/multiuser-2026-10-22T10-10-32-312Z/`。需在受控变更窗口补齐 Writer、保持最小只读挂载后重新检查最终产物及页面渲染，不能凭脚本状态判 PASS；本轮未改系统安装包。
+- 路径清洗：文档/Runner 的用户可见帧无当前用户 home 泄露，node12 定向测试 4 文件/33 项通过（含流式片段、桥接及 UI 处理）。`projects_updated` 等元数据在 DOCX 回合仍携带**当前用户**绝对路径，另需界定项目 API 的兼容处理。浏览器连接工具列出 0 个可用浏览器，因此**尚未验证前端页面实际显示的工具结果、思考和错误**；帧和单测不能替代 Task 9 Step 5 的浏览器验收。Task 9 Step 3 的 DOCX 和 Step 5 未满足，Task 9 不勾选；Task 12 完整技能回归仍独立待办。
 
 ### Task 9 node12 阶段性验收（2026-10-22；尚未完成）
 

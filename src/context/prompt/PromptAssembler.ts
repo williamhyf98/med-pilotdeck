@@ -118,6 +118,7 @@ export class PromptAssembler {
       "## 输出约束",
       "",
       "不要在回答中提及模型版本号或技术实现细节（如「本分析由 XXX 模型生成」、「使用了 XXX 技术」）。诊断依据和医学结论应基于临床证据，而非技术来源。",
+      promptCopy.userFacingPathRule,
     ];
 
     const permissionLine = formatPermissionMode(input.permissionMode);

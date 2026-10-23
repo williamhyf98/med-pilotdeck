@@ -35,6 +35,17 @@ test("default prompt requires Simplified Chinese for reasoning and replies", () 
   assert.match(prompt, /工具名、参数名、文件路径、命令、代码/u);
 });
 
+test("default prompt asks the agent to keep physical paths and user IDs out of user-facing output", () => {
+  const prompt = assemblePrompt();
+
+  assert.match(prompt, /所有输出给用户的内容/u);
+  assert.match(prompt, /绝对路径/u);
+  assert.match(prompt, /用户 ID/u);
+  assert.match(prompt, /相对路径/u);
+  assert.match(prompt, /~\/projects\/\.\.\./u);
+  assert.match(prompt, /bash.*cd/u);
+});
+
 test("high-frequency builtin tool descriptions are written in Chinese", () => {
   const tools = [
     createReadFileTool(),

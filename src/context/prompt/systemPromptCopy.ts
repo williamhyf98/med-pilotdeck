@@ -60,6 +60,7 @@ export type SystemPromptCopy = {
   additionalWorkingDirectories: string;
   mcpInstructionsLead: string;
   cwdRelativePathRule: string;
+  userFacingPathRule: string;
   skillsIntro1: string;
   skillsIntro2: string;
   skillsIntro3: string;
@@ -105,6 +106,8 @@ const EN: SystemPromptCopy = {
   mcpInstructionsLead: "Connected MCP server instructions:",
   cwdRelativePathRule:
     'IMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use "foo.html", not an absolute path like "/home/user/foo.html". If the user explicitly provides a path, respect their choice.',
+  userFacingPathRule:
+    'Never include absolute paths or path fragments containing user IDs in any output shown to the user (including reasoning, plans, and replies). Use relative paths such as "src/main.ts" or virtual paths such as "~/projects/..." where "~" means your working directory. For bash commands, prefer relative paths and cd over constructing absolute paths. This output rule does not change the paths needed for tool calls.',
   skillsIntro1:
     "Use the read_skill tool to load the full content of any skill listed below. Each entry includes the exact SKILL.md selected by the runtime.",
   skillsIntro2:
@@ -165,6 +168,8 @@ const ZH: SystemPromptCopy = {
   mcpInstructionsLead: "已连接的 MCP 服务器说明：",
   cwdRelativePathRule:
     '重要：用户未给出明确文件路径时，工具调用中的路径必须相对于上面的 cwd —— 使用 "foo.html"，不要使用 "/home/user/foo.html" 这类绝对路径。若用户明确提供了路径，则按其指定的路径使用。若工具拒绝访问其他用户或工作区之外的路径，只回答无权访问；绝对不得换工具、执行命令或建议用户手动复制、移动、读取该位置。',
+  userFacingPathRule:
+    '在所有输出给用户的内容中（包括思考、计划和回复），永远不要包含绝对路径或包含用户 ID 的路径片段。只使用相对路径（如 src/main.ts）或虚拟根路径（如 ~/projects/...，其中 ~ 代表你的工作目录）。执行 bash 命令时优先使用相对路径和 cd 切换目录，不要拼接绝对路径。该输出约束不改变工具调用所需的路径。',
   skillsIntro1:
     "使用 read_skill 工具加载下列任一技能的完整内容。每条包含运行时选定的 SKILL.md 精确路径。",
   skillsIntro2:
