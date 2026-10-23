@@ -14,6 +14,14 @@ const officePreviewConversionLocks = new Map();
 
 export const OFFICE_PREVIEW_SERVICE_BUILTIN = 'builtin';
 export const OFFICE_PREVIEW_SERVICE_LIBREOFFICE = 'libreoffice';
+const BUILTIN_OFFICE_EXTENSIONS = new Set(['docx', 'xlsx', 'pptx']);
+
+// Legacy formats always need LibreOffice. Modern formats use it only when the
+// operator explicitly selects the print-layout renderer.
+export function isLibreOfficePreviewAllowed(extension, service) {
+  return !BUILTIN_OFFICE_EXTENSIONS.has(extension)
+    || service === OFFICE_PREVIEW_SERVICE_LIBREOFFICE;
+}
 export const OFFICE_PREVIEW_CACHE_DIR = path.join(os.tmpdir(), 'pilotdeck-office-preview-cache');
 export const LIBREOFFICE_TIMEOUT_MS = Number(process.env.PILOTDECK_LIBREOFFICE_TIMEOUT_MS || 120000);
 const OFFICE_PREVIEW_LOCK_STALE_MS = LIBREOFFICE_TIMEOUT_MS + 30000;

@@ -5,7 +5,20 @@ import { describe, expect, it } from 'vitest';
 import {
   createLibreOfficeConversionWorkspace,
   getWindowsLibreOfficeCandidates,
+  isLibreOfficePreviewAllowed,
 } from './officePreview.js';
+
+describe('LibreOffice preview routing', () => {
+  it('allows legacy files in either mode but requires an explicit selection for modern files', () => {
+    for (const extension of ['doc', 'xls', 'ppt', 'wps', 'et', 'dps', 'odt', 'ods', 'odp']) {
+      expect(isLibreOfficePreviewAllowed(extension, 'builtin')).toBe(true);
+    }
+    for (const extension of ['docx', 'xlsx', 'pptx']) {
+      expect(isLibreOfficePreviewAllowed(extension, 'builtin')).toBe(false);
+      expect(isLibreOfficePreviewAllowed(extension, 'libreoffice')).toBe(true);
+    }
+  });
+});
 
 describe('getWindowsLibreOfficeCandidates', () => {
   it('uses the console launcher and honors Windows Program Files locations', () => {

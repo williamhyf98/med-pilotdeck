@@ -89,7 +89,9 @@
     "disabledTitle": "无法预览二进制文件",
     "disabledMessage": "当前未配置 Office 文件预览服务。请前往设置配置 Office 文件预览服务，或下载文件后在本地打开。",
     "libreOfficeUnavailableTitle": "LibreOffice 不可用",
-    "libreOfficeUnavailableMessage": "当前选择了 LibreOffice 兼容预览，但没有检测到可用的 LibreOffice。请安装并配置 LibreOffice，或切换为“内置预览”。",
+    "libreOfficeUnavailableMessage": "预览此文件需要 LibreOffice，但没有检测到可用的 soffice。请安装 LibreOffice 并检查设置中的可执行文件路径；也可下载后在本地打开。",
+    "conversionUnavailableTitle": "LibreOffice 未能转换此文件",
+    "conversionUnavailableMessage": "已检测到 soffice，但没有生成预览。可能缺少对应的 Writer、Calc 或 Impress 组件，也可能是文件格式不兼容；可下载后在本地打开。",
     "failedMessage": "未能生成 Office 文件预览。"
   },
   "builtinOfficePreview": {

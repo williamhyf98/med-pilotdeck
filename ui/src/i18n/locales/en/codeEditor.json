@@ -90,7 +90,9 @@
     "disabledTitle": "Cannot preview binary file",
     "disabledMessage": "No Office file preview service is configured. Configure the Office file preview service in Settings, or download the file and open it locally.",
     "libreOfficeUnavailableTitle": "LibreOffice is unavailable",
-    "libreOfficeUnavailableMessage": "LibreOffice compatibility preview is selected, but no usable LibreOffice installation was found. Install and configure LibreOffice, or switch to Built-in preview.",
+    "libreOfficeUnavailableMessage": "Previewing this file requires LibreOffice, but no soffice executable was found. Install LibreOffice and check its executable path in Settings, or download the file.",
+    "conversionUnavailableTitle": "LibreOffice could not convert this file",
+    "conversionUnavailableMessage": "soffice was detected but did not produce a preview. The relevant Writer, Calc or Impress component may be missing, or the file may be incompatible. You can download and open it locally.",
     "failedMessage": "Failed to generate Office file preview."
   },
   "builtinOfficePreview": {

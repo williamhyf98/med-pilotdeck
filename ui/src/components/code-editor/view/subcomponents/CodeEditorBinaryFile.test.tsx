@@ -529,7 +529,18 @@ describe('CodeEditorBinaryFile', () => {
     expect(await screen.findByText('Built-in DOCX preview')).not.toBeNull();
   });
 
-  it('guides legacy Office formats to LibreOffice while built-in preview is selected', async () => {
+  it('previews legacy DOC with LibreOffice even when modern files use built-in preview', async () => {
+    readOfficePreviewStatusMock.mockResolvedValueOnce({
+      service: 'builtin',
+      configuredBinaryPath: '',
+      libreOffice: { available: true },
+    });
+    const pdf = vi.spyOn(api, 'preflightOfficePdfPreview').mockResolvedValue(
+      new Response(new Uint8Array([37, 80, 68, 70]), {
+        status: 206,
+        headers: { 'Content-Type': 'application/pdf' },
+      }),
+    );
     render(
       <CodeEditorBinaryFile
         {...baseProps}
@@ -541,7 +552,72 @@ describe('CodeEditorBinaryFile', () => {
       />,
     );
 
-    expect(await screen.findByText('officePreview.unsupportedBuiltinTitle')).not.toBeNull();
+    expect(await screen.findByRole('button', { name: 'PDF preview' })).not.toBeNull();
+    expect(pdf).toHaveBeenCalled();
+  });
+
+  it('converts legacy XLS to a sheet preview in built-in mode', async () => {
+    readOfficePreviewStatusMock.mockResolvedValueOnce({
+      service: 'builtin',
+      configuredBinaryPath: '',
+      libreOffice: { available: true },
+    });
+    const manifest = vi.spyOn(api, 'spreadsheetPreviewManifest').mockResolvedValue(new Response(
+      JSON.stringify({
+        version: 1,
+        revision: 'converted-revision',
+        activeSheetIndex: 0,
+        sheets: [{ index: 0, name: 'Sheet1' }],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+    vi.spyOn(api, 'preflightSpreadsheetSheetPreview').mockResolvedValue(
+      new Response(new Uint8Array([37, 80, 68, 70]), { status: 206 }),
+    );
+    render(
+      <CodeEditorBinaryFile
+        {...baseProps}
+        file={{ name: 'legacy.xls', path: '/workspace/hundouluo/legacy.xls', diffInfo: null }}
+      />,
+    );
+    expect(await screen.findByRole('button', { name: 'PDF preview' })).not.toBeNull();
+    expect(manifest).toHaveBeenCalled();
+  });
+
+  it('explains that LibreOffice is needed for legacy Office when not installed', async () => {
+    const pdf = vi.spyOn(api, 'preflightOfficePdfPreview');
+    render(
+      <CodeEditorBinaryFile
+        {...baseProps}
+        file={{
+          name: 'legacy-report.doc',
+          path: '/workspace/hundouluo/legacy-report.doc',
+          diffInfo: null,
+        }}
+      />,
+    );
+
+    expect(await screen.findByText('officePreview.libreOfficeUnavailableTitle')).not.toBeNull();
     expect(screen.getByText('officePreview.configureService')).not.toBeNull();
+    expect(pdf).not.toHaveBeenCalled();
+  });
+
+  it('explains a missing conversion component when soffice cannot produce PDF', async () => {
+    readOfficePreviewStatusMock.mockResolvedValueOnce({
+      service: 'builtin',
+      configuredBinaryPath: '',
+      libreOffice: { available: true },
+    });
+    vi.spyOn(api, 'preflightOfficePdfPreview').mockResolvedValue(new Response(
+      JSON.stringify({ code: 'LIBREOFFICE_OUTPUT_MISSING', error: 'Failed to generate Office PDF preview' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } },
+    ));
+    render(
+      <CodeEditorBinaryFile
+        {...baseProps}
+        file={{ name: 'legacy.doc', path: '/workspace/hundouluo/legacy.doc', diffInfo: null }}
+      />,
+    );
+    expect(await screen.findByText('officePreview.conversionUnavailableTitle')).not.toBeNull();
   });
 });

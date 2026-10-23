@@ -76,13 +76,8 @@ function OfficePreviewSection({
   const libreOfficeAvailable = status?.libreOffice?.available === true;
   const libreOfficeUnavailable =
     !statusLoading && status?.libreOffice?.available === false;
-  const showLibreOfficeStatus =
-    service === "libreoffice" && libreOfficeStatusKnown;
   const libreOfficeUnknown =
-    showLibreOfficeStatus &&
-    !statusLoading &&
-    !statusError &&
-    !libreOfficeStatusKnown;
+    !statusLoading && !statusError && !libreOfficeStatusKnown;
   const configuredBinaryPath =
     config.webui?.officePreview?.binaryPath ?? "";
   const detectedBinaryPaths = status?.libreOffice?.candidates ?? [];
@@ -146,8 +141,7 @@ function OfficePreviewSection({
             </div>
           </FormRow>
 
-          {service === "libreoffice" && (
-            <FormRow
+          <FormRow
               label={t(
                 "pilotDeckConfig.panels.officePreview.fields.binaryPath.label",
               )}
@@ -268,11 +262,10 @@ function OfficePreviewSection({
                   </div>
                 )}
               </div>
-            </FormRow>
-          )}
+          </FormRow>
 
           <div className="space-y-2 px-4 py-3">
-            {showLibreOfficeStatus && (
+            {(libreOfficeStatusKnown || statusLoading) && (
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2 text-[12px] text-muted-foreground">
                   <span
@@ -331,7 +324,7 @@ function OfficePreviewSection({
               </div>
             )}
 
-            {service === "libreoffice" && libreOfficeAvailable && (
+            {libreOfficeAvailable && (
               <div className="space-y-1 rounded-md bg-muted/30 px-3 py-2 text-[11px] leading-4 text-muted-foreground">
                 {status?.libreOffice?.binaryPath && (
                   <div
@@ -366,7 +359,7 @@ function OfficePreviewSection({
               </div>
             )}
 
-            {service === "libreoffice" && libreOfficeUnavailable && (
+            {libreOfficeUnavailable && (
               <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] leading-5 text-amber-700 dark:text-amber-300">
                 <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
                 <div>
@@ -377,7 +370,7 @@ function OfficePreviewSection({
               </div>
             )}
 
-            {service === "libreoffice" && statusError && (
+            {statusError && (
               <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive">
                 {statusError}
               </div>

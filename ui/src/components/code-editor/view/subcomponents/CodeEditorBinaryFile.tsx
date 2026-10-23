@@ -1168,37 +1168,45 @@ function SpreadsheetPreview({
     sheetContent = <PreviewSpinner label={t('spreadsheetPreview.readingWorkbook')} />;
   } else if (manifestError || !manifest) {
     const needsLibreOffice = manifestErrorCode === 'LIBREOFFICE_NOT_FOUND';
+    const conversionUnavailable = manifestErrorCode === 'SPREADSHEET_XLSX_OUTPUT_MISSING'
+      || manifestErrorCode === 'SPREADSHEET_XLSX_CONVERT_FAILED';
     sheetContent = (
       <FallbackContent
-        title={needsLibreOffice ? t('officePreview.libreOfficeUnavailableTitle') : title}
+        title={needsLibreOffice ? t('officePreview.libreOfficeUnavailableTitle') : conversionUnavailable ? t('officePreview.conversionUnavailableTitle') : title}
         message={needsLibreOffice
           ? t('officePreview.libreOfficeUnavailableMessage')
+          : conversionUnavailable
+            ? t('officePreview.conversionUnavailableMessage')
           : manifestError || t('spreadsheetPreview.failedMessage')}
         onClose={onClose}
         actions={(
           <>
             <DownloadButton projectName={projectName} file={file} />
-            {needsLibreOffice && <OfficePreviewSettingsButton />}
+            {(needsLibreOffice || conversionUnavailable) && <OfficePreviewSettingsButton />}
           </>
         )}
       />
     );
   } else {
     const needsLibreOffice = sheetErrorCode === 'LIBREOFFICE_NOT_FOUND';
+    const conversionUnavailable = sheetErrorCode === 'LIBREOFFICE_OUTPUT_MISSING'
+      || sheetErrorCode === 'LIBREOFFICE_CONVERT_FAILED';
     if (sheetLoading || selectedSheetIndex === null) {
       sheetContent = <PreviewSpinner label={t('spreadsheetPreview.renderingSheet')} />;
     } else if (sheetError || !previewUrl) {
       sheetContent = (
         <FallbackContent
-          title={needsLibreOffice ? t('officePreview.libreOfficeUnavailableTitle') : title}
+          title={needsLibreOffice ? t('officePreview.libreOfficeUnavailableTitle') : conversionUnavailable ? t('officePreview.conversionUnavailableTitle') : title}
           message={needsLibreOffice
             ? t('officePreview.libreOfficeUnavailableMessage')
+            : conversionUnavailable
+              ? t('officePreview.conversionUnavailableMessage')
             : sheetError || t('spreadsheetPreview.failedMessage')}
           onClose={onClose}
           actions={(
             <>
               <DownloadButton projectName={projectName} file={file} />
-              {needsLibreOffice && <OfficePreviewSettingsButton />}
+              {(needsLibreOffice || conversionUnavailable) && <OfficePreviewSettingsButton />}
             </>
           )}
         />
@@ -1289,14 +1297,18 @@ function OfficePreview({
 
   if (loading && !previewUrl) return <PreviewSpinner label={t('officePreview.converting')} />;
   if (errorMessage || !previewUrl) {
-    const needsLibreOffice = errorCode === 'LIBREOFFICE_NOT_FOUND'
+    const conversionUnavailable = errorCode === 'LIBREOFFICE_OUTPUT_MISSING'
+      || errorCode === 'LIBREOFFICE_CONVERT_FAILED';
+    const needsLibreOffice = !conversionUnavailable && (errorCode === 'LIBREOFFICE_NOT_FOUND'
       || errorMessage?.includes('LibreOffice')
-      || errorMessage === 'LIBREOFFICE_NOT_FOUND';
+      || errorMessage === 'LIBREOFFICE_NOT_FOUND');
     const fallbackTitle = needsLibreOffice
       ? t('officePreview.libreOfficeUnavailableTitle')
+      : conversionUnavailable ? t('officePreview.conversionUnavailableTitle')
       : title;
     const fallbackMessage = needsLibreOffice
       ? t('officePreview.libreOfficeUnavailableMessage')
+      : conversionUnavailable ? t('officePreview.conversionUnavailableMessage')
       : errorMessage || t('officePreview.failedMessage');
 
     return (
@@ -1430,15 +1442,31 @@ function OfficeFilePreviewRouter({
   const { t } = useTranslation('codeEditor');
   const { status, loading } = useOfficePreviewService();
   const service = status?.service || 'builtin';
+  const usesLibreOffice = service === 'libreoffice' || !isBuiltinOfficeFile(file.name);
 
   if (loading) {
     return <PreviewSpinner label={t('officePreview.checkingService')} />;
   }
-  if (service === 'libreoffice') {
+  if (usesLibreOffice && status?.libreOffice?.available === false) {
+    return (
+      <FallbackContent
+        title={t('officePreview.libreOfficeUnavailableTitle')}
+        message={t('officePreview.libreOfficeUnavailableMessage')}
+        onClose={onClose}
+        actions={(
+          <>
+            <DownloadButton projectName={projectName} file={file} />
+            <OfficePreviewSettingsButton />
+          </>
+        )}
+      />
+    );
+  }
+  if (usesLibreOffice) {
     return isSpreadsheetFile(file.name)
       ? (
         <SpreadsheetPreview
-          service={service}
+          service="libreoffice"
           projectName={projectName}
           file={file}
           title={title}
@@ -1458,24 +1486,6 @@ function OfficeFilePreviewRouter({
           onToggleFullscreen={onToggleFullscreen}
         />
       );
-  }
-
-  if (!isBuiltinOfficeFile(file.name)) {
-    return (
-      <FallbackContent
-        title={t('officePreview.unsupportedBuiltinTitle')}
-        message={t('officePreview.unsupportedBuiltinMessage', {
-          extension: `.${getExtension(file.name)}`,
-        })}
-        onClose={onClose}
-        actions={(
-          <>
-            <DownloadButton projectName={projectName} file={file} />
-            <OfficePreviewSettingsButton />
-          </>
-        )}
-      />
-    );
   }
 
   if (isSpreadsheetFile(file.name)) {

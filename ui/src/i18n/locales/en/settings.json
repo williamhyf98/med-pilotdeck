@@ -807,11 +807,11 @@
       },
       "officePreview": {
         "title": "Office File Preview Service",
-        "description": "Choose how Office files are previewed in read-only mode. PDF always uses PilotDeck's built-in viewer.",
+        "description": "DOCX, XLSX and PPTX use built-in preview by default; legacy Office files automatically use LibreOffice. PDF always uses the built-in viewer.",
         "fields": {
           "service": {
             "label": "Preview service",
-            "description": "Built-in preview needs no installation and supports DOCX, XLSX, and PPTX. LibreOffice supports more legacy formats using print layout."
+            "description": "This option controls DOCX, XLSX and PPTX. Legacy formats always use LibreOffice automatically."
           },
           "binaryPath": {
             "label": "LibreOffice executable path",
@@ -824,14 +824,14 @@
           }
         },
         "options": {
-          "builtin": "Built-in preview (recommended)",
-          "libreOffice": "LibreOffice compatibility preview",
+          "builtin": "Built-in preview for modern files (recommended)",
+          "libreOffice": "LibreOffice print layout for modern files",
           "libreOfficeUnavailable": "LibreOffice (unavailable)",
           "autoDetect": "Auto-detect (no fixed path)",
           "candidateAvailable": "{{path}} (available)",
           "candidateUnavailable": "{{path}} (unavailable)",
-          "candidateAvailableShort": "Available",
-          "candidateUnavailableShort": "Unavailable"
+          "candidateAvailableShort": "Executable (conversion modules unverified)",
+          "candidateUnavailableShort": "Not executable"
         },
         "scan": {
           "button": "Scan",
@@ -840,7 +840,7 @@
         },
         "status": {
           "checking": "Checking LibreOffice...",
-          "available": "LibreOffice is available",
+          "available": "LibreOffice executable detected (conversion modules may still be missing)",
           "unavailable": "LibreOffice is unavailable",
           "unknown": "LibreOffice status is temporarily unavailable",
           "error": "Could not check LibreOffice status",
@@ -849,8 +849,8 @@
           "path": "Path: {{path}}",
           "version": "Version: {{version}}"
         },
-        "builtinNote": "Built-in preview works out of the box: DOCX keeps document layout, XLSX supports worksheet tabs and cell selection, and PPTX supports slide browsing. Legacy DOC, XLS, and PPT files require LibreOffice.",
-        "unavailableWarning": "LibreOffice is selected, but no LibreOffice/soffice executable is available on this machine. Install LibreOffice or switch to Built-in preview."
+        "builtinNote": "DOCX, XLSX and PPTX use built-in preview. DOC, XLS, PPT, WPS, ET, DPS and ODF files are converted automatically by LibreOffice. Legacy files require LibreOffice and the relevant Writer, Calc or Impress component.",
+        "unavailableWarning": "No LibreOffice/soffice executable was detected. Modern files still work with built-in preview; install LibreOffice to preview legacy files."
       },
       "models": {
         "title": "Model Pool",

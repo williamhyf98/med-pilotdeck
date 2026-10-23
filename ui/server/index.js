@@ -112,6 +112,7 @@ import {
     getConfiguredOfficePreviewService,
     getLibreOfficeCandidateStatuses,
     getLibreOfficeStatus,
+    isLibreOfficePreviewAllowed,
 } from './services/officePreview.js';
 import {
     SPREADSHEET_PREVIEW_EXTENSIONS,
@@ -1817,7 +1818,7 @@ app.get('/api/projects/:projectName/files/preview/pdf', ...requireUser, officePr
         }
 
         const officePreviewService = getConfiguredOfficePreviewService();
-        if (officePreviewService !== OFFICE_PREVIEW_SERVICE_LIBREOFFICE) {
+        if (!isLibreOfficePreviewAllowed(extension, officePreviewService)) {
             return res.status(409).json({
                 error: 'LibreOffice preview service is not selected',
                 code: 'LIBREOFFICE_PREVIEW_NOT_SELECTED',
@@ -1870,15 +1871,6 @@ app.get('/api/projects/:projectName/files/preview/spreadsheet/manifest', ...requ
         if (!SPREADSHEET_PREVIEW_EXTENSIONS.has(extension)) {
             return res.status(400).json({ error: 'Unsupported spreadsheet preview format' });
         }
-        if (
-            extension !== 'xlsx'
-            && getConfiguredOfficePreviewService() !== OFFICE_PREVIEW_SERVICE_LIBREOFFICE
-        ) {
-            return res.status(409).json({
-                error: 'Legacy spreadsheet preview requires LibreOffice',
-                code: 'LIBREOFFICE_PREVIEW_NOT_SELECTED',
-            });
-        }
         const manifest = await getSpreadsheetPreviewManifest(resolvedResult.resolved, { force });
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
         return res.json(manifest);
@@ -1912,15 +1904,6 @@ app.get('/api/projects/:projectName/files/preview/spreadsheet/data', ...requireU
         const extension = getFileExtension(resolvedResult.resolved);
         if (!SPREADSHEET_PREVIEW_EXTENSIONS.has(extension)) {
             return res.status(400).json({ error: 'Unsupported spreadsheet preview format' });
-        }
-        if (
-            extension !== 'xlsx'
-            && getConfiguredOfficePreviewService() !== OFFICE_PREVIEW_SERVICE_LIBREOFFICE
-        ) {
-            return res.status(409).json({
-                error: 'Legacy spreadsheet preview requires LibreOffice',
-                code: 'LIBREOFFICE_PREVIEW_NOT_SELECTED',
-            });
         }
 
         const preview = await getSpreadsheetInteractivePreview(
@@ -1961,7 +1944,7 @@ app.get('/api/projects/:projectName/files/preview/spreadsheet/sheet', ...require
             return res.status(400).json({ error: 'Unsupported spreadsheet preview format' });
         }
         const officePreviewService = getConfiguredOfficePreviewService();
-        if (officePreviewService !== OFFICE_PREVIEW_SERVICE_LIBREOFFICE) {
+        if (!isLibreOfficePreviewAllowed(extension, officePreviewService)) {
             return res.status(409).json({
                 error: 'LibreOffice preview service is not selected',
                 code: 'LIBREOFFICE_PREVIEW_NOT_SELECTED',

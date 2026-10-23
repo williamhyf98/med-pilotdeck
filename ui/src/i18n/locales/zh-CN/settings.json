@@ -807,11 +807,11 @@
       },
       "officePreview": {
         "title": "Office 文件预览服务",
-        "description": "选择 Office 文件的只读预览方式。PDF 始终使用 PilotDeck 内置浏览器，不受此设置影响。",
+        "description": "DOCX、XLSX、PPTX 默认使用内置预览；DOC、XLS、PPT 等旧格式自动使用 LibreOffice。PDF 始终使用内置浏览器。",
         "fields": {
           "service": {
             "label": "预览服务",
-            "description": "内置预览无需安装，支持 DOCX、XLSX 和 PPTX；LibreOffice 兼容更多旧版格式并统一使用打印版式。"
+            "description": "此选项控制 DOCX、XLSX、PPTX 的预览方式；旧格式始终自动使用 LibreOffice。"
           },
           "binaryPath": {
             "label": "LibreOffice 可执行文件路径",
@@ -824,14 +824,14 @@
           }
         },
         "options": {
-          "builtin": "内置预览（推荐）",
-          "libreOffice": "LibreOffice 兼容预览",
+          "builtin": "现代格式内置预览（推荐）",
+          "libreOffice": "现代格式使用 LibreOffice 打印版式",
           "libreOfficeUnavailable": "LibreOffice（不可用）",
           "autoDetect": "自动探测（不指定路径）",
           "candidateAvailable": "{{path}}（可用）",
           "candidateUnavailable": "{{path}}（不可用）",
-          "candidateAvailableShort": "可用",
-          "candidateUnavailableShort": "不可用"
+          "candidateAvailableShort": "可执行（未验证转换组件）",
+          "candidateUnavailableShort": "不可执行"
         },
         "scan": {
           "button": "扫描",
@@ -840,7 +840,7 @@
         },
         "status": {
           "checking": "正在检查 LibreOffice...",
-          "available": "LibreOffice 可用",
+          "available": "检测到 LibreOffice 可执行文件（不代表所有格式转换组件均已安装）",
           "unavailable": "LibreOffice 不可用",
           "unknown": "LibreOffice 状态暂不可用",
           "error": "无法检查 LibreOffice 状态",
@@ -849,8 +849,8 @@
           "path": "路径：{{path}}",
           "version": "版本：{{version}}"
         },
-        "builtinNote": "内置预览开箱即用：DOCX 保留文档版式，XLSX 支持工作表切换和单元格选择，PPTX 支持幻灯片浏览。旧版 DOC、XLS、PPT 等格式需要 LibreOffice。",
-        "unavailableWarning": "当前选择了 LibreOffice，但本机没有可用的 LibreOffice/soffice。请安装 LibreOffice，或将预览服务切换为“内置预览”。"
+        "builtinNote": "DOCX、XLSX、PPTX 使用内置预览；DOC、XLS、PPT、WPS、ET、DPS 和 ODF 文件自动通过 LibreOffice 转换。旧格式需要本机安装 LibreOffice 及对应的 Writer、Calc 或 Impress 组件。",
+        "unavailableWarning": "未检测到 LibreOffice/soffice。现代格式仍可使用内置预览；如需预览旧格式，请安装 LibreOffice 并配置可执行文件路径。"
       },
       "models": {
         "title": "模型池",
