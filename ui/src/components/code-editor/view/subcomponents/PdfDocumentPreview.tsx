@@ -22,6 +22,7 @@ import {
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 import 'pdfjs-dist/web/pdf_viewer.css';
+import { readPdfTextContent } from './pdfTextContent';
 import type { DocumentSelectionSource } from '../../../../types/documentSelection';
 import {
   createImageRegionContentReference,
@@ -627,7 +628,7 @@ function PdfPage({
         await renderTask.promise;
         if (cancelled) return;
 
-        const textContent = await page.getTextContent();
+        const textContent = await readPdfTextContent(page);
         if (cancelled) return;
 
         textLayerContainer.replaceChildren();
@@ -1130,7 +1131,7 @@ export default function PdfDocumentPreview({
         let textItems = pageTextItemsRef.current.get(pageNumber);
         if (textItems === undefined) {
           const page = await document.getPage(pageNumber);
-          const textContent = await page.getTextContent();
+          const textContent = await readPdfTextContent(page);
           textItems = textContent.items
             .map((item) => ('str' in item ? item.str : ''))
             .filter(Boolean);

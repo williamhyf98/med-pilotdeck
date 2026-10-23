@@ -15,6 +15,21 @@ const officePreviewConversionLocks = new Map();
 export const OFFICE_PREVIEW_SERVICE_BUILTIN = 'builtin';
 export const OFFICE_PREVIEW_SERVICE_LIBREOFFICE = 'libreoffice';
 const BUILTIN_OFFICE_EXTENSIONS = new Set(['docx', 'xlsx', 'pptx']);
+const MAC_FONTCONFIG_FILES = [
+  '/opt/homebrew/etc/fonts/fonts.conf',
+  '/usr/local/etc/fonts/fonts.conf',
+];
+const OFFICE_PREVIEW_CONVERSION_VERSION = 2;
+
+export function getLibreOfficeConversionEnvironment({
+  platform = process.platform,
+  environment = process.env,
+  exists = fs.existsSync,
+} = {}) {
+  if (platform !== 'darwin' || environment.FONTCONFIG_FILE) return { ...environment };
+  const fontConfig = MAC_FONTCONFIG_FILES.find((candidate) => exists(candidate));
+  return fontConfig ? { ...environment, FONTCONFIG_FILE: fontConfig } : { ...environment };
+}
 
 // Legacy formats always need LibreOffice. Modern formats use it only when the
 // operator explicitly selects the print-layout renderer.
@@ -339,9 +354,10 @@ export async function convertOfficeDocumentToPdf(sourcePath, options = {}) {
   if (!stats.isFile()) {
     throw createOfficePreviewError('Office preview source is not a file', 404, 'OFFICE_PREVIEW_SOURCE_NOT_FOUND');
   }
+  const conversionEnvironment = getLibreOfficeConversionEnvironment();
   const cacheKey = crypto
     .createHash('sha256')
-    .update(`${resolvedSourcePath}:${stats.size}:${stats.mtimeMs}`)
+    .update(`${OFFICE_PREVIEW_CONVERSION_VERSION}:${conversionEnvironment.FONTCONFIG_FILE || ''}:${resolvedSourcePath}:${stats.size}:${stats.mtimeMs}`)
     .digest('hex');
   const cacheDir = path.join(OFFICE_PREVIEW_CACHE_DIR, cacheKey);
 
@@ -359,6 +375,7 @@ export async function convertOfficeDocumentToPdf(sourcePath, options = {}) {
       cacheDir,
       force: options.force,
       resolvedSourcePath,
+      conversionEnvironment,
     });
   })();
   officePreviewConversionLocks.set(cacheKey, conversionPromise);
@@ -377,6 +394,7 @@ async function convertOfficeDocumentToPdfWithCache({
   cacheDir,
   force,
   resolvedSourcePath,
+  conversionEnvironment,
 }) {
   const lockDir = `${cacheDir}.lock`;
   let releaseLock = null;
@@ -426,6 +444,7 @@ async function convertOfficeDocumentToPdfWithCache({
           timeout: LIBREOFFICE_TIMEOUT_MS,
           maxBuffer: 8 * 1024 * 1024,
           windowsHide: true,
+          env: conversionEnvironment,
         });
       } catch (error) {
         error.statusCode = 500;
