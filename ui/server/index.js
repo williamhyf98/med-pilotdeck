@@ -136,7 +136,7 @@ import { runServerStartupBeforeListen, startServerAfterStartup } from './service
 import { checkMedicalPlugin, checkDeployEnv } from './services/startupChecks.js';
 import { validateApiKey, authenticateToken, authenticateWebSocket } from './middleware/auth.js';
 import { requireAdmin } from './middleware/requireAdmin.js';
-import { runWithUserScope, userScopeMiddleware, requireUserScope } from './middleware/userScope.js';
+import { runWithUserScope, runWithRequestUserScope, userScopeMiddleware, requireUserScope } from './middleware/userScope.js';
 import { DISABLE_LOCAL_AUTH, IS_PLATFORM } from './constants/config.js';
 import { getConnectableHost } from '../shared/networkHosts.js';
 import { contentDispositionAttachment } from './utils/downloadHeaders.js';
@@ -2431,7 +2431,7 @@ const uploadFilesHandler = async (req, res) => {
     });
 
     // Use multer middleware
-    uploadMiddleware.array('files', ATTACHMENT_UPLOAD_MAX_FILES)(req, res, async (err) => {
+    uploadMiddleware.array('files', ATTACHMENT_UPLOAD_MAX_FILES)(req, res, (err) => runWithRequestUserScope(req, async () => {
         if (err) {
             console.error('Multer error:', err);
             if (err.code === 'LIMIT_FILE_SIZE') {
@@ -2584,7 +2584,7 @@ const uploadFilesHandler = async (req, res) => {
                 res.status(500).json({ error: error.message });
             }
         }
-    });
+    }));
 };
 
 app.post('/api/projects/:projectName/files/upload', ...requireUser, uploadFilesHandler);
@@ -3500,7 +3500,7 @@ app.post('/api/projects/:projectName/upload-attachments', ...requireUser, async 
         return res.status(500).json({ error: 'Internal server error' });
     }
 
-    multerUpload(req, res, async (err) => {
+    multerUpload(req, res, (err) => runWithRequestUserScope(req, async () => {
         if (err) {
             if (err.code === 'LIMIT_FILE_SIZE') {
                 return res.status(400).json({
@@ -3632,7 +3632,7 @@ app.post('/api/projects/:projectName/upload-attachments', ...requireUser, async 
             const message = error instanceof Error ? error.message : 'Failed to process attachments';
             res.status(500).json({ error: message });
         }
-    });
+    }));
 });
 
 // Image upload endpoint
@@ -3676,7 +3676,7 @@ app.post('/api/projects/:projectName/upload-images', ...requireUser, async (req,
         });
 
         // Handle multipart form data
-        upload.array('images', 5)(req, res, async (err) => {
+        upload.array('images', 5)(req, res, (err) => runWithRequestUserScope(req, async () => {
             if (err) {
                 return res.status(400).json({ error: err.message });
             }
@@ -3713,7 +3713,7 @@ app.post('/api/projects/:projectName/upload-images', ...requireUser, async (req,
                 await Promise.all(req.files.map(f => fs.unlink(f.path).catch(() => { })));
                 res.status(500).json({ error: 'Failed to process images' });
             }
-        });
+        }));
     } catch (error) {
         console.error('Error in image upload endpoint:', error);
         res.status(500).json({ error: 'Internal server error' });

@@ -28,6 +28,7 @@ import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
+import { runWithRequestUserScope } from '../middleware/userScope.js';
 import { getPilotDeckGateway } from '../pilotdeck-bridge.js';
 import { DISABLE_LOCAL_AUTH } from '../constants/config.js';
 import { assertPathInUserHome, resolveScopedHome, isGeneralProjectKey, resolveLinkedRepoPath, resolveGatewayProjectKey } from '../utils/pilotPaths.js';
@@ -678,7 +679,7 @@ router.post('/scan', async (req, res) => {
 // session refresh.
 // ---------------------------------------------------------------------------
 
-router.post('/import-upload', upload.array('files', 500), async (req, res) => {
+router.post('/import-upload', upload.array('files', 500), (req, res) => runWithRequestUserScope(req, async () => {
   let stagingDir = null;
   try {
     const { slug: requestedSlug, scope, projectPath, force, paths: pathsJson } = req.body || {};
@@ -803,6 +804,6 @@ router.post('/import-upload', upload.array('files', 500), async (req, res) => {
     }
     sendGatewayError(res, e);
   }
-});
+}));
 
 export default router;

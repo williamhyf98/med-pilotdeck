@@ -19,8 +19,8 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import * as pdfjs from 'pdfjs-dist';
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
+import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
+import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 import 'pdfjs-dist/web/pdf_viewer.css';
 import type { DocumentSelectionSource } from '../../../../types/documentSelection';
 import {

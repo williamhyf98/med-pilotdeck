@@ -136,11 +136,40 @@ get /api/projects "$ADM" | grep -q '旧病例' || fail "admin cannot see migrate
 if get /api/projects "$A" | grep -q '旧病例'; then fail "alice can see admin's legacy project"; fi
 
 echo "== isolation"
-post /api/projects/create-system '{"displayName":"病例A","type":"general_medicine"}' "$A" >/dev/null
+A_PROJECT=$(post /api/projects/create-system '{"displayName":"病例A","type":"general_medicine"}' "$A" | json .project.name) || fail "create alice project"
 [ "$(ls "$ROOT/users/" | wc -l | tr -d ' ')" -ge 3 ] || fail "expected admin+alice+bob homes"
 get /api/projects "$A" | grep -q '病例A' || fail "alice cannot see her own project"
 if get /api/projects "$B" | grep -q '病例A'; then fail "bob can see alice's project"; fi
 if get /api/projects "$ADM" | grep -q '病例A'; then fail "admin's list leaks alice's project"; fi
+
+echo "== multipart uploads retain user scope"
+printf 'alice doc payload' > "$RUN/scope-test.doc"
+upload_code() {
+  code -X POST "localhost:$PORT/api/projects/$A_PROJECT/$1" \
+    -H "Authorization: Bearer $2" \
+    -F "targetPath=inbox/uploads/scope-test" \
+    -F "files=@$RUN/scope-test.doc;filename=scope-test.doc"
+}
+[ "$(upload_code files/upload "$A")" = 200 ] || fail "alice project file upload failed"
+[ "$(code -X POST "localhost:$PORT/api/projects/$A_PROJECT/upload-attachments" \
+    -H "Authorization: Bearer $A" -F "attachments=@$RUN/scope-test.doc;filename=chat.doc")" = 200 ] ||
+  fail "alice chat attachment upload failed"
+A_ID=$(get /api/auth/user "$A" | json .user.id) || fail "cannot read alice id"
+[ -f "$ROOT/users/$A_ID/workspaces/general_med/$A_PROJECT/inbox/uploads/scope-test/scope-test.doc" ] ||
+  fail "alice project upload not in her workspace"
+[ -n "$(find "$ROOT/users/$A_ID/workspaces/general_med/$A_PROJECT/inbox" -name chat.doc -print -quit)" ] ||
+  fail "alice chat attachment not in her workspace"
+[ "$(upload_code files/upload "$B")" = 200 ] || fail "bob's same-name project upload failed"
+[ "$(code -X POST "localhost:$PORT/api/projects/$A_PROJECT/upload-attachments" \
+    -H "Authorization: Bearer $B" -F "attachments=@$RUN/scope-test.doc;filename=chat.doc")" = 200 ] ||
+  fail "bob's same-name chat attachment failed"
+B_ID=$(get /api/auth/user "$B" | json .user.id) || fail "cannot read bob id"
+[ -f "$ROOT/users/$B_ID/workspaces/general_med/$A_PROJECT/inbox/uploads/scope-test/scope-test.doc" ] ||
+  fail "bob's project upload did not stay under bob's home"
+[ -n "$(find "$ROOT/users/$B_ID/workspaces/general_med/$A_PROJECT/inbox" -name chat.doc -print -quit)" ] ||
+  fail "bob's attachment did not stay under bob's home"
+[ "$(upload_code files/upload "")" = 401 ] || fail "anonymous project upload was accepted"
+[ ! -e "$ROOT/workspaces" ] || fail "multipart upload escaped user home"
 
 echo "== gating"
 [ "$(code "localhost:$PORT/api/config" -H "Authorization: Bearer $A")" = 403 ] || fail "user reached /api/config"

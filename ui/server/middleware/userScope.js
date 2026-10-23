@@ -26,6 +26,14 @@ export function requireUserScope() {
   return scope;
 }
 
+// Multipart parsers invoke their completion callbacks from request stream
+// resources created before the scope middleware runs. Re-enter the scope using
+// only the identity already established by authentication.
+export function runWithRequestUserScope(req, fn) {
+  const userId = req.user?.id ?? req.user?.userId;
+  return runWithUserScope({ userId, role: req.user?.role }, fn);
+}
+
 export function userScopeMiddleware(req, res, next) {
   const id = req.user?.id ?? req.user?.userId;
   if (id === null || id === undefined) {
