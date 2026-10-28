@@ -17,13 +17,15 @@ import {
   type Edge,
   type Node,
   type NodeProps,
+  type ReactFlowInstance,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { GitFork, Plus, Sparkles, Trash2, Workflow, X } from 'lucide-react';
+import { GitFork, MessageSquareText, Plus, Sparkles, Trash2, Workflow, X } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { authenticatedFetch } from '../../utils/api';
 import { cn } from '../../lib/utils.js';
 import SkillDraftDialog, { type SkillDraft } from '../chat-v2/SkillDraftDialog';
+import SkillFlowChatPanel, { type FlowChatMessage } from './SkillFlowChatPanel';
 
 /**
  * Full-screen flowchart canvas for the Skills page's "create from flowchart"
@@ -37,12 +39,18 @@ import SkillDraftDialog, { type SkillDraft } from '../chat-v2/SkillDraftDialog';
  * writing SKILL.md by hand): "add step / add decision" buttons auto-connect
  * from the selected (or last) node, so a linear flow needs no manual wiring;
  * branches are drawn by dragging from a decision node's 是/否 handles.
+ *
+ * A collapsible side chat (SkillFlowChatPanel) offers a third input mode:
+ * describe or amend the workflow in natural language and the canvas updates
+ * live. Chat and manual editing compose freely — every chat turn snapshots
+ * the current canvas, and the returned graph keeps the positions of nodes
+ * whose ids survive.
  */
 
 type FlowNodeData = { text: string };
 type FlowNode = Node<FlowNodeData, 'step' | 'decision'>;
 
-type FlowDraftPayload = {
+export type FlowDraftPayload = {
   nodes: Array<{ id: string; kind: 'step' | 'decision'; text: string }>;
   edges: Array<{ source: string; target: string; sourceHandle: string | null }>;
 };
@@ -83,6 +91,21 @@ function branchLabel(sourceHandle: string | null | undefined): string | undefine
   if (sourceHandle === 'yes') return '是';
   if (sourceHandle === 'no') return '否';
   return undefined;
+}
+
+function toFlowPayload(nodes: FlowNode[], edges: Edge[]): FlowDraftPayload {
+  return {
+    nodes: nodes.map((n) => ({
+      id: n.id,
+      kind: n.type === 'decision' ? 'decision' : 'step',
+      text: n.data.text,
+    })),
+    edges: edges.map((e) => ({
+      source: e.source,
+      target: e.target,
+      sourceHandle: e.sourceHandle ?? null,
+    })),
+  };
 }
 
 /**
@@ -212,6 +235,14 @@ export default function SkillFlowEditor({
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimer = useRef<number | null>(null);
   const [draftFlow, setDraftFlow] = useState<FlowDraftPayload | null>(null);
+  const [chatOpen, setChatOpen] = useState(true);
+  const [chatMessages, setChatMessages] = useState<FlowChatMessage[]>([]);
+  // Live mirrors so the chat panel's stable getFlow callback reads fresh state.
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
+  const edgesRef = useRef(edges);
+  edgesRef.current = edges;
+  const rfInstance = useRef<ReactFlowInstance<FlowNode, Edge> | null>(null);
 
   useEffect(() => () => {
     if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
@@ -293,19 +324,128 @@ export default function SkillFlowEditor({
       }) as string);
       return;
     }
-    setDraftFlow({
-      nodes: nodes.map((n) => ({
-        id: n.id,
-        kind: n.type === 'decision' ? 'decision' : 'step',
-        text: n.data.text,
-      })),
-      edges: edges.map((e) => ({
-        source: e.source,
-        target: e.target,
-        sourceHandle: e.sourceHandle ?? null,
-      })),
-    });
+    setDraftFlow(toFlowPayload(nodes, edges));
   }, [nodes, edges, flashNotice, t]);
+
+  const getFlowSnapshot = useCallback(
+    () => toFlowPayload(nodesRef.current, edgesRef.current),
+    [],
+  );
+
+  /**
+   * Replace the canvas with the graph a chat turn returned. Nodes whose id
+   * survives keep their position (and their exact text when the model merely
+   * echoed it back); new nodes are laid out under their first positioned
+   * parent with the same offsets addNode uses, so chat-grown flows look like
+   * hand-grown ones. Edges carry no user state beyond endpoints + branch, so
+   * they are regenerated wholesale.
+   */
+  const applyChatFlow = useCallback((incoming: FlowDraftPayload) => {
+    setNodes((prev) => {
+      const prevById = new Map(prev.map((n) => [n.id, n]));
+      const positions = new Map<string, { x: number; y: number }>();
+      for (const n of incoming.nodes) {
+        const existing = prevById.get(n.id);
+        if (existing) positions.set(n.id, existing.position);
+      }
+      const parentsByTarget = new Map<string, Array<{ source: string; handle: string | null }>>();
+      for (const e of incoming.edges) {
+        const list = parentsByTarget.get(e.target) ?? [];
+        list.push({ source: e.source, handle: e.sourceHandle });
+        parentsByTarget.set(e.target, list);
+      }
+      const pending = incoming.nodes.filter((n) => !positions.has(n.id));
+      // Seed parentless new nodes (graph roots) so a from-scratch generation
+      // lays out top-down instead of falling through to the orphan grid.
+      if (pending.length > 0) {
+        const hasParent = new Set(incoming.edges.map((e) => e.target));
+        const seedY = positions.size === 0
+          ? 80
+          : Math.max(...[...positions.values()].map((p) => p.y)) + 180;
+        let seedIndex = 0;
+        for (const node of pending) {
+          if (hasParent.has(node.id)) continue;
+          positions.set(node.id, { x: 260 + seedIndex * 300, y: seedY });
+          seedIndex += 1;
+        }
+        if (seedIndex > 0) {
+          for (let i = pending.length - 1; i >= 0; i -= 1) {
+            if (positions.has(pending[i].id)) pending.splice(i, 1);
+          }
+        }
+      }
+      const fanOut = new Map<string, number>();
+      // Multi-pass so chains of brand-new nodes settle one level per pass.
+      for (let pass = 0; pending.length > 0 && pass <= incoming.nodes.length; pass += 1) {
+        let placed = false;
+        for (let i = 0; i < pending.length; i += 1) {
+          const node = pending[i];
+          const parent = (parentsByTarget.get(node.id) ?? []).find((p) => positions.has(p.source));
+          if (!parent) continue;
+          const parentPos = positions.get(parent.source);
+          if (!parentPos) continue;
+          const parentHeight = prevById.get(parent.source)?.measured?.height ?? 110;
+          const fanKey = `${parent.source} ${parent.handle ?? ''}`;
+          const fan = fanOut.get(fanKey) ?? 0;
+          fanOut.set(fanKey, fan + 1);
+          positions.set(node.id, {
+            x: (parent.handle === 'yes'
+              ? parentPos.x - 150
+              : parent.handle === 'no'
+                ? parentPos.x + 150
+                : parentPos.x) + fan * 40,
+            y: parentPos.y + parentHeight + 70 + fan * 24,
+          });
+          pending.splice(i, 1);
+          i -= 1;
+          placed = true;
+        }
+        if (!placed) break;
+      }
+      if (pending.length > 0) {
+        // Orphans (no positioned ancestor at all): park them in rows below.
+        const maxY = Math.max(80, ...[...positions.values()].map((p) => p.y));
+        pending.forEach((node, index) => {
+          positions.set(node.id, {
+            x: 260 + (index % 3) * 280,
+            y: maxY + 180 + Math.floor(index / 3) * 170,
+          });
+        });
+      }
+      return incoming.nodes.map((n) => {
+        const existing = prevById.get(n.id);
+        const text = existing && existing.data.text.trim() === n.text.trim()
+          ? existing.data.text
+          : n.text;
+        return {
+          id: n.id,
+          type: n.kind,
+          position: positions.get(n.id) ?? { x: 260, y: 80 },
+          data: { text },
+          selected: false,
+        };
+      });
+    });
+    setEdges(incoming.edges.map((e, index) => ({
+      id: `chat-e${index}-${e.source}-${e.sourceHandle ?? 'out'}-${e.target}`,
+      source: e.source,
+      target: e.target,
+      sourceHandle: e.sourceHandle,
+      targetHandle: null,
+      ...EDGE_DEFAULTS,
+      label: branchLabel(e.sourceHandle),
+    })));
+    // Keep manual "add node" ids collision-free after chat-created ids.
+    let nextSeq = idSeq.current;
+    for (const n of incoming.nodes) {
+      const match = /(\d+)$/u.exec(n.id);
+      if (match) nextSeq = Math.max(nextSeq, Number.parseInt(match[1], 10) + 1);
+    }
+    idSeq.current = nextSeq;
+    window.setTimeout(() => {
+      rfInstance.current?.fitView({ maxZoom: 1, duration: 300 });
+    }, 60);
+  }, [setNodes, setEdges]);
 
   const generateOverride = useCallback(async () => {
     return api<{ draft: SkillDraft }>('/api/skills/generate-from-flow', {
@@ -315,14 +455,14 @@ export default function SkillFlowEditor({
   }, [draftFlow, projectPath]);
 
   const handleClose = useCallback(() => {
-    const hasContent = nodes.some((n) => n.data.text.trim());
+    const hasContent = nodes.some((n) => n.data.text.trim()) || chatMessages.length > 0;
     if (hasContent && !window.confirm(
       t('skillsTab.flowDiscardConfirm', { defaultValue: '关闭后当前流程图不会保存，确定关闭？' }) as string,
     )) {
       return;
     }
     onClose();
-  }, [nodes, onClose, t]);
+  }, [nodes, chatMessages, onClose, t]);
 
   // Portaled to <body>: the main area's content wrapper is a `z-0` stacking
   // context below the app header (z-[80]), so a fixed overlay rendered in
@@ -361,6 +501,20 @@ export default function SkillFlowEditor({
           </button>
           <button
             type="button"
+            onClick={() => setChatOpen((open) => !open)}
+            aria-pressed={chatOpen}
+            className={cn(
+              'inline-flex h-7 items-center gap-1 rounded-md border px-2 text-[12px] transition',
+              chatOpen
+                ? 'border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300'
+                : 'border-neutral-300 text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-900',
+            )}
+          >
+            <MessageSquareText className="h-3.5 w-3.5" strokeWidth={1.75} />
+            <span>{t('skillsTab.flowChatToggle', { defaultValue: 'AI 对话' })}</span>
+          </button>
+          <button
+            type="button"
             onClick={handleGenerate}
             disabled={Boolean(draftFlow)}
             className="inline-flex h-7 items-center gap-1.5 rounded-md bg-neutral-900 px-2.5 text-[12px] font-medium text-white transition hover:bg-neutral-700 disabled:opacity-40 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
@@ -379,23 +533,37 @@ export default function SkillFlowEditor({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1">
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          nodeTypes={NODE_TYPES}
-          colorMode={isDarkMode ? 'dark' : 'light'}
-          fitView
-          fitViewOptions={{ maxZoom: 1 }}
-          deleteKeyCode={['Backspace', 'Delete']}
-          proOptions={{ hideAttribution: false }}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={18} size={1} />
-          <Controls showInteractive={false} />
-        </ReactFlow>
+      <div className="flex min-h-0 flex-1">
+        <div className="min-h-0 min-w-0 flex-1">
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            onInit={(instance) => {
+              rfInstance.current = instance;
+            }}
+            nodeTypes={NODE_TYPES}
+            colorMode={isDarkMode ? 'dark' : 'light'}
+            fitView
+            fitViewOptions={{ maxZoom: 1 }}
+            deleteKeyCode={['Backspace', 'Delete']}
+            proOptions={{ hideAttribution: false }}
+          >
+            <Background variant={BackgroundVariant.Dots} gap={18} size={1} />
+            <Controls showInteractive={false} />
+          </ReactFlow>
+        </div>
+        <SkillFlowChatPanel
+          open={chatOpen}
+          projectPath={projectPath}
+          messages={chatMessages}
+          setMessages={setChatMessages}
+          getFlow={getFlowSnapshot}
+          onApplyFlow={applyChatFlow}
+          onClose={() => setChatOpen(false)}
+        />
       </div>
 
       {draftFlow ? (

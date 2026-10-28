@@ -127,8 +127,17 @@ ensure_project_pilot_home() {
         fi
         ;;
       *)
-        local med_relative
-        med_relative="$(node -e 'process.stdout.write(require("node:path").relative(process.argv[1], process.argv[2]))' "${PILOT_HOME_DIR}/plugins" "$med_src")"
+        # This runs before .runtime/node is on PATH, so prefer the project Node
+        # explicitly; a system Node < 22 (e.g. v12) has no `node:` prefix, so use
+        # the bare "path" module. Fall back to an absolute link if even that fails.
+        local med_relative link_node="node"
+        if [[ -x "${RUNTIME_NODE_DIR}/bin/node" ]]; then
+          link_node="${RUNTIME_NODE_DIR}/bin/node"
+        fi
+        med_relative="$("$link_node" -e 'process.stdout.write(require("path").relative(process.argv[1], process.argv[2]))' "${PILOT_HOME_DIR}/plugins" "$med_src" 2>/dev/null || true)"
+        if [[ -z "$med_relative" ]]; then
+          med_relative="$med_src"
+        fi
         ln -sfn "$med_relative" "$med_link"
         ;;
     esac
