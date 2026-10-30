@@ -50,7 +50,7 @@ export function createGlobTool(): PilotDeckToolDefinition<GlobInput> {
     name: "glob",
     aliases: ["Glob"],
     description:
-      "Fast file pattern matching tool scoped to the workspace.\n\nUsage:\n- Supports glob patterns like \"**/*.js\" or \"src/**/*.ts\".\n- Use this tool when you need to find files by name patterns.\n- Provide the optional path parameter to restrict the search to a subdirectory inside the workspace.\n- Returns matching file paths in stable sorted order.\n- Use this tool to narrow down candidate files before reading or editing them.",
+      "限定在工作区内的快速文件名匹配工具。\n\n用法：\n- 支持 \"**/*.js\"、\"src/**/*.ts\" 这类 glob 模式。\n- 需要按文件名模式查找文件时使用本工具。\n- 可选的 path 参数用于把搜索范围限制在工作区内的某个子目录。\n- 返回的匹配路径顺序稳定且已排序。\n- 在读取或编辑文件之前，用本工具缩小候选文件范围。",
     kind: "filesystem",
     inputSchema: {
       type: "object",
@@ -60,18 +60,18 @@ export function createGlobTool(): PilotDeckToolDefinition<GlobInput> {
         pattern: {
           type: "string",
           description:
-            "The glob pattern to match files against. May be workspace-relative, path-relative, "
-            + "or an absolute glob that resolves inside the workspace.",
+            "用于匹配文件的 glob 模式。可以相对工作区、相对给定 path，"
+            + "也可以是解析后仍位于工作区内的绝对路径 glob。",
         },
         path: {
           type: "string",
           description:
-            "The directory to search in. If not specified, the workspace root will be used. Omit this field to use the default directory. Must resolve to a directory inside the workspace if provided.",
+            "搜索所在目录。不填则使用工作区根目录；想用默认目录时直接省略该字段。若填写，必须解析为工作区内的目录。",
         },
         limit: {
           type: "integer",
           description:
-            "Maximum number of file paths to return. This is a PilotDeck-specific output cap; defaults to 1000. Results remain stable and sorted before truncation.",
+            "最多返回的文件路径数量。这是 PilotDeck 特有的输出上限，默认 1000。截断前结果保持稳定排序。",
         },
       },
     },

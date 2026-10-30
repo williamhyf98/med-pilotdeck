@@ -1,9 +1,14 @@
 mcp>=1.29.0,<2
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+python-multipart>=0.0.9,<1
 pydicom>=2.4.0
 Pillow>=10.0.0
 numpy>=1.24.0
+nibabel>=5.2.0
 httpx>=0.27.0
 pypdf>=4.0.0
+PyYAML>=6.0.0
 # Optional (degraded parsing if missing):
 # pymupdf>=1.24.0
 # wfdb>=4.1.0

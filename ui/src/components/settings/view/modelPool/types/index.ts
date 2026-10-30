@@ -28,6 +28,10 @@ export type PilotDeckConfig = {
     model?: string;
     autoIndexIntervalMinutes?: number;
     autoDreamIntervalMinutes?: number;
+    /** 战创伤长期记忆写入策略。'eligible_turns' 本期未实现，UI 不提供该选项。 */
+    traumaCapture?: "off" | "feedback_only";
+    /** 维护模式：immediate = 立即执行，interval = 定时执行，manual = 仅手动 */
+    maintenanceMode?: "immediate" | "interval" | "manual";
   };
   alwaysOn?: {
     enabled?: boolean;

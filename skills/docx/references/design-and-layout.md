@@ -1,213 +1,211 @@
-# DOCX Design and Layout Guide
+# DOCX 设计与版式指南
 
-Use this guide for new documents, major rewrites, restyling, template-based creation, forms, and any task where pagination or visual hierarchy matters.
+将本指南用于新文档、重大改写、重新样式化、基于模板的创建、表单，以及任何分页或视觉层级重要的任务。
 
-## Contents
+## 目录
 
-1. Design sequence
-2. Style sources and built-in template
-3. Page and typography system
-4. Content-form selection
-5. Tables
-6. Lists, forms, and callouts
-7. Images and captions
-8. Template following
-9. Visual audit
+1. 设计顺序
+2. 样式来源与内置模板
+3. 页面与字体系统
+4. 内容形式选择
+5. 表格
+6. 列表、表单与标注
+7. 图像与题注
+8. 遵循模板
+9. 视觉审计
 
-## 1. Design sequence
+## 1. 设计顺序
 
-Design the document before drafting it.
+在起草之前先设计文档。
 
-1. Identify the reader, decision, and document archetype.
-2. Estimate the page budget and content density.
-3. Freeze one style source. Do not mix a user-provided system with the built-in template.
-4. Define the title block, heading hierarchy, body rhythm, lists, tables,
-   callouts, and images. Define headers, footers, or page numbers only when the
-   user explicitly requests them.
-5. Map every major content unit to the lightest form that helps the reader understand or act.
-6. Generate a working DOCX, render it, and refine the design from the pages rather than from assumptions.
+1. 识别读者、决策和文档原型。
+2. 估计页数预算和内容密度。
+3. 冻结一种样式来源。不要把用户提供的系统与内置模板混用。
+4. 定义标题块、标题层级、正文节奏、列表、表格、
+   标注和图像。仅当用户明确要求时才定义页眉、页脚或页码。
+5. 将每一个主要内容单元映射到能帮助读者理解或行动的最轻形式。
+6. 生成工作 DOCX，渲染它，并根据页面而不是假设来精炼设计。
 
-Prefer restraint for serious or operational documents. Achieve polish through typography, alignment, spacing, hierarchy, and consistency before adding decoration.
+对严肃或操作性文档优先克制。先通过排版、对齐、间距、层级和一致性达到精致，再添加装饰。
 
-## 2. Style sources and built-in template
+## 2. 样式来源与内置模板
 
-Every creation uses one of two paths:
+每一次创建都使用两条路径之一：
 
-1. **User style:** follow a supplied reference template, concrete visual
-   instructions, or the style of an existing DOCX. Preserve that system
-   consistently and do not mix in the built-in template.
-2. **Built-in style:** use `neutral-document-v1` whenever the user did not
-   specify a visual system. This is the only built-in template currently
-   exposed. Document archetypes do not choose colors.
+1. **用户样式：** 遵循所提供的参考模板、具体视觉
+   说明，或既有 DOCX 的样式。一致地保留该系统，
+   并且不要混入内置模板。
+2. **内置样式：** 只要用户未指定视觉系统，就使用 `neutral-document-v1`。
+   这是当前唯一对外提供的内置模板。
+   文档原型不选择颜色。
 
-`neutral-document-v1` is intentionally restrained:
+`neutral-document-v1` 有意保持克制：
 
-- black titles and headings;
-- 10.5 pt Chinese serif body with Times New Roman for Latin text and numbers;
-- justified body paragraphs, an approximately 0.76 cm first-line indent, and
-  18 pt line spacing;
-- semantic Heading styles with black hierarchy;
-- white table cells, black text, neutral borders, and bold headers rather than
-  decorative color fills;
-- callouts expressed with spacing and a fine neutral border rather than a
-  colored panel.
+- 黑色标题和各级标题；
+- 10.5 pt 中文衬线正文，拉丁文本和数字使用 Times New Roman；
+- 正文两端对齐，约 0.76 cm 的首行缩进，以及
+  18 pt 行距；
+- 带黑色层级的语义标题样式；
+- 白色表格单元格、黑色文本、中性边框和加粗表头，而不是
+  装饰性彩色填充；
+- 用间距和细中性边框表达标注，而不是
+  彩色面板。
 
-The architecture may add more built-in templates later, but no unavailable
-template may be invented or selected. A colorful design is possible only
-through the user-style path and concrete current-request evidence.
+架构以后可能增加更多内置模板，但不得发明或选择不可用的
+模板。彩色设计仅可能通过用户样式路径
+以及当前请求中的具体证据实现。
 
-## 3. Page and typography system
+## 3. 页面与字体系统
 
-Set page size, orientation, and margins explicitly in the creation specification. Use A4 or US Letter consistently unless the content clearly requires landscape sections.
+在创建规范中显式设置页面尺寸、方向和边距。除非内容明显需要横向章节，否则一致使用 A4 或 US Letter。
 
-Apply these principles:
+应用这些原则：
 
-- Keep body text readable; avoid sizes below 9 pt except for short, secondary labels.
-- Use semantic Heading 1, Heading 2, and Heading 3 styles. Do not imitate headings with bold body paragraphs.
-- Avoid skipping heading levels.
-- Use paragraph spacing, not repeated blank paragraphs, to create vertical rhythm.
-- Keep a heading with at least the first paragraph or list item that follows it.
-- Avoid forcing content into a page with aggressive font reduction. First shorten labels, adjust widths, improve wrapping, or revise structure.
-- Set East Asian font mappings explicitly when the content includes CJK text.
-- Use bold, italic, underline, and color sparingly and consistently.
+- 保持正文可读；除简短的次要标签外，避免低于 9 pt。
+- 使用语义化的 Heading 1、Heading 2 和 Heading 3 样式。不要用加粗正文段落模仿标题。
+- 避免跳过标题级别。
+- 用段落间距而不是重复空段落来创造垂直节奏。
+- 让标题至少与紧随其后的第一段或列表项保持在一起。
+- 避免用激进缩小字号把内容硬塞进一页。先缩短标签、调整宽度、改善换行或修订结构。
+- 当内容包含 CJK 文本时，显式设置东亚字体映射。
+- 谨慎且一致地使用粗体、斜体、下划线和颜色。
 
-Use rich-text `runs` only when a paragraph needs localized emphasis. Prefer styles for repeated visual behavior.
+仅当段落需要局部强调时才使用富文本 `runs`。对重复的视觉行为优先使用样式。
 
-## 4. Content-form selection
+## 4. 内容形式选择
 
-Map information to an appropriate form:
+将信息映射到合适的形式：
 
-- **Prose:** explanation, evidence, context, or argument.
-- **Lead callout:** a decision, recommendation, warning, or critical constraint.
-- **Numbered list:** ordered actions or a sequence where order matters.
-- **Bulleted list:** related considerations where order does not matter.
-- **Checklist:** acceptance criteria or actions that readers must verify.
-- **Definition list:** compact terms, owners, values, or key facts.
-- **Table:** repeated records with shared fields that readers must compare or look up.
-- **Image:** a visual that improves understanding, not decorative filler.
-- **Source list:** evidence, references, or supporting materials.
+- **正文：** 解释、证据、背景或论证。
+- **引导标注：** 决策、建议、警告或关键约束。
+- **编号列表：** 有序行动，或顺序重要的序列。
+- **项目符号列表：** 顺序不重要的相关考虑。
+- **检查清单：** 读者必须核验的验收标准或行动。
+- **定义列表：** 紧凑的术语、负责人、数值或关键事实。
+- **表格：** 具有共享字段、读者必须比较或查找的重复记录。
+- **图像：** 能改善理解的视觉，而不是装饰填充。
+- **来源列表：** 证据、参考文献或支持材料。
 
-Do not put ordinary prose into a table merely to draw borders around it. If most cells contain paragraph-length text, convert the section to prose, bullets, steps, callouts, or an appendix.
+不要仅仅为了给普通正文加边框就把它放进表格。如果大多数单元格包含段落长度的文本，将该节转换为正文、项目符号、步骤、标注或附录。
 
-Audit adjacent components. Repetition is acceptable when the information task is the same, but a long sequence of visually identical tables or boxes usually indicates that the form is not matching the content.
+审计相邻组件。当信息任务相同时，重复是可接受的，但一长串视觉上相同的表格或方框通常表明形式与内容不匹配。
 
-## 5. Tables
+## 5. 表格
 
-Use tables only for genuine row-and-column data.
+仅对真正的行列数据使用表格。
 
-### Geometry
+### 几何
 
-- Define one `column_widths` value per column. Values are relative weights, not inches.
-- Give narrative columns more width than status, date, code, score, or owner columns.
-- Keep the table within the usable page width.
-- Use explicit DXA table width, grid widths, and cell widths. The bundled creator applies this geometry deterministically.
-- Keep cell margins on all sides. Text must not touch borders.
-- Allow rows to expand naturally. Never use exact row heights for wrapped text.
-- Repeat the first row on subsequent pages when it is a header.
-- Prefer left table alignment with the document text edge.
+- 为每一列定义一个 `column_widths` 值。这些值是相对权重，不是英寸。
+- 给叙述列比状态、日期、代码、分数或负责人列更多宽度。
+- 将表格保持在可用页面宽度内。
+- 使用显式的 DXA 表格宽度、网格宽度和单元格宽度。捆绑创建器会确定性地应用此几何。
+- 在所有边保留单元格边距。文本不得贴到边框。
+- 允许行自然扩展。切勿对换行文本使用精确行高。
+- 当第一行是表头时，在后续页重复它。
+- 优先让表格左对齐到文档文本边缘。
 
-### Alignment
+### 对齐
 
-- Left-align narrative and multi-line content.
-- Center short statuses, dates, checkmarks, and compact codes when that improves scanning.
-- Right-align numeric amounts when magnitude comparison matters.
-- Vertically center ordinary table cells unless top alignment is intentional for long narrative rows.
+- 叙述和多行内容左对齐。
+- 当能改善扫读时，将短状态、日期、勾选和紧凑代码居中。
+- 当量级比较重要时，将数字金额右对齐。
+- 普通表格单元格垂直居中，除非对长叙述行有意顶部对齐。
 
-### Pagination
+### 分页
 
-- Avoid a table header stranded at the bottom of a page.
-- Split long tables across pages with repeating headers.
-- Keep a caption with the table.
-- If a table creates a large blank area, adjust content or split it logically instead of shrinking it until unreadable.
+- 避免表头被留在页面底部。
+- 将长表格跨页拆分并重复表头。
+- 让题注与表格保持在一起。
+- 如果表格造成大片空白，调整内容或按逻辑拆分，而不是缩小到无法阅读。
 
-### QA
+### 质量检查
 
-Zoom into every rendered table and check:
+放大每一张已渲染表格并检查：
 
-- cell text clipping;
-- cramped top or left edges;
-- excessive wrapping in narrow columns;
-- inconsistent alignment by column type;
-- rows split in confusing places;
-- missing repeated headers;
-- a table pushed beyond the right margin;
-- body text placed too close below the table.
+- 单元格文本裁切；
+- 顶部或左侧边缘过挤；
+- 窄列中过度换行；
+- 按列类型对齐不一致；
+- 行在令人困惑的位置被拆分；
+- 缺失重复表头；
+- 表格被推到右页边之外；
+- 正文紧贴表格下方。
 
-For a formal or neutral document, also verify that tables are not dominated by
-blue, green, or another chromatic fill. The final audit warns when repeated
-Accent table styles or broad direct color fills appear; either correct the
-design or record why the user explicitly requested that treatment.
+对于正式或中性文档，还要核验表格未被
+蓝色、绿色或其他彩色填充主导。当出现重复的
+Accent 表格样式或大范围直接颜色填充时，最终审计会发出警告；要么纠正
+设计，要么记录用户为何明确要求该处理。
 
-## 6. Lists, forms, and callouts
+## 6. 列表、表单与标注
 
-Use real Word list styles for bullets and numbering. Never type bullet characters, hyphens, or number prefixes to simulate a list. Confirm that wrapped lines align with the item text rather than the marker.
+对项目符号和编号使用真正的 Word 列表样式。切勿输入项目符号字符、连字符或数字前缀来模拟列表。确认换行行与项目文本对齐，而不是与标记对齐。
 
-Use the `checklist` block for a visible, non-interactive checklist. If the user needs fillable Word content controls, explain that the bundled CLI does not yet create interactive controls and do not claim otherwise.
+对可见、非交互的检查清单使用 `checklist` 块。如果用户需要可填写的 Word 内容控件，说明捆绑 CLI 尚未创建交互控件，并且不要另行声称。
 
-Use `callout` for a short decision, warning, or constraint. Keep callouts concise. Do not place entire sections inside decorative boxes.
+对简短的决策、警告或约束使用 `callout`。保持标注简洁。不要把整节放进装饰性方框。
 
-Design forms for completion rather than for spreadsheet-like density:
+为完成而设计表单，而不是为电子表格式密度：
 
-- provide clear labels and adequate response space;
-- use obvious selection targets;
-- avoid dense full-grid layouts;
-- size fields according to expected answers;
-- group related fields with light hierarchy and spacing.
+- 提供清晰标签和充足的作答空间；
+- 使用明显的选择目标；
+- 避免密集的全网格布局；
+- 按预期答案调整字段大小；
+- 用轻量层级和间距对相关字段分组。
 
-## 7. Images and captions
+## 7. 图像与题注
 
-Use local image paths only. Choose a width that remains inside the text area and preserves the source aspect ratio.
+仅使用本地图像路径。选择仍位于文本区域内并保持源宽高比的宽度。
 
-- Place the caption immediately after the image.
-- Keep the image and caption together when possible.
-- Image paragraphs must use automatic line spacing. Exact body-text line
-  spacing clips inline drawings even when the embedded image is valid.
-- Provide meaningful alternative text when accessibility is required. Set `alt_text` on every meaningful image block; decorative images may use an empty description only when that choice is intentional and verified in the accessible audit.
-- Do not use images as a substitute for editable text when the user needs to revise the content.
-- Inspect image sharpness, scaling, wrapping, and page position after rendering.
-- When the request explicitly requires illustrations, freeze a minimum image
-  count during `prepare` and verify the final package contains those images.
-  Generating a PNG in tmp is not completion until it is embedded in the DOCX.
-- For formal reports, use the formal-report structure so the cover, TOC, and
-  body begin on separate pages. Do not imitate page separation with repeated
-  blank paragraphs.
-- A title's line box must be at least large enough for its largest glyph. Avoid
-  exact line spacing below roughly 110% of the maximum font size.
+- 将题注紧接放在图像之后。
+- 尽可能让图像和题注保持在一起。
+- 图像段落必须使用自动行距。精确的正文字行距
+  会裁切行内绘图，即使嵌入图像有效。
+- 当需要无障碍时提供有意义的替代文本。为每一个有意义的图像块设置 `alt_text`；装饰图像仅在该选择有意且在无障碍审计中已核验时，才可以使用空描述。
+- 当用户需要修订内容时，不要用图像替代可编辑文本。
+- 渲染后检查图像锐度、缩放、环绕和页面位置。
+- 当请求明确要求插图时，在 `prepare` 期间冻结最小图像
+  数量，并核验最终包包含这些图像。
+  在 tmp 中生成 PNG 并不算完成，直到它被嵌入 DOCX。
+- 对于正式报告，使用正式报告结构，使封面、目录和
+  正文从不同页面开始。不要用重复空段落模仿分页。
+- 标题的行框必须至少足以容纳其最大字形。避免
+  低于最大字号约 110% 的精确行距。
 
-## 8. Template following
+## 8. 遵循模板
 
-When an attached DOCX is a style template:
+当附加的 DOCX 是样式模板时：
 
-1. Inspect and render the template before drafting.
-2. Treat its page geometry, styles, hierarchy, headers, footers, tables, and recurring components as the visual authority.
-3. Preserve the template file and create a new output.
-4. Prefer targeted editing of a copy when the required structure already exists.
-5. Do not apply the built-in template on top of a user template unless the user requests a redesign.
-6. Compare the rendered output with the template's corresponding pages.
+1. 在起草前检查并渲染模板。
+2. 将其页面几何、样式、层级、页眉、页脚、表格和重复组件视为视觉权威。
+3. 保留模板文件并创建新输出。
+4. 当所需结构已存在时，优先对副本进行定向编辑。
+5. 除非用户要求重新设计，否则不要在用户模板之上应用内置模板。
+6. 将渲染输出与模板的对应页面比较。
 
-Do not promise full template fidelity for macros, digital signatures, embedded objects, complex fields, or content controls without inspecting those parts.
+在未检查这些部分时，不要对宏、数字签名、嵌入对象、复杂域或内容控件承诺完整模板保真。
 
-## 9. Visual audit
+## 9. 视觉审计
 
-Inspect all rendered pages, not a sample. Evaluate both correctness and visual quality.
+检查所有已渲染页面，而不是抽样。同时评估正确性和视觉质量。
 
-### Correctness
+### 正确性
 
-- no clipping, overlap, overflow, missing glyphs, or broken images;
-- correct page count and section orientation;
-- stable headers and footers;
-- coherent heading order and numbering;
-- correct tables, captions, and lists;
-- no unintended blank pages.
+- 没有裁切、重叠、溢出、缺失字形或损坏图像；
+- 正确的页数和节方向；
+- 稳定的页眉和页脚；
+- 连贯的标题顺序和编号；
+- 正确的表格、题注和列表；
+- 没有非预期空白页。
 
-### Quality
+### 质量
 
-- clear reading path and hierarchy;
-- balanced density and whitespace;
-- consistent spacing between equivalent components;
-- reasonable line length;
-- no dense text walls unless the genre requires them;
-- restrained and purposeful color;
-- visual forms that match the reader's task.
+- 清晰的阅读路径和层级；
+- 平衡的密度和留白；
+- 等效组件之间一致的间距；
+- 合理的行长；
+- 除非体裁要求，否则没有密集文字墙；
+- 克制且有目的的用色；
+- 与读者任务匹配的视觉形式。
 
-When a page feels crowded, fix structure, width, wrapping, or content density before reducing type size. When a page feels empty, verify that a table, image, or keep-together setting was not pushed unnecessarily to the next page.
+当页面显得拥挤时，先修复结构、宽度、换行或内容密度，再减小字号。当页面显得空旷时，核验表格、图像或保持在一起的设置是否被不必要地推到下一页。

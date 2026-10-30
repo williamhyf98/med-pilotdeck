@@ -108,6 +108,10 @@ export class SessionRouter {
     }
   }
 
+  isTurnInFlight(sessionKey: string): boolean {
+    return this.inFlightTurns.has(sessionKey);
+  }
+
   async abort(sessionKey: string, reason?: string): Promise<void> {
     const record = this.sessions.get(sessionKey);
     record?.session.abort(reason);

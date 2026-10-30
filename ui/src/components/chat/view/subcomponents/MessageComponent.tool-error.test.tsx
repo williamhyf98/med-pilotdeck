@@ -65,7 +65,7 @@ describe('MessageComponent tool errors', () => {
 
     fireEvent.click(
       screen.getByRole('button', {
-        name: /toolUseError\.webSearchNotConfigured\.openSettings|Go to Settings/,
+        name: /toolUseError\.webSearchNotConfigured\.openSettings|前往设置/,
       }),
     );
 
@@ -93,7 +93,7 @@ describe('MessageComponent tool errors', () => {
     expect(screen.queryByText('Parameters')).toBeNull();
     expect(container.querySelector('.border-l-red-500')).toBeNull();
 
-    const summary = screen.getByText('Tool error').closest('summary');
+    const summary = screen.getByText('工具错误').closest('summary');
     expect(summary).not.toBeNull();
     expect(summary?.className).not.toContain('text-red');
     const details = summary?.closest('details') as HTMLDetailsElement | null;
@@ -110,14 +110,14 @@ describe('MessageComponent tool errors', () => {
   it('keeps permission errors actionable instead of treating them as recoverable tool errors', () => {
     renderToolMessage(permissionRequiredMessage);
 
-    expect(screen.queryByText('Tool error')).toBeNull();
-    const summary = screen.getByText('Error').closest('summary');
+    expect(screen.queryByText('工具错误')).toBeNull();
+    const summary = screen.getByText('错误').closest('summary');
     expect(summary).not.toBeNull();
     expect(summary?.className).toContain('text-red');
     fireEvent.click(summary as HTMLElement);
 
-    expect(screen.getByRole('button', { name: /permissions\.grant|Grant Bash for this chat/ })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /permissions\.openSettings|Open settings/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /permissions\.grant|为本次对话授权终端命令/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /permissions\.openSettings|前往设置/ })).toBeTruthy();
   });
 
   it('waits for session permission grant acknowledgement before showing success', async () => {
@@ -132,15 +132,15 @@ describe('MessageComponent tool errors', () => {
       }),
     });
 
-    fireEvent.click(screen.getByText('Error').closest('summary') as HTMLElement);
-    const grantButton = screen.getByRole('button', { name: /permissions\.grant|Grant Bash for this chat/ });
+    fireEvent.click(screen.getByText('错误').closest('summary') as HTMLElement);
+    const grantButton = screen.getByRole('button', { name: /permissions\.grant|为本次对话授权终端命令/ });
     fireEvent.click(grantButton);
 
-    expect(screen.queryByText(/permissions\.added|Added/)).toBeNull();
+    expect(screen.queryByText(/permissions\.added|已添加/)).toBeNull();
 
     resolveGrant?.({ success: false });
     await waitFor(() => {
-      expect(screen.getByText(/permissions\.error|Failed to grant permission/)).toBeTruthy();
+      expect(screen.getByText(/permissions\.error|授权失败/)).toBeTruthy();
     });
   });
 
@@ -163,10 +163,10 @@ describe('MessageComponent tool errors', () => {
 
     expect(screen.queryByText('Parameters')).toBeNull();
     expect(container.querySelector('.border-l-red-500')).toBeNull();
-    expect(screen.queryByRole('button', { name: /permissions\.grant|Grant Bash for this chat/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: /permissions\.openSettings|Open settings/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /permissions\.grant|为本次对话授权终端命令/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /permissions\.openSettings|前往设置/ })).toBeNull();
 
-    const summary = screen.getByText('Tool error').closest('summary');
+    const summary = screen.getByText('工具错误').closest('summary');
     expect(summary).not.toBeNull();
     const details = summary?.closest('details') as HTMLDetailsElement | null;
     expect(details?.open).toBe(false);
@@ -196,7 +196,7 @@ describe('MessageComponent tool errors', () => {
     expect(screen.queryByRole('button', { name: /permissions\.grant|Grant edit_notebook for this chat/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /permissions\.openSettings|Open settings/ })).toBeNull();
 
-    const summary = screen.getByText('Tool error').closest('summary');
+    const summary = screen.getByText('工具错误').closest('summary');
     expect(summary).not.toBeNull();
     const details = summary?.closest('details') as HTMLDetailsElement | null;
     expect(details?.open).toBe(false);

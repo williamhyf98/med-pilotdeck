@@ -1,5 +1,6 @@
 import { basename, dirname, join, relative } from "node:path";
 import { readdir, readFile, stat } from "node:fs/promises";
+import { parse as parseYaml } from "yaml";
 
 export type LoadedPluginCommand = {
   name: string;
@@ -86,7 +87,7 @@ async function collectMarkdownFiles(directory: string): Promise<string[]> {
   }
 
   for (const entry of entries) {
-    const fullPath = `${directory}/${entry}`;
+    const fullPath = join(directory, entry);
     let entryStat;
     try {
       entryStat = await stat(fullPath);
@@ -103,32 +104,29 @@ async function collectMarkdownFiles(directory: string): Promise<string[]> {
 }
 
 function parseMarkdownFrontmatter(raw: string): { frontmatter: Record<string, unknown>; content: string } {
-  if (!raw.startsWith("---\n")) {
+  // Tolerate CRLF (Windows checkout) as well as LF line endings. The strict
+  // `---\n` match silently returned an empty frontmatter for CRLF SKILL.md
+  // files, dropping skill name/description from <available-skills>.
+  if (!raw.startsWith("---")) {
     return { frontmatter: {}, content: raw };
   }
-  const end = raw.indexOf("\n---\n", 4);
+  const fmBodyStart = raw.startsWith("---\r\n") ? 5 : raw.startsWith("---\n") ? 4 : -1;
+  if (fmBodyStart === -1) {
+    return { frontmatter: {}, content: raw };
+  }
+  const end = raw.indexOf("\n---", fmBodyStart);
   if (end === -1) {
     return { frontmatter: {}, content: raw };
   }
-  const frontmatter: Record<string, unknown> = {};
-  for (const line of raw.slice(4, end).split("\n")) {
-    const separator = line.indexOf(":");
-    if (separator === -1) {
-      continue;
+  let frontmatter: Record<string, unknown> = {};
+  try {
+    const parsed = parseYaml(raw.slice(fmBodyStart, end));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      frontmatter = parsed as Record<string, unknown>;
     }
-    const key = line.slice(0, separator).trim();
-    const value = line.slice(separator + 1).trim();
-    if (key) {
-      frontmatter[key] = parseScalar(value);
-    }
+  } catch {
+    // Invalid frontmatter is reported by the skill validator.
   }
-  return { frontmatter, content: raw.slice(end + 5) };
-}
-
-function parseScalar(value: string): unknown {
-  if (value === "true") return true;
-  if (value === "false") return false;
-  const numberValue = Number(value);
-  if (value !== "" && Number.isFinite(numberValue)) return numberValue;
-  return value.replace(/^["']|["']$/gu, "");
+  const contentStart = end + (raw[end + 4] === "\r" ? 6 : 5);
+  return { frontmatter, content: raw.slice(contentStart) };
 }

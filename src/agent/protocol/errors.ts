@@ -1,10 +1,12 @@
 export type AgentErrorCode =
   | "agent_aborted"
   | "agent_max_turns_reached"
+  | "agent_max_tool_calls_reached"
   | "agent_model_error"
   | "agent_model_capability_error"
   | "agent_prompt_too_long"
   | "agent_context_recovery_failed"
+  | "agent_invalid_profile"
   | "agent_tool_result_pairing_failed"
   | "agent_transcript_error"
   | "agent_invalid_state"

@@ -188,6 +188,46 @@ export function statementSlide(pptx, tokens, content = {}) {
   return slide;
 }
 
+export function contentSlide(pptx, tokens, content = {}) {
+  const slide = pptx.addSlide();
+  addBackground(pptx, slide, tokens.colors.white);
+  addTitle(slide, tokens, content.title ?? 'Slide title', content.kicker);
+  const items = (content.items ?? []).map((item) => String(item).trim()).filter(Boolean);
+  if (items.length) {
+    slide.addText(toRuns(items.slice(0, 8), tokens), {
+      objectName: 'Content Points',
+      x: 0.92,
+      y: 1.62,
+      w: 11.25,
+      h: 4.92,
+      fontFace: tokens.typography.bodyFontFace,
+      fontSize: tokens.typography.body,
+      color: tokens.colors.ink,
+      margin: 0.05,
+      paraSpaceAfterPt: 15,
+      breakLine: false,
+      fit: 'shrink',
+    });
+  } else {
+    slide.addText(content.body ?? '', {
+      objectName: 'Content Body',
+      x: 0.92,
+      y: 1.72,
+      w: 11.1,
+      h: 4.65,
+      fontFace: tokens.typography.bodyFontFace,
+      fontSize: tokens.typography.body,
+      color: tokens.colors.ink,
+      margin: 0,
+      breakLine: false,
+      valign: 'top',
+      fit: 'shrink',
+    });
+  }
+  addFooter(slide, tokens, content.footer, content.page);
+  return slide;
+}
+
 export function splitSlide(pptx, tokens, content = {}) {
   const slide = pptx.addSlide();
   addBackground(pptx, slide, tokens.colors.paper);

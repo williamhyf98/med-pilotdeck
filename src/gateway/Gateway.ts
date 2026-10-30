@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { createAgentSession, type AgentSession, type CreateAgentSessionOptions } from "../agent/index.js";
 import type { SessionInfo } from "../session/index.js";
 import { listProjectSessions } from "../session/index.js";
-import { InProcessGateway } from "./client/InProcessGateway.js";
+import {
+  InProcessGateway,
+  type InProcessGatewayOptions,
+} from "./client/InProcessGateway.js";
 import { SessionRouter, type GatewaySessionFactory, type SessionRouterOptions } from "./SessionRouter.js";
 import type { Gateway, GatewayCronController, GatewayServerInfo } from "./protocol/types.js";
 
@@ -23,6 +26,10 @@ export type CreateGatewayOptions = {
   uuid?: () => string;
   serverInfo?: Partial<GatewayServerInfo>;
   cron?: GatewayCronController;
+  traumaRunnerFactory?: InProcessGatewayOptions["traumaRunnerFactory"];
+  traumaKnowledgeQaFactory?: InProcessGatewayOptions["traumaKnowledgeQaFactory"];
+  recordTraumaTurn?: InProcessGatewayOptions["recordTraumaTurn"];
+  traumaCaseReader?: InProcessGatewayOptions["traumaCaseReader"];
 };
 
 export function createGateway(options: CreateGatewayOptions): Gateway {
@@ -46,6 +53,10 @@ export function createGateway(options: CreateGatewayOptions): Gateway {
       ...options.serverInfo,
     },
     cron: options.cron,
+    traumaRunnerFactory: options.traumaRunnerFactory,
+    traumaKnowledgeQaFactory: options.traumaKnowledgeQaFactory,
+    recordTraumaTurn: options.recordTraumaTurn,
+    traumaCaseReader: options.traumaCaseReader,
   });
 }
 

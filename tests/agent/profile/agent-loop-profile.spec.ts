@@ -1,0 +1,686 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  AgentLoop,
+  ProfileRegistry,
+} from "../../../src/agent/index.js";
+import {
+  createDefaultPermissionContext,
+  PermissionRuntime,
+} from "../../../src/permission/index.js";
+import { ToolRegistry, ToolRuntime } from "../../../src/tool/index.js";
+import type { AgentRuntimeConfig } from "../../../src/agent/runtime/AgentRuntimeConfig.js";
+import type { AgentRuntimeDependencies } from "../../../src/agent/runtime/AgentRuntimeDependencies.js";
+
+function fakeTool(name: string) {
+  return {
+    name,
+    description: name,
+    kind: "custom" as const,
+    inputSchema: { type: "object" as const, properties: {} },
+    isReadOnly: () => true,
+    isConcurrencySafe: () => true,
+    async execute() {
+      return { content: [{ type: "text" as const, text: "ok" }] };
+    },
+  };
+}
+
+test("agent loop applies trusted profile context, model controls, and narrowed tools", async () => {
+  const profiles = new ProfileRegistry();
+  profiles.replaceAll([
+    {
+      id: "triage",
+      provider: "openrouter",
+      model: "medical/model",
+      maxOutputTokens: 2_048,
+      temperature: 0.1,
+      topP: 0.85,
+      topK: 40,
+      minP: 0.05,
+      presencePenalty: 0.2,
+      frequencyPenalty: 0.3,
+      repetitionPenalty: 1.1,
+      seed: 7,
+      thinking: { enabled: true, mode: "low" as const, budgetTokens: 512 },
+      allowedTools: ["read_file", "web_search"],
+      deniedTools: ["bash"],
+      metadata: { profileKind: "medical", memoryPolicy: "disabled" },
+      systemContext: "Use the trusted clinical safety policy.",
+    },
+  ]);
+
+  const tools = new ToolRegistry();
+  for (const name of ["read_file", "web_search", "bash"]) {
+    tools.register(fakeTool(name));
+  }
+
+  let routedMetadata: any;
+  let executedRequest: any;
+  let preparedMemoryPolicy: any;
+  let captureCount = 0;
+
+  const router = {
+    invalidateSticky: () => ({ orchestrating: false }),
+    async decide(input: any) {
+      routedMetadata = input.metadata;
+      return {
+        provider: input.request.provider,
+        model: input.request.model,
+        scenarioType: "explicit",
+        isSubagent: false,
+        orchestrating: false,
+        resolvedFrom: "explicit",
+        mutations: {},
+      };
+    },
+    async *execute(_decision: any, request: any) {
+      executedRequest = request;
+      yield { type: "message_start", role: "assistant" };
+      yield { type: "text_delta", text: "done" };
+      yield { type: "message_end", finishReason: "stop" };
+    },
+    async *stream() {
+      yield { type: "message_end", finishReason: "stop" };
+    },
+  };
+
+  const context = {
+    async prepareForModel(input: any) {
+      preparedMemoryPolicy = input.memoryPolicy;
+      return {
+        messages: input.messages,
+        systemPrompt: input.appendSystemPrompt,
+        systemPromptParts: input.appendSystemPrompt
+          ? [input.appendSystemPrompt]
+          : [],
+        tools: input.tools,
+        diagnostics: [],
+        boundaries: [],
+      };
+    },
+    async applyToolResults(input: any) {
+      return { messages: input.messages, diagnostics: [] };
+    },
+    async captureTurn() {
+      captureCount += 1;
+    },
+  };
+
+  const config: AgentRuntimeConfig = {
+    provider: "openai",
+    model: "default-model",
+    cwd: process.cwd(),
+    permissionMode: "bypassPermissions",
+    permissionContext: createDefaultPermissionContext({
+      cwd: process.cwd(),
+      mode: "bypassPermissions",
+      bypassAvailable: true,
+      canPrompt: false,
+    }),
+  };
+
+  const loop = new AgentLoop(config, {
+    router,
+    tools: {
+      registry: tools,
+      scheduler: { async executeAll() { return []; } } as any,
+    },
+    context,
+    profileRegistry: profiles,
+    isModelAvailable: (provider: string, model: string) =>
+      provider === "openrouter" && model === "medical/model",
+    getModelTokenLimits: () => ({
+      maxContextTokens: 128_000,
+      maxOutputTokens: 4_096,
+    }),
+  } as AgentRuntimeDependencies);
+
+  for await (const _event of loop.run({
+    sessionId: "session-1",
+    turnId: "turn-1",
+    profile: "triage",
+    turnOverrides: {
+      allowedTools: ["read_file", "bash"],
+      deniedTools: ["web_search"],
+      temperature: 0.2,
+      metadata: { workflow: "triage" },
+    },
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: "review chart" }],
+      },
+    ],
+  })) {
+    // Drain.
+  }
+
+  assert.ok(executedRequest);
+  assert.equal(executedRequest.provider, "openrouter");
+  assert.equal(executedRequest.model, "medical/model");
+  assert.equal(executedRequest.maxOutputTokens, 2_048);
+  assert.equal(executedRequest.temperature, 0.2);
+  assert.equal(executedRequest.topP, 0.85);
+  assert.equal(executedRequest.topK, 40);
+  assert.equal(executedRequest.minP, 0.05);
+  assert.equal(executedRequest.presencePenalty, 0.2);
+  assert.equal(executedRequest.frequencyPenalty, 0.3);
+  assert.equal(executedRequest.repetitionPenalty, 1.1);
+  assert.equal(executedRequest.seed, 7);
+  assert.deepEqual(executedRequest.thinking, {
+    enabled: true,
+    mode: "low",
+    budgetTokens: 512,
+  });
+  assert.deepEqual(
+    executedRequest.tools?.map((tool: any) => tool.name),
+    ["read_file"],
+  );
+  assert.equal(
+    executedRequest.systemPrompt,
+    "Use the trusted clinical safety policy.",
+  );
+  assert.deepEqual(executedRequest.metadata, {
+    profileKind: "medical",
+    memoryPolicy: "disabled",
+    workflow: "triage",
+  });
+  assert.equal(preparedMemoryPolicy, "disabled");
+  assert.equal(captureCount, 0);
+  assert.equal(routedMetadata?.explicitProvider, "openrouter");
+  assert.equal(routedMetadata?.explicitModel, "medical/model");
+  assert.equal(routedMetadata?.serverValidatedModelOverride, true);
+});
+
+test("single-tool-pass profiles close tools after the first successful retrieval", async () => {
+  const profiles = new ProfileRegistry();
+  profiles.replaceAll([
+    {
+      id: "retrieval",
+      allowedTools: ["read_file"],
+      metadata: { singleToolPass: true },
+      systemContext: "Retrieve once, then answer.",
+    },
+  ]);
+
+  const tools = new ToolRegistry();
+  tools.register(fakeTool("read_file"));
+
+  const requests: string[][] = [];
+  let modelCall = 0;
+  const router = {
+    invalidateSticky: () => ({ orchestrating: false }),
+    async decide(input: any) {
+      return {
+        provider: input.request.provider,
+        model: input.request.model,
+        scenarioType: "explicit",
+        isSubagent: false,
+        orchestrating: false,
+        resolvedFrom: "explicit",
+        mutations: {},
+      };
+    },
+    async *execute(_decision: any, request: any) {
+      requests.push(request.tools?.map((tool: any) => tool.name) ?? []);
+      yield { type: "message_start", role: "assistant" };
+      if (modelCall++ === 0) {
+        yield {
+          type: "tool_call_end",
+          toolCall: { id: "call-1", name: "read_file", input: {} },
+        };
+        yield { type: "message_end", finishReason: "tool_call" };
+        return;
+      }
+      yield { type: "text_delta", text: "final answer" };
+      yield { type: "message_end", finishReason: "stop" };
+    },
+    async *stream() {
+      yield { type: "message_end", finishReason: "stop" };
+    },
+  };
+
+  const config: AgentRuntimeConfig = {
+    provider: "openai",
+    model: "default-model",
+    cwd: process.cwd(),
+    permissionMode: "bypassPermissions",
+    permissionContext: createDefaultPermissionContext({
+      cwd: process.cwd(),
+      mode: "bypassPermissions",
+      bypassAvailable: true,
+      canPrompt: false,
+    }),
+  };
+
+  const loop = new AgentLoop(config, {
+    router,
+    tools: {
+      registry: tools,
+      scheduler: {
+        async executeAll(calls: any[]) {
+          const now = new Date().toISOString();
+          return calls.map((call) => ({
+            type: "success" as const,
+            toolCallId: call.id,
+            toolName: call.name,
+            content: [{ type: "text", text: "retrieved evidence" }],
+            startedAt: now,
+            completedAt: now,
+          }));
+        },
+      },
+    },
+    profileRegistry: profiles,
+  } as any);
+
+  for await (const _event of loop.run({
+    sessionId: "session-single-pass",
+    turnId: "turn-single-pass",
+    profile: "retrieval",
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: "retrieve evidence" }],
+      },
+    ],
+  })) {
+    // Drain.
+  }
+
+  assert.deepEqual(requests, [["read_file"], []]);
+});
+
+test("direct-final tool output completes without a second agent model call", async () => {
+  const toolName = "mcp__med-tools__med_parse_medical";
+  const tools = new ToolRegistry();
+  tools.register(fakeTool(toolName));
+  let modelCalls = 0;
+  const router = {
+    invalidateSticky: () => ({ orchestrating: false }),
+    async decide(input: any) {
+      return {
+        provider: input.request.provider,
+        model: input.request.model,
+        scenarioType: "explicit",
+        isSubagent: false,
+        orchestrating: false,
+        resolvedFrom: "explicit",
+        mutations: {},
+      };
+    },
+    async *execute() {
+      modelCalls += 1;
+      yield { type: "message_start", role: "assistant" };
+      yield {
+        type: "tool_call_end",
+        toolCall: { id: "call-plan", name: toolName, input: {} },
+      };
+      yield { type: "message_end", finishReason: "tool_call" };
+    },
+    async *stream() {
+      yield { type: "message_end", finishReason: "stop" };
+    },
+  };
+  const config: AgentRuntimeConfig = {
+    provider: "openai",
+    model: "default-model",
+    cwd: process.cwd(),
+    permissionMode: "bypassPermissions",
+    permissionContext: createDefaultPermissionContext({
+      cwd: process.cwd(),
+      mode: "bypassPermissions",
+      bypassAvailable: true,
+      canPrompt: false,
+    }),
+  };
+  const directText = "一、图像/影像判读\n创伤图像所见。";
+  const durable: any[] = [];
+  const loop = new AgentLoop(config, {
+    router,
+    tools: {
+      registry: tools,
+      scheduler: {
+        async executeAll(calls: any[]) {
+          const now = new Date().toISOString();
+          return calls.map((call) => ({
+            type: "success" as const,
+            toolCallId: call.id,
+            toolName: call.name,
+            content: [{ type: "text", text: directText }],
+            data: { ok: true, report: directText },
+            metadata: {
+              directFinalAssistantText: directText,
+              generationOwner: "plugin-vlm",
+            },
+            startedAt: now,
+            completedAt: now,
+          }));
+        },
+      },
+    },
+  } as any);
+
+  const events = [];
+  for await (const event of loop.run({
+    sessionId: "session-direct-plan",
+    turnId: "turn-direct-plan",
+    messages: [{ role: "user", content: [{ type: "text", text: "生成方案" }] }],
+    onDurableMessage: (message) => {
+      durable.push(message);
+    },
+  })) {
+    events.push(event);
+  }
+
+  assert.equal(modelCalls, 1);
+  const finalAssistant = events.filter((event) => event.type === "assistant_message").at(-1);
+  const finalBlock = finalAssistant?.message.content[0];
+  assert.equal(finalBlock?.type, "text");
+  assert.equal(finalBlock?.type === "text" ? finalBlock.text : undefined, directText);
+  assert.equal(events.at(-1)?.type, "turn_completed");
+  assert.equal(durable.at(-1)?.metadata?.directToolOutput, true);
+});
+
+for (const { reportCount, failed } of [{ reportCount: 1, failed: false }, { reportCount: 2, failed: false }, { reportCount: 2, failed: true }]) {
+test(`${reportCount} medical reports, failed=${failed}: complete only successful batches without rewriting`, async () => {
+  const routeTool = "mcp__med-tools__med_dicom_route";
+  const parseTool = "mcp__med-tools__med_parse_medical";
+  const tools = new ToolRegistry();
+  tools.register(fakeTool(routeTool));
+  tools.register(fakeTool(parseTool));
+  let modelCalls = 0;
+  const router = {
+    invalidateSticky: () => ({ orchestrating: false }),
+    async decide(input: any) {
+      return {
+        provider: input.request.provider,
+        model: input.request.model,
+        scenarioType: "explicit",
+        isSubagent: false,
+        orchestrating: false,
+        resolvedFrom: "explicit",
+        mutations: {},
+      };
+    },
+    async *execute() {
+      modelCalls += 1;
+      yield { type: "message_start", role: "assistant" };
+      if (modelCalls > 1) {
+        yield { type: "text_delta", text: "部分附件解析失败，请检查文件。" };
+        yield { type: "message_end", finishReason: "stop" };
+        return;
+      }
+      yield {
+        type: "tool_call_end",
+        toolCall: { id: "call-route", name: routeTool, input: { path: "scan.dcm" } },
+      };
+      yield {
+        type: "tool_call_end",
+        toolCall: { id: "call-parse", name: parseTool, input: { path: "scan.dcm" } },
+      };
+      if (reportCount === 2) yield {
+        type: "tool_call_end",
+        toolCall: { id: "call-parse-2", name: parseTool, input: { path: "scan-2.dcm" } },
+      };
+      yield { type: "message_end", finishReason: "tool_call" };
+    },
+    async *stream() {
+      yield { type: "message_end", finishReason: "stop" };
+    },
+  };
+  const config: AgentRuntimeConfig = {
+    provider: "openai",
+    model: "default-model",
+    cwd: process.cwd(),
+    permissionMode: "bypassPermissions",
+    permissionContext: createDefaultPermissionContext({
+      cwd: process.cwd(),
+      mode: "bypassPermissions",
+      bypassAvailable: true,
+      canPrompt: false,
+    }),
+  };
+  const directText = "## 资料概况\n\n完整医学报告。";
+  const loop = new AgentLoop(config, {
+    router,
+    tools: {
+      registry: tools,
+      scheduler: {
+        async executeAll(calls: any[]) {
+          const now = new Date().toISOString();
+          return calls.map((call) => failed && call.id === "call-parse-2"
+            ? { type: "error", toolCallId: call.id, toolName: call.name,
+                content: [{ type: "text", text: "parse failed" }],
+                error: { code: "tool_execution_failed", message: "parse failed" },
+                startedAt: now, completedAt: now }
+            : call.name === parseTool
+            ? {
+                type: "success" as const,
+                toolCallId: call.id,
+                toolName: call.name,
+                content: [{ type: "text", text: directText }],
+                data: { ok: true, report: directText },
+                metadata: {
+                  directFinalAssistantText: directText,
+                  generationOwner: "plugin-vlm",
+                },
+                startedAt: now,
+                completedAt: now,
+              }
+            : {
+                type: "success" as const,
+                toolCallId: call.id,
+                toolName: call.name,
+                content: [{ type: "text", text: "route complete" }],
+                data: { status: "ready" },
+                metadata: {},
+                startedAt: now,
+                completedAt: now,
+              });
+        },
+      },
+    },
+  } as any);
+
+  const events = [];
+  for await (const event of loop.run({
+    sessionId: "session-parallel-direct",
+    turnId: "turn-parallel-direct",
+    maxTurns: 2,
+    messages: [{ role: "user", content: [{ type: "text", text: "分析 DICOM" }] }],
+  })) {
+    events.push(event);
+  }
+
+  assert.equal(modelCalls, failed ? 2 : 1);
+  const finalAssistant = events.filter((event) => event.type === "assistant_message").at(-1);
+  const finalBlock = finalAssistant?.message.content[0];
+  assert.equal(finalBlock?.type === "text" ? finalBlock.text : undefined, failed ? "部分附件解析失败，请检查文件。" : Array(reportCount).fill(directText).join("\n\n---\n\n"));
+  assert.equal(events.at(-1)?.type, "turn_completed");
+});
+}
+
+test("material continuation keeps the agent loop open after streamed report", async () => {
+  const toolName = "mcp__med-tools__med_parse_medical";
+  const tools = new ToolRegistry();
+  tools.register(fakeTool(toolName));
+  tools.register(fakeTool("write_file"));
+  let modelCalls = 0;
+  const router = {
+    invalidateSticky: () => ({ orchestrating: false }),
+    async decide(input: any) {
+      return {
+        provider: input.request.provider,
+        model: input.request.model,
+        scenarioType: "explicit",
+        isSubagent: false,
+        orchestrating: false,
+        resolvedFrom: "explicit",
+        mutations: {},
+      };
+    },
+    async *execute() {
+      modelCalls += 1;
+      yield { type: "message_start", role: "assistant" };
+      if (modelCalls === 1) {
+        yield {
+          type: "tool_call_end",
+          toolCall: {
+            id: "call-parse",
+            name: toolName,
+            input: { continuation_mode: "material" },
+          },
+        };
+        yield { type: "message_end", finishReason: "tool_call" };
+        return;
+      }
+      if (modelCalls === 2) {
+        yield {
+          type: "tool_call_end",
+          toolCall: {
+            id: "call-write",
+            name: "write_file",
+            input: { file_path: "scratch/病例报告.md", content: "# 报告" },
+          },
+        };
+        yield { type: "message_end", finishReason: "tool_call" };
+        return;
+      }
+      yield {
+        type: "content_block_delta",
+        delta: { type: "text", text: "病例报告已写好。" },
+      };
+      yield { type: "message_end", finishReason: "stop" };
+    },
+    async *stream() {
+      yield { type: "message_end", finishReason: "stop" };
+    },
+  };
+  const config: AgentRuntimeConfig = {
+    provider: "openai",
+    model: "default-model",
+    cwd: process.cwd(),
+    permissionMode: "bypassPermissions",
+    permissionContext: createDefaultPermissionContext({
+      cwd: process.cwd(),
+      mode: "bypassPermissions",
+      bypassAvailable: true,
+      canPrompt: false,
+    }),
+  };
+  const reportText = "一、资料概况\n检验报告材料。";
+  const executed: string[] = [];
+  const loop = new AgentLoop(config, {
+    router,
+    tools: {
+      registry: tools,
+      scheduler: {
+        async executeAll(calls: any[]) {
+          const now = new Date().toISOString();
+          return calls.map((call) => {
+            executed.push(call.name);
+            if (call.name === toolName) {
+              return {
+                type: "success" as const,
+                toolCallId: call.id,
+                toolName: call.name,
+                content: [{ type: "text", text: JSON.stringify({ ok: true, report: reportText }) }],
+                data: {
+                  ok: true,
+                  report: reportText,
+                  continuation_mode: "material",
+                },
+                metadata: {
+                  // material mode streams but MUST NOT set directFinalAssistantText
+                  generationOwner: "plugin-vlm",
+                },
+                startedAt: now,
+                completedAt: now,
+              };
+            }
+            return {
+              type: "success" as const,
+              toolCallId: call.id,
+              toolName: call.name,
+              content: [{ type: "text", text: "Wrote scratch/病例报告.md" }],
+              data: { type: "create" },
+              metadata: {},
+              startedAt: now,
+              completedAt: now,
+            };
+          });
+        },
+      },
+    },
+  } as any);
+
+  const events = [];
+  for await (const event of loop.run({
+    sessionId: "session-material-continue",
+    turnId: "turn-material-continue",
+    messages: [{ role: "user", content: [{ type: "text", text: "解析后写病例报告" }] }],
+  })) {
+    events.push(event);
+  }
+
+  assert.ok(modelCalls >= 2, `expected a second main-model call after material parse, got ${modelCalls}`);
+  assert.deepEqual(executed.slice(0, 2), [toolName, "write_file"]);
+  assert.equal(events.at(-1)?.type, "turn_completed");
+  const directFinal = events.find((event) =>
+    event.type === "assistant_message" && event.message?.metadata?.directToolOutput === true
+  );
+  assert.equal(directFinal, undefined);
+});
+
+test("tool runtime enforces profile policy even for direct or nested calls", async () => {
+  const tools = new ToolRegistry();
+  let executed = false;
+  let nestedErrorCode: string | undefined;
+
+  tools.register({
+    ...fakeTool("bash"),
+    async execute() {
+      executed = true;
+      return { content: [{ type: "text" as const, text: "unexpected" }] };
+    },
+  });
+
+  tools.register({
+    ...fakeTool("wrapper"),
+    async execute(_input: any, context: any) {
+      const nested = await context.executeTool?.(
+        { id: "call-nested", name: "bash", input: {} },
+        { toolPolicy: undefined },
+      );
+      nestedErrorCode =
+        nested?.type === "error" ? nested.error.code : undefined;
+      return { content: [{ type: "text" as const, text: "wrapped" }] };
+    },
+  });
+
+  const runtime = new ToolRuntime(tools, new PermissionRuntime());
+  const permissionContext = createDefaultPermissionContext({
+    cwd: process.cwd(),
+    mode: "bypassPermissions",
+    bypassAvailable: true,
+    canPrompt: false,
+  });
+
+  const result = await runtime.execute(
+    { id: "call-1", name: "wrapper", input: {} },
+    {
+      sessionId: "session-1",
+      turnId: "turn-1",
+      cwd: process.cwd(),
+      permissionMode: "bypassPermissions",
+      permissionContext,
+      toolPolicy: { allowedTools: ["wrapper"], deniedTools: ["bash"] },
+    } as any,
+  );
+
+  assert.equal(result.type, "success");
+  assert.equal(nestedErrorCode, "permission_denied");
+  assert.equal(executed, false);
+});

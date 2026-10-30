@@ -1,22 +1,33 @@
 import fs from 'fs/promises';
-import os from 'os';
+import fsSync from 'fs';
 import path from 'path';
 import { DatabaseSync } from 'node:sqlite';
 import {
   ALL_PROJECTS_MEMORY_EXPORT_FORMAT_VERSION,
   EdgeClawMemoryService,
   MemoryBundleValidationError,
-  hashText,
 } from '../../../src/context/memory/edgeclaw-memory-core/lib/index.js';
 import { extractProjectDirectory } from '../projects.js';
+import {
+  resolveScopedHome,
+  resolveGatewayProjectKey,
+  resolveProjectMemoryDataDir,
+  resolveWorkspaceId,
+} from '../utils/pilotPaths.js';
+import { resolveMemoryScopeIdentity } from '../utils/memoryIdentity.js';
+import { DISABLE_LOCAL_AUTH } from '../constants/config.js';
+import { runWithUserScope } from '../middleware/userScope.js';
+import { userDb } from '../database/db.js';
 import {
   buildMemoryDefaults,
   readPilotDeckConfigFile,
 } from './pilotdeckConfig.js';
 
-const MEMORY_ROOT_DIR = path.join(process.env.PILOT_HOME || path.join(os.homedir(), '.pilotdeck'), 'memory');
-const MEMORY_WORKSPACES_ROOT = path.join(MEMORY_ROOT_DIR, 'workspaces');
-const MEMORY_GLOBAL_ROOT = path.join(MEMORY_ROOT_DIR, 'global');
+// Memory lives under the current user's home. These are functions (not
+// module-level constants) because the scoped home is only known per request.
+function memoryRootDir() { return path.join(resolveScopedHome(), 'memory'); }
+function memoryWorkspacesRoot() { return path.join(memoryRootDir(), 'workspaces'); }
+function memoryGlobalRoot() { return path.join(memoryRootDir(), 'global'); }
 const MEMORY_SCHEDULER_INTERVAL_MS = 60_000;
 const GLOBAL_MAINTENANCE_TASK_KEY = '__edgeclaw_memory_global_maintenance__';
 
@@ -33,7 +44,7 @@ function normalizePath(projectPath) {
 }
 
 function resolveWorkspaceDataDir(projectPath) {
-  return path.join(MEMORY_WORKSPACES_ROOT, hashText(path.resolve(projectPath)));
+  return resolveProjectMemoryDataDir(projectPath, resolveScopedHome());
 }
 
 function buildServiceForDataDir(dataDir, workspaceDir = dataDir) {
@@ -45,15 +56,18 @@ function buildServiceForDataDir(dataDir, workspaceDir = dataDir) {
   }
   const service = new EdgeClawMemoryService({
     workspaceDir,
-    rootDir: MEMORY_ROOT_DIR,
+    rootDir: memoryRootDir(),
     dbPath: path.join(dataDir, 'control.sqlite'),
     memoryDir: path.join(dataDir, 'memory'),
     source: 'pilotdeck',
     ...memoryDefaults,
+    settingsSource: 'global',
+    projectType: resolveMemoryScopeIdentity({
+      projectKey: /^(general_med|trauma_med)-/.test(path.basename(dataDir)) ? path.basename(dataDir) : workspaceDir,
+      pilotHome: resolveScopedHome(),
+    }).projectType,
   });
-  if (memoryDefaults.defaultIndexingSettings) {
-    service.saveSettings(memoryDefaults.defaultIndexingSettings);
-  }
+  // Global settings are authoritative; legacy database settings remain untouched.
   return service;
 }
 
@@ -94,24 +108,31 @@ function getOrCreateServiceForDataDir(dataDir, workspaceDir = dataDir) {
   };
 }
 
-function getOrCreateServiceForProjectPath(projectPath) {
-  const normalizedProjectPath = normalizePath(projectPath);
-  if (!normalizedProjectPath) {
+function getOrCreateServiceForProjectPath(projectKey) {
+  const trimmed = typeof projectKey === 'string' ? projectKey.trim() : '';
+  if (!trimmed) {
     throw new Error('projectPath is required');
   }
-  const dataDir = resolveWorkspaceDataDir(normalizedProjectPath);
-  const existing = servicesByDataDir.get(path.resolve(dataDir));
-  if (existing && existing.workspaceDir !== normalizedProjectPath) {
+  // Do not path.resolve() a bare project ID (e.g. "trauma_med-demo") — that would
+  // anchor it to cwd and produce a wrong absolute path.  resolveWorkspaceDataDir already
+  // understands both bare IDs and absolute paths via resolveProjectMemoryDataDir.
+  const dataDir = resolveWorkspaceDataDir(trimmed);
+  // For absolute-path keys (linked repos) the EdgeClaw workspaceDir tracks the actual
+  // project root.  For bare project IDs the data dir doubles as the workspace root.
+  const workspaceDir = path.isAbsolute(trimmed) ? path.resolve(trimmed) : dataDir;
+  const normalizedDataDir = path.resolve(dataDir);
+  const existing = servicesByDataDir.get(normalizedDataDir);
+  if (existing && existing.workspaceDir !== workspaceDir) {
     try {
       existing.close();
     } catch {
       // ignore close failures when refreshing workspace context
     }
-    servicesByDataDir.delete(path.resolve(dataDir));
+    servicesByDataDir.delete(normalizedDataDir);
   }
   return {
-    projectPath: normalizedProjectPath,
-    ...getOrCreateServiceForDataDir(dataDir, normalizedProjectPath),
+    projectPath: workspaceDir,
+    ...getOrCreateServiceForDataDir(dataDir, workspaceDir),
   };
 }
 
@@ -281,30 +302,42 @@ function normalizeAllProjectsBundle(value) {
     seenGlobalPaths.add(record.relativePath);
   }
 
-  const seenProjectPaths = new Set();
+  // Bundles are keyed by the stable projectId (Task 8).  Bundles written before
+  // that only carry projectPath; accept them by deriving the id from the path,
+  // which is exactly what the storage layer would have done anyway.
+  const pilotHome = resolveScopedHome();
+  const seenProjectIds = new Set();
   const projects = value.projects.map((project, index) => {
     if (!project || typeof project !== 'object' || Array.isArray(project)) {
       throw new MemoryBundleValidationError(`Invalid projects[${index}]`);
     }
 
     const projectPath = normalizePath(project.projectPath);
-    if (!projectPath) {
-      throw new MemoryBundleValidationError(`Invalid projects[${index}].projectPath`);
+    const declaredProjectId = typeof project.projectId === 'string' ? project.projectId.trim() : '';
+    if (!declaredProjectId && !projectPath) {
+      throw new MemoryBundleValidationError(`Invalid projects[${index}].projectId`);
     }
-    if (seenProjectPaths.has(projectPath)) {
-      throw new MemoryBundleValidationError(`Duplicate projectPath in projects[${index}]`);
+
+    const projectId = declaredProjectId || resolveWorkspaceId(projectPath, pilotHome);
+    if (!projectId) {
+      throw new MemoryBundleValidationError(`Invalid projects[${index}].projectId`);
     }
-    seenProjectPaths.add(projectPath);
+    if (seenProjectIds.has(projectId)) {
+      throw new MemoryBundleValidationError(`Duplicate projectId in projects[${index}]`);
+    }
+    seenProjectIds.add(projectId);
 
     if (!project.bundle || typeof project.bundle !== 'object' || Array.isArray(project.bundle)) {
       throw new MemoryBundleValidationError(`Invalid projects[${index}].bundle`);
     }
 
     return {
+      projectId,
+      // Display only — import addresses the service by projectId.
       projectPath,
       projectName: typeof project.projectName === 'string' && project.projectName.trim()
         ? project.projectName.trim()
-        : path.basename(projectPath),
+        : (projectPath ? path.basename(projectPath) : projectId),
       bundle: project.bundle,
     };
   });
@@ -321,22 +354,46 @@ function normalizeAllProjectsBundle(value) {
 }
 
 async function listWorkspaceDataDirs() {
+  const dirs = [];
+  const seen = new Set();
+  const pushIfValid = async (dataDir) => {
+    const normalized = path.resolve(dataDir);
+    if (seen.has(normalized)) return;
+    const hasDb = await pathExists(path.join(normalized, 'control.sqlite'));
+    const hasMemoryDir = await pathExists(path.join(normalized, 'memory'));
+    if (hasDb && hasMemoryDir) {
+      seen.add(normalized);
+      dirs.push(normalized);
+    }
+  };
+
   try {
-    const entries = await fs.readdir(MEMORY_WORKSPACES_ROOT, { withFileTypes: true });
-    const dirs = [];
+    const entries = await fs.readdir(memoryWorkspacesRoot(), { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const dataDir = path.join(MEMORY_WORKSPACES_ROOT, entry.name);
-      const hasDb = await pathExists(path.join(dataDir, 'control.sqlite'));
-      const hasMemoryDir = await pathExists(path.join(dataDir, 'memory'));
-      if (hasDb && hasMemoryDir) {
-        dirs.push(dataDir);
-      }
+      await pushIfValid(path.join(memoryWorkspacesRoot(), entry.name));
     }
-    return dirs.sort((left, right) => left.localeCompare(right));
   } catch {
-    return [];
+    // legacy hash root may be absent after migration
   }
+
+  const pilotHome = resolveScopedHome();
+  const memoryRoot = path.join(pilotHome, 'memory');
+  for (const typeKey of ['general_med', 'trauma_med']) {
+    const typeDir = path.join(memoryRoot, typeKey);
+    let nested = [];
+    try {
+      nested = await fs.readdir(typeDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of nested) {
+      if (!entry.isDirectory()) continue;
+      await pushIfValid(path.join(typeDir, entry.name));
+    }
+  }
+
+  return dirs.sort((left, right) => left.localeCompare(right));
 }
 
 async function executeScheduledMaintenanceForDataDir(dataDir) {
@@ -344,15 +401,56 @@ async function executeScheduledMaintenanceForDataDir(dataDir) {
   return enqueueMaintenanceTask(dataDir, async () => service.runDueScheduledMaintenance('scheduled:server_scheduler'));
 }
 
+function readRequestField(req, field) {
+  const fromQuery = req.query?.[field];
+  if (typeof fromQuery === 'string' && fromQuery.trim()) {
+    return fromQuery.trim();
+  }
+  const fromBody = req.body?.[field];
+  if (typeof fromBody === 'string' && fromBody.trim()) {
+    return fromBody.trim();
+  }
+  return '';
+}
+
+/**
+ * Thrown when a request carries a `projectId` and a `projectPath` that resolve
+ * to different projects.  Before Task 8 the server took `projectPath` on faith,
+ * so a stale panel (project renamed, workspace migrated) could write into a
+ * project other than the one it was displaying.  Never reconcile the two — the
+ * request is ambiguous and the only safe answer is to refuse it.
+ */
+export class MemoryScopeMismatchError extends Error {
+  constructor(projectId, projectPath) {
+    super(`projectId "${projectId}" does not match projectPath "${projectPath}"`);
+    this.name = 'MemoryScopeMismatchError';
+    this.code = 'MEMORY_SCOPE_MISMATCH';
+    this.projectId = projectId;
+    this.projectPath = projectPath;
+  }
+}
+
+/**
+ * Resolve the addressing key for a memory request.
+ *
+ * Order (Task 8): `projectId` (stable storage id) wins; `projectPath` is a
+ * mutable display path kept only for legacy clients; `projectName` is the last
+ * resort.  When both an id and a path are present they must agree.
+ */
 export async function resolveProjectPathFromRequest(req) {
-  const queryProjectPath = normalizePath(req.query?.projectPath);
-  if (queryProjectPath) {
-    return queryProjectPath;
+  const pilotHome = resolveScopedHome();
+  const projectId = readRequestField(req, 'projectId');
+  const queryProjectPath = normalizePath(req.query?.projectPath) || normalizePath(req.body?.projectPath);
+
+  if (projectId) {
+    if (queryProjectPath && resolveWorkspaceId(queryProjectPath, pilotHome) !== resolveWorkspaceId(projectId, pilotHome)) {
+      throw new MemoryScopeMismatchError(projectId, queryProjectPath);
+    }
+    return projectId;
   }
 
-  const bodyProjectPath = normalizePath(req.body?.projectPath);
-  if (bodyProjectPath) {
-    return bodyProjectPath;
+  if (queryProjectPath) {
+    return queryProjectPath;
   }
 
   const projectName = typeof req.query?.projectName === 'string'
@@ -362,15 +460,48 @@ export async function resolveProjectPathFromRequest(req) {
       : '';
 
   if (!projectName) {
-    throw new Error('projectPath or projectName is required');
+    throw new Error('projectId, projectPath or projectName is required');
   }
 
-  return path.resolve(await extractProjectDirectory(projectName));
+  const workspacePath = await extractProjectDirectory(projectName);
+  return path.resolve(resolveGatewayProjectKey(workspacePath, pilotHome));
 }
 
 export async function getMemoryServiceForRequest(req) {
-  const projectPath = await resolveProjectPathFromRequest(req);
-  return getOrCreateServiceForProjectPath(projectPath);
+  const projectKey = await resolveProjectPathFromRequest(req);
+  const resolved = getOrCreateServiceForProjectPath(projectKey);
+  return {
+    ...resolved,
+    identity: buildScopeIdentity(projectKey, resolved.dataDir, readRequestField(req, 'sessionId')),
+  };
+}
+
+/**
+ * The identity the Dashboard renders in its scope bar: which project type, which
+ * stable id, where the data actually lives, and whether it can be written to.
+ * `readOnly` is decided by the data dir, not by the request — a client claim
+ * about its own writability would be worth nothing.
+ */
+function buildScopeIdentity(projectKey, dataDir, sessionId) {
+  const identity = resolveMemoryScopeIdentity({
+    projectKey,
+    pilotHome: resolveScopedHome(),
+    ...(sessionId ? { sessionId } : {}),
+  });
+  return {
+    ...identity,
+    dataDir,
+    readOnly: !isDataDirWritable(dataDir),
+  };
+}
+
+function isDataDirWritable(dataDir) {
+  try {
+    fsSync.accessSync(dataDir, fsSync.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function runManualMemoryFlush(service, dataDir, options = {}) {
@@ -419,6 +550,20 @@ export async function runMemorySchedulerCycle() {
 }
 
 export function startMemoryScheduler() {
+  if (!DISABLE_LOCAL_AUTH) {
+    console.log('[memory] UI-side maintenance scheduler disabled in multi-user mode (runs inside each user gateway).');
+    return;
+  }
+  // No-login mode: everything belongs to the admin user.
+  const admin = userDb.getAdminUser();
+  if (!admin) {
+    return;
+  }
+  const runInAdminScope = () => runWithUserScope(
+    { userId: admin.id, role: 'admin' },
+    () => runMemorySchedulerCycle(),
+  );
+
   try {
     if (!readPilotDeckConfigFile().config.memory?.enabled) {
       return;
@@ -432,14 +577,14 @@ export function startMemoryScheduler() {
   }
 
   schedulerTimer = setInterval(() => {
-    void runMemorySchedulerCycle();
+    void runInAdminScope();
   }, MEMORY_SCHEDULER_INTERVAL_MS);
 
   if (typeof schedulerTimer.unref === 'function') {
     schedulerTimer.unref();
   }
 
-  void runMemorySchedulerCycle();
+  void runInAdminScope();
 }
 
 export function stopMemoryScheduler() {
@@ -476,7 +621,7 @@ export function closeMemoryServices() {
     }
   }
   servicesByDataDir.clear();
-  workspaceTaskChains.clear();
+  // Keep existing queues until in-flight maintenance completes after a reload.
 }
 
 export async function clearAllMemoryData() {
@@ -490,9 +635,9 @@ export async function clearAllMemoryData() {
   servicesByDataDir.clear();
   workspaceTaskChains.clear();
 
-  await fs.rm(MEMORY_ROOT_DIR, { recursive: true, force: true });
-  await fs.mkdir(MEMORY_WORKSPACES_ROOT, { recursive: true });
-  await fs.mkdir(MEMORY_GLOBAL_ROOT, { recursive: true });
+  await fs.rm(memoryRootDir(), { recursive: true, force: true });
+  await fs.mkdir(memoryWorkspacesRoot(), { recursive: true });
+  await fs.mkdir(memoryGlobalRoot(), { recursive: true });
 
   return {
     scope: 'all_memory',
@@ -515,6 +660,7 @@ export async function exportAllProjectsMemoryBundle() {
     const { service } = getOrCreateServiceForDataDir(dataDir, restoredWorkspaceDir ?? dataDir);
     const projectMeta = service.getProjectMeta();
     projects.push({
+      projectId: resolveWorkspaceId(service.workspaceDir, resolveScopedHome()),
       projectPath: service.workspaceDir,
       projectName: projectMeta?.projectName || path.basename(service.workspaceDir),
       bundle: service.exportBundle(),
@@ -525,7 +671,7 @@ export async function exportAllProjectsMemoryBundle() {
     formatVersion: ALL_PROJECTS_MEMORY_EXPORT_FORMAT_VERSION,
     scope: 'all_projects',
     exportedAt: new Date().toISOString(),
-    globalFiles: await listSnapshotFiles(MEMORY_GLOBAL_ROOT),
+    globalFiles: await listSnapshotFiles(memoryGlobalRoot()),
     projects,
   };
 }
@@ -538,7 +684,7 @@ export async function importAllProjectsMemoryBundle(bundle) {
   const warnings = [];
 
   for (const project of normalized.projects) {
-    const { service } = getOrCreateServiceForProjectPath(project.projectPath);
+    const { service } = getOrCreateServiceForProjectPath(project.projectId);
     const result = service.importBundle(project.bundle);
     addTransferCounts(imported, result.imported);
     if (Array.isArray(result.warnings) && result.warnings.length > 0) {
@@ -546,7 +692,7 @@ export async function importAllProjectsMemoryBundle(bundle) {
     }
   }
 
-  await replaceSnapshotFiles(MEMORY_GLOBAL_ROOT, normalized.globalFiles);
+  await replaceSnapshotFiles(memoryGlobalRoot(), normalized.globalFiles);
 
   return {
     formatVersion: ALL_PROJECTS_MEMORY_EXPORT_FORMAT_VERSION,

@@ -15,7 +15,11 @@ import {
   normalizeOpenAIResponsesStreamEvent,
   type OpenAIResponsesStreamState,
 } from "../providers/openai-responses/stream.js";
-import type { CanonicalModelEvent, ModelProtocol } from "../protocol/canonical.js";
+import type {
+  CanonicalModelEvent,
+  CanonicalThinkingConfig,
+  ModelProtocol,
+} from "../protocol/canonical.js";
 
 export type StreamNormalizerState = {
   anthropic?: AnthropicStreamState;
@@ -24,7 +28,11 @@ export type StreamNormalizerState = {
   openaiResponses?: OpenAIResponsesStreamState;
 };
 
-export function createStreamNormalizerState(protocol: ModelProtocol): StreamNormalizerState {
+export function createStreamNormalizerState(
+  protocol: ModelProtocol,
+  modelId?: string,
+  thinking?: CanonicalThinkingConfig,
+): StreamNormalizerState {
   if (protocol === "anthropic") {
     return { anthropic: createAnthropicStreamState() };
   }
@@ -34,7 +42,16 @@ export function createStreamNormalizerState(protocol: ModelProtocol): StreamNorm
   if (protocol === "openai-responses") {
     return { openaiResponses: createOpenAIResponsesStreamState() };
   }
-  return { openai: createOpenAIStreamState() };
+  // Qwen3-style models stream reasoning inline in `content`, ending with a
+  // bare `</think>`; hold text back so it can be reclassified as thinking.
+  // Requests that explicitly disable thinking (for example Trauma's
+  // structured JSON request) cannot produce a closing think marker, so
+  // holding the entire response would turn a real stream into one final
+  // delta.
+  const thinkingExplicitlyOff = thinking?.enabled === false || thinking?.mode === "off";
+  const holdBackInlineThink =
+    !thinkingExplicitlyOff && /qwen|thinking|qwq|qvq/i.test(modelId ?? "");
+  return { openai: createOpenAIStreamState({ holdBackInlineThink }) };
 }
 
 export function normalizeStreamEvent(
@@ -53,6 +70,22 @@ export function normalizeStreamEvent(
   }
 
   if (protocol === "openai-responses") {
+    state.openaiResponses ??= createOpenAIResponsesStreamState();
+    return normalizeOpenAIResponsesStreamEvent(raw, state.openaiResponses);
+  }
+
+  if (
+    protocol === "openai"
+    && raw
+    && typeof raw === "object"
+    && !Array.isArray(raw)
+    && typeof (raw as { type?: unknown }).type === "string"
+    && ((raw as { type: string }).type === "error"
+      || (raw as { type: string }).type.startsWith("response."))
+  ) {
+    // Some OpenAI-compatible gateways expose `/chat/completions` but stream
+    // Responses API events. Detect the wire shape rather than discarding all
+    // deltas under the configured Chat Completions protocol.
     state.openaiResponses ??= createOpenAIResponsesStreamState();
     return normalizeOpenAIResponsesStreamEvent(raw, state.openaiResponses);
   }

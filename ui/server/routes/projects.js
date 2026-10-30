@@ -1,6 +1,8 @@
 import express from 'express';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { DISABLE_LOCAL_AUTH } from '../constants/config.js';
+import { assertPathInUserHome, resolveScopedHome } from '../utils/pilotPaths.js';
 import { spawn } from 'child_process';
 import os from 'os';
 import {
@@ -154,6 +156,19 @@ export async function validateWorkspacePath(requestedPath) {
         throw error;
       }
       // Path doesn't exist - that's fine for new workspace creation
+    }
+
+    // Multi-user: a workspace must live inside the requesting user's home.
+    // Single-user local mode may link repositories anywhere, so it is not gated.
+    if (!DISABLE_LOCAL_AUTH) {
+      try {
+        assertPathInUserHome(realPath, resolveScopedHome());
+      } catch {
+        return {
+          valid: false,
+          error: 'Workspace path must be inside your user directory'
+        };
+      }
     }
 
     return {

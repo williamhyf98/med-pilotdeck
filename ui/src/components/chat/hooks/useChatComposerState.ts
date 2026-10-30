@@ -21,6 +21,11 @@ import {
   MEDICAL_FOLDER_MAX_FILES,
   collectMedicalFilesFromDataTransfer,
   collectMedicalFilesFromFileList,
+  formatAttachmentLimitErrors,
+  totalFileBytes,
+  validateAttachmentBatch,
+  ensureUploadFailedMessage,
+  type CollectMedicalFolderResult,
   type MedicalFolderEntry,
 } from '../utils/medicalFolderUpload';
 import {
@@ -39,6 +44,7 @@ import {
 import type {
   ChatAttachment,
   ChatMessage,
+  ChatTurnOverrides,
   PendingPermissionRequest,
   PermissionGrantResult,
   PermissionMode,
@@ -49,6 +55,7 @@ import type {
 } from '../../../types/app';
 import { isImeEnterEvent } from '../../../utils/ime';
 import { useFileMentions } from './useFileMentions';
+import type { MentionableFile, MentionedFile } from './useFileMentions';
 import { type SlashCommand, useSlashCommands } from './useSlashCommands';
 
 type PendingViewSession = {
@@ -61,6 +68,7 @@ interface UseChatComposerStateArgs {
   selectedSession: ProjectSession | null;
   currentSessionId: string | null;
   model: string;
+  profileOverride?: string;
   permissionMode: PermissionMode | string;
   basePermissionMode?: PermissionMode | string;
   runMode?: string;
@@ -96,11 +104,10 @@ interface UseChatComposerStateArgs {
   pendingPermissionRequests: PendingPermissionRequest[];
   setPendingPermissionRequests: Dispatch<SetStateAction<PendingPermissionRequest[]>>;
   referenceOnlyPrompt?: string;
-}
-
-interface MentionableFile {
-  name: string;
-  path: string;
+  commandPrefix?: string;
+  turnOverrides?: ChatTurnOverrides;
+  attachmentFilesOverride?: File[];
+  onAttachmentFilesConsumed?: () => void;
 }
 
 interface CommandExecutionResult {
@@ -130,6 +137,33 @@ const MAX_ATTACHMENTS = MEDICAL_FOLDER_MAX_FILES;
 export const MAX_ATTACHMENTS_ERROR_KEY = '__max_attachments__';
 export const MEDICAL_FOLDER_WARNING_KEY = '__medical_folder__';
 
+const activeAttachmentSubmissions = new Map<string, symbol>();
+
+export function attachmentSubmissionKey(
+  projectName: string,
+  input: string,
+  files: readonly Pick<File, 'name' | 'size' | 'lastModified'>[],
+): string {
+  const normalizedInput = input.trim().replace(/\s+/g, ' ');
+  const fileIdentity = files
+    .map((file) => `${file.name}\u0000${file.size}\u0000${file.lastModified}`)
+    .join('\u0001');
+  return `${projectName}\u0002${normalizedInput}\u0002${fileIdentity}`;
+}
+
+export function acquireAttachmentSubmission(
+  key: string,
+): (() => void) | null {
+  if (activeAttachmentSubmissions.has(key)) return null;
+  const owner = Symbol(key);
+  activeAttachmentSubmissions.set(key, owner);
+  return () => {
+    if (activeAttachmentSubmissions.get(key) === owner) {
+      activeAttachmentSubmissions.delete(key);
+    }
+  };
+}
+
 type UploadedAttachmentFile = {
   name: string;
   path: string;
@@ -147,6 +181,7 @@ type QueuedBusySendSnapshot = {
   input: string;
   attachedImages: File[];
   documentReferences: ContentReference[];
+  mentionedFiles: MentionedFile[];
   forceStart?: boolean;
 };
 
@@ -165,19 +200,30 @@ export function shouldCycleRunModeOnKeyDown(
 
 export type AttachmentAddResult = {
   files: File[];
-  droppedCount: number;
+  accepted: boolean;
+  errors: string[];
 };
 
+/** Cumulative hard-fail add: on limit violation, keep current files unchanged. */
 export function addAttachmentFiles(
   currentFiles: File[],
   incomingFiles: File[],
   maxAttachments = MAX_ATTACHMENTS,
 ): AttachmentAddResult {
-  const mergedFiles = [...currentFiles, ...incomingFiles];
-
+  const validation = validateAttachmentBatch({
+    existingCount: currentFiles.length,
+    existingBytes: totalFileBytes(currentFiles),
+    incoming: incomingFiles.map((file) => ({ name: file.name, size: file.size })),
+    maxFiles: maxAttachments,
+    maxFileBytes: MAX_ATTACHMENT_SIZE_BYTES,
+  });
+  if (!validation.ok) {
+    return { files: currentFiles, accepted: false, errors: validation.errors };
+  }
   return {
-    files: mergedFiles.slice(0, maxAttachments),
-    droppedCount: Math.max(0, mergedFiles.length - maxAttachments),
+    files: [...currentFiles, ...incomingFiles],
+    accepted: true,
+    errors: [],
   };
 }
 
@@ -186,6 +232,7 @@ export function useChatComposerState({
   selectedSession,
   currentSessionId,
   model,
+  profileOverride,
   permissionMode,
   basePermissionMode,
   runMode,
@@ -217,6 +264,10 @@ export function useChatComposerState({
   pendingPermissionRequests,
   setPendingPermissionRequests,
   referenceOnlyPrompt = 'Please answer based on the document selection I quoted.',
+  commandPrefix,
+  turnOverrides,
+  attachmentFilesOverride,
+  onAttachmentFilesConsumed,
 }: UseChatComposerStateArgs) {
   const draftStorageKey = selectedProject
     ? getDraftInputStorageKey(selectedProject.name, selectedSession?.id)
@@ -235,22 +286,28 @@ export function useChatComposerState({
   const [documentReferences, setDocumentReferences] = useState<ContentReference[]>([]);
   const [uploadingImages, setUploadingImages] = useState<Map<string, number>>(new Map());
   const [imageErrors, setImageErrors] = useState<Map<string, string>>(new Map());
+  const [isSubmitPending, setIsSubmitPending] = useState(false);
   const [isTextareaExpanded, setIsTextareaExpanded] = useState(false);
   const [isBusySendQueued, setIsBusySendQueued] = useState(false);
   const [isBusySendConfirmed, setIsBusySendConfirmed] = useState(false);
   const [thinkingMode, setThinkingModeState] = useState<ThinkingModeId>('default');
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const inputHighlightRef = useRef<HTMLDivElement>(null);
   const medicalFolderInputRef = useRef<HTMLInputElement | null>(null);
   const pendingNewSessionThinkingModeRef = useRef<ThinkingModeId | null>(null);
   const handleSubmitRef = useRef<
     ((event: FormEvent<HTMLFormElement> | MouseEvent | TouchEvent | KeyboardEvent<HTMLTextAreaElement>) => Promise<void>) | null
   >(null);
   const inputValueRef = useRef(input);
+  // Mentions come from useFileMentions, which runs after this callback is
+  // declared — the ref (kept in sync by an effect below the hook call) lets
+  // the snapshot read the latest chips without a declaration-order cycle.
+  const mentionedFilesRef = useRef<MentionedFile[]>([]);
   const activeDraftStorageKeyRef = useRef(draftStorageKey);
   const queuedBusySendRef = useRef(false);
   const queuedBusySendConfirmedRef = useRef(false);
+  const submitPendingRef = useRef(false);
+  const consumedAttachmentFilesRef = useRef<File[] | undefined>(undefined);
   const queuedBusySendSnapshotRef = useRef<QueuedBusySendSnapshot | null>(null);
   const pendingSessionGrantResolversRef = useRef(new Map<string, (result: PermissionGrantResult) => void>());
 
@@ -269,6 +326,7 @@ export function useChatComposerState({
       input: updates.input ?? previous?.input ?? inputValueRef.current,
       attachedImages: updates.attachedImages ?? previous?.attachedImages ?? attachedImages,
       documentReferences: updates.documentReferences ?? previous?.documentReferences ?? documentReferences,
+      mentionedFiles: updates.mentionedFiles ?? previous?.mentionedFiles ?? mentionedFilesRef.current,
       ...(previous?.forceStart ? { forceStart: true } : {}),
       ...(updates.forceStart ? { forceStart: true } : {}),
     };
@@ -444,73 +502,6 @@ export function useChatComposerState({
             });
           }
           break;
-
-        case 'skillInstall': {
-          if (data.error) {
-            addMessage({
-              type: 'assistant',
-              content: `**Skill install failed**\n\n${data.message || data.errorMessage || 'Unknown error'}${
-                data.stderr ? `\n\n\`\`\`\n${data.stderr}\n\`\`\`` : ''
-              }`,
-              timestamp: Date.now(),
-            });
-            break;
-          }
-          const lines: string[] = [];
-
-          if (data.needsForce) {
-            lines.push(
-              `⚠️ **\`${data.slug}\` is flagged as suspicious by VirusTotal.** clawhub refused to install without explicit consent.`,
-            );
-            lines.push('');
-            lines.push('Review the skill before retrying. If you trust the source, rerun:');
-            lines.push('');
-            lines.push('```');
-            lines.push(data.retryCommand || `/skill_install ${data.slug} --force`);
-            lines.push('```');
-          } else if (data.installed) {
-            const versionTag = data.skillMeta?.version ? ` v${data.skillMeta.version}` : '';
-            const displayName = data.skillMeta?.name || data.slug;
-            lines.push(`✅ **Installed** \`${displayName}\`${versionTag} (${data.scope === 'project' ? 'project' : 'user'} scope)`);
-            lines.push(`Path: \`${data.installPath}\``);
-            if (data.skillMeta?.description) {
-              lines.push('');
-              lines.push(data.skillMeta.description);
-            }
-          } else {
-            lines.push(
-              `⚠️ clawhub finished but \`SKILL.md\` was not found at \`${data.installPath}\`.`,
-            );
-          }
-
-          if (data.stdout) {
-            lines.push('');
-            lines.push('```');
-            lines.push(data.stdout);
-            lines.push('```');
-          }
-          if (data.stderr) {
-            lines.push('');
-            lines.push('**stderr**');
-            lines.push('```');
-            lines.push(data.stderr);
-            lines.push('```');
-          }
-          if (data.exitCode && data.exitCode !== 0 && !data.needsForce) {
-            lines.push('');
-            lines.push(`Exit code: \`${data.exitCode}\`. ${data.errorMessage || ''}`);
-          }
-          if (data.installed) {
-            lines.push('');
-            lines.push('_New skill is on disk — open a fresh chat (or `/clear-caches`) to make PilotDeck see it. The UI slash menu picks it up next time you open `/`._');
-          }
-          addMessage({
-            type: 'assistant',
-            content: lines.join('\n'),
-            timestamp: Date.now(),
-          });
-          break;
-        }
 
         case 'switchProject': {
           // The server validates that an arg was supplied; project lookup
@@ -694,10 +685,12 @@ export function useChatComposerState({
     showFileDropdown,
     filteredFiles,
     selectedFileIndex,
-    renderInputWithMentions,
     selectFile,
     setCursorPosition,
     handleFileMentionsKeyDown,
+    mentionedFiles,
+    removeMentionedFile,
+    clearMentionedFiles,
   } = useFileMentions({
     selectedProject,
     mentionScopeKey: draftStorageKey,
@@ -706,57 +699,63 @@ export function useChatComposerState({
     textareaRef,
   });
 
-  const syncInputOverlayScroll = useCallback((target: HTMLTextAreaElement) => {
-    if (!inputHighlightRef.current || !target) {
-      return;
-    }
-    inputHighlightRef.current.scrollTop = target.scrollTop;
-    inputHighlightRef.current.scrollLeft = target.scrollLeft;
-  }, []);
+  useEffect(() => {
+    mentionedFilesRef.current = mentionedFiles;
+    syncQueuedBusySendSnapshot({ mentionedFiles });
+  }, [mentionedFiles, syncQueuedBusySendSnapshot]);
 
   const applyMedicalFolderCollection = useCallback((
-    result: ReturnType<typeof collectMedicalFilesFromFileList>,
+    result: CollectMedicalFolderResult,
   ) => {
-    const warningText = result.warnings.join('；');
-    setImageErrors((previous) => {
-      const next = new Map(previous);
-      if (warningText) next.set(MEDICAL_FOLDER_WARNING_KEY, warningText);
-      else next.delete(MEDICAL_FOLDER_WARNING_KEY);
-      next.delete(MAX_ATTACHMENTS_ERROR_KEY);
-      return next;
-    });
+    const softWarningText = result.warnings.join('；');
 
-    if (result.entries.length === 0) {
-      if (!warningText) {
-        setImageErrors((previous) => {
-          const next = new Map(previous);
-          next.set(MEDICAL_FOLDER_WARNING_KEY, '所选内容中没有可解析的医学资料');
-          return next;
-        });
-      }
+    if (result.entries.length === 0 && !result.scanOverflow) {
+      setImageErrors((previous) => {
+        const next = new Map(previous);
+        next.delete(MAX_ATTACHMENTS_ERROR_KEY);
+        if (softWarningText) next.set(MEDICAL_FOLDER_WARNING_KEY, softWarningText);
+        else next.set(MEDICAL_FOLDER_WARNING_KEY, '所选内容中没有可解析的医学资料');
+        return next;
+      });
       return;
     }
 
-    // Treat folder picks as ordinary multi-file attachments (same path as paperclip),
-    // but mark them so upload/gateway never inline content (path + diagnostics only).
-    const files = result.entries.map((entry) => entry.file);
-    for (const file of files) {
-      folderOriginFilesRef.current.add(file);
-    }
     setAttachedImages((previous) => {
-      const addResult = addAttachmentFiles(previous, files);
-      if (addResult.droppedCount > 0) {
+      const validation = validateAttachmentBatch({
+        existingCount: previous.length,
+        existingBytes: totalFileBytes(previous),
+        incoming: result.entries.map((entry) => ({
+          name: entry.relativePath || entry.file.name,
+          size: entry.file.size,
+        })),
+        scanOverflow: result.scanOverflow,
+      });
+
+      if (!validation.ok) {
         setImageErrors((previousErrors) => {
           const next = new Map(previousErrors);
-          next.set(
-            MAX_ATTACHMENTS_ERROR_KEY,
-            `Only the first ${MAX_ATTACHMENTS} attachments were added; ${addResult.droppedCount} file${addResult.droppedCount === 1 ? '' : 's'} skipped.`,
-          );
+          next.set(MAX_ATTACHMENTS_ERROR_KEY, formatAttachmentLimitErrors(validation.errors));
+          if (softWarningText) next.set(MEDICAL_FOLDER_WARNING_KEY, softWarningText);
+          else next.delete(MEDICAL_FOLDER_WARNING_KEY);
           return next;
         });
+        return previous;
       }
-      syncQueuedBusySendSnapshot({ attachedImages: addResult.files });
-      return addResult.files;
+
+      const files = result.entries.map((entry) => entry.file);
+      for (const file of files) {
+        folderOriginFilesRef.current.add(file);
+      }
+      setImageErrors((previousErrors) => {
+        const next = new Map(previousErrors);
+        next.delete(MAX_ATTACHMENTS_ERROR_KEY);
+        if (softWarningText) next.set(MEDICAL_FOLDER_WARNING_KEY, softWarningText);
+        else next.delete(MEDICAL_FOLDER_WARNING_KEY);
+        return next;
+      });
+      const merged = [...previous, ...files];
+      syncQueuedBusySendSnapshot({ attachedImages: merged });
+      return merged;
     });
   }, [syncQueuedBusySendSnapshot]);
 
@@ -790,52 +789,38 @@ export function useChatComposerState({
       return;
     }
 
-    const validFiles = files.filter((file) => {
-      try {
-        if (!file || typeof file !== 'object') {
-          console.warn('Invalid file object:', file);
-          return false;
-        }
+    if (files.length === 0) return;
 
-        if (typeof file.size !== 'number' || file.size > MAX_ATTACHMENT_SIZE_BYTES) {
-          const fileName = file.name || 'Unknown file';
-          setImageErrors((previous) => {
-            const next = new Map(previous);
-            next.set(fileName, `File too large (max ${Math.round(MAX_ATTACHMENT_SIZE_BYTES / (1024 * 1024))}MB)`);
-            return next;
-          });
-          return false;
-        }
-
-        return true;
-      } catch (error) {
-        console.error('Error validating file:', error, file);
-        return false;
+    setAttachedImages((previous) => {
+      const addResult = addAttachmentFiles(previous, files);
+      if (!addResult.accepted) {
+        setImageErrors((previousErrors) => {
+          const next = new Map(previousErrors);
+          next.set(MAX_ATTACHMENTS_ERROR_KEY, formatAttachmentLimitErrors(addResult.errors));
+          return next;
+        });
+        return previous;
       }
-    });
-
-    setImageErrors((previous) => {
-      if (!previous.has(MAX_ATTACHMENTS_ERROR_KEY)) return previous;
-      const next = new Map(previous);
-      next.delete(MAX_ATTACHMENTS_ERROR_KEY);
-      return next;
-    });
-
-    if (validFiles.length > 0) {
-      setAttachedImages((previous) => {
-        const result = addAttachmentFiles(previous, validFiles);
-        if (result.droppedCount > 0) {
-          setImageErrors((previousErrors) => {
-            const next = new Map(previousErrors);
-            next.set(MAX_ATTACHMENTS_ERROR_KEY, `Only the first ${MAX_ATTACHMENTS} attachments were added; ${result.droppedCount} file${result.droppedCount === 1 ? '' : 's'} skipped.`);
-            return next;
-          });
-        }
-        syncQueuedBusySendSnapshot({ attachedImages: result.files });
-        return result.files;
+      setImageErrors((previousErrors) => {
+        if (!previousErrors.has(MAX_ATTACHMENTS_ERROR_KEY)) return previousErrors;
+        const next = new Map(previousErrors);
+        next.delete(MAX_ATTACHMENTS_ERROR_KEY);
+        return next;
       });
-    }
+      syncQueuedBusySendSnapshot({ attachedImages: addResult.files });
+      return addResult.files;
+    });
   }, [handleMedicalFolderFiles, syncQueuedBusySendSnapshot]);
+
+  useEffect(() => {
+    if (
+      !attachmentFilesOverride?.length
+      || consumedAttachmentFilesRef.current === attachmentFilesOverride
+    ) return;
+    consumedAttachmentFilesRef.current = attachmentFilesOverride;
+    handleImageFiles(attachmentFilesOverride);
+    onAttachmentFilesConsumed?.();
+  }, [attachmentFilesOverride, handleImageFiles, onAttachmentFilesConsumed]);
 
   const handlePaste = useCallback(
     (event: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -869,14 +854,15 @@ export function useChatComposerState({
   );
 
   const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
-    maxSize: MAX_ATTACHMENT_SIZE_BYTES,
+    // Hard size/count checks run in validateAttachmentBatch so a single oversized
+    // file rejects the whole drop instead of silently accepting the rest.
     multiple: true,
     onDrop: (acceptedFiles, _fileRejections, event) => {
       const dataTransfer = (event as DragEvent | undefined)?.dataTransfer;
       void (async () => {
         if (dataTransfer) {
           const collected = await collectMedicalFilesFromDataTransfer(dataTransfer);
-          if (collected.hasDirectory && collected.entries.length > 0) {
+          if (collected.hasDirectory || collected.entries.length > 0 || collected.scanOverflow) {
             applyMedicalFolderCollection(collected);
             return;
           }
@@ -897,11 +883,16 @@ export function useChatComposerState({
       const currentInput = queuedSnapshot?.input ?? inputValueRef.current;
       const submitAttachedImages = queuedSnapshot?.attachedImages ?? attachedImages;
       const submitDocumentReferences = queuedSnapshot?.documentReferences ?? documentReferences;
+      const submitMentionedFiles = queuedSnapshot?.mentionedFiles ?? mentionedFiles;
       const hasDocumentReferences = submitDocumentReferences.length > 0;
-      const hasAttachments = submitAttachedImages.length > 0 || hasDocumentReferences;
+      const hasAttachments = submitAttachedImages.length > 0
+        || hasDocumentReferences
+        || submitMentionedFiles.length > 0;
       if ((!currentInput.trim() && !hasAttachments) || !selectedProject) {
         return;
       }
+
+      if (submitPendingRef.current) return;
 
       if (isLoading && !isBusySendQueued) {
         queuedBusySendRef.current = true;
@@ -910,6 +901,7 @@ export function useChatComposerState({
           input: currentInput,
           attachedImages: [...attachedImages],
           documentReferences: [...documentReferences],
+          mentionedFiles: [...mentionedFiles],
         };
         setIsBusySendQueued(true);
         setIsBusySendConfirmed(false);
@@ -921,6 +913,7 @@ export function useChatComposerState({
           input: currentInput,
           attachedImages: submitAttachedImages,
           documentReferences: submitDocumentReferences,
+          mentionedFiles: submitMentionedFiles,
         };
 
         const pendingSessionId = typeof window !== 'undefined' ? sessionStorage.getItem('pendingSessionId') : null;
@@ -973,6 +966,7 @@ export function useChatComposerState({
           inputValueRef.current = '';
           setAttachedImages([]);
           setDocumentReferences([]);
+          clearMentionedFiles();
           setUploadingImages(new Map());
           setImageErrors(new Map());
           resetCommandMenuState();
@@ -988,7 +982,11 @@ export function useChatComposerState({
         || (submitAttachedImages.length > 0
           ? 'Please review the attached file(s).'
           : (hasDocumentReferences ? referenceOnlyPrompt : 'Please review the attached file(s).'));
+      const normalizedCommandPrefix = commandPrefix?.trim();
       let messageContent = userVisibleInput;
+      const syntheticMessages = normalizedCommandPrefix
+        ? [{ text: normalizedCommandPrefix, purpose: 'medical_task_context' }]
+        : undefined;
 
       // Pin the target session before any await so attachment upload cannot
       // race with a sidebar session switch and leak the optimistic bubble.
@@ -1013,23 +1011,81 @@ export function useChatComposerState({
       // arrives with the real id).
       const optimisticSessionId =
         submitTargetSessionId || createTemporarySessionId();
-      if (selectedProject?.name) {
+
+      let uploadedImages: unknown[] = [];
+      let uploadedFiles: UploadedAttachmentFile[] = [];
+      let uploadedImagePathFiles: UploadedAttachmentFile[] = [];
+      const filesToUpload: File[] = [...submitAttachedImages];
+      const releaseAttachmentSubmission = filesToUpload.length > 0
+        ? acquireAttachmentSubmission(attachmentSubmissionKey(
+            selectedProject.name,
+            currentInput,
+            filesToUpload,
+          ))
+        : () => undefined;
+      if (!releaseAttachmentSubmission) return;
+
+      try {
         onSessionActivityBump?.(
           selectedProject.name,
           optimisticSessionId,
           userVisibleInput,
         );
-      }
 
-      let uploadedImages: unknown[] = [];
-      let uploadedFiles: UploadedAttachmentFile[] = [];
-      const filesToUpload: File[] = [...submitAttachedImages];
-      // If this send includes any folder-picked file, force the whole attachment
-      // batch to path-only (no content/image inline) — same diagnostics path as .dcm.
-      const hasFolderOrigin = filesToUpload.some((file) => folderOriginFilesRef.current.has(file));
-      const pathOnlyIndexes = hasFolderOrigin
-        ? filesToUpload.map((_, index) => index)
-        : [];
+        // If this send includes any folder-picked file, force the whole attachment
+        // batch to path-only (no content/image inline) — same diagnostics path as .dcm.
+        const hasFolderOrigin = filesToUpload.some((file) => folderOriginFilesRef.current.has(file));
+        const pathOnlyIndexes = hasFolderOrigin
+          ? filesToUpload.map((_, index) => index)
+          : [];
+        const effectiveSessionId = submitTargetSessionId;
+        const sessionToActivate = effectiveSessionId || optimisticSessionId;
+        const showOptimisticUploadMessage = filesToUpload.length > 0
+          && filesToUpload.every((file) => !file.type.toLowerCase().startsWith('image/'));
+        const uploadMessageId = showOptimisticUploadMessage
+          ? `local_upload_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+          : undefined;
+        const userMessageTimestamp = new Date();
+
+      submitPendingRef.current = filesToUpload.length > 0;
+      setIsSubmitPending(filesToUpload.length > 0);
+
+      if (filesToUpload.length > 0) {
+        if (!effectiveSessionId && !submitSelectedSession?.id) {
+          if (typeof window !== 'undefined') {
+            sessionStorage.removeItem('pendingSessionId');
+          }
+          pendingViewSessionRef.current = { sessionId: null, startedAt: Date.now() };
+        }
+        if (showOptimisticUploadMessage) {
+          addMessage({
+            id: uploadMessageId,
+            type: 'user',
+            content: userVisibleInput,
+            attachments: filesToUpload.map((file) => ({
+              name: file.name,
+              size: file.size,
+              mimeType: file.type || undefined,
+            })),
+            timestamp: userMessageTimestamp,
+          }, submitTargetSessionId);
+        }
+        setIsLoading(true);
+        setCanAbortSession(false);
+        setClaudeStatus({
+          text: 'uploading_attachments',
+          tokens: 0,
+          can_interrupt: false,
+        });
+        setPilotDeckStatus({
+          text: 'uploading_attachments',
+          tokens: 0,
+          can_interrupt: false,
+        });
+        onSessionActive?.(sessionToActivate);
+        setIsUserScrolledUp(false);
+        setTimeout(() => scrollToBottom(), 100);
+      }
 
       if (filesToUpload.length > 0) {
         const formData = new FormData();
@@ -1048,7 +1104,14 @@ export function useChatComposerState({
           });
 
           if (!response.ok) {
-            throw new Error('Failed to upload attachments');
+            let serverMessage = '';
+            try {
+              const payload = await response.json();
+              serverMessage = typeof payload?.error === 'string' ? payload.error : '';
+            } catch {
+              serverMessage = await response.text().catch(() => '');
+            }
+            throw new Error(serverMessage || '附件上传失败，请稍后重试');
           }
 
           const result = await response.json();
@@ -1069,13 +1132,28 @@ export function useChatComposerState({
           } else {
             uploadedImages = serverImages;
             uploadedFiles = serverFiles;
+            uploadedImagePathFiles = serverImages
+              .map((image: UploadedAttachmentFile & { data?: string }) => ({
+                name: image.name,
+                path: image.path,
+                size: image.size,
+                mimeType: image.mimeType,
+                relativePath: image.relativePath,
+              }))
+              .filter((file: UploadedAttachmentFile) => Boolean(file.path));
           }
         } catch (error) {
-          const message = error instanceof Error ? error.message : 'Unknown error';
+          const message = error instanceof Error ? error.message : '未知错误';
           console.error('Attachment upload failed:', error);
+          submitPendingRef.current = false;
+          setIsSubmitPending(false);
+          setIsLoading(false);
+          setCanAbortSession(false);
+          setClaudeStatus(null);
+          setPilotDeckStatus(null);
           addMessage({
             type: 'error',
-            content: `Failed to upload attachments: ${message}`,
+            content: ensureUploadFailedMessage(message),
             timestamp: new Date(),
           }, submitTargetSessionId);
           return;
@@ -1087,7 +1165,28 @@ export function useChatComposerState({
         .filter((image): image is NonNullable<typeof image> => Boolean(image));
       uploadedImages = [...uploadedImages, ...referenceImages];
       const documentReferenceAttachments = submitDocumentReferences.map(contentReferenceToAttachment);
-      messageContent = `${messageContent}${buildAttachmentPathNote(uploadedFiles)}${formatContentReferencePromptBlock(submitDocumentReferences)}`;
+      // @-mentions are path references to files already inside the project.
+      // Their bytes must never be uploaded or inlined: the agent gets the path
+      // via the attachment note below, the bridge drops them from gateway
+      // attachments (see uiFilesToAttachments), and the structured attachment
+      // exists purely so history reloads render the same chip card. `path`
+      // must stay identical to the note line's path so the note-parsed copy
+      // dedupes away on reload.
+      const mentionNoteFiles = submitMentionedFiles.map((file) => ({
+        name: file.name,
+        path: file.absolutePath || file.relativePath,
+      }));
+      const mentionAttachments: ChatAttachment[] = submitMentionedFiles.map((file) => ({
+        name: file.name,
+        path: file.absolutePath || file.relativePath,
+        relativePath: file.relativePath,
+        metadata: { workspaceFileMention: true },
+      }));
+      const agentVisibleUploadedFiles = [
+        ...uploadedFiles,
+        ...uploadedImagePathFiles,
+      ];
+      messageContent = `${messageContent}${buildAttachmentPathNote([...agentVisibleUploadedFiles, ...mentionNoteFiles])}${formatContentReferencePromptBlock(submitDocumentReferences)}`;
 
       const agentAttachments: ChatAttachment[] = [
         ...uploadedFiles.map((file) => ({
@@ -1101,23 +1200,31 @@ export function useChatComposerState({
             : {}),
         })),
         ...documentReferenceAttachments,
+        ...mentionAttachments,
       ];
 
-      const effectiveSessionId = submitTargetSessionId;
-      const sessionToActivate = effectiveSessionId || optimisticSessionId;
-
       const userMessage: ChatMessage = {
+        id: uploadMessageId,
         type: 'user',
         content: userVisibleInput,
         images: uploadedImages as any,
-        attachments: [...uploadedFiles, ...documentReferenceAttachments] as any,
-        timestamp: new Date(),
+        attachments: [...uploadedFiles, ...documentReferenceAttachments, ...mentionAttachments] as any,
+        timestamp: userMessageTimestamp,
       };
 
+      // The stable local id replaces the upload placeholder in its original
+      // session; new-session pending messages are replaced by addMessage too.
       addMessage(userMessage, submitTargetSessionId);
+      submitPendingRef.current = false;
+      setIsSubmitPending(false);
       setIsLoading(true); // Processing banner starts
       setCanAbortSession(true);
       setClaudeStatus({
+        text: 'Processing',
+        tokens: 0,
+        can_interrupt: true,
+      });
+      setPilotDeckStatus({
         text: 'Processing',
         tokens: 0,
         can_interrupt: true,
@@ -1175,7 +1282,10 @@ export function useChatComposerState({
         permissionMode,
         basePermissionMode,
         model,
+        profile: profileOverride,
         thinking: thinkingModeToConfig(effectiveThinkingMode),
+        turnOverrides,
+        syntheticMessages,
         sessionSummary,
         images: uploadedImages,
         attachments: agentAttachments,
@@ -1187,6 +1297,7 @@ export function useChatComposerState({
       resetCommandMenuState();
       setAttachedImages([]);
       setDocumentReferences([]);
+      clearMentionedFiles();
       setUploadingImages(new Map());
       setImageErrors(new Map());
       setIsTextareaExpanded(false);
@@ -1198,17 +1309,24 @@ export function useChatComposerState({
       if (activeDraftStorageKeyRef.current) {
         safeLocalStorage.removeItem(activeDraftStorageKeyRef.current);
       }
+      } finally {
+        releaseAttachmentSubmission();
+      }
     },
     [
       selectedSession,
-    attachedImages,
-    documentReferences,
+      attachedImages,
+      documentReferences,
+      mentionedFiles,
+      clearMentionedFiles,
       model,
+      profileOverride,
       currentSessionId,
       executeCommand,
       isLoading,
       isBusySendQueued,
       canAbortSession,
+      commandPrefix,
       onSessionActive,
       onSessionActivityBump,
       onSessionProcessing,
@@ -1230,6 +1348,7 @@ export function useChatComposerState({
       slashCommands,
       thinkingMode,
       thinkingModeAvailability,
+      turnOverrides,
       referenceOnlyPrompt,
     ],
   );
@@ -1237,6 +1356,115 @@ export function useChatComposerState({
   useEffect(() => {
     handleSubmitRef.current = handleSubmit;
   }, [handleSubmit]);
+
+  /**
+   * Resend an edited question through the normal send pipeline WITHOUT
+   * touching the composer (no draft consumption, no attachments, no slash
+   * detection, no busy queue). Used by last-turn rewind→regenerate; only
+   * valid while the session is idle. Returns false when the send was refused.
+   */
+  const regenerateWithText = useCallback(
+    (text: string, targetSessionId: string): boolean => {
+      const trimmed = text.trim();
+      if (!trimmed || !selectedProject || isLoading) return false;
+      if (!targetSessionId || isTemporarySessionId(targetSessionId)) return false;
+
+      const normalizedCommandPrefix = commandPrefix?.trim();
+      const syntheticMessages = normalizedCommandPrefix
+        ? [{ text: normalizedCommandPrefix, purpose: 'medical_task_context' }]
+        : undefined;
+
+      if (selectedProject.name) {
+        onSessionActivityBump?.(selectedProject.name, targetSessionId, trimmed);
+      }
+
+      addMessage({
+        type: 'user',
+        content: trimmed,
+        images: [],
+        attachments: [],
+        timestamp: new Date(),
+      }, targetSessionId);
+      setIsLoading(true);
+      setCanAbortSession(true);
+      setClaudeStatus({
+        text: 'Processing',
+        tokens: 0,
+        can_interrupt: true,
+      });
+      setIsUserScrolledUp(false);
+      setTimeout(() => scrollToBottom(), 100);
+      onSessionActive?.(targetSessionId);
+      onSessionProcessing?.(targetSessionId);
+
+      const getToolsSettings = () => {
+        try {
+          const savedSettings = safeLocalStorage.getItem('pilotdeck-settings');
+          if (savedSettings) {
+            return JSON.parse(savedSettings);
+          }
+        } catch (error) {
+          console.error('Error loading tools settings:', error);
+        }
+
+        return {
+          allowedTools: [],
+          disallowedTools: [],
+          skipPermissions: false,
+        };
+      };
+      const toolsSettings = getToolsSettings();
+
+      const sessionSummary = getNotificationSessionSummary(selectedSession, trimmed);
+      const effectiveThinkingMode = getEffectiveThinkingMode(thinkingMode, thinkingModeAvailability);
+
+      startSessionCommand({
+        sendMessage,
+        selectedProject,
+        command: trimmed,
+        userVisibleInput: trimmed,
+        sessionId: targetSessionId,
+        temporarySessionId: targetSessionId,
+        toolsSettings,
+        runMode,
+        permissionMode,
+        basePermissionMode,
+        model,
+        profile: profileOverride,
+        thinking: thinkingModeToConfig(effectiveThinkingMode),
+        turnOverrides,
+        syntheticMessages,
+        sessionSummary,
+        images: [],
+        attachments: [],
+      });
+      return true;
+    },
+    [
+      selectedProject,
+      selectedSession,
+      isLoading,
+      commandPrefix,
+      onSessionActive,
+      onSessionActivityBump,
+      onSessionProcessing,
+      addMessage,
+      setIsLoading,
+      setCanAbortSession,
+      setClaudeStatus,
+      setIsUserScrolledUp,
+      scrollToBottom,
+      sendMessage,
+      runMode,
+      permissionMode,
+      basePermissionMode,
+      model,
+      profileOverride,
+      thinkingMode,
+      thinkingModeAvailability,
+      turnOverrides,
+    ],
+  );
 
   useEffect(() => {
     inputValueRef.current = input;
@@ -1419,20 +1647,18 @@ export function useChatComposerState({
       target.style.height = 'auto';
       target.style.height = `${target.scrollHeight}px`;
       setCursorPosition(target.selectionStart);
-      syncInputOverlayScroll(target);
 
       const lineHeight = parseInt(window.getComputedStyle(target).lineHeight);
       setIsTextareaExpanded(target.scrollHeight > lineHeight * 2);
     },
-    [setCursorPosition, syncInputOverlayScroll],
+    [setCursorPosition],
   );
 
   const handleClearInput = useCallback(() => {
     setInput('');
     inputValueRef.current = '';
     setDocumentReferences([]);
-    setAttachedImages([]);
-    setImageErrors(new Map());
+    clearMentionedFiles();
     cancelBusySendQueue();
     resetCommandMenuState();
     if (textareaRef.current) {
@@ -1440,7 +1666,7 @@ export function useChatComposerState({
       textareaRef.current.focus();
     }
     setIsTextareaExpanded(false);
-  }, [cancelBusySendQueue, resetCommandMenuState]);
+  }, [cancelBusySendQueue, clearMentionedFiles, resetCommandMenuState]);
 
   const handleAbortSession = useCallback(() => {
     if (!canAbortSession) {
@@ -1556,6 +1782,29 @@ export function useChatComposerState({
       validIds.forEach((requestId) => {
         const pending = pendingPermissionRequests.find((r) => r.requestId === requestId);
         if (pending?.isElicitation) {
+          const traumaMetadata = (
+            pending.input as { metadata?: { source?: string; version?: number } } | undefined
+          )?.metadata;
+          if (
+            traumaMetadata?.source === 'trauma_pending_transition'
+            && typeof traumaMetadata.version === 'number'
+          ) {
+            const submitted = (decision?.updatedInput as {
+              answers?: Record<string, string | string[]>;
+            } | undefined) ?? {};
+            const selected = Object.values(submitted.answers ?? {}).flat().join(' ');
+            sendMessage({
+              type: 'trauma-transition-response',
+              requestId,
+              sessionId: pending.sessionId,
+              projectKey: selectedProject?.fullPath || selectedProject?.path || selectedProject?.name,
+              answer: decision?.allow && /确认转换|确认转入/.test(selected)
+                ? 'confirmed'
+                : 'declined',
+              expectedVersion: traumaMetadata.version,
+            });
+            return;
+          }
           // Elicitation flow (e.g. `ask_user_question`): submit selections
           // through GatewayElicitationBus, not GatewayPermissionBus.
           const submitted =
@@ -1605,7 +1854,16 @@ export function useChatComposerState({
         return next;
       });
     },
-    [pendingPermissionRequests, sendMessage, setClaudeStatus, setPilotDeckStatus, setPendingPermissionRequests],
+    [
+      pendingPermissionRequests,
+      selectedProject?.fullPath,
+      selectedProject?.name,
+      selectedProject?.path,
+      sendMessage,
+      setClaudeStatus,
+      setPilotDeckStatus,
+      setPendingPermissionRequests,
+    ],
   );
 
   const [isInputFocused, setIsInputFocused] = useState(false);
@@ -1622,7 +1880,6 @@ export function useChatComposerState({
     input,
     setInput,
     textareaRef,
-    inputHighlightRef,
     isTextareaExpanded,
     thinkingMode,
     setThinkingMode,
@@ -1639,17 +1896,10 @@ export function useChatComposerState({
     showFileDropdown,
     filteredFiles: filteredFiles as MentionableFile[],
     selectedFileIndex,
-    renderInputWithMentions,
     selectFile,
+    mentionedFiles,
+    removeMentionedFile,
     attachedImages,
-    attachedMedicalFolder,
-    clearAttachedMedicalFolder,
-    openMedicalFolderPicker,
-    medicalFolderInputRef,
-    handleMedicalFolderInputChange: (event: ChangeEvent<HTMLInputElement>) => {
-      handleMedicalFolderFiles(event.currentTarget.files);
-      event.currentTarget.value = '';
-    },
     setAttachedImages: (value: SetStateAction<File[]>) => {
       setAttachedImages((previous) => {
         const next = typeof value === 'function'
@@ -1668,19 +1918,20 @@ export function useChatComposerState({
       });
     },
     uploadingImages,
+    isSubmitPending,
     imageErrors,
     getRootProps,
     getInputProps,
     isDragActive,
     openImagePicker: open,
     handleSubmit,
+    regenerateWithText,
     handleInputChange,
     insertAtCursor,
     handleKeyDown,
     handlePaste,
     handleTextareaClick,
     handleTextareaInput,
-    syncInputOverlayScroll,
     handleClearInput,
     handleAbortSession,
     handlePermissionDecision,
@@ -1691,6 +1942,14 @@ export function useChatComposerState({
     isBusySendQueued,
     isBusySendConfirmed,
     cancelBusySendQueue,
+    attachedMedicalFolder,
+    clearAttachedMedicalFolder,
+    openMedicalFolderPicker,
+    medicalFolderInputRef,
+    handleMedicalFolderInputChange: (event: ChangeEvent<HTMLInputElement>) => {
+      handleMedicalFolderFiles(event.currentTarget.files);
+      event.currentTarget.value = '';
+    },
   };
 }
 

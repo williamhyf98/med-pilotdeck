@@ -40,18 +40,6 @@ const BUILTIN_ALIASES: Record<string, string[]> = {
   replace_file: ["edit_file", "edit"],
   replacefile: ["edit_file", "edit"],
 
-  web_fetch: ["web_fetch", "webfetch"],
-  webfetch: ["web_fetch", "webfetch"],
-  fetch_url: ["web_fetch"],
-  fetchurl: ["web_fetch"],
-  url_fetch: ["web_fetch"],
-  urlfetch: ["web_fetch"],
-
-  web_search: ["web_search", "websearch"],
-  websearch: ["web_search", "websearch"],
-  search_web: ["web_search"],
-  searchweb: ["web_search"],
-
   todo_write: ["todo_write", "todowrite"],
   todowrite: ["todo_write", "todowrite"],
   todo: ["todo_write"],
@@ -63,19 +51,6 @@ const BUILTIN_ALIASES: Record<string, string[]> = {
   askuser: ["ask_user_question"],
   ask_question: ["ask_user_question"],
   askquestion: ["ask_user_question"],
-
-  task: ["agent"],
-  subagent: ["agent"],
-
-  edit_notebook: ["edit_notebook", "notebook_edit"],
-  notebook_edit: ["edit_notebook", "notebook_edit"],
-  notebookedit: ["edit_notebook", "notebook_edit"],
-  editnotebook: ["edit_notebook"],
-
-  enter_plan_mode: ["enter_plan_mode", "enterplanmode"],
-  enterplanmode: ["enter_plan_mode", "enterplanmode"],
-  exit_plan_mode: ["exit_plan_mode", "exitplanmode"],
-  exitplanmode: ["exit_plan_mode", "exitplanmode"],
 
   list_mcp_resources: ["list_mcp_resources", "listmcpresources"],
   listmcpresources: ["list_mcp_resources", "listmcpresources"],

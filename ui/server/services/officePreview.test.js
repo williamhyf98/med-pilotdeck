@@ -4,8 +4,54 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   createLibreOfficeConversionWorkspace,
+  getLibreOfficeConversionEnvironment,
   getWindowsLibreOfficeCandidates,
+  isLibreOfficePreviewAllowed,
+  OFFICE_PREVIEW_CACHE_DIR,
 } from './officePreview.js';
+
+describe('Office preview cache location', () => {
+  it('uses an OS-account-specific path instead of the shared legacy cache', () => {
+    expect(path.dirname(OFFICE_PREVIEW_CACHE_DIR)).toBe(path.resolve(tmpdir()));
+    expect(path.basename(OFFICE_PREVIEW_CACHE_DIR)).toMatch(/^pilotdeck-office-preview-cache-[a-f0-9]{16}$/);
+    expect(OFFICE_PREVIEW_CACHE_DIR).not.toBe(path.join(tmpdir(), 'pilotdeck-office-preview-cache'));
+  });
+});
+
+describe('LibreOffice font configuration', () => {
+  it('uses an installed Fontconfig file on macOS when none is configured', () => {
+    const environment = { PATH: '/usr/bin' };
+    const result = getLibreOfficeConversionEnvironment({
+      platform: 'darwin',
+      environment,
+      exists: (file) => file === '/opt/homebrew/etc/fonts/fonts.conf',
+    });
+    expect(result).toEqual({ PATH: '/usr/bin', FONTCONFIG_FILE: '/opt/homebrew/etc/fonts/fonts.conf' });
+    expect(environment).toEqual({ PATH: '/usr/bin' });
+  });
+
+  it('preserves explicit configuration and does not impose a Mac path on Linux', () => {
+    const exists = () => true;
+    expect(getLibreOfficeConversionEnvironment({
+      platform: 'darwin', environment: { FONTCONFIG_FILE: '/custom/fonts.conf' }, exists,
+    }).FONTCONFIG_FILE).toBe('/custom/fonts.conf');
+    expect(getLibreOfficeConversionEnvironment({
+      platform: 'linux', environment: { PATH: '/usr/bin' }, exists,
+    })).toEqual({ PATH: '/usr/bin' });
+  });
+});
+
+describe('LibreOffice preview routing', () => {
+  it('allows legacy files in either mode but requires an explicit selection for modern files', () => {
+    for (const extension of ['doc', 'xls', 'ppt', 'wps', 'et', 'dps', 'odt', 'ods', 'odp']) {
+      expect(isLibreOfficePreviewAllowed(extension, 'builtin')).toBe(true);
+    }
+    for (const extension of ['docx', 'xlsx', 'pptx']) {
+      expect(isLibreOfficePreviewAllowed(extension, 'builtin')).toBe(false);
+      expect(isLibreOfficePreviewAllowed(extension, 'libreoffice')).toBe(true);
+    }
+  });
+});
 
 describe('getWindowsLibreOfficeCandidates', () => {
   it('uses the console launcher and honors Windows Program Files locations', () => {

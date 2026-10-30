@@ -1,26 +1,26 @@
-# Formulas and data
+# 公式与数据
 
-## Workbook organization
+## 工作簿组织
 
-- Put raw imports and editable assumptions in dedicated sheets or clearly marked ranges.
-- Put calculation helpers next to their source or in a labeled calculation sheet.
-- Put decision-ready outputs in a compact summary sheet.
-- Use cells as the source of truth for anything the user should be able to update.
+- 将原始导入和可编辑假设放在专用工作表或清晰标记的范围中。
+- 将计算辅助放在其源旁边，或放在已标注的计算工作表中。
+- 将可供决策的输出放在紧凑的摘要工作表中。
+- 对用户应能更新的任何内容，以单元格作为事实来源。
 
-## Formula rules
+## 公式规则
 
-- Write derived values as formulas rather than hardcoded numbers.
-- Keep formulas short and traceable. Break long formulas into helper cells.
-- Use correct relative and absolute references when formulas are copied.
-- Use bounded ranges such as `$A$2:$A$5000`; avoid `A:A` in large models.
-- Reference assumptions instead of embedding magic numbers.
-- Quote every cross-sheet name: `'Revenue Model'!B6`.
-- Use English Excel function names and comma separators.
-- In an ExcelJS `{ formula }` object, omit the leading `=`.
-- Guard expected edge cases with functions such as `IFERROR` only when the fallback is semantically valid.
-- Do not use `NA()` or an intentional `#N/A` to represent an expected business state such as “not applicable” or “missing source”. Return a blank or text such as `"不适用"`, and explain it in a note or status column. Formula error values are hard audit failures.
+- 将派生值写成公式，而不是硬编码数字。
+- 保持公式简短且可追踪。将长公式拆成辅助单元格。
+- 在复制公式时使用正确的相对引用和绝对引用。
+- 使用如 `$A$2:$A$5000` 这样的有界范围；在大型模型中避免 `A:A`。
+- 引用假设，而不是嵌入魔术数字。
+- 为每一个跨表名称加引号：`'Revenue Model'!B6`。
+- 使用英文 Excel 函数名和逗号分隔符。
+- 在 ExcelJS `{ formula }` 对象中，省略前导 `=`。
+- 仅当回退在语义上有效时，才用 `IFERROR` 等函数防护预期边界情况。
+- 不要用 `NA()` 或有意的 `#N/A` 来表示“不适用”或“缺失来源”这类预期业务状态。返回空白或如 `"不适用"` 这样的文本，并在备注或状态列中说明。公式错误值是硬审计失败。
 
-Example:
+示例：
 
 ```js
 sheet.getCell("D5").value = {
@@ -29,51 +29,51 @@ sheet.getCell("D5").value = {
 };
 ```
 
-Do not use `result` as an independently calculated answer. The build command removes cached formula results, requests a full calculation, and lets LibreOffice write verified results back to the XLSX.
+不要把 `result` 当作独立计算的答案。构建命令会移除缓存的公式结果，请求完整计算，并让 LibreOffice 将已核验结果写回 XLSX。
 
-## Compatibility of formulas
+## 公式兼容性
 
-LibreOffice and Excel do not implement every function identically. Treat these as higher risk:
+LibreOffice 和 Excel 并非以相同方式实现每一个函数。将这些视为更高风险：
 
-- New Excel-only dynamic-array functions.
-- Cube formulas and data-model functions.
-- External workbook references.
-- Proprietary add-in functions.
-- Power Query and linked data types.
+- 新的仅限 Excel 的动态数组函数。
+- 多维数据集公式和数据模型函数。
+- 外部工作簿引用。
+- 专有加载项函数。
+- Power Query 和链接数据类型。
 
-Prefer well-supported arithmetic, logical, lookup, date, text, statistical, and financial functions. If a requested formula is Excel-specific, disclose the compatibility risk and verify in Microsoft Excel when available.
+优先使用受良好支持的算术、逻辑、查找、日期、文本、统计和财务函数。如果所要求的公式是 Excel 特有的，披露兼容性风险，并在可用时在 Microsoft Excel 中核验。
 
-## Typed values
+## 类型化值
 
-- Store counts and measures as numbers.
-- Store percentages as decimal numbers such as `0.125`, formatted as `0.0%`.
-- Store dates as `Date` values and apply an invariant number format such as `yyyy-mm-dd`.
-- Store account IDs, SKUs, ZIP codes, and zero-prefixed identifiers as strings.
-- Do not write currency symbols or thousands separators into numeric values.
+- 将计数和度量存储为数字。
+- 将百分比存储为如 `0.125` 这样的小数，并格式化为 `0.0%`。
+- 将日期存储为 `Date` 值，并应用如 `yyyy-mm-dd` 这样的不变数字格式。
+- 将账户 ID、SKU、ZIP 码和带前导零的标识符存储为字符串。
+- 不要把货币符号或千位分隔符写入数值。
 
-## CSV and TSV safety
+## CSV 和 TSV 安全
 
-Delimited files do not preserve formulas, formats, comments, multiple sheets, validations, images, or charts.
+分隔文件不保留公式、格式、批注、多个工作表、验证、图像或图表。
 
-- Preserve the source delimiter when the requested output stays delimited.
-- Preserve quoted delimiters and newlines correctly.
-- Preserve leading zeroes unless the user clearly requests numeric conversion.
-- Preserve integers longer than 15 digits as text; JavaScript and Excel cannot safely represent them as ordinary numbers.
-- Detect UTF-8, UTF-8 BOM, GBK, and GB18030 input. Use an explicit encoding when automatic detection is ambiguous.
-- New delimited exports default to UTF-8 with BOM so Chinese opens correctly in desktop Excel.
-- Do not infer locale-specific dates automatically.
-- Treat phone numbers, identity numbers, account numbers, order IDs, and postal codes as identifiers, not measures.
-- Review untrusted text beginning with `=`, `+`, `-`, or `@` before CSV export when spreadsheet-formula injection is a security concern.
-- Report inconsistent row widths instead of silently dropping cells.
-- Convert to XLSX when the requested result needs formulas or formatting.
+- 当所要求的输出仍为分隔格式时，保留源分隔符。
+- 正确保留带引号的分隔符和换行。
+- 除非用户明确要求数值转换，否则保留前导零。
+- 将超过 15 位的整数保留为文本；JavaScript 和 Excel 不能安全地将它们表示为普通数字。
+- 检测 UTF-8、UTF-8 BOM、GBK 和 GB18030 输入。当自动检测不明确时使用显式编码。
+- 新的分隔导出默认为带 BOM 的 UTF-8，以便中文在桌面 Excel 中正确打开。
+- 不要自动推断区域特定日期。
+- 将电话号码、身份号码、账号、订单 ID 和邮政编码视为标识符，而不是度量。
+- 当电子表格公式注入是安全问题时，在 CSV 导出前审阅以 `=`、`+`、`-` 或 `@` 开头的不受信任文本。
+- 报告不一致的行宽，而不是静默丢弃单元格。
+- 当所要求的结果需要公式或格式时，转换为 XLSX。
 
-## Verification
+## 核验
 
-After build or recalculation:
+在构建或重新计算之后：
 
-1. Inspect important result cells and their formulas.
-2. Reconcile totals against source rows or assumptions.
-3. Run `audit` and fix every formula error.
-4. Render the final workbook and check visible values and units.
+1. 检查重要结果单元格及其公式。
+2. 将合计与源行或假设核对。
+3. 运行 `audit` 并修复每一个公式错误。
+4. 渲染最终工作簿，并检查可见值和单位。
 
-The audit scans `#REF!`, `#DIV/0!`, `#VALUE!`, `#NAME?`, `#N/A`, `#NUM!`, `#NULL!`, `#SPILL!`, and related error values. These are hard failures, including an intentional `#N/A`.
+审计会扫描 `#REF!`、`#DIV/0!`、`#VALUE!`、`#NAME?`、`#N/A`、`#NUM!`、`#NULL!`、`#SPILL!` 以及相关错误值。这些都是硬失败，包括有意的 `#N/A`。

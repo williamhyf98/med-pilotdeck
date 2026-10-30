@@ -1,6 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { getPilotProjectChatDir } from "../../pilot/index.js";
+import { getPilotProjectChatDir, listProjectStorageIds, resolveTypedProjectDir } from "../../pilot/index.js";
 import { readSessionLite, type SessionLiteFile } from "./SessionLiteReader.js";
 
 const ALWAYS_ON_AUXILIARY_PATTERN = /^always-on-(discovery|workspace|report)[:\-]/;
@@ -101,19 +101,31 @@ export function parseSessionInfoFromLite(
   };
 }
 
+function inputTextFromLine(line: string): string | undefined {
+  const isAcceptedInput = line.includes('"type":"accepted_input"');
+  const isDurableMessage = line.includes('"type":"durable_message"');
+  if (!isAcceptedInput && !isDurableMessage) {
+    return undefined;
+  }
+  const entry = JSON.parse(line) as {
+    messages?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
+    message?: {
+      role?: string;
+      content?: Array<{ type?: string; text?: string }>;
+    };
+  };
+  const blocks = isAcceptedInput
+    ? entry.messages?.flatMap((message) => message.content ?? [])
+    : entry.message?.role === "user" ? entry.message.content : undefined;
+  const text = blocks?.find((block) => block.type === "text")?.text;
+  return text?.trim() || undefined;
+}
+
 function firstAcceptedInputText(head: string): string | undefined {
   for (const line of head.split(/\r?\n/)) {
-    if (!line.includes('"type":"accepted_input"')) {
-      continue;
-    }
     try {
-      const entry = JSON.parse(line) as {
-        messages?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
-      };
-      const text = entry.messages?.flatMap((message) => message.content ?? []).find((block) => block.type === "text")?.text;
-      if (text?.trim()) {
-        return text.trim();
-      }
+      const text = inputTextFromLine(line);
+      if (text) return text;
     } catch {
       return undefined;
     }
@@ -124,17 +136,9 @@ function firstAcceptedInputText(head: string): string | undefined {
 function lastAcceptedInputText(tail: string): string | undefined {
   let last: string | undefined;
   for (const line of tail.split(/\r?\n/)) {
-    if (!line.includes('"type":"accepted_input"')) {
-      continue;
-    }
     try {
-      const entry = JSON.parse(line) as {
-        messages?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
-      };
-      const text = entry.messages?.flatMap((message) => message.content ?? []).find((block) => block.type === "text")?.text;
-      if (text?.trim()) {
-        last = text.trim();
-      }
+      const text = inputTextFromLine(line);
+      if (text) last = text;
     } catch {
       // partial line at tail boundary — skip
     }
@@ -202,17 +206,11 @@ export type ListAllSessionsOptions = {
  * paginated via `limit` / `offset`.
  */
 export async function listAllSessions(options: ListAllSessionsOptions): Promise<SessionInfo[]> {
-  const projectsDir = resolve(options.pilotHome, "projects");
-  let projectIds: string[];
-  try {
-    projectIds = await readdir(projectsDir);
-  } catch {
-    return [];
-  }
+  const projectIds = listProjectStorageIds(options.pilotHome);
 
   const all: SessionInfo[] = [];
   for (const projectId of projectIds) {
-    const chatDir = join(projectsDir, projectId, "chats");
+    const chatDir = join(resolveTypedProjectDir(projectId, options.pilotHome), "chats");
     let names: string[];
     try {
       names = await readdir(chatDir);

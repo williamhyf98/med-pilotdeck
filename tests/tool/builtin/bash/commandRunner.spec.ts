@@ -1,0 +1,208 @@
+import test, { afterEach } from "node:test";
+import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import type { spawn, SpawnOptions } from "node:child_process";
+import {
+  NodeShellCommandRunner,
+  getCommandSandbox,
+  initializeSandbox,
+  setCommandSandbox,
+} from "../../../../src/tool/builtin/bash/commandRunner.js";
+import type { CommandSandbox } from "../../../../src/tool/builtin/bash/sandbox/index.js";
+import type { MultiUserConfig } from "../../../../src/pilot/config/parseMultiUserConfig.js";
+import { assertSandboxGrantsSafe } from "../../../../src/tool/builtin/bash/commandRunner.js";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+type SpawnCall = { file: string; args: string[]; options: SpawnOptions };
+
+/** 记录 spawn 调用的假实现：立即输出 stdout 并以 0 退出。 */
+function recordingSpawn(calls: SpawnCall[], stdout = "hello\n") {
+  return ((file: string, second?: unknown, third?: unknown) => {
+    const args = Array.isArray(second) ? (second as string[]) : [];
+    const options = (Array.isArray(second) ? third : second) as SpawnOptions;
+    calls.push({ file, args, options });
+    const child = new EventEmitter() as EventEmitter & { pid: number; stdout: EventEmitter; stderr: EventEmitter };
+    child.pid = 4321;
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    setImmediate(() => {
+      child.stdout.emit("data", Buffer.from(stdout));
+      child.emit("close", 0);
+    });
+    return child;
+  }) as unknown as typeof spawn;
+}
+
+function fakeSandbox(kind: CommandSandbox["kind"] = "bwrap"): CommandSandbox & { wrapCalls: unknown[] } {
+  const wrapCalls: unknown[] = [];
+  return {
+    kind,
+    wrapCalls,
+    grants: () => ({ readOnly: [], writable: [] }),
+    wrap(command, options) {
+      wrapCalls.push({ command, options });
+      return { file: "/fake/sandbox-launcher", args: ["--wrapped", command] };
+    },
+    async probe() {
+      return { ok: true };
+    },
+  };
+}
+
+afterEach(() => setCommandSandbox(null));
+
+test("without a sandbox the command is handed to the shell as before", async () => {
+  const calls: SpawnCall[] = [];
+  const runner = new NodeShellCommandRunner(recordingSpawn(calls));
+  const result = await runner.run("echo hi", { cwd: "/work", env: { PATH: "/usr/bin" }, timeoutMs: 5_000 });
+
+  assert.equal(result.stdout, "hello\n");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].file, "echo hi");
+  assert.deepEqual(calls[0].args, []);
+  assert.equal(calls[0].options.shell, true);
+  assert.equal(calls[0].options.cwd, "/work");
+});
+
+test("with a sandbox, wrap() receives cwd, userHome, env and its argv is spawned without a shell", async () => {
+  const calls: SpawnCall[] = [];
+  const sandbox = fakeSandbox("bwrap");
+  setCommandSandbox(sandbox);
+  const env = { PATH: "/usr/bin", PILOT_HOME: "/root/.pilotdeck" };
+  const runner = new NodeShellCommandRunner(recordingSpawn(calls));
+
+  await runner.run("ls", { cwd: "/root/.pilotdeck/users/u1/projects", env, userHome: "/root/.pilotdeck/users/u1", timeoutMs: 5_000 });
+
+  assert.deepEqual(sandbox.wrapCalls, [{
+    command: "ls",
+    options: { cwd: "/root/.pilotdeck/users/u1/projects", userHome: "/root/.pilotdeck/users/u1", env },
+  }]);
+  assert.equal(calls[0].file, "/fake/sandbox-launcher");
+  assert.deepEqual(calls[0].args, ["--wrapped", "ls"]);
+  assert.equal(calls[0].options.shell, false);
+});
+
+test("userHome defaults to PILOT_HOME from the command env", async () => {
+  const calls: SpawnCall[] = [];
+  const sandbox = fakeSandbox("none");
+  setCommandSandbox(sandbox);
+  const runner = new NodeShellCommandRunner(recordingSpawn(calls));
+
+  await runner.run("pwd", { cwd: "/home/u", env: { PILOT_HOME: "/srv/pilot/users/u1" }, timeoutMs: 5_000 });
+
+  assert.equal((sandbox.wrapCalls[0] as { options: { userHome: string } }).options.userHome, "/srv/pilot/users/u1");
+});
+
+test("bwrap children are not detached: --new-session would fail with EPERM under a process-group leader", async () => {
+  const calls: SpawnCall[] = [];
+  setCommandSandbox(fakeSandbox("bwrap"));
+  await new NodeShellCommandRunner(recordingSpawn(calls)).run("true", { cwd: "/w", env: {}, timeoutMs: 5_000 });
+  assert.equal(calls[0].options.detached, false);
+});
+
+test("none keeps a detached process group, matching the original runner", async () => {
+  const calls: SpawnCall[] = [];
+  setCommandSandbox(fakeSandbox("none"));
+  await new NodeShellCommandRunner(recordingSpawn(calls)).run("true", { cwd: "/w", env: {}, timeoutMs: 5_000 });
+  assert.equal(calls[0].options.detached, process.platform !== "win32");
+});
+
+test("initializeSandbox rejects multi-user mode when only none is available", async () => {
+  await assert.rejects(
+    initializeSandbox(
+      { retention: {} as MultiUserConfig["retention"], sandbox: { kind: "none", allowUnsandboxed: false } } as MultiUserConfig,
+      { PILOTDECK_DISABLE_LOCAL_AUTH: "0" },
+    ),
+    /multi-user mode requires an OS sandbox/,
+  );
+  assert.equal(getCommandSandbox(), null);
+});
+
+test("initializeSandbox accepts an explicit unsandboxed opt-in in multi-user mode", async () => {
+  const sandbox = await initializeSandbox(
+    { retention: {} as MultiUserConfig["retention"], sandbox: { kind: "none", allowUnsandboxed: true } } as MultiUserConfig,
+    { PILOTDECK_DISABLE_LOCAL_AUTH: "false" },
+  );
+  assert.equal(sandbox.kind, "none");
+  assert.equal(getCommandSandbox(), sandbox);
+});
+
+test("startup probe: a configured sandbox-exec is probed by initializeSandbox and logged as (ok) on success", {
+  skip: process.platform !== "darwin" && "sandbox-exec probe succeeds only on macOS; the failure branch is covered below",
+}, async () => {
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (...args: unknown[]) => {
+    logs.push(args.map(String).join(" "));
+  };
+  try {
+    const sandbox = await initializeSandbox(
+      { retention: {} as MultiUserConfig["retention"], sandbox: { kind: "sandbox-exec" } } as MultiUserConfig,
+      {},
+    );
+    assert.equal(sandbox.kind, "sandbox-exec");
+    assert.ok(logs.includes("[sandbox] sandbox-exec (ok)"), `unexpected startup log: ${logs.join(" | ")}`);
+    assert.equal(getCommandSandbox(), sandbox);
+  } finally {
+    console.log = originalLog;
+  }
+});
+
+test("startup probe: a configured sandbox-exec that cannot run fails startup with the probe reason", {
+  skip: process.platform === "darwin" && "only meaningful where sandbox-exec is absent",
+}, async () => {
+  await assert.rejects(
+    initializeSandbox(
+      { retention: {} as MultiUserConfig["retention"], sandbox: { kind: "sandbox-exec" } } as MultiUserConfig,
+      {},
+    ),
+    /sandbox sandbox-exec failed its startup probe: sandbox-exec not found/,
+  );
+  assert.equal(getCommandSandbox(), null);
+});
+
+test("startup guard rejects root-wide and symlinked grants but accepts specific app directories", () => {
+  const root = mkdtempSync(join(tmpdir(), "sb-grant-"));
+  try {
+    const home = join(root, "data", "users", "2");
+    mkdirSync(home, { recursive: true });
+    mkdirSync(join(root, "data", "users", "3", "workspaces"), { recursive: true });
+    mkdirSync(join(root, "skills"));
+    symlinkSync(join(root, "data"), join(root, "shortcut"));
+    const withGrant = (readOnly: string[]): CommandSandbox => ({
+      kind: "bwrap", grants: () => ({ readOnly, writable: [home] }),
+      wrap: () => ({ file: "bwrap", args: [] }), probe: async () => ({ ok: true }),
+    });
+    assert.doesNotThrow(() => assertSandboxGrantsSafe(withGrant([join(root, "skills")]), home));
+    for (const grant of [root, join(root, "data"), join(root, "shortcut"), join(root, "data", "users")]) {
+      assert.throws(() => assertSandboxGrantsSafe(withGrant([grant]), home), /Unsafe sandbox grant/);
+    }
+    assert.throws(() => assertSandboxGrantsSafe(withGrant([join(root, "data", "users", "3", "workspaces")]), home), /Unsafe sandbox grant/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("startup guard permits ancestor metadata but rejects literal metadata inside protected data", () => {
+  const root = mkdtempSync(join(tmpdir(), "sb-meta-"));
+  try {
+    const home = join(root, "data", "users", "2");
+    mkdirSync(home, { recursive: true });
+    mkdirSync(join(root, "data", "users", "3"), { recursive: true });
+    const sandbox = (metadataOnly: string[]): CommandSandbox => ({
+      kind: "sandbox-exec",
+      grants: () => ({ readOnly: [], writable: [home], metadataOnly }),
+      wrap: () => ({ file: "/usr/bin/sandbox-exec", args: [] }),
+      probe: async () => ({ ok: true }),
+    });
+    assert.doesNotThrow(() => assertSandboxGrantsSafe(sandbox([root, home]), home));
+    for (const target of [join(root, "data"), join(root, "data", "system", "auth.db"),
+      join(root, "data", "users", "3"), join(root, "data", "users", "3", "secret")]) {
+      assert.throws(() => assertSandboxGrantsSafe(sandbox([target]), home), /Unsafe sandbox metadata grant/);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

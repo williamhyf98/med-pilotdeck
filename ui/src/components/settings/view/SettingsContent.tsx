@@ -18,6 +18,8 @@ import ModelPoolSections from "./modelPool";
 import PrivacySections from "./privacy";
 import AboutSections from "./about";
 import OfficePreviewSections from "./officePreview";
+import AccountSettings from "./account";
+import UsersSettings from "./users";
 
 type SettingsContentProps = {
   selectedKey: SettingsMenuKey;
@@ -29,6 +31,8 @@ type SettingsContentProps = {
 };
 
 const MENU_TITLE_KEYS: Record<SettingsMenuKey, string> = {
+  account: "settingsPage.titles.account",
+  users: "settingsPage.titles.users",
   general: "settingsPage.titles.general",
   modelPool: "settingsPage.titles.modelPool",
   agent: "settingsPage.titles.agent",
@@ -66,7 +70,7 @@ export default function SettingsContent({
         mobileVisible ? "block" : "hidden",
       )}
     >
-      <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col px-8 pb-6 pt-7">
+      <div key={selectedKey} className="pd-settings-section-enter mx-auto flex min-h-full w-full max-w-5xl flex-col px-8 pb-6 pt-7">
         <button
           type="button"
           onClick={onOpenMobileNavigation}
@@ -75,7 +79,11 @@ export default function SettingsContent({
           <ChevronLeft className="h-4 w-4" />
           {t("settingsPage.backToSettings")}
         </button>
-        {isGeneral ? (
+        {selectedKey === "account" ? (
+          <AccountSettings title={title} />
+        ) : selectedKey === "users" ? (
+          <UsersSettings title={title} />
+        ) : isGeneral ? (
           <GeneralSections title={title} />
         ) : selectedKey === "agentModel" ? (
           <AgentModelSections title={title} />

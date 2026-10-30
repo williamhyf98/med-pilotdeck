@@ -1,0 +1,3 @@
+{"id": 0, "chunk_id": "fix_000", "doc_id": "doc_a", "title": "战创伤止血", "volume": "测试卷", "chapter_path": "第一章 > 止血", "text": "危及生命的大出血应立即直接压迫止血，必要时使用止血带并标注时间。", "contents": "危及生命的大出血应立即直接压迫止血，必要时使用止血带并标注时间。", "source_file": "test.xlsx"}
+{"id": 1, "chunk_id": "fix_001", "doc_id": "doc_a", "title": "气道管理", "volume": "测试卷", "chapter_path": "第二章 > 气道", "text": "气道梗阻时应开放气道，必要时环甲膜穿刺，优先保证通气。", "contents": "气道梗阻时应开放气道，必要时环甲膜穿刺，优先保证通气。", "source_file": "test.xlsx"}
+{"id": 2, "chunk_id": "fix_002", "doc_id": "doc_b", "title": "无关天气", "volume": "测试卷", "chapter_path": "附录", "text": "今天天气晴朗适合户外散步。", "contents": "今天天气晴朗适合户外散步。", "source_file": "other.xlsx"}

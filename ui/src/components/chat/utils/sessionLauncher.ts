@@ -1,8 +1,15 @@
 import type { Project, ProjectSession } from '../../../types/app';
-import type { ChatAttachment, ChatRunMode, PilotDeckSettings, PermissionMode } from '../types/types';
-import { getPilotDeckSettings, safeLocalStorage } from './chatStorage';
+import type { TurnFormInput } from '../../trauma-workspace/domain/types';
+import type {
+  ChatAttachment,
+  ChatRunMode,
+  ChatTurnOverrides,
+  PilotDeckSettings,
+  PermissionMode,
+} from '../types/types';
+import { getPilotDeckSettings } from './chatStorage';
 
-type StartSessionOptions = {
+export type StartSessionOptions = {
   sendMessage: (message: unknown) => void;
   selectedProject: Project;
   command: string;
@@ -13,7 +20,10 @@ type StartSessionOptions = {
   basePermissionMode?: PermissionMode | string;
   runMode?: ChatRunMode | string;
   model?: string;
+  profile?: string;
   thinking?: unknown;
+  turnOverrides?: ChatTurnOverrides;
+  syntheticMessages?: Array<{ text: string; purpose?: string }>;
   sessionSummary?: string | null;
   toolsSettings?: PilotDeckSettings;
   images?: unknown[];
@@ -22,19 +32,25 @@ type StartSessionOptions = {
   alwaysOnExecutionToken?: string;
   workspaceCwd?: string;
   forceStart?: boolean;
+  runId?: string;
+  traumaForm?: TurnFormInput;
+  traumaRawInput?: string;
+  traumaExtract?: boolean;
+  traumaAttachments?: Array<{ path: string; name: string }>;
 };
-
-const VALID_PERMISSION_MODES = new Set<PermissionMode>([
-  'default',
-  'bypassPermissions',
-  'plan',
-]);
 
 export const isTemporarySessionId = (sessionId: string | null | undefined) =>
   Boolean(sessionId && sessionId.startsWith('new-session-'));
 
 export function createTemporarySessionId(): string {
   return `new-session-${Date.now()}`;
+}
+
+export function createPilotDeckSessionId(): string {
+  const randomId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `web:s_${randomId}`;
 }
 
 export function getNotificationSessionSummary(
@@ -60,23 +76,8 @@ export function getNotificationSessionSummary(
     : normalizedFallback;
 }
 
-export function getStoredPermissionMode(
-  selectedSession: ProjectSession | null,
-): PermissionMode {
-  if (!selectedSession?.id) {
-    return 'default';
-  }
-
-  const stored = safeLocalStorage.getItem(`permissionMode-${selectedSession.id}`);
-  if (stored && VALID_PERMISSION_MODES.has(stored as PermissionMode)) {
-    return stored as PermissionMode;
-  }
-
-  return 'default';
-}
-
 export function getSelectedProjectPath(selectedProject: Project): string {
-  return selectedProject.fullPath || selectedProject.path || '';
+  return selectedProject.fullPath || selectedProject.path || selectedProject.name || '';
 }
 
 export function startSessionCommand({
@@ -90,7 +91,10 @@ export function startSessionCommand({
   basePermissionMode,
   runMode,
   model,
+  profile,
   thinking,
+  turnOverrides,
+  syntheticMessages,
   sessionSummary,
   toolsSettings = getPilotDeckSettings(),
   images,
@@ -99,6 +103,11 @@ export function startSessionCommand({
   alwaysOnExecutionToken,
   workspaceCwd,
   forceStart,
+  runId,
+  traumaForm,
+  traumaRawInput,
+  traumaExtract,
+  traumaAttachments,
 }: StartSessionOptions): string {
   const sessionToActivate =
     sessionId || temporarySessionId || createTemporarySessionId();
@@ -116,7 +125,10 @@ export function startSessionCommand({
       permissionMode,
       ...(basePermissionMode ? { basePermissionMode } : {}),
       ...(model ? { model } : {}),
+      ...(profile ? { profile } : {}),
       ...(thinking ? { thinking } : {}),
+      ...(turnOverrides ? { turnOverrides } : {}),
+      ...(syntheticMessages?.length ? { syntheticMessages } : {}),
       sessionSummary,
       ...(typeof userVisibleInput === 'string' && userVisibleInput.trim()
         ? { userVisibleInput: userVisibleInput.trim() }
@@ -127,6 +139,13 @@ export function startSessionCommand({
       ...(Array.isArray(attachments) && attachments.length > 0 ? { attachments } : {}),
       ...(workspaceCwd ? { workspaceCwd } : {}),
       ...(forceStart ? { forceStart: true } : {}),
+      ...(runId ? { runId } : {}),
+      ...(traumaForm ? { traumaForm } : {}),
+      ...(traumaRawInput ? { traumaRawInput } : {}),
+      ...(traumaExtract ? { traumaExtract: true } : {}),
+      ...(Array.isArray(traumaAttachments) && traumaAttachments.length > 0
+        ? { traumaAttachments }
+        : {}),
     },
   });
 

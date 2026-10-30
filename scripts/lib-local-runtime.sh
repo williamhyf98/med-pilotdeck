@@ -14,6 +14,53 @@ RUNTIME_NPM_CACHE="${RUNTIME_CACHE_DIR}/npm"
 RUNTIME_PNPM_STORE="${RUNTIME_CACHE_DIR}/pnpm-store"
 RUNTIME_PIP_CACHE="${RUNTIME_CACHE_DIR}/pip"
 PILOT_HOME_DIR="${PILOTDECK_ROOT}/.pilotdeck-home"
+LOCAL_PORT_CONFIG="${_PILOTDECK_LIB_DIR}/config.env"
+
+# Load SERVER_PORT / PILOTDECK_GATEWAY_PORT / VITE_PORT from scripts/config.env.
+# Existing environment variables are left unchanged.
+load_local_port_config() {
+  local conf="${LOCAL_PORT_CONFIG}"
+  if [[ ! -f "$conf" ]]; then
+    echo "error: missing port config: ${conf}" >&2
+    return 1
+  fi
+
+  local key raw value current
+  while IFS= read -r raw || [[ -n "$raw" ]]; do
+    raw="${raw%$'\r'}"
+    [[ -z "${raw}" || "${raw}" =~ ^[[:space:]]*# ]] && continue
+    key="${raw%%=*}"
+    value="${raw#*=}"
+    key="${key%"${key##*[![:space:]]}"}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    if [[ "${value}" == \"*\" && "${value}" == *\" ]]; then
+      value="${value#\"}"
+      value="${value%\"}"
+    elif [[ "${value}" == \'*\' && "${value}" == *\' ]]; then
+      value="${value#\'}"
+      value="${value%\'}"
+    fi
+    case "$key" in
+      SERVER_PORT|PILOTDECK_GATEWAY_PORT|VITE_PORT|\
+      PILOTDECK_OFFICE_RENDERER_URL|PILOTDECK_OFFICE_RENDERER_TOKEN|\
+      PILOTDECK_OFFICE_RENDERER_HOST|PILOTDECK_OFFICE_RENDERER_PORT|\
+      PILOTDECK_OFFICE_RENDERER_ROLE)
+        current="${!key:-}"
+        if [[ -z "$current" ]]; then
+          export "${key}=${value}"
+        fi
+        ;;
+    esac
+  done < "$conf"
+
+  export SERVER_PORT="${SERVER_PORT:-3010}"
+  export PILOTDECK_GATEWAY_PORT="${PILOTDECK_GATEWAY_PORT:-18789}"
+  export VITE_PORT="${VITE_PORT:-5173}"
+}
+
+load_local_port_config
 
 NODE_VERSION_DEFAULT="22.23.2"
 # astral/python-build-standalone pin (install_only_stripped)
@@ -57,18 +104,46 @@ ensure_runtime_dirs() {
 
 # Empty (or existing) project-local Pilot home; link in-repo med-tools plugin.
 ensure_project_pilot_home() {
-  mkdir -p \
-    "${PILOT_HOME_DIR}/plugins" \
-    "${PILOT_HOME_DIR}/skills" \
-    "${PILOT_HOME_DIR}/projects" \
-    "${PILOT_HOME_DIR}/memory" \
-    "${PILOT_HOME_DIR}/cron" \
-    "${PILOT_HOME_DIR}/logs"
+  # Only the shared dirs: per-user data lives under users/<id>/ and is created
+  # by the server, so the old root skeleton is deliberately not pre-created.
+  mkdir -p "${PILOT_HOME_DIR}/plugins" "${PILOT_HOME_DIR}/system"
 
   local med_src="${PILOTDECK_ROOT}/plugins/med-tools"
   local med_link="${PILOT_HOME_DIR}/plugins/med-tools"
   if [[ -d "$med_src" ]]; then
-    ln -sfn "$med_src" "$med_link"
+    case "$(uname -s)" in
+      MINGW*|MSYS*|CYGWIN*)
+        # Windows: `ln -s` needs dev mode and otherwise silently deep-copies
+        # the plugin (~400MB). Use a directory junction (no admin needed).
+        if [[ -L "$med_link" || -d "$med_link" ]]; then
+          rm -rf "$med_link"
+        fi
+        local win_med_link win_med_src
+        win_med_link="$(cygpath -w "$med_link")"
+        win_med_src="$(cygpath -w "$med_src")"
+        if powershell -NoProfile -Command "New-Item -ItemType Junction -Path '${win_med_link}' -Target '${win_med_src}' | Out-Null" 2>/dev/null \
+          && [[ -f "$med_link/plugin.json" ]]; then
+          :
+        else
+          echo "warn: junction failed for med-tools; falling back to copy" >&2
+          cp -r "$med_src" "$med_link"
+        fi
+        ;;
+      *)
+        # This runs before .runtime/node is on PATH, so prefer the project Node
+        # explicitly; a system Node < 22 (e.g. v12) has no `node:` prefix, so use
+        # the bare "path" module. Fall back to an absolute link if even that fails.
+        local med_relative link_node="node"
+        if [[ -x "${RUNTIME_NODE_DIR}/bin/node" ]]; then
+          link_node="${RUNTIME_NODE_DIR}/bin/node"
+        fi
+        med_relative="$("$link_node" -e 'process.stdout.write(require("path").relative(process.argv[1], process.argv[2]))' "${PILOT_HOME_DIR}/plugins" "$med_src" 2>/dev/null || true)"
+        if [[ -z "$med_relative" ]]; then
+          med_relative="$med_src"
+        fi
+        ln -sfn "$med_relative" "$med_link"
+        ;;
+    esac
   fi
 }
 
@@ -150,6 +225,10 @@ assert_no_share() {
     echo "error: python3 resolves under ${FORBIDDEN_PATH_SUBSTR}: ${python_bin}" >&2
     return 1
   fi
+}
+
+check_server_preflight() {
+  bash "${_PILOTDECK_LIB_DIR}/pre-flight-check.sh"
 }
 
 runtime_node() {

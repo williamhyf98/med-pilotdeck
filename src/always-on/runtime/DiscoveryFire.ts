@@ -1048,6 +1048,7 @@ export class DiscoveryFire {
     persistEvents?: boolean;
   }): Promise<GatewayEvent[]> {
     const events: GatewayEvent[] = [];
+    const execution = this.deps.config.execution;
     for await (const event of this.deps.gateway.submitTurn({
       sessionKey: input.sessionKey,
       channelKey: input.channelKey,
@@ -1055,6 +1056,9 @@ export class DiscoveryFire {
       mode: input.mode,
       runId: input.runId,
       projectKey: this.deps.projectKey,
+      maxTurns: execution.maxTurns,
+      maxToolCalls: execution.maxToolCalls,
+      timeoutMs: Math.max(1, execution.timeoutMinutes) * 60_000,
       telemetry: {
         ownerModule: "always_on",
         executionKind: "always_on",

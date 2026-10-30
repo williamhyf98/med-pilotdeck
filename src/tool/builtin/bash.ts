@@ -37,25 +37,24 @@ export type BashOutput = {
   assertions: BashOutputAssertions;
 };
 
-const BASH_TOOL_DESCRIPTION = `Run a shell command in the PilotDeck workspace.
+const BASH_TOOL_DESCRIPTION = `在 PilotDeck 工作区内执行 shell 命令。
 
-Usage:
-- The \`command\` parameter is passed to the system shell (\`cmd.exe\` on Windows, \`/bin/sh\` on macOS/Linux).
-- The shell runs in the current workspace directory and inherits the tool runtime environment.
-- Use \`timeout\` to override the command timeout in milliseconds. When omitted, the default is 30000ms. Values above 600000ms are rejected; lower the foreground timeout to 600000 or less, or use task_create followed by task_wait for background work that should finish.
-- Use \`description\` to provide a short, clear label for logs and audits. Prefer 3-10 words that say what the command does.
-- Use this tool for short shell commands, simple pipelines, and running saved workspace scripts.
-- Use task_create for long-running work such as dev servers, watchers, builds, test suites, deploys, CI pollers, or commands that need more than the maximum foreground timeout. For background work that should finish, call task_wait after task_create. Use task_output for progress checks and task_stop for long-lived processes.
-- For non-trivial code or anything you will debug/rerun with changed parameters, first create or edit a script file with write_file/edit_file, then run that file. Avoid large inline heredocs, \`python - <<...\`, long \`python -c\`, or long \`node -e\` programs when a saved script would be reusable.
-- Do not use shell-level backgrounding (\`nohup\`, \`disown\`, \`setsid\`, trailing \`&\`) in bash. Use task_create so PilotDeck can track lifecycle and output.
-- Read-only shell commands (for example \`pwd\`, \`ls\`, \`git status\`, \`git diff\`, \`git log\`) are treated as read-only. Commands with side effects require permission, and known-dangerous commands are denied outright.
-- The tool returns stdout, stderr, exit code, and duration. Non-zero exits raise a tool error, and timeouts raise \`tool_timeout\`.
-- Successful results begin with \`BASH_RESULT[success][...]\` plus Assertions. Read \`retrieved_data_available\` before treating \`exit_code: 0\` as task progress: exit code 0 only proves the process succeeded, not that useful task data was retrieved.
-- If a task needs content but the result is \`empty_stdout\` or \`stderr_only\`, run a follow-up command that prints or verifies the needed data instead of assuming progress.
-- If you have no command to run, respond with text instead of calling bash.`;
+用法：
+- \`command\` 参数会传给系统 shell（Windows 上是 \`cmd.exe\`，macOS/Linux 上是 \`/bin/sh\`）。
+- shell 在当前工作区目录下运行，并继承工具运行时的环境变量。
+- 用 \`timeout\` 覆盖命令超时时间，单位毫秒。不传时默认 30000ms，超过 600000ms 的取值会被拒绝。
+- 用 \`description\` 给出简短清晰的中文说明，供日志与审计使用，用一句话说明这条命令做什么。
+- 本工具用于本地的短小查看/文件管理命令，以及运行随附技能的入口脚本（例如 pdf.sh / docx.sh）。
+- 所有转换类操作都必须走已注册工具或随附技能入口。若没有随附命令支持某项操作，请说明限制，不要自行另造实现。
+- 只读命令（例如 \`pwd\`、\`ls\`、\`git status\`、\`git diff\`、\`git log\`）按只读处理；有副作用的命令需要授权；已知的危险命令会被直接拒绝。
+- 离线部署：不要使用 curl、wget、pip install、npm install、npx 等对外联网或包管理器安装命令。缺少依赖时如实说明，不要尝试下载。
+- 本工具返回 stdout、stderr、退出码和耗时。非零退出会抛出工具错误，超时会抛出 \`tool_timeout\`。
+- 成功结果以 \`BASH_RESULT[success][...]\` 开头，并附带 Assertions。在把 \`exit_code: 0\` 当作任务进展之前，先看 \`retrieved_data_available\`：退出码 0 只说明进程执行成功，并不代表拿到了有用的数据。
+- 若任务需要具体内容，但结果是 \`empty_stdout\` 或 \`stderr_only\`，应再执行一条命令把所需数据打印或校验出来，不要想当然地认为已有进展。
+- 如果没有需要执行的命令，直接用文字回复，不要调用 bash。`;
 
 const LONG_TASK_HINT =
-  "Use timeout=600000 or less for foreground bash. If the command must run in the background, use task_create and then task_wait to block for completion; use task_output only for progress checks and task_stop to clean up long-lived processes.";
+  "Use timeout=600000 or less for foreground bash. Long-running commands may time out; keep skill script invocations bounded.";
 
 const STREAM_DIAGNOSTIC_MAX_CHARS = 600;
 
@@ -87,15 +86,15 @@ export function createBashTool(options?: CreateBashToolOptions): PilotDeckToolDe
       properties: {
         command: {
           type: "string",
-          description: "The shell command to execute (passed to the system shell).",
+          description: "要执行的 shell 命令（会传给系统 shell）。",
         },
         timeout: {
           type: "integer",
-          description: "Optional timeout in milliseconds. Defaults to 30000. Max 600000; larger values are rejected. Use timeout=600000 or less for foreground bash, or task_create followed by task_wait for background work that should finish.",
+          description: "可选，超时时间，单位毫秒。默认 30000，最大 600000，更大的取值会被拒绝。前台 bash 请使用不超过 600000 的 timeout。离线部署会拒绝 curl、wget 以及包管理器安装类命令。",
         },
         description: {
           type: "string",
-          description: "Clear, concise description of what this command does in active voice. Prefer 3-10 words.",
+          description: "用一句简短清晰的中文说明这条命令做什么。",
         },
       },
     },
@@ -118,10 +117,51 @@ export function createBashTool(options?: CreateBashToolOptions): PilotDeckToolDe
       }
       const timeoutMs = Math.max(1, input.timeout ?? defaultTimeoutMs);
       const progress = context.progress;
-      const toolCallId = ""; // ToolRuntime fills this via metadata; we pull from context if available.
+      const toolCallId = context.currentToolCallId ?? "";
+      const isDeepChestCommand = /(?:^|[/\\])run_deepchest_agent_qwen\.sh(?:\s|$)/u.test(command);
+      const deepChestActivityId = `medical:${toolCallId || "deepchest"}`;
+      const emitDeepChestActivity = (
+        title: string,
+        detail: string,
+        state: "running" | "completed" | "failed",
+      ) => {
+        if (!progress || !isDeepChestCommand) return;
+        progress({
+          type: "tool_progress",
+          sessionId: context.sessionId,
+          turnId: context.turnId,
+          toolCallId,
+          toolName: "bash",
+          message: title,
+          metadata: {
+            channel: "medical_activity",
+            activityId: deepChestActivityId,
+            phase: "medical",
+            title,
+            detail,
+            state,
+            ...(state === "failed" ? { severity: "error" } : {}),
+          },
+          createdAt: (context.now?.() ?? new Date()).toISOString(),
+        });
+      };
+      emitDeepChestActivity(
+        "正在检查 DeepChest 产物",
+        "核对 DeepChestVQA、CT-CLIP 和分割结果",
+        "running",
+      );
+      let deepChestExecutionReported = false;
       const emitProgress = progress
         ? (stream: "stdout" | "stderr") => (chunk: string) => {
             try {
+              if (isDeepChestCommand && !deepChestExecutionReported && chunk.trim()) {
+                deepChestExecutionReported = true;
+                emitDeepChestActivity(
+                  command.includes("--dry-run") ? "正在执行 DeepChest 预检" : "正在执行胸部 CT 流程",
+                  command.includes("--dry-run") ? "验证数据、mask 和 CT-CLIP 产物" : "3DMedAgent 正在处理胸部 CT 证据",
+                  "running",
+                );
+              }
               progress({
                 type: "tool_progress",
                 sessionId: context.sessionId,
@@ -147,10 +187,12 @@ export function createBashTool(options?: CreateBashToolOptions): PilotDeckToolDe
       });
 
       if (result.timedOut) {
+        emitDeepChestActivity("DeepChest 流程超时", "流程未完成，请检查最终错误提示", "failed");
         throw new PilotDeckToolRuntimeError("tool_timeout", `Command timed out after ${timeoutMs}ms.`);
       }
 
       if (result.exitCode !== 0) {
+        emitDeepChestActivity("DeepChest 流程失败", "流程未完成，请检查最终错误提示", "failed");
         const summary = formatShellFailure(command, result);
         const diagnostic = formatShellFailureDiagnostic(result);
         throw new PilotDeckToolRuntimeError("tool_execution_failed", summary, {
@@ -166,6 +208,11 @@ export function createBashTool(options?: CreateBashToolOptions): PilotDeckToolDe
 
       const assertions = buildBashOutputAssertions(result.stdout, result.stderr, result.exitCode);
       const outputState = classifyBashOutput(assertions);
+      emitDeepChestActivity(
+        command.includes("--dry-run") ? "DeepChest 预检完成" : "DeepChest 分析完成",
+        command.includes("--dry-run") ? "数据与中间产物检查已完成" : "胸部 CT 结果已生成并可供整理",
+        "completed",
+      );
 
       return {
         content: [

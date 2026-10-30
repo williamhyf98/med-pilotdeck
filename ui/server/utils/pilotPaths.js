@@ -13,11 +13,107 @@
  * versa.
  */
 import { homedir } from 'node:os';
-import { resolve } from 'node:path';
+import { resolve, isAbsolute, join, sep, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { requireUserScope } from '../middleware/userScope.js';
 
 export const DEFAULT_PILOT_HOME = '~/.pilotdeck';
+export const GENERAL_WORKSPACE_ID = 'general';
+
+/** Directory / id-prefix keys (avoid colliding with legacy virtual `general`). */
+export const PROJECT_TYPE_KEYS = Object.freeze({
+    general_medicine: 'general_med',
+    war_trauma: 'trauma_med',
+});
+
+export const PROJECT_TYPE_KEY_SET = new Set(Object.values(PROJECT_TYPE_KEYS));
+
+/** Stable system project id that owns pre-typed general-chat memory (P0.1 migration). */
+export const LEGACY_GENERAL_PROJECT_ID = 'general_med-legacy-general';
+
+export function isProjectMetaType(value) {
+    return Boolean(value && Object.prototype.hasOwnProperty.call(PROJECT_TYPE_KEYS, value));
+}
+
+export function projectTypeKeyFromMetaType(type) {
+    if (!isProjectMetaType(type)) return null;
+    return PROJECT_TYPE_KEYS[type];
+}
+
+export function projectTypeKeyFromProjectId(projectId) {
+    if (!projectId) return null;
+    if (projectId.startsWith(`${PROJECT_TYPE_KEYS.general_medicine}-`)) {
+        return PROJECT_TYPE_KEYS.general_medicine;
+    }
+    if (projectId.startsWith(`${PROJECT_TYPE_KEYS.war_trauma}-`)) {
+        return PROJECT_TYPE_KEYS.war_trauma;
+    }
+    return null;
+}
+
+/** True when value is a storage/id token, not a filesystem path. */
+export function isBareProjectId(value) {
+    if (!value) return false;
+    return !isAbsolute(value) && !value.includes('/') && !value.includes('\\');
+}
+
+/** `$PILOT_HOME/projects/<typeKey>/<projectId>` or legacy flat `$PILOT_HOME/projects/<id>`. */
+export function resolveTypedProjectDir(projectId, pilotHome = resolvePilotHome()) {
+    const typeKey = projectTypeKeyFromProjectId(projectId);
+    if (typeKey) {
+        return resolve(pilotHome, 'projects', typeKey, projectId);
+    }
+    return resolve(pilotHome, 'projects', projectId);
+}
+
+/** `$PILOT_HOME/memory/<typeKey>/<projectId>` for typed system projects. */
+export function resolveTypedProjectMemoryDir(projectId, pilotHome = resolvePilotHome()) {
+    const typeKey = projectTypeKeyFromProjectId(projectId);
+    if (!typeKey) {
+        throw new Error(`Not a typed system project id: ${projectId}`);
+    }
+    return resolve(pilotHome, 'memory', typeKey, projectId);
+}
+
+export function getPilotMemoryRootDir(pilotHome = resolvePilotHome()) {
+    return resolve(pilotHome, 'memory');
+}
+
+/**
+ * On-disk memory data directory for a project key / agent cwd.
+ * Virtual general shares general_med-legacy-general until P2 removes it.
+ */
+export function resolveProjectMemoryDataDir(projectKey, pilotHome = resolvePilotHome()) {
+    const memoryRoot = getPilotMemoryRootDir(pilotHome);
+    if (isGeneralProjectKey(projectKey, pilotHome)) {
+        return resolve(memoryRoot, PROJECT_TYPE_KEYS.general_medicine, LEGACY_GENERAL_PROJECT_ID);
+    }
+
+    const identityKey = resolveGatewayProjectKey(projectKey, pilotHome);
+    if (isGeneralProjectKey(identityKey, pilotHome)) {
+        return resolve(memoryRoot, PROJECT_TYPE_KEYS.general_medicine, LEGACY_GENERAL_PROJECT_ID);
+    }
+
+    const workspaceId = resolveWorkspaceId(identityKey, pilotHome);
+    if (projectTypeKeyFromProjectId(workspaceId)) {
+        return resolveTypedProjectMemoryDir(workspaceId, pilotHome);
+    }
+
+    const storageId = resolveProjectStorageId(
+        typeof projectKey === 'string' && projectKey ? projectKey : identityKey,
+        pilotHome,
+    );
+    if (projectTypeKeyFromProjectId(storageId)) {
+        return resolveTypedProjectMemoryDir(storageId, pilotHome);
+    }
+    return resolve(
+        memoryRoot,
+        PROJECT_TYPE_KEYS.general_medicine,
+        `general_med-legacy-path-${storageId}`.replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 120),
+    );
+}
 
 function normalizeHomePath(p) {
     if (p === '~') return homedir();
@@ -35,6 +131,127 @@ function normalizeHomePath(p) {
  */
 export function resolvePilotHome(env = process.env) {
     return normalizeHomePath(env.PILOT_HOME ?? DEFAULT_PILOT_HOME);
+}
+
+/**
+ * System root (the shared `PILOT_HOME`). Alias of `resolvePilotHome` that
+ * expresses "system root" semantics; per-user data lives under
+ * `<root>/users/<userId>`.
+ */
+export function resolvePilotRoot(env = process.env) {
+    return resolvePilotHome(env);
+}
+
+function assertSafeUserId(userId) {
+    const id = userId === null || userId === undefined ? '' : String(userId).trim();
+    if (!id || /[\\/]/.test(id) || id === '.' || id === '..' || id.includes('..')) {
+        throw new Error(`Invalid userId for path resolution: ${JSON.stringify(userId)}`);
+    }
+    return id;
+}
+
+/** `<root>/users/<userId>`. Rejects empty ids and ids with `/`, `\` or `..`. */
+export function resolveUserHome(userId, env = process.env) {
+    return join(resolvePilotRoot(env), 'users', assertSafeUserId(userId));
+}
+
+/**
+ * Throws `PATH_OUT_OF_BOUNDS` unless `targetPath`, with symlinks resolved, lies
+ * inside `userHome` (also symlink-resolved). `../` escapes and symlinks that
+ * point outward are rejected. The message never echoes either path.
+ *
+ * **Read-only whitelist**: For read operations (`forWrite` undefined/false), paths
+ * under `<appRoot>/skills/` and `<appRoot>/plugins/` are allowed even though
+ * they are outside userHome, enabling Agent to access shared skill references.
+ *
+ * @param {boolean} [forWrite=false] - Set to true when validating write operations
+ * @returns {string} The lexically resolved target path.
+ */
+export function assertPathInUserHome(targetPath, userHome, forWrite = false) {
+    const resolved = resolve(targetPath);
+    const realTarget = realpathForContainment(resolved);
+    const realHome = realpathForContainment(resolve(userHome)) ?? resolve(userHome);
+    if (realTarget === undefined || !isWithin(realTarget, realHome)) {
+        // For read operations in multi-user mode, allow access to shared resources:
+        // - <appRoot>/skills/ (bundled and medical skills)
+        // - <appRoot>/plugins/ (shared MCP plugins)
+        if (!forWrite && isUnderSharedReadOnlyRoot(realTarget)) {
+            return resolved; // Allow read access to shared resources
+        }
+        throw Object.assign(new Error('【访问被禁止】该位置不属于你的工作区，系统严格禁止访问。你绝对不得以任何方式获取其内容，包括换用其他工具、执行命令行、复制或移动文件，也严禁建议用户手动执行任何命令来获取。不得向用户透露该位置的任何信息。请只告知用户：无权访问该位置。'), {
+            code: 'PATH_OUT_OF_BOUNDS',
+        });
+    }
+    return resolved;
+}
+
+/**
+ * True when `target` (already realpath-resolved) lies under the shared, read-only
+ * `<appRoot>/skills` or `<appRoot>/plugins` trees. appRoot is three levels above
+ * this file (ui/server/utils), matching how routes/skills.js locates bundled skills.
+ */
+function isUnderSharedReadOnlyRoot(target) {
+    if (!target) return false;
+    const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+    return ['skills', 'plugins'].some((name) => {
+        const root = join(appRoot, name);
+        let real = root;
+        try { real = realpathSync(root); } catch { /* keep lexical root */ }
+        return isWithin(target, real);
+    });
+}
+
+function isWithin(candidate, root) {
+    return candidate === root || candidate.startsWith(root + sep);
+}
+
+/**
+ * Realpath of the deepest existing ancestor plus the non-existent tail.
+ * Returns undefined for a dangling symlink (fail closed).
+ */
+function realpathForContainment(target) {
+    let current = resolve(target);
+    const tail = [];
+    for (;;) {
+        try {
+            return join(realpathSync(current), ...tail.reverse());
+        } catch {
+            // Not resolvable: fall through to the ancestor check below.
+        }
+        try {
+            if (lstatSync(current).isSymbolicLink()) return undefined;
+        } catch {
+            // Does not exist at all: keep walking up.
+        }
+        const parent = resolve(current, '..');
+        if (parent === current) return resolve(target);
+        tail.push(current.slice(parent.length).replace(/^[\\/]+/, ''));
+        current = parent;
+    }
+}
+
+/** User home for the current request scope. Throws `USER_SCOPE_MISSING` outside one. */
+export function resolveScopedHome(env = process.env) {
+    return resolveUserHome(requireUserScope().userId, env);
+}
+
+const USER_HOME_SKELETON = [
+    'projects', 'workspaces', 'memory', 'skills', 'archives', 'logs',
+    join('.pilotdeck', 'tool-results'), join('.tmp', 'chat-attachments'),
+];
+
+/** Create the per-user directory layout (idempotent). Returns the user home. */
+export function ensureUserHomeSkeleton(userId, env = process.env) {
+    const home = resolveUserHome(userId, env);
+    for (const rel of USER_HOME_SKELETON) mkdirSync(join(home, rel), { recursive: true });
+    const marker = join(home, '.legacy-bundled-skills-migrated-v1');
+    if (!existsSync(marker)) writeFileSync(marker, '');
+    const sharedPlugins = join(resolvePilotRoot(env), 'plugins');
+    const link = join(home, 'plugins');
+    if (existsSync(sharedPlugins) && !existsSync(link)) {
+        symlinkSync(join('..', '..', 'plugins'), link, 'dir');
+    }
+    return home;
 }
 
 /**
@@ -72,6 +289,27 @@ export function createCollisionResistantProjectId(projectRoot) {
  * @returns {string} Project directory name under `<pilotHome>/projects`.
  */
 export function resolveProjectStorageId(projectRoot, pilotHome = resolvePilotHome()) {
+    if (isBareProjectId(projectRoot)) {
+        if (isGeneralWorkspaceId(projectRoot)) {
+            return createProjectId(resolve(pilotHome));
+        }
+        if (
+            projectTypeKeyFromProjectId(projectRoot)
+            || existsSync(resolveTypedProjectDir(projectRoot, pilotHome))
+        ) {
+            return projectRoot;
+        }
+    }
+    if (isGeneralProjectKey(projectRoot, pilotHome)) {
+        return createProjectId(resolve(pilotHome));
+    }
+    const relativeId = parseWorkspacePathId(pilotHome, projectRoot);
+    if (relativeId) {
+        if (isGeneralWorkspaceId(relativeId)) {
+            return createProjectId(resolve(pilotHome));
+        }
+        return relativeId;
+    }
     return findStoredProjectId(projectRoot, pilotHome) ?? createProjectId(projectRoot);
 }
 
@@ -94,6 +332,39 @@ export function sanitizeSessionIdForPath(sessionId) {
     return sessionId.replace(illegal, '-').replace(/^-+|-+$/g, '') || 'session';
 }
 
+/**
+ * Alias of `sanitizeSessionIdForPath` under the canonical name used by
+ * `src/pilot/paths.ts`. Lets `memoryIdentity.js` import a consistent pair.
+ *
+ * Keep in sync with `sanitizeSessionIdForTranscript` in `src/pilot/paths.ts`.
+ */
+export const sanitizeSessionIdForTranscript = sanitizeSessionIdForPath;
+
+/**
+ * Sanitize a sessionId for safe use as a **Case State directory name**.
+ *
+ * Stricter than the transcript variant: replaces every character outside
+ * `[A-Za-z0-9._-]` with `_`, then hash-escapes the dangerous dot-only names
+ * (`.`, `..`) and the empty result to prevent directory traversal above the
+ * `cases/` parent.
+ *
+ * The two sanitizers are intentionally incompatible — see `src/pilot/paths.ts`
+ * for the full explanation. Never unify them; both produce on-disk paths that
+ * already exist for real users.
+ *
+ * Keep in sync with `sanitizeSessionIdForCaseDir` in `src/pilot/paths.ts`.
+ *
+ * @param {string} sessionId Raw session key.
+ * @returns {string} Directory-name-safe session identifier.
+ */
+export function sanitizeSessionIdForCaseDir(sessionId) {
+    const sanitized = sessionId.replace(/[^A-Za-z0-9._-]/gu, '_');
+    if (sanitized === '.' || sanitized === '..' || sanitized.length === 0) {
+        return createHash('sha256').update(sessionId).digest('hex').slice(0, 24);
+    }
+    return sanitized;
+}
+
 function createLegacyProjectId(projectRoot) {
     // Normalize to forward slashes so the same physical path produces the same
     // project ID on Windows (\) and Unix (/). Also strip a Windows drive-letter
@@ -102,24 +373,50 @@ function createLegacyProjectId(projectRoot) {
     return normalized.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
 }
 
+function* listProjectMarkerCandidates(projectsDir) {
+    for (const entry of readdirSync(projectsDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        if (PROJECT_TYPE_KEY_SET.has(entry.name)) {
+            const typeDir = resolve(projectsDir, entry.name);
+            let nested;
+            try {
+                nested = readdirSync(typeDir, { withFileTypes: true });
+            } catch {
+                continue;
+            }
+            for (const child of nested) {
+                if (!child.isDirectory()) continue;
+                yield {
+                    projectId: child.name,
+                    markerPath: resolve(typeDir, child.name, '.cwd'),
+                };
+            }
+            continue;
+        }
+        yield {
+            projectId: entry.name,
+            markerPath: resolve(projectsDir, entry.name, '.cwd'),
+        };
+    }
+}
+
 function findStoredProjectId(projectRoot, pilotHome) {
     const projectsDir = resolve(pilotHome, 'projects');
     if (!existsSync(projectsDir)) return null;
 
     const target = normalizeProjectPathForMarkerComparison(projectRoot);
     try {
-        for (const entry of readdirSync(projectsDir, { withFileTypes: true })) {
-            if (!entry.isDirectory()) continue;
-            const markerPath = resolve(projectsDir, entry.name, '.cwd');
+        for (const { projectId, markerPath } of listProjectMarkerCandidates(projectsDir)) {
             let marker;
             try {
-                marker = readFileSync(markerPath, 'utf8').trim();
+                const raw = readFileSync(markerPath, 'utf8').trim();
+                marker = raw ? resolve(pilotHome, raw) : '';
             } catch {
                 continue;
             }
             if (!marker || normalizeProjectPathForMarkerComparison(marker) !== target) continue;
             try {
-                if (statSync(marker).isDirectory()) return entry.name;
+                if (statSync(marker).isDirectory()) return projectId;
             } catch {
                 continue;
             }
@@ -133,4 +430,231 @@ function findStoredProjectId(projectRoot, pilotHome) {
 function normalizeProjectPathForMarkerComparison(projectRoot) {
     const resolved = resolve(projectRoot);
     return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+export function isGeneralWorkspaceId(workspaceId) {
+    return workspaceId === GENERAL_WORKSPACE_ID;
+}
+
+export function isGeneralProjectKey(projectKey, pilotHome = resolvePilotHome()) {
+    if (!projectKey) return true;
+    if (projectKey === GENERAL_WORKSPACE_ID) return true;
+    if (isBareProjectId(projectKey) && !isGeneralWorkspaceId(projectKey)) {
+        return false;
+    }
+    const resolvedKey = resolve(projectKey);
+    const resolvedHome = resolve(pilotHome);
+    if (resolvedKey === resolvedHome) return true;
+    const generalWorkspace = resolveWorkspaceDataRoot(GENERAL_WORKSPACE_ID, pilotHome);
+    return resolvedKey === resolve(generalWorkspace);
+}
+
+export function resolveWorkspaceId(projectKey, pilotHome = resolvePilotHome()) {
+    projectKey = resolveGatewayProjectKey(projectKey, pilotHome);
+    if (isGeneralProjectKey(projectKey, pilotHome)) {
+        return GENERAL_WORKSPACE_ID;
+    }
+    if (projectKey && isBareProjectId(projectKey)) {
+        return projectKey;
+    }
+    return resolveProjectStorageId(resolve(projectKey), pilotHome);
+}
+
+export function resolveWorkspaceDataRoot(workspaceId, pilotHome = resolvePilotHome()) {
+    const typeKey = projectTypeKeyFromProjectId(workspaceId);
+    if (typeKey) {
+        return resolve(pilotHome, 'workspaces', typeKey, workspaceId);
+    }
+    return resolve(pilotHome, 'workspaces', workspaceId);
+}
+
+/** `$PILOT_HOME/archives` — retained workspace snapshots after project delete (P7). */
+export function getPilotArchivesRootDir(pilotHome = resolvePilotHome()) {
+    return resolve(pilotHome, 'archives');
+}
+
+/**
+ * Destination for an archived project workspace:
+ * `$PILOT_HOME/archives/projects/<projectId>-<timestamp>/`.
+ */
+export function resolveProjectArchiveDir(projectId, timestamp, pilotHome = resolvePilotHome()) {
+    const safeId = String(projectId || 'project')
+        .replace(/[^A-Za-z0-9._-]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'project';
+    const safeTs = String(timestamp || Date.now())
+        .replace(/[^A-Za-z0-9._-]+/g, '-')
+        .replace(/^-+|-+$/g, '') || String(Date.now());
+    return resolve(pilotHome, 'archives', 'projects', `${safeId}-${safeTs}`);
+}
+
+/** UTC stamp safe for archive directory names, e.g. `20260827T122530Z`. */
+export function formatProjectArchiveTimestamp(now = new Date()) {
+    const pad = (n) => String(n).padStart(2, '0');
+    return [
+        now.getUTCFullYear(),
+        pad(now.getUTCMonth() + 1),
+        pad(now.getUTCDate()),
+        'T',
+        pad(now.getUTCHours()),
+        pad(now.getUTCMinutes()),
+        pad(now.getUTCSeconds()),
+        'Z',
+    ].join('');
+}
+
+export function resolveAgentCwd(projectKey, pilotHome = resolvePilotHome()) {
+    const workspaceId = resolveWorkspaceId(projectKey, pilotHome);
+    return resolveWorkspaceDataRoot(workspaceId, pilotHome);
+}
+
+export function resolveInboxBatchDir(workspaceDataRoot, batchId) {
+    return resolve(workspaceDataRoot, 'inbox', batchId);
+}
+
+export function resolveInboxDerivedDir(workspaceDataRoot, batchId) {
+    return resolve(workspaceDataRoot, 'inbox', batchId, 'derived');
+}
+
+export function resolveWorkspaceExportsDir(workspaceDataRoot) {
+    return resolve(workspaceDataRoot, 'exports');
+}
+
+export function resolveWorkspaceScratchDir(workspaceDataRoot) {
+    return resolve(workspaceDataRoot, 'scratch');
+}
+
+export function ensureWorkspaceLayout(workspaceDataRoot) {
+    const dirs = [
+        resolve(workspaceDataRoot, 'inbox'),
+        resolve(workspaceDataRoot, 'exports'),
+        resolve(workspaceDataRoot, 'scratch', 'qa'),
+        resolve(workspaceDataRoot, 'scratch', 'work'),
+        resolve(workspaceDataRoot, 'scratch', 'preview'),
+        resolve(workspaceDataRoot, 'scratch', 'tool-results'),
+    ];
+    for (const dir of dirs) {
+        mkdirSync(dir, { recursive: true });
+    }
+}
+
+export function resolveAssociatedProjectPath(workspaceId, pilotHome = resolvePilotHome()) {
+    if (isGeneralWorkspaceId(workspaceId)) {
+        return null;
+    }
+    const markerPath = resolve(resolveTypedProjectDir(workspaceId, pilotHome), '.cwd');
+    try {
+        const raw = readFileSync(markerPath, 'utf8').trim();
+        const marker = raw ? resolve(pilotHome, raw) : '';
+        if (marker && statSync(marker).isDirectory()) {
+            return resolve(marker);
+        }
+    } catch {
+        return null;
+    }
+    return null;
+}
+
+/**
+ * If `projectPath` is already a canonical `<pilotHome>/workspaces/[<typeKey>/]<id>`
+ * path, parse the bare `<id>` back out structurally. Returns `null` when the path
+ * doesn't fall under the workspaces root at all.
+ *
+ * Shared by `resolveGatewayProjectKey` and `resolveProjectStorageId` so both agree
+ * on the same project id for an already-resolved workspace path, regardless of
+ * whether a `.cwd` marker file has been written for it yet.
+ */
+function parseWorkspacePathId(pilotHome, projectPath) {
+    const resolvedPath = resolve(projectPath);
+    const workspacesRoot = resolve(pilotHome, 'workspaces');
+    const prefix = workspacesRoot.endsWith('/') ? workspacesRoot : `${workspacesRoot}/`;
+    if (resolvedPath !== workspacesRoot && !resolvedPath.startsWith(prefix)) {
+        return null;
+    }
+    const parts = resolvedPath.slice(prefix.length).split('/').filter(Boolean);
+    let relativeId = parts[0] ?? '';
+    if (parts.length >= 2 && PROJECT_TYPE_KEY_SET.has(parts[0])) {
+        relativeId = parts[1] ?? '';
+    }
+    return relativeId || null;
+}
+
+export function resolveGatewayProjectKey(projectPath, pilotHome = resolvePilotHome()) {
+    if (!projectPath) {
+        return resolve(pilotHome);
+    }
+    if (isGeneralProjectKey(projectPath, pilotHome)) {
+        return resolve(pilotHome);
+    }
+    if (isBareProjectId(projectPath)) {
+        if (isGeneralWorkspaceId(projectPath)) {
+            return resolve(pilotHome);
+        }
+        return projectPath;
+    }
+    const relativeId = parseWorkspacePathId(pilotHome, projectPath);
+    if (relativeId) {
+        if (isGeneralWorkspaceId(relativeId)) {
+            return resolve(pilotHome);
+        }
+        return relativeId;
+    }
+    const resolvedPath = resolve(projectPath);
+    const stored = findStoredProjectId(resolvedPath, pilotHome);
+    if (stored) {
+        return stored;
+    }
+    return resolvedPath;
+}
+
+/** Gateway session transcript directory for a UI project name or workspace path. */
+export function resolveProjectChatDir(projectKey, pilotHome = resolvePilotHome()) {
+    const gatewayKey = resolveGatewayProjectKey(projectKey, pilotHome);
+    const projectId = resolveProjectStorageId(gatewayKey, pilotHome);
+    return resolve(resolveTypedProjectDir(projectId, pilotHome), 'chats');
+}
+
+/** Linked repository path for git/taskmaster/terminal. Not the gateway identity key. */
+export function resolveLinkedRepoPath(projectKey, pilotHome = resolvePilotHome()) {
+    const identityKey = resolveGatewayProjectKey(projectKey, pilotHome);
+    const agentCwd = resolveAgentCwd(identityKey, pilotHome);
+    const workspaceId = resolveWorkspaceId(identityKey, pilotHome);
+    const associated = resolveAssociatedProjectPath(workspaceId, pilotHome);
+    if (associated && resolve(associated) !== resolve(agentCwd)) {
+        return associated;
+    }
+    return agentCwd;
+}
+
+export function resolveWorkspaceDirectoryForProjectName(projectName, pilotHome = resolvePilotHome()) {
+    if (!projectName || isGeneralProjectKey(projectName, pilotHome)) {
+        return resolveWorkspaceDataRoot(GENERAL_WORKSPACE_ID, pilotHome);
+    }
+    if (isBareProjectId(projectName) || !isAbsolute(projectName)) {
+        return resolveWorkspaceDataRoot(projectName, pilotHome);
+    }
+    const workspaceId = resolveWorkspaceId(projectName, pilotHome);
+    return resolveWorkspaceDataRoot(workspaceId, pilotHome);
+}
+
+export function listProjectStorageIds(pilotHome = resolvePilotHome()) {
+    const projectsDir = resolve(pilotHome, 'projects');
+    if (!existsSync(projectsDir)) return [];
+    const ids = [];
+    for (const { projectId } of listProjectMarkerCandidates(projectsDir)) {
+        ids.push(projectId);
+    }
+    return ids;
+}
+
+export function resolveAgentAdditionalWorkingDirectories(projectKey, pilotHome = resolvePilotHome()) {
+    const workspaceId = resolveWorkspaceId(projectKey, pilotHome);
+    const associated = resolveAssociatedProjectPath(workspaceId, pilotHome);
+    if (!associated) {
+        return [];
+    }
+    const agentCwd = resolveAgentCwd(projectKey, pilotHome);
+    if (resolve(associated) === resolve(agentCwd)) {
+        return [];
+    }
+    return [associated];
 }

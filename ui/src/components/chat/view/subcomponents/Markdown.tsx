@@ -1,15 +1,28 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
-import { normalizeInlineCodeFences } from '../../utils/chatFormatting';
+import rehypeRaw from 'rehype-raw';
+import {
+  normalizeDetailsBlocks,
+  normalizeInlineCodeFences,
+  stripReferenceDetails,
+} from '../../utils/chatFormatting';
 import { resolveMarkdownFileHref } from '../../utils/resolveMarkdownFileHref';
 import {
   createRemarkArtifactFileTextPlugin,
   type MarkdownArtifactFile,
 } from '../../utils/remarkArtifactFileText';
+import { createRemarkCitationPlugin } from '../../utils/remarkCitationPlugin';
+import { remarkGroupImageParagraphs } from '../../utils/remarkGroupImages';
+import { collectMarkdownImages } from '../../utils/markdownImages';
+import { CitationPopover } from '../../utils/CitationPopover';
+import { CitationSourcesBar } from '../../utils/CitationSourcesBar';
+import { buildCitationDisplayMap, splitCitationLabel } from '../../utils/ragCitations';
+import type { CitationMetadata } from '../../types/types';
+import ImageLightbox, { type LightboxImage } from './ImageLightbox';
 
 type MarkdownProps = {
   children: React.ReactNode;
@@ -18,14 +31,113 @@ type MarkdownProps = {
   isStreaming?: boolean;
   onFileOpen?: (filePath: string) => void;
   artifactFiles?: MarkdownArtifactFile[];
+  citations?: CitationMetadata[];
+  /** 在正文之后渲染「参考来源」折叠条（每轮只有页脚消息为 true，防重复）。 */
+  showSourcesBar?: boolean;
 };
 
-const fullRehypePlugins = [rehypeKatex];
+const fullRehypePlugins = [rehypeKatex, rehypeRaw];
 
 const linkClassName = 'text-blue-600 hover:underline dark:text-blue-400';
 
-function createMarkdownComponents(onFileOpen?: (filePath: string) => void): Components {
+// Retrieved figures arrive at full resolution, so they are shown as
+// proportionally scaled thumbnails and opened in the lightbox on click.
+const imageThumbnailClassName = 'block h-auto max-h-[180px] w-auto max-w-[min(240px,100%)] object-contain';
+const imageButtonClassName = 'not-prose m-0 inline-block cursor-zoom-in overflow-hidden rounded-md border border-neutral-200 bg-neutral-50 p-0 align-top focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800';
+const imageRowClassName = 'not-prose my-3 flex flex-wrap items-start gap-2';
+
+type HastNode = {
+  type?: string;
+  tagName?: string;
+  value?: string;
+  children?: HastNode[];
+};
+
+const isBlankHastText = (node: HastNode): boolean => (
+  node.type === 'text' && !(node.value ?? '').trim()
+);
+
+const isHastImage = (node: HastNode): boolean => {
+  if (node.tagName === 'img') return true;
+  if (node.tagName !== 'a' || !Array.isArray(node.children)) return false;
+  const meaningful = node.children.filter((child) => !isBlankHastText(child));
+  return meaningful.length > 0 && meaningful.every((child) => child.tagName === 'img');
+};
+
+/** True when a paragraph holds nothing but images, so it can become an image row. */
+const isImageOnlyParagraph = (node: unknown): boolean => {
+  const children = (node as HastNode | undefined)?.children;
+  if (!Array.isArray(children)) return false;
+  const meaningful = children.filter((child) => !isBlankHastText(child));
+  return meaningful.length > 0 && meaningful.every(isHastImage);
+};
+
+/**
+ * 兜底路径：从 <details> 块里刮 `- [N] 文献名 > 章节` 这样的行。
+ *
+ * 只有在结构化 citations 缺席时才会走到这里（旧会话、或者不是 med-tools 检索），
+ * 刮出来的引用没有 chunk 原文，点开也只能看到文献名。
+ *
+ * section 必须可选：远程语料的 `section_title` 经常为空，而原来的正则强制要求
+ * `>` 分隔符，于是没有章节的那一条整行匹配不上、根本进不了引用表 —— 表现就是
+ * 「大部分角标有 hover，偶尔一个没有」。
+ */
+const CITATION_LINE_RE = /^\s*[-*]\s*\[(\d{1,3})\]\s+(.+?)\s*$/;
+const DETAILS_BLOCK_RE = /<details\b[^>]*>[\s\S]*?<\/details>/gi;
+
+function extractCitationsFromContent(text: string): CitationMetadata[] {
+  const citations: CitationMetadata[] = [];
+  const seen = new Set<number>();
+
+  DETAILS_BLOCK_RE.lastIndex = 0;
+  let block: RegExpExecArray | null;
+  while ((block = DETAILS_BLOCK_RE.exec(text)) !== null) {
+    for (const line of block[0].split('\n')) {
+      const matched = line.match(CITATION_LINE_RE);
+      if (!matched) continue;
+      const index = parseInt(matched[1], 10);
+      if (seen.has(index)) continue;
+      seen.add(index);
+      const label = matched[2].trim();
+      citations.push({ index, ...splitCitationLabel(label), label });
+    }
+  }
+  return citations;
+}
+function createMarkdownComponents(
+  onImageZoom: (src: string) => void,
+  onFileOpen?: (filePath: string) => void,
+  citations?: CitationMetadata[],
+): Components {
   return {
+    p: ({ children, node, ...props }) => {
+      if (isImageOnlyParagraph(node)) {
+        return <div className={imageRowClassName}>{children}</div>;
+      }
+      return <p {...props}>{children}</p>;
+    },
+    img: ({ src, alt, node: _node, ...props }) => {
+      const source = typeof src === 'string' ? src.trim() : '';
+      if (!source) return null;
+      const caption = typeof alt === 'string' ? alt.trim() : '';
+      return (
+        <button
+          type="button"
+          className={imageButtonClassName}
+          title={caption || undefined}
+          aria-label={caption ? `Preview ${caption}` : 'Preview image'}
+          onClick={() => onImageZoom(source)}
+        >
+          <img
+            {...props}
+            src={source}
+            alt={caption}
+            loading="lazy"
+            className={imageThumbnailClassName}
+          />
+        </button>
+      );
+    },
     a: ({ href, children, ...props }) => {
       const filePath = resolveMarkdownFileHref(href);
       if (filePath && onFileOpen) {
@@ -56,6 +168,20 @@ function createMarkdownComponents(onFileOpen?: (filePath: string) => void): Comp
         </a>
       );
     },
+    // children 要透传：rehypeRaw 会放行模型自己写在正文里的字面 <cite> 标签，
+    // 那种节点没有 data-citation-index，对不上任何一条引用，原文得留着。
+    cite: ({ children, ...props }) => {
+      const attributes = props as Record<string, unknown>;
+      return (
+        <CitationPopover
+          data-citation-index={attributes['data-citation-index'] as string}
+          data-citation-display={attributes['data-citation-display'] as string}
+          citations={citations}
+        >
+          {children}
+        </CitationPopover>
+      );
+    },
   };
 }
 
@@ -65,31 +191,77 @@ export function Markdown({
   isStreaming,
   onFileOpen,
   artifactFiles,
+  citations,
+  showSourcesBar,
 }: MarkdownProps) {
-  const content = useMemo(
-    () => normalizeInlineCodeFences(String(children ?? '')),
+  const rawContent = useMemo(
+    () => normalizeDetailsBlocks(normalizeInlineCodeFences(String(children ?? ''))),
     [children],
   );
 
-  const components = useMemo(
-    () => (onFileOpen ? createMarkdownComponents(onFileOpen) : undefined),
-    [onFileOpen],
+  // 兜底抓取要在剥列表**之前**跑：老会话的引用数据只存在于那个被隐藏的列表里。
+  const resolvedCitations = useMemo(
+    () => citations && citations.length > 0 ? citations : extractCitationsFromContent(rawContent),
+    [citations, rawContent],
   );
-  const remarkPlugins = useMemo(() => {
-    if (isStreaming) return [remarkGfm];
-    if (artifactFiles === undefined) return [remarkGfm, remarkMath];
-    return [remarkGfm, remarkMath, createRemarkArtifactFileTextPlugin(artifactFiles)];
-  }, [artifactFiles, isStreaming]);
 
-  // Only apply streaming-fade-in on the initial mount while streaming.
-  // Once streaming ends, never re-apply it — prevents old content from
-  // briefly re-animating when sibling messages cause a re-render.
-  const wasStreamingRef = useRef(!!isStreaming);
-  if (!isStreaming) wasStreamingRef.current = false;
-  const showFadeIn = isStreaming && wasStreamingRef.current;
+  // 可见正文 = 剥掉「参考来源」details 之后的文本。编号压缩、图片收集、最终渲染
+  // 都只看它 —— 隐藏列表里的 [N] 不占展示号，行内编号才不会出洞。
+  const content = useMemo(() => stripReferenceDetails(rawContent), [rawContent]);
+
+  // 编号压缩要拿最终正文算，所以放在 resolvedCitations 之后、插件构建之前。
+  const citationDisplayMap = useMemo(
+    () => buildCitationDisplayMap(content, resolvedCitations),
+    [content, resolvedCitations],
+  );
+
+  const [zoomedSrc, setZoomedSrc] = useState<string | null>(null);
+  const handleImageZoom = useCallback((src: string) => setZoomedSrc(src), []);
+
+  const lightboxImages = useMemo<LightboxImage[]>(
+    () => collectMarkdownImages(content).map((image) => ({
+      data: image.url,
+      name: image.caption || undefined,
+    })),
+    [content],
+  );
+  const zoomIndex = zoomedSrc
+    ? lightboxImages.findIndex((image) => image.data === zoomedSrc)
+    : -1;
+  const activeLightboxImages = zoomIndex >= 0
+    ? lightboxImages
+    : (zoomedSrc ? [{ data: zoomedSrc }] : []);
+
+  const components = useMemo(
+    () => createMarkdownComponents(handleImageZoom, onFileOpen, resolvedCitations),
+    [handleImageZoom, onFileOpen, resolvedCitations],
+  );
+  // 流式期间 resolvedCitations 往往还是空的（元数据要等正文流完才下发），
+  // 但角标本身必须立刻渲染成上标，所以这里单独盯住正文里有没有 [N]。
+  // 用布尔值而不是 content 本身作依赖，避免每个 delta 都重建插件数组。
+  const hasInlineCitationMarker = useMemo(() => /\[\d{1,2}\]/.test(content), [content]);
+  const remarkPlugins = useMemo(() => {
+    const base = isStreaming
+      ? [remarkGfm, remarkGroupImageParagraphs]
+      : [remarkGfm, remarkMath, remarkGroupImageParagraphs];
+    if ((resolvedCitations && resolvedCitations.length > 0) || hasInlineCitationMarker) {
+      base.push(createRemarkCitationPlugin(resolvedCitations, citationDisplayMap, Boolean(isStreaming)));
+    }
+    if (isStreaming) return base;
+    if (artifactFiles !== undefined) {
+      base.push(createRemarkArtifactFileTextPlugin(artifactFiles));
+    }
+    return base;
+  }, [artifactFiles, resolvedCitations, citationDisplayMap, isStreaming]);
+
+  // scrape 兜底轮（citations prop 为空、引用是从本条正文尾部列表刮出来的）自带
+  // 展示资格：列表本来就长在这条消息里，天然每轮只有一条，无需 footer 标记。
+  const shouldShowSourcesBar = !isStreaming
+    && resolvedCitations.length > 0
+    && (Boolean(showSourcesBar) || !(citations && citations.length > 0));
 
   return (
-    <div className={`${className || ''} ${showFadeIn ? 'streaming-fade-in' : ''}`.trim()}>
+    <div className={className}>
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
         rehypePlugins={isStreaming ? undefined : fullRehypePlugins}
@@ -97,6 +269,16 @@ export function Markdown({
       >
         {content}
       </ReactMarkdown>
+      {shouldShowSourcesBar ? (
+        <CitationSourcesBar citations={resolvedCitations} displayMap={citationDisplayMap} />
+      ) : null}
+      {activeLightboxImages.length > 0 ? (
+        <ImageLightbox
+          images={activeLightboxImages}
+          startIndex={zoomIndex >= 0 ? zoomIndex : 0}
+          onClose={() => setZoomedSrc(null)}
+        />
+      ) : null}
     </div>
   );
 }

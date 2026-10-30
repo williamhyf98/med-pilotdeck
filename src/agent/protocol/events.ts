@@ -1,5 +1,5 @@
 import type { CanonicalMessage, CanonicalModelError, CanonicalModelEvent, CanonicalToolCall } from "../../model/index.js";
-import type { PilotDeckToolResult } from "../../tool/index.js";
+import type { PilotDeckToolProgressEvent, PilotDeckToolResult } from "../../tool/index.js";
 import type { AgentError } from "./errors.js";
 import type { AgentTurnResult } from "./result.js";
 import type { AgentLoopTransition } from "./state.js";
@@ -24,6 +24,7 @@ export type AgentEvent =
   | { type: "permission_requested"; sessionId: string; turnId: string; toolCallId: string; toolName: string }
   | { type: "permission_denied"; sessionId: string; turnId: string; toolName: string; reason: string }
   | { type: "tool_result"; sessionId: string; turnId: string; result: PilotDeckToolResult }
+  | PilotDeckToolProgressEvent
   | { type: "tool_results_projected"; sessionId: string; turnId: string; message: CanonicalMessage }
   | { type: "file_artifacts"; sessionId: string; turnId: string; artifacts: FileArtifact[] }
   | { type: "mode_change_requested"; sessionId: string; turnId: string; mode: string }

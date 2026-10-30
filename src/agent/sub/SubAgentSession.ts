@@ -191,8 +191,18 @@ export class SubAgentSession {
     const scoped = new ToolRegistry();
     const allowedSet = new Set(this.options.definition.allowedTools);
     const wildcard = allowedSet.has("*");
+    const inheritedAllowed = this.options.parentConfig.toolPolicy?.allowedTools === undefined
+      ? undefined
+      : new Set(this.options.parentConfig.toolPolicy.allowedTools);
+    const inheritedDenied = new Set(this.options.parentConfig.toolPolicy?.deniedTools ?? []);
     for (const tool of this.options.parentDependencies.tools.registry.list()) {
       if (!wildcard && !allowedSet.has(tool.name)) {
+        continue;
+      }
+      if (
+        (inheritedAllowed !== undefined && !inheritedAllowed.has(tool.name))
+        || inheritedDenied.has(tool.name)
+      ) {
         continue;
       }
       if (tool.name === "enter_plan_mode" || tool.name === "exit_plan_mode") {

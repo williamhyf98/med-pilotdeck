@@ -3,6 +3,7 @@ import type { PromptContribution } from "../../contributions/PromptContribution.
 import type { RouterContribution } from "../../contributions/RouterContribution.js";
 import type { LoadedPluginCommand } from "../loading/PluginCommandLoader.js";
 import type { PilotDeckPluginManifest } from "./manifest.js";
+import type { AgentProfile } from "../../../agent/profile/types.js";
 
 export type PilotDeckPluginSourceKind = "builtin" | "global" | "project";
 
@@ -13,6 +14,7 @@ export type PilotDeckLoadedPlugin = {
   manifest: PilotDeckPluginManifest;
   hooksConfig?: PilotDeckHooksSettings;
   commands?: LoadedPluginCommand[];
+  agents?: AgentProfile[];
   skills?: LoadedPluginCommand[];
   outputStyles?: LoadedPluginCommand[];
   mcpServers?: Record<string, unknown>;

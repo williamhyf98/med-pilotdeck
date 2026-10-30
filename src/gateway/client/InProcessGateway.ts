@@ -14,6 +14,7 @@ import type { AgentError } from "../../agent/index.js";
 import { contentToText } from "../../tool/index.js";
 import type { SessionRouter } from "../SessionRouter.js";
 import { GatewayElicitationBus } from "../elicitation/GatewayElicitationBus.js";
+import { GatewayElicitationChannel } from "../elicitation/GatewayElicitationChannel.js";
 import { GatewayPermissionBus } from "../permission/GatewayPermissionBus.js";
 import { AsyncQueue } from "../util/AsyncQueue.js";
 import type {
@@ -23,9 +24,19 @@ import type {
   GatewayActiveTurnSnapshot,
   GatewayActiveTurnSnapshotInput,
   GatewayElicitationResponseInput,
+  GatewayExtractTraumaFormInput,
+  GatewayExtractTraumaFormOutput,
+  GatewaySkillGenerateDraftInput,
+  GatewaySkillGenerateDraftOutput,
+  GatewaySkillFlowChatInput,
+  GatewaySkillFlowChatOutput,
+  GatewayTraumaCaseInput,
+  GatewayTraumaConfirmTransitionInput,
+  GatewayTraumaOverrideStageInput,
   GatewayEvent,
   GatewayPermissionDecisionInput,
   GatewayRecordAgentStatusMessageInput,
+  GatewayRecordRejectedTurnInput,
   GatewaySessionPermissionGrantInput,
   GatewayServerInfo,
   GatewaySubmitTurnInput,
@@ -47,7 +58,34 @@ import type {
   WebReadSubagentMessagesResult,
   WebForkSessionInput,
   WebForkSessionResult,
+  WebRewindSessionInput,
+  WebRewindSessionResult,
 } from "../protocol/types.js";
+import {
+  createChineseDisplayStreamNormalizer,
+  normalizeChineseDisplayText,
+  subStageLabel,
+} from "../../trauma/displayLabels.js";
+import { validateTurnFormInput } from "../../trauma/factMerge.js";
+import type { CitationMetadata, TurnFormInput } from "../../trauma/types.js";
+import type { KnowledgeQueryRewriter } from "../../trauma/stations/knowledgeQueryRewriter.js";
+import type { KnowledgeQaStation } from "../../trauma/stations/knowledgeQa.js";
+import {
+  resolveTraumaPresentationMemory,
+  type TraumaMemoryContext,
+} from "../../trauma/memory/TraumaMemoryContext.js";
+import type { TraumaMemoryCaptureSink } from "../../trauma/memory/TraumaMemoryCapturePolicy.js";
+import { validateTraumaPreferences } from "../../trauma/memory/TraumaPreferencePolicy.js";
+import type { ValidatedTraumaPreference } from "../../trauma/memory/TraumaPreferencePolicy.js";
+import {
+  buildEffectivePresentationPolicy,
+  renderEffectivePresentationPolicy,
+} from "../../trauma/memory/EffectivePresentationPolicy.js";
+import type { TraumaRagClient } from "../../trauma/rag/client.js";
+import { mergeRetrieval } from "../../trauma/rag/merge.js";
+import { runBaselineRetrieval } from "../../trauma/rag/retrieval.js";
+import type { RetrievalQuery } from "../../trauma/rag/queryPlan.js";
+import type { EvidenceChunk } from "../../trauma/types.js";
 import type {
   CronCreateInput,
   CronCreateResult,
@@ -79,16 +117,141 @@ import type {
   SkillValidationResult,
   SkillWriteInput,
   SkillWriteResult,
+  SkillSetAvailabilityInput,
+  SkillSetAvailabilityResult,
   SkillsListInput,
   SkillsListResult,
 } from "../../extension/skills/types.js";
 import { createVisibleErrorStatusDetail } from "../../status/agentStatus.js";
 import type { TelemetryClient } from "../../telemetry/index.js";
 import type { TelemetryExecutionKind, TelemetryModule } from "../../telemetry/index.js";
+import {
+  projectMetaTypeFromProjectPath,
+  projectTypeKeyFromProjectId,
+} from "../../pilot/paths.js";
+import {
+  PLACEMENT_QUESTION,
+  parsePlacementConfirmation,
+  placementConfirmationOptions,
+  traumaExtractionEvents,
+  traumaPostAnswerProcessEvents,
+  traumaProgressEvents,
+  traumaTurnEvents,
+  type TraumaTurnRunner,
+} from "../../trauma/index.js";
+import { normalizeTraumaIntentPlan, traumaScopeReply } from "../../trauma/formDraft.js";
+import { numberAnswerCitations } from "../../trauma/citations.js";
+import { extractRecentConversationMessages, renderRecentConversation } from "../../trauma/conversationHistory.js";
 
 const PLAN_COMMAND_USAGE = "用法：/plan <任务>\n例如：/plan 设计一个新功能";
 const MAX_GATEWAY_TOOL_RESULT_PREVIEW_CHARS = 20_000;
 const MAX_GATEWAY_TOOL_DATA_STRING_CHARS = 4_000;
+
+/**
+ * 参考来源列表由前端组件渲染，不再拼进正文。这里只负责把「正文里实际出现过
+ * 的合法角标」对应的引用元数据挑出来，在正文流完的瞬间随 assistant_text_end
+ * 一起推给前端——不用等 runner 跑完后续工位。
+ */
+function resolveStreamedCitations(
+  answer: string,
+  citations: CitationMetadata[] | undefined,
+): CitationMetadata[] | undefined {
+  if (!citations || citations.length === 0) return undefined;
+  const used = numberAnswerCitations(answer, citations);
+  return used.length > 0 ? used : undefined;
+}
+
+function traumaCitationMetadata(chunks: EvidenceChunk[]): CitationMetadata[] {
+  return chunks.map((chunk, index) => ({
+    index: index + 1,
+    chunkId: chunk.id,
+    text: chunk.text,
+    score: chunk.retrievalScore,
+    rerankScore: chunk.rerankScore,
+    retrievalMode: chunk.retrievalBackend,
+    title: normalizeChineseDisplayText(chunk.documentTitle),
+    section: normalizeChineseDisplayText(chunk.section || chunk.chapter || chunk.heading || "未标注章节"),
+  }));
+}
+
+/**
+ * RAG evidence payloads (med-tools rag_query / stage_plan) must reach hosts
+ * untruncated: citation popovers parse `chunks[]` out of this text, and the
+ * head+tail preview silently drops the tail chunks — their citations then have
+ * no 原文 to show. Bounded by the retrieval tool itself (top_k ≤ 8, capped
+ * chunk length); the ceiling only guards against a misbehaving server.
+ */
+const CITATION_TOOL_NAME_RE = /rag_query|rag_search|stage_plan/i;
+const MAX_CITATION_RESULT_CHARS = 400_000;
+
+function previewGatewayToolResultText(toolName: string | undefined, fullText: string): string {
+  if (toolName && CITATION_TOOL_NAME_RE.test(toolName) && fullText.length <= MAX_CITATION_RESULT_CHARS) {
+    return fullText;
+  }
+  return limitGatewayToolResultPreview(fullText);
+}
+
+function isTraumaProject(projectKey: string | undefined): projectKey is string {
+  return projectTypeKeyFromProjectId(projectKey) === "trauma_med"
+    || projectMetaTypeFromProjectPath(projectKey) === "war_trauma";
+}
+
+function traumaPreferenceAcknowledgement(
+  preferences: readonly ValidatedTraumaPreference[],
+): string {
+  return `已记录你的表达偏好：${preferences.map((item) => item.directive).join("；")}。后续回答会按此调整；医学事实、证据与安全要求保持不变。`;
+}
+
+function hasNonPreferenceRemainder(
+  rawText: string,
+  preferences: readonly ValidatedTraumaPreference[],
+): boolean {
+  let remainder = rawText;
+  for (const preference of preferences) {
+    remainder = remainder.replace(preference.sourceSpan, "");
+  }
+  return remainder.replace(/[\s，。！？、；：,.!?;:'"“”‘’（）()\[\]{}-]+/gu, "").length > 0;
+}
+
+function summarizeTraumaForm(form: TurnFormInput): string {
+  const vitalLabels: Array<[keyof TurnFormInput["vitals"], string]> = [
+    ["respiratoryRate", "呼吸"],
+    ["systolicBloodPressure", "收缩压"],
+    ["heartRate", "心率"],
+    ["temperature", "体温"],
+    ["spo2", "血氧"],
+  ];
+  const vitalSummary = vitalLabels
+    .filter(([key]) => form.vitals[key] !== undefined)
+    .map(([key, label]) => `${label} ${form.vitals[key]}`)
+    .join("，");
+  const parts = [
+    `救治级别：${form.statedSubStage ? subStageLabel(form.statedSubStage) : "由系统判定"}`,
+    form.injuryNarrative.trim() ? `伤情：${form.injuryNarrative.trim()}` : null,
+    form.treatmentNarrative.trim() ? `已做处置：${form.treatmentNarrative.trim()}` : null,
+    form.evacuationNarrative.trim() ? `后送条件：${form.evacuationNarrative.trim()}` : null,
+    form.note.trim() ? `补充说明：${form.note.trim()}` : null,
+    vitalSummary ? `生命体征：${vitalSummary}` : null,
+  ].filter((part): part is string => Boolean(part));
+  return parts.map((part) => `- ${part}`).join("\n");
+}
+
+function tryParseJsonRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
 
 export type InProcessGatewayOptions = {
   now?: () => Date;
@@ -103,6 +266,7 @@ export type InProcessGatewayOptions = {
   readSessionMessages?: (input: WebReadSessionMessagesInput) => Promise<WebReadSessionMessagesResult>;
   readSubagentMessages?: (input: WebReadSubagentMessagesInput) => Promise<WebReadSubagentMessagesResult>;
   forkSession?: (input: WebForkSessionInput) => Promise<WebForkSessionResult>;
+  rewindSession?: (input: WebRewindSessionInput) => Promise<WebRewindSessionResult>;
   recordAgentStatusMessage?: (input: GatewayRecordAgentStatusMessageInput) => Promise<{ recorded: boolean }>;
   /**
    * Web Phase 3 — pluggable project enumerator + describer.
@@ -162,6 +326,63 @@ export type InProcessGatewayOptions = {
     runId: string;
   }) => void;
   telemetry?: TelemetryClient;
+  /** Builds the deterministic runner used by war_trauma turns. */
+  traumaRunnerFactory?: (input: {
+    projectKey: string;
+    sessionKey: string;
+  }) => TraumaTurnRunner | Promise<TraumaTurnRunner>;
+  traumaKnowledgeQaFactory?: (input: {
+    projectKey: string;
+    sessionKey: string;
+  }) => Promise<{
+    rewriter: KnowledgeQueryRewriter;
+    rag: TraumaRagClient;
+    qa: KnowledgeQaStation;
+  }>;
+  traumaPreferenceProvider?: (input: {
+    projectKey: string;
+    sessionKey: string;
+  }) => TraumaMemoryContext | null | Promise<TraumaMemoryContext | null>;
+  /**
+   * 战创伤长期记忆写入（Task 7，`feedback_only`）。
+   *
+   * 只在回合正常完成后调用，且只交出用户输入——助手回答不进候选池。
+   * 判定与脱敏都在 sink 内部，网关不做内容判断。
+   */
+  captureTraumaMemory?: (
+    input: { projectKey: string } & Parameters<TraumaMemoryCaptureSink>[0],
+  ) => void;
+  /** Persists the bypassed user/assistant pair to the normal transcript. */
+  recordTraumaTurn?: (input: {
+    projectKey: string;
+    sessionKey: string;
+    runId: string;
+    userText: string;
+    assistantText: string;
+    attachments?: Array<{ path: string; name: string; size?: number; mimeType?: string; relativePath?: string }>;
+    aiTitle?: string;
+    citations?: CitationMetadata[];
+    processMessages?: CanonicalMessage[];
+  }) => void | Promise<void>;
+  traumaCaseReader?: (input: GatewayTraumaCaseInput) => Promise<{
+    current: import("../../trauma/types.js").CaseState | null;
+    snapshots: import("../../trauma/types.js").CaseSnapshot[];
+  }>;
+  /** Builds the stateless extractor used by the traumaExtractForm RPC. */
+  traumaExtractorFactory?: (input: {
+    projectKey: string;
+    sessionKey: string;
+  }) => import("../../trauma/stations/extractor.js").ExtractionStation | Promise<import("../../trauma/stations/extractor.js").ExtractionStation>;
+  /** Builds the stateless draft station used by the skillGenerateDraft RPC. */
+  skillDraftFactory?: (input: {
+    projectKey: string;
+    sessionKey: string;
+  }) => import("../../extension/skills/draftStation.js").SkillDraftStation | Promise<import("../../extension/skills/draftStation.js").SkillDraftStation>;
+  /** Builds the stateless flow-chat station used by the skillFlowChat RPC. */
+  skillFlowChatFactory?: (input: {
+    projectKey: string;
+    sessionKey: string;
+  }) => import("../../extension/skills/flowChatStation.js").SkillFlowChatStation | Promise<import("../../extension/skills/flowChatStation.js").SkillFlowChatStation>;
 };
 
 const ACTIVE_TURN_EVENT_LIMIT = 500;
@@ -176,6 +397,26 @@ type ActiveTurnReplay = {
 };
 
 export class InProcessGateway implements Gateway {
+  async recordRejectedTurn(input: GatewayRecordRejectedTurnInput): Promise<{ recorded: boolean }> {
+    if (!input.sessionKey || !input.projectKey || !input.runId || typeof input.userText !== "string"
+      || typeof input.reply !== "string" || input.reply.length > 2048) {
+      throw new Error("Invalid policy refusal turn.");
+    }
+    if (!this.router.beginTurn(input.sessionKey, input.runId)) {
+      throw new Error("Session already has an active turn.");
+    }
+    try {
+      const session = await this.router.getOrCreate({
+        sessionKey: input.sessionKey,
+        projectKey: input.projectKey,
+        channelKey: input.channelKey,
+      });
+      await session.recordRejectedTurn(input.runId, input.userText, input.reply);
+      return { recorded: true };
+    } finally {
+      this.router.endTurn(input.sessionKey, input.runId);
+    }
+  }
   private readonly now: () => Date;
   private readonly uuid: () => string;
   /**
@@ -204,6 +445,8 @@ export class InProcessGateway implements Gateway {
    * while `inFlightTurns` was still populated, racing the next submit.
    */
   private readonly turnCompletions = new Map<string, Promise<void>>();
+  /** Independent cancellation controllers for the Trauma Runner path. */
+  private readonly traumaTurnControllers = new Map<string, { runId: string; controller: AbortController }>();
   constructor(
     private readonly router: SessionRouter,
     private readonly options: InProcessGatewayOptions = {},
@@ -406,13 +649,499 @@ export class InProcessGateway implements Gateway {
             }
           }, input.timeoutMs);
         }
+        if (isTraumaProject(input.projectKey)) {
+          const traumaController = new AbortController();
+          this.traumaTurnControllers.set(input.sessionKey, { runId, controller: traumaController });
+          const traumaAbortSignal = traumaController.signal;
+          let runner: TraumaTurnRunner | undefined;
+          // 先把 turn_started 和逐阶段进度推给宿主，否则界面在整轮结束前只能一直显示「连接中」。
+          const emit = (gatewayEvent: GatewayEvent) => {
+            this.recordActiveTurnEvent(input.sessionKey, gatewayEvent);
+            queue.enqueue(gatewayEvent);
+          };
+          const traumaProcessMessages: CanonicalMessage[] = [];
+          const persistProcessEvent = (gatewayEvent: GatewayEvent) => {
+            if (
+              gatewayEvent.type !== "tool_call_started"
+              && gatewayEvent.type !== "tool_call_finished"
+            ) {
+              return;
+            }
+            const inputPayload = gatewayEvent.type === "tool_call_started"
+              ? tryParseJsonRecord(gatewayEvent.argsPreview)
+              : {};
+            const resultPayload = gatewayEvent.type === "tool_call_finished"
+              ? tryParseJsonRecord(gatewayEvent.resultPreview)
+              : {};
+            if (
+              inputPayload.traumaRunnerStep !== true
+              && resultPayload.traumaRunnerStep !== true
+            ) {
+              return;
+            }
+            if (gatewayEvent.type === "tool_call_started") {
+              traumaProcessMessages.push({
+                role: "assistant",
+                content: [{
+                  type: "tool_call",
+                  id: gatewayEvent.toolCallId,
+                  name: gatewayEvent.name,
+                  input: inputPayload,
+                }],
+                metadata: { purpose: "trauma_runner_step" },
+              });
+              return;
+            }
+            traumaProcessMessages.push({
+              role: "user",
+              content: [{
+                type: "tool_result",
+                toolCallId: gatewayEvent.toolCallId,
+                content: [{
+                  type: "text",
+                  text: typeof gatewayEvent.resultPreview === "string"
+                    ? gatewayEvent.resultPreview
+                    : JSON.stringify(resultPayload),
+                }],
+                isError: !gatewayEvent.ok,
+                raw: {
+                  toolName: gatewayEvent.toolName,
+                  traumaRunnerStep: true,
+                },
+              }],
+              metadata: { purpose: "trauma_runner_step" },
+            });
+          };
+          const emitTraumaProcessEvents = (events: GatewayEvent[]) => {
+            for (const gatewayEvent of events) {
+              persistProcessEvent(gatewayEvent);
+              emit(gatewayEvent);
+            }
+          };
+          emit({ type: "turn_started", runId });
+          let traumaForm = input.traumaForm;
+          let acceptedPreferences: ValidatedTraumaPreference[] = [];
+          let presentationPolicy: string | null | undefined;
+          const loadPresentationPolicy = async (): Promise<string | null> => {
+            if (presentationPolicy !== undefined) return presentationPolicy;
+            const recalled = await resolveTraumaPresentationMemory(
+              this.options.traumaPreferenceProvider
+                ? () => this.options.traumaPreferenceProvider!({
+                  projectKey: input.projectKey!,
+                  sessionKey: input.sessionKey,
+                })
+                : undefined,
+            );
+            presentationPolicy = renderEffectivePresentationPolicy(
+              buildEffectivePresentationPolicy({
+                currentTurn: acceptedPreferences,
+                recalled,
+              }),
+            );
+            return presentationPolicy;
+          };
+          const captureAcceptedPreferences = () => {
+            try {
+              this.options.captureTraumaMemory?.({
+                projectKey: input.projectKey!,
+                sessionId: input.sessionKey,
+                preferences: acceptedPreferences,
+                turnStatus: "completed",
+              });
+            } catch {
+              // Long-term memory is best-effort and must not change a completed response.
+            }
+          };
+          if (input.traumaExtract && input.traumaRawInput?.trim()) {
+            emitTraumaProcessEvents(traumaExtractionEvents({ runId, status: "started" }));
+            try {
+              if (!this.options.traumaExtractorFactory) {
+                throw new Error("war_trauma extractor is not configured");
+              }
+              const station = await this.options.traumaExtractorFactory({
+                projectKey: input.projectKey,
+                sessionKey: input.sessionKey,
+              });
+              const extracted = await station.extract({
+                rawText: input.traumaRawInput.trim(),
+                caseHistory: "",
+              });
+              if (traumaAbortSignal.aborted) {
+                throw new Error("turn aborted");
+              }
+              const rawText = input.traumaRawInput.trim();
+              const plan = normalizeTraumaIntentPlan(rawText, extracted);
+              acceptedPreferences = validateTraumaPreferences({
+                rawText,
+                preferences: plan.preferences,
+              }).accepted;
+              await loadPresentationPolicy();
+              if (plan.primaryIntent !== "case_update") {
+                emitTraumaProcessEvents(traumaExtractionEvents({
+                  runId,
+                  status: "finished",
+                  ok: true,
+                  detail: plan.scopeReason
+                    ? `输入意图：${plan.primaryIntent}；${plan.scopeReason}`
+                    : `输入意图：${plan.primaryIntent}`,
+                }));
+                if (plan.primaryIntent === "knowledge_question" && this.options.traumaKnowledgeQaFactory) {
+                  const knowledge = await this.options.traumaKnowledgeQaFactory({
+                    projectKey: input.projectKey,
+                    sessionKey: input.sessionKey,
+                  });
+                  const recent = this.options.readSessionMessages
+                    ? await this.options.readSessionMessages({
+                      sessionKey: input.sessionKey,
+                      projectKey: input.projectKey,
+                      limit: 12,
+                      direction: "backward",
+                    }).then((result) => renderRecentConversation(
+                      extractRecentConversationMessages(
+                        result.messages,
+                        input.traumaRawInput?.trim(),
+                      ),
+                    )).catch(() => "")
+                    : "";
+                  const rewrite = await knowledge.rewriter.rewrite({
+                    rawQuestion: input.traumaRawInput.trim(),
+                    recentConversation: recent,
+                    signal: traumaAbortSignal,
+                  });
+                  const retrievalQueries: RetrievalQuery[] = rewrite.rewrittenQueries.map((item) => ({
+                    kind: "knowledge",
+                    query: item.query,
+                    reason: item.reason,
+                    critical: false,
+                  }));
+                  const results = await runBaselineRetrieval({
+                    queries: retrievalQueries,
+                    rag: knowledge.rag,
+                    signal: traumaAbortSignal,
+                  });
+                  const merged = mergeRetrieval({
+                    queries: retrievalQueries,
+                    results,
+                  });
+                  const citations = traumaCitationMetadata(merged.promptChunks);
+                  let streamedText = "";
+                  let citationsSent = false;
+                  const displayStream = createChineseDisplayStreamNormalizer();
+                  const qaResponse = await knowledge.qa.answer({
+                    question: input.traumaRawInput.trim(),
+                    rewrittenQueries: rewrite.rewrittenQueries.map((item) => item.query),
+                    promptChunks: merged.promptChunks,
+                    presentationPolicy: presentationPolicy ?? null,
+                    signal: traumaAbortSignal,
+                    onNaturalLanguageDelta: (text) => {
+                      const displayText = displayStream.push(text);
+                      if (!displayText) return;
+                      streamedText += displayText;
+                      const attach = !citationsSent && citations.length > 0;
+                      if (attach) citationsSent = true;
+                      emit({
+                        type: "assistant_text_delta",
+                        text: displayText,
+                        runId,
+                        ...(attach ? { citations } : {}),
+                      });
+                    },
+                    onNaturalLanguageEnd: () => {
+                      const finalText = displayStream.flush();
+                      if (finalText) {
+                        streamedText += finalText;
+                        emit({ type: "assistant_text_delta", text: finalText, runId });
+                      }
+                    },
+                  });
+                  if (!streamedText && qaResponse.naturalLanguageAnswer) {
+                    streamedText = normalizeChineseDisplayText(qaResponse.naturalLanguageAnswer);
+                    emit({
+                      type: "assistant_text_delta",
+                      text: streamedText,
+                      runId,
+                      ...(citations.length > 0 ? { citations } : {}),
+                    });
+                  }
+                  const usedCitations = resolveStreamedCitations(streamedText, citations);
+                  const finalCitations = usedCitations && usedCitations.length > 0
+                    ? usedCitations
+                    : undefined;
+                  emit({
+                    type: "assistant_text_end",
+                    runId,
+                    ...(finalCitations ? { citations: finalCitations } : {}),
+                  });
+                  await this.options.recordTraumaTurn?.({
+                    projectKey: input.projectKey,
+                    sessionKey: input.sessionKey,
+                    runId,
+                    userText: input.traumaRawInput.trim(),
+                    assistantText: normalizeChineseDisplayText(streamedText),
+                    ...(input.traumaAttachments?.length ? { attachments: input.traumaAttachments } : {}),
+                    aiTitle: "战创伤知识问答",
+                    ...(finalCitations ? { citations: finalCitations } : {}),
+                  });
+                  captureAcceptedPreferences();
+                  emit({ type: "turn_completed", usage: {}, finishReason: "completed", runId });
+                  return;
+                }
+                let assistantText: string;
+                if (acceptedPreferences.length > 0) {
+                  assistantText = traumaPreferenceAcknowledgement(acceptedPreferences);
+                  if (plan.primaryIntent === "system_help") {
+                    assistantText += `\n\n${traumaScopeReply("system_help")}`;
+                  } else if (
+                    plan.primaryIntent === "out_of_scope"
+                    && hasNonPreferenceRemainder(rawText, acceptedPreferences)
+                  ) {
+                    assistantText += "\n\n你消息中的其余内容不属于战创伤救治范围，因此本页面不作答。";
+                  }
+                } else {
+                  assistantText = traumaScopeReply(
+                    plan.primaryIntent === "knowledge_question"
+                      ? "domain_question_no_case"
+                      : plan.primaryIntent,
+                  );
+                }
+                emit({ type: "assistant_text_delta", text: assistantText, runId });
+                emit({ type: "assistant_text_end", runId });
+                await this.options.recordTraumaTurn?.({
+                  projectKey: input.projectKey,
+                  sessionKey: input.sessionKey,
+                  runId,
+                  userText: input.traumaRawInput.trim(),
+                  assistantText,
+                  ...(input.traumaAttachments?.length ? { attachments: input.traumaAttachments } : {}),
+                  aiTitle: "非推演输入",
+                  processMessages: traumaProcessMessages,
+                });
+                // 非推演输入恰恰是协作规则最常出现的地方（「以后先给结论」），
+                // 所以这条路径同样要捕获。
+                captureAcceptedPreferences();
+                emit({
+                  type: "turn_completed",
+                  usage: {},
+                  finishReason: "completed",
+                  runId,
+                });
+                return;
+              }
+              if (!this.options.traumaRunnerFactory) {
+                throw new Error("war_trauma runner is not configured");
+              }
+              runner = await this.options.traumaRunnerFactory({
+                projectKey: input.projectKey,
+                sessionKey: input.sessionKey,
+              });
+              traumaForm = plan.caseForm;
+              if (!validateTurnFormInput(traumaForm)) {
+                throw new Error("抽取结果未包含可用于推演的病例信息");
+              }
+              if (input.traumaForm?.statedSubStage) {
+                traumaForm.statedSubStage = input.traumaForm.statedSubStage;
+              }
+              emitTraumaProcessEvents(traumaExtractionEvents({
+                runId,
+                status: "finished",
+                ok: true,
+              }));
+            } catch (error) {
+              if (traumaAbortSignal.aborted) throw error;
+              traumaForm = {
+                statedSubStage: input.traumaForm?.statedSubStage ?? null,
+                injuryNarrative: input.traumaRawInput.trim().slice(0, 1000),
+                treatmentNarrative: "",
+                evacuationNarrative: "",
+                note: "",
+                vitals: {},
+              };
+              emitTraumaProcessEvents(traumaExtractionEvents({
+                runId,
+                status: "finished",
+                ok: false,
+                detail: `抽取失败，已使用自由文本继续推演：${error instanceof Error ? error.message : String(error)}`,
+              }));
+            }
+          }
+          if (!validateTurnFormInput(traumaForm)) {
+            throw new Error("war_trauma turns require a valid traumaForm");
+          }
+          await loadPresentationPolicy();
+          if (!runner) {
+            if (!this.options.traumaRunnerFactory) {
+              throw new Error("war_trauma runner is not configured");
+            }
+            runner = await this.options.traumaRunnerFactory({
+              projectKey: input.projectKey,
+              sessionKey: input.sessionKey,
+            });
+          }
+          let assistantTextStreamed = false;
+          let assistantTextEnded = false;
+          let postAnswerProcessStarted = false;
+          let assistantCitations: CitationMetadata[] | undefined;
+          let assistantStreamText = "";
+          let assistantCandidateCitationsSent = false;
+          const displayStream = createChineseDisplayStreamNormalizer();
+          const elicitation = new GatewayElicitationChannel({
+            sessionKey: input.sessionKey,
+            bus: this.elicitationBus,
+            emit,
+            uuid: this.uuid,
+          });
+          const response = await runner.runTurn({
+            projectId: input.projectKey,
+            sessionId: input.sessionKey,
+            messageId: runId,
+            form: traumaForm,
+            rawInput: input.traumaRawInput,
+            presentationPolicy: presentationPolicy ?? null,
+            ...(input.traumaAttachments?.length ? { attachments: input.traumaAttachments } : {}),
+            now: this.now().toISOString(),
+            abortSignal: traumaAbortSignal,
+            onProgress: (progress) => {
+              emitTraumaProcessEvents(traumaProgressEvents({ progress, runId }));
+            },
+            onAssistantTextDelta: (text) => {
+              if (!text) return;
+              const displayText = displayStream.push(text);
+              if (!displayText) return;
+              assistantTextStreamed = true;
+              assistantStreamText += displayText;
+              // 候选引用元数据（本轮 promptChunks 全量）在推理开始前就已就绪，
+              // 随第一个 delta 一起发出去，前端的 [N] 角标才能在流式期间就渲染
+              // 成可悬浮的蓝色上标，而不是等正文结束。编号沿用 promptChunks
+              // 顺序，所以候选和最终列表的编号是一致的。
+              const attachCitations = !assistantCandidateCitationsSent
+                && assistantCitations
+                && assistantCitations.length > 0;
+              if (attachCitations) assistantCandidateCitationsSent = true;
+              emit({
+                type: "assistant_text_delta",
+                text: displayText,
+                runId,
+                ...(attachCitations ? { citations: assistantCitations } : {}),
+              });
+            },
+            onAssistantCitations: (citations) => {
+              assistantCitations = citations;
+            },
+            onAssistantTextEnd: () => {
+              if (assistantTextEnded) return;
+              const finalStreamDelta = displayStream.flush();
+              if (finalStreamDelta) {
+                assistantTextStreamed = true;
+                assistantStreamText += finalStreamDelta;
+                emit({
+                  type: "assistant_text_delta",
+                  text: finalStreamDelta,
+                  runId,
+                });
+              }
+              if (assistantTextStreamed) {
+                assistantTextEnded = true;
+                emit({
+                  type: "assistant_text_end",
+                  runId,
+                  ...(() => {
+                    const streamedCitations = resolveStreamedCitations(
+                      assistantStreamText,
+                      assistantCitations,
+                    );
+                    return streamedCitations ? { citations: streamedCitations } : {};
+                  })(),
+                });
+                postAnswerProcessStarted = true;
+                emitTraumaProcessEvents(traumaPostAnswerProcessEvents({ runId, status: "started" }));
+              }
+            },
+            requestPlacementConfirmation: async (request) => {
+              const answer = await elicitation.askUser({
+                toolCallId: `trauma-placement:${runId}`,
+                toolName: "ask_user_question",
+                questions: [{
+                  header: "确认推演级别",
+                  question: PLACEMENT_QUESTION,
+                  options: placementConfirmationOptions(request),
+                  // 级别必须落在允许的子级里，自由填空只会让后续推演无从判断。
+                  allowOther: false,
+                }],
+                metadata: {
+                  source: "trauma_pending_placement",
+                  proposedStage: request.proposed.stage,
+                  proposedSubStage: request.proposed.subStage,
+                },
+              });
+              // 用户关掉/跳过确认卡时按建议继续，保证推演不会停在这一步。
+              if (answer.type !== "answered") return { choice: "proposed" };
+              const selected = Object.values(answer.answers).flat()[0];
+              return parsePlacementConfirmation(request, selected);
+            },
+          });
+          const finalStreamDelta = displayStream.flush();
+          if (finalStreamDelta) {
+            assistantTextStreamed = true;
+            assistantStreamText += finalStreamDelta;
+            emit({
+              type: "assistant_text_delta",
+              text: finalStreamDelta,
+              runId,
+            });
+          }
+          if (assistantTextStreamed && !assistantTextEnded) {
+            assistantTextEnded = true;
+            const streamedCitations = resolveStreamedCitations(
+              assistantStreamText,
+              assistantCitations,
+            );
+            emit({
+              type: "assistant_text_end",
+              runId,
+              ...(streamedCitations ? { citations: streamedCitations } : {}),
+            });
+            postAnswerProcessStarted = true;
+            emitTraumaProcessEvents(traumaPostAnswerProcessEvents({ runId, status: "started" }));
+          }
+          if (postAnswerProcessStarted) {
+            emitTraumaProcessEvents(traumaPostAnswerProcessEvents({ runId, status: "finished" }));
+          }
+          await this.options.recordTraumaTurn?.({
+            projectKey: input.projectKey,
+            sessionKey: input.sessionKey,
+            runId,
+            userText: input.traumaRawInput?.trim() || summarizeTraumaForm(traumaForm),
+            assistantText: normalizeChineseDisplayText(response.naturalLanguageAnswer),
+            ...(input.traumaAttachments?.length ? { attachments: input.traumaAttachments } : {}),
+            aiTitle: normalizeChineseDisplayText(response.memo.title),
+            ...(assistantCitations && assistantCitations.length > 0 ? { citations: assistantCitations } : {}),
+            processMessages: traumaProcessMessages,
+          });
+          captureAcceptedPreferences();
+          const displayResponse = {
+            ...response,
+            naturalLanguageAnswer: normalizeChineseDisplayText(response.naturalLanguageAnswer),
+          };
+          for (const gatewayEvent of traumaTurnEvents({
+            response: displayResponse,
+            runId,
+            version: response.caseVersion,
+            turnStartedAlreadyEmitted: true,
+            includeAssistantText: !assistantTextStreamed,
+          })) {
+            emit(gatewayEvent);
+          }
+          return;
+        }
         const permissionSettings = readPermissionSettings();
         const inputMode = normalizeGatewayModeForLegacyInput((input as { mode?: unknown }).mode);
         const runMode = normalizeGatewayRunMode((input as { runMode?: unknown }).runMode)
           ?? (inputMode === "plan" ? "plan" : "agent");
         const permissionMode = inputMode ?? (permissionSettings.skipPermissions ? "bypassPermissions" : undefined);
         const basePermissionMode = normalizeGatewayModeForLegacyInput((input as { basePermissionMode?: unknown }).basePermissionMode);
-        const allowPlanModeTools = input.allowPlanModeTools ?? inputMode === "plan";
+        const allowPlanModeTools = inputMode === "plan"
+          && runMode === "plan"
+          && input.allowPlanModeTools !== false;
         const persistedRules = permissionSettingsToRuleSet(permissionSettings);
         const sessionAllowRules = this.sessionPermissionGrants.get(input.sessionKey) ?? [];
         this.options.telemetry?.trackFeatureLoopStage({
@@ -448,6 +1177,9 @@ export class InProcessGateway implements Gateway {
           {
             turnId: runId,
             maxTurns: input.maxTurns,
+            maxToolCalls: input.maxToolCalls,
+            ...(input.profile !== undefined ? { profile: input.profile } : {}),
+            ...(input.turnOverrides !== undefined ? { turnOverrides: input.turnOverrides } : {}),
             runMode,
             permissionMode,
             basePermissionMode,
@@ -507,6 +1239,21 @@ export class InProcessGateway implements Gateway {
         });
         if (this.turnCompletions.get(input.sessionKey) === turnDone) {
           const message = error instanceof Error ? error.message : String(error);
+          const traumaController = this.traumaTurnControllers.get(input.sessionKey);
+          const traumaAborted = traumaController?.runId === runId && traumaController.controller.signal.aborted;
+          if (traumaAborted) {
+            const gatewayEvent: GatewayEvent = {
+              type: "error",
+              runId,
+              code: "turn_aborted",
+              message: "本轮推演已停止。",
+              recoverable: true,
+              userHint: "本轮推演已停止，未保存新的推演结果。",
+            };
+            this.recordActiveTurnEvent(input.sessionKey, gatewayEvent);
+            queue.enqueue(gatewayEvent);
+            return;
+          }
           await emitGatewayFailureStatus(createGatewayFailureStatus({
             event: "gateway_submit_failed",
             code: "gateway_submit_failed",
@@ -525,6 +1272,10 @@ export class InProcessGateway implements Gateway {
           queue.enqueue(gatewayEvent);
         }
       } finally {
+        const traumaController = this.traumaTurnControllers.get(input.sessionKey);
+        if (traumaController?.runId === runId) {
+          this.traumaTurnControllers.delete(input.sessionKey);
+        }
         if (timeoutHandle) {
           clearTimeout(timeoutHandle);
           timeoutHandle = undefined;
@@ -573,6 +1324,10 @@ export class InProcessGateway implements Gateway {
 
   async abortTurn(input: { sessionKey: string; runId?: string; reason?: string }): Promise<void> {
     const reason = input.reason ?? (input.runId ? `aborted:${input.runId}` : "aborted");
+    const traumaController = this.traumaTurnControllers.get(input.sessionKey);
+    if (traumaController && (!input.runId || traumaController.runId === input.runId)) {
+      traumaController.controller.abort(reason);
+    }
     await this.router.abort(input.sessionKey, reason);
     // Wait for the in-flight `submitTurn` (if any) to fully unwind so
     // `inFlightTurns` has been cleared by the time the RPC response is
@@ -677,6 +1432,106 @@ export class InProcessGateway implements Gateway {
     return { delivered: true };
   }
 
+  async traumaConfirmTransition(input: GatewayTraumaConfirmTransitionInput) {
+    if (!this.options.traumaRunnerFactory || !isTraumaProject(input.projectKey)) {
+      throw new Error("war_trauma runner is not configured");
+    }
+    const runner = await this.options.traumaRunnerFactory({
+      projectKey: input.projectKey,
+      sessionKey: input.sessionKey,
+    });
+    return runner.confirmTransition({
+      projectId: input.projectKey,
+      sessionId: input.sessionKey,
+      answer: input.answer,
+      expectedVersion: input.expectedVersion,
+    });
+  }
+
+  async traumaGetCase(input: GatewayTraumaCaseInput) {
+    if (!this.options.traumaCaseReader) {
+      throw new Error("war_trauma case reader is not configured");
+    }
+    // A project that is not a war_trauma project simply has no case. Answer
+    // like the registry's reader does instead of turning the read into a 500.
+    if (!isTraumaProject(input.projectKey)) {
+      return { current: null, snapshots: [] };
+    }
+    return this.options.traumaCaseReader(input);
+  }
+
+  async traumaOverrideStage(input: GatewayTraumaOverrideStageInput) {
+    if (!this.options.traumaRunnerFactory || !isTraumaProject(input.projectKey)) {
+      throw new Error("war_trauma runner is not configured");
+    }
+    const runner = await this.options.traumaRunnerFactory({
+      projectKey: input.projectKey,
+      sessionKey: input.sessionKey,
+    });
+    return runner.overrideStage({
+      projectId: input.projectKey,
+      sessionId: input.sessionKey,
+      actorId: input.actorId,
+      toStage: input.toStage,
+      toSubStage: input.toSubStage,
+      reason: input.reason,
+      riskAcknowledged: input.riskAcknowledged,
+      blockedOverrideConfirmed: input.blockedOverrideConfirmed,
+    });
+  }
+
+  async traumaExtractForm(
+    input: GatewayExtractTraumaFormInput,
+  ): Promise<GatewayExtractTraumaFormOutput> {
+    if (!this.options.traumaExtractorFactory || !isTraumaProject(input.projectKey)) {
+      throw new Error("war_trauma extractor is not configured");
+    }
+    const station = await this.options.traumaExtractorFactory({
+      projectKey: input.projectKey,
+      sessionKey: input.sessionKey,
+    });
+    const extracted = await station.extract({
+      rawText: input.rawText,
+      caseHistory: input.caseHistory,
+    });
+    return { extracted };
+  }
+
+  async skillGenerateDraft(
+    input: GatewaySkillGenerateDraftInput,
+  ): Promise<GatewaySkillGenerateDraftOutput> {
+    if (!this.options.skillDraftFactory) {
+      throw new Error("skill draft generation is not configured");
+    }
+    const station = await this.options.skillDraftFactory({
+      projectKey: input.projectKey,
+      sessionKey: input.sessionKey,
+    });
+    const draft = await station.generate({
+      conversation: input.conversation,
+      existingSlugs: input.existingSlugs ?? [],
+      source: input.source,
+    });
+    return { draft };
+  }
+
+  async skillFlowChat(
+    input: GatewaySkillFlowChatInput,
+  ): Promise<GatewaySkillFlowChatOutput> {
+    if (!this.options.skillFlowChatFactory) {
+      throw new Error("skill flow chat is not configured");
+    }
+    const station = await this.options.skillFlowChatFactory({
+      projectKey: input.projectKey,
+      sessionKey: input.sessionKey,
+    });
+    const result = await station.chat({
+      flow: input.flow,
+      messages: input.messages,
+    });
+    return { reply: result.reply, flow: result.flow };
+  }
+
   async permissionDecide(input: GatewayPermissionDecisionInput): Promise<{ delivered: boolean }> {
     const entry = this.permissionBus.consume(input.sessionKey, input.requestId);
     if (!entry) return { delivered: false };
@@ -731,6 +1586,25 @@ export class InProcessGateway implements Gateway {
       );
     }
     return this.options.forkSession(input);
+  }
+
+  async rewindSession(input: WebRewindSessionInput): Promise<WebRewindSessionResult> {
+    if (!this.options.rewindSession) {
+      throw new Error(
+        "rewind_session is not configured. Wire `rewindSession` via createLocalGateway.",
+      );
+    }
+    if (this.router.isTurnInFlight(input.sessionKey)) {
+      const error = new Error("Cannot rewind while a turn is running for this session.");
+      (error as Error & { code?: string }).code = "rewind_turn_in_flight";
+      throw error;
+    }
+    const result = await this.options.rewindSession(input);
+    // Evict the cached session so the next turn resumes from the truncated
+    // transcript instead of the stale in-memory history.
+    await this.router.close(input.sessionKey);
+    this.sessionPermissionGrants.delete(input.sessionKey);
+    return result;
   }
 
   async listProjects(): Promise<WebListProjectsResult> {
@@ -806,6 +1680,12 @@ export class InProcessGateway implements Gateway {
 
   async skillWrite(input: SkillWriteInput): Promise<SkillWriteResult> {
     return this.requireSkills().write(input);
+  }
+
+  async skillSetAvailability(
+    input: SkillSetAvailabilityInput,
+  ): Promise<SkillSetAvailabilityResult> {
+    return this.requireSkills().setAvailability(input);
   }
 
   async skillCreate(input: SkillCreateInput): Promise<SkillCreateResult> {
@@ -1341,6 +2221,35 @@ function mapAgentEventForTurn(event: AgentEvent, runId: string): GatewayEvent[] 
       return [{ type: "model_request_started", model: event.model, provider: event.provider }];
     case "model_event":
       return mapModelEvent(event.event, runId);
+    case "tool_progress":
+      if (
+        event.metadata?.channel === "assistant_text_delta"
+        && typeof event.metadata.text === "string"
+      ) {
+        return [{ type: "assistant_text_delta", text: event.metadata.text }];
+      }
+      if (
+        event.metadata?.channel === "medical_activity"
+        && typeof event.metadata.activityId === "string"
+        && typeof event.metadata.title === "string"
+        && ["running", "completed", "failed"].includes(String(event.metadata.state))
+      ) {
+        return [{
+          type: "tool_activity",
+          activityId: event.metadata.activityId,
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          title: event.metadata.title,
+          ...(typeof event.metadata.detail === "string" ? { detail: event.metadata.detail } : {}),
+          state: event.metadata.state as "running" | "completed" | "failed",
+          phase: "medical",
+          ...(event.metadata.severity === "warning" || event.metadata.severity === "error"
+            ? { severity: event.metadata.severity }
+            : {}),
+          createdAt: event.createdAt,
+        }];
+      }
+      return [];
     case "tool_calls_detected":
       return event.calls.map((call) => ({
         type: "tool_call_started",
@@ -1350,7 +2259,7 @@ function mapAgentEventForTurn(event: AgentEvent, runId: string): GatewayEvent[] 
       }));
     case "tool_result": {
       const fullText = event.result.content.map(contentToText).join("\n");
-      const resultPreview = limitGatewayToolResultPreview(fullText);
+      const resultPreview = previewGatewayToolResultText(event.result.toolName, fullText);
       const lines = fullText.split("\n");
       const lineCount = lines.length;
       const totalBytes = Buffer.byteLength(fullText, "utf-8");
@@ -1619,7 +2528,7 @@ function mapAgentEventForTurn(event: AgentEvent, runId: string): GatewayEvent[] 
       }));
     case "subagent_tool_result": {
       const fullText = event.result.content.map(contentToText).join("\n");
-      const resultPreview = limitGatewayToolResultPreview(fullText);
+      const resultPreview = previewGatewayToolResultText(event.result.toolName, fullText);
       const lines = fullText.split("\n");
       return [{
         type: "agent_status",
@@ -1915,7 +2824,9 @@ function buildAttachmentPathNote(
 
   for (const attachment of attachments) {
     if (!attachment.path) continue;
-    const normalized = safeAllowedAttachmentPath(attachment.path, allowedReadFiles);
+    const resolvedPath = resolve(attachment.path);
+    const normalized = safeAllowedAttachmentPath(attachment.path, allowedReadFiles)
+      ?? (directContentPaths.has(resolvedPath) ? resolvedPath : undefined);
     if (!normalized) continue;
     if (seen.has(normalized)) continue;
     seen.add(normalized);
@@ -2004,19 +2915,6 @@ async function attachmentsToContentBlocks(
   const diagnostics: string[] = [];
 
   for (const att of attachments) {
-    // Folder uploads: never inline bytes; keep the same diagnostics shape as
-    // non-whitelist extensions (e.g. .dcm) so the agent still sees path-only files.
-    if (att.metadata?.skipContentInline === true) {
-      if (att.path) {
-        const ext = extname(resolve(att.path)).toLowerCase();
-        const displayExt = ext || "(none)";
-        diagnostics.push(
-          `File extension ${displayExt} is not in the inline text whitelist; skipped. If this is plain text, use read_file with the exact path; otherwise convert it before inspection.`,
-        );
-      }
-      continue;
-    }
-
     if (att.type === "image" && att.content && att.mimeType) {
       blocks.push({
         type: "image",

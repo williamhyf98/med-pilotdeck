@@ -50,6 +50,44 @@
     "cancelChanges": "Cancel Changes"
   },
   "settingsPage": {
+    "users": {
+      "title": "User management",
+      "newUser": "New user",
+      "username": "Username",
+      "password": "Password",
+      "role": "Role",
+      "roleAdmin": "Admin",
+      "roleUser": "User",
+      "active": "Active",
+      "createdAt": "Created",
+      "lastLogin": "Last login",
+      "storage": "Storage",
+      "actions": "Actions",
+      "create": "Create",
+      "resetPassword": "Reset password",
+      "resetDone": "A new password has been generated. It is shown only once; copy it now and pass it to the user. They are signed out of all sessions.",
+      "newPassword": "New password",
+      "copy": "Copy",
+      "copied": "Copied",
+      "close": "Close",
+      "delete": "Delete",
+      "deleteExplain": "This deletes the account. The user's data directory is archived to archives/users/ rather than removed.",
+      "cannotDeleteSelf": "You cannot delete your own account",
+      "cannotResetSelf": "Change your own password from the Account page",
+      "confirm": "Confirm",
+      "cancel": "Cancel",
+      "selfLockoutWarning": "This will sign you out (you are changing your own account). Continue?",
+      "registration": "Public registration",
+      "registrationOn": "Anyone can register an account from the login page.",
+      "registrationOff": "Only administrators can create accounts.",
+      "errors": {
+        "LAST_ADMIN": "At least one active administrator must remain.",
+        "RESERVED_USERNAME": "This username is reserved. Choose another one.",
+        "USERNAME_TAKEN": "This username is already taken.",
+        "WEAK_CREDENTIALS": "Username or password does not meet the requirements.",
+        "generic": "Operation failed"
+      }
+    },
     "actions": {
       "edit": "Edit",
       "save": "Save",
@@ -58,6 +96,7 @@
     "backToApp": "Back to app",
     "backToSettings": "Back to settings",
     "menu": {
+      "account": "Account",
       "general": "General",
       "modelPool": "Model Pool",
       "agent": "Agents",
@@ -73,9 +112,11 @@
       "officePreview": "Office Preview",
       "privacy": "Security & Privacy",
       "advanced": "Advanced",
-      "about": "About"
+      "about": "About",
+      "users": "User management"
     },
     "titles": {
+      "account": "Account",
       "general": "General",
       "modelPool": "Model Pool",
       "agent": "Agents",
@@ -91,7 +132,8 @@
       "officePreview": "Extensions / Office Preview",
       "privacy": "Security & Privacy",
       "advanced": "Advanced",
-      "about": "About"
+      "about": "About",
+      "users": "User management"
     },
     "contentComingSoon": {
       "title": "Right panel content is not connected yet",
@@ -136,6 +178,7 @@
       "inputSettings": "Input Settings"
     },
     "darkMode": "Dark Mode",
+    "showProcessTrace": "Show tool/process trace",
     "autoExpandTools": "Auto-expand tools",
     "showRawParameters": "Show raw parameters",
     "showThinking": "Show thinking",
@@ -196,10 +239,11 @@
     },
     "appearanceMode": {
       "title": "Theme Mode",
-      "detail": "Follow the system appearance, or pin a light / dark theme.",
-      "system": "Follow System",
+      "detail": "Choose Light, Dark, Warm Clinic, or Command Center.",
       "light": "Light",
-      "dark": "Dark"
+      "dark": "Dark",
+      "warm": "Warm Clinic",
+      "command": "Command Center"
     },
     "chatInput": {
       "title": "Chat & Input",
@@ -763,11 +807,11 @@
       },
       "officePreview": {
         "title": "Office File Preview Service",
-        "description": "Choose how Office files are previewed in read-only mode. PDF always uses PilotDeck's built-in viewer.",
+        "description": "DOCX, XLSX and PPTX use built-in preview by default; legacy Office files automatically use LibreOffice. PDF always uses the built-in viewer.",
         "fields": {
           "service": {
             "label": "Preview service",
-            "description": "Built-in preview needs no installation and supports DOCX, XLSX, and PPTX. LibreOffice supports more legacy formats using print layout."
+            "description": "This option controls DOCX, XLSX and PPTX. Legacy formats always use LibreOffice automatically."
           },
           "binaryPath": {
             "label": "LibreOffice executable path",
@@ -780,14 +824,14 @@
           }
         },
         "options": {
-          "builtin": "Built-in preview (recommended)",
-          "libreOffice": "LibreOffice compatibility preview",
+          "builtin": "Built-in preview for modern files (recommended)",
+          "libreOffice": "LibreOffice print layout for modern files",
           "libreOfficeUnavailable": "LibreOffice (unavailable)",
           "autoDetect": "Auto-detect (no fixed path)",
           "candidateAvailable": "{{path}} (available)",
           "candidateUnavailable": "{{path}} (unavailable)",
-          "candidateAvailableShort": "Available",
-          "candidateUnavailableShort": "Unavailable"
+          "candidateAvailableShort": "Executable (conversion modules unverified)",
+          "candidateUnavailableShort": "Not executable"
         },
         "scan": {
           "button": "Scan",
@@ -796,7 +840,7 @@
         },
         "status": {
           "checking": "Checking LibreOffice...",
-          "available": "LibreOffice is available",
+          "available": "LibreOffice executable detected (conversion modules may still be missing)",
           "unavailable": "LibreOffice is unavailable",
           "unknown": "LibreOffice status is temporarily unavailable",
           "error": "Could not check LibreOffice status",
@@ -805,8 +849,8 @@
           "path": "Path: {{path}}",
           "version": "Version: {{version}}"
         },
-        "builtinNote": "Built-in preview works out of the box: DOCX keeps document layout, XLSX supports worksheet tabs and cell selection, and PPTX supports slide browsing. Legacy DOC, XLS, and PPT files require LibreOffice.",
-        "unavailableWarning": "LibreOffice is selected, but no LibreOffice/soffice executable is available on this machine. Install LibreOffice or switch to Built-in preview."
+        "builtinNote": "DOCX, XLSX and PPTX use built-in preview. DOC, XLS, PPT, WPS, ET, DPS and ODF files are converted automatically by LibreOffice. Legacy files require LibreOffice and the relevant Writer, Calc or Impress component.",
+        "unavailableWarning": "No LibreOffice/soffice executable was detected. Modern files still work with built-in preview; install LibreOffice to preview legacy files."
       },
       "models": {
         "title": "Model Pool",
@@ -962,6 +1006,19 @@
           "description": "Provider/model the memory pipeline calls.",
           "inherit": "inherit (use main agent's model)"
         },
+        "traumaCapture": {
+          "label": "War-trauma memory writes",
+          "description": "War-trauma projects only write collaboration rules to long-term memory: reporting format, wording preferences, workflow rules, and explicit corrections. Vital signs, injury severity, resuscitation stage, and patient identifiers stay in Case State and never enter long-term memory; whatever is kept is redacted before it is stored.",
+          "feedbackOnly": "Collaboration rules only (recommended)",
+          "off": "Do not write"
+        },
+        "maintenanceMode": {
+          "label": "Maintenance Mode",
+          "description": "Applies to all existing and new general medicine and trauma projects. Immediate: index pending content after replies and consolidate changed memories. Scheduled: use the intervals below. Manual: only when requested.",
+          "immediate": "Immediate",
+          "interval": "Scheduled",
+          "manual": "Manual only"
+        },
         "automation": {
           "autoIndex": {
             "label": "Auto index interval (minutes)",
@@ -974,11 +1031,11 @@
         },
         "autoIndexInterval": {
           "label": "Auto index interval",
-          "description": "Interval for automatic file scanning. \"0\" disables the automatic task."
+          "description": "Shared by all projects in scheduled mode. 0 disables time-based indexing; a backlog of 20 turns or Dream preparation can still trigger indexing."
         },
         "autoDreamInterval": {
           "label": "Auto Dream interval",
-          "description": "Interval for automatic memory consolidation. Auto Dream runs only when memory files changed since the last Dream."
+          "description": "Shared by all projects in scheduled mode; 0 disables scheduled Dream. Only changed memories are consolidated. Failures delay retries without changing the maintenance mode."
         },
         "intervalUnits": {
           "minutes": "Minutes",

@@ -4,6 +4,7 @@ import type {
   MemoryResolver,
   MemoryRetrieveInput,
 } from "./MemoryResolver.js";
+import { wrapMemoryRecallBody } from "../prompt/systemPromptCopy.js";
 
 export type MemoryAttachmentBuilderResult = {
   attachments: CanonicalMessage[];
@@ -48,7 +49,7 @@ export class MemoryAttachmentBuilder {
           content: [
             {
               type: "text",
-              text: `<memory-context>\n${result.systemContext.trim()}\n</memory-context>`,
+              text: `<memory-context>\n${wrapMemoryRecallBody(result.systemContext)}\n</memory-context>`,
             },
           ],
         },

@@ -6,9 +6,18 @@ import type {
   Gateway,
   GatewayElicitationResponseInput,
   GatewayEvent,
+  GatewayExtractTraumaFormInput,
+  GatewayExtractTraumaFormOutput,
+  GatewaySkillGenerateDraftInput,
+  GatewaySkillGenerateDraftOutput,
+  GatewaySkillFlowChatInput,
+  GatewaySkillFlowChatOutput,
   GatewayPermissionDecisionInput,
   GatewayServerInfo,
   GatewaySubmitTurnInput,
+  GatewayTraumaCaseInput,
+  GatewayTraumaConfirmTransitionInput,
+  GatewayTraumaOverrideStageInput,
   ListSessionsInput,
   ListSessionsResult,
   NewSessionInput,
@@ -25,6 +34,8 @@ import type {
   WebReadSubagentMessagesResult,
   WebForkSessionInput,
   WebForkSessionResult,
+  WebRewindSessionInput,
+  WebRewindSessionResult,
 } from "../protocol/types.js";
 import type {
   SkillAddressInput,
@@ -41,6 +52,8 @@ import type {
   SkillValidationResult,
   SkillWriteInput,
   SkillWriteResult,
+  SkillSetAvailabilityInput,
+  SkillSetAvailabilityResult,
   SkillsListInput,
   SkillsListResult,
 } from "../../extension/skills/types.js";
@@ -61,6 +74,10 @@ import { parseReloadConfigResult } from "../protocol/reloadConfigResult.js";
 
 export class RemoteGateway implements Gateway {
   constructor(private readonly client: GatewayWsClient) {}
+
+  close(): void {
+    this.client.close();
+  }
 
   onNotification(handler: GatewayWsNotificationHandler): void {
     this.client.onNotification(handler);
@@ -92,6 +109,10 @@ export class RemoteGateway implements Gateway {
 
   async recordAgentStatusMessage(input: import("../protocol/types.js").GatewayRecordAgentStatusMessageInput): Promise<{ recorded: boolean }> {
     return (await this.client.request("record_agent_status_message", input)) as { recorded: boolean };
+  }
+
+  async recordRejectedTurn(input: import("../protocol/types.js").GatewayRecordRejectedTurnInput): Promise<{ recorded: boolean }> {
+    return (await this.client.request("record_rejected_turn", input)) as { recorded: boolean };
   }
 
   async describeServer(): Promise<GatewayServerInfo> {
@@ -126,6 +147,43 @@ export class RemoteGateway implements Gateway {
     return (await this.client.request("elicitation_respond", input)) as { delivered: boolean };
   }
 
+  async traumaConfirmTransition(
+    input: GatewayTraumaConfirmTransitionInput,
+  ): Promise<import("../../trauma/types.js").CaseSnapshot> {
+    return (await this.client.request(
+      "trauma_confirm_transition",
+      input,
+    )) as import("../../trauma/types.js").CaseSnapshot;
+  }
+
+  async traumaGetCase(input: GatewayTraumaCaseInput): Promise<{
+    current: import("../../trauma/types.js").CaseState | null;
+    snapshots: import("../../trauma/types.js").CaseSnapshot[];
+  }> {
+    return (await this.client.request("trauma_get_case", input)) as {
+      current: import("../../trauma/types.js").CaseState | null;
+      snapshots: import("../../trauma/types.js").CaseSnapshot[];
+    };
+  }
+
+  async traumaOverrideStage(
+    input: GatewayTraumaOverrideStageInput,
+  ): Promise<import("../../trauma/types.js").CaseSnapshot> {
+    return (await this.client.request(
+      "trauma_override_stage",
+      input,
+    )) as import("../../trauma/types.js").CaseSnapshot;
+  }
+
+  async traumaExtractForm(
+    input: GatewayExtractTraumaFormInput,
+  ): Promise<GatewayExtractTraumaFormOutput> {
+    return (await this.client.request(
+      "trauma_extract_form",
+      input,
+    )) as GatewayExtractTraumaFormOutput;
+  }
+
   async permissionDecide(input: GatewayPermissionDecisionInput): Promise<{ delivered: boolean }> {
     return (await this.client.request("permission_decide", input)) as { delivered: boolean };
   }
@@ -144,6 +202,10 @@ export class RemoteGateway implements Gateway {
 
   async forkSession(input: WebForkSessionInput): Promise<WebForkSessionResult> {
     return (await this.client.request("fork_session", input)) as WebForkSessionResult;
+  }
+
+  async rewindSession(input: WebRewindSessionInput): Promise<WebRewindSessionResult> {
+    return (await this.client.request("rewind_session", input)) as WebRewindSessionResult;
   }
 
   async listProjects(): Promise<WebListProjectsResult> {
@@ -178,6 +240,12 @@ export class RemoteGateway implements Gateway {
     return (await this.client.request("skill_write", input)) as SkillWriteResult;
   }
 
+  async skillSetAvailability(
+    input: SkillSetAvailabilityInput,
+  ): Promise<SkillSetAvailabilityResult> {
+    return (await this.client.request("skill_set_availability", input)) as SkillSetAvailabilityResult;
+  }
+
   async skillCreate(input: SkillCreateInput): Promise<SkillCreateResult> {
     return (await this.client.request("skill_create", input)) as SkillCreateResult;
   }
@@ -196,6 +264,24 @@ export class RemoteGateway implements Gateway {
 
   async skillScan(input: SkillScanInput): Promise<SkillScanResult> {
     return (await this.client.request("skill_scan", input)) as SkillScanResult;
+  }
+
+  async skillGenerateDraft(
+    input: GatewaySkillGenerateDraftInput,
+  ): Promise<GatewaySkillGenerateDraftOutput> {
+    return (await this.client.request(
+      "skill_generate_draft",
+      input,
+    )) as GatewaySkillGenerateDraftOutput;
+  }
+
+  async skillFlowChat(
+    input: GatewaySkillFlowChatInput,
+  ): Promise<GatewaySkillFlowChatOutput> {
+    return (await this.client.request(
+      "skill_flow_chat",
+      input,
+    )) as GatewaySkillFlowChatOutput;
   }
 
   async alwaysOnApply(input: AlwaysOnApplyInput): Promise<AlwaysOnApplyResult> {

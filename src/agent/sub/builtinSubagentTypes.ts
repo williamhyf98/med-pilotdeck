@@ -63,7 +63,7 @@ Guidelines:
 8. Use absolute paths when referencing files.
 9. Trust the parent's directive: do not re-question its premises.
 10. If the directive is impossible with the allowed tools, say so explicitly in the report.
-11. Prefer fewer tool calls. Do not use web_fetch unless the directive explicitly requires full page content.
+11. Prefer fewer tool calls. Stay on local files, bundled skills, and registered MCP tools.
 12. When the directive provides specific file paths, trust them and use them directly. Do not spend turns searching for or verifying file paths that are already given.
 
 Output format (mandatory; missing any field fails the run):

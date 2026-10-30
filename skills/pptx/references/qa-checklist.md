@@ -1,53 +1,53 @@
-# QA checklist
+# 质量检查清单
 
-## Structural checks
+## 结构检查
 
-- The PPTX opens as a valid OOXML package.
-- Slide count and dimensions match the plan.
-- All intended masters, layouts, images, charts, and relationships are present.
-- No object extends beyond the slide canvas.
-- No unresolved placeholder text remains.
-- Template edits target only frame-map-approved objects.
+- PPTX 作为有效的 OOXML 包打开。
+- 幻灯片数量和尺寸与计划相符。
+- 所有预期的母版、版式、图像、图表和关系均存在。
+- 没有对象超出幻灯片画布。
+- 没有未解析的占位符文本残留。
+- 模板编辑仅针对框架映射批准的对象。
 
-Run `audit`. Treat `failed` as blocking. Treat `passed_with_warnings` as an intermediate state only: inspect every warning, then fix it or add a hash-bound disposition with evidence. Do not convert every heuristic warning into a defect, but do not seal an unresolved warning.
+运行 `audit`。将 `failed` 视为阻断。将 `passed_with_warnings` 仅视为中间状态：检查每一项警告，然后修复它或添加带证据的、与哈希绑定的处置。不要把每一项启发式警告都变成缺陷，但也不要封存未解决的警告。
 
-## Visual checks
+## 视觉检查
 
-Render every slide at a consistent DPI. Inspect each full-size PNG for:
+以一致的 DPI 渲染每一张幻灯片。检查每一张全尺寸 PNG，查找：
 
-- Unexpected title or body wrapping.
-- Cropped glyphs, substituted fonts, or missing characters.
-- Unintended overlap and weak alignment.
-- Stretched, blurry, or badly cropped images.
-- Broken connector routing or objects hidden by layer order.
-- Charts whose labels, legend, or values do not fit.
-- Inconsistent page numbers, footers, margins, and color usage.
+- 意外的标题或正文换行。
+- 被裁切的字形、被替换的字体或缺失的字符。
+- 非预期重叠和对齐不佳。
+- 被拉伸、模糊或裁切不当的图像。
+- 连接线走线损坏，或对象被图层顺序遮挡。
+- 标签、图例或数值放不下的图表。
+- 不一致的页码、页脚、边距和用色。
 
-Use the montage to assess pacing, density, and visual consistency only after inspecting individual pages.
+仅在检查过单页之后，再用拼图评估节奏、密度和视觉一致性。
 
-## Content checks
+## 内容检查
 
-- Audience, objective, and takeaway remain clear.
-- Each slide advances the narrative.
-- Claims, quotations, and values are supported.
-- Dates, units, terminology, and capitalization are consistent.
-- Visible slide copy contains no production instructions.
-- Critical entries in an applicable requirements file are present in the extracted slide text.
+- 受众、目标和要点仍然清晰。
+- 每一张幻灯片都推进叙事。
+- 主张、引文和数值有依据。
+- 日期、单位、术语和大小写一致。
+- 可见幻灯片文案不包含制作说明。
+- 适用需求文件中的关键条目出现在提取的幻灯片文本中。
 
-## Compatibility checks
+## 兼容性检查
 
-LibreOffice rendering is the automated baseline, not a guarantee of identical Microsoft PowerPoint rendering. Chinese OOXML text may be intact even when the baseline substitutes or omits glyphs. Classify that result as a renderer warning and inspect the same artifact in target PowerPoint before calling it an artifact defect. For high-risk delivery, smoke-test uncommon fonts, animations, SmartArt, macros, and extended chart types in the target environment.
+LibreOffice 渲染是自动化基线，不能保证与 Microsoft PowerPoint 渲染完全相同。即使基线替换或省略了字形，中文 OOXML 文本仍可能完整。将该结果归类为渲染器警告，并在目标 PowerPoint 中检查同一产物，再称之为产物缺陷。对于高风险交付，在目标环境中对非常用字体、动画、SmartArt、宏和扩展图表类型做冒烟测试。
 
-For a legacy `.ppt`, inspect both conversion montages, confirm equal page counts, and review any fidelity warning before using the converted `.pptx`. Disclose that macros, legacy animation, OLE objects, WordArt, media, editable chart data, and uncommon fonts are not guaranteed lossless.
+对于旧版 `.ppt`，检查两份转换拼图，确认页数相等，并在使用转换后的 `.pptx` 之前审阅任何保真度警告。披露宏、旧版动画、OLE 对象、WordArt、媒体、可编辑图表数据和非常用字体不保证无损。
 
-## Delivery checks
+## 交付检查
 
-- Use `deliver --builder` for the last net-new build or `deliver --input` for template output. Seal a reviewed candidate with `deliver --input candidate.pptx --out final.pptx`.
-- Confirm the delivery report has one SHA-256 before and after audit and rendering.
-- Confirm applicable requirements were auto-discovered or explicitly supplied and `coverage=passed`.
-- Confirm `unresolvedWarnings=0` and every disposition matches the final SHA-256.
-- Confirm `delivery.seal.status=passed`; never deliver a QA candidate.
-- Do not edit or rebuild the PPTX after the final delivery report.
-- Resolve or disposition every warning; include a concrete reason for accepted limitations.
-- Preserve source files and deliver a distinct output.
-- Deliver only requested artifacts unless the user asks for builders or QA evidence.
+- 最后一次全新构建使用 `deliver --builder`，模板输出使用 `deliver --input`。用 `deliver --input candidate.pptx --out final.pptx` 封存已审阅的候选文件。
+- 确认交付报告在审计和渲染前后各有一个 SHA-256。
+- 确认适用需求已自动发现或显式提供，且 `coverage=passed`。
+- 确认 `unresolvedWarnings=0`，且每一项处置都匹配最终 SHA-256。
+- 确认 `delivery.seal.status=passed`；切勿交付质量候选文件。
+- 在最终交付报告之后不要编辑或重建 PPTX。
+- 解决或处置每一项警告；对已接受的限制给出具体原因。
+- 保留源文件并交付不同的输出。
+- 仅交付所要求的产物，除非用户要求构建器或质量证据。

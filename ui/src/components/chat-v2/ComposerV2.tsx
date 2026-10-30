@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   ChangeEvent,
   ClipboardEvent,
@@ -12,38 +12,34 @@ import type {
 import {
   ArrowUp,
   AtSign,
-  Brain,
   Bot,
   Check,
   ChevronDown,
   CircleGauge,
   CircleHelp,
-  Hand,
   ListChecks,
   Loader2,
   Paperclip,
   FolderOpen,
   X,
-  ShieldAlert,
+  Sparkles,
   Square,
   type LucideIcon,
 } from 'lucide-react';
 import type { ChatRunMode, PendingPermissionRequest, PermissionMode } from '../chat/types/types';
 import { MAX_ATTACHMENTS_ERROR_KEY, MEDICAL_FOLDER_WARNING_KEY } from '../chat/hooks/useChatComposerState';
 import type { AttachedMedicalFolder } from '../chat/hooks/useChatComposerState';
-import { thinkingModes, type ThinkingModeId } from '../chat/constants/thinkingModes';
-import { getEffectiveThinkingMode, type ThinkingModeAvailability } from '../chat/constants/thinkingModeAvailability';
+import type { ThinkingModeId } from '../chat/constants/thinkingModes';
+import type { ThinkingModeAvailability } from '../chat/constants/thinkingModeAvailability';
 import PermissionRequestsBanner from '../chat/view/subcomponents/PermissionRequestsBanner';
 import ImageAttachment from '../chat/view/subcomponents/ImageAttachment';
 import CommandMenu from '../chat/view/subcomponents/CommandMenu';
 import { cn } from '../../lib/utils.js';
 import type { ContentReference } from '../../types/contentReference';
+import type { MentionableFile, MentionedFile } from '../chat/hooks/useFileMentions';
 import DocumentReferenceChip from './DocumentReferenceChip';
-
-interface MentionableFile {
-  name: string;
-  path: string;
-}
+import MentionedFileChip from './MentionedFileChip';
+import SkillRecommendBar from './SkillRecommendBar';
 
 interface SlashCommand {
   name: string;
@@ -59,13 +55,10 @@ export type ComposerV2Props = {
   input: string;
   placeholder: string;
   textareaRef: RefObject<HTMLTextAreaElement>;
-  inputHighlightRef: RefObject<HTMLDivElement>;
-  renderInputWithMentions: (text: string) => ReactNode;
   onInputChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
   onTextareaClick: (event: MouseEvent<HTMLTextAreaElement>) => void;
   onTextareaKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onTextareaPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
-  onTextareaScrollSync: (target: HTMLTextAreaElement) => void;
   onTextareaInput: (event: FormEvent<HTMLTextAreaElement>) => void;
   onInputFocusChange?: (focused: boolean) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -75,12 +68,14 @@ export type ComposerV2Props = {
   medicalFolderInputRef?: RefObject<HTMLInputElement | null>;
   onMedicalFolderInputChange?: (event: ChangeEvent<HTMLInputElement>) => void;
   attachedImages: File[];
+  onRemoveImage: (index: number) => void;
   attachedMedicalFolder?: AttachedMedicalFolder | null;
   onRemoveMedicalFolder?: () => void;
-  onRemoveImage: (index: number) => void;
   documentReferences: ContentReference[];
   onRemoveDocumentReference: (id: string) => void;
   onOpenDocumentReference?: (filePath: string) => void;
+  mentionedFiles: MentionedFile[];
+  onRemoveMentionedFile: (relativePath: string) => void;
   uploadingImages: Map<string, number>;
   imageErrors: Map<string, string>;
 
@@ -130,7 +125,6 @@ export type ComposerV2Props = {
     toolName: string;
   }) => { success: boolean };
   permissionMode: PermissionMode;
-  onPermissionModeChange: (mode: PermissionMode) => void;
   runMode: ChatRunMode;
   onRunModeChange: (mode: ChatRunMode) => void;
   planModeAvailable?: boolean;
@@ -139,7 +133,51 @@ export type ComposerV2Props = {
   sendByCtrlEnter?: boolean;
 
   chromeless?: boolean;
+  headerSlot?: ReactNode;
+  footerStartSlot?: ReactNode;
+  footerEndSlot?: ReactNode;
+  chromeMode?: 'default' | 'medical';
+
+  /**
+   * Optional query→skill suggestions. Absent everywhere except the live chat
+   * composer, so tests and the welcome-mode variants keep rendering without it.
+   */
+  skillRecommendProjectPath?: string | null;
+  skillRecommendProjectType?: string | null;
+  onInsertSkillHint?: (text: string) => void;
+
+  /**
+   * Turns the current conversation into a skill draft. Only the live chat
+   * composer passes this, so the button stays hidden in welcome mode/tests.
+   */
+  onGenerateSkill?: () => void;
+  generateSkillDisabled?: boolean;
 };
+
+export function PermissionRequestsSlot({
+  pendingPermissionRequests,
+  handlePermissionDecision,
+  handleGrantToolPermission,
+  onPlanExecutionApproved,
+}: Pick<
+  ComposerV2Props,
+  | 'pendingPermissionRequests'
+  | 'handlePermissionDecision'
+  | 'handleGrantToolPermission'
+  | 'onPlanExecutionApproved'
+>) {
+  if (pendingPermissionRequests.length === 0) return null;
+  return (
+    <div className="mb-3">
+      <PermissionRequestsBanner
+        pendingPermissionRequests={pendingPermissionRequests}
+        handlePermissionDecision={handlePermissionDecision}
+        handleGrantToolPermission={handleGrantToolPermission}
+        onPlanExecutionApproved={onPlanExecutionApproved}
+      />
+    </div>
+  );
+}
 
 type ContextStatus = {
   known: boolean;
@@ -153,34 +191,6 @@ type ContextStatus = {
   state: 'ok' | 'warning' | 'blocking' | 'unknown';
   tone: 'normal' | 'amber' | 'red' | 'unknown';
 };
-
-type PermissionModeOption = {
-  mode: PermissionMode;
-  Icon: LucideIcon;
-  labelKey: string;
-  defaultLabel: string;
-  descriptionKey: string;
-  defaultDescription: string;
-};
-
-const PERMISSION_MODE_OPTIONS: PermissionModeOption[] = [
-  {
-    mode: 'default',
-    Icon: Hand,
-    labelKey: 'input.permissions.default',
-    defaultLabel: 'Default Permissions',
-    descriptionKey: 'input.permissions.defaultDescription',
-    defaultDescription: 'Ask before risky operations',
-  },
-  {
-    mode: 'bypassPermissions',
-    Icon: ShieldAlert,
-    labelKey: 'input.permissions.bypassPermissions',
-    defaultLabel: 'Full Access',
-    descriptionKey: 'input.permissions.bypassPermissionsDescription',
-    defaultDescription: 'Skip confirmations and allow full access',
-  },
-];
 
 type RunModeOption = {
   mode: ChatRunMode;
@@ -301,13 +311,10 @@ export default function ComposerV2({
   input,
   placeholder,
   textareaRef,
-  inputHighlightRef,
-  renderInputWithMentions,
   onInputChange,
   onTextareaClick,
   onTextareaKeyDown,
   onTextareaPaste,
-  onTextareaScrollSync,
   onTextareaInput,
   onInputFocusChange,
   onSubmit,
@@ -317,12 +324,14 @@ export default function ComposerV2({
   medicalFolderInputRef,
   onMedicalFolderInputChange,
   attachedImages,
+  onRemoveImage,
   attachedMedicalFolder = null,
   onRemoveMedicalFolder,
-  onRemoveImage,
   documentReferences,
   onRemoveDocumentReference,
   onOpenDocumentReference,
+  mentionedFiles,
+  onRemoveMentionedFile,
   uploadingImages,
   imageErrors,
   showFileDropdown,
@@ -348,32 +357,28 @@ export default function ComposerV2({
   onCancelBusySendQueue,
   isSubmitPending = false,
   tokenBudget,
-  thinkingMode,
-  thinkingModeAvailability,
-  onThinkingModeChange,
   pendingPermissionRequests,
   handlePermissionDecision,
   handleGrantToolPermission,
-  permissionMode,
-  onPermissionModeChange,
   runMode,
   onRunModeChange,
   planModeAvailable = true,
   onPlanExecutionApproved,
   chromeless = false,
+  headerSlot,
+  footerStartSlot,
+  footerEndSlot,
+  chromeMode = 'default',
+  skillRecommendProjectPath = null,
+  skillRecommendProjectType = null,
+  onInsertSkillHint,
+  onGenerateSkill,
+  generateSkillDisabled = false,
 }: ComposerV2Props) {
   const { t } = useTranslation('chat');
   const [isContextPopoverOpen, setIsContextPopoverOpen] = useState(false);
-  const [isThinkingModeMenuOpen, setIsThinkingModeMenuOpen] = useState(false);
   const [isRunModeMenuOpen, setIsRunModeMenuOpen] = useState(false);
-  const [isPermissionMenuOpen, setIsPermissionMenuOpen] = useState(false);
-  const permissionSelectorDisabled = runMode === 'plan';
-
-  useEffect(() => {
-    if (permissionSelectorDisabled) {
-      setIsPermissionMenuOpen(false);
-    }
-  }, [permissionSelectorDisabled]);
+  const attachmentPanelRef = useRef<HTMLDivElement>(null);
 
   const hasBlockingPermissionPanel = pendingPermissionRequests.some(
     (request) => BLOCKING_PERMISSION_TOOLS.has(request.toolName),
@@ -382,10 +387,30 @@ export default function ComposerV2({
   const hasDraftContent = input.trim().length > 0
     || attachedImages.length > 0
     || documentReferences.length > 0
+    || mentionedFiles.length > 0
     || Boolean(attachedMedicalFolder?.entries?.length);
   const hasUploadingImages = uploadingImages.size > 0;
   const attachmentLimitError = imageErrors.get(MAX_ATTACHMENTS_ERROR_KEY);
   const medicalFolderWarning = imageErrors.get(MEDICAL_FOLDER_WARNING_KEY);
+
+  // Option B: after any attachment-area change, keep the panel scrolled to the
+  // bottom so newly added chips / hard-fail red copy remain visible.
+  useEffect(() => {
+    const panel = attachmentPanelRef.current;
+    if (!panel) return;
+    const frame = requestAnimationFrame(() => {
+      panel.scrollTop = panel.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [
+    attachedImages,
+    documentReferences,
+    mentionedFiles,
+    attachedMedicalFolder,
+    attachmentLimitError,
+    medicalFolderWarning,
+  ]);
+
   const disabled = !hasDraftContent || isSubmitPending || hasUploadingImages;
   const showAbortButton = isLoading && canAbortSession && !hasDraftContent;
   const sendTitle = isSubmitPending || hasUploadingImages
@@ -398,22 +423,12 @@ export default function ComposerV2({
         ? (t('input.queueSend', { defaultValue: 'Queue message' }) as string)
         : (t('input.send', { defaultValue: 'Send' }) as string);
   const contextStatus = getContextStatus(tokenBudget);
-  const effectiveThinkingMode = getEffectiveThinkingMode(thinkingMode, thinkingModeAvailability);
-  const selectedThinkingMode = thinkingModes.find((option) => option.id === effectiveThinkingMode) || thinkingModes[0];
-  const SelectedThinkingIcon = selectedThinkingMode.icon || Brain;
-  const selectedPermissionOption =
-    PERMISSION_MODE_OPTIONS.find((option) => option.mode === permissionMode) ||
-    PERMISSION_MODE_OPTIONS[0];
   const selectedRunModeOption =
     RUN_MODE_OPTIONS.find((option) => option.mode === runMode) ||
     RUN_MODE_OPTIONS[0];
   const SelectedRunModeIcon = selectedRunModeOption.Icon;
   const selectedRunModeLabel = t(selectedRunModeOption.labelKey, {
     defaultValue: selectedRunModeOption.defaultLabel,
-  }) as string;
-  const SelectedPermissionIcon = selectedPermissionOption.Icon;
-  const selectedPermissionLabel = t(selectedPermissionOption.labelKey, {
-    defaultValue: selectedPermissionOption.defaultLabel,
   }) as string;
   const contextStatusTitle = contextStatus.known
     ? (contextStatus.state === 'blocking'
@@ -454,28 +469,30 @@ export default function ComposerV2({
     <div
       className={cn(
         'min-w-0 shrink-0',
-        chromeless ? '' : 'bg-white px-6 pb-6 pt-3 dark:bg-neutral-950',
+        chromeless ? '' : 'workspace-dock-surface px-6 pb-6 pt-3',
       )}
     >
       <div className={cn('min-w-0', chromeless ? '' : 'mx-auto max-w-[720px]')}>
-        {pendingPermissionRequests.length > 0 ? (
-          <div className="mb-3">
-            <PermissionRequestsBanner
-              pendingPermissionRequests={pendingPermissionRequests}
-              handlePermissionDecision={handlePermissionDecision}
-              handleGrantToolPermission={handleGrantToolPermission}
-              onPlanExecutionApproved={onPlanExecutionApproved}
-            />
-          </div>
-        ) : null}
+        <PermissionRequestsSlot
+          pendingPermissionRequests={pendingPermissionRequests}
+          handlePermissionDecision={handlePermissionDecision}
+          handleGrantToolPermission={handleGrantToolPermission}
+          onPlanExecutionApproved={onPlanExecutionApproved}
+        />
 
         {!hasBlockingPermissionPanel ? (
           <form
             onSubmit={onSubmit as (event: FormEvent<HTMLFormElement>) => void}
-            className="pd-composer-container relative"
+            className={cn(
+              'pd-composer-container relative',
+              chromeMode === 'medical' && 'pd-composer--medical',
+            )}
           >
-            {attachedImages.length > 0 || documentReferences.length > 0 || attachedMedicalFolder ? (
-              <div className="pd-composer-attachment-panel mb-2 overflow-hidden rounded-lg border border-neutral-200 bg-neutral-50 p-2 dark:border-neutral-800 dark:bg-neutral-900">
+            {attachedImages.length > 0 || documentReferences.length > 0 || mentionedFiles.length > 0 || attachedMedicalFolder || attachmentLimitError || medicalFolderWarning ? (
+              <div
+                ref={attachmentPanelRef}
+                className="pd-composer-attachment-panel mb-2 rounded-lg border border-neutral-200 bg-neutral-50 p-2 dark:border-neutral-800 dark:bg-neutral-900"
+              >
                 <div className="flex flex-wrap gap-2">
                   {attachedMedicalFolder ? (
                     <div className="inline-flex max-w-full items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[12px] text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-100">
@@ -513,6 +530,15 @@ export default function ComposerV2({
                       onRemove={() => onRemoveDocumentReference(reference.id)}
                     />
                   ))}
+                  {mentionedFiles.map((file) => (
+                    <MentionedFileChip
+                      key={file.relativePath}
+                      name={file.name}
+                      className="pd-composer-reference-chip sm:max-w-[520px]"
+                      removeLabel={t('input.removeMention', { defaultValue: 'Remove file' }) as string}
+                      onRemove={() => onRemoveMentionedFile(file.relativePath)}
+                    />
+                  ))}
                   {attachedImages.map((file, index) => (
                     <ImageAttachment
                       key={index}
@@ -524,7 +550,7 @@ export default function ComposerV2({
                   ))}
                 </div>
                 {attachmentLimitError ? (
-                  <div className="mt-2 text-xs text-amber-600 dark:text-amber-300">
+                  <div className="mt-2 text-xs text-red-600 dark:text-red-400">
                     {attachmentLimitError}
                   </div>
                 ) : null}
@@ -558,9 +584,6 @@ export default function ComposerV2({
                     }}
                   >
                     <div className="font-medium">{file.name}</div>
-                    <div className="font-mono text-[11px] text-neutral-500 dark:text-neutral-400">
-                      {file.path}
-                    </div>
                   </div>
                 ))}
               </div>
@@ -569,13 +592,16 @@ export default function ComposerV2({
             <div
               {...getRootProps()}
               className={cn(
-                'group rounded-xl border bg-white p-2 shadow-sm transition-colors',
-                'border-neutral-200 focus-within:border-neutral-300',
-                'dark:border-neutral-800 dark:bg-neutral-900 dark:focus-within:border-neutral-700',
+                'workspace-composer-surface group rounded-xl border p-2 transition-colors',
+                'border-neutral-300/70 focus-within:border-neutral-400',
+                'dark:border-neutral-700/80 dark:focus-within:border-neutral-600',
                 isDragActive && 'border-dashed border-neutral-400 dark:border-neutral-500',
               )}
             >
               <input {...getInputProps()} />
+              {headerSlot ? (
+                <div className="pd-composer-header-slot">{headerSlot}</div>
+              ) : null}
 
               <CommandMenu
                 commands={filteredCommands}
@@ -592,37 +618,36 @@ export default function ComposerV2({
                 })()}
               />
 
-              <div className="relative">
-                <div
-                  ref={inputHighlightRef}
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-0 overflow-hidden"
-                >
-                  <div className="block w-full whitespace-pre-wrap break-words px-2 pt-1.5 text-[14px] leading-6 text-transparent">
-                    {renderInputWithMentions(input)}
-                  </div>
-                </div>
-                <textarea
-                  ref={textareaRef}
-                  value={input}
-                  onChange={onInputChange}
-                  onClick={onTextareaClick}
-                  onKeyDown={onTextareaKeyDown}
-                  onPaste={onTextareaPaste}
-                  onScroll={(event) =>
-                    onTextareaScrollSync(event.target as HTMLTextAreaElement)
-                  }
-                  onFocus={() => onInputFocusChange?.(true)}
-                  onBlur={() => onInputFocusChange?.(false)}
-                  onInput={onTextareaInput}
-                  placeholder={placeholder}
-                  rows={2}
-                  className="relative z-10 block max-h-[40vh] min-h-[48px] w-full resize-none bg-transparent px-2 pt-1.5 text-[14px] leading-6 text-neutral-900 placeholder-neutral-400 outline-none dark:text-neutral-100 dark:placeholder-neutral-500"
+              {onInsertSkillHint ? (
+                <SkillRecommendBar
+                  input={input}
+                  projectPath={skillRecommendProjectPath}
+                  projectType={skillRecommendProjectType}
+                  onUseSkill={onInsertSkillHint}
+                  disabled={isCommandMenuOpen || showFileDropdown || isLoading}
                 />
-              </div>
+              ) : null}
+
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={onInputChange}
+                onClick={onTextareaClick}
+                onKeyDown={onTextareaKeyDown}
+                onPaste={onTextareaPaste}
+                onFocus={() => onInputFocusChange?.(true)}
+                onBlur={() => onInputFocusChange?.(false)}
+                onInput={onTextareaInput}
+                placeholder={placeholder}
+                rows={2}
+                className="block max-h-[40vh] min-h-[48px] w-full resize-none bg-transparent px-2 pt-1.5 text-[14px] leading-6 text-neutral-900 placeholder-neutral-400 outline-none dark:text-neutral-100 dark:placeholder-neutral-500"
+              />
 
                 <div className="pd-composer-control-row flex flex-wrap items-center gap-x-2 gap-y-1 px-1 pt-1">
                   <div className="pd-composer-toolbar-left flex min-w-0 flex-1 flex-wrap items-center gap-0.5">
+                    {footerStartSlot ? (
+                      <div className="pd-composer-footer-start">{footerStartSlot}</div>
+                    ) : null}
                     <div
                       className="relative mr-1"
                       onBlur={(event) => {
@@ -774,113 +799,19 @@ export default function ComposerV2({
                   >
                     <AtSign className="h-4 w-4" strokeWidth={1.75} />
                   </button>
-                    <div
-                      className="relative"
-                    onBlur={(event) => {
-                      const nextTarget = event.relatedTarget as Node | null;
-                      if (!nextTarget || !event.currentTarget.contains(nextTarget)) {
-                        setIsPermissionMenuOpen(false);
-                      }
-                    }}
-                  >
+                  {onGenerateSkill ? (
                     <button
                       type="button"
-                      disabled={permissionSelectorDisabled}
-                      onClick={() => {
-                        if (permissionSelectorDisabled) return;
-                        setIsPermissionMenuOpen((open) => !open);
-                      }}
-                      className={cn(
-                        'pd-composer-icon-button inline-flex h-7 max-w-[132px] items-center justify-center gap-1.5 rounded-md px-2 text-[12px] font-medium transition sm:max-w-[190px]',
-                        permissionSelectorDisabled
-                          ? 'cursor-not-allowed text-neutral-400 opacity-45 dark:text-neutral-500'
-                          : permissionMode === 'bypassPermissions'
-                            ? 'text-amber-600 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950/30'
-                            : 'text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800',
-                      )}
-                      title={t('input.permissions.change', {
-                        defaultValue: 'Select permission mode',
+                      onClick={onGenerateSkill}
+                      disabled={generateSkillDisabled}
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-neutral-500 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100 dark:disabled:hover:bg-transparent dark:disabled:hover:text-neutral-400"
+                      title={t('input.generateSkill', {
+                        defaultValue: 'Generate skill from conversation',
                       }) as string}
-                      aria-haspopup="menu"
-                      aria-expanded={permissionSelectorDisabled ? false : isPermissionMenuOpen}
                     >
-                      <SelectedPermissionIcon className="h-4 w-4 shrink-0" strokeWidth={1.9} />
-                      <span className="pd-composer-permission-label truncate">{selectedPermissionLabel}</span>
-                      <ChevronDown
-                        className={cn(
-                          'pd-composer-control-chevron h-3.5 w-3.5 shrink-0 transition-transform',
-                          isPermissionMenuOpen && 'rotate-180',
-                        )}
-                        strokeWidth={2}
-                      />
+                      <Sparkles className="h-4 w-4" strokeWidth={1.75} />
                     </button>
-                    {isPermissionMenuOpen ? (
-                      <div
-                        role="menu"
-                        className="absolute bottom-full left-0 z-50 mb-2 w-60 rounded-xl border border-neutral-200 bg-white p-1.5 text-left shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
-                      >
-                        {PERMISSION_MODE_OPTIONS.map((option) => {
-                          const Icon = option.Icon;
-                          const isSelected = permissionMode === option.mode;
-                          const isDangerous = option.mode === 'bypassPermissions';
-                          const label = t(option.labelKey, {
-                            defaultValue: option.defaultLabel,
-                          }) as string;
-                          const description = t(option.descriptionKey, {
-                            defaultValue: option.defaultDescription,
-                          }) as string;
-
-                          return (
-                            <button
-                              key={option.mode}
-                              type="button"
-                              role="menuitemradio"
-                              aria-checked={isSelected}
-                              onMouseDown={(event) => event.preventDefault()}
-                              onClick={() => {
-                                onPermissionModeChange(option.mode);
-                                setIsPermissionMenuOpen(false);
-                              }}
-                              className={cn(
-                                'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition',
-                                isSelected
-                                  ? 'bg-neutral-100 dark:bg-neutral-800'
-                                  : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/70',
-                              )}
-                            >
-                              <Icon
-                                className={cn(
-                                  'h-4 w-4 shrink-0',
-                                  isDangerous
-                                    ? 'text-amber-600 dark:text-amber-400'
-                                    : 'text-neutral-500 dark:text-neutral-400',
-                                )}
-                                strokeWidth={1.9}
-                              />
-                              <span className="min-w-0 flex-1">
-                                <span
-                                  className={cn(
-                                    'block truncate text-[13px] font-medium',
-                                    isDangerous
-                                      ? 'text-amber-700 dark:text-amber-300'
-                                      : 'text-neutral-900 dark:text-neutral-100',
-                                  )}
-                                >
-                                  {label}
-                                </span>
-                                <span className="block truncate text-[11px] text-neutral-500 dark:text-neutral-400">
-                                  {description}
-                                </span>
-                              </span>
-                              {isSelected ? (
-                                <Check className="h-4 w-4 shrink-0 text-neutral-500 dark:text-neutral-300" strokeWidth={2} />
-                              ) : null}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-                  </div>
+                  ) : null}
                   </div>
 
                   {isBusySendQueued ? (
@@ -902,8 +833,11 @@ export default function ComposerV2({
                   ) : null}
 
                   <div className="pd-composer-toolbar-right ml-auto flex shrink-0 items-center gap-1">
+                    {footerEndSlot ? (
+                      <div className="pd-composer-footer-end">{footerEndSlot}</div>
+                    ) : null}
                     <div
-                      className="relative"
+                      className="pd-composer-context-control relative"
                       onBlur={(event) => {
                         const nextTarget = event.relatedTarget as Node | null;
                         if (!nextTarget || !event.currentTarget.contains(nextTarget)) {
@@ -974,82 +908,6 @@ export default function ComposerV2({
                               {contextStatusUnknownBodyText}
                             </div>
                           )}
-                        </div>
-                      ) : null}
-                    </div>
-
-                    <div
-                      className="relative"
-                      onBlur={(event) => {
-                        const nextTarget = event.relatedTarget as Node | null;
-                        if (!nextTarget || !event.currentTarget.contains(nextTarget)) {
-                          setIsThinkingModeMenuOpen(false);
-                        }
-                      }}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setIsThinkingModeMenuOpen((open) => !open)}
-                        className={cn(
-                          'pd-composer-icon-button inline-flex h-7 max-w-[116px] items-center justify-center gap-1.5 rounded-md px-2 text-[12px] font-medium transition sm:max-w-[140px]',
-                          effectiveThinkingMode === 'default'
-                            ? 'text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800'
-                            : 'text-purple-600 hover:bg-purple-50 dark:text-purple-300 dark:hover:bg-purple-950/30',
-                        )}
-                        title={t('input.thinking.change', { defaultValue: 'Select thinking strength' }) as string}
-                        aria-haspopup="menu"
-                        aria-expanded={isThinkingModeMenuOpen}
-                      >
-                        <SelectedThinkingIcon className="h-4 w-4 shrink-0" strokeWidth={1.9} />
-                        <span className="pd-composer-thinking-label truncate">{selectedThinkingMode.name}</span>
-                        <ChevronDown
-                          className={cn(
-                            'pd-composer-control-chevron h-3.5 w-3.5 shrink-0 transition-transform',
-                            isThinkingModeMenuOpen && 'rotate-180',
-                          )}
-                          strokeWidth={2}
-                        />
-                      </button>
-                      {isThinkingModeMenuOpen ? (
-                        <div
-                          role="menu"
-                          className="absolute bottom-full right-0 z-50 mb-2 w-64 rounded-xl border border-neutral-200 bg-white p-1.5 text-left shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
-                        >
-                          {thinkingModes.map((option) => {
-                            const Icon = option.icon || Brain;
-                            const isSelected = option.id === thinkingMode;
-                            const unavailableReason = thinkingModeAvailability[option.id];
-                            return (
-                              <button
-                                key={option.id}
-                                type="button"
-                                role="menuitemradio"
-                                aria-checked={isSelected}
-                                disabled={Boolean(unavailableReason)}
-                                onClick={() => {
-                                  if (unavailableReason) return;
-                                  onThinkingModeChange(option.id);
-                                  setIsThinkingModeMenuOpen(false);
-                                }}
-                                className={cn(
-                                  'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition',
-                                  isSelected
-                                    ? 'bg-neutral-100 text-neutral-950 dark:bg-neutral-800 dark:text-neutral-50'
-                                    : 'text-neutral-700 hover:bg-neutral-50 dark:text-neutral-200 dark:hover:bg-neutral-800/70',
-                                  unavailableReason && 'cursor-not-allowed opacity-45 hover:bg-transparent dark:hover:bg-transparent',
-                                )}
-                                title={option.name}
-                              >
-                                <Icon className={cn('h-4 w-4 shrink-0', option.color)} strokeWidth={1.9} />
-                                <span className="min-w-0 flex-1">
-                                  <span className="block text-[13px] font-medium">{option.name}</span>
-                                </span>
-                                {isSelected ? (
-                                  <Check className="h-4 w-4 shrink-0 text-neutral-500 dark:text-neutral-300" strokeWidth={2} />
-                                ) : null}
-                              </button>
-                            );
-                          })}
                         </div>
                       ) : null}
                     </div>

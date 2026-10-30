@@ -9,6 +9,7 @@ import {
   readPilotDeckConfigFile,
   writePilotDeckConfig,
 } from '../services/pilotdeckConfig.js';
+import { requireAdmin } from '../middleware/requireAdmin.js';
 import { reloadPilotDeckConfig } from '../services/pilotdeckConfigReloader.js';
 import { suppressNextWatchEvent } from '../services/pilotdeckConfigWatcher.js';
 import {
@@ -21,6 +22,8 @@ import {
   runManualMemoryDream,
   runManualMemoryFlush,
 } from '../services/memoryService.js';
+import { getProjectDisplayNameForPath } from '../utils/projectDisplayName.js';
+import caseStateRoutes from './caseState.js';
 
 const router = express.Router();
 const __filename = fileURLToPath(import.meta.url);
@@ -66,8 +69,11 @@ function getGlobalMemorySettingsFromConfig(config) {
   const reasoningMode = memory.reasoningMode === 'accuracy_first' ? 'accuracy_first' : 'answer_first';
   return {
     reasoningMode,
-    autoIndexIntervalMinutes: normalizeMemoryInterval(memory.autoIndexIntervalMinutes, 30),
-    autoDreamIntervalMinutes: normalizeMemoryInterval(memory.autoDreamIntervalMinutes, 60),
+    maintenanceMode: memory.maintenanceMode ?? memory.schedule?.maintenanceMode
+      ?? ((memory.autoIndexIntervalMinutes !== undefined || memory.autoDreamIntervalMinutes !== undefined
+        || memory.schedule?.autoIndexIntervalMinutes !== undefined || memory.schedule?.autoDreamIntervalMinutes !== undefined) ? 'interval' : 'immediate'),
+    autoIndexIntervalMinutes: normalizeMemoryInterval(memory.autoIndexIntervalMinutes ?? memory.schedule?.autoIndexIntervalMinutes, 30),
+    autoDreamIntervalMinutes: normalizeMemoryInterval(memory.autoDreamIntervalMinutes ?? memory.schedule?.autoDreamIntervalMinutes, 60),
   };
 }
 
@@ -88,8 +94,13 @@ async function saveGlobalMemorySettings(partial = {}) {
   }
   const { config } = record;
   const current = getGlobalMemorySettingsFromConfig(config);
+  if (partial.maintenanceMode !== undefined
+      && !['immediate', 'interval', 'manual'].includes(partial.maintenanceMode)) {
+    throw new Error('maintenanceMode must be immediate, interval or manual');
+  }
   const reasoningMode = validateReasoningMode(partial.reasoningMode);
   const next = {
+    maintenanceMode: partial.maintenanceMode ?? current.maintenanceMode,
     reasoningMode: reasoningMode ?? current.reasoningMode,
     autoIndexIntervalMinutes: normalizeMemoryInterval(
       partial.autoIndexIntervalMinutes,
@@ -105,6 +116,7 @@ async function saveGlobalMemorySettings(partial = {}) {
     memory: {
       ...(config.memory ?? {}),
       ...next,
+      ...(config.memory?.schedule ? { schedule: { ...config.memory.schedule, ...next } } : {}),
     },
   };
   suppressNextWatchEvent();
@@ -167,12 +179,21 @@ function annotateWorkspaceEntries(entries) {
   }));
 }
 
-function buildWorkspaceSnapshot(repository, { query = '', limit = 100, offset = 0, selectedProjectId = '' } = {}) {
+function buildWorkspaceSnapshot(repository, {
+  query = '',
+  limit = 100,
+  offset = 0,
+  selectedProjectId = '',
+  projectPath = '',
+} = {}) {
   const store = repository.getFileMemoryStore();
   const workspaceMode = typeof repository.getWorkspaceMode === 'function'
     ? repository.getWorkspaceMode()
     : store.getWorkspaceMode();
   const manifestPath = path.join(store.getRootDir(), 'MEMORY.md');
+  // Memory's own project.meta.md only knows generic names ("Current Project"),
+  // so the sidebar name comes from the pilot project's meta.json instead.
+  const projectDisplayName = getProjectDisplayNameForPath(projectPath);
 
   if (workspaceMode === 'general') {
     const generalProjects = repository
@@ -205,6 +226,7 @@ function buildWorkspaceSnapshot(repository, { query = '', limit = 100, offset = 
 
     return {
       workspaceMode,
+      projectDisplayName,
       generalProjects,
       selectedProjectId: selectedProject?.logicalProjectId ?? null,
       selectedProjectSource: selectedProject ? 'general_local' : null,
@@ -260,6 +282,7 @@ function buildWorkspaceSnapshot(repository, { query = '', limit = 100, offset = 
 
   return {
     workspaceMode,
+    projectDisplayName,
     projectMetaPath: projectMeta ? 'project.meta.md' : null,
     projectMeta,
     manifestPath: 'MEMORY.md',
@@ -280,18 +303,47 @@ function buildWorkspaceSnapshot(repository, { query = '', limit = 100, offset = 
   };
 }
 
-function buildDashboardSnapshot(service, repository, { query = '', selectedProjectId = '' } = {}) {
+// Global memory policy — maintenance cadence, reasoning mode and the
+// auto-index / auto-dream intervals — lives in pilotdeck.yaml and belongs to
+// the administrator: `GET/POST /settings` carries `requireAdmin`. The same
+// block used to walk out through the siblings, because `/overview`,
+// `/snapshot` and every `dashboard` payload embed `service.overview()` and
+// `service.getSettings()`. For a non-admin caller those fields are removed and
+// only what is actually theirs survives: whether memory is switched on, and
+// whether the scheduler happens to be running.
+function isAdminRequest(req) {
+  return req?.user?.role === 'admin';
+}
+
+/** `IndexingSettings` is entirely policy, so a user sees only the on/off flag. */
+function publicSettings() {
+  return { enabled: getMemorySchedulerStatus().enabled };
+}
+
+function publicScheduler(scheduler) {
+  return { enabled: scheduler?.enabled !== false, running: Boolean(scheduler?.running) };
+}
+
+/** Drops `maintenanceMode` (and narrows a nested `scheduler`) for non-admins. */
+function scopeOverview(req, overview) {
+  if (isAdminRequest(req) || !overview || typeof overview !== 'object') return overview;
+  const { maintenanceMode, scheduler, ...rest } = overview;
+  return scheduler === undefined ? rest : { ...rest, scheduler: publicScheduler(scheduler) };
+}
+
+function buildDashboardSnapshot(req, service, repository, { query = '', selectedProjectId = '', projectPath = '' } = {}) {
   return {
-    overview: {
+    overview: scopeOverview(req, {
       ...service.overview(),
       scheduler: getMemorySchedulerStatus(),
-    },
-    settings: getGlobalMemorySettings(),
+    }),
+    settings: isAdminRequest(req) ? (service.getSettings?.() ?? getGlobalMemorySettings()) : publicSettings(),
     workspace: buildWorkspaceSnapshot(repository, {
       query,
       limit: 200,
       offset: 0,
       selectedProjectId,
+      projectPath,
     }),
     userSummary: service.getUserSummary(),
     caseTraces: service.listCaseTraces(12),
@@ -312,6 +364,8 @@ function getSelectedProjectId(req) {
 
 function hasDashboardRequestContext(req) {
   return [
+    req.query?.projectId,
+    req.body?.projectId,
     req.query?.projectPath,
     req.body?.projectPath,
     req.query?.projectName,
@@ -321,12 +375,35 @@ function hasDashboardRequestContext(req) {
 
 async function withMemoryService(req, res, fn) {
   try {
-    const { projectPath, dataDir, service } = await getMemoryServiceForRequest(req);
-    return await fn({ projectPath, dataDir, service, repository: service.repository });
+    const { projectPath, dataDir, service, identity } = await getMemoryServiceForRequest(req);
+    return await fn({ projectPath, dataDir, service, identity, repository: service.repository });
   } catch (error) {
+    // A request whose projectId and projectPath disagree is ambiguous, not
+    // malformed: refuse it as a conflict rather than guessing which one the
+    // caller meant (Task 8 — "don't edit project B from project A's panel").
+    if (error?.code === 'MEMORY_SCOPE_MISMATCH') {
+      return res.status(409).json({
+        error: error.message,
+        code: error.code,
+        projectId: error.projectId,
+        projectPath: error.projectPath,
+      });
+    }
     const message = error instanceof Error ? error.message : String(error);
     return res.status(400).json({ error: message });
   }
+}
+
+/**
+ * Routes renamed in Task 8.  `/cases` now belongs to Case State, so the memory
+ * dashboard's recall traces moved to `/index-case-traces`.  The old paths stay
+ * for one version, answering with a Deprecation header so a stale iframe keeps
+ * working while telling anyone reading the network tab where to go.
+ */
+function markDeprecatedRoute(res, replacement) {
+  res.setHeader('Deprecation', 'true');
+  res.setHeader('Link', `<${replacement}>; rel="successor-version"`);
+  res.setHeader('Warning', `299 - "Deprecated route; use ${replacement}"`);
 }
 
 function buildDownloadFileName(prefix, exportedAt) {
@@ -345,59 +422,78 @@ function sendBundleDownload(res, bundle, prefix) {
   res.send(JSON.stringify(bundle, null, 2));
 }
 
-router.get('/overview', async (req, res) =>
-  withMemoryService(req, res, async ({ service }) => {
-    res.json({
-      ...service.overview(),
-      scheduler: getMemorySchedulerStatus(),
-    });
+// The Dashboard's scope bar (Task 8): which project type, which stable id,
+// where the data lives, whether it is writable.  Answered by the server rather
+// than inferred in the browser, so what the panel shows is what the writes hit.
+router.get('/identity', async (req, res) =>
+  withMemoryService(req, res, async ({ identity }) => {
+    res.json(identity);
   }),
 );
 
+router.get('/overview', async (req, res) =>
+  withMemoryService(req, res, async ({ service }) => {
+    res.json(scopeOverview(req, {
+      ...service.overview(),
+      scheduler: getMemorySchedulerStatus(),
+    }));
+  }),
+);
+
+// Memory settings are global: they live in pilotdeck.yaml and affect every
+// user's gateway, so only an administrator may change them. Reading is open
+// to every signed-in user (the embedded dashboard fetches it at boot), but a
+// non-admin only learns the on/off flag, never the policy values.
 router.route('/settings')
-  .get(async (req, res) =>
-    withMemoryService(req, res, async () => {
-      res.json(getGlobalMemorySettings());
-    }))
-  .post(async (req, res) =>
-    withMemoryService(req, res, async () => {
-      res.json(await saveGlobalMemorySettings(req.body ?? {}));
+  .get(async (req, res) => {
+    if (!isAdminRequest(req)) return res.json(publicSettings());
+    return withMemoryService(req, res, async ({ service }) => {
+      res.json(service.getSettings?.() ?? getGlobalMemorySettings());
+    });
+  })
+  .post(requireAdmin, async (req, res) =>
+    withMemoryService(req, res, async ({ service }) => {
+      const settings = await saveGlobalMemorySettings(req.body ?? {});
+      res.json(settings);
     }));
 
 router.post('/index/run', async (req, res) =>
-  withMemoryService(req, res, async ({ dataDir, service, repository }) => {
+  withMemoryService(req, res, async ({ projectPath, dataDir, service, repository }) => {
     const result = await runManualMemoryFlush(service, dataDir, { reason: 'manual' });
     res.json({
       ...result,
-      dashboard: buildDashboardSnapshot(service, repository, {
+      dashboard: buildDashboardSnapshot(req, service, repository, {
         query: getQuery(req),
         selectedProjectId: getSelectedProjectId(req),
+        projectPath,
       }),
     });
   }),
 );
 
 router.post('/dream/run', async (req, res) =>
-  withMemoryService(req, res, async ({ dataDir, service, repository }) => {
+  withMemoryService(req, res, async ({ projectPath, dataDir, service, repository }) => {
     const result = await runManualMemoryDream(service, dataDir);
     res.json({
       ...result,
-      dashboard: buildDashboardSnapshot(service, repository, {
+      dashboard: buildDashboardSnapshot(req, service, repository, {
         query: getQuery(req),
         selectedProjectId: getSelectedProjectId(req),
+        projectPath,
       }),
     });
   }),
 );
 
 router.post('/dream/rollback-last', async (req, res) =>
-  withMemoryService(req, res, async ({ dataDir, service, repository }) => {
+  withMemoryService(req, res, async ({ projectPath, dataDir, service, repository }) => {
     const result = await rollbackLastMemoryDream(service, dataDir);
     res.json({
       ...result,
-      dashboard: buildDashboardSnapshot(service, repository, {
+      dashboard: buildDashboardSnapshot(req, service, repository, {
         query: getQuery(req),
         selectedProjectId: getSelectedProjectId(req),
+        projectPath,
       }),
     });
   }),
@@ -405,7 +501,12 @@ router.post('/dream/rollback-last', async (req, res) =>
 
 router.get('/snapshot', async (req, res) =>
   withMemoryService(req, res, async ({ service }) => {
-    res.json(service.snapshot(parseLimit(req.query.limit, 24)));
+    const snapshot = service.snapshot(parseLimit(req.query.limit, 24));
+    if (isAdminRequest(req)) {
+      res.json(snapshot);
+      return;
+    }
+    res.json({ ...snapshot, overview: scopeOverview(req, snapshot.overview), settings: publicSettings() });
   }),
 );
 
@@ -481,25 +582,36 @@ router.route('/project-meta')
     }));
 
 router.get('/workspace', async (req, res) =>
-  withMemoryService(req, res, async ({ repository }) => {
+  withMemoryService(req, res, async ({ projectPath, repository }) => {
     res.json(
       buildWorkspaceSnapshot(repository, {
         query: getQuery(req),
         limit: parseLimit(req.query.limit, 100),
         offset: parseOffset(req.query.offset, 0),
         selectedProjectId: getSelectedProjectId(req),
+        projectPath,
       }),
     );
   }),
 );
 
-router.get('/cases', async (req, res) =>
+/**
+ * Case State（战创伤病例状态，只读）。
+ *
+ * 必须挂在下面那两条 `/cases` 弃用别名**之前**：Express 的子路由不匹配时会
+ * `next()`，于是 `/cases/current`、`/cases/snapshots` 落到这里，而过渡期里
+ * 的 `/cases` 和 `/cases/<traceId>` 继续落到别名上。别名删掉之后这个顺序就
+ * 不再重要，但在那之前挪动它会让病例状态被 `:caseId` 吞掉。
+ */
+router.use('/cases', caseStateRoutes);
+
+router.get('/index-case-traces', async (req, res) =>
   withMemoryService(req, res, async ({ service }) => {
     res.json(service.listCaseTraces(parseLimit(req.query.limit, 12)));
   }),
 );
 
-router.get('/cases/:caseId', async (req, res) =>
+router.get('/index-case-traces/:caseId', async (req, res) =>
   withMemoryService(req, res, async ({ service }) => {
     const record = service.getCaseTrace(req.params.caseId);
     if (!record) {
@@ -508,6 +620,25 @@ router.get('/cases/:caseId', async (req, res) =>
     res.json(record);
   }),
 );
+
+// Deprecated aliases — remove after one version.
+router.get('/cases', async (req, res) => {
+  markDeprecatedRoute(res, '/api/memory/index-case-traces');
+  return withMemoryService(req, res, async ({ service }) => {
+    res.json(service.listCaseTraces(parseLimit(req.query.limit, 12)));
+  });
+});
+
+router.get('/cases/:caseId', async (req, res) => {
+  markDeprecatedRoute(res, '/api/memory/index-case-traces/:caseId');
+  return withMemoryService(req, res, async ({ service }) => {
+    const record = service.getCaseTrace(req.params.caseId);
+    if (!record) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    res.json(record);
+  });
+});
 
 router.get('/index-traces', async (req, res) =>
   withMemoryService(req, res, async ({ service }) => {
@@ -613,12 +744,13 @@ router.post('/clear', async (req, res) => {
         return;
       }
 
-      const { service } = await getMemoryServiceForRequest(req);
+      const { projectPath, service } = await getMemoryServiceForRequest(req);
       res.json({
         ...result,
-        dashboard: buildDashboardSnapshot(service, service.repository, {
+        dashboard: buildDashboardSnapshot(req, service, service.repository, {
           query: getQuery(req),
           selectedProjectId: getSelectedProjectId(req),
+          projectPath,
         }),
       });
     } catch (error) {
@@ -629,13 +761,14 @@ router.post('/clear', async (req, res) => {
     return;
   }
 
-  return withMemoryService(req, res, async ({ service, repository }) => {
+  return withMemoryService(req, res, async ({ projectPath, service, repository }) => {
     const result = service.clear(scope);
     res.json({
       ...result,
-      dashboard: buildDashboardSnapshot(service, repository, {
+      dashboard: buildDashboardSnapshot(req, service, repository, {
         query: getQuery(req),
         selectedProjectId: getSelectedProjectId(req),
+        projectPath,
       }),
     });
   });

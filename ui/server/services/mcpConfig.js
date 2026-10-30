@@ -1,13 +1,14 @@
 import fsPromises from 'fs/promises';
-import os from 'os';
 import path from 'path';
+import { resolvePilotRoot } from '../utils/pilotPaths.js';
 
 const DEFAULT_MCP_CONFIG = {
   mcpServers: {},
 };
 
 function pilotHome() {
-  return process.env.PILOT_HOME || path.join(os.homedir(), '.pilotdeck');
+  // System-level (shared) MCP config: lives in the root, not a per-user home.
+  return resolvePilotRoot();
 }
 
 export function getGlobalMcpConfigPath() {

@@ -1,27 +1,27 @@
-# Content and narrative
+# 内容与叙事
 
-## Define the communication job
+## 定义沟通任务
 
-Before planning slides, state:
+在规划幻灯片之前，先说明：
 
-- Audience: who must understand or decide something.
-- Outcome: what the deck should cause them to believe, decide, or do.
-- Takeaway: the one sentence they should remember.
+- 受众：谁必须理解或决定某件事。
+- 结果：演示文稿应促使他们相信、决定或采取什么行动。
+- 要点：他们应记住的那一句话。
 
-Build a beginning, middle, and end around that job. A useful default is context → tension or evidence → decision → next action.
+围绕该任务构建开头、中间和结尾。有用的默认结构是：背景 → 张力或证据 → 决策 → 下一步行动。
 
-## Give each slide one job
+## 给每一张幻灯片一个任务
 
-Write an assertion-style slide title whenever the evidence supports one. The title should communicate the conclusion, not merely name the topic. Remove any slide that does not advance the argument.
+只要证据支持，就写断言式幻灯片标题。标题应传达结论，而不仅仅是命名主题。删除任何不推进论证的幻灯片。
 
-Keep titles on one line. Prefer fewer high-value points. Split dense material into another slide instead of shrinking text.
+标题保持一行。宁可少而高价值。把密集材料拆到另一张幻灯片，而不是缩小文字。
 
-## Write for the audience
+## 为受众写作
 
-Do not include internal phrases such as “talk about,” “insert chart,” “speaker note,” “draft,” or process instructions in visible copy. Define specialized terms when the audience may not know them.
+不要在可见文案中包含内部用语，例如 “talk about”、“insert chart”、“speaker note”、“draft” 或流程说明。当受众可能不了解时，定义专业术语。
 
-Use parallel grammar in lists and comparisons. Keep numbers, dates, and units consistent across slides.
+在列表和对比中使用平行语法。在各幻灯片之间保持数字、日期和单位一致。
 
-## Use evidence responsibly
+## 负责任地使用证据
 
-Do not invent research, quotations, customer facts, financial results, or chart values. Record the source and retrieval date for external claims. Mark estimates as estimates and keep assumptions available in source notes or speaker notes when appropriate.
+不要编造研究、引文、客户事实、财务结果或图表数值。为外部主张记录来源和检索日期。将估算标记为估算，并在适当时在来源说明或演讲者备注中保留假设。

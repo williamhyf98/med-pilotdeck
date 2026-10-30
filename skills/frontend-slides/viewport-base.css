@@ -1,8 +1,5 @@
-/* ===========================================
-   VIEWPORT FITTING: MANDATORY BASE STYLES
-   Include this ENTIRE file in every presentation.
-   These styles ensure slides fit exactly in the viewport.
-   =========================================== */
+/* 仅当用户要投屏/全屏翻页，或 Phase 2 选了「高对比大字（远看）」时，把本文件全文纳入 HTML。
+   默认自由布局不要包含这些规则（会禁止页内滚动）。 */
 
 /* 1. Lock html/body to viewport */
 html, body {

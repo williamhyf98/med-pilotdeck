@@ -3,6 +3,7 @@ import type { ChatMessage, ChatRunMode } from '../chat/types/types';
 import { isReadOnlyModeToolDeny } from '../chat/utils/chatPermissions';
 import type { ProcessTraceMetric, ProcessTraceStep } from './ProcessTrace';
 import { formatProcessDuration } from './processTraceUtils';
+import { sanitizePathsClient } from '../../utils/pathSanitization';
 
 export type ProcessAttachmentImage = {
   data: string;
@@ -262,6 +263,112 @@ function parseToolInput(value: unknown): Record<string, unknown> {
   }
 }
 
+type TraumaRunnerStepMeta = {
+  traumaRunnerStep?: boolean;
+  stepNumber?: number;
+  phase?: string;
+  title?: string;
+  runningTitle?: string;
+  detail?: string;
+  durationMs?: number;
+  details?: Record<string, unknown>;
+  expectedTotalSteps?: number;
+  countInTotal?: boolean;
+};
+
+function parseRecordJson(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== 'string' || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function normalizeTraumaStepMeta(value: Record<string, unknown>): TraumaRunnerStepMeta | null {
+  if (value.traumaRunnerStep !== true) return null;
+  const details = parseRecordJson(value.details);
+  return {
+    traumaRunnerStep: true,
+    stepNumber: typeof value.stepNumber === 'number' && Number.isFinite(value.stepNumber)
+      ? value.stepNumber
+      : undefined,
+    phase: typeof value.phase === 'string' ? value.phase : undefined,
+    title: typeof value.title === 'string' ? value.title : undefined,
+    runningTitle: typeof value.runningTitle === 'string' ? value.runningTitle : undefined,
+    detail: typeof value.detail === 'string' ? value.detail : undefined,
+    durationMs: typeof value.durationMs === 'number' && Number.isFinite(value.durationMs)
+      ? value.durationMs
+      : undefined,
+    details,
+    expectedTotalSteps: typeof value.expectedTotalSteps === 'number' && Number.isFinite(value.expectedTotalSteps)
+      ? value.expectedTotalSteps
+      : undefined,
+    countInTotal: value.countInTotal === false ? false : true,
+  };
+}
+
+function getTraumaRunnerStepMeta(message: ChatMessage): TraumaRunnerStepMeta | null {
+  const inputMeta = normalizeTraumaStepMeta(parseToolInput(message.toolInput));
+  const resultContent = typeof message.toolResult?.content === 'string'
+    ? message.toolResult.content
+    : undefined;
+  const resultMeta = normalizeTraumaStepMeta(parseRecordJson(resultContent));
+  if (!inputMeta && !resultMeta) return null;
+  return {
+    ...(inputMeta || {}),
+    ...(resultMeta || {}),
+    traumaRunnerStep: true,
+    details: {
+      ...(inputMeta?.details || {}),
+      ...(resultMeta?.details || {}),
+    },
+  };
+}
+
+function isTraumaRunnerStepMessage(message: ChatMessage): boolean {
+  return Boolean(message.isToolUse && getTraumaRunnerStepMeta(message));
+}
+
+export function hasTraumaRunnerSteps(messages: ChatMessage[]): boolean {
+  return messages.some(isTraumaRunnerStepMessage);
+}
+
+function formatTraumaRunnerResultDetail(meta: TraumaRunnerStepMeta): string {
+  const details = meta.details || {};
+  if (meta.detail) return meta.detail;
+  const totalCalls = typeof details.totalCalls === 'number' ? details.totalCalls : undefined;
+  const promptChunkCount = typeof details.promptChunkCount === 'number' ? details.promptChunkCount : undefined;
+  if (totalCalls !== undefined || promptChunkCount !== undefined) {
+    const parts: string[] = [];
+    if (totalCalls !== undefined) parts.push(`检索 ${totalCalls} 次`);
+    if (promptChunkCount !== undefined) parts.push(`选用 ${promptChunkCount} 个知识块`);
+    return parts.join('，');
+  }
+  const treatmentActionCount = typeof details.treatmentActionCount === 'number'
+    ? details.treatmentActionCount
+    : undefined;
+  const missingInformationCount = typeof details.missingInformationCount === 'number'
+    ? details.missingInformationCount
+    : undefined;
+  if (treatmentActionCount !== undefined || missingInformationCount !== undefined) {
+    const parts: string[] = [];
+    if (treatmentActionCount !== undefined) parts.push(`生成 ${treatmentActionCount} 条处置建议`);
+    if (missingInformationCount !== undefined) parts.push(`提示 ${missingInformationCount} 项缺失信息`);
+    return parts.join('，');
+  }
+  const gateStatus = typeof details.gateStatus === 'string' ? details.gateStatus : '';
+  if (gateStatus) return `门控状态：${gateStatus}`;
+  if (typeof meta.durationMs === 'number') return formatProcessDuration(meta.durationMs);
+  return '';
+}
+
 function getToolInputString(message: ChatMessage, key: string): string {
   const value = parseToolInput(message.toolInput)[key];
   return typeof value === 'string' ? value : '';
@@ -288,6 +395,10 @@ function truncateToolText(text: string, max = 48): string {
 }
 
 function getToolStepTargetMeta(message: ChatMessage): { target: string; context: string } {
+  const skillName = getToolInputString(message, 'skillName');
+  if (skillName) {
+    return { target: truncateToolText(skillName, 40), context: '' };
+  }
   const filePath =
     getToolInputString(message, 'file_path') ||
     getToolInputString(message, 'path');
@@ -321,9 +432,13 @@ function getToolStepTargetMeta(message: ChatMessage): { target: string; context:
   }
 
   if (command) {
+    const description =
+      getToolInputString(message, 'description') ||
+      getToolInputString(message, 'prompt');
+    const summary = summarizeBashCommand(command);
     return {
-      target: truncateToolText(command, 48),
-      context: '',
+      target: summary,
+      context: description && description !== summary ? description : '',
     };
   }
 
@@ -342,9 +457,12 @@ function getToolStepResultDetail(message: ChatMessage): string {
   if (!result) return '';
 
   const content = typeof result.content === 'string' ? result.content.trim() : '';
+  const documentDetail = getDocumentToolResultDetail(content, Boolean(result.isError));
+  if (documentDetail) return documentDetail;
+
   if (result.isError) {
     const firstLine = content.split(/\r?\n/u).find((line) => line.trim()) || 'Failed';
-    return truncateToolText(firstLine.replace(/^<[^>]+>/u, '').trim() || 'Failed', 56);
+    return truncateToolText(firstLine.replace(/^<[^>]+>/u, '').trim() || 'Failed', 80);
   }
 
   if (!content) return '';
@@ -368,6 +486,74 @@ function getDisplayTarget(target: string): string {
   if (!target) return '';
   const normalized = target.replace(/\\/g, '/');
   return normalized.split('/').filter(Boolean).pop() || target;
+}
+
+function summarizeBashCommand(command: string): string {
+  const compact = command.replace(/\s+/g, ' ').trim();
+  const outMatch = compact.match(/--out(?:put)?\s+(?:"([^"]+)"|'([^']+)'|(\S+))/u);
+  const outPath = outMatch?.[1] || outMatch?.[2] || outMatch?.[3] || '';
+  const outName = outPath ? getDisplayTarget(outPath.replace(/["']$/u, '')) : '';
+  if (/\bpdf\.sh\b/u.test(compact) && /\bmake\b/u.test(compact)) {
+    return outName ? `pdf.sh make → ${outName}` : 'pdf.sh make';
+  }
+  if (/\bdocx\.sh\b/u.test(compact) && /\bmake\b/u.test(compact)) {
+    return outName ? `docx.sh make → ${outName}` : 'docx.sh make';
+  }
+  if (/\bpptx\.sh\b/u.test(compact) && /\bmake\b/u.test(compact)) {
+    return outName ? `pptx.sh make → ${outName}` : 'pptx.sh make';
+  }
+  if (/\bspreadsheet\.sh\b/u.test(compact) && /\bmake\b/u.test(compact)) {
+    return outName ? `spreadsheet.sh make → ${outName}` : 'spreadsheet.sh make';
+  }
+  if (/\bdiagram\.sh\b/u.test(compact) && /\bmake\b/u.test(compact)) {
+    return outName ? `diagram.sh make → ${outName}` : 'diagram.sh make';
+  }
+  return truncateToolText(compact, 72);
+}
+
+function getDocumentToolResultDetail(content: string, isError: boolean): string {
+  const parsed = extractDocumentToolJson(content);
+  if (!parsed) return '';
+  const status = typeof parsed.status === 'string' ? parsed.status.toLowerCase() : '';
+  const output = typeof parsed.output === 'string' ? parsed.output : '';
+  const error = typeof parsed.error === 'string' ? parsed.error : '';
+  if (status === 'ok' && output) {
+    return `已写入 ${getDisplayTarget(output)}`;
+  }
+  if ((isError || status === 'error') && error) {
+    return truncateToolText(error, 80);
+  }
+  return '';
+}
+
+function extractDocumentToolJson(content: string): Record<string, unknown> | null {
+  const candidates: string[] = [];
+  for (const line of content.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('{') && trimmed.includes('"status"')) {
+      candidates.push(trimmed);
+    }
+  }
+  const start = content.lastIndexOf('{');
+  const end = content.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    candidates.push(content.slice(start, end + 1));
+  }
+  const firstStart = content.indexOf('{');
+  if (firstStart >= 0 && end > firstStart && firstStart !== start) {
+    candidates.push(content.slice(firstStart, end + 1));
+  }
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    try {
+      const parsed = JSON.parse(candidates[index] as string);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Keep scanning wrapped bash banners for the JSON payload.
+    }
+  }
+  return null;
 }
 
 function hasToolError(message: ChatMessage): boolean {
@@ -566,6 +752,27 @@ function collectProcessCounts(messages: ChatMessage[]): ProcessCounts {
   }
 
   return counts;
+}
+
+function collectTraumaRunnerProcessMessages(messages: ChatMessage[], turn: MessageTurn): {
+  messages: ChatMessage[];
+  detailMessages: ChatMessage[];
+  indices: number[];
+} | null {
+  const collected: ChatMessage[] = [];
+  const indices: number[] = [];
+  for (let index = turn.start; index < turn.end; index += 1) {
+    const message = messages[index];
+    if (!message || !isTraumaRunnerStepMessage(message)) continue;
+    collected.push(message);
+    indices.push(index);
+  }
+  if (collected.length === 0) return null;
+  return {
+    messages: collected,
+    detailMessages: collected.filter(isExpandableProcessMessage),
+    indices,
+  };
 }
 
 function getDurationMs(start: unknown, end: unknown): number {
@@ -801,6 +1008,27 @@ export function buildRenderableMessageItems(
   const collapsedIndices = new Set<number>();
   const turns = createMessageTurns(messages);
   const liveTurn = options.isAssistantWorking ? turns[turns.length - 1] : null;
+  const stoppedTraumaTurns = new Map<MessageTurn, number>();
+  const stoppedTraumaTurnByMessageIndex = new Map<number, MessageTurn>();
+
+  for (const turn of turns) {
+    let stopNoticeIndex = -1;
+    for (let index = turn.start; index < turn.end; index += 1) {
+      const message = messages[index];
+      if (
+        message?.isInterruptedNotice
+        && String(message.content || '').trim() === '本轮推演已停止。'
+      ) {
+        stopNoticeIndex = index;
+      }
+    }
+    if (stopNoticeIndex >= 0) {
+      stoppedTraumaTurns.set(turn, stopNoticeIndex);
+      for (let index = turn.start; index < turn.end; index += 1) {
+        stoppedTraumaTurnByMessageIndex.set(index, turn);
+      }
+    }
+  }
 
   const liveStandaloneThinkingIndices = new Set<number>();
   if (liveTurn) {
@@ -840,6 +1068,14 @@ export function buildRenderableMessageItems(
     if (message.isAgentActivitySummary) {
       return;
     }
+    const stoppedTurn = stoppedTraumaTurnByMessageIndex.get(originalIndex);
+    if (stoppedTurn) {
+      const stopNoticeIndex = stoppedTraumaTurns.get(stoppedTurn);
+      if (message.type !== 'user' && originalIndex !== stopNoticeIndex) {
+        collapsedIndices.add(originalIndex);
+        return;
+      }
+    }
     if (
       liveTurn &&
       originalIndex >= liveTurn.start &&
@@ -866,6 +1102,9 @@ export function buildRenderableMessageItems(
   attachSummariesToTurns(messages, turns);
 
   turns.forEach((turn, turnIndex) => {
+    if (stoppedTraumaTurns.has(turn)) {
+      return;
+    }
     const isLatestTurn = turnIndex === turns.length - 1;
     if (options.isAssistantWorking && isLatestTurn) {
       return;
@@ -891,6 +1130,47 @@ export function buildRenderableMessageItems(
           firstVisibleItem.beforeRunAttachment = runAttachment;
         }
       }
+    }
+
+    const traumaSegment = collectTraumaRunnerProcessMessages(messages, turn);
+    if (traumaSegment) {
+      for (const index of traumaSegment.indices) {
+        collapsedIndices.add(index);
+      }
+      const firstIndex = traumaSegment.indices[0] ?? turn.start;
+      const lastIndex = traumaSegment.indices[traumaSegment.indices.length - 1] ?? firstIndex;
+      const attachmentId = `trauma-process-${getStableMessagePart(messages[turn.start], `turn-${turn.start}`)}`;
+      const summary = createSyntheticProcessSummary(
+        messages,
+        turn,
+        turn.start,
+        traumaSegment.messages,
+        firstIndex,
+        lastIndex,
+        attachmentId,
+      );
+      const attachment: ProcessAttachment = {
+        id: attachmentId,
+        processSummary: summary,
+        processDetailMessages: traumaSegment.detailMessages,
+        startIndex: firstIndex,
+        endIndex: lastIndex,
+        inlineImages: collectToolResultImages(traumaSegment.messages),
+      };
+      const turnStartItem = itemsByIndex.get(turn.start);
+      if (turnStartItem) {
+        pushProcessAttachment(turnStartItem, 'after', attachment);
+      } else {
+        syntheticItems.push({
+          message: summary,
+          originalIndex: firstIndex - 0.1,
+          beforeRunAttachment: null,
+          afterRunAttachment: null,
+          beforeProcessAttachments: [],
+          afterProcessAttachments: [],
+        });
+      }
+      return;
     }
 
     const segments = collectCompletedProcessSegments(messages, turn);
@@ -985,6 +1265,20 @@ export function getLiveProcessGroups(
   const liveTurn = turns[turns.length - 1];
   if (!liveTurn) {
     return [];
+  }
+
+  const traumaSegment = collectTraumaRunnerProcessMessages(messages, liveTurn);
+  if (traumaSegment) {
+    return [{
+      id: `live-trauma-process-${getStableMessagePart(messages[liveTurn.start], `turn-${liveTurn.start}`)}`,
+      afterOriginalIndex: liveTurn.start,
+      beforeOriginalIndex: null,
+      startIndex: traumaSegment.indices[0] ?? liveTurn.start,
+      endIndex: traumaSegment.indices[traumaSegment.indices.length - 1] ?? messages.length,
+      messages: traumaSegment.messages,
+      detailMessages: traumaSegment.detailMessages,
+      isRunning: Boolean(options.isAssistantWorking),
+    }];
   }
 
   const groups: Omit<LiveProcessGroup, 'isRunning'>[] = [];
@@ -1134,6 +1428,11 @@ export function formatCompletedProcessTitle(
   messageOrMessages: ChatMessage | ChatMessage[],
   t: TFunction<'chat'>,
 ): string {
+  const messages = Array.isArray(messageOrMessages) ? messageOrMessages : [messageOrMessages];
+  if (hasTraumaRunnerSteps(messages)) {
+    return '本轮推演完成';
+  }
+
   const counts = Array.isArray(messageOrMessages)
     ? collectProcessCounts(messageOrMessages)
     : {
@@ -1215,6 +1514,11 @@ export function getRunningProcessTitle(
     return t('working.processing', { defaultValue: 'Processing' });
   }
 
+  const traumaMeta = getTraumaRunnerStepMeta(latestMessage);
+  if (traumaMeta) {
+    return traumaMeta.runningTitle || traumaMeta.title || '正在执行推演步骤';
+  }
+
   const kind = getProcessToolKind(latestMessage);
   const target = getDisplayTarget(getToolTarget(latestMessage));
   if (kind === 'edit') {
@@ -1254,8 +1558,10 @@ export function getLiveProcessGroupStep(
   t: TFunction<'chat'>,
   fallbackRunningStep: ProcessTraceStep | null,
 ): ProcessTraceStep {
+  const isTraumaGroup = hasTraumaRunnerSteps(group.messages);
   const fallbackPhase = String(fallbackRunningStep?.phase || '');
   const canUseFallbackStep = fallbackRunningStep?.title &&
+    !isTraumaGroup &&
     !['generation', 'thinking', 'permission'].includes(fallbackPhase);
   if (group.isRunning && canUseFallbackStep) {
     return {
@@ -1270,12 +1576,13 @@ export function getLiveProcessGroupStep(
     : formatCompletedProcessTitle(group.messages, t);
   const latestMessage = group.messages[group.messages.length - 1];
   const kind = latestMessage ? getProcessToolKind(latestMessage) : 'tool';
+  const traumaMeta = latestMessage ? getTraumaRunnerStepMeta(latestMessage) : null;
 
   return {
     id: group.id,
     title,
     state: group.isRunning ? 'running' : 'completed',
-    phase: kind === 'search' ? 'rag' : kind === 'command' ? 'tool' : latestMessage?.phase,
+    phase: traumaMeta?.phase || (kind === 'search' ? 'rag' : kind === 'command' ? 'tool' : latestMessage?.phase),
     toolName: latestMessage?.toolName,
   };
 }
@@ -1284,7 +1591,29 @@ export function getLiveProcessGroupStep(
  * Build a vertical timeline step list for process panels.
  * Includes tool name + short target (path / pattern / command) and optional result summary.
  */
-export function buildProcessToolSteps(messages: ChatMessage[]): ProcessTraceStep[] {
+export type ProcessStepOptions = {
+  /** Multi-user: current user id. When set, user-specific path segments are hidden. */
+  sanitizeForUserId?: string | number | null;
+};
+
+export function buildProcessToolSteps(
+  messages: ChatMessage[],
+  options: ProcessStepOptions = {},
+): ProcessTraceStep[] {
+  const steps = buildProcessToolStepsRaw(messages);
+  if (options.sanitizeForUserId === undefined || options.sanitizeForUserId === null) return steps;
+  const userId = options.sanitizeForUserId;
+  const clean = (value: string | undefined) => (value === undefined ? value : sanitizePathsClient(value, userId));
+  return steps.map((step) => ({
+    ...step,
+    target: clean(step.target),
+    context: clean(step.context),
+    detail: clean(step.detail),
+    resultDetail: clean(step.resultDetail),
+  }));
+}
+
+function buildProcessToolStepsRaw(messages: ChatMessage[]): ProcessTraceStep[] {
   const steps: ProcessTraceStep[] = [];
   const seen = new Set<string>();
 
@@ -1304,28 +1633,47 @@ export function buildProcessToolSteps(messages: ChatMessage[]): ProcessTraceStep
         typeof result === 'object' &&
         (result as { isError?: boolean }).isError,
     );
+    const traumaMeta = getTraumaRunnerStepMeta(message);
     const kind = getProcessToolKind(message);
     const { target, context } = getToolStepTargetMeta(message);
-    const resultDetail = getToolStepResultDetail(message);
+    const resultDetail = traumaMeta ? formatTraumaRunnerResultDetail(traumaMeta) : getToolStepResultDetail(message);
+    const command = getToolInputString(message, 'command');
+    const description = getToolInputString(message, 'description');
+    const title = traumaMeta
+      ? traumaMeta.title || toolName
+      : kind === 'command' && description ? description : toolName;
 
     steps.push({
       id: stepId,
-      title: toolName,
+      title,
       toolName,
-      target: target || undefined,
-      context: context || undefined,
-      detail: target || undefined,
+      target: traumaMeta ? undefined : (target || undefined),
+      context: kind === 'command' ? undefined : (context || undefined),
+      detail: traumaMeta ? undefined : (command || target || undefined),
       resultDetail: resultDetail || undefined,
       state: !hasResult ? 'running' : isError ? 'failed' : 'completed',
-      phase: kind === 'search' ? 'rag' : kind === 'subagent' ? 'subtask' : 'tool',
-    });
+      phase: traumaMeta?.phase || (kind === 'search'
+        ? 'rag'
+        : kind === 'subagent'
+          ? 'subtask'
+	          : kind === 'command'
+	            ? 'command'
+	            : kind === 'edit'
+	              ? 'write'
+	              : kind === 'read'
+	                ? 'read'
+	                : 'tool'),
+	    });
   }
 
   return steps;
 }
 
-export function getLiveProcessToolNameSteps(group: LiveProcessGroup): ProcessTraceStep[] {
-  return buildProcessToolSteps(group.messages);
+export function getLiveProcessToolNameSteps(
+  group: LiveProcessGroup,
+  options: ProcessStepOptions = {},
+): ProcessTraceStep[] {
+  return buildProcessToolSteps(group.messages, options);
 }
 
 export function processSummaryToTrace(

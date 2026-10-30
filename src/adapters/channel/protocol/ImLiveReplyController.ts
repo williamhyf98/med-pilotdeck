@@ -87,6 +87,7 @@ const DEFAULT_ABORT_FINAL_TEXT = "处理已中止，请重新发送或稍后重�
 const VISIBLE_FAILURE_STATUS_EVENTS = new Set([
   "model_empty_response_exhausted",
   "max_turns_reached",
+  "max_tool_calls_reached",
   "max_output_recovery_exhausted",
   "model_request_failed",
   "tool_call_recovery_exhausted",
@@ -310,6 +311,11 @@ export class ImLiveReplyController<Handle = ImLiveReplyHandle> {
     if (event.event === "max_turns_reached") {
       const detailMessage = typeof event.detail?.message === "string" ? event.detail.message : undefined;
       void this.append(`\n⚠️ ${detailMessage ?? "Reached the maximum number of turns, so this turn has stopped. Increase maxTurns or split the task into smaller steps and try again."}\n`);
+      return;
+    }
+    if (event.event === "max_tool_calls_reached") {
+      const detailMessage = typeof event.detail?.message === "string" ? event.detail.message : undefined;
+      void this.append(`\n⚠️ ${detailMessage ?? "Reached the maximum number of tool calls, so this turn has stopped. Reply with what you already know, or split the task into smaller steps."}\n`);
       return;
     }
     if (WARNING_STATUS_EVENTS.has(event.event) || isVisibleFailureStatusDetail(event.detail)) {

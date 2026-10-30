@@ -32,7 +32,7 @@ async function createInteractiveFixture(workbookPath) {
   workbook.creator = 'PilotDeck test';
   workbook.views = [{ activeTab: 0 }];
   const summary = workbook.addWorksheet('管理摘要', {
-    views: [{ state: 'frozen', xSplit: 1, ySplit: 1 }],
+    views: [{ state: 'frozen', xSplit: 1, ySplit: 1, showGridLines: false }],
   });
   summary.getColumn(1).width = 24;
   summary.getColumn(2).width = 18;
@@ -68,6 +68,8 @@ async function createInteractiveFixture(workbookPath) {
   const details = workbook.addWorksheet('行动项');
   details.getCell('A1').value = '负责人';
   details.getCell('B1').value = '王芳';
+  details.getCell('C1').value = '浅色字无底';
+  details.getCell('C1').font = { color: { argb: 'FFFFFFFF' } };
 
   await workbook.xlsx.writeFile(workbookPath);
 }
@@ -151,9 +153,12 @@ describe('spreadsheet workbook manifest parsing', () => {
       expect(summary.columnData[0].w).toBeGreaterThan(150);
       expect(summary.rowData[0].h).toBe(40);
       expect(summary.freeze).toMatchObject({
-        xSplit: 1,
-        ySplit: 1,
+        xSplit: 0,
+        ySplit: 0,
+        startRow: 0,
+        startColumn: 0,
       });
+      expect(summary.showGridlines).toBe(1);
       expect(summary.cellData[0][0]).toMatchObject({
         v: '中文指标',
         t: 1,
@@ -163,6 +168,10 @@ describe('spreadsheet workbook manifest parsing', () => {
           bg: { rgb: '#70AD47' },
           cl: { rgb: '#FFFFFF' },
         },
+      });
+      expect(preview.workbook.sheets['sheet-2'].cellData[0][2]).toMatchObject({
+        v: '浅色字无底',
+        s: { cl: { rgb: '#1F2937' } },
       });
       expect(summary.cellData[2][0]).toMatchObject({
         f: '=SUM(A2:B2)',

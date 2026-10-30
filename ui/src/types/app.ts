@@ -1,7 +1,21 @@
 export type SessionProvider = 'claude' | 'cursor' | 'codex' | 'gemini' | 'pilotdeck';
 export type ProjectSessionKind = 'background_task';
 
-export type AppTab = 'home' | 'chat' | 'always-on' | 'cron' | 'files' | 'shell' | 'git' | 'tasks' | 'memory' | 'skills' | 'preview' | 'dashboard' | `plugin:${string}`;
+export type AppTab =
+  | 'home'
+  | 'chat'
+  | 'always-on'
+  | 'cron'
+  | 'files'
+  | 'shell'
+  | 'git'
+  | 'tasks'
+  | 'memory'
+  | 'skills'
+  | 'storage'
+  | 'preview'
+  | 'dashboard'
+  | `plugin:${string}`;
 
 export type AlwaysOnSessionTarget =
   | {
@@ -244,11 +258,19 @@ export interface ProjectTaskmasterInfo {
   [key: string]: unknown;
 }
 
+export type ProjectType = 'general_medicine' | 'war_trauma';
+
 export interface Project {
   name: string;
   displayName: string;
   fullPath: string;
   path?: string;
+  /** System project type when created via create-system (immutable). */
+  projectType?: ProjectType;
+  type?: ProjectType;
+  kind?: 'system' | string;
+  status?: 'active' | 'archived' | string;
+  createdAt?: string;
   sessions?: ProjectSession[];
   sessionMeta?: ProjectSessionMeta;
   taskmaster?: ProjectTaskmasterInfo;

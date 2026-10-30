@@ -27,7 +27,11 @@ type UseShellConnectionOptions = {
   onOutputRef?: MutableRefObject<(() => void) | null>;
 };
 
+export type ShellDeniedReason = 'ADMIN_REQUIRED';
+
 type UseShellConnectionResult = {
+  /** Set when the gateway refused the terminal for this account; the UI should explain, not retry. */
+  deniedReason: ShellDeniedReason | null;
   isConnected: boolean;
   isConnecting: boolean;
   closeSocket: () => void;
@@ -53,7 +57,9 @@ export function useShellConnection({
 }: UseShellConnectionOptions): UseShellConnectionResult {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [deniedReason, setDeniedReason] = useState<ShellDeniedReason | null>(null);
   const connectingRef = useRef(false);
+  const deniedRef = useRef(false);
 
   const handleProcessCompletion = useCallback(
     (output: string) => {
@@ -109,7 +115,7 @@ export function useShellConnection({
 
   const connectWebSocket = useCallback(
     (isConnectionLocked = false) => {
-      if ((connectingRef.current && !isConnectionLocked) || isConnecting || isConnected) {
+      if (deniedRef.current || (connectingRef.current && !isConnectionLocked) || isConnecting || isConnected) {
         return;
       }
 
@@ -161,7 +167,17 @@ export function useShellConnection({
           handleSocketMessage(rawPayload);
         };
 
-        socket.onclose = () => {
+        socket.onclose = (event) => {
+          if (event.code === 4403) {
+            // Shell is admin-only: remember the refusal so we neither retry nor
+            // let autoConnect loop.
+            deniedRef.current = true;
+            setDeniedReason('ADMIN_REQUIRED');
+          } else if (event.code === 4401) {
+            window.dispatchEvent(new CustomEvent('pilotdeck:auth-revoked', {
+              detail: { code: event.reason || 'TOKEN_REVOKED' },
+            }));
+          }
           setIsConnected(false);
           setIsConnecting(false);
           connectingRef.current = false;
@@ -196,7 +212,7 @@ export function useShellConnection({
   );
 
   const connectToShell = useCallback(() => {
-    if (!isInitialized || isConnected || isConnecting || connectingRef.current) {
+    if (deniedRef.current || !isInitialized || isConnected || isConnecting || connectingRef.current) {
       return;
     }
 
@@ -215,14 +231,15 @@ export function useShellConnection({
   }, [clearTerminalScreen, closeSocket, setAuthUrl]);
 
   useEffect(() => {
-    if (!autoConnect || !isInitialized || isConnecting || isConnected) {
+    if (!autoConnect || !isInitialized || isConnecting || isConnected || deniedReason) {
       return;
     }
 
     connectToShell();
-  }, [autoConnect, connectToShell, isConnected, isConnecting, isInitialized]);
+  }, [autoConnect, connectToShell, deniedReason, isConnected, isConnecting, isInitialized]);
 
   return {
+    deniedReason,
     isConnected,
     isConnecting,
     closeSocket,

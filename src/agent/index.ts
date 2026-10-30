@@ -18,6 +18,25 @@ export {
 export { AgentRuntimeError, agentError, normalizeAgentError, type AgentError, type AgentErrorCode } from "./protocol/errors.js";
 export { createAgentEventBuffer, type AgentEvent, type AgentEventEmitter, type AgentEventBufferHandle } from "./protocol/events.js";
 export type { AgentInput, AgentSubmitOptions } from "./protocol/input.js";
+export { ProfileRegistry } from "./profile/ProfileRegistry.js";
+export {
+  MAX_AGENT_PROFILE_SYSTEM_CONTEXT_CHARS,
+  MAX_AGENT_TURN_METADATA_BYTES,
+  parseAgentTurnOverrides,
+  parseMarkdownAgentProfile,
+  resolveAgentTurnExecution,
+  sanitizeAgentTurnMetadata,
+  type ResolveAgentTurnExecutionInput,
+} from "./profile/validation.js";
+export type {
+  AgentModelControls,
+  AgentProfile,
+  AgentProfileResolver,
+  AgentProfileSource,
+  AgentToolPolicy,
+  AgentTurnOverrides,
+  ResolvedAgentTurnExecution,
+} from "./profile/types.js";
 export type { AgentPermissionDenial, AgentStopReason, AgentTurnResult } from "./protocol/result.js";
 export type { AgentLoopState, AgentLoopTransition, AgentLoopTransitionReason, AgentSessionState } from "./protocol/state.js";
 export type { AgentRuntimeConfig } from "./runtime/AgentRuntimeConfig.js";

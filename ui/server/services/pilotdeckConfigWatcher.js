@@ -4,6 +4,7 @@ import path from 'path';
 import {
   configToYaml,
   getPilotDeckConfigPath,
+  maskRawYamlText,
   maskSecrets,
   rawYamlToMaskedString,
   readPilotDeckConfigFile,
@@ -66,7 +67,9 @@ async function handleChange(configPath) {
     onEventHandler?.({
       source: 'watcher',
       path: record.configPath,
-      raw: record.raw,
+      // Unparseable YAML cannot go through rawYamlToMaskedString; mask it
+      // line-wise so a broken file does not broadcast its API keys.
+      raw: maskRawYamlText(record.raw),
       configDisabled: true,
       parseError: record.parseError,
       validation: {

@@ -1,6 +1,8 @@
 import { resolvePluginDirectories } from "../discovery/PluginDirectoryResolver.js";
+import { isMedicalSkillAvailable } from "../../../pilot/medicalCapabilities.js";
 import { discoverPluginPaths, discoverSkillPaths } from "../discovery/discoverLocalPlugins.js";
 import { loadPluginFromPath, loadSkillFromPath } from "../loading/PluginLoader.js";
+import { loadPluginAgentProfiles } from "../loading/PluginAgentProfileLoader.js";
 import { loadPluginHooks } from "../loading/PluginHookLoader.js";
 import type { LoadedPluginCommand } from "../loading/PluginCommandLoader.js";
 import type { PilotDeckLoadedPlugin } from "../protocol/plugin.js";
@@ -8,6 +10,15 @@ import { PluginRegistry } from "./PluginRegistry.js";
 import { truncateMcpInstructionString } from "./truncateMcpString.js";
 import type { PilotDeckHooksSettings } from "../../hooks/protocol/settings.js";
 import type { PilotDeckCustomRouter } from "../../../router/customRouter/customRouter.js";
+import {
+  ProfileRegistry,
+  type AgentProfile,
+  type AgentProfileResolver,
+} from "../../../agent/index.js";
+import {
+  normalizeSkillAvailability,
+  type SkillAvailability,
+} from "../../../pilot/skillAvailability.js";
 
 /**
  * Static MCP server contribution shape callers can rely on. Manifests load
@@ -59,6 +70,7 @@ export type PluginSkillContribution = {
   /** Absolute path to the resolved SKILL.md. */
   path: string;
   namespace?: string;
+  availability?: SkillAvailability[];
 };
 
 export type PluginMcpInstruction = {
@@ -69,6 +81,7 @@ export type PluginMcpInstruction = {
 export type PluginContributionSnapshot = {
   plugins: PilotDeckLoadedPlugin[];
   commands: PluginCommandContribution[];
+  agents: AgentProfile[];
   skills: PluginSkillContribution[];
   outputStyles: LoadedPluginCommand[];
   hooks: PilotDeckHooksSettings;
@@ -79,11 +92,20 @@ export type PluginContributionSnapshot = {
 
 export class PluginRuntime {
   private readonly registry = new PluginRegistry();
+  private readonly agentProfileRegistry = new ProfileRegistry();
 
   constructor(private readonly options: PluginRuntimeOptions) {}
 
   snapshot(): PilotDeckLoadedPlugin[] {
     return this.registry.list();
+  }
+
+  profiles(): AgentProfileResolver {
+    return this.agentProfileRegistry;
+  }
+
+  getAllAgentProfiles(): AgentProfile[] {
+    return this.agentProfileRegistry.list();
   }
 
   mcpServers(): Record<string, unknown> {
@@ -134,7 +156,8 @@ export class PluginRuntime {
     return {
       plugins,
       commands: plugins.flatMap((plugin) => (plugin.commands ?? []).map((command) => toCommandContribution(plugin, command))),
-      skills: collectSkillContributions(plugins),
+      agents: this.getAllAgentProfiles(),
+      skills: collectSkillContributions(plugins).filter((skill) => isMedicalSkillAvailable(skill.name)),
       outputStyles: plugins.flatMap((plugin) => plugin.outputStyles ?? []),
       hooks: loadPluginHooks(plugins),
       mcpServers: this.mcpServers(),
@@ -164,6 +187,7 @@ export class PluginRuntime {
   }
 
   async loadSkillPrompt(extensionId: string): Promise<string | undefined> {
+    if (!isMedicalSkillAvailable(extensionId)) return undefined;
     const plugins = sortByResolutionPriority(this.registry.list());
 
     for (const plugin of plugins) {
@@ -229,12 +253,28 @@ export class PluginRuntime {
         discoveredSkills.map((s) => loadSkillFromPath(s.path, s.source).catch(() => undefined)),
       ),
     ]);
+    const builtinPlugins = await Promise.all(
+      enabledBuiltinPlugins(
+        this.options.builtinPlugins ?? [],
+        this.options.builtinPluginsEnabled ?? {},
+      ).map(async (plugin) => {
+        if (plugin.agents) return plugin;
+        const agents = await loadPluginAgentProfiles({
+          pluginName: plugin.name,
+          pluginPath: plugin.path,
+          source: plugin.source,
+          configured: plugin.manifest.agents,
+        }).catch(() => []);
+        return { ...plugin, agents };
+      }),
+    );
     const plugins = [
-      ...enabledBuiltinPlugins(this.options.builtinPlugins ?? [], this.options.builtinPluginsEnabled ?? {}),
+      ...builtinPlugins,
       ...loaded.filter(isLoadedPlugin),
       ...loadedSkills.filter(isLoadedPlugin),
     ];
     this.registry.replaceAll(plugins);
+    this.agentProfileRegistry.replaceAll(plugins.flatMap((plugin) => plugin.agents ?? []));
     return {
       previous,
       next: plugins,
@@ -278,11 +318,13 @@ function toSkillContribution(
   plugin: PilotDeckLoadedPlugin,
   skill: LoadedPluginCommand,
 ): PluginSkillContribution {
+  const availability = normalizeSkillAvailability(skill.frontmatter.availability);
   return {
     name: skill.name,
     description: typeof skill.frontmatter.description === "string" ? skill.frontmatter.description : undefined,
     path: skill.path,
     namespace: plugin.name,
+    ...(availability.length > 0 ? { availability } : {}),
   };
 }
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import difflib
+import os
 import platform
 import re
 import shutil
@@ -123,6 +124,11 @@ def _fontconfig_match(font_name: str) -> str | None:
 
 
 def resolve_fonts(style: dict[str, Any]) -> dict[str, str]:
+    bundled_font_dir = os.environ.get("DOCX_SKILL_FONT_DIR", "").strip()
+    if bundled_font_dir and (
+        Path(bundled_font_dir).expanduser().resolve() / "NotoSansSC-VF.ttf"
+    ).is_file():
+        return {"latin": "Noto Sans SC", "east_asia": "Noto Sans SC"}
     latin = str(style["body_font"])
     system = platform.system()
     candidate_map = (

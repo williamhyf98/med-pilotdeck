@@ -11,12 +11,14 @@ import { mergeConfigSources } from "./merge.js";
 import { parseMemoryConfig } from "./parseMemoryConfig.js";
 import { parseAdaptersConfig, parseGatewayConfig } from "./parseGatewayConfig.js";
 import { parseToolsConfig } from "./parseToolsConfig.js";
+import { parseMultiUserConfig } from "./parseMultiUserConfig.js";
 import { parseRouterConfig } from "../../router/config/parseRouterConfig.js";
 import { redactConfig } from "./redact.js";
 import {
   PilotConfigError,
   type PilotAgentConfig,
   type PilotAgentModelSelection,
+  type PilotMedicalConfig,
   type PilotConfigDiagnostic,
   type PilotExtensionConfig,
   type PilotProxyConfig,
@@ -49,7 +51,7 @@ export function loadPilotConfig(options: PilotConfigLoadOptions = {}): PilotConf
     });
   }
 
-  const defaultConfigPath = getPilotConfigFilePath(pilotHome);
+  const defaultConfigPath = getPilotConfigFilePath(pilotHome, env);
   const defaultConfig = readYamlSource(defaultConfigPath, "default", 10, loadedAt, diagnostics, sources);
 
   const envConfig = readEnvOverrides(env);
@@ -90,6 +92,7 @@ export function loadPilotConfig(options: PilotConfigLoadOptions = {}): PilotConf
 
   const model = parseModel(rawConfig.model, env, diagnostics);
   const agent = parseAgent(rawConfig.agent, model, diagnostics);
+  const medical = parseMedical(rawConfig.medical, model, diagnostics);
   const extension = parseExtension(rawConfig.extension, diagnostics);
   const memory = parseMemoryConfig(rawConfig.memory, diagnostics, getPilotMemoryRootDir(pilotHome), model);
   const gateway = parseGatewayConfig(rawConfig.gateway, diagnostics);
@@ -124,6 +127,7 @@ export function loadPilotConfig(options: PilotConfigLoadOptions = {}): PilotConf
   const alwaysOn = parseAlwaysOnConfig(rawConfig.alwaysOn, diagnostics);
   const cron = parseCronConfig(rawConfig.cron, diagnostics);
   const tools = parseToolsConfig(rawConfig.tools, diagnostics);
+  const multiUser = parseMultiUserConfig(rawConfig.multiUser, diagnostics);
   const telemetry = parseTelemetryConfig(rawConfig.telemetry);
   const proxy = parseProxyConfig(rawConfig, diagnostics);
   throwConfigErrorIfFatal(diagnostics);
@@ -131,6 +135,7 @@ export function loadPilotConfig(options: PilotConfigLoadOptions = {}): PilotConf
   const redactedSnapshotConfig = redactConfig({
     agent,
     model,
+    ...(medical ? { medical } : {}),
     extension,
     memory,
     gateway,
@@ -141,6 +146,7 @@ export function loadPilotConfig(options: PilotConfigLoadOptions = {}): PilotConf
     tools,
     telemetry,
     proxy,
+    multiUser,
   });
   return deepFreeze({
     version: options.version ?? 1,
@@ -152,6 +158,7 @@ export function loadPilotConfig(options: PilotConfigLoadOptions = {}): PilotConf
     config: {
       agent,
       model,
+      ...(medical ? { medical } : {}),
       extension,
       ...(memory ? { memory } : {}),
       ...(gateway ? { gateway } : {}),
@@ -162,6 +169,7 @@ export function loadPilotConfig(options: PilotConfigLoadOptions = {}): PilotConf
       ...(tools ? { tools } : {}),
       telemetry,
       ...(proxy ? { proxy } : {}),
+      multiUser,
     },
   });
 }
@@ -299,6 +307,7 @@ function validateTopLevel(rawConfig: PilotRawConfig, diagnostics: PilotConfigDia
     "schemaVersion",
     "agent",
     "model",
+    "medical",
     "extension",
     "memory",
     "gateway",
@@ -308,6 +317,7 @@ function validateTopLevel(rawConfig: PilotRawConfig, diagnostics: PilotConfigDia
     "cron",
     "tools",
     "proxy",
+    "multiUser",
     // Reserved namespace for ui/server (Web UI Express bridge). The PilotDeck
     // gateway does not parse `webui.*` itself but tolerates it so a single
     // ~/.pilotdeck/pilotdeck.yaml can carry both gateway-side and ui-side
@@ -326,6 +336,49 @@ function validateTopLevel(rawConfig: PilotRawConfig, diagnostics: PilotConfigDia
       });
     }
   }
+}
+
+function parseMedical(
+  raw: unknown,
+  modelConfig: ReturnType<typeof parseModel>,
+  diagnostics: PilotConfigDiagnostic[],
+): PilotMedicalConfig | undefined {
+  if (raw === undefined) return undefined;
+  if (!isRecord(raw) || typeof raw.interpretationModel !== "string") {
+    diagnostics.push({
+      code: "CONFIG_MEDICAL_INVALID",
+      severity: "fatal",
+      message: "medical.interpretationModel must be a provider/model string.",
+      path: "medical.interpretationModel",
+      recoverable: false,
+    });
+    throwConfigErrorIfFatal(diagnostics);
+    return undefined;
+  }
+  const interpretationModel = parseAgentModelSelection(
+    raw.interpretationModel, "medical.interpretationModel", modelConfig, diagnostics,
+  );
+  const provider = modelConfig.providers[interpretationModel.provider];
+  if (provider.protocol !== "openai") {
+    diagnostics.push({
+      code: "CONFIG_MEDICAL_PROTOCOL_UNSUPPORTED",
+      severity: "fatal",
+      message: "medical.interpretationModel requires an OpenAI-compatible provider.",
+      path: "medical.interpretationModel",
+      recoverable: false,
+    });
+  }
+  if (!provider.models[interpretationModel.model].multimodal.input.includes("image")) {
+    diagnostics.push({
+      code: "CONFIG_MEDICAL_IMAGE_UNSUPPORTED",
+      severity: "fatal",
+      message: "medical.interpretationModel must support image input.",
+      path: "medical.interpretationModel",
+      recoverable: false,
+    });
+  }
+  throwConfigErrorIfFatal(diagnostics);
+  return { interpretationModel };
 }
 
 function parseAgent(

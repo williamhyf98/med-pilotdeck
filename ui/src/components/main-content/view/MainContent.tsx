@@ -2,24 +2,26 @@ import React, { Suspense, useCallback, useEffect, useRef, useState } from 'react
 import { useTranslation } from 'react-i18next';
 import {
   BarChart3,
-  Database,
-  FileText,
-  FolderOpen,
-  MessageSquare,
-  PanelLeftOpen,
-  PanelRightClose,
-  PanelRightOpen,
   Radio,
-  Sparkles,
   type LucideIcon,
 } from 'lucide-react';
+import { resolveProjectType } from '../../app-shell/appShellSelection';
 import ChatInterfaceV2 from '../../chat-v2/ChatInterfaceV2';
+import TraumaWorkspace from '../../trauma-workspace/TraumaWorkspace';
+import type { TurnFormInput, VitalItemKey } from '../../trauma-workspace/domain/types';
+import { subStageLabel } from '../../trauma-workspace/domain/displayLabels';
+import {
+  createTemporarySessionId,
+  isTemporarySessionId,
+  startSessionCommand,
+} from '../../chat/utils/sessionLauncher';
 import PluginTabContent from '../../plugins/view/PluginTabContent';
 import { cn } from '../../../lib/utils.js';
 import type { MainContentProps } from '../types/types';
 import { useTaskMaster } from '../../../contexts/TaskMasterContext';
 import { useTasksSettings } from '../../../contexts/TasksSettingsContext';
 import { useUiPreferences } from '../../../hooks/useUiPreferences';
+import { useAnimatedPresence } from '../../../hooks/useAnimatedPresence';
 import { useEditorSidebar } from '../../code-editor/hooks/useEditorSidebar';
 import EditorSidebar from '../../code-editor/view/EditorSidebar';
 import type { CodeEditorDiffInfo } from '../../code-editor/types/types';
@@ -29,12 +31,11 @@ import type {
   Project,
   ProjectSession,
 } from '../../../types/app';
-import { isReadOnlySession } from '../../../types/app';
 import { api } from '../../../utils/api';
 import MainContentStateView from './subcomponents/MainContentStateView';
-import ConversationSwitcher from './subcomponents/ConversationSwitcher';
 import ErrorBoundary from './ErrorBoundary';
 import ToolSidePanel from './subcomponents/ToolSidePanel';
+import { safeLocalStorage } from '../../../utils/safeStorage';
 
 const AlwaysOnV2 = React.lazy(() => import('../../main-content-v2/AlwaysOnV2'));
 const CronV2 = React.lazy(() => import('../../main-content-v2/CronV2'));
@@ -45,6 +46,7 @@ const DashboardV2 = React.lazy(() => import('../../main-content-v2/DashboardV2')
 const TasksV2 = React.lazy(() => import('../../main-content-v2/TasksV2'));
 const MemoryPanel = React.lazy(() => import('./memory/MemoryPanel'));
 const SkillsV2 = React.lazy(() => import('../../main-content-v2/SkillsV2'));
+const StorageV2 = React.lazy(() => import('../../main-content-v2/StorageV2'));
 
 function TabSkeleton() {
   return (
@@ -67,45 +69,51 @@ type TasksSettingsContextValue = {
 
 type MainContentToast = { kind: 'error' | 'info'; text: string } | null;
 
-const FILES_EXPLORER_DEFAULT_WIDTH = 300;
-const FILES_EXPLORER_MIN_WIDTH = 240;
-const FILES_EXPLORER_MAX_WIDTH = 420;
-const FILES_ASSISTANT_DEFAULT_WIDTH = 380;
-const FILES_ASSISTANT_MIN_WIDTH = 320;
-const FILES_ASSISTANT_MAX_WIDTH = 480;
-const FILES_ARTIFACT_MIN_WIDTH = 480;
-const FILES_NARROW_BREAKPOINT = 1040;
-const FILES_ASSISTANT_STORAGE_KEY = 'pilotdeck:files-assistant-width';
+const FILES_PANEL_WIDTH = 320;
+const FILE_PREVIEW_WIDTH = 560;
 const TOOL_PANEL_STORAGE_KEY = 'pilotdeck:dashboard-panel-width';
 const TOOL_PANEL_DEFAULT_WIDTH = 480;
 const TOOL_PANEL_MIN_WIDTH = 360;
 const TOOL_PANEL_MAX_WIDTH = 720;
 const TOOL_PANEL_MAX_LAYOUT_RATIO = 0.48;
 
-type DashboardPanelTab = Extract<AppTab, 'skills' | 'dashboard' | 'memory' | 'always-on'>;
+type DashboardPanelTab = Extract<AppTab, 'dashboard' | 'always-on'>;
 
-const DASHBOARD_PANEL_TABS = new Set<AppTab>(['skills', 'dashboard', 'memory', 'always-on']);
+const DASHBOARD_PANEL_TABS = new Set<AppTab>(['dashboard', 'always-on']);
 const DASHBOARD_PANEL_META: Record<DashboardPanelTab, { labelKey: string; icon: LucideIcon }> = {
-  skills: { labelKey: 'tabs.skills', icon: Sparkles },
   dashboard: { labelKey: 'tabs.dashboard', icon: BarChart3 },
-  memory: { labelKey: 'tabs.memory', icon: Database },
   'always-on': { labelKey: 'tabs.alwaysOn', icon: Radio },
 };
 
-function readStoredFilesAssistantWidth(): number {
-  try {
-    const stored = Number(localStorage.getItem(FILES_ASSISTANT_STORAGE_KEY));
-    return Number.isFinite(stored) && stored > 0
-      ? Math.min(Math.max(stored, FILES_ASSISTANT_MIN_WIDTH), FILES_ASSISTANT_MAX_WIDTH)
-      : FILES_ASSISTANT_DEFAULT_WIDTH;
-  } catch {
-    return FILES_ASSISTANT_DEFAULT_WIDTH;
-  }
+const TRAUMA_VITAL_LABELS: Record<VitalItemKey, { label: string; unit: string }> = {
+  respiratoryRate: { label: '呼吸', unit: '次/分' },
+  systolicBloodPressure: { label: '收缩压', unit: 'mmHg' },
+  heartRate: { label: '心率', unit: '次/分' },
+  temperature: { label: '体温', unit: '℃' },
+};
+
+function summarizeTraumaForm(form: TurnFormInput): string {
+  const parts = [
+    `救治级别：${form.statedSubStage ? subStageLabel(form.statedSubStage) : '由系统判定'}`,
+    form.injuryNarrative ? `伤情：${form.injuryNarrative}` : null,
+    form.treatmentNarrative ? `已做处置：${form.treatmentNarrative}` : null,
+    form.evacuationNarrative ? `后送条件：${form.evacuationNarrative}` : null,
+    form.note ? `补充说明：${form.note}` : null,
+    Object.keys(form.vitals).length > 0
+      ? `生命体征：${Object.entries(form.vitals)
+        .map(([key, value]) => {
+          const vital = TRAUMA_VITAL_LABELS[key as VitalItemKey];
+          return `${vital.label} ${value} ${vital.unit}`;
+        })
+        .join('，')}`
+      : null,
+  ].filter((part): part is string => Boolean(part));
+  return parts.map((part) => `- ${part}`).join('\n');
 }
 
 function readStoredToolPanelWidth(): number {
   try {
-    const stored = Number(localStorage.getItem(TOOL_PANEL_STORAGE_KEY));
+    const stored = Number(safeLocalStorage.getItem(TOOL_PANEL_STORAGE_KEY));
     return Number.isFinite(stored) && stored > 0 ? stored : TOOL_PANEL_DEFAULT_WIDTH;
   } catch {
     return TOOL_PANEL_DEFAULT_WIDTH;
@@ -120,8 +128,14 @@ async function readJsonPayload<T>(response: Response): Promise<T | null> {
   }
 }
 
+function createClientRunId(): string {
+  return globalThis.crypto?.randomUUID?.()
+    ?? `client-run-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function MainContent({
   projects,
+  workspaceType = 'general_medicine',
   selectedProject,
   selectedSession,
   activeTab,
@@ -148,17 +162,170 @@ function MainContent({
   onSelectSession,
   onShowSettings,
   onSelectProjectByName,
+  onCreateProject,
   externalMessageUpdate,
   misroutedFileFromUrl,
   onMisroutedFileUrlHandled,
 }: MainContentProps) {
   const { i18n } = useTranslation();
   const { preferences } = useUiPreferences();
-  const { autoExpandTools, showRawParameters, showThinking, inlineThinking, autoScrollToBottom, sendByCtrlEnter } = preferences;
+  const { showProcessTrace, autoExpandTools, showRawParameters, showThinking, inlineThinking, autoScrollToBottom, sendByCtrlEnter } = preferences;
 
   const { currentProject, setCurrentProject } = useTaskMaster() as TaskMasterContextValue;
   const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings() as TasksSettingsContextValue;
   const [toast, setToast] = useState<MainContentToast>(null);
+  const [traumaSubmitting, setTraumaSubmitting] = useState(false);
+  // Set to true the moment the user clicks stop so submitting=false fires
+  // immediately, without waiting for external state (processingSessions,
+  // traumaSubmitting) to propagate through parent re-renders.
+  const [traumaLocallyAborted, setTraumaLocallyAborted] = useState(false);
+  const [pendingTraumaRun, setPendingTraumaRun] = useState<{
+    runId: string;
+    mainStage?: string;
+    subStage?: string;
+    round?: number;
+  } | null>(null);
+  const navigateToChatMessageRef = useRef<((runId: string) => void | Promise<void>) | null>(null);
+  const traumaAbortUIRef = useRef<(() => void) | null>(null);
+  const traumaOptimisticMessageRef = useRef<(
+    (text: string, targetSessionId?: string | null, runId?: string, traumaAttachments?: Array<{ name: string; path?: string; previewUrl?: string }>) => void
+  ) | null>(null);
+
+  const submitTraumaForm = useCallback((
+    form: TurnFormInput,
+    rawInput = '',
+    traumaExtract = false,
+    traumaAttachments: Array<{ path: string; name: string }> = [],
+    preferredSessionId?: string,
+  ) => {
+    if (!selectedProject || traumaSubmitting) return;
+    const selectedSessionId = selectedSession?.id;
+    const concreteSessionId = preferredSessionId
+      ?? (selectedSessionId && !isTemporarySessionId(selectedSessionId)
+        ? selectedSessionId
+        : undefined);
+    const temporarySessionId = concreteSessionId
+      ? undefined
+      : selectedSessionId || createTemporarySessionId();
+    const summary = summarizeTraumaForm(form);
+    const runId = createClientRunId();
+    const visibleInput = traumaExtract && rawInput.trim() ? rawInput.trim() : summary;
+    setTraumaLocallyAborted(false);
+    setTraumaSubmitting(true);
+    try {
+      // Keep the sidebar in sync with the generic chat flow: create/bump the
+      // session row before the runner starts so a new trauma conversation is
+      // visible while its answer is still streaming. A temporary id is
+      // replaced in-place when the server emits session_created.
+      if (selectedProject.name) {
+        const optimisticSessionId = concreteSessionId
+          ?? temporarySessionId
+          ?? createTemporarySessionId();
+        onSessionActivityBump?.(
+          selectedProject.name,
+          optimisticSessionId,
+          visibleInput,
+        );
+      }
+      traumaOptimisticMessageRef.current?.(visibleInput, concreteSessionId, runId, traumaAttachments);
+      const activatedSessionId = startSessionCommand({
+        sendMessage,
+        selectedProject,
+        command: `战创伤推演：${visibleInput}`,
+        userVisibleInput: visibleInput,
+        sessionId: concreteSessionId,
+        temporarySessionId,
+        sessionSummary: summary,
+        runId,
+        traumaForm: form,
+        traumaRawInput: rawInput,
+        traumaExtract,
+        ...(traumaAttachments.length > 0 ? { traumaAttachments } : {}),
+      });
+      onSessionActive?.(activatedSessionId);
+      if (concreteSessionId) onSessionProcessing?.(concreteSessionId);
+      if (activatedSessionId && !isTemporarySessionId(activatedSessionId)) {
+        onNavigateToSession?.(activatedSessionId);
+      }
+    } catch (error) {
+      setTraumaSubmitting(false);
+      throw error;
+    }
+  }, [
+    onSessionActive,
+    onSessionProcessing,
+    selectedProject,
+    selectedSession?.id,
+    onSessionActivityBump,
+    onNavigateToSession,
+    sendMessage,
+    traumaSubmitting,
+  ]);
+
+  const abortTraumaTurn = useCallback(() => {
+    const pendingSessionId = typeof window !== 'undefined'
+      ? window.sessionStorage.getItem('pendingSessionId')
+      : null;
+    const sessionId = [selectedSession?.id, pendingSessionId]
+      .find((value) => Boolean(value) && !isTemporarySessionId(value));
+    if (!sessionId) return;
+    // Set the local abort flag first — this short-circuits the submitting prop
+    // calculation immediately, before any external state (traumaSubmitting,
+    // processingSessions) propagates through parent re-renders.
+    setTraumaLocallyAborted(true);
+    setTraumaSubmitting(false);
+    setPendingTraumaRun(null);
+    traumaAbortUIRef.current?.();
+    sendMessage({
+      type: 'abort-session',
+      sessionId,
+      provider: 'pilotdeck',
+    });
+  }, [selectedSession?.id, sendMessage]);
+
+  const handleTraumaProcessStateChange = useCallback((state: {
+    runId: string;
+    state: 'snapshot_started' | 'turn_failed';
+    mainStage?: string;
+    subStage?: string;
+    round?: number;
+  }) => {
+    setPendingTraumaRun((current) => {
+      if (state.state !== 'snapshot_started') {
+        return current?.runId === state.runId ? null : current;
+      }
+      // 同一轮里会收到多个 snapshot_started：第 5 步和第 10 步带确认后的级别，
+      // 而正文写完时的「整理推演流程图/保存推演结果」标记不带。后者不能把已经
+      // 定好的位置擦成空，否则「生成中」节点又会掉回默认子级。
+      const sameRun = current?.runId === state.runId;
+      const keepPlacement = sameRun && !state.subStage && Boolean(current?.subStage);
+      return {
+        runId: state.runId,
+        mainStage: keepPlacement ? current?.mainStage : state.mainStage,
+        subStage: keepPlacement ? current?.subStage : state.subStage,
+        round: state.round ?? (sameRun ? current?.round : undefined),
+      };
+    });
+  }, []);
+
+  useEffect(() => {
+    setTraumaSubmitting(false);
+    setPendingTraumaRun(null);
+  }, [selectedProject?.name, selectedSession?.id]);
+
+  useEffect(() => {
+    if (!traumaSubmitting) return undefined;
+    const handleComplete = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectName?: string; projectPath?: string }>).detail;
+      const projectKeys = [selectedProject?.name, selectedProject?.fullPath, selectedProject?.path]
+        .filter(Boolean);
+      const eventProjectKeys = [detail?.projectName, detail?.projectPath].filter(Boolean);
+      if (eventProjectKeys.length > 0 && !eventProjectKeys.some((key) => projectKeys.includes(key))) return;
+      setTraumaSubmitting(false);
+    };
+    window.addEventListener('pilotdeck:agent-turn-complete', handleComplete);
+    return () => window.removeEventListener('pilotdeck:agent-turn-complete', handleComplete);
+  }, [selectedProject, traumaSubmitting]);
 
   const shouldShowTasksTab = Boolean(tasksEnabled && isTaskMasterInstalled);
 
@@ -381,21 +548,28 @@ function MainContent({
     );
   }
 
-  if (!selectedProject && activeTab !== 'dashboard' && activeTab !== 'cron') {
+  if (
+    !selectedProject
+    && activeTab !== 'dashboard'
+    && activeTab !== 'cron'
+    && activeTab !== 'skills'
+    && activeTab !== 'storage'
+  ) {
     return (
       <MainContentStateView
         mode="empty"
+        workspaceType={workspaceType}
         isMobile={isMobile}
         onMenuClick={onMenuClick}
+        onCreateProject={onCreateProject}
       />
     );
   }
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+    <div className="workspace-content-surface relative flex h-full min-h-0 flex-col text-neutral-900 dark:text-neutral-100">
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <SplitBody
-          projects={projects}
           selectedProject={selectedProject}
           selectedSession={selectedSession}
           activeTab={activeTab}
@@ -415,6 +589,15 @@ function MainContent({
           onSessionNotProcessing={onSessionNotProcessing}
           onSessionActivityBump={onSessionActivityBump}
           processingSessions={processingSessions}
+          submitTraumaForm={submitTraumaForm}
+          abortTraumaTurn={abortTraumaTurn}
+          traumaOptimisticMessageRef={traumaOptimisticMessageRef}
+          navigateToChatMessageRef={navigateToChatMessageRef}
+          traumaAbortUIRef={traumaAbortUIRef}
+          traumaSubmitting={traumaSubmitting}
+          traumaLocallyAborted={traumaLocallyAborted}
+          pendingTraumaRun={pendingTraumaRun}
+          onTraumaProcessStateChange={handleTraumaProcessStateChange}
           unreadSessionIds={unreadSessionIds}
           onReplaceTemporarySession={onReplaceTemporarySession}
           onNavigateToSession={onNavigateToSession}
@@ -422,6 +605,7 @@ function MainContent({
           onSelectSession={onSelectSession}
           onShowSettings={onShowSettings}
           externalMessageUpdate={externalMessageUpdate}
+          showProcessTrace={showProcessTrace}
           autoExpandTools={autoExpandTools}
           showRawParameters={showRawParameters}
           showThinking={showThinking}
@@ -473,9 +657,8 @@ function MainContent({
 }
 
 // V2 split body: chat is the persistent primary surface, Files is a dedicated
-// workbench, and the management dashboards open in a resizable side panel.
+// workbench, and auxiliary dashboards open in a resizable side panel.
 type SplitBodyProps = {
-  projects: Project[];
   selectedProject: Project | null;
   selectedSession: ProjectSession | null;
   activeTab: AppTab;
@@ -499,6 +682,32 @@ type SplitBodyProps = {
     optimisticTitle?: string,
   ) => void;
   processingSessions: Set<string>;
+  submitTraumaForm: (
+    form: TurnFormInput,
+    rawInput?: string,
+    traumaExtract?: boolean,
+    traumaAttachments?: Array<{ path: string; name: string; previewUrl?: string }>,
+    sessionId?: string,
+  ) => void;
+  abortTraumaTurn: () => void;
+  traumaOptimisticMessageRef: React.MutableRefObject<((text: string, targetSessionId?: string | null, runId?: string, traumaAttachments?: Array<{ name: string; path?: string; previewUrl?: string }>) => void) | null>;
+  navigateToChatMessageRef: React.MutableRefObject<((runId: string) => void | Promise<void>) | null>;
+  traumaAbortUIRef: React.MutableRefObject<(() => void) | null>;
+  traumaSubmitting: boolean;
+  traumaLocallyAborted: boolean;
+  pendingTraumaRun: {
+    runId: string;
+    mainStage?: string;
+    subStage?: string;
+    round?: number;
+  } | null;
+  onTraumaProcessStateChange: (state: {
+    runId: string;
+    state: 'snapshot_started' | 'turn_failed';
+    mainStage?: string;
+    subStage?: string;
+    round?: number;
+  }) => void;
   unreadSessionIds: Set<string>;
   onReplaceTemporarySession: any;
   onNavigateToSession: (sessionId: string) => void;
@@ -506,6 +715,7 @@ type SplitBodyProps = {
   onSelectSession: MainContentProps['onSelectSession'];
   onShowSettings: any;
   externalMessageUpdate: any;
+  showProcessTrace: any;
   autoExpandTools: any;
   showRawParameters: any;
   showThinking: any;
@@ -527,7 +737,6 @@ type SplitBodyProps = {
 function SplitBody(props: SplitBodyProps) {
   const { t } = useTranslation();
   const {
-    projects,
     selectedProject,
     selectedSession,
     activeTab,
@@ -547,6 +756,15 @@ function SplitBody(props: SplitBodyProps) {
     onSessionNotProcessing,
     onSessionActivityBump,
     processingSessions,
+    submitTraumaForm,
+    abortTraumaTurn,
+    traumaOptimisticMessageRef,
+    navigateToChatMessageRef,
+    traumaAbortUIRef,
+    traumaSubmitting,
+    traumaLocallyAborted,
+    pendingTraumaRun,
+    onTraumaProcessStateChange,
     unreadSessionIds,
     onReplaceTemporarySession,
     onNavigateToSession,
@@ -554,6 +772,7 @@ function SplitBody(props: SplitBodyProps) {
     onSelectSession,
     onShowSettings,
     externalMessageUpdate,
+    showProcessTrace,
     autoExpandTools,
     showRawParameters,
     showThinking,
@@ -572,14 +791,17 @@ function SplitBody(props: SplitBodyProps) {
     editorSidebarProps,
   } = props;
 
-  // Shell, Git, Tasks, and plugin tabs retain their legacy full-screen mode.
-  // Skills, Routing, Memory, and Always-On are auxiliary dashboards paired
-  // with chat. Files stays a separate explorer + artifact + assistant mode.
+  // Shell, Git, Memory, Skills, Storage, Tasks, and plugin tabs use the full workspace.
+  // Dashboard and Always-On remain auxiliary panels paired with chat.
+  // Files stays a separate explorer + artifact + assistant mode.
   const isPlugin = typeof activeTab === 'string' && activeTab.startsWith('plugin:');
   const fullScreenToolTabs = new Set([
     'shell',
     'git',
     'cron',
+    'memory',
+    'skills',
+    'storage',
     'tasks',
   ]);
   const isFullScreenTool = fullScreenToolTabs.has(activeTab) || isPlugin;
@@ -589,23 +811,21 @@ function SplitBody(props: SplitBodyProps) {
   // enabled it yet so we don't render a black hole.
   const renderTasksAsTool = activeTab === 'tasks' && shouldShowTasksTab;
   const isFiles = activeTab === 'files';
+  const filesPresence = useAnimatedPresence(isFiles, 480);
+  const previewPresence = useAnimatedPresence(isFiles && hasEditor && Boolean(selectedProject), 480);
   const filesSplitContainerRef = useRef<HTMLDivElement | null>(null);
-  const [filesExplorerWidth, setFilesExplorerWidth] = useState(FILES_EXPLORER_DEFAULT_WIDTH);
-  const [filesAssistantWidth, setFilesAssistantWidth] = useState(readStoredFilesAssistantWidth);
-  const [filesResizeTarget, setFilesResizeTarget] = useState<'explorer' | 'assistant' | null>(null);
-  const [explorerCollapsed, setExplorerCollapsed] = useState(false);
-  const [assistantCollapsed, setAssistantCollapsed] = useState(false);
-  const [assistantOverlayOpen, setAssistantOverlayOpen] = useState(false);
   const [workbenchWidth, setWorkbenchWidth] = useState(0);
   const [toolPanelWidth, setToolPanelWidth] = useState(readStoredToolPanelWidth);
   const [toolPanelResizing, setToolPanelResizing] = useState(false);
-  const isNarrowWorkbench = workbenchWidth > 0 && workbenchWidth < FILES_NARROW_BREAKPOINT;
   const toolPanelMaxWidth = workbenchWidth > 0
     ? Math.max(
         TOOL_PANEL_MIN_WIDTH,
         Math.min(TOOL_PANEL_MAX_WIDTH, workbenchWidth * TOOL_PANEL_MAX_LAYOUT_RATIO),
       )
     : TOOL_PANEL_MAX_WIDTH;
+  const filePreviewWidth = workbenchWidth > 0
+    ? Math.min(FILE_PREVIEW_WIDTH, Math.max(380, workbenchWidth - FILES_PANEL_WIDTH - 420))
+    : FILE_PREVIEW_WIDTH;
 
   useEffect(() => {
     const container = filesSplitContainerRef.current;
@@ -624,93 +844,11 @@ function SplitBody(props: SplitBodyProps) {
 
   useEffect(() => {
     try {
-      localStorage.setItem(TOOL_PANEL_STORAGE_KEY, String(Math.round(toolPanelWidth)));
+      safeLocalStorage.setItem(TOOL_PANEL_STORAGE_KEY, String(Math.round(toolPanelWidth)));
     } catch {
       // The panel remains usable when localStorage is unavailable.
     }
   }, [toolPanelWidth]);
-
-  useEffect(() => {
-    if (!isNarrowWorkbench) setAssistantOverlayOpen(false);
-  }, [isNarrowWorkbench]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(FILES_ASSISTANT_STORAGE_KEY, String(Math.round(filesAssistantWidth)));
-    } catch {
-      // Resizing remains available when persistent storage is unavailable.
-    }
-  }, [filesAssistantWidth]);
-
-  const clampFilesAssistantWidth = useCallback((width: number) => {
-    const explorerWidth = explorerCollapsed ? 44 : filesExplorerWidth;
-    const availableWidth = workbenchWidth > 0
-      ? workbenchWidth - explorerWidth - FILES_ARTIFACT_MIN_WIDTH
-      : FILES_ASSISTANT_MAX_WIDTH;
-    const maxWidth = Math.max(
-      FILES_ASSISTANT_MIN_WIDTH,
-      Math.min(FILES_ASSISTANT_MAX_WIDTH, availableWidth),
-    );
-    return Math.min(Math.max(width, FILES_ASSISTANT_MIN_WIDTH), maxWidth);
-  }, [explorerCollapsed, filesExplorerWidth, workbenchWidth]);
-
-  const handleFilesAssistantResizeBy = useCallback((delta: number) => {
-    setFilesAssistantWidth((width) => clampFilesAssistantWidth(width + delta));
-  }, [clampFilesAssistantWidth]);
-
-  useEffect(() => {
-    setFilesAssistantWidth((width) => clampFilesAssistantWidth(width));
-  }, [clampFilesAssistantWidth]);
-
-  const handleFilesResizeStart = useCallback((
-    target: 'explorer' | 'assistant',
-    event: React.MouseEvent<HTMLDivElement>,
-  ) => {
-    if (!isFiles) return;
-    setFilesResizeTarget(target);
-    event.preventDefault();
-  }, [isFiles]);
-
-  useEffect(() => {
-    if (!filesResizeTarget) return undefined;
-
-    const handleMouseMove = (event: globalThis.MouseEvent) => {
-      const container = filesSplitContainerRef.current;
-      if (!container) return;
-
-      const rect = container.getBoundingClientRect();
-      if (filesResizeTarget === 'explorer') {
-        const available = rect.width - filesAssistantWidth - FILES_ARTIFACT_MIN_WIDTH;
-        const maxWidth = Math.max(
-          FILES_EXPLORER_MIN_WIDTH,
-          Math.min(FILES_EXPLORER_MAX_WIDTH, available),
-        );
-        setFilesExplorerWidth(Math.min(
-          Math.max(event.clientX - rect.left, FILES_EXPLORER_MIN_WIDTH),
-          maxWidth,
-        ));
-        return;
-      }
-
-      setFilesAssistantWidth(clampFilesAssistantWidth(rect.right - event.clientX));
-    };
-
-    const handleMouseUp = () => {
-      setFilesResizeTarget(null);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-  }, [clampFilesAssistantWidth, filesAssistantWidth, filesExplorerWidth, filesResizeTarget]);
 
   const clampToolPanelWidth = useCallback((width: number) => (
     Math.min(Math.max(width, TOOL_PANEL_MIN_WIDTH), toolPanelMaxWidth)
@@ -777,8 +915,9 @@ function SplitBody(props: SplitBodyProps) {
     }
     if (activeTab === 'cron') return <CronV2 />;
     if (activeTab === 'dashboard') return <DashboardV2 projectFilter={selectedProject?.name} projectFullPath={selectedProject?.fullPath} onSelectProject={onSelectProjectByName} compact />;
-    if (activeTab === 'memory') return <MemoryPanel selectedProject={selectedProject} />;
-    if (activeTab === 'skills') return <SkillsV2 selectedProject={selectedProject} projects={projects} compact />;
+    if (activeTab === 'memory') return <MemoryPanel selectedProject={selectedProject} selectedSession={selectedSession} />;
+    if (activeTab === 'skills') return <SkillsV2 selectedProject={selectedProject} />;
+    if (activeTab === 'storage') return <StorageV2 />;
     if (renderTasksAsTool) return <TasksV2 isVisible />;
     if (isPlugin) {
       return (
@@ -794,18 +933,52 @@ function SplitBody(props: SplitBodyProps) {
 
   const showFullScreenTool = isFullScreenTool && (activeTab !== 'tasks' || shouldShowTasksTab);
   const showChat = !showFullScreenTool;
-  const assistantVisible = isFiles
-    && showChat
-    && !editorExpanded
-    && !isMobile
-    && !assistantCollapsed
-    && (!isNarrowWorkbench || assistantOverlayOpen);
-  const assistantIsOverlay = assistantVisible && isNarrowWorkbench;
-  const showAssistantRail = isFiles
-    && showChat
-    && !editorExpanded
-    && !isMobile
-    && !assistantVisible;
+  const filePreviewExpanded = isFiles && showChat && hasEditor && editorExpanded;
+  const expandedPreviewRef = useRef(false);
+  if (isFiles && hasEditor) expandedPreviewRef.current = editorExpanded;
+  if (!previewPresence.present) expandedPreviewRef.current = false;
+  const previewExpandedDuringExit = filePreviewExpanded
+    || (previewPresence.exiting && expandedPreviewRef.current);
+  const isWarTraumaProject = selectedProject
+    ? resolveProjectType(selectedProject) === 'war_trauma'
+    : false;
+  const chatInterface = (
+    <ChatInterfaceV2
+      selectedProject={selectedProject}
+      selectedSession={selectedSession}
+      ws={ws}
+      sendMessage={sendMessage}
+      latestMessage={latestMessage}
+      onFileOpen={handleFileOpen}
+      onInputFocusChange={onInputFocusChange}
+      onSessionActive={onSessionActive}
+      onSessionInactive={onSessionInactive}
+      onSessionProcessing={onSessionProcessing}
+      onSessionNotProcessing={onSessionNotProcessing}
+      onSessionActivityBump={onSessionActivityBump}
+      processingSessions={processingSessions}
+      onReplaceTemporarySession={onReplaceTemporarySession}
+      onNavigateToSession={onNavigateToSession}
+      onShowSettings={onShowSettings}
+      showProcessTrace={showProcessTrace}
+      autoExpandTools={autoExpandTools}
+      showRawParameters={showRawParameters}
+      showThinking={showThinking}
+      inlineThinking={inlineThinking}
+      autoScrollToBottom={autoScrollToBottom}
+      sendByCtrlEnter={sendByCtrlEnter}
+      externalMessageUpdate={externalMessageUpdate}
+      onShowAllTasks={tasksEnabled ? () => setActiveTab('tasks') : null}
+      forceWelcome={false}
+      onExitWelcome={isFiles ? undefined : () => setActiveTab('chat')}
+      compact={isFiles}
+      hideComposer={isWarTraumaProject}
+      traumaOptimisticMessageRef={traumaOptimisticMessageRef}
+      navigateToChatMessageRef={navigateToChatMessageRef}
+      traumaAbortUIRef={traumaAbortUIRef}
+      onTraumaProcessStateChange={onTraumaProcessStateChange}
+    />
+  );
   return (
     <div
       ref={filesSplitContainerRef}
@@ -815,162 +988,96 @@ function SplitBody(props: SplitBodyProps) {
       {showFullScreenTool && (
         <div className="flex h-full w-full min-w-0 flex-col overflow-hidden">
           <Suspense fallback={<TabSkeleton />}>
-            {renderTool()}
+            {activeTab === 'skills' || activeTab === 'storage' ? (
+              <div key={activeTab} className="pd-workspace-enter flex h-full min-h-0 w-full min-w-0 flex-col">
+                {renderTool()}
+              </div>
+            ) : renderTool()}
           </Suspense>
         </div>
       )}
 
-      {/* Files workbench explorer. On mobile it yields to the opened artifact. */}
-      {isFiles && showChat && !editorExpanded && (!isMobile || !hasEditor) ? (
-        explorerCollapsed && !isMobile ? (
-          <div className="flex h-full w-11 flex-shrink-0 flex-col items-center border-r border-neutral-200 bg-neutral-50/60 py-2 dark:border-neutral-800 dark:bg-neutral-900/40">
-            <button
-              type="button"
-              onClick={() => setExplorerCollapsed(false)}
-              className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-200/70 hover:text-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
-              title={t('filesWorkbench.openExplorer')}
-              aria-label={t('filesWorkbench.openExplorer')}
-            >
-              <PanelLeftOpen className="h-4 w-4" strokeWidth={1.8} />
-            </button>
-            <FolderOpen className="mt-3 h-4 w-4 text-neutral-400 dark:text-neutral-500" strokeWidth={1.7} />
-          </div>
-        ) : (
-          <>
-            <div
-              className="flex h-full min-w-0 flex-shrink-0 flex-col overflow-hidden border-r border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950"
-              style={isMobile ? { width: '100%' } : { width: filesExplorerWidth }}
-            >
-              <Suspense fallback={<TabSkeleton />}>
-                <FilesV2
-                  key={selectedProject?.name ?? ''}
-                  selectedProject={selectedProject}
-                  onFileOpen={handleFileOpen}
-                  activeFilePath={activeFilePath}
-                  onFileRename={onFileRename}
-                  onFileDelete={onFileDelete}
-                  onClose={isMobile ? () => setActiveTab('chat') : () => setExplorerCollapsed(true)}
-                  canAddToChat={!isReadOnlySession(selectedSession)}
-                />
-              </Suspense>
-            </div>
-            {!isMobile ? (
-              <div
-                onMouseDown={(event) => handleFilesResizeStart('explorer', event)}
-                className="group relative z-20 w-px flex-shrink-0 cursor-col-resize bg-neutral-200 transition-colors hover:bg-neutral-400 dark:bg-neutral-800 dark:hover:bg-neutral-600"
-                title={t('filesWorkbench.resizeExplorer')}
-              >
-                <div className="absolute inset-y-0 left-1/2 w-3 -translate-x-1/2" />
-                <div className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-neutral-400 opacity-0 transition-opacity group-hover:opacity-100 dark:bg-neutral-600" />
-              </div>
-            ) : null}
-          </>
-        )
-      ) : null}
-
-      {/* Artifact canvas — the visual center and primary surface in Files. */}
-      {isFiles && showChat && (hasEditor || !isMobile) ? (
-        <div className="flex min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-hidden bg-neutral-50/40 dark:bg-neutral-950">
-          {hasEditor && selectedProject ? (
-            <EditorSidebar {...editorSidebarProps} workspaceMode />
-          ) : (
-            <div className="flex h-full flex-col items-center justify-center px-8 text-center">
-              <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl border border-neutral-200 bg-white text-neutral-400 shadow-sm dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-500">
-                <FileText className="h-5 w-5" strokeWidth={1.6} />
-              </div>
-              <p className="text-[14px] font-medium text-neutral-700 dark:text-neutral-300">
-                {t('filesWorkbench.openFileTitle')}
-              </p>
-              <p className="mt-1 max-w-64 text-[12px] leading-5 text-neutral-400 dark:text-neutral-500">
-                {t('filesWorkbench.openFileDescription')}
-              </p>
-            </div>
-          )}
-        </div>
-      ) : null}
-
-      {/* Agent surface stays mounted so streaming state survives tab switches. */}
+      {/* Conversation stays mounted while project files open beside it. */}
       <div
         key="agent-surface"
         className={cn(
-          'flex min-h-0 min-w-0 flex-col bg-white dark:bg-neutral-950',
+          'workspace-chat-surface flex min-h-0 min-w-0 flex-1 flex-col',
           !showChat && 'invisible absolute h-0 w-0 overflow-hidden',
-          showChat && !isFiles && 'flex-1',
-          assistantVisible && !assistantIsOverlay && 'flex-shrink-0 border-l border-neutral-200 dark:border-neutral-800',
-          assistantIsOverlay && 'absolute inset-y-0 right-0 z-40 border-l border-neutral-200 shadow-2xl dark:border-neutral-800',
-          isFiles && !assistantVisible && 'invisible absolute h-0 w-0 overflow-hidden',
+          previewExpandedDuringExit && 'invisible absolute h-0 w-0 overflow-hidden',
         )}
-        style={assistantVisible ? { width: filesAssistantWidth } : undefined}
-        aria-hidden={!showChat || (isFiles && !assistantVisible)}
+        aria-hidden={!showChat || previewExpandedDuringExit}
       >
-        {isFiles ? (
-          <div className="relative z-50 flex h-12 flex-shrink-0 items-center gap-1 border-b border-neutral-200 px-2 dark:border-neutral-800">
-            {selectedProject ? (
-              <ConversationSwitcher
-                project={selectedProject}
-                selectedSession={selectedSession}
-                processingSessions={processingSessions}
-                unreadSessionIds={unreadSessionIds}
-                onSelectSession={(session) => {
-                  if (onSelectSession) {
-                    onSelectSession(selectedProject, session.id, session, {
-                      preserveActiveTab: true,
-                    });
-                    return;
-                  }
-                  onNavigateToSession(session.id);
-                }}
-                onNewSession={() => onStartNewSession(selectedProject, {
-                  preserveActiveTab: true,
-                })}
-              />
-            ) : null}
-            <button
-              type="button"
-              onClick={() => {
-                if (isNarrowWorkbench) setAssistantOverlayOpen(false);
-                else setAssistantCollapsed(true);
-              }}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-700 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
-              title={t('filesWorkbench.collapseAssistant')}
-              aria-label={t('filesWorkbench.collapseAssistant')}
-            >
-              <PanelRightClose className="h-4 w-4" strokeWidth={1.8} />
-            </button>
-          </div>
-        ) : null}
         <ErrorBoundary showDetails>
-          <ChatInterfaceV2
-            selectedProject={selectedProject}
-            selectedSession={selectedSession}
-            ws={ws}
-            sendMessage={sendMessage}
-            latestMessage={latestMessage}
-            onFileOpen={handleFileOpen}
-            onInputFocusChange={onInputFocusChange}
-            onSessionActive={onSessionActive}
-            onSessionInactive={onSessionInactive}
-            onSessionProcessing={onSessionProcessing}
-            onSessionNotProcessing={onSessionNotProcessing}
-            onSessionActivityBump={onSessionActivityBump}
-            processingSessions={processingSessions}
-            onReplaceTemporarySession={onReplaceTemporarySession}
-            onNavigateToSession={onNavigateToSession}
-            onShowSettings={onShowSettings}
-            autoExpandTools={autoExpandTools}
-            showRawParameters={showRawParameters}
-            showThinking={showThinking}
-            inlineThinking={inlineThinking}
-            autoScrollToBottom={autoScrollToBottom}
-            sendByCtrlEnter={sendByCtrlEnter}
-            externalMessageUpdate={externalMessageUpdate}
-            onShowAllTasks={tasksEnabled ? () => setActiveTab('tasks') : null}
-            forceWelcome={false}
-            onExitWelcome={isFiles ? undefined : () => setActiveTab('chat')}
-            compact={isFiles}
-          />
+          {isWarTraumaProject ? (
+            <TraumaWorkspace
+              resetKey={`${selectedProject?.name ?? ''}:${selectedSession?.id ?? ''}`}
+              projectKey={selectedProject?.name || selectedProject?.fullPath || selectedProject?.path}
+              sessionId={selectedSession?.id}
+              onSubmitForm={submitTraumaForm}
+              onAbortTurn={abortTraumaTurn}
+              pendingRun={pendingTraumaRun}
+              onNavigateToChatMessage={(runId) => navigateToChatMessageRef.current?.(runId)}
+              runtimePanel={chatInterface}
+              conversationOnly={isFiles}
+              submitting={!traumaLocallyAborted && (traumaSubmitting || Boolean(
+                selectedSession?.id && processingSessions.has(selectedSession.id)
+              ))}
+            />
+          ) : chatInterface}
         </ErrorBoundary>
       </div>
+
+      {previewPresence.present && showChat && selectedProject ? (
+        <aside
+          className={cn(
+            'z-20 h-full min-h-0 min-w-0 overflow-hidden border-l border-border bg-background shadow-[-12px_0_32px_rgba(15,23,42,0.12)]',
+            previewPresence.exiting ? 'pd-side-panel-exit pointer-events-none' : 'pd-side-panel-enter',
+            previewExpandedDuringExit && 'pd-side-panel-flex',
+            previewExpandedDuringExit ? 'min-w-0 flex-1' : 'shrink-0',
+            isMobile ? 'absolute inset-y-0 right-0 z-40 w-full' : 'relative',
+          )}
+          style={{ '--pd-side-width': isMobile ? '100%' : `${filePreviewWidth}px`,
+            '--pd-side-content-width': isMobile
+              ? (workbenchWidth ? `${workbenchWidth}px` : '100vw')
+              : previewExpandedDuringExit
+                ? `${Math.max(FILE_PREVIEW_WIDTH, workbenchWidth - FILES_PANEL_WIDTH)}px`
+                : `${filePreviewWidth}px`,
+            ...(!isMobile && !previewExpandedDuringExit ? { width: filePreviewWidth } : {}) } as React.CSSProperties}
+          aria-label="文件预览"
+        >
+          <div className="pd-side-panel-content h-full pr-3">
+            <EditorSidebar {...editorSidebarProps} workspaceMode />
+          </div>
+        </aside>
+      ) : null}
+
+      {filesPresence.present && showChat ? (
+        <aside
+          className={cn(
+            'z-30 h-full min-h-0 min-w-0 shrink-0 overflow-hidden border-l border-border shadow-[-8px_0_24px_rgba(15,23,42,0.06)]',
+            filesPresence.exiting ? 'pd-side-panel-exit pointer-events-none' : 'pd-side-panel-enter',
+            isMobile ? 'absolute inset-y-0 right-0 w-full' : 'relative',
+          )}
+          style={{ '--pd-side-width': isMobile ? '100%' : `${FILES_PANEL_WIDTH}px`,
+            '--pd-side-content-width': isMobile
+              ? (workbenchWidth ? `${workbenchWidth}px` : '100vw')
+              : `${FILES_PANEL_WIDTH}px`,
+            ...(!isMobile ? { width: FILES_PANEL_WIDTH } : {}) } as React.CSSProperties}
+          aria-label="项目文件"
+        >
+          <div className="pd-side-panel-content h-full">
+            <Suspense fallback={<TabSkeleton />}>
+              <FilesV2
+                key={selectedProject?.name ?? ''}
+                selectedProject={selectedProject}
+                onFileOpen={handleFileOpen}
+                activeFilePath={activeFilePath}
+                onClose={() => setActiveTab('chat')}
+              />
+            </Suspense>
+          </div>
+        </aside>
+      ) : null}
 
       {dashboardPanelTab ? (
         <ToolSidePanel
@@ -996,61 +1103,6 @@ function SplitBody(props: SplitBodyProps) {
             {renderTool()}
           </Suspense>
         </ToolSidePanel>
-      ) : null}
-
-      {assistantVisible && !assistantIsOverlay ? (
-        <div
-          onMouseDown={(event) => handleFilesResizeStart('assistant', event)}
-          onKeyDown={(event) => {
-            if (event.key === 'ArrowLeft') {
-              event.preventDefault();
-              handleFilesAssistantResizeBy(16);
-            } else if (event.key === 'ArrowRight') {
-              event.preventDefault();
-              handleFilesAssistantResizeBy(-16);
-            } else if (event.key === 'Home') {
-              event.preventDefault();
-              setFilesAssistantWidth(clampFilesAssistantWidth(FILES_ASSISTANT_MIN_WIDTH));
-            } else if (event.key === 'End') {
-              event.preventDefault();
-              setFilesAssistantWidth(clampFilesAssistantWidth(FILES_ASSISTANT_MAX_WIDTH));
-            }
-          }}
-          className="group absolute inset-y-0 z-30 w-px cursor-col-resize bg-neutral-200 outline-none transition-colors hover:bg-neutral-400 focus:bg-blue-500 dark:bg-neutral-800 dark:hover:bg-neutral-600 dark:focus:bg-blue-400"
-          style={{ right: filesAssistantWidth }}
-          title={t('filesWorkbench.resizeAssistant')}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={t('filesWorkbench.resizeAssistant')}
-          aria-valuemin={FILES_ASSISTANT_MIN_WIDTH}
-          aria-valuemax={FILES_ASSISTANT_MAX_WIDTH}
-          aria-valuenow={Math.round(filesAssistantWidth)}
-          tabIndex={0}
-        >
-          <div className="absolute inset-y-0 left-1/2 w-3 -translate-x-1/2" />
-          <div className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-neutral-400 opacity-0 transition-opacity group-hover:opacity-100 dark:bg-neutral-600" />
-        </div>
-      ) : null}
-
-      {showAssistantRail ? (
-        <div className="flex h-full w-11 flex-shrink-0 flex-col items-center border-l border-neutral-200 bg-neutral-50/60 py-2 dark:border-neutral-800 dark:bg-neutral-900/40">
-          <div
-            className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-200/70 hover:text-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
-          >
-            <button
-              type="button"
-              onClick={() => {
-                if (isNarrowWorkbench) setAssistantOverlayOpen(true);
-                else setAssistantCollapsed(false);
-              }}
-              title={t('filesWorkbench.openAssistant')}
-              aria-label={t('filesWorkbench.openAssistant')}
-            >
-              <PanelRightOpen className="h-4 w-4" strokeWidth={1.8} />
-            </button>
-          </div>
-          <MessageSquare className="mt-3 h-4 w-4 text-neutral-400 dark:text-neutral-500" strokeWidth={1.7} />
-        </div>
       ) : null}
 
     </div>

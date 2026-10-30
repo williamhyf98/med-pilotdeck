@@ -5,6 +5,7 @@ import type { PilotDeckPluginManifest } from "../protocol/manifest.js";
 import type { PilotDeckLoadedPlugin, PilotDeckPluginSourceKind } from "../protocol/plugin.js";
 import { parsePluginManifest } from "../config/parsePluginManifest.js";
 import { loadPluginCommands, loadStandaloneSkill } from "./PluginCommandLoader.js";
+import { loadPluginAgentProfiles } from "./PluginAgentProfileLoader.js";
 
 /**
  * Loads a standalone skill directory (containing SKILL.md) as a pseudo-plugin.
@@ -33,6 +34,12 @@ export async function loadPluginFromPath(
   const manifest = parsePluginManifest(JSON.parse(await readFile(manifestPath, "utf8")) as unknown);
   const hooksConfig = await loadHooksConfig(pluginPath, manifest);
   const commands = await loadConfiguredMarkdown(pluginPath, manifest.commands, "commands");
+  const agents = await loadPluginAgentProfiles({
+    pluginName: manifest.name,
+    pluginPath,
+    source,
+    configured: manifest.agents,
+  });
   const skills = await loadConfiguredMarkdown(pluginPath, manifest.skills, "skills");
   const outputStyles = await loadConfiguredMarkdown(pluginPath, manifest.outputStyles, "output-styles");
 
@@ -43,6 +50,7 @@ export async function loadPluginFromPath(
     manifest,
     hooksConfig,
     commands,
+    agents,
     skills,
     outputStyles,
     mcpServers: manifest.mcpServers,

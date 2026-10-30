@@ -1,14 +1,26 @@
 from __future__ import annotations
 
+import io
+import json
 import os
 import platform
 import shutil
 import subprocess
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
+import zipfile
 from pathlib import Path
 from typing import Any
 
-import fitz
+try:
+    import pymupdf as fitz
+except ImportError:  # Rendering is optional for make when LibreOffice/PyMuPDF is absent.
+    try:
+        import fitz  # type: ignore[no-redef]
+    except ImportError:
+        fitz = None  # type: ignore[assignment]
 
 from .common import (
     DocxSkillError,
@@ -139,6 +151,150 @@ def find_soffice() -> str | None:
     return None
 
 
+def get_office_renderer_url() -> str | None:
+    configured = os.environ.get("PILOTDECK_OFFICE_RENDERER_URL", "").strip()
+    if not configured:
+        return None
+    return configured.rstrip("/")
+
+
+def office_renderer_configured() -> bool:
+    return get_office_renderer_url() is not None
+
+
+def _remote_renderer_error(
+    message: str,
+    *,
+    status: str = "error",
+    code: str = "office-renderer-failed",
+) -> DocxSkillError:
+    return DocxSkillError(message, status=status, code=code)
+
+
+def _render_docx_remote(
+    source: Path,
+    out_dir: Path,
+    *,
+    dpi: int,
+    emit_pdf: bool,
+    include_text: bool,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    renderer_url = get_office_renderer_url()
+    if not renderer_url:
+        raise _remote_renderer_error(
+            "PILOTDECK_OFFICE_RENDERER_URL is not configured",
+            status="unsupported",
+            code="office-renderer-not-configured",
+        )
+
+    query = urllib.parse.urlencode(
+        {
+            "dpi": dpi,
+            "emit_pdf": "1" if emit_pdf else "0",
+            "include_text": "1" if include_text else "0",
+        }
+    )
+    header_name = source.name
+    if not header_name.isascii():
+        header_name = f"input{source.suffix.lower() or '.docx'}"
+    request = urllib.request.Request(
+        f"{renderer_url}/v1/render/docx?{query}",
+        data=source.read_bytes(),
+        method="POST",
+        headers={
+            "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "X-File-Name": header_name,
+        },
+    )
+    token = os.environ.get("PILOTDECK_OFFICE_RENDERER_TOKEN", "").strip()
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            payload = response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace").strip()
+        raise _remote_renderer_error(
+            f"Office Renderer rejected DOCX: HTTP {exc.code} {detail[:500]}",
+            code="office-renderer-http-error",
+        ) from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise _remote_renderer_error(
+            f"Office Renderer request failed: {exc}",
+            code="office-renderer-unreachable",
+        ) from exc
+
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(payload))
+    except zipfile.BadZipFile as exc:
+        detail = payload[:500].decode("utf-8", errors="replace")
+        raise _remote_renderer_error(
+            f"Office Renderer returned an invalid archive: {detail}",
+            code="office-renderer-invalid-response",
+        ) from exc
+
+    manifest: dict[str, Any]
+    try:
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+        if not isinstance(manifest, dict):
+            raise ValueError("manifest is not an object")
+    except (KeyError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise _remote_renderer_error(
+            "Office Renderer response is missing a valid manifest.json",
+            code="office-renderer-invalid-response",
+        ) from exc
+
+    output_root = out_dir.resolve()
+    page_paths: list[str] = []
+    emitted_pdf: str | None = None
+    allowed_names = {"manifest.json", "result.pdf"}
+    for info in archive.infolist():
+        name = info.filename
+        if info.is_dir():
+            continue
+        if name not in allowed_names and not (
+            name.startswith("page-") and name.endswith(".png")
+        ):
+            raise _remote_renderer_error(
+                f"Office Renderer returned an unexpected file: {name}",
+                code="office-renderer-invalid-response",
+            )
+        destination = (output_root / name).resolve()
+        if destination != output_root and not str(destination).startswith(
+            str(output_root) + os.sep
+        ):
+            raise _remote_renderer_error(
+                "Office Renderer returned a path outside the render directory",
+                code="office-renderer-invalid-response",
+            )
+        if name == "manifest.json":
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(archive.read(info))
+        if name.startswith("page-") and name.endswith(".png"):
+            page_paths.append(str(destination))
+        elif name == "result.pdf":
+            emitted_pdf = str(destination)
+
+    page_paths.sort(key=lambda value: int(Path(value).stem.split("-")[-1]))
+    result = dict(manifest)
+    result.update(
+        {
+            "status": manifest.get("status", "ok"),
+            "input": str(source),
+            "out_dir": str(out_dir),
+            "pages": int(manifest.get("pages", len(page_paths))),
+            "images": page_paths,
+            "pdf": emitted_pdf if emit_pdf else None,
+            "dpi": dpi,
+            "renderer": renderer_url,
+        }
+    )
+    return result
+
+
 def _seed_libreoffice_profile(profile_root: Path) -> str:
     user_dir = profile_root / "user"
     user_dir.mkdir(parents=True, exist_ok=True)
@@ -198,14 +354,6 @@ def render_docx(
 ) -> dict[str, Any]:
     source = require_docx_path(input_path)
     assert_valid_docx(source)
-    soffice = find_soffice()
-    if not soffice:
-        raise DocxSkillError(
-            "LibreOffice soffice was not found; install LibreOffice to enable visual rendering",
-            status="unsupported",
-            code="render-backend-unavailable",
-            details={"backend": "LibreOffice"},
-        )
     if dpi < 72 or dpi > 300:
         raise DocxSkillError("DPI must be between 72 and 300")
 
@@ -216,6 +364,30 @@ def render_docx(
     out_dir.mkdir(parents=True, exist_ok=True)
     for stale in out_dir.glob("page-*.png"):
         stale.unlink()
+    if office_renderer_configured():
+        return _render_docx_remote(
+            source,
+            out_dir,
+            dpi=dpi,
+            emit_pdf=emit_pdf,
+            include_text=include_text,
+            timeout_seconds=timeout_seconds,
+        )
+
+    if fitz is None:
+        raise DocxSkillError(
+            "PyMuPDF is unavailable; use a complete DOCX runtime to render previews",
+            status="unsupported",
+            code="render-runtime-unavailable",
+        )
+    soffice = find_soffice()
+    if not soffice:
+        raise DocxSkillError(
+            "LibreOffice soffice was not found; install LibreOffice to enable visual rendering",
+            status="unsupported",
+            code="render-backend-unavailable",
+            details={"backend": "LibreOffice"},
+        )
 
     # On macOS, LibreOffice can start with a different font configuration when
     # its profile lives inside the per-app /var/folders tree used by
@@ -239,6 +411,9 @@ def render_docx(
             profile_uri = profile_path.as_uri()
             env = os.environ.copy()
             env["HOME"] = profile_dir
+            bundled_font_dir = os.environ.get("DOCX_SKILL_FONT_DIR", "").strip()
+            if bundled_font_dir and Path(bundled_font_dir).is_dir():
+                env["SAL_FONTPATH"] = bundled_font_dir
             if platform.system() == "Darwin" and Path("/private/tmp").is_dir():
                 env["TMPDIR"] = "/private/tmp"
             command = [

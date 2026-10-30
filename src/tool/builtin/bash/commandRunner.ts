@@ -1,9 +1,18 @@
 import { spawn } from "node:child_process";
 import { TextDecoder } from "node:util";
+import type { MultiUserConfig } from "../../../pilot/config/parseMultiUserConfig.js";
+import { resolvePilotHome } from "../../../pilot/paths.js";
+import { selectSandbox, type CommandSandbox } from "./sandbox/index.js";
+import { grantForms, skillCacheEnv } from "./sandbox/grants.js";
+import { resolveAppRoot } from "./sandbox/bwrap.js";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
 
 export type PilotDeckCommandOptions = {
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  /** 用户 home（沙箱可写根）。缺省时取 env 中的 PILOT_HOME。 */
+  userHome?: string;
   timeoutMs: number;
   signal?: AbortSignal;
   /** Called on each stdout chunk as it arrives. Errors thrown by the callback are swallowed. */
@@ -26,6 +35,110 @@ export type PilotDeckCommandRunner = {
 
 type SpawnShell = typeof spawn;
 
+/** 模块级沙箱实例：为 null 时 bash 直接交给 shell 执行（与引入沙箱前一致）。 */
+let _sandbox: CommandSandbox | null = null;
+
+export function getCommandSandbox(): CommandSandbox | null {
+  return _sandbox;
+}
+
+export function setCommandSandbox(sandbox: CommandSandbox | null): void {
+  _sandbox = sandbox;
+}
+
+/**
+ * Gateway 启动时调用：按配置选择沙箱、执行 probe() 自检并设置模块级实例。
+ * 显式配置的实现自检失败直接抛错；多用户模式下落到 none 的拒绝由 selectSandbox 负责。
+ */
+export async function initializeSandbox(config: MultiUserConfig, env: NodeJS.ProcessEnv): Promise<CommandSandbox> {
+  const multiUserEnabled = isMultiUserLoginEnabled(env);
+  const sandboxConfig = config.sandbox ?? {};
+  const sandbox = await selectSandbox({
+    configuredKind: sandboxConfig.kind,
+    multiUserEnabled,
+    allowUnsandboxed: sandboxConfig.allowUnsandboxed,
+    platform: process.platform,
+    network: sandboxConfig.network,
+    extraReadOnlyBinds: sandboxConfig.extraReadOnlyBinds,
+  });
+  if (multiUserEnabled && sandbox.kind !== "none") {
+    if (!env.PILOT_HOME || !isAbsolute(env.PILOT_HOME)) {
+      throw new Error("Multi-user sandbox requires an absolute PILOT_HOME.");
+    }
+    assertSandboxGrantsSafe(sandbox, env.PILOT_HOME);
+  }
+  let probe: { ok: true } | { ok: false; reason: string };
+  try {
+    probe = await sandbox.probe();
+  } catch (err) {
+    probe = { ok: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+  if (!probe.ok && sandbox.kind !== "none") {
+    throw new Error(`sandbox ${sandbox.kind} failed its startup probe: ${probe.reason}`);
+  }
+  if (sandbox.kind === "none" && multiUserEnabled) {
+    console.warn("[sandbox] Multi-user mode running without an OS sandbox (multiUser.sandbox.allowUnsandboxed: true). This is UNSAFE for production.");
+  }
+  setCommandSandbox(sandbox);
+  console.log(`[sandbox] ${sandbox.kind} (${probe.ok ? "ok" : probe.reason})`);
+  return sandbox;
+}
+
+/** Verify the actual OS grants, not the assumed layout of the application. */
+export function assertSandboxGrantsSafe(sandbox: CommandSandbox, userHome: string): void {
+  const home = resolve(userHome);
+  const users = dirname(home);
+  const dataRoot = dirname(users);
+  if (users === dataRoot || home === users || !existsSync(users) || dirname(home) !== users || users.split(/[\\/]/).at(-1) !== "users") {
+    throw new Error("Invalid per-user PILOT_HOME for sandbox authorization.");
+  }
+  const protectedPaths = [dataRoot, users, join(dataRoot, "system"), join(dataRoot, "pilotdeck.yaml")];
+  const otherHomes = readdirSync(users).filter((id) => id !== home.split(/[\\/]/).at(-1))
+    .map((id) => join(users, id));
+  const own = grantForms(home);
+  const covered = (candidate: string, grant: string) => {
+    const rel = relative(grant, candidate);
+    return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  };
+  const grants = sandbox.grants(home);
+  for (const grant of [...grants.readOnly, ...grants.writable]) {
+    for (const form of grantForms(grant)) {
+      for (const protectedPath of protectedPaths) {
+        for (const target of grantForms(protectedPath)) {
+          if (covered(target, form) && !own.some((root) => covered(form, root))) {
+            throw new Error(`Unsafe sandbox grant ${form} covers protected location ${target}.`);
+          }
+        }
+      }
+      for (const other of otherHomes) {
+        for (const target of grantForms(other)) {
+          if (covered(target, form) || covered(form, target)) {
+            throw new Error(`Unsafe sandbox grant ${form} overlaps another user home ${target}.`);
+          }
+        }
+      }
+    }
+  }
+  // macOS allows literal stat() on selected ancestors to traverse into shared
+  // runtimes. These literals do not grant directory contents; reject any that
+  // point inside protected data (except the current user's home).
+  for (const grant of grants.metadataOnly ?? []) {
+    for (const form of grantForms(grant)) {
+      if (own.some((root) => covered(form, root))) continue;
+      if ([...protectedPaths, ...otherHomes].some((target) =>
+        grantForms(target).some((protectedForm) => covered(form, protectedForm)))) {
+        throw new Error(`Unsafe sandbox metadata grant ${form} overlaps protected data.`);
+      }
+    }
+  }
+}
+
+/** 与 ui/server/constants/config.js 的 DISABLE_LOCAL_AUTH 判定一致：仅显式设为 0 / false 时为多用户（登录）模式。 */
+function isMultiUserLoginEnabled(env: NodeJS.ProcessEnv): boolean {
+  const value = env.PILOTDECK_DISABLE_LOCAL_AUTH;
+  return value === "0" || value === "false";
+}
+
 export class NodeShellCommandRunner implements PilotDeckCommandRunner {
   constructor(private readonly spawnShell: SpawnShell = spawn) {}
 
@@ -33,14 +146,43 @@ export class NodeShellCommandRunner implements PilotDeckCommandRunner {
     const startedAt = Date.now();
     return new Promise((resolve, reject) => {
       const isWindows = process.platform === "win32";
-      const child = this.spawnShell(command, {
-        cwd: options.cwd,
-        env: options.env,
-        shell: true,
-        detached: !isWindows,
-        windowsHide: isWindows,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      // Windows 上的沙箱只会是 none，其 /bin/sh 不存在，保持原来的 shell（cmd.exe）执行方式。
+      const sandbox = _sandbox && !(isWindows && _sandbox.kind === "none") ? _sandbox : null;
+      // bwrap 的 --new-session 会调用 setsid()，而 detached 子进程在 spawn 时已是进程组组长，
+      // setsid() 会以 EPERM 失败。因此 bwrap 不使用独立进程组，改为对 bwrap 进程本身发信号；
+      // --unshare-pid + --die-with-parent 保证沙箱内的进程随之结束。
+      const detached = !isWindows && sandbox?.kind !== "bwrap";
+      const launch = sandbox
+        ? sandbox.wrap(command, {
+            cwd: options.cwd,
+            userHome: options.userHome ?? resolvePilotHome(options.env ?? process.env),
+            env: options.env ?? process.env,
+          })
+        : undefined;
+      const spawnEnv = sandbox?.kind === "sandbox-exec"
+        ? { ...options.env, HOME: options.userHome ?? resolvePilotHome(options.env ?? process.env),
+            PILOT_HOME: options.userHome ?? resolvePilotHome(options.env ?? process.env),
+            XDG_CACHE_HOME: join(options.userHome ?? resolvePilotHome(options.env ?? process.env), ".cache"),
+            TMPDIR: join(options.userHome ?? resolvePilotHome(options.env ?? process.env), ".tmp"),
+            ...skillCacheEnv(resolveAppRoot()) }
+        : options.env;
+      const child = launch
+        ? this.spawnShell(launch.file, launch.args, {
+            cwd: options.cwd,
+            env: spawnEnv,
+            shell: false,
+            detached,
+            windowsHide: isWindows,
+            stdio: ["ignore", "pipe", "pipe"],
+          })
+        : this.spawnShell(command, {
+            cwd: options.cwd,
+            env: options.env,
+            shell: true,
+            detached,
+            windowsHide: isWindows,
+            stdio: ["ignore", "pipe", "pipe"],
+          });
 
       let stdout = "";
       let stderr = "";
@@ -60,9 +202,11 @@ export class NodeShellCommandRunner implements PilotDeckCommandRunner {
             killer.unref();
           } catch { /* best-effort */ }
         } else {
-          try { process.kill(-pid, "SIGTERM"); } catch { /* already dead */ }
+          // detached 时 pid 即进程组号，整组发信号；否则只能针对 pid 本身。
+          const target = detached ? -pid : pid;
+          try { process.kill(target, "SIGTERM"); } catch { /* already dead */ }
           setTimeout(() => {
-            try { process.kill(-pid, "SIGKILL"); } catch { /* already dead */ }
+            try { process.kill(target, "SIGKILL"); } catch { /* already dead */ }
           }, 3000).unref();
         }
       }

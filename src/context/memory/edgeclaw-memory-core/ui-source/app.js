@@ -1,8 +1,20 @@
 import { renderTraceI18nText } from "./trace-i18n.js";
+import {
+  hasAddressableScope,
+  readDashboardScope,
+  withScope,
+  withScopeBody,
+} from "./dashboard-scope.js";
 
 const params = new URLSearchParams(window.location.search);
 
-const MEMORY_LOCALE = params.get("locale") === "zh" ? "zh" : "en";
+/**
+ * 面板绑定的作用域（Task 8）。在模块加载时从 URL 读一次就**冻结**：
+ * 后续任何请求都只能指向它，这是「在项目 A 的面板里改不到项目 B」的依据。
+ */
+const DASHBOARD_SCOPE = Object.freeze(readDashboardScope(params));
+
+const MEMORY_LOCALE = params.get("locale") === "en" ? "en" : "zh";
 const MEMORY_THEME = params.get("theme") === "dark" ? "dark" : "light";
 const DATE_TIME_LOCALE = MEMORY_LOCALE === "zh" ? "zh-CN" : "en-US";
 
@@ -48,10 +60,52 @@ const UI_STRINGS = {
     "status.yes": "是",
     "status.no": "否",
     "status.unknown": "未知",
+    "page.eyebrow": "记忆管理",
+    "page.title": "记忆中心",
+    "page.subtitle": "查看当前对话关联的长期记忆、用户画像与运行记录。",
     "nav.project": "项目记忆",
     "nav.project.general": "通用记忆",
+    "nav.feedback": "协作反馈",
     "nav.user": "用户画像",
     "nav.trace": "记忆追踪",
+    "nav.case": "病例状态记录",
+    "nav.group.memory": "长期记忆",
+    "nav.group.case": "病例状态",
+    "nav.group.run": "运行记录",
+    "case.summary.title": "病例状态记录",
+    "case.summary.subtitle": "按轮查看推演时实际使用的伤员病例上下文、本轮新增信息和研判结果。",
+    "case.readOnlyBadge": "只读",
+    "case.timeline.title": "状态快照时间线",
+    "case.timeline.subtitle": "每次回合推进或阶段变更留下的快照，最新在前。",
+    "case.empty": "当前对话还没有病例状态。",
+    "case.empty.session": "未选择对话，无法定位病例状态。",
+    "case.timeline.empty": "还没有状态快照。",
+    "case.loadFailed": "病例状态读取失败：{0}",
+    "case.field.caseId": "病例编号",
+    "case.field.round": "回合",
+    "case.field.version": "版本",
+    "case.field.updatedAt": "更新时间",
+    "case.field.stage": "救治阶段",
+    "case.field.facility": "当前救治机构",
+    "case.field.severity": "伤情分级",
+    "case.field.treatmentPriority": "救治优先级",
+    "case.field.transport": "后送状态",
+    "case.field.vitals": "最近生命体征",
+    "case.field.missingInformation": "待补充信息",
+    "case.field.pendingTransition": "待确认阶段转换",
+    "case.transport.needed": "需后送（{0}／{1}）",
+    "case.transport.notNeeded": "暂不需要后送",
+    "case.narrative.injury": "伤情叙述",
+    "case.narrative.treatment": "处置叙述",
+    "case.narrative.evacuation": "后送叙述",
+    "case.narrative.note": "备注",
+    "case.narrative.count": "共 {0} 条 · 第 {1} 回合",
+    "case.snapshot.round": "第 {0} 回合",
+    "entry.tag.scope": "作用域 {0}",
+    "entry.tag.source": "来源 {0}",
+    "entry.tag.dreamMerged": "已被 Dream 合并 · {0}",
+    "entry.tag.dreamPending": "未经 Dream 合并",
+    "entry.source.session": "session {0}",
     "topbar.lastIndexed": "最近索引",
     "topbar.autoStatus.enabled": "自动构建：已启用",
     "topbar.autoStatus.failed": "自动构建：失败",
@@ -233,7 +287,21 @@ const UI_STRINGS = {
     "editor.error.memoryNameRequired": "记忆名称不能为空。",
     "actions.back": "← 返回",
     "error.authRequired": "需要登录后才能访问当前项目的 Memory Dashboard。",
-    "error.missingProjectPath": "缺少 projectPath，无法加载当前项目的 Memory Dashboard。",
+    "scope.projectType": "类型 {0}",
+    "scope.projectId": "项目 ID {0}",
+    "scope.dataDir": "数据目录 {0}",
+    "scope.sessionId": "会话 {0}",
+    "scope.readOnly": "只读",
+    "scope.writable": "可写",
+    "scope.maintenanceMode": "维护模式 {0}",
+    "scope.backlog": "待处理 {0} 轮",
+    "scope.downgraded": "已降级",
+    "maintenance.mode.immediate": "立即执行",
+    "maintenance.mode.interval": "定时执行",
+    "maintenance.mode.manual": "仅手动",
+    "scope.type.war_trauma": "战创伤",
+    "scope.type.general_medicine": "通用医学",
+    "error.missingProjectId": "缺少 projectId，无法定位当前项目的 Memory Dashboard。",
     "error.bundleDownloadReturnedHtml": "导出接口返回了 HTML 页面，而不是记忆 JSON。通常是服务未重启或路由未生效，请重启 PilotDeck 后重新导出。",
     "error.bundleDownloadInvalidJson": "导出接口返回的不是合法 JSON，无法生成记忆导出文件。",
     "error.apiReturnedHtml": "接口返回了 HTML 页面，而不是预期的 JSON。通常是服务未重启或路由未生效。",
@@ -272,10 +340,52 @@ const UI_STRINGS = {
     "status.yes": "Yes",
     "status.no": "No",
     "status.unknown": "Unknown",
+    "page.eyebrow": "Memory management",
+    "page.title": "Memory center",
+    "page.subtitle": "Review long-term memory, user profile, and run history for the selected conversation.",
     "nav.project": "Project Memory",
     "nav.project.general": "General Memory",
+    "nav.feedback": "Collaboration Feedback",
     "nav.user": "User Profile",
     "nav.trace": "Memory Traces",
+    "nav.case": "Case State Records",
+    "nav.group.memory": "Long-term Memory",
+    "nav.group.case": "Case State",
+    "nav.group.run": "Run Records",
+    "case.summary.title": "Case State Records",
+    "case.summary.subtitle": "Review the casualty context, new input, and result used for each reasoning round.",
+    "case.readOnlyBadge": "Read-only",
+    "case.timeline.title": "State Snapshot Timeline",
+    "case.timeline.subtitle": "A snapshot per round advance or stage change, newest first.",
+    "case.empty": "No case state for this session yet.",
+    "case.empty.session": "No session selected, so no case state can be located.",
+    "case.timeline.empty": "No state snapshots yet.",
+    "case.loadFailed": "Failed to read case state: {0}",
+    "case.field.caseId": "Case ID",
+    "case.field.round": "Round",
+    "case.field.version": "Version",
+    "case.field.updatedAt": "Updated",
+    "case.field.stage": "Care Stage",
+    "case.field.facility": "Current Facility",
+    "case.field.severity": "Severity",
+    "case.field.treatmentPriority": "Treatment Priority",
+    "case.field.transport": "Transport",
+    "case.field.vitals": "Latest Vitals",
+    "case.field.missingInformation": "Missing Information",
+    "case.field.pendingTransition": "Pending Stage Transition",
+    "case.transport.needed": "Transport needed ({0} / {1})",
+    "case.transport.notNeeded": "Transport not needed",
+    "case.narrative.injury": "Injury Narrative",
+    "case.narrative.treatment": "Treatment Narrative",
+    "case.narrative.evacuation": "Evacuation Narrative",
+    "case.narrative.note": "Notes",
+    "case.narrative.count": "{0} entries · round {1}",
+    "case.snapshot.round": "Round {0}",
+    "entry.tag.scope": "scope {0}",
+    "entry.tag.source": "from {0}",
+    "entry.tag.dreamMerged": "Dream-merged · {0}",
+    "entry.tag.dreamPending": "Not Dream-merged",
+    "entry.source.session": "session {0}",
     "topbar.lastIndexed": "Last indexed",
     "topbar.autoStatus.enabled": "Auto Build: Enabled",
     "topbar.autoStatus.failed": "Auto Build: Failed",
@@ -457,7 +567,21 @@ const UI_STRINGS = {
     "editor.error.memoryNameRequired": "Memory name is required.",
     "actions.back": "← Back",
     "error.authRequired": "Sign in to access the Memory Dashboard for the current project.",
-    "error.missingProjectPath": "Missing projectPath; unable to load the Memory Dashboard for the current project.",
+    "scope.projectType": "Type {0}",
+    "scope.projectId": "Project ID {0}",
+    "scope.dataDir": "Data dir {0}",
+    "scope.sessionId": "Session {0}",
+    "scope.readOnly": "Read-only",
+    "scope.writable": "Writable",
+    "scope.maintenanceMode": "Mode {0}",
+    "scope.backlog": "Backlog {0} turns",
+    "scope.downgraded": "Downgraded",
+    "maintenance.mode.immediate": "Immediate",
+    "maintenance.mode.interval": "Scheduled",
+    "maintenance.mode.manual": "Manual",
+    "scope.type.war_trauma": "War trauma",
+    "scope.type.general_medicine": "General medicine",
+    "error.missingProjectId": "Missing projectId; unable to locate the Memory Dashboard for the current project.",
     "error.bundleDownloadReturnedHtml": "The export endpoint returned an HTML page instead of a memory JSON bundle. This usually means the service was not restarted or the route is not active. Restart PilotDeck and export again.",
     "error.bundleDownloadInvalidJson": "The export endpoint did not return valid JSON, so the memory export file could not be created.",
     "error.apiReturnedHtml": "The endpoint returned an HTML page instead of the expected JSON. This usually means the service was not restarted or the route is not active.",
@@ -555,17 +679,29 @@ function ts(key, ...args) {
 
 const state = {
   token: params.get("token") || "",
-  projectPath: params.get("projectPath") || "",
+  // 寻址身份来自 DASHBOARD_SCOPE；这些字段只是它在 state 里的投影。
+  projectId: DASHBOARD_SCOPE.projectId,
+  projectType: DASHBOARD_SCOPE.projectType,
+  sessionId: DASHBOARD_SCOPE.sessionId,
+  /** 仅用于旧接口兼容和名称兜底，禁止展示或用于定位。 */
+  projectPath: DASHBOARD_SCOPE.projectPath,
+  identity: null,
   selectedProjectId: params.get("selectedProjectId") || "",
   locale: MEMORY_LOCALE,
   workspaceQuery: "",
-  activePage: "project",
+  activePage: DASHBOARD_SCOPE.projectType === "war_trauma" ? "case" : "project",
   activeTraceTab: "recall",
   overview: null,
   settings: null,
   workspace: null,
   userSummary: null,
   caseTraces: [],
+  /** 病例状态（只读投影）。null = 还没加载或不适用；见 loadCaseState。 */
+  caseState: null,
+  caseSnapshots: [],
+  caseRounds: [],
+  selectedCaseRoundKey: "",
+  caseStateError: "",
   indexTraces: [],
   dreamTraces: [],
   detailOpen: false,
@@ -586,6 +722,7 @@ const DEFAULT_ACTIVITY = t("status.ready");
 const appScrimEl = document.getElementById("appScrim");
 const activityTextEl = document.getElementById("activityText");
 const statusBarEl = document.getElementById("statusBar");
+const scopeBarEl = document.getElementById("scopeBar");
 const memoryAutoStatusEl = document.getElementById("memoryAutoStatus");
 const navLastIndexedEl = document.getElementById("navLastIndexed");
 const boardNavTabs = Array.from(document.querySelectorAll(".nav-tab[data-page]"));
@@ -614,8 +751,14 @@ const workspaceSearchEl = document.getElementById("workspaceSearch");
 const workspaceSearchBtn = document.getElementById("workspaceSearchBtn");
 const listSearchRowEl = document.getElementById("listSearchRow");
 const projectBoardEl = document.getElementById("projectBoard");
+const feedbackBoardEl = document.getElementById("feedbackBoard");
 const userBoardEl = document.getElementById("userBoard");
 const traceBoardEl = document.getElementById("traceBoard");
+const caseBoardEl = document.getElementById("caseBoard");
+const caseSummaryEl = document.getElementById("caseSummary");
+const caseRoundNavEl = document.getElementById("caseRoundNav");
+const navCaseTabEl = document.getElementById("navCaseTab");
+const navProjectTabEl = document.getElementById("navProjectTab");
 const projectContextSectionEl = document.getElementById("projectContextSection");
 const projectEntriesEl = document.getElementById("projectEntries");
 const feedbackEntriesSectionEl = document.getElementById("feedbackEntriesSection");
@@ -681,7 +824,9 @@ const editorSaveBtn = document.getElementById("editorSaveBtn");
 
 const PAGE_CONFIG = {
   project: { title: t("nav.project") },
+  feedback: { title: t("nav.feedback") },
   user: { title: t("nav.user") },
+  case: { title: t("nav.case") },
   trace: { title: t("nav.trace") },
 };
 
@@ -911,10 +1056,8 @@ function formatTraceDisplayStatus(record) {
 
 function headers(extra = {}) { return state.token ? { Authorization: `Bearer ${state.token}`, ...extra } : { ...extra }; }
 
-function withProjectPath(url) {
-  const next = new URL(url, window.location.origin);
-  if (state.projectPath) next.searchParams.set("projectPath", state.projectPath);
-  return `${next.pathname}${next.search}`;
+function withProjectScope(url) {
+  return withScope(url, DASHBOARD_SCOPE, window.location.origin);
 }
 
 function parseJsonText(raw) {
@@ -938,9 +1081,9 @@ function isRecoverableLegacyRouteError(error) {
 }
 
 async function requestText(url, options = {}) {
-  const response = await fetch(withProjectPath(url), {
+  const response = await fetch(withProjectScope(url), {
     method: options.method || "GET", headers: headers(options.headers),
-    ...(options.body ? { body: JSON.stringify({ ...options.body, projectPath: state.projectPath }) } : {}),
+    ...(options.body ? { body: JSON.stringify(withScopeBody(options.body, DASHBOARD_SCOPE)) } : {}),
   });
   const raw = await response.text();
   return { response, raw, data: parseJsonText(raw) };
@@ -1093,6 +1236,58 @@ function syncMaintenanceActionState() {
   }
 }
 
+/* ── 作用域状态条（Task 8） ── */
+
+function formatScopeProjectType(projectType) {
+  if (projectType === "war_trauma") return t("scope.type.war_trauma");
+  if (projectType === "general_medicine") return t("scope.type.general_medicine");
+  return t("status.unknown");
+}
+
+/**
+ * 渲染顶部状态条。稳定 project id、数据目录和 session id 只用于请求寻址，
+ * 不在页面中暴露；这里只保留用户理解维护状态所需的信息。
+ */
+function renderScopeBar() {
+  if (!scopeBarEl) return;
+  clearNode(scopeBarEl);
+
+  const identity = state.identity;
+  const chips = [
+    ["projectType", t("scope.projectType", formatScopeProjectType(state.projectType || identity?.projectType))],
+  ];
+
+  // Task 10: 添加维护模式显示
+  const maintenanceMode = state.settings?.maintenanceMode || "interval";
+  const modeLabel = maintenanceMode === "immediate" ? t("maintenance.mode.immediate")
+    : maintenanceMode === "manual" ? t("maintenance.mode.manual")
+    : t("maintenance.mode.interval");
+  chips.push(["maintenanceMode", t("scope.maintenanceMode", modeLabel)]);
+
+  // Task 10: 添加待处理会话数和失败提示
+  const overview = state.overview;
+  if (overview) {
+    if (overview.pendingSessions > 0) {
+      chips.push(["backlog", t("scope.backlog", overview.pendingSessions)]);
+    }
+    if (overview.maintenanceDowngrade) {
+      chips.push(["downgraded", t("scope.downgraded")]);
+    }
+  }
+
+  chips.push([
+    "readOnly",
+    identity?.readOnly ? t("scope.readOnly") : t("scope.writable"),
+  ]);
+
+  chips.forEach(([kind, text]) => {
+    const chip = el("span", "scope-chip", text);
+    chip.dataset.kind = kind;
+    if (kind === "downgraded") chip.classList.add("warning");
+    scopeBarEl.append(chip);
+  });
+}
+
 function renderMemoryAutoStatus() {
   if (!memoryAutoStatusEl) return;
 
@@ -1107,17 +1302,39 @@ function renderMemoryAutoStatus() {
 
 function updateCounts() {
   navLastIndexedEl.textContent = formatDateTime(state.overview?.lastIndexedAt || "") === "—" ? t("status.waitingForIndex") : formatDateTime(state.overview?.lastIndexedAt || "");
+  renderScopeBar();
   renderMemoryAutoStatus();
   syncMaintenanceActionState();
 }
 
 /* ── Page / Tab Navigation ── */
 
+/** 病例状态只在战创伤项目下存在，通用医学整组隐藏。 */
+function isCasePageAvailable() {
+  return (state.projectType || state.identity?.projectType) === "war_trauma";
+}
+
+function applyCaseNavVisibility() {
+  const available = isCasePageAvailable();
+  if (navCaseTabEl) navCaseTabEl.classList.toggle("hidden", !available);
+  // 战创伤不生成也不召回 project 类型记忆，因此不展示无效的项目记忆页。
+  if (navProjectTabEl) navProjectTabEl.classList.toggle("hidden", available);
+  if (available && state.activePage === "project") state.activePage = "case";
+  // 通用医学隐藏病例页时退回项目记忆。
+  if (!available && state.activePage === "case") state.activePage = "project";
+}
+
 function applyPageChrome() {
   const isDetail = state.memoryDetailOpen;
-  listSearchRowEl.classList.toggle("hidden", state.activePage !== "project" || isDetail);
+  applyCaseNavVisibility();
+  listSearchRowEl.classList.toggle(
+    "hidden",
+    !["project", "feedback"].includes(state.activePage) || isDetail,
+  );
   projectBoardEl.classList.toggle("board-active", state.activePage === "project" && !isDetail);
+  feedbackBoardEl.classList.toggle("board-active", state.activePage === "feedback" && !isDetail);
   userBoardEl.classList.toggle("board-active", state.activePage === "user" && !isDetail);
+  caseBoardEl.classList.toggle("board-active", state.activePage === "case" && !isDetail);
   traceBoardEl.classList.toggle("board-active", state.activePage === "trace" && !isDetail);
   memoryDetailBoardEl.classList.toggle("board-active", isDetail);
   boardNavTabs.forEach((b) => b.classList.toggle("active", b.dataset.page === state.activePage && !isDetail));
@@ -1305,7 +1522,6 @@ function renderProjectContext() {
     const meta = el("div", "project-context-meta");
     [
       t("project.context.statusChip", formatProjectStatusLabel(selectedProject.status || "in_progress")),
-      ts("project.context.pathChip", basename(selectedProject.workspacePath || state.projectPath)),
       selectedProject.readOnly ? t("project.general.readOnly") : "",
     ].filter(Boolean).forEach((text) => meta.append(el("span", "context-chip", text)));
     selectedCard.append(meta);
@@ -1314,7 +1530,9 @@ function renderProjectContext() {
   }
 
   const pm = state.workspace?.projectMeta;
-  const projectName = pm?.projectName || basename(state.projectPath);
+  const projectName = state.workspace?.projectDisplayName
+    || pm?.projectName
+    || t("project.currentProject");
 
   const wrapper = el("div", "project-context-head");
   const copy = el("div", "project-context-copy");
@@ -1331,7 +1549,6 @@ function renderProjectContext() {
   const meta = el("div", "project-context-meta");
   [
     t("project.context.statusChip", formatProjectStatusLabel(pm?.status || "in_progress")),
-    ts("project.context.pathChip", basename(state.projectPath)),
   ].forEach((text) => meta.append(el("span", "context-chip", text)));
   projectContextSectionEl.append(meta);
 }
@@ -1416,6 +1633,29 @@ async function deleteEntry(record) {
   setStatus(t("status.memoryDeleted")); await loadWorkspace(); closeMemoryDetailPage();
 }
 
+/**
+ * 长期记忆条目的标注（Task 9）：作用域、来源、是否已被 Dream 合并。
+ *
+ * 更新时间已经在 entry-meta 那行，这里不重复。Dream 状态用 frontmatter 的
+ * `dreamUpdatedAt`：有值才说明这条真的经过了 Dream 合并，缺字段的旧条目按
+ * 「未合并」显示而不是留空——留空会被读成「不知道」，而事实是它确实没被合并过。
+ */
+function buildEntryTags(record) {
+  const row = el("div", "entry-tags");
+  if (record.scope) row.append(el("span", "entry-tag", t("entry.tag.scope", record.scope)));
+  if (record.sourceKind) row.append(el("span", "entry-tag", t("entry.tag.source", record.sourceKind)));
+  const dreamTag = el(
+    "span",
+    "entry-tag",
+    record.dreamUpdatedAt
+      ? t("entry.tag.dreamMerged", formatDateTime(record.dreamUpdatedAt))
+      : t("entry.tag.dreamPending"),
+  );
+  if (record.dreamUpdatedAt) dreamTag.dataset.kind = "dream";
+  row.append(dreamTag);
+  return row;
+}
+
 function buildEntryCard(record) {
   const card = el("div", "entry-card entry-card--clickable");
   card.dataset.kind = record.deprecated ? "deprecated" : record.type;
@@ -1426,6 +1666,7 @@ function buildEntryCard(record) {
   head.append(badge);
   card.append(head);
   card.append(el("div", "entry-meta", `${formatDateTime(record.updatedAt)} · ${formatEntrySource(record)} · ${record.relativePath}`));
+  card.append(buildEntryTags(record));
   card.append(el("div", "", record.description || t("detail.noDescription")));
   card.addEventListener("click", () => void openMemoryDetail(record.relativePath));
   return card;
@@ -1440,7 +1681,7 @@ function renderWorkspace() {
   clearNode(projectEntriesEl);
   if (!pe.length) renderEmpty(projectEntriesEl, ts("workspace.empty.project"));
   else pe.forEach((r) => projectEntriesEl.append(buildEntryCard(r)));
-  feedbackEntriesSectionEl.classList.toggle("hidden", !fe.length && !state.workspaceQuery);
+  feedbackEntriesSectionEl.classList.remove("hidden");
   clearNode(feedbackEntriesEl);
   if (!fe.length) renderEmpty(feedbackEntriesEl, t("workspace.empty.feedback"));
   else fe.forEach((r) => feedbackEntriesEl.append(buildEntryCard(r)));
@@ -1595,7 +1836,7 @@ function renderRecallCaseList() {
   clearNode(recallCaseSelectEl);
   const def = el("option", "", t("trace.selectRecallCase")); def.value = ""; recallCaseSelectEl.append(def);
   state.caseTraces.forEach((c) => {
-    const opt = el("option", "", `${c.query} — ${c.sessionKey} · ${formatDateTime(c.startedAt)}`);
+    const opt = el("option", "", `${c.query} · ${formatDateTime(c.startedAt)}`);
     opt.value = c.caseId; recallCaseSelectEl.append(opt);
   });
   recallDetailEl.classList.add("hidden"); recallEmptyEl.classList.remove("hidden");
@@ -1611,12 +1852,11 @@ function buildKvCell(label, value) {
 async function loadRecallDetail(caseId) {
   if (!caseId) { recallDetailEl.classList.add("hidden"); recallEmptyEl.classList.remove("hidden"); return; }
   try {
-    const r = await fetchJson(`/api/memory/cases/${encodeURIComponent(caseId)}`);
+    const r = await fetchJson(`/api/memory/index-case-traces/${encodeURIComponent(caseId)}`);
     recallEmptyEl.classList.add("hidden"); recallDetailEl.classList.remove("hidden");
 
     clearNode(recallMetaTableEl);
     recallMetaTableEl.append(buildKvCell(t("trace.meta.query"), r.query || "—"));
-    recallMetaTableEl.append(buildKvCell(t("trace.meta.session"), r.sessionKey || "—"));
     recallMetaTableEl.append(buildKvCell(t("trace.meta.mode"), formatRecallRoute(r.retrieval?.intent || "auto")));
     recallMetaTableEl.append(buildKvCell(t("trace.meta.reason"), formatRecallRoute(r.retrieval?.intent || "none")));
     recallMetaTableEl.append(buildKvCell(t("trace.meta.status"), r.status || "—"));
@@ -1718,7 +1958,413 @@ async function loadWorkspace() {
   renderWorkspace();
 }
 async function loadUserSummary() { state.userSummary = await fetchJson("/api/memory/memory/user-summary"); renderUserSummary(); }
-async function loadCaseTraces() { const c = await fetchJson("/api/memory/cases?limit=12"); state.caseTraces = Array.isArray(c) ? c : []; renderRecallCaseList(); updateCounts(); }
+async function loadCaseTraces() { const c = await fetchJson("/api/memory/index-case-traces?limit=12"); state.caseTraces = Array.isArray(c) ? c : []; renderRecallCaseList(); updateCounts(); }
+/**
+ * 服务端确认的作用域身份（Task 8）。数据目录和只读状态只能由服务端说了算——
+ * 浏览器侧的猜测和真正落盘的位置不是一回事。失败不阻断面板：身份条会退回
+ * 只显示 URL 里的类型与 id。
+ */
+async function loadIdentity() {
+  try {
+    state.identity = await fetchJson("/api/memory/identity");
+  } catch {
+    state.identity = null;
+  }
+  renderScopeBar();
+}
+/**
+ * 病例状态（只读）。
+ *
+ * 通用医学项目直接跳过——服务端会回 404 CASE_STATE_UNSUPPORTED，但没必要为了
+ * 拿一个预期内的 404 发请求。没有 sessionId 同样跳过：病例状态是 per-session 的。
+ * 读取失败不阻断整块面板，只在病例页显示原因。
+ */
+async function loadCaseState() {
+  if (!isCasePageAvailable() || !state.sessionId) {
+    state.caseState = null;
+    state.caseSnapshots = [];
+    state.caseRounds = [];
+    state.selectedCaseRoundKey = "";
+    state.caseStateError = "";
+    renderCaseBoard();
+    return;
+  }
+  try {
+    const [current, snapshots] = await Promise.all([
+      fetchJson("/api/memory/cases/current"),
+      fetchJson("/api/memory/cases/snapshots?limit=500"),
+    ]);
+    state.caseState = current?.current ?? null;
+    state.caseSnapshots = Array.isArray(snapshots?.snapshots) ? snapshots.snapshots : [];
+    state.caseRounds = Array.isArray(snapshots?.rounds) ? snapshots.rounds : [];
+    const availableKeys = new Set(state.caseRounds.map(caseRoundKey));
+    if (!availableKeys.has(state.selectedCaseRoundKey)) {
+      state.selectedCaseRoundKey = state.caseRounds[0] ? caseRoundKey(state.caseRounds[0]) : "";
+    }
+    state.caseStateError = "";
+  } catch (err) {
+    state.caseState = null;
+    state.caseSnapshots = [];
+    state.caseRounds = [];
+    state.selectedCaseRoundKey = "";
+    state.caseStateError = err instanceof Error ? err.message : String(err);
+  }
+  renderCaseBoard();
+}
+
+const CASE_VALUE_LABELS = {
+  mainStage: {
+    battlefield_first_aid: ["Ⅰ级·战现场急救", "Level I · Battlefield first aid"],
+    early_treatment: ["Ⅱ级·早期救治", "Level II · Early treatment"],
+    role1: ["Ⅰ级·战现场急救", "Level I · Battlefield first aid"],
+    role2: ["Ⅱ级·早期救治", "Level II · Early treatment"],
+  },
+  subStage: {
+    primary_first_aid: ["初级急救", "Primary first aid"],
+    advanced_first_aid: ["高级急救", "Advanced first aid"],
+    emergency_treatment: ["紧急处置", "Emergency treatment"],
+    surgical_resuscitation: ["外科复苏", "Surgical resuscitation"],
+    damage_control: ["损伤控制", "Damage control"],
+  },
+  severity: {
+    unknown: ["待评估", "Pending assessment"],
+    mild: ["轻伤", "Mild"],
+    moderate: ["中度伤", "Moderate"],
+    severe: ["重伤", "Severe"],
+    critical: ["危重伤", "Critical"],
+  },
+  priority: {
+    pending: ["待评估", "Pending"],
+    routine: ["常规", "Routine"],
+    delayed: ["可延后", "Delayed"],
+    priority: ["优先", "Priority"],
+    urgent: ["紧急", "Urgent"],
+    immediate: ["立即", "Immediate"],
+  },
+  readiness: {
+    unknown: ["待评估", "Unknown"],
+    ready: ["已具备后送条件", "Ready"],
+    not_ready: ["尚未具备后送条件", "Not ready"],
+  },
+  gate: {
+    ASSESSING: ["评估中", "Assessing"],
+    STAY: ["留在本级", "Stay"],
+    READY: ["建议后送", "Ready for transfer"],
+    BLOCKED: ["暂缓后送", "Transfer blocked"],
+    COMPLETED: ["转换完成", "Completed"],
+    open: ["通道开放", "Open"],
+  },
+  event: {
+    agent_turn: ["病例推演", "Case reasoning"],
+    transition_confirmation: ["阶段转换确认", "Stage transition confirmation"],
+    manual_stage_override: ["人工调整阶段", "Manual stage override"],
+    stage_transition: ["阶段转换", "Stage transition"],
+  },
+};
+
+const CASE_VITALS = {
+  respiratoryRate: ["呼吸频率", "Respiratory rate", "次/分"],
+  systolicBloodPressure: ["收缩压", "Systolic pressure", "mmHg"],
+  heartRate: ["心率", "Heart rate", "次/分"],
+  temperature: ["体温", "Temperature", "℃"],
+  spo2: ["血氧饱和度", "Oxygen saturation", "%"],
+  rr: ["呼吸频率", "Respiratory rate", "次/分"],
+  sbp: ["收缩压", "Systolic pressure", "mmHg"],
+  hr: ["心率", "Heart rate", "次/分"],
+};
+
+function caseText(zh, en) {
+  return state.locale === "zh" ? zh : en;
+}
+
+function caseValue(group, value) {
+  if (!value) return "—";
+  const labels = CASE_VALUE_LABELS[group]?.[value];
+  return labels ? caseText(labels[0], labels[1]) : String(value);
+}
+
+function caseTone(value) {
+  if (["critical", "urgent", "immediate", "BLOCKED", "not_ready"].includes(value)) return "danger";
+  if (["severe", "priority", "READY"].includes(value)) return "warning";
+  if (["mild", "routine", "ready", "COMPLETED", "open"].includes(value)) return "success";
+  return "neutral";
+}
+
+function buildCaseSection(title, subtitle) {
+  const section = el("section", "case-detail-card");
+  const header = el("header", "case-detail-card-head");
+  const marker = el("span", "case-detail-marker");
+  const copy = el("div", "case-detail-card-copy");
+  copy.append(el("h5", "", title));
+  if (subtitle) copy.append(el("p", "", subtitle));
+  header.append(marker, copy);
+  section.append(header);
+  return section;
+}
+
+function buildCaseMetric(label, value, tone = "neutral") {
+  const row = el("div", "case-metric");
+  row.append(el("span", "case-metric-label", label));
+  const display = el("span", "case-metric-value", value || "—");
+  display.dataset.tone = tone;
+  row.append(display);
+  return row;
+}
+
+function buildCaseBadge(text, tone = "neutral") {
+  const badge = el("span", "case-status-badge", text);
+  badge.dataset.tone = tone;
+  return badge;
+}
+
+function caseRoundKey(round) {
+  return `${round?.round ?? "unknown"}:${round?.version ?? "unknown"}`;
+}
+
+function caseVitalDisplay(key, value) {
+  const config = CASE_VITALS[key] || [key, key, ""];
+  return {
+    label: caseText(config[0], config[1]),
+    value: `${value}${config[2] ? ` ${config[2]}` : ""}`,
+  };
+}
+
+function appendCaseTextBlock(container, label, text, meta = "") {
+  if (!text) return;
+  const block = el("article", "case-text-block");
+  const header = el("div", "case-text-block-head");
+  header.append(el("h6", "", label));
+  if (meta) header.append(el("span", "case-text-block-meta", meta));
+  block.append(header, el("p", "", text));
+  container.append(block);
+}
+
+function buildNarrativeList(title, entries) {
+  const section = buildCaseSection(title, caseText("Runner 使用的最近记录，最新在前", "Recent records used by the runner, newest first"));
+  const list = el("div", "case-record-list");
+  if (!entries?.length) {
+    list.append(el("p", "case-inline-empty", caseText("暂无记录", "No records")));
+  } else {
+    entries.forEach((entry) => appendCaseTextBlock(
+      list,
+      `${caseText("第", "Round ")}${entry.round ?? "—"}${caseText("轮", "")}`,
+      entry.text || "—",
+      formatDateTime(entry.createdAt || ""),
+    ));
+  }
+  section.append(list);
+  return section;
+}
+
+function renderCaseRoundNav() {
+  if (!caseRoundNavEl) return;
+  clearNode(caseRoundNavEl);
+  state.caseRounds.forEach((round, index) => {
+    const key = caseRoundKey(round);
+    const active = key === state.selectedCaseRoundKey;
+    const button = el("button", `case-round-tab${active ? " active" : ""}`);
+    button.type = "button";
+    button.setAttribute("aria-pressed", String(active));
+    button.append(el("strong", "", `${caseText("第", "Round ")}${round.round ?? "—"}${caseText("轮", "")}`));
+    button.append(el("span", "", index === 0 ? caseText("当前", "Current") : formatDateTime(round.createdAt || "")));
+    button.addEventListener("click", () => {
+      state.selectedCaseRoundKey = key;
+      renderCaseBoard();
+    });
+    caseRoundNavEl.append(button);
+  });
+}
+
+function renderCaseContext(container, round) {
+  const context = round.context || {};
+  const hero = el("section", "case-hero");
+  const heroCopy = el("div", "case-hero-copy");
+  heroCopy.append(el("p", "case-hero-eyebrow", `${caseText("第", "Round ")}${round.round ?? "—"}${caseText("轮 · Runner 病例上下文", " · Runner context")}`));
+  heroCopy.append(el("h3", "", [
+    caseValue("mainStage", context.currentStage),
+    caseValue("subStage", context.currentSubStage),
+  ].filter((value) => value !== "—").join(" · ") || caseText("尚未完成分级", "Not classified")));
+  heroCopy.append(el("p", "case-hero-meta", `${context.facility?.name || caseText("救治机构待确认", "Facility pending")} · ${formatDateTime(round.createdAt || "")}`));
+  const heroBadges = el("div", "case-hero-badges");
+  heroBadges.append(buildCaseBadge(caseText(`第 ${round.version ?? "—"} 版`, `V${round.version ?? "—"}`), "info"));
+  (round.events || []).forEach((event) => heroBadges.append(buildCaseBadge(
+    caseValue("event", event.eventType),
+    event.eventType === "manual_stage_override" ? "warning" : "neutral",
+  )));
+  hero.append(heroCopy, heroBadges);
+  container.append(hero);
+
+  const placement = buildCaseSection(caseText("当轮救治位置", "Care placement for this round"));
+  placement.append(buildCaseMetric(caseText("主救治级别", "Main care level"), caseValue("mainStage", context.currentStage)));
+  placement.append(buildCaseMetric(caseText("当前子阶段", "Current substage"), caseValue("subStage", context.currentSubStage), "info"));
+  placement.append(buildCaseMetric(caseText("当前救治机构", "Current facility"), context.facility?.name || "—"));
+  placement.append(buildCaseMetric(caseText("机构能力", "Capabilities"), context.facility?.capabilities?.join("、") || "—"));
+
+  const latestVitals = buildCaseSection(
+    caseText("Runner 看到的生命体征", "Vital signs seen by the runner"),
+    context.vitals?.measuredThisRound
+      ? caseText("本轮已测量", "Measured this round")
+      : caseText("包含沿用自历史轮次的最新值", "Includes latest values carried from prior rounds"),
+  );
+  const vitalGrid = el("div", "case-vital-grid");
+  const vitalEntries = Object.entries(context.vitals?.latestByField || {});
+  if (!vitalEntries.length) {
+    vitalGrid.append(el("p", "case-inline-empty", caseText("暂无生命体征记录", "No vital signs")));
+  } else {
+    vitalEntries.forEach(([key, detail]) => {
+      const display = caseVitalDisplay(key, detail.value);
+      const item = el("div", "case-vital");
+      const head = el("div", "case-vital-head");
+      head.append(el("span", "case-vital-label", display.label));
+      if (detail.stale) head.append(buildCaseBadge(caseText(`第 ${detail.round} 轮`, `Round ${detail.round}`), "warning"));
+      item.append(head, el("strong", "case-vital-value", display.value));
+      vitalGrid.append(item);
+    });
+  }
+  latestVitals.append(vitalGrid);
+  const topGrid = el("div", "case-section-grid");
+  topGrid.append(placement, latestVitals);
+  container.append(topGrid);
+
+  const narrativeGrid = el("div", "case-section-grid");
+  narrativeGrid.append(
+    buildNarrativeList(caseText("累计伤情记录", "Accumulated injury records"), context.injuryNarratives),
+    buildNarrativeList(caseText("累计处置记录", "Accumulated treatment records"), context.treatmentNarratives),
+    buildNarrativeList(caseText("累计后送记录", "Accumulated evacuation records"), context.evacuationNarratives),
+  );
+  const notes = buildCaseSection(caseText("本轮备注", "Current-round note"));
+  if (context.note?.text) appendCaseTextBlock(notes, caseText("备注", "Note"), context.note.text, formatDateTime(context.note.createdAt || ""));
+  else notes.append(el("p", "case-inline-empty", caseText("本轮没有备注", "No note for this round")));
+  narrativeGrid.append(notes);
+  container.append(narrativeGrid);
+
+  const history = buildCaseSection(caseText("最近生命体征记录", "Recent vital history"), caseText("最多展示 Runner 使用的最近 6 轮", "Up to the six most recent records used by the runner"));
+  const historyList = el("div", "case-vital-history");
+  if (!context.vitals?.recentRecords?.length) {
+    historyList.append(el("p", "case-inline-empty", caseText("暂无记录", "No records")));
+  } else {
+    context.vitals.recentRecords.forEach((record) => {
+      const row = el("div", "case-vital-history-row");
+      row.append(el("span", "case-vital-history-round", `${caseText("第", "Round ")}${record.round ?? "—"}${caseText("轮", "")}`));
+      const values = Object.entries(record.values || {}).map(([key, value]) => {
+        const display = caseVitalDisplay(key, value);
+        return `${display.label} ${display.value}`;
+      });
+      row.append(el("span", "case-vital-history-values", values.join(" · ") || "—"));
+      row.append(el("span", "case-vital-history-time", formatDateTime(record.recordedAt || "")));
+      historyList.append(row);
+    });
+  }
+  history.append(historyList);
+  container.append(history);
+}
+
+function renderCaseRoundInput(container, round) {
+  const input = round.input || {};
+  const section = buildCaseSection(caseText("本轮新增信息", "New information this round"), caseText("用户在本轮提交并合并进病例状态的内容", "Content submitted and merged into the case state"));
+  const grid = el("div", "case-input-grid");
+  appendCaseTextBlock(grid, caseText("原始输入", "Raw input"), input.rawInput);
+  appendCaseTextBlock(grid, caseText("新增伤情", "New injury information"), input.injuryNarrative);
+  appendCaseTextBlock(grid, caseText("新增处置", "New treatment information"), input.treatmentNarrative);
+  appendCaseTextBlock(grid, caseText("新增后送信息", "New evacuation information"), input.evacuationNarrative);
+  appendCaseTextBlock(grid, caseText("本轮备注", "Round note"), input.note);
+  appendCaseTextBlock(grid, caseText("本轮附件判读", "Round attachment interpretation"), input.attachmentInterpretation);
+  const vitalEntries = Object.entries(input.vitals || {});
+  if (vitalEntries.length) {
+    const vitalText = vitalEntries.map(([key, value]) => {
+      const display = caseVitalDisplay(key, value);
+      return `${display.label} ${display.value}`;
+    }).join(" · ");
+    appendCaseTextBlock(grid, caseText("本轮测量", "Measurements this round"), vitalText);
+  }
+  if (!grid.childElementCount) grid.append(el("p", "case-inline-empty", caseText("该轮没有可展示的新增输入", "No displayable new input for this round")));
+  section.append(grid);
+  container.append(section);
+}
+
+function renderCaseRoundResult(container, round) {
+  const result = round.result || {};
+  const grid = el("div", "case-section-grid");
+  const classification = buildCaseSection(caseText("动态分类", "Dynamic classification"));
+  classification.append(buildCaseMetric(caseText("伤情分级", "Severity"), caseValue("severity", result.classification?.severity), caseTone(result.classification?.severity)));
+  classification.append(buildCaseMetric(caseText("救治优先级", "Treatment priority"), caseValue("priority", result.classification?.treatmentPriority), caseTone(result.classification?.treatmentPriority)));
+  classification.append(buildCaseMetric(caseText("后送优先级", "Transport priority"), caseValue("priority", result.classification?.transportPriority), caseTone(result.classification?.transportPriority)));
+  (result.classification?.rationale || []).forEach((item) => classification.append(el("p", "case-rationale", item)));
+
+  const transport = buildCaseSection(caseText("后送与阶段建议", "Evacuation and stage recommendation"));
+  transport.append(buildCaseMetric(caseText("状态", "Status"), caseValue("gate", result.transport?.gateStatus || result.transition?.status), caseTone(result.transport?.gateStatus || result.transition?.status)));
+  transport.append(buildCaseMetric(caseText("准备状态", "Readiness"), caseValue("readiness", result.transport?.readiness), caseTone(result.transport?.readiness)));
+  if (result.transition?.targetStage || result.transition?.targetSubStage) {
+    transport.append(buildCaseMetric(caseText("建议目标", "Suggested target"), [
+      caseValue("mainStage", result.transition.targetStage),
+      caseValue("subStage", result.transition.targetSubStage),
+    ].filter((value) => value !== "—").join(" · ")));
+  }
+  if (result.transition?.reason) transport.append(el("p", "case-rationale", result.transition.reason));
+  if (result.transport?.blockingReason) transport.append(el("p", "case-alert", result.transport.blockingReason));
+  grid.append(classification, transport);
+  container.append(grid);
+
+  if (result.treatmentPlan?.length) {
+    const plan = buildCaseSection(caseText("本轮处置计划", "Treatment plan for this round"));
+    const list = el("ol", "case-action-list");
+    result.treatmentPlan.forEach((action) => {
+      const item = el("li", "case-action-item");
+      item.append(el("strong", "", action.title || caseText("处置建议", "Treatment action")));
+      if (action.description) item.append(el("p", "", action.description));
+      list.append(item);
+    });
+    plan.append(list);
+    container.append(plan);
+  }
+
+  if (result.memo) {
+    const memo = buildCaseSection(caseText("本轮纪要", "Round memo"), result.memo.title || "");
+    const memoGrid = el("div", "case-input-grid");
+    appendCaseTextBlock(memoGrid, caseText("输入要点", "Input points"), (result.memo.inputPoints || []).join("；"));
+    appendCaseTextBlock(memoGrid, caseText("处置要点", "Action points"), (result.memo.actionPoints || []).join("；"));
+    appendCaseTextBlock(memoGrid, caseText("结论", "Conclusion"), result.memo.conclusion);
+    memo.append(memoGrid);
+    container.append(memo);
+  }
+
+  if (result.requiredCapabilities?.length || result.missingInformation?.length) {
+    const followup = buildCaseSection(caseText("后续所需", "Follow-up needs"));
+    if (result.requiredCapabilities?.length) followup.append(buildCaseMetric(caseText("所需能力", "Required capabilities"), result.requiredCapabilities.join("、"), "info"));
+    if (result.missingInformation?.length) {
+      const chips = el("div", "case-chip-list");
+      result.missingInformation.forEach((item) => chips.append(buildCaseBadge(item, "warning")));
+      followup.append(chips);
+    }
+    container.append(followup);
+  }
+}
+
+function renderCaseBoard() {
+  if (!caseSummaryEl || !caseRoundNavEl) return;
+  clearNode(caseSummaryEl);
+  renderCaseRoundNav();
+  if (state.caseStateError) {
+    caseSummaryEl.append(el("div", "empty-state", t("case.loadFailed", state.caseStateError)));
+    return;
+  }
+  if (!state.sessionId) {
+    caseSummaryEl.append(el("div", "empty-state", t("case.empty.session")));
+    return;
+  }
+  if (!state.caseRounds.length) {
+    caseSummaryEl.append(el("div", "empty-state", state.caseState
+      ? caseText("已有当前病例状态，但没有可读取的历史轮次快照。", "Current case state exists, but no readable round snapshots were found.")
+      : t("case.empty")));
+    return;
+  }
+  const selected = state.caseRounds.find((round) => caseRoundKey(round) === state.selectedCaseRoundKey)
+    || state.caseRounds[0];
+  renderCaseContext(caseSummaryEl, selected);
+  renderCaseRoundInput(caseSummaryEl, selected);
+  renderCaseRoundResult(caseSummaryEl, selected);
+}
+
 async function loadTraces() {
   const [it, dt] = await Promise.all([fetchJson("/api/memory/index-traces?limit=10"), fetchJson("/api/memory/dream-traces?limit=10")]);
   state.indexTraces = Array.isArray(it) ? it : []; state.dreamTraces = Array.isArray(dt) ? dt : [];
@@ -1748,15 +2394,19 @@ function applyDashboardSnapshot(snapshot) {
   renderRecallCaseList();
   renderIndexTraceSelect();
   renderDreamTraceSelect();
+  // 快照不带病例状态（那是 Trauma 侧的数据），这里只是让病例页跟着重绘，
+  // 保持和其他板一致，避免切回去时看到上一次渲染的残留。
+  renderCaseBoard();
   updateCounts();
   applyPageChrome();
   return true;
 }
 
 async function loadDashboard() {
-  if (!state.projectPath) { setStatus(t("error.missingProjectPath"), "error"); return; }
+  // 没有稳定 projectId 就直接停住，绝不回落到 projectPath 去猜一个项目。
+  if (!hasAddressableScope(DASHBOARD_SCOPE)) { setStatus(t("error.missingProjectId"), "error"); return; }
   setStatus(t("status.refreshing"));
-  try { await Promise.all([loadOverview(), loadSettings(), loadWorkspace(), loadUserSummary(), loadCaseTraces(), loadTraces()]); setStatus(DEFAULT_ACTIVITY); }
+  try { await Promise.all([loadIdentity(), loadOverview(), loadSettings(), loadWorkspace(), loadUserSummary(), loadCaseState(), loadCaseTraces(), loadTraces()]); setStatus(DEFAULT_ACTIVITY); }
   catch (err) { setStatus(err instanceof Error ? err.message : String(err), "error"); }
 }
 
@@ -2035,7 +2685,10 @@ importAllProjectsBtn?.addEventListener("click", () => importAllProjectsInput?.cl
 clearProjectBtn?.addEventListener("click", () => void clearCurrentProjectMemory());
 clearAllBtn?.addEventListener("click", () => void clearAllMemory());
 
-workspaceSearchEl.addEventListener("input", () => { state.workspaceQuery = workspaceSearchEl.value.trim(); if (state.activePage === "project") void loadWorkspace(); });
+workspaceSearchEl.addEventListener("input", () => {
+  state.workspaceQuery = workspaceSearchEl.value.trim();
+  if (["project", "feedback"].includes(state.activePage)) void loadWorkspace();
+});
 workspaceSearchEl.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); state.workspaceQuery = workspaceSearchEl.value.trim(); void loadWorkspace(); } });
 workspaceSearchBtn.addEventListener("click", () => { state.workspaceQuery = workspaceSearchEl.value.trim(); void loadWorkspace(); });
 
@@ -2071,6 +2724,6 @@ renderUserSummary();
 renderRecallCaseList();
 renderIndexTraceSelect();
 renderDreamTraceSelect();
-setActivePage("project");
+setActivePage(isCasePageAvailable() ? "case" : "project");
 applyTraceTabChrome();
 void loadDashboard();

@@ -2,14 +2,16 @@ import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
 import { prepareCliSpawn } from './processSpawn.js';
-import { resolvePilotHome } from './pilotPaths.js';
+import { resolvePilotRoot } from './pilotPaths.js';
 
+// Plugins are shared across users: they live under the system root, not a
+// per-user home.
 function getPluginsRoot() {
-  return path.join(resolvePilotHome(), 'plugins');
+  return path.join(resolvePilotRoot(), 'plugins');
 }
 
 function getPluginsConfigPath() {
-  return path.join(resolvePilotHome(), 'plugins.json');
+  return path.join(resolvePilotRoot(), 'plugins.json');
 }
 
 const REQUIRED_MANIFEST_FIELDS = ['name', 'displayName', 'entry'];

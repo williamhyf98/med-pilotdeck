@@ -153,13 +153,20 @@ export class GatewayWsConnection {
         );
         return;
       }
+      // Other gateway errors (ForkSessionError, RewindSessionError, fs
+      // errors) also carry a string `code`; preserve it so HTTP bridges can
+      // map stable codes to status codes instead of parsing messages.
+      const errorCode =
+        error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string"
+          ? (error as { code: string }).code
+          : "gateway_request_failed";
       this.ws.sendText(
         JSON.stringify({
           type: "response",
           id: frame.id,
           ok: false,
           error: {
-            code: "gateway_request_failed",
+            code: errorCode,
             message: error instanceof Error ? error.message : String(error),
           },
         }),
@@ -184,6 +191,9 @@ export class GatewayWsConnection {
           return this.options.gateway.recordAgentStatusMessage(frame.params as never);
         }
         return Promise.resolve({ recorded: false });
+      case "record_rejected_turn":
+        if (!this.options.gateway.recordRejectedTurn) throw new Error("Policy refusal persistence is unavailable.");
+        return this.options.gateway.recordRejectedTurn(frame.params as never);
       case "describe_server":
         return this.options.gateway.describeServer();
       case "active_turn_snapshot":
@@ -207,6 +217,26 @@ export class GatewayWsConnection {
         return this.options.gateway.cronRunNow(frame.params as never);
       case "elicitation_respond":
         return this.options.gateway.respondElicitation(frame.params as never);
+      case "trauma_confirm_transition":
+        if (!this.options.gateway.traumaConfirmTransition) {
+          throw new Error("Trauma stage confirmation is not configured.");
+        }
+        return this.options.gateway.traumaConfirmTransition(frame.params as never);
+      case "trauma_get_case":
+        if (!this.options.gateway.traumaGetCase) {
+          throw new Error("Trauma case reads are not configured.");
+        }
+        return this.options.gateway.traumaGetCase(frame.params as never);
+      case "trauma_override_stage":
+        if (!this.options.gateway.traumaOverrideStage) {
+          throw new Error("Trauma stage override is not configured.");
+        }
+        return this.options.gateway.traumaOverrideStage(frame.params as never);
+      case "trauma_extract_form":
+        if (!this.options.gateway.traumaExtractForm) {
+          throw new Error("Trauma form extraction is not configured.");
+        }
+        return this.options.gateway.traumaExtractForm(frame.params as never);
       case "permission_decide":
         return this.options.gateway.permissionDecide(frame.params as never);
       case "grant_session_permission":
@@ -217,6 +247,8 @@ export class GatewayWsConnection {
         return this.options.gateway.readSubagentMessages(frame.params as never);
       case "fork_session":
         return this.options.gateway.forkSession(frame.params as never);
+      case "rewind_session":
+        return this.options.gateway.rewindSession(frame.params as never);
       case "list_projects":
         return this.options.gateway.listProjects();
       case "describe_project":
@@ -246,6 +278,11 @@ export class GatewayWsConnection {
         return requireSkillMethod(this.options.gateway.skillRead, this.options.gateway)(frame.params as never);
       case "skill_write":
         return requireSkillMethod(this.options.gateway.skillWrite, this.options.gateway)(frame.params as never);
+      case "skill_set_availability":
+        return requireSkillMethod(
+          this.options.gateway.skillSetAvailability,
+          this.options.gateway,
+        )(frame.params as never);
       case "skill_create":
         return requireSkillMethod(this.options.gateway.skillCreate, this.options.gateway)(frame.params as never);
       case "skill_delete":
@@ -256,6 +293,16 @@ export class GatewayWsConnection {
         return requireSkillMethod(this.options.gateway.skillValidate, this.options.gateway)(frame.params as never);
       case "skill_scan":
         return requireSkillMethod(this.options.gateway.skillScan, this.options.gateway)(frame.params as never);
+      case "skill_generate_draft":
+        return requireSkillMethod(
+          this.options.gateway.skillGenerateDraft,
+          this.options.gateway,
+        )(frame.params as never);
+      case "skill_flow_chat":
+        return requireSkillMethod(
+          this.options.gateway.skillFlowChat,
+          this.options.gateway,
+        )(frame.params as never);
       case "always_on_apply":
         if (this.options.gateway.alwaysOnApply) {
           return this.options.gateway.alwaysOnApply(frame.params as never);

@@ -12,14 +12,14 @@ const marker = '[Files attached by user and available for reading in the project
 describe('attachment path notes', () => {
   it('writes a bounded attachment note for new messages', () => {
     const note = buildAttachmentPathNote([
-      { name: '报告.xlsx', path: '.tmp/chat-attachments/run/1-报告.xlsx' },
+      { name: '报告.xlsx', path: 'inbox/run/1-报告.xlsx' },
     ]);
 
     expect(note).toBe([
       '',
       '',
       marker,
-      '- 报告.xlsx: .tmp/chat-attachments/run/1-报告.xlsx',
+      '- 报告.xlsx: inbox/run/1-报告.xlsx',
       '[End files attached by user]',
       '',
     ].join('\n'));
@@ -34,7 +34,7 @@ describe('attachment path notes', () => {
     });
     expect(note).toContain('[Medical materials folder attached');
     expect(note).toContain('- folder: /work/.tmp/chat-attachments/abc');
-    expect(note).toContain('med_parse_medical');
+    expect(note).toContain('med_image_route');
     expect(note).toContain('case-1/a.dcm');
   });
 
@@ -62,7 +62,20 @@ describe('attachment path notes', () => {
       },
     );
     expect(note.indexOf('[Medical materials folder attached')).toBeGreaterThan(-1);
-    expect(note.indexOf(marker)).toBeGreaterThan(note.indexOf('med_parse_medical'));
+    expect(note.indexOf(marker)).toBeGreaterThan(note.indexOf('med_image_route'));
+  });
+
+  it('strips historical medical folder notes without exposing their instructions', () => {
+    const legacy = [
+      '请分析',
+      '[Medical materials folder attached — parse with med_parse_medical on the folder path:]',
+      '- folder: /private/legacy',
+      '[End medical materials folder]',
+      buildAttachmentPathNote([{ name: 'scan.nii.gz', path: '/private/legacy/scan.nii.gz' }]),
+    ].join('\n');
+    const parsed = parseUserAttachmentNote(legacy);
+    expect(parsed.content).toBe('请分析');
+    expect(parsed.attachments[0]?.path).toBe('/private/legacy/scan.nii.gz');
   });
 
   it('recovers an xlsx path from a legacy note glued to attachment diagnostics', () => {
@@ -127,9 +140,41 @@ describe('attachment path notes', () => {
       },
     ]);
   });
+
+  it('separates the display name from an uploaded DICOM relative path', () => {
+    const parsed = parseUserAttachmentNote([
+      '分析这个 DICOM',
+      '',
+      marker,
+      '- scan.dcm (1-scan.dcm): /workspace/inbox/run/1-scan.dcm',
+      '[End files attached by user]',
+    ].join('\n'));
+
+    expect(parsed.attachments).toEqual([{
+      name: 'scan.dcm',
+      path: '/workspace/inbox/run/1-scan.dcm',
+      relativePath: '1-scan.dcm',
+      mimeType: 'application/dicom',
+    }]);
+  });
 });
 
 describe('mergeUserAttachments', () => {
+  it.each(['MR_多帧_10帧.dcm', '报告.pdf', '记录.docx', '数据.json'])('reconciles an optimistic placeholder with the persisted path: %s', (name) => {
+    const placeholder = { name, size: 123 };
+    const persisted = { name, path: `/project/inbox/upload/${name}` };
+    expect(mergeUserAttachments([placeholder], [persisted])).toEqual([{ ...placeholder, ...persisted }]);
+    expect(mergeUserAttachments([persisted], [placeholder])).toEqual([{ ...placeholder, ...persisted }]);
+  });
+
+  it('keeps same-name files at distinct paths when reconciling placeholders', () => {
+    const files = [
+      { name: 'scan.dcm', path: '/project/inbox/a/scan.dcm' },
+      { name: 'scan.dcm', path: '/project/inbox/b/scan.dcm' },
+    ];
+    expect(mergeUserAttachments([{ name: 'scan.dcm' }, { name: 'scan.dcm' }], files)).toEqual(files);
+  });
+
   it('prefers structured attachment metadata over the text fallback', () => {
     const structured: ChatAttachment = {
       name: 'report.xlsx',

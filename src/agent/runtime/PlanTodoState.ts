@@ -6,6 +6,7 @@ import type {
   PilotDeckTodoUpdate,
   PilotDeckTodoWriteHistoryEntry,
 } from "../../tool/protocol/types.js";
+import { promptCopy } from "../../context/prompt/systemPromptCopy.js";
 
 type SessionPlanTodoState = {
   approvedPlan?: string;
@@ -219,18 +220,12 @@ export function createPlanTodoStateManager(): PlanTodoStateManager {
   function buildPromptAddendum(state: SessionPlanTodoState): string | undefined {
     if (!state.approvedPlan) return undefined;
     if (state.requiresInitialization) {
-      return [
-        "You are executing an approved plan.",
-        `Before using any non-read-only tool, you MUST call \`${TODO_WRITE_TOOL_NAME}\` with a markdown checklist derived from the approved plan.`,
-        "Represent completed items as `- [x]` and remaining items as `- [ ]`.",
-      ].join("\n");
+      return promptCopy.planAddendumInit
+        .map((line) => line.replaceAll("{todoWrite}", `\`${TODO_WRITE_TOOL_NAME}\``))
+        .join("\n");
     }
     if (state.toolCallsSinceLastTodoWrite >= 10) {
-      return [
-        `You haven't updated the todo list in a while (${state.toolCallsSinceLastTodoWrite} tool calls since last update).`,
-        `Consider calling \`${TODO_WRITE_TOOL_NAME}\` to reflect your current progress.`,
-        "This is a gentle reminder — ignore if not applicable.",
-      ].join(" ");
+      return promptCopy.planAddendumStale(state.toolCallsSinceLastTodoWrite, TODO_WRITE_TOOL_NAME);
     }
     return undefined;
   }

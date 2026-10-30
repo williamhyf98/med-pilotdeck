@@ -8,10 +8,10 @@ export function mapInitialTabToMenuKey(
     models: "modelPool",
     agents: "agentModel",
     memory: "agentMemory",
-    tools: "agentSearch",
-    webSearch: "agentSearch",
+    tools: "general",
+    webSearch: "general",
     router: "agentRoute",
-    gateway: "integrations",
+    gateway: "general",
     officePreview: "officePreview",
     customEnv: "advanced",
     alwaysOn: "agentResident",
@@ -21,12 +21,16 @@ export function mapInitialTabToMenuKey(
 
   const [base, section] = normalized.split(":", 2);
   switch (base) {
+    case "account":
+      return "account";
+    case "users":
+      return "users";
     case "permissions":
       return "privacy";
     case "mcp":
       return "mcpServers";
     case "gateway":
-      return "integrations";
+      return "general";
     case "config":
       return section ? (configSections[section] ?? "modelPool") : "modelPool";
     default:

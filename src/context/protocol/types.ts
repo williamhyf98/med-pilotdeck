@@ -60,6 +60,8 @@ export type ContextPrepareInput = {
   appendSystemPrompt?: string;
   /** Maximum messages retained when no compact boundary is in play. */
   maxMessages?: number;
+  /** Per-turn privacy control. Disabled skips memory retrieval and capture. */
+  memoryPolicy?: "default" | "disabled";
 };
 
 export type ContextToolResultInput = {
@@ -106,6 +108,7 @@ export type ContextRecoveryDecision =
  * advisory — context implementations without memory simply no-op.
  */
 export type ContextCaptureTurnInput = {
+  attachmentContext?: { allowedReadFiles: readonly string[]; cwd: string };
   sessionId: string;
   turnId: string;
   /** Whole turn-end message history (not the in-flight projection). */

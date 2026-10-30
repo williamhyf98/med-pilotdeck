@@ -6,9 +6,9 @@ describe('catalogProviders maxOutputTokens', () => {
     const deepseek = findCatalogProviderById('deepseek');
     const openai = findCatalogProviderById('openai');
 
-    expect(deepseek?.models.map((model) => model.id)).toEqual(['deepseek-v4-pro', 'deepseek-v4-flash']);
     expect(deepseek?.models.find((model) => model.id === 'deepseek-v4-pro')?.maxOutputTokens).toBe(384 * 1024);
     expect(deepseek?.models.find((model) => model.id === 'deepseek-v4-flash')?.maxOutputTokens).toBe(384 * 1024);
+    expect(deepseek?.models.find((model) => model.id === 'deepseek-chat')?.maxOutputTokens).toBe(384 * 1024);
     expect(openai?.models.find((model) => model.id === 'gpt-4.1-mini')?.maxOutputTokens).toBe(32_768);
     expect(openai?.models.find((model) => model.id === 'o3-mini')?.maxOutputTokens).toBe(100_000);
   });
@@ -40,6 +40,7 @@ describe('catalogProviders maxOutputTokens', () => {
 
     expect(moonshot?.models.map((model) => model.id)).toEqual([
       'kimi-k2.6',
+      'kimi-k1.5',
       'kimi-k2.7-code',
       'kimi-k2.7-code-highspeed',
       'kimi-k3',

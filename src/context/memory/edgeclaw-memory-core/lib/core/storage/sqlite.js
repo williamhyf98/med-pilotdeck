@@ -1,5 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { normalizeAttachmentEvidence } from "../utils/attachment-evidence.js";
 import { MEMORY_EXPORT_FORMAT_VERSION, } from "../types.js";
 import { FileMemoryStore } from "../file-memory.js";
 import { buildExternalProjectLogicalId, buildExternalRecordId, getWorkspaceMemoryMode, isExternalRecordId, parseExternalRecordId, } from "../general-projects.js";
@@ -46,6 +47,8 @@ function normalizeMessages(value) {
         ...(typeof item.msgId === "string" && item.msgId.trim() ? { msgId: item.msgId } : {}),
         role: typeof item.role === "string" && item.role.trim() ? item.role : "user",
         content: typeof item.content === "string" ? item.content : "",
+        ...(item.role === "user" && Array.isArray(item.attachmentEvidence)
+            ? { attachmentEvidence: normalizeAttachmentEvidence(item.attachmentEvidence) } : {}),
     }));
 }
 function normalizeL0Row(row) {
@@ -143,10 +146,17 @@ function clampInt(value, fallback, min, max) {
 }
 function sanitizeIndexingSettings(input, defaults) {
     const record = isRecord(input) ? input : {};
+    const rawMode = typeof record.maintenanceMode === "string" ? record.maintenanceMode : "";
+    const mode = rawMode === "immediate" || rawMode === "interval" || rawMode === "manual"
+        ? rawMode
+        : record.autoIndexIntervalMinutes !== undefined || record.autoDreamIntervalMinutes !== undefined
+            ? "interval"
+            : defaults.maintenanceMode;
     return {
         reasoningMode: record.reasoningMode === "accuracy_first" ? "accuracy_first" : defaults.reasoningMode,
         autoIndexIntervalMinutes: clampInt(record.autoIndexIntervalMinutes, defaults.autoIndexIntervalMinutes, 0, 10_080),
         autoDreamIntervalMinutes: clampInt(record.autoDreamIntervalMinutes, defaults.autoDreamIntervalMinutes, 0, 10_080),
+        maintenanceMode: mode,
     };
 }
 function normalizeSnapshotRelativePath(value, index) {
@@ -1398,6 +1408,31 @@ export class MemoryRepository {
         }).some((entry) => entry.relativePath === toExposedGlobalRelativePath(GLOBAL_USER_PROFILE_RELATIVE_PATH))
             ? 1
             : 0;
+        // Task 10 —— 新增字段：维护模式、待 Dream 文件数、失败原因、成本护栏触发。
+        const settings = this.getIndexingSettings({
+            reasoningMode: "answer_first",
+            autoIndexIntervalMinutes: 30,
+            autoDreamIntervalMinutes: 60,
+            maintenanceMode: "interval",
+        });
+        const lastCapturedRow = this.db.prepare("SELECT MAX(created_at) AS ts FROM l0_sessions").get();
+        const lastCapturedAt = typeof lastCapturedRow?.ts === "string" ? lastCapturedRow.ts : undefined;
+        const lastDreamFailureReason = this.getPipelineState("lastDreamFailureReason");
+        const dreamConsecutiveFailures = Number(this.getPipelineState("dreamConsecutiveFailures") ?? 0);
+        const rawDowngrade = this.getPipelineState("maintenanceDowngrade");
+        // 验证降级记录的字段是否是合法的 MemoryMaintenanceMode
+        function isValidMode(v) {
+            return v === "immediate" || v === "interval" || v === "manual";
+        }
+        const maintenanceDowngrade = rawDowngrade
+            && typeof rawDowngrade.from === "string"
+            && typeof rawDowngrade.to === "string"
+            && typeof rawDowngrade.at === "string"
+            && typeof rawDowngrade.reason === "string"
+            && isValidMode(rawDowngrade.from)
+            && isValidMode(rawDowngrade.to)
+            ? { from: rawDowngrade.from, to: rawDowngrade.to, at: rawDowngrade.at, reason: rawDowngrade.reason }
+            : null;
         return {
             pendingSessions,
             workspaceMode: this.workspaceMode,
@@ -1422,6 +1457,14 @@ export class MemoryRepository {
                 ? { lastDreamSummary: this.getPipelineState(LAST_DREAM_SUMMARY_STATE_KEY) }
                 : {}),
             ...(lastDreamSnapshot ? { lastDreamSnapshot } : {}),
+            maintenanceMode: settings.maintenanceMode,
+            changedFilesSinceLastDream: fileOverview.changedFilesSinceLastDream,
+            ...(lastCapturedAt ? { lastCapturedAt } : {}),
+            ...(typeof lastDreamFailureReason === "string" && lastDreamFailureReason.trim()
+                ? { lastDreamFailureReason }
+                : {}),
+            ...(dreamConsecutiveFailures > 0 ? { dreamConsecutiveFailures } : {}),
+            ...(maintenanceDowngrade ? { maintenanceDowngrade } : {}),
         };
     }
     getUiSnapshot(limit = 50) {
@@ -1431,6 +1474,7 @@ export class MemoryRepository {
                 reasoningMode: "answer_first",
                 autoIndexIntervalMinutes: 30,
                 autoDreamIntervalMinutes: 60,
+                maintenanceMode: "interval",
             }),
             recentMemoryFiles: this.listMemoryEntries({ limit }),
         };

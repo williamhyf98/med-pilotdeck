@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import type { Dirent } from "node:fs";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import type { SessionConfigOverrides } from "../../always-on/runtime/SessionConfigOverrides.js";
 import type { Gateway } from "../../gateway/index.js";
 import type { TelemetryClient } from "../../telemetry/index.js";
@@ -22,6 +22,7 @@ import type {
   CronTask,
 } from "../protocol/types.js";
 import { resolveCronPaths } from "../storage/CronPaths.js";
+import { resolveGatewayProjectKey } from "../../pilot/paths.js";
 import { createCronCreateTool } from "../tool/CronCreateTool.js";
 import { createCronDeleteTool } from "../tool/CronDeleteTool.js";
 import { createCronListTool } from "../tool/CronListTool.js";
@@ -163,7 +164,9 @@ export class CronManager {
   }
 
   private async ensureRuntime(projectKeyInput: string): Promise<CronRuntime> {
-    const projectKey = resolve(projectKeyInput);
+    const projectKey = resolve(
+      resolveGatewayProjectKey(projectKeyInput, this.pilotHome),
+    );
     const existing = this.runtimes.get(projectKey);
     if (existing) {
       await this.starting.get(projectKey);
@@ -185,7 +188,7 @@ export class CronManager {
     });
     if (this.gateway) runtime.bindGateway(this.gateway);
     this.runtimes.set(projectKey, runtime);
-    await writeProjectMarker(runtime.paths.projectDir, projectKey);
+    await writeProjectMarker(runtime.paths.projectDir, projectKey, this.pilotHome);
 
     if (this.started) {
       const pending = runtime.start().finally(() => this.starting.delete(projectKey));
@@ -312,7 +315,7 @@ async function discoverCronProjectKeys(
     }
     try {
       const marker = (await readFile(resolve(projectDir, ".cwd"), "utf-8")).trim();
-      if (marker) projectKeys.add(resolve(marker));
+      if (marker) projectKeys.add(resolve(pilotHome, marker));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
@@ -320,7 +323,7 @@ async function discoverCronProjectKeys(
   return [...projectKeys].sort();
 }
 
-async function writeProjectMarker(projectDir: string, projectKey: string): Promise<void> {
+async function writeProjectMarker(projectDir: string, projectKey: string, pilotHome: string): Promise<void> {
   await mkdir(projectDir, { recursive: true });
-  await writeFile(resolve(projectDir, ".cwd"), `${projectKey}\n`, "utf-8");
+  await writeFile(resolve(projectDir, ".cwd"), `${relative(pilotHome, projectKey) || "."}\n`, "utf-8");
 }

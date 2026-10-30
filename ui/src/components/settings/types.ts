@@ -1,4 +1,6 @@
 export type SettingsMenuKey =
+  | 'account'
+  | 'users'
   | 'general'
   | 'modelPool'
   | 'agent'

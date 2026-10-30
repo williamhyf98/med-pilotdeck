@@ -30,7 +30,7 @@ export type AppShellContextValue = {
   onReplaceTemporarySession: SessionLifecycleHandler;
   onNavigateToSession: (sessionId: string) => void;
   onStartNewSession: (project: Project, options?: SessionNavigationOptions) => void;
-  onShowSettings: () => void;
+  onShowSettings: (initialTab?: string) => void;
   onMenuClick: () => void;
   onInputFocusChange: (focused: boolean) => void;
 

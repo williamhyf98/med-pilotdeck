@@ -10,6 +10,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { SessionProvider } from '../types/app';
 import { authenticatedFetch, readAgentStatusErrorFromResponse } from '../utils/api';
+import { parseUserAttachmentNote } from '../components/chat/utils/attachmentNotes';
 
 // ─── NormalizedMessage (mirrors server/adapters/types.js) ────────────────────
 
@@ -53,7 +54,19 @@ export interface NormalizedMessage {
   // kind-specific fields (flat for simplicity)
   role?: 'user' | 'assistant';
   content?: string;
+  citations?: Array<{
+    index: number;
+    title: string;
+    section: string;
+    quote?: string;
+    evidenceGrade?: string;
+    evidenceQuality?: string;
+  }>;
+  /** 思考帧的推理正文，OpenAI 兼容 provider 走这个字段而非 `content`。 */
+  reasoningContent?: string;
   contentI18n?: { key: string; params?: Record<string, unknown> };
+  /** 错误帧的可读处置建议，由 pilotdeck-bridge 透传。 */
+  userHint?: string;
   userHintI18n?: { key: string; params?: Record<string, unknown> };
   images?: string[];
   attachments?: Array<{
@@ -97,6 +110,8 @@ export interface NormalizedMessage {
    */
   toolResultImages?: Array<{ data: string; mimeType?: string; name?: string }>;
   isError?: boolean;
+  /** Marks a realtime row from a turn explicitly stopped by the user. */
+  isInterruptedNotice?: boolean;
   /**
    * `PilotDeckToolErrorCode` from the gateway when `kind === 'tool_result'`
    * and `isError === true` — flat on the frame because the bridge merges
@@ -252,30 +267,54 @@ function getSameTurnServerCandidates(
   return serverMessages.filter((message) => getMessageTurnId(message) === realtimeTurnId);
 }
 
-function isConfirmedUserMessageDuplicate(
+/**
+ * The optimistic bubble stores only what the user typed, while server history
+ * stores the agent-facing input (typed text plus attachment/reference notes).
+ * Compare the rendered text so attachments do not defeat dedupe.
+ */
+function normalizeUserVisibleText(content?: string): string {
+  return normalizeRealtimeText(parseUserAttachmentNote(content ?? '').content);
+}
+
+function findConfirmedUserMessageDuplicateIndex(
   realtimeMessage: NormalizedMessage,
   serverMessages: NormalizedMessage[],
-): boolean {
+): number {
   if (
     realtimeMessage.kind !== 'text'
     || realtimeMessage.role !== 'user'
     || !realtimeMessage.id.startsWith('local_')
   ) {
-    return false;
+    return -1;
   }
 
-  const realtimeText = normalizeRealtimeText(realtimeMessage.content);
-  if (!realtimeText) return false;
+  const realtimeTurnId = getMessageTurnId(realtimeMessage);
+  if (realtimeTurnId) {
+    const sameTurnIndex = serverMessages.findIndex((serverMessage) => (
+      serverMessage.kind === 'text'
+      && serverMessage.role === 'user'
+      && getMessageTurnId(serverMessage) === realtimeTurnId
+    ));
+    if (sameTurnIndex >= 0) return sameTurnIndex;
+  }
+
+  const realtimeText = normalizeUserVisibleText(realtimeMessage.content);
+  if (!realtimeText) return -1;
 
   const realtimeTimestamp = parseTimestampMs(realtimeMessage.timestamp);
 
-  return serverMessages.some((serverMessage) => {
+  return serverMessages.findIndex((serverMessage) => {
     if (serverMessage.kind !== 'text' || serverMessage.role !== 'user') {
       return false;
     }
 
-    if (normalizeRealtimeText(serverMessage.content) !== realtimeText) {
+    if (normalizeUserVisibleText(serverMessage.content) !== realtimeText) {
       return false;
+    }
+
+    const serverTurnId = getMessageTurnId(serverMessage);
+    if (realtimeTurnId) {
+      return serverTurnId === realtimeTurnId;
     }
 
     if (realtimeTimestamp == null) {
@@ -289,6 +328,79 @@ function isConfirmedUserMessageDuplicate(
 
     return Math.abs(serverTimestamp - realtimeTimestamp) <= 10_000;
   });
+}
+
+function isConfirmedUserMessageDuplicate(
+  realtimeMessage: NormalizedMessage,
+  serverMessages: NormalizedMessage[],
+): boolean {
+  return findConfirmedUserMessageDuplicateIndex(realtimeMessage, serverMessages) >= 0;
+}
+
+/**
+ * 缩略图与附件卡片只存在于客户端：图片是 blob URL，附件元数据来自上传那一刻，
+ * 服务端转录里两者都没有。乐观用户气泡一旦被服务端同轮的 user 帧取代（见
+ * `shouldKeepRealtimeAfterServerRefresh`），不搬运这两个字段的话，答案输出完毕
+ * 的瞬间气泡里的图片和文件名卡片就会消失。
+ *
+ * 就地替换 `serverMessages` 中被匹配到的条目（合并出新对象，不改原引用的字段），
+ * 必须在把该数组交给 slot 之前调用。
+ */
+function carryOverLocalUserAttachments(
+  realtimeMessages: NormalizedMessage[],
+  serverMessages: NormalizedMessage[],
+): void {
+  for (const realtimeMessage of realtimeMessages) {
+    if (!hasClientOnlyUserMedia(realtimeMessage)) continue;
+    const index = findConfirmedUserMessageDuplicateIndex(realtimeMessage, serverMessages);
+    if (index < 0) continue;
+    mergeUserMediaInto(serverMessages, index, realtimeMessage);
+  }
+}
+
+/**
+ * 同一原因的第二道搬运：乐观气泡在第一次刷新后就被丢弃了，之后每次
+ * `refreshFromServer` 都会用全新的服务端数组整体替换 `serverMessages`。若不把上一份
+ * 快照里已搬运过的字段继续带过来，图片会在「下一轮」而不是「本轮」消失。
+ * 按 id 配对（服务端 id 跨刷新稳定），且只在新条目自身没有该字段时填充。
+ */
+function carryOverServerUserAttachments(
+  previousServerMessages: NormalizedMessage[],
+  incomingMessages: NormalizedMessage[],
+): void {
+  const byId = new Map<string, NormalizedMessage>();
+  for (const message of previousServerMessages) {
+    if (hasClientOnlyUserMedia(message)) byId.set(message.id, message);
+  }
+  if (byId.size === 0) return;
+
+  for (let index = 0; index < incomingMessages.length; index += 1) {
+    const source = byId.get(incomingMessages[index].id);
+    if (source) mergeUserMediaInto(incomingMessages, index, source);
+  }
+}
+
+function hasClientOnlyUserMedia(message: NormalizedMessage): boolean {
+  if (message.kind !== 'text' || message.role !== 'user') return false;
+  return Boolean(message.images?.length) || Boolean(message.attachments?.length);
+}
+
+function mergeUserMediaInto(
+  target: NormalizedMessage[],
+  index: number,
+  source: NormalizedMessage,
+): void {
+  const existing = target[index];
+  // 目标条目若自己带了同类字段，以它为准——它才是持久化的真相。
+  const takeImages = Boolean(source.images?.length) && !existing.images?.length;
+  const takeAttachments = Boolean(source.attachments?.length) && !existing.attachments?.length;
+  if (!takeImages && !takeAttachments) return;
+
+  target[index] = {
+    ...existing,
+    ...(takeImages ? { images: source.images } : {}),
+    ...(takeAttachments ? { attachments: source.attachments } : {}),
+  };
 }
 
 /**
@@ -438,6 +550,16 @@ export function isRealtimeMessageRepresentedOnServer(
 
   const candidates = getSameTurnServerCandidates(realtimeMessage, serverMessages);
   switch (realtimeMessage.kind) {
+    case 'stream_delta': {
+      if (!getMessageTurnId(realtimeMessage)) return false;
+      const content = normalizeRealtimeText(realtimeMessage.content);
+      if (!content) return false;
+      return candidates.some((message) => (
+        message.kind === 'text'
+        && message.role === 'assistant'
+        && normalizeRealtimeText(message.content) === content
+      ));
+    }
     case 'text':
     case 'thinking': {
       const content = normalizeRealtimeText(realtimeMessage.content);
@@ -510,7 +632,7 @@ export function shouldKeepRealtimeAfterServerRefresh(
   serverMessages: NormalizedMessage[],
 ): boolean {
   if (realtimeMessage.id.startsWith('__streaming_')) {
-    return true;
+    return !isRealtimeMessageRepresentedOnServer(realtimeMessage, serverMessages);
   }
   if (!PERSISTED_RENDERABLE_KINDS.has(realtimeMessage.kind)) return false;
   return !isRealtimeMessageRepresentedOnServer(realtimeMessage, serverMessages);
@@ -558,6 +680,20 @@ export function computeMerged(server: NormalizedMessage[], realtime: NormalizedM
   }
 
   const result = [...server, ...extra];
+  // Stopped turns are intentionally not persisted. When a subsequent turn
+  // has already reached the server, those old realtime rows must remain in
+  // their original chronological position instead of being appended below
+  // the newer server rows.
+  if (extra.some((message) => message.isInterruptedNotice)) {
+    return result
+      .map((message, index) => ({ message, index }))
+      .sort((left, right) => {
+        const leftTs = Date.parse(left.message.timestamp) || 0;
+        const rightTs = Date.parse(right.message.timestamp) || 0;
+        return leftTs - rightTs || left.index - right.index;
+      })
+      .map(({ message }) => message);
+  }
   return result;
 }
 
@@ -692,6 +828,7 @@ export function patchMergedStreamingMessage(
   streamId: string,
   content: string,
   msgProvider?: SessionProvider,
+  citations?: NormalizedMessage['citations'],
 ): boolean {
   const mergedIdx = slot.merged.findIndex((message) => message.id === streamId);
   if (mergedIdx < 0) {
@@ -699,7 +836,11 @@ export function patchMergedStreamingMessage(
   }
 
   const existing = slot.merged[mergedIdx];
-  if (existing.content === content && (msgProvider == null || existing.provider === msgProvider)) {
+  if (
+    existing.content === content
+    && (msgProvider == null || existing.provider === msgProvider)
+    && (!citations || citations.length === 0 || existing.citations === citations)
+  ) {
     return true;
   }
 
@@ -707,6 +848,7 @@ export function patchMergedStreamingMessage(
     ...existing,
     content,
     ...(msgProvider != null ? { provider: msgProvider } : {}),
+    ...(citations && citations.length > 0 ? { citations } : {}),
   };
   slot.merged = slot.merged.slice();
   return true;
@@ -855,6 +997,14 @@ export function useSessionStore() {
       if (requestGeneration < slot._serverAppliedGeneration) return slot;
       slot._serverAppliedGeneration = requestGeneration;
       const messages: NormalizedMessage[] = data.messages || [];
+
+      // 在服务端消息取代乐观气泡之前，把仅存在于客户端的缩略图/附件卡片搬过去。
+      if (messages.length > 0) {
+        if (slot.realtimeMessages.length > 0) {
+          carryOverLocalUserAttachments(slot.realtimeMessages, messages);
+        }
+        carryOverServerUserAttachments(slot.serverMessages, messages);
+      }
 
       slot.serverMessages = messages;
       slot.total = data.total ?? messages.length;
@@ -1269,6 +1419,13 @@ export function useSessionStore() {
         return;
       }
       slot._serverAppliedGeneration = requestGeneration;
+      // 在服务端消息取代乐观气泡之前，把仅存在于客户端的缩略图/附件卡片搬过去。
+      if (incomingMessages.length > 0) {
+        if (slot.realtimeMessages.length > 0) {
+          carryOverLocalUserAttachments(slot.realtimeMessages, incomingMessages);
+        }
+        carryOverServerUserAttachments(slot.serverMessages, incomingMessages);
+      }
       // Don't overwrite existing server messages with empty response
       // (race condition: server hasn't committed yet after stop/complete).
       if (incomingMessages.length > 0 || slot.serverMessages.length === 0) {
@@ -1329,7 +1486,13 @@ export function useSessionStore() {
    * Update or create a streaming message (accumulated text so far).
    * Uses a well-known ID so subsequent calls replace the same message.
    */
-  const updateStreaming = useCallback((sessionId: string, accumulatedText: string, msgProvider: SessionProvider, runId?: string) => {
+  const updateStreaming = useCallback((
+    sessionId: string,
+    accumulatedText: string,
+    msgProvider: SessionProvider,
+    runId?: string,
+    citations?: NormalizedMessage['citations'],
+  ) => {
     const slot = getSlot(sessionId);
     const streamId = `__streaming_${streamingKey(sessionId, runId)}`;
     const idx = slot.realtimeMessages.findIndex(m => m.id === streamId);
@@ -1337,16 +1500,23 @@ export function useSessionStore() {
       // Subsequent delta — preserve the original turn-start timestamp so
       // computeMerged can tell which server snapshots belong to this turn.
       const existing = slot.realtimeMessages[idx];
-      if (existing.content === accumulatedText && existing.provider === msgProvider) {
+      const nextCitations = citations && citations.length > 0 ? citations : existing.citations;
+      if (
+        existing.content === accumulatedText
+        && existing.provider === msgProvider
+        && existing.citations === nextCitations
+      ) {
         return;
       }
-      if (!patchMergedStreamingMessage(slot, streamId, accumulatedText, msgProvider)) {
+      if (!patchMergedStreamingMessage(slot, streamId, accumulatedText, msgProvider, nextCitations)) {
         existing.content = accumulatedText;
         existing.provider = msgProvider;
+        existing.citations = nextCitations;
         forceRecomputeMerged(slot);
       } else {
         existing.content = accumulatedText;
         existing.provider = msgProvider;
+        existing.citations = nextCitations;
       }
       notify(sessionId);
       return;
@@ -1367,6 +1537,7 @@ export function useSessionStore() {
         provider: msgProvider,
         kind: 'stream_delta',
         content: accumulatedText,
+        ...(citations && citations.length > 0 ? { citations } : {}),
         runId,
         serverTailIdAtStart: serverTailId ?? undefined,
       };
@@ -1380,7 +1551,11 @@ export function useSessionStore() {
    * Finalize streaming: convert the streaming message to a regular text message.
    * The well-known streaming ID is replaced with a unique text message ID.
    */
-  const finalizeStreaming = useCallback((sessionId: string, runId?: string) => {
+  const finalizeStreaming = useCallback((
+    sessionId: string,
+    runId?: string,
+    citations?: NormalizedMessage['citations'],
+  ) => {
     const slot = storeRef.current.get(sessionId);
     if (!slot) return;
     const streamId = `__streaming_${streamingKey(sessionId, runId)}`;
@@ -1395,6 +1570,8 @@ export function useSessionStore() {
         kind: 'text',
         role: 'assistant',
         isFinal: true,
+        // 参考来源随 stream_end 下发，正文流完即可渲染，无需等整轮推演结束。
+        ...(citations && citations.length > 0 ? { citations } : {}),
       };
       recomputeMergedIfNeeded(slot);
       notify(sessionId);
@@ -1484,7 +1661,13 @@ export function useSessionStore() {
     const slot = storeRef.current.get(sessionId);
     if (!slot) return;
     const nextRealtime = slot.realtimeMessages.filter((message) => {
-      if (message.kind === 'thinking' || message.kind === 'stream_delta' || message.kind === 'stream_end') {
+      if (
+        message.kind === 'thinking'
+        || message.kind === 'stream_delta'
+        || message.kind === 'stream_end'
+        || message.kind === 'tool_use'
+        || message.kind === 'tool_result'
+      ) {
         return false;
       }
       return !(message.kind === 'text' && message.role === 'assistant');
@@ -1492,6 +1675,62 @@ export function useSessionStore() {
     if (nextRealtime.length === slot.realtimeMessages.length) return;
     slot.realtimeMessages = nextRealtime;
     recomputeMergedIfNeeded(slot);
+    notify(sessionId);
+  }, [notify]);
+
+  const markTurnInterrupted = useCallback((sessionId: string, runId: string) => {
+    const slot = storeRef.current.get(sessionId);
+    if (!slot) return;
+    let changed = false;
+    slot.realtimeMessages = slot.realtimeMessages.map((message) => {
+      if (message.runId !== runId || message.isInterruptedNotice) return message;
+      changed = true;
+      return { ...message, isInterruptedNotice: true };
+    });
+    if (changed) {
+      recomputeMergedIfNeeded(slot);
+      notify(sessionId);
+    }
+  }, [notify]);
+
+  /**
+   * Drop the rewound (last) turn from every slot array after a successful
+   * `rewind_session`. Not `refreshFromServer`: its empty-response and
+   * keep-realtime race guards would resurrect the removed messages.
+   */
+  const dropTurnForRewind = useCallback((
+    sessionId: string,
+    opts: { turnId?: string; fromSequence?: number; fromTimestamp?: string },
+  ) => {
+    const slot = storeRef.current.get(sessionId);
+    if (!slot) return;
+    const fromMs = opts.fromTimestamp ? Date.parse(opts.fromTimestamp) : Number.NaN;
+    const matchesRemovedTurn = (m: NormalizedMessage): boolean => {
+      if (opts.turnId && (m.turnId === opts.turnId || m.runId === opts.turnId)) return true;
+      if (
+        typeof opts.fromSequence === 'number'
+        && typeof m.sequence === 'number'
+        && m.sequence >= opts.fromSequence
+      ) {
+        return true;
+      }
+      return false;
+    };
+    // Realtime/activity rows often lack transcript identity; since rewind only
+    // targets the LAST turn of an idle session, anything timestamped at or
+    // after the removed user message belongs to that turn.
+    const isAtOrAfterRemovedTurn = (m: NormalizedMessage): boolean => {
+      if (matchesRemovedTurn(m)) return true;
+      if (!Number.isNaN(fromMs)) {
+        const ts = Date.parse(m.timestamp);
+        if (!Number.isNaN(ts) && ts >= fromMs) return true;
+      }
+      return false;
+    };
+    slot.serverMessages = slot.serverMessages.filter((m) => !isAtOrAfterRemovedTurn(m));
+    slot.realtimeMessages = slot.realtimeMessages.filter((m) => !isAtOrAfterRemovedTurn(m));
+    slot.activityMessages = slot.activityMessages.filter((m) => !isAtOrAfterRemovedTurn(m));
+    forceRecomputeMerged(slot);
     notify(sessionId);
   }, [notify]);
 
@@ -1532,6 +1771,8 @@ export function useSessionStore() {
     finalizeStreamingThinking,
     clearRealtime,
     clearAssistantRealtime,
+    markTurnInterrupted,
+    dropTurnForRewind,
     getMessages,
     getActivityMessages,
     getSubagentDetailMessages,
@@ -1547,7 +1788,7 @@ export function useSessionStore() {
     appendRealtime, upsertActivity, setActivities, appendRealtimeBatch, refreshFromServer,
     setActiveSession, setStatus, isStale, updateStreaming, finalizeStreaming,
     updateStreamingThinking, finalizeStreamingThinking,
-    clearRealtime, clearAssistantRealtime, getMessages, getActivityMessages, getSubagentDetailMessages, getSessionSlot,
+    clearRealtime, clearAssistantRealtime, markTurnInterrupted, dropTurnForRewind, getMessages, getActivityMessages, getSubagentDetailMessages, getSessionSlot,
     recordSubagentLink, appendSubagentDetailMessage, updateSubagentDetailStreaming,
     finalizeSubagentDetailStreaming, updateSubagentDetailThinking, finalizeSubagentDetailThinking,
   ]);

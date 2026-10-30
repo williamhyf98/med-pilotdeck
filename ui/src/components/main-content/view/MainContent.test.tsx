@@ -8,6 +8,9 @@ import MainContent from './MainContent';
 const mocks = vi.hoisted(() => ({
   handleFileOpen: vi.fn(),
   onMisroutedFileUrlHandled: vi.fn(),
+  chatProps: [] as any[],
+  editorExpanded: false,
+  hasEditor: true,
 }));
 
 vi.mock('../../../contexts/TaskMasterContext', () => ({
@@ -52,14 +55,14 @@ vi.mock('../../code-editor/hooks/useEditorSidebar', () => ({
     }],
     activeEditorTabId: 'editor-tab-0',
     activeFilePath: '/workspace/PilotDeck/report.pdf',
-    editingFile: {
+    editingFile: mocks.hasEditor ? {
       name: 'report.pdf',
       path: '/workspace/PilotDeck/report.pdf',
       projectName: 'pilotdeck',
       diffInfo: null,
-    },
+    } : null,
     editorWidth: 600,
-    editorExpanded: false,
+    editorExpanded: mocks.editorExpanded,
     hasManualWidth: false,
     resizeHandleRef: { current: null },
     handleFileOpen: mocks.handleFileOpen,
@@ -80,11 +83,23 @@ vi.mock('../../code-editor/view/EditorSidebar', () => ({
 }));
 
 vi.mock('../../chat-v2/ChatInterfaceV2', () => ({
-  default: ({ onFileOpen }: { onFileOpen: (filePath: string) => void }) => (
-    <button type="button" onClick={() => onFileOpen('/workspace/PilotDeck/generated.pptx')}>
-      Open workspace file
-    </button>
-  ),
+  default: (props: {
+    onFileOpen: (filePath: string) => void;
+    hideComposer?: boolean;
+    hiddenComposerNotice?: string;
+    externalComposerSlot?: React.ReactNode;
+  }) => {
+    mocks.chatProps.push(props);
+    return (
+      <div data-testid="runtime-chat" data-hide-composer={String(Boolean(props.hideComposer))}>
+        {props.hiddenComposerNotice ? <p role="note">{props.hiddenComposerNotice}</p> : null}
+        <button type="button" onClick={() => props.onFileOpen('/workspace/PilotDeck/generated.pptx')}>
+          Open workspace file
+        </button>
+        {props.externalComposerSlot}
+      </div>
+    );
+  },
 }));
 
 vi.mock('../../main-content-v2/FilesV2', () => ({
@@ -141,9 +156,36 @@ function propsFor(activeTab: AppTab, setActiveTab = vi.fn()) {
 
 beforeEach(() => {
   vi.stubGlobal('ResizeObserver', ResizeObserverMock);
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+    const url = String(input);
+    // Trauma case polling (useCaseStore) returns an empty case payload.
+    if (url.includes('/api/trauma/cases/') && !url.includes('/extract')) {
+      return new Response(JSON.stringify({ current: null, snapshots: [] }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    // Trauma extraction endpoint — return a structured form mirroring the raw text.
+    if (url.includes('/extract')) {
+      return new Response(JSON.stringify({
+        extracted: {
+          injuryNarratives: [{ text: '右小腿开放伤' }],
+          treatmentNarratives: [],
+          evacuationNarratives: [],
+          notes: [],
+          vitals: [{ field: 'heartRate', value: 118 }],
+        },
+      }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }));
   localStorage.clear();
   mocks.handleFileOpen.mockReset();
   mocks.onMisroutedFileUrlHandled.mockReset();
+  mocks.chatProps.length = 0;
+  mocks.editorExpanded = false;
+  mocks.hasEditor = true;
 });
 
 afterEach(() => {
@@ -153,6 +195,22 @@ afterEach(() => {
 });
 
 describe('MainContent file workspace routing', () => {
+  it('retains the war-trauma introduction and empty workflow with no projects', () => {
+    const onCreateProject = vi.fn();
+    const empty = { ...propsFor('chat'), projects: [], selectedProject: null, onCreateProject };
+    const { rerender } = render(<MainContent {...empty} workspaceType="general_medicine" />);
+    expect(screen.getByRole('heading', { name: '通用医学智能助手' })).toBeTruthy();
+
+    rerender(<MainContent {...empty} workspaceType="war_trauma" />);
+    expect(screen.getByRole('heading', { name: '战创伤救治推演助手' })).toBeTruthy();
+    expect(screen.getByText('分级救治全过程')).toBeTruthy();
+    expect(screen.getByText('等待首轮推演')).toBeTruthy();
+    expect(screen.queryByTestId('general-medicine-capability-grid')).toBeNull();
+    expect(screen.queryByLabelText('本轮伤情自由输入')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '创建项目' }));
+    expect(onCreateProject).toHaveBeenCalledOnce();
+  });
+
   it('routes every chat file open into the Files workbench', async () => {
     const setActiveTab = vi.fn();
     const { rerender } = render(<MainContent {...propsFor('files', setActiveTab)} />);
@@ -160,7 +218,9 @@ describe('MainContent file workspace routing', () => {
     expect(await screen.findByTestId('editor-sidebar')).not.toBeNull();
 
     rerender(<MainContent {...propsFor('chat', setActiveTab)} />);
-    expect(screen.queryByTestId('editor-sidebar')).toBeNull();
+    expect(screen.getByRole('complementary', { name: '项目文件' }).className).toContain('pd-side-panel-exit');
+    expect(screen.getByRole('complementary', { name: '文件预览' }).className).toContain('pd-side-panel-exit');
+    await waitFor(() => expect(screen.queryByTestId('editor-sidebar')).toBeNull());
 
     fireEvent.click(screen.getByRole('button', { name: 'Open workspace file' }));
     expect(mocks.handleFileOpen).toHaveBeenCalledWith(
@@ -192,31 +252,193 @@ describe('MainContent file workspace routing', () => {
     expect(mocks.onMisroutedFileUrlHandled).toHaveBeenCalledOnce();
   });
 
-  it('keeps the agent panel collapsible and persists keyboard resizing', async () => {
+  it('keeps the conversation visible and opens files plus preview on the right', async () => {
     render(<MainContent {...propsFor('files')} />);
 
-    const conversationTrigger = await screen.findByTestId('files-conversation-switcher-trigger');
-    const labels = conversationTrigger.querySelectorAll('span.block');
-    expect(labels[0]?.textContent).toBe('filesWorkbench.assistant');
-    expect(labels[1]?.textContent).toBe('filesWorkbench.conversations.newConversation');
+    expect(await screen.findByTestId('runtime-chat')).not.toBeNull();
+    const preview = screen.getByRole('complementary', { name: '文件预览' });
+    const files = screen.getByRole('complementary', { name: '项目文件' });
+    expect(preview).not.toBeNull();
+    expect(files).not.toBeNull();
+    expect(preview.querySelector('.pd-side-panel-content')).not.toBeNull();
+    expect(files.querySelector('.pd-side-panel-content')).not.toBeNull();
+    expect(preview.style.getPropertyValue('--pd-side-content-width')).toBe('560px');
+    expect(files.style.getPropertyValue('--pd-side-content-width')).toBe('320px');
+    expect(preview.nextElementSibling).toBe(files);
+    expect(screen.getByTestId('files-explorer')).not.toBeNull();
+    expect(screen.getByTestId('editor-sidebar')).not.toBeNull();
+    expect(files.className).toContain('pd-side-panel-enter');
+    expect(preview.className).toContain('pd-side-panel-enter');
+  });
 
-    const resizeHandle = screen.getByRole('separator', {
-      name: 'filesWorkbench.resizeAssistant',
+  it('collapses the preview alone when its file tab closes', async () => {
+    const view = render(<MainContent {...propsFor('files')} />);
+    const preview = screen.getByRole('complementary', { name: '文件预览' });
+    mocks.hasEditor = false;
+    view.rerender(<MainContent {...propsFor('files')} />);
+    expect(preview.className).toContain('pd-side-panel-exit');
+    expect(preview.style.getPropertyValue('--pd-side-content-width')).toBe('560px');
+    expect(screen.getByRole('complementary', { name: '项目文件' }).className)
+      .toContain('pd-side-panel-enter');
+    await waitFor(() => expect(screen.queryByRole('complementary', { name: '文件预览' })).toBeNull());
+    expect(screen.getByRole('complementary', { name: '项目文件' })).not.toBeNull();
+  });
+
+  it.each([false, true])('lets the expanded preview hide the conversation (mobile: %s)', (isMobile) => {
+    mocks.editorExpanded = true;
+    render(<MainContent {...propsFor('files')} isMobile={isMobile} />);
+
+    const chat = screen.getByTestId('runtime-chat').parentElement;
+    const preview = screen.getByRole('complementary', { name: '文件预览' });
+    const files = screen.getByRole('complementary', { name: '项目文件' });
+    expect(chat?.className).toContain('invisible');
+    expect(preview.className).toContain('flex-1');
+    expect(preview.style.width).toBe('');
+    expect(preview.querySelector('.pd-side-panel-content')).not.toBeNull();
+    expect(preview.nextElementSibling).toBe(files);
+  });
+});
+
+describe('MainContent project-type workspace routing', () => {
+  it('wraps war-trauma chat in the dedicated treatment workspace', () => {
+    const traumaProject: Project = {
+      ...project,
+      name: 'trauma_med-demo',
+      displayName: '战创伤演练',
+    };
+    render(
+      <MainContent
+        {...propsFor('chat')}
+        projects={[traumaProject]}
+        selectedProject={traumaProject}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: '分级救治全过程' })).not.toBeNull();
+    expect(screen.getByLabelText('本轮伤情自由输入')).not.toBeNull();
+    expect(screen.getByRole('region', { name: '推演对话' })).not.toBeNull();
+    expect(screen.getByTestId('runtime-chat').getAttribute('data-hide-composer')).toBe('true');
+    expect(mocks.chatProps.some((props) => props.hideComposer === true)).toBe(true);
+  });
+
+  it('submits free-text trauma input and launches an extraction turn', async () => {
+    const traumaProject: Project = {
+      ...project,
+      name: 'trauma_med-demo',
+      displayName: '战创伤演练',
+    };
+    const props = propsFor('chat');
+    const { rerender } = render(
+      <MainContent
+        {...props}
+        projects={[traumaProject]}
+        selectedProject={traumaProject}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText('本轮伤情自由输入'), {
+      target: { value: '右小腿开放伤，心率 118' },
     });
-    expect(resizeHandle.getAttribute('aria-valuenow')).toBe('380');
+    fireEvent.click(screen.getByRole('button', { name: '整理' }));
 
-    fireEvent.keyDown(resizeHandle, { key: 'ArrowLeft' });
-    expect(resizeHandle.getAttribute('aria-valuenow')).toBe('396');
+    await waitFor(() => expect(props.sendMessage).toHaveBeenCalled());
+    expect(props.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'pilotdeck-command',
+      options: expect.objectContaining({
+        traumaForm: expect.objectContaining({
+          injuryNarrative: '右小腿开放伤，心率 118',
+          vitals: {},
+        }),
+        traumaRawInput: '右小腿开放伤，心率 118',
+        traumaExtract: true,
+        userVisibleInput: '右小腿开放伤，心率 118',
+      }),
+    }));
+    expect(screen.getByTestId('runtime-chat')).not.toBeNull();
+    expect(screen.getByRole('region', { name: '推演对话' })).not.toBeNull();
+
+    rerender(
+      <MainContent
+        {...props}
+        projects={[traumaProject]}
+        selectedProject={traumaProject}
+        selectedSession={{ id: 'web:s-created' } as any}
+      />,
+    );
+    expect(screen.getByTestId('runtime-chat')).not.toBeNull();
+
+    window.dispatchEvent(new CustomEvent('pilotdeck:agent-turn-complete', {
+      detail: { projectName: traumaProject.name, sessionId: 'web:s-created' },
+    }));
     await waitFor(() => {
-      expect(localStorage.getItem('pilotdeck:files-assistant-width')).toBe('396');
+      expect(screen.queryByRole('region', { name: '推演实时进度' })).toBeNull();
     });
+  });
 
-    fireEvent.click(screen.getByRole('button', { name: 'filesWorkbench.collapseAssistant' }));
-    expect(screen.queryByRole('separator', { name: 'filesWorkbench.resizeAssistant' })).toBeNull();
+  it('navigates immediately when a new trauma turn already has a concrete session id', async () => {
+    const traumaProject: Project = {
+      ...project,
+      name: 'trauma_med-demo',
+      displayName: '战创伤演练',
+    };
+    const props = propsFor('chat');
+    const { container } = render(
+      <MainContent
+        {...props}
+        projects={[traumaProject]}
+        selectedProject={traumaProject}
+      />,
+    );
 
-    fireEvent.click(screen.getByRole('button', { name: 'filesWorkbench.openAssistant' }));
-    expect(screen.getByRole('separator', {
-      name: 'filesWorkbench.resizeAssistant',
-    }).getAttribute('aria-valuenow')).toBe('396');
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    expect(fileInput).not.toBeNull();
+    fireEvent.change(fileInput!, {
+      target: {
+        files: [new File(['image-bytes'], '伤情照片.png', { type: 'image/png' })],
+      },
+    });
+    fireEvent.change(screen.getByLabelText('本轮伤情自由输入'), {
+      target: { value: '左大腿爆炸伤，上传影像' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '整理' }));
+
+    await waitFor(() => expect(props.sendMessage).toHaveBeenCalled());
+    expect(props.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'pilotdeck-command',
+      options: expect.objectContaining({
+        sessionId: expect.stringMatching(/^web:s_/),
+        resume: true,
+        traumaRawInput: '左大腿爆炸伤，上传影像',
+      }),
+    }));
+    expect(props.onNavigateToSession).toHaveBeenCalledWith(expect.stringMatching(/^web:s_/));
+  });
+
+  it('keeps general-medicine chat on the standard surface', () => {
+    render(<MainContent {...propsFor('chat')} />);
+
+    expect(screen.queryByRole('heading', { name: '分级救治全过程' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Open workspace file' })).not.toBeNull();
+  });
+
+  it('keeps the trauma structured composer available beside project files', () => {
+    const traumaProject: Project = {
+      ...project,
+      name: 'trauma_med-demo',
+      displayName: '战创伤演练',
+    };
+    render(
+      <MainContent
+        {...propsFor('files')}
+        projects={[traumaProject]}
+        selectedProject={traumaProject}
+      />,
+    );
+
+    expect(screen.getByRole('region', { name: '伤情推演对话' })).not.toBeNull();
+    expect(screen.getByLabelText('本轮伤情自由输入')).not.toBeNull();
+    expect(screen.queryByRole('heading', { name: '分级救治全过程' })).toBeNull();
+    expect(screen.getByRole('complementary', { name: '项目文件' })).not.toBeNull();
+    expect(mocks.chatProps.some((props) => props.hideComposer === true)).toBe(true);
   });
 });

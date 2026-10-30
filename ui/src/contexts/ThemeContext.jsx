@@ -1,31 +1,34 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { STORAGE_USER_CHANGED_EVENT, safeLocalStorage } from '../utils/safeStorage';
 
 const ThemeContext = createContext();
 const THEME_MODE_KEY = 'themeMode';
 const LEGACY_THEME_KEY = 'theme';
-
-const getSystemDarkMode = () => (
-  typeof window !== 'undefined' &&
-  window.matchMedia &&
-  window.matchMedia('(prefers-color-scheme: dark)').matches
-);
+const PRODUCT_THEMES = new Set(['warm', 'command']);
 
 const normalizeThemeMode = (value) => (
-  value === 'light' || value === 'dark' || value === 'system' ? value : null
+  value === 'light'
+  || value === 'dark'
+  || value === 'warm'
+  || value === 'command'
+    ? value
+    : null
 );
 
 const readInitialThemeMode = () => {
-  const savedMode = normalizeThemeMode(localStorage.getItem(THEME_MODE_KEY));
+  const storedMode = safeLocalStorage.getItem(THEME_MODE_KEY);
+  const savedMode = normalizeThemeMode(storedMode);
   if (savedMode) return savedMode;
+  if (storedMode === 'system') return 'warm';
 
-  const legacyTheme = normalizeThemeMode(localStorage.getItem(LEGACY_THEME_KEY));
-  if (legacyTheme === 'light' || legacyTheme === 'dark') return legacyTheme;
+  const legacyTheme = normalizeThemeMode(safeLocalStorage.getItem(LEGACY_THEME_KEY));
+  if (legacyTheme) return legacyTheme;
 
-  return 'system';
+  return 'warm';
 };
 
 const resolveThemeMode = (mode) => (
-  mode === 'system' ? getSystemDarkMode() : mode === 'dark'
+  mode === 'dark' || mode === 'command'
 );
 
 // eslint-disable-next-line react-refresh/only-export-components
@@ -41,10 +44,24 @@ export const ThemeProvider = ({ children }) => {
   const [themeMode, setThemeMode] = useState(readInitialThemeMode);
   const [isDarkMode, setIsDarkMode] = useState(() => resolveThemeMode(readInitialThemeMode()));
 
+  // The preference lives in the per-user storage namespace; re-read it when
+  // the signed-in user (and therefore the namespace) changes.
+  useEffect(() => {
+    const reload = () => setThemeMode(readInitialThemeMode());
+    window.addEventListener(STORAGE_USER_CHANGED_EVENT, reload);
+    return () => window.removeEventListener(STORAGE_USER_CHANGED_EVENT, reload);
+  }, []);
+
   // Update document class and localStorage when theme changes
   useEffect(() => {
     const nextIsDark = resolveThemeMode(themeMode);
     setIsDarkMode(nextIsDark);
+
+    if (PRODUCT_THEMES.has(themeMode)) {
+      document.documentElement.dataset.theme = themeMode;
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
 
     if (nextIsDark) {
       document.documentElement.classList.add('dark');
@@ -57,7 +74,7 @@ export const ThemeProvider = ({ children }) => {
       
       const themeColorMeta = document.querySelector('meta[name="theme-color"]');
       if (themeColorMeta) {
-        themeColorMeta.setAttribute('content', '#0c1117'); // Dark background color (hsl(222.2 84% 4.9%))
+        themeColorMeta.setAttribute('content', themeMode === 'command' ? '#0a111f' : '#0c1117');
       }
     } else {
       document.documentElement.classList.remove('dark');
@@ -70,31 +87,12 @@ export const ThemeProvider = ({ children }) => {
       
       const themeColorMeta = document.querySelector('meta[name="theme-color"]');
       if (themeColorMeta) {
-        themeColorMeta.setAttribute('content', '#ffffff'); // Light background color
+        themeColorMeta.setAttribute('content', themeMode === 'warm' ? '#faf8f4' : '#ffffff');
       }
     }
 
-    localStorage.setItem(THEME_MODE_KEY, themeMode);
-    if (themeMode === 'system') {
-      localStorage.removeItem(LEGACY_THEME_KEY);
-    } else {
-      localStorage.setItem(LEGACY_THEME_KEY, themeMode);
-    }
-  }, [isDarkMode, themeMode]);
-
-  // Listen for system theme changes
-  useEffect(() => {
-    if (!window.matchMedia) return;
-
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const handleChange = (e) => {
-      if (themeMode === 'system') {
-        setIsDarkMode(e.matches);
-      }
-    };
-
-    mediaQuery.addEventListener('change', handleChange);
-    return () => mediaQuery.removeEventListener('change', handleChange);
+    safeLocalStorage.setItem(THEME_MODE_KEY, themeMode);
+    safeLocalStorage.setItem(LEGACY_THEME_KEY, themeMode);
   }, [themeMode]);
 
   const toggleDarkMode = () => {

@@ -105,7 +105,7 @@ export function useShellRuntime({
     closeSocket,
   });
 
-  const { isConnected, isConnecting, connectToShell, disconnectFromShell } = useShellConnection({
+  const { deniedReason, isConnected, isConnecting, connectToShell, disconnectFromShell } = useShellConnection({
     wsRef,
     terminalRef,
     fitAddonRef,
@@ -153,6 +153,7 @@ export function useShellRuntime({
     terminalContainerRef,
     terminalRef,
     wsRef,
+    deniedReason,
     isConnected,
     isInitialized,
     isConnecting,

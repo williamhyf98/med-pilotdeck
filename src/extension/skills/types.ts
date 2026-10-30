@@ -1,3 +1,5 @@
+import type { SkillAvailability } from "../../pilot/skillAvailability.js";
+
 /**
  * Public protocol types for the skill manager. These types are shared
  * between the gateway, its remote clients (UI server bridge), and any
@@ -8,11 +10,12 @@
  */
 
 /**
- * "builtin" is shipped with PilotDeck and is read-only. "user" lives in
+ * "builtin" is shipped with PilotDeck and is read-only. "medical" is shipped
+ * with plugins/med-tools and is also read-only. "user" lives in
  * `~/.pilotdeck/skills/`, available to every project. "project" lives in
  * `<projectRoot>/.pilotdeck/skills/`, scoped to the active project.
  */
-export type SkillScope = "builtin" | "user" | "project";
+export type SkillScope = "builtin" | "user" | "project" | "medical";
 
 /**
  * Lightweight summary used by `list` / `create` / `write` responses.
@@ -31,7 +34,7 @@ export type SkillSummary = {
   /** Absolute path of the containing skill directory. */
   skillDir: string;
   scope: SkillScope;
-  /** Built-in skills are immutable; user/project skills remain editable. */
+  /** Built-in and medical skills are immutable; user/project skills remain editable. */
   readonly: boolean;
   /** Higher-priority scope currently shadowing this entry, when any. */
   overriddenBy?: "user" | "project";
@@ -39,6 +42,22 @@ export type SkillSummary = {
   overridesBuiltin?: boolean;
   /** Last-modified time of SKILL.md in epoch ms, or null if unreadable. */
   mtime: number | null;
+  /** Compatibility field. Skills are always globally available. */
+  availability: SkillAvailability[];
+  /** Compatibility field. Always false because skills are global. */
+  availabilityMutable: boolean;
+  /**
+   * Optional `department:` frontmatter value — the clinical specialty a
+   * role-style skill belongs to (`cardiology`, `orthopedics`, …). Free-form
+   * on purpose: departments differ per hospital, so this is a display /
+   * grouping hint, never a gate. Null when the skill doesn't declare one.
+   */
+  department: string | null;
+  /**
+   * Optional `category:` frontmatter value — a coarse kind ("role",
+   * "document", "workflow", …) used for grouping alongside `department`.
+   */
+  category: string | null;
 };
 
 export type SkillsListInput = {
@@ -54,6 +73,7 @@ export type SkillsListResult = {
   builtin: SkillSummary[];
   user: SkillSummary[];
   project: SkillSummary[];
+  medical: SkillSummary[];
   /** Echoed back so the UI can confirm which project the list came from. */
   projectPath: string | null;
 };
@@ -78,6 +98,17 @@ export type SkillWriteResult = {
   scope: SkillScope;
   slug: string;
   skill: SkillSummary | null;
+};
+
+export type SkillSetAvailabilityInput = SkillAddressInput & {
+  availability: SkillAvailability[];
+};
+
+export type SkillSetAvailabilityResult = {
+  ok: true;
+  scope: SkillScope;
+  slug: string;
+  skill: SkillSummary;
 };
 
 export type SkillCreateInput = SkillAddressInput & {

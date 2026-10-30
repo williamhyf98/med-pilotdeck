@@ -212,6 +212,10 @@ In black-box agents, mixing tasks in a shared context pool inevitably pollutes m
 </tbody>
 </table>
 
+War-trauma workspaces support multiple intents in one message: the system selects one primary workflow (case update, knowledge question, help, or scope response) while independently extracting explicit presentation preferences. Current-turn preferences affect the same answer immediately, without waiting for persistence. After a successful response, they are captured as project Feedback and consolidated asynchronously by Index and Dream. A preference-only message acknowledges the preference without running the case workflow or changing Case State.
+
+Two independent priority chains apply. Clinical authority is `current input > Case State > RAG evidence`; presentation is `current-turn preference > project Feedback > global preference > default`. Preferences may change headings, ordering, tables/lists, detail, and language, but cannot override medical safety, evidence and citation rules, stage boundaries, structured fields, or the required clinical-review notice. Memory reads/writes and Index/Dream failures do not invalidate a completed medical response, and patient facts, vital signs, and identifiers never enter war-trauma long-term memory.
+
 ---
 
 ## 🖥️ UI & Demo
@@ -289,6 +293,8 @@ https://github.com/user-attachments/assets/a7245467-ee3c-4939-a055-c56576ac56d1
 ---
 
 ## 📦 Installation & Quick Start
+
+**This fork (med-pilotdeck):** after `git clone`, follow the Chinese local-start guide **[docs/local-clone-and-start.zh.md](./docs/local-clone-and-start.zh.md)** (`bootstrap-runtime` + `start-local.sh`, project `.pilotdeck-home`). The one-liners below are upstream PilotDeck and use `~/.pilotdeck`.
 
 We provide one-line installers for macOS / Linux and Windows PowerShell, plus a source-based workflow for developers.
 
@@ -483,7 +489,7 @@ For full Docker configuration, see [README_DOCKER.md](README_DOCKER.md).
 PilotDeck has an open plugin architecture with a strict boundary between the open-source core and plugin customization. Extending the system is a `plugin.json` away:
 
 - **MCP Servers** — first-class integration with any Model Context Protocol server.
-- **Tools & Skills** — register custom tools, or pull community skills via [ClawHub](https://www.npmjs.com/package/clawhub).
+- **Tools & Skills** — register custom tools and ship bundled / plugin skills with the deployment package.
 - **Lifecycle Hooks** — intercept `PreToolUse`, `UserPromptSubmit`, and other critical lifecycle events.
 - **Custom Memory** — plug in your own memory store provider.
 

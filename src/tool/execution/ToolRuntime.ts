@@ -5,6 +5,7 @@ import { toolError } from "../protocol/errors.js";
 import type { PilotDeckToolErrorCode } from "../protocol/errors.js";
 import {
   PLAN_MODE_ALLOWED_TOOLS,
+  isPlanToolAvailable,
   buildPlanModeBashViolationMessage,
   buildPlanModeViolationMessage,
 } from "../planModeConstraints.js";
@@ -18,6 +19,7 @@ import {
 } from "../protocol/result.js";
 import type { PilotDeckToolCall, PilotDeckToolRuntimeContext } from "../protocol/types.js";
 import type { ToolRegistry } from "../registry/ToolRegistry.js";
+import { coerceJsonEncodedToolInput } from "./coerceJsonEncodedToolInput.js";
 import { validateToolInput } from "./validateToolInput.js";
 import { formatValidationError } from "./formatValidationError.js";
 import { normalizeToolError } from "../protocol/errors.js";
@@ -25,8 +27,20 @@ import type { AgentEventEmitter } from "../../agent/protocol/events.js";
 import { requiresPromptCapability } from "../userInteractionConstraints.js";
 import { buildToolErrorRecovery } from "./errorRecovery.js";
 import { repairToolName } from "./repairToolName.js";
+import { getAutomationPolicyViolation } from "../automationPolicyConstraints.js";
+import {
+  buildMedToolsSkillGateMessage,
+  getMedToolsSkillRequirement,
+  isMedToolDisabled,
+  isRequiredMedToolsSkillLoaded,
+  normalizeLoadedSkillName,
+} from "../medToolsSkillGate.js";
+import { projectMetaTypeFromProjectPath } from "../../pilot/paths.js";
+import { isToolAvailableForProjectType } from "../../pilot/projectTypePolicy.js";
 
 export class ToolRuntime {
+  private readonly loadedSkills = new Set<string>();
+
   constructor(
     private readonly registry: ToolRegistry,
     private readonly permissionRuntime: PermissionRuntime,
@@ -50,6 +64,10 @@ export class ToolRuntime {
                 readFileState: runtimeContext.readFileState,
                 writeSnapshots: runtimeContext.writeSnapshots,
                 executeTool: runtimeContext.executeTool,
+                toolPolicy: runtimeContext.toolPolicy,
+                allowPlanModeTools: runtimeContext.allowPlanModeTools,
+                permissionMode: runtimeContext.permissionMode,
+                runMode: runtimeContext.runMode,
               });
             },
         };
@@ -79,6 +97,53 @@ export class ToolRuntime {
       );
     }
 
+    if (isMedToolDisabled(tool.name)) {
+      return this.errorResult(
+        call.id,
+        tool.name,
+        "permission_denied",
+        `${tool.name} is temporarily disabled in offline mode; no remote request was made.`,
+        startedAt,
+        runtimeContext,
+      );
+    }
+
+    const projectType = projectMetaTypeFromProjectPath(runtimeContext.cwd);
+    if (!isToolAvailableForProjectType(tool.name, projectType)) {
+      return this.errorResult(
+        call.id,
+        tool.name,
+        "permission_denied",
+        `Tool ${tool.name} is not available for the ${projectType} project type.`,
+        startedAt,
+        runtimeContext,
+      );
+    }
+
+    const allowedTools = runtimeContext.toolPolicy?.allowedTools;
+    const deniedTools = runtimeContext.toolPolicy?.deniedTools;
+    if (
+      (allowedTools !== undefined && !allowedTools.includes(tool.name))
+      || deniedTools?.includes(tool.name)
+    ) {
+      return this.errorResult(
+        call.id,
+        tool.name,
+        "permission_denied",
+        `Tool ${tool.name} is not allowed by the active agent profile.`,
+        startedAt,
+        runtimeContext,
+      );
+    }
+
+    if (!isPlanToolAvailable(tool.name, runtimeContext)) {
+      return this.errorResult(
+        call.id, tool.name, "permission_denied",
+        "计划模式只能由用户主动开启。当前模式不允许调用此计划工具；智能体可使用待办清单继续执行任务。",
+        startedAt, runtimeContext,
+      );
+    }
+
     const planModeViolation = getPlanModeViolation(tool.name, call.input, runtimeContext);
     if (planModeViolation) {
       return this.errorResult(
@@ -105,7 +170,20 @@ export class ToolRuntime {
       );
     }
 
-    const validation = validateToolInput(call.input, tool.inputSchema);
+    const automationPolicyViolation = getAutomationPolicyViolation(tool.name, call.input);
+    if (automationPolicyViolation) {
+      return this.errorResult(
+        call.id,
+        tool.name,
+        "automation_policy_violation",
+        automationPolicyViolation,
+        startedAt,
+        runtimeContext,
+      );
+    }
+
+    const coercedInput = coerceJsonEncodedToolInput(call.input, tool.inputSchema);
+    const validation = validateToolInput(coercedInput, tool.inputSchema);
     if (!validation.ok) {
       return this.errorResult(
         call.id,
@@ -121,7 +199,17 @@ export class ToolRuntime {
       );
     }
 
-    if (runtimeContext.permissionContext.canPrompt === false && requiresPromptCapability(tool, call.input)) {
+    const skillGateResult = await this.applyMedToolsSkillGate(
+      call.id,
+      tool.name,
+      startedAt,
+      runtimeContext,
+    );
+    if (skillGateResult) {
+      return skillGateResult;
+    }
+
+    if (runtimeContext.permissionContext.canPrompt === false && requiresPromptCapability(tool, coercedInput)) {
       return this.errorResult(
         call.id,
         tool.name,
@@ -132,7 +220,7 @@ export class ToolRuntime {
       );
     }
 
-    let executeInput = call.input;
+    let executeInput = coercedInput;
     const preToolResult = await this.dispatchLifecycle("PreToolUse", tool.name, call.id, executeInput, context);
     this.eventEmitter?.({ type: "pre_tool_execute", sessionId: context.sessionId, turnId: context.turnId, toolCallId: call.id, toolName: tool.name });
     const preBlock = findEffect(preToolResult.effects, "block");
@@ -150,7 +238,7 @@ export class ToolRuntime {
     }
     const updatedInput = findEffect(preToolResult.effects, "updated_tool_input");
     if (updatedInput) {
-      executeInput = updatedInput.input;
+      executeInput = coerceJsonEncodedToolInput(updatedInput.input, tool.inputSchema);
       const updatedValidation = validateToolInput(executeInput, tool.inputSchema);
       if (!updatedValidation.ok) {
         return this.errorResult(
@@ -281,6 +369,12 @@ ${formatValidationError(tool.name, updatedValidation.issues, {
       : baseContext;
     try {
       const output = await tool.execute(executeInput, executeContext);
+      if (tool.name === "read_skill" && skillWasLoaded(output.content)) {
+        const skillName = readSkillName(executeInput);
+        if (skillName) {
+          this.loadedSkills.add(normalizeLoadedSkillName(skillName));
+        }
+      }
       const maxResultBytes = tool.maxResultBytes ?? context.maxResultBytes;
       const previewLimit = applyResultSizeLimit(output.content, maxResultBytes);
       const completedAt = now(context).toISOString();
@@ -325,6 +419,85 @@ ${formatValidationError(tool.name, updatedValidation.issues, {
       const result = this.createErrorResult(call.id, tool.name, normalized.code, normalized.message, startedAt, context, normalized.details);
       await this.recordToolAudit(result, context, startedAtDate);
       return result;
+    }
+  }
+
+  private async applyMedToolsSkillGate(
+    toolCallId: string,
+    toolName: string,
+    startedAt: string,
+    context: PilotDeckToolRuntimeContext,
+  ): Promise<PilotDeckToolSuccessResult | PilotDeckToolErrorResult | undefined> {
+    const requirement = getMedToolsSkillRequirement(toolName);
+    if (!requirement || isRequiredMedToolsSkillLoaded(requirement, this.loadedSkills)) {
+      return undefined;
+    }
+
+    const readSkillTool = this.registry.get("read_skill");
+    if (!readSkillTool) {
+      return this.errorResult(
+        toolCallId,
+        toolName,
+        "tool_execution_failed",
+        `Cannot execute ${toolName}: read_skill is unavailable, so required skill ${requirement.loadSkill} cannot be loaded.`,
+        startedAt,
+        context,
+      );
+    }
+
+    try {
+      const skillAddress = `med-tools:${requirement.loadSkill}`;
+      const skillOutput = await readSkillTool.execute(
+        { skillName: skillAddress },
+        context,
+      );
+      if (!skillWasLoaded(skillOutput.content)) {
+        return this.errorResult(
+          toolCallId,
+          toolName,
+          "tool_execution_failed",
+          `Cannot execute ${toolName}: required skill ${requirement.loadSkill} was not found.`,
+          startedAt,
+          context,
+        );
+      }
+
+      this.loadedSkills.add(normalizeLoadedSkillName(requirement.loadSkill));
+      const result: PilotDeckToolSuccessResult = {
+        type: "success",
+        toolCallId,
+        toolName,
+        content: [
+          {
+            type: "text",
+            text: buildMedToolsSkillGateMessage(toolName, skillAddress),
+          },
+          ...skillOutput.content,
+        ],
+        metadata: {
+          medToolsSkillGate: {
+            blocked: true,
+            toolName,
+            loadedSkill: skillAddress,
+            retryRequired: true,
+          },
+        },
+        startedAt,
+        completedAt: now(context).toISOString(),
+      };
+      await this.recordToolAudit(result, context, new Date(startedAt));
+      return result;
+    } catch (error) {
+      const normalized = normalizeToolError(error);
+      return this.errorResult(
+        toolCallId,
+        toolName,
+        normalized.code,
+        `Cannot execute ${toolName}: failed to load required skill ${requirement.loadSkill}. ${normalized.message}`,
+        startedAt,
+        context,
+        normalized.details,
+      );
     }
   }
 
@@ -427,6 +600,18 @@ ${formatValidationError(tool.name, updatedValidation.issues, {
       nonBlockingErrors: [],
     };
   }
+}
+
+function skillWasLoaded(
+  content: ReadonlyArray<{ type: string; text?: string }>,
+): boolean {
+  return content.some(
+    (item) => item.type === "text" && item.text?.includes("<skill>") === true,
+  );
+}
+
+function readSkillName(input: unknown): string | undefined {
+  return readStringProperty(input, "skillName");
 }
 
 function formatToolErrorContent(

@@ -20,7 +20,7 @@ function getFileExtension(fileName: string): string {
   return (extension || '').toLowerCase();
 }
 
-function getDocumentReferenceFileMeta(fileName: string): DocumentReferenceFileMeta {
+export function getDocumentReferenceFileMeta(fileName: string): DocumentReferenceFileMeta {
   const extension = getFileExtension(fileName);
   if (extension === 'pdf') {
     return {

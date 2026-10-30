@@ -1,16 +1,18 @@
 import { ArrowLeft } from "lucide-react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { useAuth } from "../../auth/context/AuthContext";
 import { cn } from "../../../lib/utils.js";
 import type { SettingsMenuKey } from "../types";
 
-type SettingsMenuItemI18n = {
+export type SettingsMenuItemI18n = {
   key: SettingsMenuKey;
   labelKey: string;
   children?: SettingsMenuItemI18n[];
   showDot?: boolean;
 };
 
-const MENU_ITEMS: SettingsMenuItemI18n[] = [
+const MENU_ITEMS_ADMIN: SettingsMenuItemI18n[] = [
   { key: "general", labelKey: "settingsPage.menu.general" },
   { key: "modelPool", labelKey: "settingsPage.menu.modelPool" },
   {
@@ -20,24 +22,59 @@ const MENU_ITEMS: SettingsMenuItemI18n[] = [
       { key: "agentModel", labelKey: "settingsPage.menu.agentModel" },
       { key: "agentRoute", labelKey: "settingsPage.menu.agentRoute" },
       { key: "agentMemory", labelKey: "settingsPage.menu.agentMemory" },
-      { key: "agentResident", labelKey: "settingsPage.menu.agentResident" },
-      { key: "agentSearch", labelKey: "settingsPage.menu.agentSearch" },
-      { key: "agentSchedule", labelKey: "settingsPage.menu.agentSchedule" },
     ],
   },
-  { key: "integrations", labelKey: "settingsPage.menu.integrations" },
   {
     key: "extensions",
     labelKey: "settingsPage.menu.extensions",
     children: [
-      { key: "mcpServers", labelKey: "settingsPage.menu.mcpServers" },
       { key: "officePreview", labelKey: "settingsPage.menu.officePreview" },
     ],
   },
-  { key: "privacy", labelKey: "settingsPage.menu.privacy" },
   { key: "advanced", labelKey: "settingsPage.menu.advanced" },
-  { key: "about", labelKey: "settingsPage.menu.about", showDot: true },
 ];
+
+const ACCOUNT_ITEM: SettingsMenuItemI18n = {
+  key: "account",
+  labelKey: "settingsPage.menu.account",
+};
+
+// Normal users only get the pages that work on their own data; everything
+// else is backed by the admin-only system config.
+const MENU_ITEMS_USER: SettingsMenuItemI18n[] = [
+  ACCOUNT_ITEM,
+  { key: "general", labelKey: "settingsPage.menu.general" },
+  { key: "agentMemory", labelKey: "settingsPage.menu.agentMemory" },
+];
+
+const MENU_ITEMS_FULL: SettingsMenuItemI18n[] = [
+  ACCOUNT_ITEM,
+  ...MENU_ITEMS_ADMIN,
+  { key: "users", labelKey: "settingsPage.menu.users" },
+];
+
+// In no-login mode there are no accounts to manage (spec 8), so the admin
+// menu drops the user-management page even though the single local user is
+// treated as an administrator everywhere else.
+export function getMenuItems(
+  isAdmin: boolean,
+  authDisabled = false,
+): SettingsMenuItemI18n[] {
+  if (!isAdmin) return MENU_ITEMS_USER;
+  return authDisabled
+    ? MENU_ITEMS_FULL.filter((item) => item.key !== "users")
+    : MENU_ITEMS_FULL;
+}
+
+/** Flat list of every selectable menu key for the role. */
+export function getSelectableMenuKeys(
+  isAdmin: boolean,
+  authDisabled = false,
+): SettingsMenuKey[] {
+  return getMenuItems(isAdmin, authDisabled).flatMap((item) =>
+    item.children?.length ? item.children.map((child) => child.key) : [item.key],
+  );
+}
 
 type SettingsSidebarProps = {
   selectedKey: SettingsMenuKey;
@@ -64,6 +101,11 @@ export default function SettingsSidebar({
   mobileVisible = true,
 }: SettingsSidebarProps) {
   const { t } = useTranslation("settings");
+  const { isAdmin, authDisabled } = useAuth();
+  const items = useMemo(
+    () => getMenuItems(isAdmin, authDisabled),
+    [isAdmin, authDisabled],
+  );
 
   return (
     <aside
@@ -86,7 +128,7 @@ export default function SettingsSidebar({
 
         <nav className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-5">
           <ul className="space-y-3">
-            {MENU_ITEMS.map((item) => {
+            {items.map((item) => {
               const active = isItemActive(item, selectedKey);
               const hasChildren = Boolean(item.children?.length);
               return (

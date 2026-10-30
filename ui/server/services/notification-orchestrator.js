@@ -1,5 +1,6 @@
 import webPush from 'web-push';
 import { notificationPreferencesDb, pushSubscriptionsDb, sessionNamesDb } from '../database/db.js';
+import { getUserScope } from '../middleware/userScope.js';
 
 const KIND_TO_PREF_KEY = {
   action_required: 'actionRequired',
@@ -108,7 +109,10 @@ function resolveSessionName(event) {
     return null;
   }
 
-  return normalizeSessionName(sessionNamesDb.getName(event.sessionId, event.provider));
+  // Gateway events can fire outside any request scope; never read another user's (or a shared) names then.
+  const scope = getUserScope();
+  if (!scope) return null;
+  return normalizeSessionName(sessionNamesDb.getName(scope.userId, event.sessionId, event.provider));
 }
 
 function buildPushBody(event) {

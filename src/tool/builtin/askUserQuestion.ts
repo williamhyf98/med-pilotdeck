@@ -17,15 +17,20 @@ export const ASK_USER_QUESTION_TOOL_NAME = "ask_user_question";
  * `ASK_USER_QUESTION_TOOL_CHIP_WIDTH = 12` (prompt.ts).
  */
 export const ASK_USER_QUESTION_HEADER_MAX = 12;
+/** Max questions in one ask_user_question call. */
+export const ASK_USER_QUESTION_MAX_QUESTIONS = 4;
+/** Min / max choices per question. Six trauma stages fit in one card when this is ≥ 6. */
+export const ASK_USER_QUESTION_MIN_OPTIONS = 2;
+export const ASK_USER_QUESTION_MAX_OPTIONS = 8;
 
 const ASK_USER_QUESTION_DESCRIPTION =
-  "Use this tool when you need to ask the user one or more multiple-choice questions during execution. " +
-  "It is suitable for gathering preferences or requirements, clarifying ambiguous instructions, " +
-  "getting decisions on implementation choices, or offering the user concrete directions to choose from. " +
-  "Usage notes: provide 1-4 questions, each with 2-4 options; set multiSelect to true when a question " +
-  "should allow multiple selections; phrase the choices yourself instead of using this tool for open-ended " +
-  "free-form clarification. In plan mode, use ask_user_question to clarify requirements or choose between " +
-  "approaches before finalizing your plan. Do not use it to ask for plan approval; use exit_plan_mode for that.";
+  "在执行过程中需要向用户提出一个或多个选择题时使用本工具。" +
+  "适用于收集偏好或需求、澄清含糊的指令、就实现方案做出取舍，" +
+  "或给用户几个具体方向供其选择。" +
+  "使用说明：一次提供 1-4 个问题，每题 2-8 个选项；某题允许多选时把 multiSelect 设为 true；" +
+  "选项内容由你自己拟定，不要用本工具做开放式的自由问答。" +
+  "在计划模式下，用 ask_user_question 澄清需求或在几种做法之间取舍，然后再定稿计划。" +
+  "不要用它来征求对计划的批准；应展示计划并等待用户退出计划模式。";
 
 export type AskUserQuestionOption = {
   label: string;
@@ -62,8 +67,8 @@ export type AskUserQuestionOutput = {
  * via `runtimeContext.elicitation.askUser`.
  *
  * Behaviour alignment with `AskUserQuestionTool.tsx` (E1..E10 in §5.1.6):
- *   E1 schema: questions ≥ 1, ≤ 4 (legacy max).
- *   E2 each question.options ≥ 2, ≤ 4.
+ *   E1 schema: questions ≥ 1, ≤ ASK_USER_QUESTION_MAX_QUESTIONS.
+ *   E2 each question.options ≥ ASK_USER_QUESTION_MIN_OPTIONS, ≤ ASK_USER_QUESTION_MAX_OPTIONS.
  *   E3 question texts unique within the call; option labels unique within
  *      each question (legacy `UNIQUENESS_REFINE`).
  *   E4 header.length ≤ ASK_USER_QUESTION_HEADER_MAX.
@@ -94,9 +99,9 @@ export function createAskUserQuestionTool(): PilotDeckToolDefinition<
         questions: {
           type: "array",
           minItems: 1,
-          maxItems: 4,
+          maxItems: ASK_USER_QUESTION_MAX_QUESTIONS,
           description:
-            "Questions to ask the user. Provide 1-4 multiple-choice questions in one batch.",
+            `要向用户提出的问题。必须是问题对象组成的 JSON 数组（不能是字符串）。一次提供 1-${ASK_USER_QUESTION_MAX_QUESTIONS} 个选择题。`,
           items: {
             type: "object",
             required: ["question", "header", "options"],
@@ -105,20 +110,20 @@ export function createAskUserQuestionTool(): PilotDeckToolDefinition<
               question: {
                 type: "string",
                 description:
-                  "The full question shown to the user. Keep it clear and specific; if multiSelect is true, phrase it as a multi-select question.",
+                  "展示给用户的完整问题。表述要清楚、具体；若 multiSelect 为 true，请写成多选题的口吻。",
               },
               header: {
                 type: "string",
                 maxLength: ASK_USER_QUESTION_HEADER_MAX,
                 description:
-                  `Very short chip/tag label for the question (max ${ASK_USER_QUESTION_HEADER_MAX} chars).`,
+                  `该问题的极简标签，用于界面上的小标签（最多 ${ASK_USER_QUESTION_HEADER_MAX} 个字符）。`,
               },
               options: {
                 type: "array",
-                minItems: 2,
-                maxItems: 4,
+                minItems: ASK_USER_QUESTION_MIN_OPTIONS,
+                maxItems: ASK_USER_QUESTION_MAX_OPTIONS,
                 description:
-                  "Available choices for this question. Provide 2-4 distinct options; they should be mutually exclusive unless multiSelect is true.",
+                  `该问题的可选项。提供 ${ASK_USER_QUESTION_MIN_OPTIONS}-${ASK_USER_QUESTION_MAX_OPTIONS} 个互不重复的选项；除非 multiSelect 为 true，各选项之间应互斥。`,
                 items: {
                   type: "object",
                   required: ["label", "description"],
@@ -127,17 +132,17 @@ export function createAskUserQuestionTool(): PilotDeckToolDefinition<
                     label: {
                       type: "string",
                       description:
-                        "Short display text for the option. This is what the user selects.",
+                        "选项的简短展示文字，也就是用户实际点选的内容。",
                     },
                     description: {
                       type: "string",
                       description:
-                        "Explanation of what the option means or what choosing it implies.",
+                        "说明该选项的含义，或选择它意味着什么。",
                     },
                     preview: {
                       type: "string",
                       description:
-                        "Optional host-specific preview content associated with this option. Hosts may surface it alongside the choice and may echo the selected preview back in annotations.",
+                        "可选，与该选项关联、由宿主决定如何使用的预览内容。宿主可能把它展示在选项旁边，并在 annotations 中回传所选预览。",
                     },
                   },
                 },
@@ -145,7 +150,7 @@ export function createAskUserQuestionTool(): PilotDeckToolDefinition<
               multiSelect: {
                 type: "boolean",
                 description:
-                  "Set to true to allow the user to select multiple options for this question instead of just one.",
+                  "设为 true 时，该问题允许用户选择多个选项，而不是只选一个。",
               },
             },
           },
@@ -156,23 +161,23 @@ export function createAskUserQuestionTool(): PilotDeckToolDefinition<
         answers: {
           type: "object",
           description:
-            "Optional pre-supplied answers keyed by question text. Values may be a single string or an array of strings for multi-select questions.",
+            "可选，以问题文本为键预先给出的答案。取值可以是单个字符串；多选题也可以是字符串数组。",
         },
         annotations: {
           type: "object",
           description:
-            "Optional per-question annotation data keyed by question text, such as selected preview text or free-form user notes returned by the host.",
+            "可选，以问题文本为键的逐题标注数据，例如所选预览文本，或宿主回传的用户自由填写内容。",
         },
         metadata: {
           type: "object",
           additionalProperties: false,
           description:
-            "Optional metadata forwarded to the host with the elicitation request. Not displayed to the user.",
+            "可选，随本次询问请求一并转发给宿主的元数据，不会展示给用户。",
           properties: {
             source: {
               type: "string",
               description:
-                "Optional identifier describing why this question was asked, for host-side analytics or routing.",
+                "可选标识，说明本次提问的来由，供宿主侧统计或路由使用。",
             },
           },
         },
@@ -182,35 +187,46 @@ export function createAskUserQuestionTool(): PilotDeckToolDefinition<
     isConcurrencySafe: () => true,
     requiresUserInteraction: () => true,
     validateInput: async (input): Promise<PilotDeckToolValidationResult> => {
-      // E1: 1 ≤ questions ≤ 4. The JSON-Schema validator currently does not
-      // enforce minItems/maxItems, so we double-check here.
+      // E1: 1 ≤ questions ≤ MAX. Schema minItems/maxItems are also enforced here.
       if (!Array.isArray(input.questions) || input.questions.length < 1) {
         return {
           ok: false,
           issues: [
-            { path: "questions", code: "invalid_schema", message: "Provide 1-4 questions" },
+            {
+              path: "questions",
+              code: "invalid_schema",
+              message: `Provide 1-${ASK_USER_QUESTION_MAX_QUESTIONS} questions`,
+            },
           ],
         };
       }
-      if (input.questions.length > 4) {
+      if (input.questions.length > ASK_USER_QUESTION_MAX_QUESTIONS) {
         return {
           ok: false,
           issues: [
-            { path: "questions", code: "invalid_schema", message: "At most 4 questions allowed" },
+            {
+              path: "questions",
+              code: "invalid_schema",
+              message: `At most ${ASK_USER_QUESTION_MAX_QUESTIONS} questions allowed`,
+            },
           ],
         };
       }
 
-      // E2: 2 ≤ options ≤ 4 per question.
+      // E2: MIN ≤ options ≤ MAX per question.
       for (const q of input.questions) {
-        if (!Array.isArray(q.options) || q.options.length < 2 || q.options.length > 4) {
+        if (
+          !Array.isArray(q.options) ||
+          q.options.length < ASK_USER_QUESTION_MIN_OPTIONS ||
+          q.options.length > ASK_USER_QUESTION_MAX_OPTIONS
+        ) {
           return {
             ok: false,
             issues: [
               {
                 path: "questions[].options",
                 code: "invalid_schema",
-                message: `Question "${q.question}" must have 2-4 options`,
+                message: `Question "${q.question}" must have ${ASK_USER_QUESTION_MIN_OPTIONS}-${ASK_USER_QUESTION_MAX_OPTIONS} options`,
               },
             ],
           };

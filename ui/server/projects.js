@@ -21,22 +21,200 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { randomBytes } from 'node:crypto';
 
 import {
     getPilotDeckGateway,
 } from './pilotdeck-bridge.js';
 import { mapLegacySessionPresentation } from '../../src/web/server/legacySessionPresentation.js';
 import {
-    resolvePilotHome,
+    resolveScopedHome,
+    assertPathInUserHome,
     createProjectId,
     createCollisionResistantProjectId,
     sanitizeSessionIdForPath,
+    resolveWorkspaceDirectoryForProjectName,
+    resolveWorkspaceDataRoot,
+    resolveGatewayProjectKey,
+    resolveProjectStorageId,
+    resolveProjectChatDir,
+    resolveTypedProjectDir,
+    projectTypeKeyFromMetaType,
+    projectTypeKeyFromProjectId,
+    PROJECT_TYPE_KEY_SET,
+    GENERAL_WORKSPACE_ID,
+    ensureWorkspaceLayout,
 } from './utils/pilotPaths.js';
+import { deleteSessionArtifacts } from './utils/sessionCleanup.js';
+import { archiveAndDeleteProjectStorage } from './utils/projectDelete.js';
 import { mapCronRunOutcome } from '../../src/cron/protocol/types.js';
 import sessionManager from './sessionManager.js';
 import { applyCustomSessionNames } from './database/db.js';
+import { requireUserScope } from './middleware/userScope.js';
 
-// Optional taskmaster detection. Read once per project; lightweight.
+/** Project type ids (P0). Immutable after create. */
+export const PROJECT_TYPES = Object.freeze({
+    GENERAL_MEDICINE: 'general_medicine',
+    WAR_TRAUMA: 'war_trauma',
+});
+
+export const PROJECT_TYPE_LABELS = Object.freeze({
+    [PROJECT_TYPES.GENERAL_MEDICINE]: '通用医学',
+    [PROJECT_TYPES.WAR_TRAUMA]: '战创伤医学',
+});
+
+const PROJECT_META_FILE = 'meta.json';
+const ALLOWED_PROJECT_TYPES = new Set(Object.values(PROJECT_TYPES));
+const CREATABLE_PROJECT_TYPES = new Set([
+    PROJECT_TYPES.GENERAL_MEDICINE,
+    PROJECT_TYPES.WAR_TRAUMA,
+]);
+
+function isAllowedProjectType(type) {
+    return typeof type === 'string' && ALLOWED_PROJECT_TYPES.has(type);
+}
+
+function projectMetaPath(pilotHome, projectId) {
+    return path.join(resolveTypedProjectDir(projectId, pilotHome), PROJECT_META_FILE);
+}
+
+async function readProjectMeta(pilotHome, projectId) {
+    try {
+        const raw = await fs.readFile(projectMetaPath(pilotHome, projectId), 'utf8');
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return null;
+        return parsed;
+    } catch (error) {
+        if (error?.code === 'ENOENT') return null;
+        throw error;
+    }
+}
+
+async function writeProjectMeta(pilotHome, projectId, meta) {
+    const dir = resolveTypedProjectDir(projectId, pilotHome);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(
+        projectMetaPath(pilotHome, projectId),
+        `${JSON.stringify(meta, null, 2)}\n`,
+        'utf8',
+    );
+}
+
+async function allocateSystemProjectId(pilotHome, typeKey) {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+        const id = `${typeKey}-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
+        try {
+            await fs.access(path.join(pilotHome, 'projects', typeKey, id));
+        } catch (error) {
+            if (error?.code === 'ENOENT') {
+                return id;
+            }
+            throw error;
+        }
+    }
+    throw new Error('Failed to allocate a unique system project id');
+}
+
+/**
+ * Create a system-managed project (name + type). Files live under
+ * workspaces/<typeKey>/<id>/; identity under projects/<typeKey>/<id>/meta.json.
+ * `.cwd` points at the workspace root so existing list/session resolvers
+ * can find the project id via the marker (P1 will further unify keys).
+ */
+async function createSystemProject({ displayName, type }) {
+    const name = typeof displayName === 'string' ? displayName.trim() : '';
+    if (!name) {
+        const err = new Error('displayName is required');
+        err.code = 'invalid_input';
+        throw err;
+    }
+    if (!CREATABLE_PROJECT_TYPES.has(type)) {
+        const err = new Error(`type must be one of: ${[...CREATABLE_PROJECT_TYPES].join(', ')}`);
+        err.code = 'invalid_input';
+        throw err;
+    }
+
+    const typeKey = projectTypeKeyFromMetaType(type);
+    if (!typeKey) {
+        const err = new Error(`unsupported project type: ${type}`);
+        err.code = 'invalid_input';
+        throw err;
+    }
+
+    const pilotHome = resolveScopedHome();
+    const id = await allocateSystemProjectId(pilotHome, typeKey);
+    const projectDir = resolveTypedProjectDir(id, pilotHome);
+    const workspacePath = resolveWorkspaceDataRoot(id, pilotHome);
+    ensureWorkspaceLayout(workspacePath);
+
+    const meta = {
+        id,
+        displayName: name,
+        type,
+        createdAt: new Date().toISOString(),
+        status: 'active',
+        kind: 'system',
+    };
+    await writeProjectMeta(pilotHome, id, meta);
+
+    // Marker so listWebProjects / findStoredProjectId can resolve this id.
+    await fs.writeFile(path.join(projectDir, '.cwd'), path.relative(pilotHome, workspacePath), 'utf8');
+    await fs.mkdir(path.join(projectDir, 'chats'), { recursive: true });
+
+    rememberProjectDirectory(id, workspacePath);
+
+    return {
+        name: id,
+        displayName: name,
+        fullPath: workspacePath,
+        path: workspacePath,
+        projectType: type,
+        type,
+        status: meta.status,
+        kind: 'system',
+        createdAt: meta.createdAt,
+    };
+}
+
+async function* iterateProjectDirs(pilotHome) {
+    const projectsRoot = path.join(pilotHome, 'projects');
+    let entries = [];
+    try {
+        entries = await fs.readdir(projectsRoot, { withFileTypes: true });
+    } catch (error) {
+        if (error?.code === 'ENOENT') return;
+        throw error;
+    }
+    for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (PROJECT_TYPE_KEY_SET.has(entry.name)) {
+            const typeDir = path.join(projectsRoot, entry.name);
+            let nested = [];
+            try {
+                nested = await fs.readdir(typeDir, { withFileTypes: true });
+            } catch {
+                continue;
+            }
+            for (const child of nested) {
+                if (!child.isDirectory()) continue;
+                yield { projectId: child.name, projectDir: path.join(typeDir, child.name) };
+            }
+            continue;
+        }
+        yield { projectId: entry.name, projectDir: path.join(projectsRoot, entry.name) };
+    }
+}
+
+async function listSystemProjectIds(pilotHome) {
+    const ids = [];
+    for await (const { projectId } of iterateProjectDirs(pilotHome)) {
+        const meta = await readProjectMeta(pilotHome, projectId);
+        if (meta?.kind === 'system' || (meta?.type && isAllowedProjectType(meta.type))) {
+            ids.push(projectId);
+        }
+    }
+    return ids;
+}
 async function detectTaskMaster(projectPath) {
     try {
         const taskMasterDir = path.join(projectPath, '.taskmaster');
@@ -108,25 +286,17 @@ function toLegacySession(session, projectName) {
 }
 
 async function readMarkedProjectPaths() {
-    // Scan ~/.pilotdeck/projects/<id>/.cwd to recover real workspace paths
+    // Scan ~/.pilotdeck/projects/[<typeKey>/]<id>/.cwd to recover real workspace paths
     // for projects whose encoded id is ambiguous (see addProjectManually).
     // Returns a Map<id, absoluteCwd>; missing/unreadable markers are skipped.
-    const pilotHome = resolvePilotHome(process.env);
-    const projectsDir = path.join(pilotHome, 'projects');
+    const pilotHome = resolveScopedHome();
     const result = new Map();
-    let entries = [];
-    try {
-        entries = await fs.readdir(projectsDir, { withFileTypes: true });
-    } catch {
-        return result;
-    }
-    for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        const cwdFile = path.join(projectsDir, entry.name, '.cwd');
+    for await (const { projectId, projectDir } of iterateProjectDirs(pilotHome)) {
+        const cwdFile = path.join(projectDir, '.cwd');
         try {
             const raw = await fs.readFile(cwdFile, 'utf8');
-            const cwd = raw.trim();
-            if (cwd) result.set(entry.name, cwd);
+            const cwd = raw.trim() ? path.resolve(pilotHome, raw.trim()) : '';
+            if (cwd) result.set(projectId, cwd);
         } catch {
             // No marker — listProjects can still surface this project via
             // its heuristic decoder when the path is unambiguous.
@@ -157,6 +327,7 @@ async function getProjects(progressCallback = null) {
     // the user-typed verbatim path, so it wins over the heuristic
     // decode). Session counts from the gateway are preserved.
     const byId = new Map();
+    const pilotHome = resolveScopedHome();
     for (const project of webProjects) {
         const fullPath = project.fullPath || project.projectKey;
         if (!fullPath) continue;
@@ -180,15 +351,36 @@ async function getProjects(progressCallback = null) {
             });
         }
     }
+
+    // System projects (meta.json) may already be covered via `.cwd`; backfill any
+    // that listProjects missed so create-system always shows up in the sidebar.
+    for (const systemId of await listSystemProjectIds(pilotHome)) {
+        if (byId.has(systemId)) continue;
+        const workspacePath = resolveWorkspaceDataRoot(systemId, pilotHome);
+        byId.set(systemId, {
+            __projectId: systemId,
+            fullPath: workspacePath,
+            projectKey: workspacePath,
+            sessionCount: 0,
+        });
+    }
+
     const dedupedProjects = [...byId.values()];
     const total = dedupedProjects.length;
 
     const result = [];
     for (let index = 0; index < dedupedProjects.length; index += 1) {
         const project = dedupedProjects[index];
-        const fullPath = project.fullPath || project.projectKey;
-        const name = project.__projectId || createProjectId(fullPath);
-        rememberProjectDirectory(name, fullPath);
+        const gatewayKey = project.fullPath || project.projectKey;
+        const name = project.__projectId || createProjectId(gatewayKey);
+        const workspacePath = resolveWorkspaceDirectoryForProjectName(name, pilotHome);
+        ensureWorkspaceLayout(workspacePath);
+        rememberProjectDirectory(name, workspacePath);
+
+        const meta = await readProjectMeta(pilotHome, name);
+        const displayName = (meta?.displayName && String(meta.displayName).trim())
+            || projectDisplayName(gatewayKey);
+        const projectType = meta?.type && isAllowedProjectType(meta.type) ? meta.type : undefined;
 
         if (progressCallback) {
             progressCallback({
@@ -200,22 +392,26 @@ async function getProjects(progressCallback = null) {
         }
 
         const sessionsResult = await gateway
-            .listSessions({ projectKey: fullPath, limit: 5 })
+            .listSessions({ projectKey: name, limit: 5 })
             .catch(() => ({ sessions: [] }));
         const sessions = (sessionsResult.sessions || []).map((session) =>
             toLegacySession(session, name),
         );
-        applyCustomSessionNames(sessions, 'claude');
+        applyCustomSessionNames(requireUserScope().userId, sessions, 'claude');
 
-        const taskmaster = await detectTaskMaster(fullPath).catch(() => ({
+        const taskmaster = await detectTaskMaster(workspacePath).catch(() => ({
             hasTaskmaster: false,
         }));
 
         result.push({
             name,
-            displayName: projectDisplayName(fullPath),
-            fullPath,
-            path: fullPath,
+            displayName,
+            fullPath: workspacePath,
+            path: workspacePath,
+            ...(projectType ? { projectType, type: projectType } : {}),
+            ...(meta?.status ? { status: meta.status } : {}),
+            ...(meta?.kind ? { kind: meta.kind } : {}),
+            ...(meta?.createdAt ? { createdAt: meta.createdAt } : {}),
             lastActivity: project.lastActivity,
             sessions,
             sessionMeta: {
@@ -230,66 +426,17 @@ async function getProjects(progressCallback = null) {
         progressCallback({ phase: 'done', processed: total, total });
     }
 
-    // Virtual "general" workspace — a non-project chat space rooted at
-    // ~/.pilotdeck. SidebarV2 looks for a project whose `name` or
-    // `displayName` equals 'general' to populate the dedicated "General"
-    // toggle section. PilotDeck's gateway.listProjects() only returns
-    // real project directories, so we synthesize one here. New chats
-    // started from the General section use this cwd; sessions are
-    // sourced from the same backend as any other project.
-    const generalHome = resolvePilotHome(process.env);
-    let generalSessions = [];
-    let generalTotal = 0;
-    let generalLastActivity;
-    try {
-        const generalGateway = await getPilotDeckGateway();
-        // Pair the first page query with describeProject so the General
-        // workspace gets the real session count instead of the page size.
-        // Without this, sessionMeta.hasMore was hardcoded `false` and the
-        // sidebar would silently truncate to the first 5 sessions even
-        // when dozens existed under ~/.pilotdeck/projects/<encoded>/chats/.
-        const [generalSessionsResult, generalSummary] = await Promise.all([
-            generalGateway
-                .listSessions({ projectKey: generalHome, limit: 5 })
-                .catch(() => ({ sessions: [] })),
-            generalGateway
-                .describeProject({ projectKey: generalHome })
-                .catch(() => null),
-        ]);
-        generalSessions = (generalSessionsResult.sessions || []).map((session) =>
-            toLegacySession(session, 'general'),
-        );
-        applyCustomSessionNames(generalSessions, 'claude');
-        generalTotal = typeof generalSummary?.sessionCount === 'number'
-            ? generalSummary.sessionCount
-            : generalSessions.length;
-        generalLastActivity = generalSummary?.lastActivity;
-    } catch {
-        generalSessions = [];
-        generalTotal = 0;
-        generalLastActivity = undefined;
-    }
-    rememberProjectDirectory('general', generalHome);
-    result.unshift({
-        name: 'general',
-        displayName: 'general',
-        fullPath: generalHome,
-        path: generalHome,
-        lastActivity: generalLastActivity,
-        sessions: generalSessions,
-        sessionMeta: {
-            total: generalTotal,
-            hasMore: generalTotal > generalSessions.length,
-        },
-        taskmaster: { hasTaskmaster: false },
-    });
+    // P2: do not inject a virtual "general" chat workspace. Users must create
+    // a typed system project before chatting. Migrated history lives as the
+    // normal project `general_med-legacy-general` when present on disk.
 
     return result;
 }
 
 async function getSessions(projectName, limit = 5, offset = 0) {
     const gateway = await getPilotDeckGateway();
-    const projectPath = await extractProjectDirectory(projectName);
+    const pilotHome = resolveScopedHome();
+    const gatewayKey = resolveGatewayProjectKey(projectName, pilotHome);
     const cursor = offset > 0 ? String(offset) : undefined;
     // Fan-out the page query and the project summary (for the authoritative
     // total session count) in parallel. Without summary.sessionCount we'd
@@ -301,10 +448,10 @@ async function getSessions(projectName, limit = 5, offset = 0) {
     // pulled in everything that exists.
     const [listResult, summary] = await Promise.all([
         gateway
-            .listSessions({ projectKey: projectPath, limit, cursor })
+            .listSessions({ projectKey: gatewayKey, limit, cursor })
             .catch(() => ({ sessions: [] })),
         gateway
-            .describeProject({ projectKey: projectPath })
+            .describeProject({ projectKey: gatewayKey })
             .catch(() => null),
     ]);
     const sessions = (listResult.sessions || []).map((session) =>
@@ -325,36 +472,19 @@ async function getSessions(projectName, limit = 5, offset = 0) {
 }
 
 /**
- * Resolve a `projectName` (encoded form like `-Users-miwi-PilotDeck`,
- * a basename, or an already-absolute path) to the absolute project root.
- * Falls back to consulting the directory cache populated by
- * `getProjects()` so worktree-aware paths resolve correctly.
+ * Resolve a `projectName` to the workspace data root used as agent cwd.
  */
 async function extractProjectDirectory(projectName) {
-    if (!projectName) {
-        return resolvePilotHome(process.env);
+    const pilotHome = resolveScopedHome();
+    const workspaceDir = resolveWorkspaceDirectoryForProjectName(projectName, pilotHome);
+    ensureWorkspaceLayout(workspaceDir);
+    if (projectName) {
+        rememberProjectDirectory(projectName, workspaceDir);
     }
-    if (path.isAbsolute(projectName)) {
-        rememberProjectDirectory(projectName, projectName);
-        return projectName;
+    if (projectName === 'general' || projectName === GENERAL_WORKSPACE_ID) {
+        rememberProjectDirectory('general', workspaceDir);
     }
-    const cached = directoryCache.get(projectName);
-    if (cached) {
-        return cached;
-    }
-    const markedProjects = await readMarkedProjectPaths();
-    const marked = markedProjects.get(projectName);
-    if (marked) {
-        rememberProjectDirectory(projectName, marked);
-        return marked;
-    }
-    if (projectName.startsWith('-')) {
-        // Legacy dash-encoding heuristic: `-Users-foo-foo` → `/Users/foo/foo`.
-        const decoded = '/' + projectName.replace(/^-+/, '').replace(/-/g, '/');
-        rememberProjectDirectory(projectName, decoded);
-        return decoded;
-    }
-    return resolvePilotHome(process.env);
+    return workspaceDir;
 }
 
 async function addProjectManually(projectPath, _displayName = null) {
@@ -362,12 +492,12 @@ async function addProjectManually(projectPath, _displayName = null) {
         throw new Error('projectPath is required');
     }
     const absolute = path.resolve(projectPath);
-    const pilotHome = resolvePilotHome(process.env);
+    const pilotHome = resolveScopedHome();
     const name = await allocateProjectIdForPath(absolute, pilotHome);
     rememberProjectDirectory(name, absolute);
 
     // Materialize a PilotDeck project directory and drop a `.cwd` marker
-    // recording the real absolute path. We need the marker because
+    // recording a path relative to PILOT_HOME. We need the marker because
     // createProjectId() encodes both '/' and literal '-' to '-', so the
     // PilotDeck's listWebProjects() heuristically tries each `-` as a
     // path separator and drops the project when no decode matches an
@@ -377,7 +507,7 @@ async function addProjectManually(projectPath, _displayName = null) {
     const projectDir = path.join(pilotHome, 'projects', name);
     try {
         await fs.mkdir(projectDir, { recursive: true });
-        await fs.writeFile(path.join(projectDir, '.cwd'), absolute, 'utf8');
+        await fs.writeFile(path.join(projectDir, '.cwd'), path.relative(pilotHome, absolute) || '.', 'utf8');
     } catch (error) {
         console.warn(
             `[projects] failed to materialize PilotDeck project dir for ${name}:`,
@@ -385,11 +515,15 @@ async function addProjectManually(projectPath, _displayName = null) {
         );
     }
 
+    const workspacePath = resolveWorkspaceDataRoot(name, pilotHome);
+    ensureWorkspaceLayout(workspacePath);
+    rememberProjectDirectory(name, workspacePath);
+
     return {
         name,
         displayName: projectDisplayName(absolute),
-        fullPath: absolute,
-        path: absolute,
+        fullPath: workspacePath,
+        path: workspacePath,
     };
 }
 
@@ -408,7 +542,7 @@ async function allocateProjectIdForPath(absolutePath, pilotHome) {
     const markerPath = path.join(legacyDir, '.cwd');
     try {
         const marker = (await fs.readFile(markerPath, 'utf8')).trim();
-        if (marker && path.resolve(marker) === absolutePath) {
+        if (marker && path.resolve(pilotHome, marker) === absolutePath) {
             return legacyId;
         }
     } catch (error) {
@@ -420,56 +554,79 @@ async function allocateProjectIdForPath(absolutePath, pilotHome) {
     return createCollisionResistantProjectId(absolutePath);
 }
 
-async function renameProject(_projectName, _displayName) {
-    // PilotDeck does not yet expose a rename API. Display names are derived
-    // from the project's basename today, so this is a no-op.
+async function renameProject(projectName, displayName) {
+    const name = typeof displayName === 'string' ? displayName.trim() : '';
+    if (!name) {
+        const error = new Error('displayName is required');
+        error.code = 'invalid_input';
+        throw error;
+    }
+    if (typeof projectName !== 'string' || !projectName || projectName === '.' || projectName === '..'
+        || projectName.includes('/') || projectName.includes('\\')) {
+        const error = new Error('Invalid project name');
+        error.code = 'invalid_input';
+        throw error;
+    }
+    const pilotHome = resolveScopedHome();
+    const metaFile = projectMetaPath(pilotHome, projectName);
+    assertPathInUserHome(metaFile, pilotHome, true);
+    let meta = await readProjectMeta(pilotHome, projectName);
+    if (!meta) {
+        const typeKey = projectTypeKeyFromProjectId(projectName);
+        const projectDir = resolveTypedProjectDir(projectName, pilotHome);
+        const stat = await fs.stat(projectDir).catch((error) => {
+            if (error?.code === 'ENOENT') return null;
+            throw error;
+        });
+        if (stat?.isDirectory() && typeKey) {
+            meta = {
+                id: projectName,
+                type: typeKey === 'trauma_med' ? PROJECT_TYPES.WAR_TRAUMA : PROJECT_TYPES.GENERAL_MEDICINE,
+                kind: 'system',
+            };
+        }
+    }
+    if (!meta || (meta.id && meta.id !== projectName) || !isAllowedProjectType(meta.type)) {
+        const error = new Error('Project not found');
+        error.code = 'project_not_found';
+        throw error;
+    }
+    const temporary = `${metaFile}.${randomBytes(6).toString('hex')}.tmp`;
+    try {
+        await fs.writeFile(temporary, `${JSON.stringify({ ...meta, displayName: name }, null, 2)}\n`,
+            { flag: 'wx', mode: 0o600 });
+        await fs.rename(temporary, metaFile);
+    } finally {
+        await fs.rm(temporary, { force: true });
+    }
     return { success: true };
 }
 
 async function deleteSession(projectName, sessionId, _options = {}) {
-    const fullPath = await extractProjectDirectory(projectName);
-    const pilotHome = resolvePilotHome(process.env);
-    const projectId = await resolveProjectIdForPathOrName(projectName, fullPath);
-    // Try the sanitized filename first (current storage layout), then the
-    // raw form (legacy files written before the sanitize fix).
-    const safeId = sanitizeSessionIdForPath(sessionId);
-    const filenames = safeId === sessionId ? [sessionId] : [safeId, sessionId];
-    let removed = false;
-    for (const name of filenames) {
-        const transcript = path.join(
-            pilotHome,
-            'projects',
-            projectId,
-            'chats',
-            `${name}.jsonl`,
-        );
-        try {
-            await fs.unlink(transcript);
-            removed = true;
-        } catch (error) {
-            if (error?.code !== 'ENOENT') {
-                throw error;
-            }
-        }
-    }
-    return removed;
+    const pilotHome = resolveScopedHome();
+    const result = await deleteSessionArtifacts(projectName, sessionId, { pilotHome });
+    return result;
 }
 
+/**
+ * P7: delete project chats + project memory; archive `$WS` under archives/projects.
+ *
+ * @returns {{ success: boolean, projectId: string, archivePath: string | null }}
+ */
 async function deleteProject(projectName, force = false) {
-    const fullPath = await extractProjectDirectory(projectName);
-    const pilotHome = resolvePilotHome(process.env);
-    const projectId = await resolveProjectIdForPathOrName(projectName, fullPath);
-    const projectDir = path.join(pilotHome, 'projects', projectId);
-    try {
-        await fs.rm(projectDir, { recursive: true, force });
-        directoryCache.delete(projectName);
-        return true;
-    } catch (error) {
-        if (error?.code === 'ENOENT') {
-            return false;
-        }
-        throw error;
-    }
+    const pilotHome = resolveScopedHome();
+    const projectId = resolveProjectStorageId(
+        resolveGatewayProjectKey(projectName, pilotHome),
+        pilotHome,
+    );
+    const result = await archiveAndDeleteProjectStorage({
+        pilotHome,
+        projectId,
+        force,
+    });
+    directoryCache.delete(projectName);
+    directoryCache.delete(projectId);
+    return result;
 }
 
 async function resolveProjectIdForPathOrName(projectName, fullPath) {
@@ -489,8 +646,9 @@ async function resolveProjectIdForPathOrName(projectName, fullPath) {
 async function getProjectCronJobsOverview(projectName) {
     try {
         const gateway = await getPilotDeckGateway();
+        const pilotHome = resolveScopedHome();
         const projectKey = projectName
-            ? await extractProjectDirectory(projectName)
+            ? resolveGatewayProjectKey(projectName, pilotHome)
             : undefined;
         const result = await gateway.cronList({
             projectKey,
@@ -591,6 +749,7 @@ export {
     deleteSession,
     deleteProject,
     addProjectManually,
+    createSystemProject,
     extractProjectDirectory,
     clearProjectDirectoryCache,
     searchConversations,

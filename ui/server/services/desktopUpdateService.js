@@ -1,10 +1,10 @@
 import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync } from 'fs';
 import { rm } from 'fs/promises';
-import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { resolvePilotRoot } from '../utils/pilotPaths.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -579,7 +579,7 @@ function shouldIncludePrerelease(env) {
 function getUpdateCacheRoot(env) {
   return env.PILOTDECK_UPDATE_CACHE_DIR
     ? path.resolve(env.PILOTDECK_UPDATE_CACHE_DIR)
-    : path.join(env.PILOT_HOME || path.join(os.homedir(), '.pilotdeck'), 'updates');
+    : path.join(resolvePilotRoot(env), 'updates');
 }
 
 function getUpdateCacheDir(env, releaseName) {

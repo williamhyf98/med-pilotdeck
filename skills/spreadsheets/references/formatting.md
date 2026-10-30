@@ -1,61 +1,61 @@
-# Formatting
+# 格式设置
 
-## Preserve an existing workbook
+## 保留既有工作簿
 
-- Render the source workbook before editing it.
-- Inspect the target range's fills, fonts, borders, alignment, merged cells, number formats, widths, and row heights.
-- Change values without replacing existing styles.
-- Extend surrounding formulas, table ranges, validations, and conditional formatting when adding rows or columns.
-- Make the smallest plausible visual change. Do not apply sheet-wide autofit or restyling without a redesign request.
+- 编辑前渲染源工作簿。
+- 检查目标范围的填充、字体、边框、对齐、合并单元格、数字格式、列宽和行高。
+- 更改值而不替换既有样式。
+- 添加行或列时，扩展周围的公式、表格范围、验证和条件格式。
+- 做最小且合理的视觉更改。没有重新设计请求时，不要应用整表自动列宽或重新样式化。
 
-## Baseline for a new workbook
+## 新建工作簿的基线
 
-- Use a clear title, section hierarchy, and visible summary area.
-- Distinguish headers from input and output cells.
-- Use restrained fills and borders; do not box every populated cell.
-- Use whitespace and slightly taller section rows to separate logical blocks.
-- Hide gridlines only when explicit styling provides sufficient structure.
-- Freeze header rows or identifier columns for large sheets.
-- Apply formatting only to populated or intentionally reserved ranges.
+- 使用清晰的标题、章节层级和可见的摘要区域。
+- 区分表头与输入、输出单元格。
+- 使用克制的填充和边框；不要给每一个已填充单元格加框。
+- 用留白和略高的章节行分隔逻辑块。
+- 仅当显式样式已提供足够结构时才隐藏网格线。
+- 对大型工作表冻结表头行或标识列。
+- 仅对已填充或有意预留的范围应用格式。
 
-## Typography and alignment
+## 排版与对齐
 
-- For Chinese, bilingual, or unspecified-language workbooks, follow [chinese-and-cross-platform.md](chinese-and-cross-platform.md).
-- Use one neutral body-font profile. Do not promise a universal CJK font; XLSX does not reliably embed fonts.
-- Use bold sparingly to establish reading order.
-- Left-align descriptions, right-align numbers, and apply explicit date/number formats.
-- Widen columns before creating deeply wrapped rows.
-- Keep row heights consistent within a section.
-- Use CJK-aware `helpers.autoFitColumns`; use `helpers.autoFitRows` after widths are final for wrapped text.
+- 对于中文、双语或未指定语言的工作簿，遵循 [chinese-and-cross-platform.md](chinese-and-cross-platform.md)。
+- 使用一种中性的正文字体配置。不要承诺通用 CJK 字体；XLSX 不能可靠地嵌入字体。
+- 谨慎使用粗体以建立阅读顺序。
+- 描述左对齐，数字右对齐，并应用显式的日期/数字格式。
+- 先加宽列，再创建深度换行的行。
+- 在同一章节内保持行高一致。
+- 使用感知 CJK 的 `helpers.autoFitColumns`；在列宽确定后，对换行文本使用 `helpers.autoFitRows`。
 
-## Number formats
+## 数字格式
 
-Use invariant Excel format codes:
+使用不变的 Excel 格式代码：
 
-- Count: `#,##0`
-- Decimal: `#,##0.0`
-- Percentage: `0.0%`
-- Currency: `"$"#,##0` or a currency requested by the user
-- Chinese yuan: `¥#,##0` or `¥#,##0.00`
-- Date: `yyyy-mm-dd`
-- Month: `mmm yyyy`
+- 计数：`#,##0`
+- 小数：`#,##0.0`
+- 百分比：`0.0%`
+- 货币：`"$"#,##0` 或用户要求的货币
+- 人民币：`¥#,##0` 或 `¥#,##0.00`
+- 日期：`yyyy-mm-dd`
+- 月份：`mmm yyyy`
 
-Use enough precision to support the decision, not every available decimal place.
+使用足以支持决策的精度，而不是所有可用小数位。
 
-## Tables and summaries
+## 表格与摘要
 
-- Use a native table when filters, banding, or structured growth improve usability.
-- Keep table names unique and stable.
-- Show important totals near the top or in a summary block, driven by formulas.
-- Use conditional formatting for status, thresholds, variances, and exceptions.
-- Do not merge cells inside calculation tables. Reserve merging for titles and section labels.
+- 当筛选、条纹或结构化增长能改善可用性时，使用原生表格。
+- 保持表格名称唯一且稳定。
+- 在顶部附近或摘要块中显示由公式驱动的重要合计。
+- 对状态、阈值、差异和例外使用条件格式。
+- 不要在计算表格内合并单元格。将合并留给标题和章节标签。
 
-## Visual QA
+## 视觉质量检查
 
-At full-size render, verify:
+在全尺寸渲染中核验：
 
-- Headers and important numbers are not clipped.
-- Wrapped text is readable and row heights are sufficient.
-- Units, currency, dates, and percentages display correctly.
-- Sections do not overlap and pages do not contain accidental blank areas caused by a bloated used range.
-- Print scaling does not make the workbook unreadably small.
+- 表头和重要数字未被裁切。
+- 换行文本可读，行高足够。
+- 单位、货币、日期和百分比显示正确。
+- 区块不重叠，页面不因膨胀的已用范围而包含意外空白区域。
+- 打印缩放不会使工作簿小到无法阅读。

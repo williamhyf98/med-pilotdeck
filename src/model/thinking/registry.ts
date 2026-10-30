@@ -78,9 +78,6 @@ export function resolveThinkingPlan(
     };
   }
 
-  if (provider.protocol === "openai-responses" || isOpenAIProvider(providerId, providerUrl)) {
-    return openAIPlan(mode, modelId, isOpenAIProvider(providerId, providerUrl));
-  }
   if (provider.protocol === "anthropic" || /anthropic|claude/.test(providerId + providerUrl + modelId)) {
     return anthropicPlan(mode, modelId, budgetTokens);
   }
@@ -101,6 +98,12 @@ export function resolveThinkingPlan(
   }
   if (/minimax/.test(providerId + providerUrl + modelId)) {
     return minimaxPlan(mode);
+  }
+  // Model-family adapters must run before the generic OpenAI-compatible
+  // provider branch. Private gateways often contain "openai" in their URL
+  // while serving Qwen/DeepSeek models with enable_thinking semantics.
+  if (provider.protocol === "openai-responses" || isOpenAIProvider(providerId, providerUrl)) {
+    return openAIPlan(mode, modelId, isOpenAIProvider(providerId, providerUrl));
   }
 
   if (explicitMode) {
@@ -225,7 +228,16 @@ function qwenPlan(mode: ThinkingMode, modelId: string, providerUrl: string, budg
   }
   const thinkingOnly = /thinking|qwq|qvq/.test(modelId) && !/hybrid/.test(modelId);
   if (mode === "off" && thinkingOnly) return { mode, enabled: false };
-  if (mode === "off") return { mode, enabled: false, bodyPatch: { enable_thinking: false } };
+  if (mode === "off") {
+    return {
+      mode,
+      enabled: false,
+      bodyPatch: {
+        enable_thinking: false,
+        chat_template_kwargs: { enable_thinking: false },
+      },
+    };
+  }
   return {
     mode,
     enabled: true,
@@ -234,6 +246,7 @@ function qwenPlan(mode: ThinkingMode, modelId: string, providerUrl: string, budg
     bodyPatch: {
       enable_thinking: true,
       thinking_budget: budgetTokens ?? QWEN_BUDGETS[mode] ?? 8192,
+      chat_template_kwargs: { enable_thinking: true },
     },
   };
 }

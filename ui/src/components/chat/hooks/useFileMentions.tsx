@@ -1,14 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, KeyboardEvent, RefObject, SetStateAction } from 'react';
 import { api } from '../../../utils/api';
 import { isImeEnterEvent } from '../../../utils/ime';
 import {
   ADD_WORKSPACE_FILE_MENTION_EVENT,
-  hasWorkspaceFileMention,
-  insertWorkspaceFileMention,
   isWorkspaceFileMentionRequest,
 } from '../../../utils/workspaceFileMention';
-import { escapeRegExp } from '../utils/chatFormatting';
 import type { Project } from '../../../types/app';
 
 interface ProjectFileNode {
@@ -20,8 +17,19 @@ interface ProjectFileNode {
 
 export interface MentionableFile {
   name: string;
+  /** Project-relative path (built from tree names). Unique key in the dropdown. */
   path: string;
-  relativePath?: string;
+  /** Server-side absolute path from the tree node, when known. */
+  absolutePath?: string;
+}
+
+/** A file referenced via @ — rendered as an attachment-style chip, not input text. */
+export interface MentionedFile {
+  name: string;
+  /** Project-relative path — identity for dedupe/removal. */
+  relativePath: string;
+  /** Absolute path on the server when known; preferred in the agent-visible note. */
+  absolutePath?: string;
 }
 
 interface UseFileMentionsOptions {
@@ -46,7 +54,7 @@ const flattenFileTree = (files: ProjectFileNode[], basePath = ''): MentionableFi
       flattened.push({
         name: file.name,
         path: fullPath,
-        relativePath: file.path,
+        absolutePath: file.path,
       });
     }
   });
@@ -62,17 +70,15 @@ export function useFileMentions({
   textareaRef,
 }: UseFileMentionsOptions) {
   const [fileList, setFileList] = useState<MentionableFile[]>([]);
-  const [fileMentions, setFileMentions] = useState<string[]>([]);
+  const [mentionedFiles, setMentionedFiles] = useState<MentionedFile[]>([]);
   const [filteredFiles, setFilteredFiles] = useState<MentionableFile[]>([]);
   const [showFileDropdown, setShowFileDropdown] = useState(false);
   const [selectedFileIndex, setSelectedFileIndex] = useState(-1);
   const [cursorPosition, setCursorPositionState] = useState(0);
   const [atSymbolPosition, setAtSymbolPosition] = useState(-1);
-  const hasCursorPositionRef = useRef(false);
   const wasDropdownOpenRef = useRef(false);
 
   const setCursorPosition = useCallback((position: number) => {
-    hasCursorPositionRef.current = true;
     setCursorPositionState(position);
   }, []);
 
@@ -118,27 +124,25 @@ export function useFileMentions({
   // Initial fetch + reset on project change.
   useEffect(() => {
     setFileList([]);
-    setFileMentions([]);
+    setMentionedFiles([]);
     setFilteredFiles([]);
     setCursorPositionState(0);
-    hasCursorPositionRef.current = false;
     fetchProjectFiles();
     return () => {
       inFlightFetchRef.current?.abort();
     };
   }, [fetchProjectFiles]);
 
-  // Cursor and mention UI state belong to a single draft. A conversation
+  // Mention chips and dropdown state belong to a single draft. A conversation
   // switch can keep the same project mounted, so project identity alone is
-  // not enough to prevent insertion at a previous conversation's cursor.
+  // not enough to prevent chips leaking into another conversation's draft.
   useEffect(() => {
-    setFileMentions([]);
+    setMentionedFiles([]);
     setFilteredFiles([]);
     setShowFileDropdown(false);
     setSelectedFileIndex(-1);
     setCursorPositionState(0);
     setAtSymbolPosition(-1);
-    hasCursorPositionRef.current = false;
     wasDropdownOpenRef.current = false;
   }, [mentionScopeKey]);
 
@@ -176,76 +180,67 @@ export function useFileMentions({
     setShowFileDropdown(true);
     setSelectedFileIndex(-1);
 
+    // Match on the file name only — paths are intentionally not exposed in
+    // the dropdown, so they must not influence what appears to match either.
     const matchingFiles = fileList
-      .filter(
-        (file) =>
-          file.name.toLowerCase().includes(textAfterAt.toLowerCase()) ||
-          file.path.toLowerCase().includes(textAfterAt.toLowerCase()),
-      )
+      .filter((file) => file.name.toLowerCase().includes(textAfterAt.toLowerCase()))
       .slice(0, 10);
 
     setFilteredFiles(matchingFiles);
   }, [input, cursorPosition, fileList]);
 
-  const activeFileMentions = useMemo(() => {
-    if (!input || fileMentions.length === 0) {
-      return [];
-    }
-    return fileMentions.filter((path) => hasWorkspaceFileMention(input, path));
-  }, [fileMentions, input]);
-
-  const sortedFileMentions = useMemo(() => {
-    if (activeFileMentions.length === 0) {
-      return [];
-    }
-    const uniqueMentions = Array.from(new Set(activeFileMentions));
-    return uniqueMentions.sort((mentionA, mentionB) => mentionB.length - mentionA.length);
-  }, [activeFileMentions]);
-
-  const fileMentionRegex = useMemo(() => {
-    if (sortedFileMentions.length === 0) {
-      return null;
-    }
-    const pattern = sortedFileMentions.map(escapeRegExp).join('|');
-    return new RegExp(`((?<!\\S)(?:${pattern})(?=$|\\s))`, 'g');
-  }, [sortedFileMentions]);
-
-  const fileMentionSet = useMemo(() => new Set(sortedFileMentions), [sortedFileMentions]);
-
-  const focusMention = useCallback(
-    (position: number) => {
-      if (textareaRef.current && !textareaRef.current.matches(':focus')) {
-        textareaRef.current.focus();
-      }
-
+  const focusTextarea = useCallback(
+    (position?: number) => {
       requestAnimationFrame(() => {
-        if (!textareaRef.current) return;
-        textareaRef.current.setSelectionRange(position, position);
-        if (!textareaRef.current.matches(':focus')) {
-          textareaRef.current.focus();
+        const node = textareaRef.current;
+        if (!node) return;
+        if (!node.matches(':focus')) {
+          node.focus();
+        }
+        if (typeof position === 'number') {
+          try {
+            node.setSelectionRange(position, position);
+          } catch {
+            // ignore: textarea may have been unmounted between frames
+          }
         }
       });
     },
     [textareaRef],
   );
 
+  const addMentionedFile = useCallback((file: MentionedFile) => {
+    setMentionedFiles((previous) =>
+      previous.some((mention) => mention.relativePath === file.relativePath)
+        ? previous
+        : [...previous, file],
+    );
+  }, []);
+
+  const removeMentionedFile = useCallback((relativePath: string) => {
+    setMentionedFiles((previous) =>
+      previous.filter((mention) => mention.relativePath !== relativePath),
+    );
+  }, []);
+
+  const clearMentionedFiles = useCallback(() => {
+    setMentionedFiles([]);
+  }, []);
+
   const addExternalFileMention = useCallback(
     (relativePath: string) => {
-      const insertionPosition = hasCursorPositionRef.current ? cursorPosition : input.length;
-      const result = insertWorkspaceFileMention(input, relativePath, insertionPosition);
-
-      if (!result.alreadyPresent) {
-        setInput(result.input);
-      }
-      setCursorPosition(result.cursorPosition);
-      setFileMentions((previousMentions) =>
-        previousMentions.includes(relativePath)
-          ? previousMentions
-          : [...previousMentions, relativePath],
-      );
-      focusMention(result.cursorPosition);
+      const name = relativePath.split('/').pop() || relativePath;
+      const projectRoot = selectedProject?.fullPath || selectedProject?.path || '';
+      addMentionedFile({
+        name,
+        relativePath,
+        absolutePath: projectRoot
+          ? `${projectRoot.replace(/[\\/]+$/, '')}/${relativePath}`
+          : undefined,
+      });
+      focusTextarea();
     },
-    [cursorPosition, focusMention, input, setCursorPosition, setInput],
+    [addMentionedFile, focusTextarea, selectedProject?.fullPath, selectedProject?.path],
   );
 
   useEffect(() => {
@@ -262,104 +257,37 @@ export function useFileMentions({
     };
   }, [addExternalFileMention, selectedProject?.name]);
 
-  const renderInputWithMentions = useCallback(
-    (text: string) => {
-      if (!text) {
-        return '';
-      }
-      if (!fileMentionRegex) {
-        return text;
-      }
-
-      const parts = text.split(fileMentionRegex);
-      return parts.map((part, index) =>
-        fileMentionSet.has(part) ? (
-          <span
-            key={`mention-${index}`}
-            className="-ml-0.5 rounded-md bg-blue-200/70 box-decoration-clone px-0.5 text-transparent dark:bg-blue-300/40"
-          >
-            {part}
-          </span>
-        ) : (
-          <span key={`text-${index}`}>{part}</span>
-        ),
-      );
-    },
-    [fileMentionRegex, fileMentionSet],
-  );
-
   const selectFile = useCallback(
     (file: MentionableFile) => {
-      const textBeforeAt = input.slice(0, atSymbolPosition);
-      const textAfterAtQuery = input.slice(atSymbolPosition);
-      const spaceIndex = textAfterAtQuery.indexOf(' ');
-      const textAfterQuery = spaceIndex !== -1 ? textAfterAtQuery.slice(spaceIndex) : '';
+      // The picked file becomes a chip; the `@query` text that summoned the
+      // dropdown is removed from the input instead of being replaced by a path.
+      if (atSymbolPosition >= 0) {
+        const textBeforeAt = input.slice(0, atSymbolPosition);
+        const textAfterAtQuery = input.slice(atSymbolPosition);
+        const spaceIndex = textAfterAtQuery.indexOf(' ');
+        const textAfterQuery = spaceIndex !== -1 ? textAfterAtQuery.slice(spaceIndex + 1) : '';
 
-      const newInput = `${textBeforeAt}${file.path} ${textAfterQuery}`;
-      const newCursorPosition = textBeforeAt.length + file.path.length + 1;
+        setInput(`${textBeforeAt}${textAfterQuery}`);
+        setCursorPosition(textBeforeAt.length);
+        focusTextarea(textBeforeAt.length);
+      } else {
+        focusTextarea();
+      }
 
-      setInput(newInput);
-      setCursorPosition(newCursorPosition);
-      setFileMentions((previousMentions) =>
-        previousMentions.includes(file.path) ? previousMentions : [...previousMentions, file.path],
-      );
+      addMentionedFile({
+        name: file.name,
+        relativePath: file.path,
+        absolutePath: file.absolutePath,
+      });
 
       setShowFileDropdown(false);
       setAtSymbolPosition(-1);
-      focusMention(newCursorPosition);
     },
-    [input, atSymbolPosition, focusMention, setCursorPosition, setInput],
+    [addMentionedFile, atSymbolPosition, focusTextarea, input, setCursorPosition, setInput],
   );
 
   const handleFileMentionsKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
-      if ((event.key === 'Backspace' || event.key === 'Delete') && sortedFileMentions.length > 0) {
-        const textarea = textareaRef.current;
-        const selectionStart = textarea?.selectionStart ?? cursorPosition;
-        const selectionEnd = textarea?.selectionEnd ?? selectionStart;
-        if (selectionStart === selectionEnd) {
-          const mentionRanges = sortedFileMentions.flatMap((mention) => {
-            const ranges: Array<{ mention: string; start: number; end: number }> = [];
-            let searchFrom = 0;
-            while (searchFrom <= input.length - mention.length) {
-              const start = input.indexOf(mention, searchFrom);
-              if (start === -1) break;
-              const end = start + mention.length;
-              const hasLeadingBoundary = start === 0 || /\s/.test(input[start - 1]);
-              const hasTrailingBoundary = end === input.length || /\s/.test(input[end]);
-              if (hasLeadingBoundary && hasTrailingBoundary) ranges.push({ mention, start, end });
-              searchFrom = Math.max(end, start + 1);
-            }
-            return ranges;
-          });
-          const range = mentionRanges.find(({ start, end }) => (
-            event.key === 'Backspace'
-              ? selectionStart === end || (selectionStart === end + 1 && /\s/.test(input[end] || ''))
-              : selectionStart === start || (selectionStart + 1 === start && /\s/.test(input[selectionStart] || ''))
-          ));
-
-          if (range) {
-            event.preventDefault();
-            let removeStart = range.start;
-            let removeEnd = range.end;
-            if (/\s/.test(input[removeEnd] || '')) {
-              removeEnd += 1;
-            } else if (removeStart > 0 && /\s/.test(input[removeStart - 1] || '')) {
-              removeStart -= 1;
-            }
-            const nextInput = `${input.slice(0, removeStart)}${input.slice(removeEnd)}`;
-            setInput(nextInput);
-            setCursorPosition(removeStart);
-            setFileMentions((mentions) => mentions.filter((mention) => (
-              mention !== range.mention || hasWorkspaceFileMention(nextInput, mention)
-            )));
-            focusMention(removeStart);
-            setShowFileDropdown(false);
-            return true;
-          }
-        }
-      }
-
       if (!showFileDropdown || filteredFiles.length === 0) {
         return false;
       }
@@ -401,28 +329,18 @@ export function useFileMentions({
 
       return false;
     },
-    [
-      cursorPosition,
-      filteredFiles,
-      focusMention,
-      input,
-      selectFile,
-      selectedFileIndex,
-      setCursorPosition,
-      setInput,
-      showFileDropdown,
-      sortedFileMentions,
-      textareaRef,
-    ],
+    [filteredFiles, selectFile, selectedFileIndex, showFileDropdown],
   );
 
   return {
     showFileDropdown,
     filteredFiles,
     selectedFileIndex,
-    renderInputWithMentions,
     selectFile,
     setCursorPosition,
     handleFileMentionsKeyDown,
+    mentionedFiles,
+    removeMentionedFile,
+    clearMentionedFiles,
   };
 }

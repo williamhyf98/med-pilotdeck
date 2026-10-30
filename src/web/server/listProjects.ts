@@ -10,12 +10,43 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { resolve, basename } from "node:path";
 import { listProjectSessions } from "../../session/index.js";
-import { createProjectId } from "../../pilot/index.js";
+import {
+  createProjectId,
+  resolveGatewayProjectKey,
+  PROJECT_TYPE_KEY_SET,
+} from "../../pilot/index.js";
 import type { WebListProjectsResult, WebProjectSummary } from "../client/protocol.js";
 
 export type ListWebProjectsOptions = {
   pilotHome: string;
 };
+
+type ProjectDirEntry = { id: string; dir: string };
+
+async function listProjectDirEntries(projectsDir: string): Promise<ProjectDirEntry[]> {
+  const results: ProjectDirEntry[] = [];
+  try {
+    for (const entry of await readdir(projectsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (PROJECT_TYPE_KEY_SET.has(entry.name)) {
+        const typeDir = resolve(projectsDir, entry.name);
+        try {
+          for (const child of await readdir(typeDir, { withFileTypes: true })) {
+            if (!child.isDirectory()) continue;
+            results.push({ id: child.name, dir: resolve(typeDir, child.name) });
+          }
+        } catch {
+          continue;
+        }
+        continue;
+      }
+      results.push({ id: entry.name, dir: resolve(projectsDir, entry.name) });
+    }
+  } catch {
+    return results;
+  }
+  return results;
+}
 
 export async function listWebProjects(
   options: ListWebProjectsOptions,
@@ -23,15 +54,9 @@ export async function listWebProjects(
   const projects: WebProjectSummary[] = [];
 
   const projectsDir = resolve(options.pilotHome, "projects");
-  let projectIds: string[] = [];
-  try {
-    projectIds = await readdir(projectsDir);
-  } catch {
-    projectIds = [];
-  }
+  const projectEntries = await listProjectDirEntries(projectsDir);
 
-  for (const id of projectIds) {
-    const dir = resolve(projectsDir, id);
+  for (const { id, dir } of projectEntries) {
     let isDir = false;
     try {
       const s = await stat(dir);
@@ -40,7 +65,7 @@ export async function listWebProjects(
       isDir = false;
     }
     if (!isDir) continue;
-    const fullPath = await resolveProjectPathFromId(projectsDir, id);
+    const fullPath = await resolveProjectPathFromDir(dir, id, options.pilotHome);
     if (!fullPath) {
       // Encoded id no longer maps to an existing absolute path on disk
       // (typical for stale dirs created by older runs that resolve()'d a
@@ -63,7 +88,8 @@ export async function describeWebProject(
   projectKey: string,
   options: ListWebProjectsOptions,
 ): Promise<WebProjectSummary> {
-  return summarizeProject(projectKey, options);
+  const effectiveKey = resolveGatewayProjectKey(projectKey, options.pilotHome);
+  return summarizeProject(effectiveKey, options);
 }
 
 async function summarizeProject(
@@ -91,16 +117,17 @@ async function summarizeProject(
   };
 }
 
-async function resolveProjectPathFromId(projectsDir: string, projectId: string): Promise<string | null> {
-  const markerPath = resolve(projectsDir, projectId, ".cwd");
+async function resolveProjectPathFromDir(projectDir: string, projectId: string, pilotHome: string): Promise<string | null> {
+  const markerPath = resolve(projectDir, ".cwd");
   try {
     const marker = (await readFile(markerPath, "utf8")).trim();
     if (!marker) {
       return null;
     }
-    const markerStat = await stat(marker);
+    const resolvedMarker = resolve(pilotHome, marker);
+    const markerStat = await stat(resolvedMarker);
     if (markerStat.isDirectory()) {
-      return marker;
+      return resolvedMarker;
     }
   } catch {
     // No marker (or stale marker) — fall back to legacy id decoding.

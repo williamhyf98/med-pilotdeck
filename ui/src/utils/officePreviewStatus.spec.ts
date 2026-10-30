@@ -1,5 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setStorageUserRole } from './safeStorage';
+
+const { statusMock, configMock } = vi.hoisted(() => ({
+  statusMock: vi.fn(),
+  configMock: vi.fn(),
+}));
+vi.mock('./api', () => ({
+  api: { officePreviewStatus: statusMock, pilotDeckConfig: configMock },
+}));
+
 import {
+  readOfficePreviewStatus,
   normalizeOfficePreviewService,
   officePreviewRendererSignature,
   officePreviewRendererSignatureFromConfig,
@@ -28,5 +39,36 @@ describe('Office preview renderer signatures', () => {
 
   it('ignores config payloads without an Office preview section', () => {
     expect(officePreviewRendererSignatureFromConfig({ model: {} })).toBeNull();
+  });
+});
+
+describe('readOfficePreviewStatus config fallback', () => {
+  beforeEach(() => {
+    statusMock.mockReset();
+    configMock.mockReset();
+    statusMock.mockRejectedValue(new Error('status down'));
+    configMock.mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({
+        config: { webui: { officePreview: { service: 'libreoffice', binaryPath: '/opt/soffice' } } },
+      }),
+    });
+  });
+  afterEach(() => setStorageUserRole(null));
+
+  it('never requests /api/config for a normal user when the status call fails', async () => {
+    setStorageUserRole('user');
+    await expect(readOfficePreviewStatus()).rejects.toThrow('status down');
+    expect(configMock).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the config for an admin', async () => {
+    setStorageUserRole('admin');
+    await expect(readOfficePreviewStatus()).resolves.toMatchObject({
+      service: 'libreoffice',
+      configuredBinaryPath: '/opt/soffice',
+      statusUnavailable: true,
+    });
+    expect(configMock).toHaveBeenCalledTimes(1);
   });
 });

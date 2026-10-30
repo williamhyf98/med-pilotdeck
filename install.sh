@@ -802,9 +802,11 @@ resolve_runtime_ports() {
     fail "$(L "Could not find a free UI port within ${MAX_PORT_TRIES} ports from ${server_base}." "从 ${server_base} 起 ${MAX_PORT_TRIES} 个端口内未找到空闲的 UI 端口。")"
   PILOTDECK_GATEWAY_PORT="$(find_free_port "$gateway_base")" || \
     fail "$(L "Could not find a free gateway port within ${MAX_PORT_TRIES} ports from ${gateway_base}." "从 ${gateway_base} 起 ${MAX_PORT_TRIES} 个端口内未找到空闲的网关端口。")"
-  PILOTDECK_GATEWAY_URL="ws://127.0.0.1:${PILOTDECK_GATEWAY_PORT}/ws"
+  # The UI server starts one Gateway per user on demand; this is only the first
+  # port its pool tries, so there is no single gateway URL to export.
+  PILOTDECK_GATEWAY_PORT_BASE="$PILOTDECK_GATEWAY_PORT"
 
-  export SERVER_PORT PILOTDECK_GATEWAY_PORT PILOTDECK_GATEWAY_URL
+  export SERVER_PORT PILOTDECK_GATEWAY_PORT PILOTDECK_GATEWAY_PORT_BASE
 
   if [[ "$SERVER_PORT" != "$server_base" ]]; then
     warn "$(L "UI port ${server_base} is busy; using ${SERVER_PORT} instead." "UI 端口 ${server_base} 被占用,改用 ${SERVER_PORT}。")"
@@ -1176,16 +1178,6 @@ else
 fi
 echo ""
 
-echo "$(L "Installing ClawHub CLI..." "正在安装 ClawHub CLI...")"
-if command -v clawhub >/dev/null 2>&1; then
-  ok "$(L "ClawHub CLI already installed ($(clawhub --version 2>/dev/null || echo 'unknown version'))" "ClawHub CLI 已安装($(clawhub --version 2>/dev/null || echo '未知版本'))")"
-else
-  npm install -g clawhub --loglevel=error </dev/null && \
-    ok "$(L "ClawHub CLI installed" "ClawHub CLI 已安装")" || \
-    warn "$(L "ClawHub CLI install failed (skill marketplace features may not work)" "ClawHub CLI 安装失败(技能市场功能可能不可用)")"
-fi
-echo ""
-
 echo "$(L "Setting up CLI command..." "正在设置 CLI 命令...")"
 WRAPPER_DIR="$INSTALL_DIR/bin"
 CLI_TARGET="$WRAPPER_DIR/pilotdeck"
@@ -1437,10 +1429,11 @@ SERVER_BASE="${SERVER_PORT:-3001}"
 GATEWAY_BASE="${PILOTDECK_GATEWAY_PORT:-18789}"
 SERVER_PORT="$(find_free_port "$SERVER_BASE")" || fail "could not find a free UI port from ${SERVER_BASE}"
 PILOTDECK_GATEWAY_PORT="$(find_free_port "$GATEWAY_BASE")" || fail "could not find a free gateway port from ${GATEWAY_BASE}"
-PILOTDECK_GATEWAY_URL="ws://127.0.0.1:${PILOTDECK_GATEWAY_PORT}/ws"
+# First port of the per-user Gateway pool, not a single shared gateway.
+PILOTDECK_GATEWAY_PORT_BASE="$PILOTDECK_GATEWAY_PORT"
 
 export PILOTDECK_CONFIG_PATH="$CONFIG_FILE"
-export SERVER_PORT PILOTDECK_GATEWAY_PORT PILOTDECK_GATEWAY_URL
+export SERVER_PORT PILOTDECK_GATEWAY_PORT PILOTDECK_GATEWAY_PORT_BASE
 
 if [[ "$SERVER_PORT" != "$SERVER_BASE" ]]; then
   warn "UI port ${SERVER_BASE} is busy; using ${SERVER_PORT} instead."
@@ -1543,7 +1536,7 @@ export PILOTDECK_CONFIG_PATH="$CONFIG_FILE"
 resolve_runtime_ports
 node "$INSTALL_DIR/scripts/bootstrap-pilotdeck-config.mjs"
 echo -e "  UI:             ${DIM}http://localhost:${SERVER_PORT}${RESET}"
-echo -e "  Gateway:        ${DIM}${PILOTDECK_GATEWAY_URL}${RESET}"
+echo -e "  Gateway ports:  ${DIM}from ${PILOTDECK_GATEWAY_PORT}, one per user, started on demand${RESET}"
 
 print_getting_started "http://localhost:${SERVER_PORT}"
 

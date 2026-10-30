@@ -1,0 +1,4 @@
+interface:
+  display_name: "DeepChest 3DMedAgent"
+  short_description: "完整胸部 CT 的 DeepChest / 3DMedAgent 流程"
+  default_prompt: "使用 $med-deepchest-3dmedagent 处理这份完整胸部 CT；其他部位 DICOM 使用 med-medical 通用解析。"

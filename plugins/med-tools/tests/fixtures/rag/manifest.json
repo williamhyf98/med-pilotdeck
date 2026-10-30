@@ -1,0 +1,16 @@
+{
+  "corpus_id": "war-trauma-test",
+  "name": "fixture",
+  "version": "test",
+  "license_id": "test",
+  "embedding_model": "fixture-8d",
+  "dimension": 8,
+  "row_count": 3,
+  "corpus_path": "corpus/tiny_chunks.jsonl",
+  "embedding_path": "embedding/tiny_embedding.npy",
+  "corpus_sha256": "296f20c199cccfc38149f491a467b9b9e91effc56932fc28c64275ab414f7e45",
+  "embedding_sha256": "7e5f831a340c7038f4a9aa5a42b0d1f4485d7671a5f7974db879db08b852e72d",
+  "default_top_k": 2,
+  "max_top_k": 3,
+  "default_min_score": 0.0
+}

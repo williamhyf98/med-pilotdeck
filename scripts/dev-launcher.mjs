@@ -27,11 +27,37 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 import { ensureWritableTmpDir } from './ensure-writable-tmpdir.mjs';
+import { collectModelHosts, loadDeployEnv, DEPLOY_ENV_EXAMPLE_PATH } from './load-deploy-env.mjs';
 
 ensureWritableTmpDir();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
+const pilotHome = process.env.PILOT_HOME || join(repoRoot, '.pilotdeck-home');
+
+// Keep direct `npm run dev` and scripts/start-local.sh on the same state/config
+// directory. Also ensure local model traffic bypasses any inherited HTTP proxy.
+process.env.PILOT_HOME = pilotHome;
+process.env.PILOTDECK_CONFIG_DIR = process.env.PILOTDECK_CONFIG_DIR || pilotHome;
+
+// Site configuration (model URLs etc.) comes from config/deploy.env; the repo
+// itself ships no model IP. Load it before deriving NO_PROXY below.
+const deployEnv = loadDeployEnv();
+if (!deployEnv.exists) {
+  console.warn(`[dev] no ${deployEnv.path}; med-tools falls back to 127.0.0.1 placeholders`);
+  console.warn(`[dev] copy ${DEPLOY_ENV_EXAMPLE_PATH} and fill in the model URLs`);
+}
+
+// Model hosts must bypass the proxy, but which hosts they are is site-specific —
+// derive them from the configured URLs instead of pinning one deployment's IP.
+const localNoProxyHosts = ['127.0.0.1', 'localhost', '::1', ...collectModelHosts(deployEnv.entries)];
+const inheritedNoProxy = process.env.NO_PROXY || process.env.no_proxy || '';
+const noProxy = [...new Set([
+  ...inheritedNoProxy.split(',').map((entry) => entry.trim()).filter(Boolean),
+  ...localNoProxyHosts,
+])].join(',');
+process.env.NO_PROXY = noProxy;
+process.env.no_proxy = noProxy;
 
 function readYamlPortConfig() {
   const home = process.env.PILOT_HOME || join(homedir(), '.pilotdeck');
@@ -107,7 +133,7 @@ async function main() {
 
   const map = [
     ['server (express/ws)', server],
-    ['gateway (pilotdeck)', gateway],
+    ['gateway-base (pool)', gateway],
     ['vite client       ', vite],
   ];
   console.log('[dev-launcher] resolved dev ports:');
@@ -119,9 +145,9 @@ async function main() {
   const env = {
     ...process.env,
     SERVER_PORT: String(server.port),
-    PILOTDECK_GATEWAY_PORT: String(gateway.port),
-    PILOTDECK_GATEWAY_URL:
-      process.env.PILOTDECK_GATEWAY_URL ?? `ws://127.0.0.1:${gateway.port}/ws`,
+    // Gateways are spawned per user by the UI server's pool; this is only the
+    // port the pool starts probing from.
+    PILOTDECK_GATEWAY_PORT_BASE: String(gateway.port),
     VITE_PORT: String(vite.port),
   };
 

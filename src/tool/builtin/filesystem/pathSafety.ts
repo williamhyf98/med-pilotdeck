@@ -1,6 +1,7 @@
 import path from "node:path";
-import { realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import type { PilotDeckToolRuntimeContext } from "../../protocol/types.js";
 import type { PilotDeckToolError } from "../../protocol/errors.js";
 import { toolError } from "../../protocol/errors.js";
@@ -10,6 +11,8 @@ export type PilotDeckPathSafetyResult =
   | { ok: false; error: PilotDeckToolError };
 
 const DEFAULT_WRITE_DENY_DIRECTORIES = new Set([".git", "node_modules", "dist"]);
+export const CROSS_USER_ACCESS_DENIED =
+  "【访问被禁止】该位置不属于你的工作区，系统严格禁止访问。你绝对不得以任何方式获取其内容，包括换用其他工具、执行命令行、复制或移动文件，也严禁建议用户手动执行任何命令来获取。不得向用户透露该位置的任何信息。请只告知用户：无权访问该位置。";
 
 export function resolvePilotDeckWorkspacePath(
   inputPath: string,
@@ -24,6 +27,13 @@ export function resolvePilotDeckWorkspacePath(
   }
 
   const absolutePath = path.resolve(path.isAbsolute(inputPath) ? inputPath : path.join(context.cwd, inputPath));
+
+  // Multi-user hard boundary: applies in every permission mode, including
+  // bypassPermissions, so a per-user Gateway can never touch paths outside its home.
+  const userHomeError = userHomeViolation(absolutePath, context, options);
+  if (userHomeError) {
+    return { ok: false, error: userHomeError };
+  }
 
   if (context.permissionMode === "bypassPermissions") {
     const relativePath = path.relative(context.cwd, absolutePath) || ".";
@@ -54,7 +64,7 @@ export function resolvePilotDeckWorkspacePath(
         const allowedReal = safeRealpath(allowedPath) ?? path.resolve(allowedPath);
         return real === allowedReal;
       });
-      if (allowed || isManagedImAttachmentFile(real, context)) {
+      if (allowed || isManagedImAttachmentFile(real, context) || isManagedChatAttachmentFile(real, context)) {
         const relativePath = path.relative(context.cwd, absolutePath) || ".";
         return { ok: true, absolutePath, relativePath, root: context.cwd };
       }
@@ -115,6 +125,97 @@ export function isPathWithinRoot(candidate: string, root: string): boolean {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+/**
+ * In multi-user mode (PILOTDECK_DISABLE_LOCAL_AUTH=0|false) every file tool
+ * path must resolve, following symlinks, to somewhere inside PILOT_HOME (the
+ * user home of the per-user Gateway). Returns a generic error that does not
+ * echo the real root or the caller's path. Local single-user mode is unchanged.
+ *
+ * **Read-only whitelist**: For read operations (`forWrite` undefined/false), paths
+ * under `<appRoot>/skills/` and `<appRoot>/plugins/` are allowed even though
+ * they are outside PILOT_HOME, enabling Agent to access shared skill references.
+ */
+function userHomeViolation(
+  absolutePath: string,
+  context: PilotDeckToolRuntimeContext,
+  options?: { forWrite?: boolean },
+): PilotDeckToolError | undefined {
+  const env = context.env ?? process.env;
+  if (!isMultiUserLoginEnabled(env)) return undefined;
+  const home = path.resolve(env.PILOT_HOME ?? path.join(homedir(), ".pilotdeck"));
+  const realHome = resolveForContainment(home) ?? home;
+  const realTarget = resolveForContainment(absolutePath);
+  if (!realTarget || !isPathWithinRoot(realTarget, realHome)) {
+    // For read operations in multi-user mode, allow access to shared resources:
+    // - <appRoot>/skills/ (bundled and medical skills)
+    // - <appRoot>/plugins/ (shared MCP plugins)
+    if (!options?.forWrite && realTarget) {
+      if (isUnderSharedReadOnlyRoot(realTarget)) {
+        return undefined; // Allow read access to shared resources
+      }
+    }
+    return toolError("path_not_allowed", CROSS_USER_ACCESS_DENIED);
+  }
+  return undefined;
+}
+
+/**
+ * True when `target` (already realpath-resolved) lies under the shared, read-only
+ * `<appRoot>/skills` or `<appRoot>/plugins` trees. Roots are realpath-resolved too,
+ * so symlinked install locations compare correctly.
+ */
+function isUnderSharedReadOnlyRoot(target: string): boolean {
+  const appRoot = resolveAppRootForWhitelist();
+  if (!appRoot) return false;
+  return ["skills", "plugins"].some((name) => {
+    const root = path.join(appRoot, name);
+    return isPathWithinRoot(target, safeRealpath(root) ?? root);
+  });
+}
+
+/** Nearest ancestor of this module that contains package.json (works for src/ and dist/ layouts). */
+function resolveAppRootForWhitelist(): string | undefined {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    if (existsSync(path.join(dir, "package.json"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
+function isMultiUserLoginEnabled(env: NodeJS.ProcessEnv): boolean {
+  const value = env.PILOTDECK_DISABLE_LOCAL_AUTH;
+  return value === "0" || value === "false";
+}
+
+/**
+ * Realpath of `target`, resolving the deepest existing ancestor and re-appending
+ * the non-existent tail (so new files can be checked before they exist).
+ * Returns undefined for a dangling symlink, which is treated as outside (fail closed).
+ */
+function resolveForContainment(target: string): string | undefined {
+  let current = path.resolve(target);
+  const tail: string[] = [];
+  for (;;) {
+    const real = safeRealpath(current);
+    if (real) return path.join(real, ...tail.reverse());
+    if (isSymbolicLink(current)) return undefined;
+    const parent = path.dirname(current);
+    if (parent === current) return path.resolve(target);
+    tail.push(path.basename(current));
+    current = parent;
+  }
+}
+
+function isSymbolicLink(value: string): boolean {
+  try {
+    return lstatSync(value).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 function isWriteDenied(relativePath: string): boolean {
   const firstPart = relativePath.split(path.sep)[0];
   return firstPart !== undefined && DEFAULT_WRITE_DENY_DIRECTORIES.has(firstPart);
@@ -132,6 +233,28 @@ function isManagedImAttachmentFile(realPath: string, context: PilotDeckToolRunti
   const pilotHome = path.resolve(context.env?.PILOT_HOME ?? path.join(homedir(), ".pilotdeck"));
   const root = safeRealpath(path.join(pilotHome, "im-attachments")) ?? path.join(pilotHome, "im-attachments");
   return isPathWithinRoot(realPath, root) && isRegularFile(realPath);
+}
+
+function isManagedChatAttachmentFile(realPath: string, context: PilotDeckToolRuntimeContext): boolean {
+  if (!isRegularFile(realPath)) return false;
+
+  const resolvedRealPath = safeRealpath(realPath) ?? path.resolve(realPath);
+  const withinRoot = (root: string): boolean => {
+    const resolvedRoot = safeRealpath(root) ?? path.resolve(root);
+    return isPathWithinRoot(resolvedRealPath, resolvedRoot);
+  };
+
+  if (withinRoot(path.resolve(context.cwd, "inbox"))) return true;
+  if (withinRoot(path.resolve(context.cwd, ".tmp", "chat-attachments"))) return true;
+
+  const pilotHome = path.resolve(context.env?.PILOT_HOME ?? path.join(homedir(), ".pilotdeck"));
+  if (withinRoot(path.join(pilotHome, ".tmp", "chat-attachments"))) return true;
+
+  const workspacesRoot = path.join(pilotHome, "workspaces");
+  if (!withinRoot(workspacesRoot)) return false;
+  const relative = path.relative(safeRealpath(workspacesRoot) ?? workspacesRoot, resolvedRealPath).replace(/\\/g, "/");
+  const segments = relative.split("/");
+  return segments.length >= 3 && segments[2] === "inbox";
 }
 
 function isRegularFile(value: string): boolean {

@@ -1,6 +1,9 @@
 import { useEffect, useReducer, useRef } from 'react';
+import { isScopedStorageKey, safeLocalStorage } from '../utils/safeStorage';
+import { UI_PREFERENCES_HYDRATED_EVENT } from '../components/auth/UserPreferenceSync';
 
 type UiPreferences = {
+  showProcessTrace: boolean;
   autoExpandTools: boolean;
   showRawParameters: boolean;
   showThinking: boolean;
@@ -34,6 +37,7 @@ type UiPreferencesAction =
   | ResetPreferencesAction;
 
 const DEFAULTS: UiPreferences = {
+  showProcessTrace: true,
   autoExpandTools: false,
   showRawParameters: false,
   showThinking: true,
@@ -68,7 +72,7 @@ const parseBoolean = (value: unknown, fallback: boolean): boolean => {
 
 const readLegacyPreference = (key: UiPreferenceKey, fallback: boolean): boolean => {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = safeLocalStorage.getItem(key);
     if (raw === null) return fallback;
 
     // Supports values written by both JSON.stringify and plain strings.
@@ -85,7 +89,7 @@ const readInitialPreferences = (storageKey: string): UiPreferences => {
   }
 
   try {
-    const raw = localStorage.getItem(storageKey);
+    const raw = safeLocalStorage.getItem(storageKey);
 
     if (raw) {
       const parsed = JSON.parse(raw);
@@ -161,7 +165,7 @@ export function useUiPreferences(storageKey = 'uiPreferences') {
       return;
     }
 
-    localStorage.setItem(storageKey, JSON.stringify(state));
+    safeLocalStorage.setItem(storageKey, JSON.stringify(state));
 
     window.dispatchEvent(
       new CustomEvent<SyncEventDetail>(SYNC_EVENT, {
@@ -187,7 +191,7 @@ export function useUiPreferences(storageKey = 'uiPreferences') {
     };
 
     const handleStorageChange = (event: StorageEvent) => {
-      if (event.key !== storageKey || event.newValue === null) {
+      if (!isScopedStorageKey(event.key, storageKey) || event.newValue === null) {
         return;
       }
 
@@ -211,10 +215,18 @@ export function useUiPreferences(storageKey = 'uiPreferences') {
 
     window.addEventListener('storage', handleStorageChange);
     window.addEventListener(SYNC_EVENT, handleSyncEvent as EventListener);
+    const handleHydration = (event: Event) => {
+      dispatch({
+        type: 'reset',
+        value: (event as CustomEvent<Partial<UiPreferences>>).detail,
+      });
+    };
+    window.addEventListener(UI_PREFERENCES_HYDRATED_EVENT, handleHydration);
 
     return () => {
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener(SYNC_EVENT, handleSyncEvent as EventListener);
+      window.removeEventListener(UI_PREFERENCES_HYDRATED_EVENT, handleHydration);
     };
   }, [storageKey]);
 

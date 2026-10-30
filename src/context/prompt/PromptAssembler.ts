@@ -5,9 +5,14 @@ import type {
   ExtensionResolver,
   McpServerInstruction,
 } from "../extension/ExtensionResolver.js";
+import { projectMetaTypeFromProjectPath, type ProjectMetaType } from "../../pilot/paths.js";
+import { filterSkillsForProjectType } from "../../pilot/projectTypePolicy.js";
+import { getProjectTypePersona, promptCopy } from "./systemPromptCopy.js";
 
 export type PromptAssemblerInput = {
   cwd: string;
+  /** Immutable system-project type; inferred from typed cwd when omitted. */
+  projectType?: ProjectMetaType;
   provider: string;
   model: string;
   permissionMode: string;
@@ -86,25 +91,34 @@ export class PromptAssembler {
   }
 
   private buildDefaultSystemPrompt(input: PromptAssemblerInput): string[] {
-    const hasWebSearch = input.tools.some((tool) => tool.name === "web_search");
-    const hasWebFetch = input.tools.some((tool) => tool.name === "web_fetch");
-    const documentationLookupPolicy = hasWebSearch
-      ? "When implementing code against an API, SDK, framework, CLI, config schema, or file format whose usage is not clear from local source, installed types, examples, or project docs, search for official documentation before writing or changing code. Prefer versioned official docs and existing in-repo call sites. Use web_search for discovery and web_fetch for the relevant docs page. Do not guess unfamiliar signatures, options, or output shapes when a quick lookup can resolve them. If network tools are unavailable or denied, state the uncertainty and proceed conservatively."
-      : hasWebFetch
-        ? "When implementing code against an API, SDK, framework, CLI, config schema, or file format whose usage is not clear, prefer installed types, local source, examples, and project docs. If a relevant official documentation URL is already known, use web_fetch to inspect it. Otherwise state the uncertainty and proceed conservatively."
-        : "When implementing code against an API, SDK, framework, CLI, config schema, or file format whose usage is not clear, prefer installed types, local source, examples, and project docs. State any remaining uncertainty and proceed conservatively.";
+    const projectType = input.projectType ?? projectMetaTypeFromProjectPath(input.cwd);
+    const persona = getProjectTypePersona(projectType);
     const lines: string[] = [
-      "You are PilotDeck, an AI agent runtime. You execute tasks across CLI, TUI, web, and chat channels by calling structured tools and reasoning over their results.",
-      "Operate decisively: prefer using available tools to gather facts before answering, prefer concise replies, and surface uncertainty when present.",
+      persona.identityLine1,
+      persona.identityLine2,
       "",
-      "Documentation lookup policy:",
-      documentationLookupPolicy,
+      promptCopy.languageTitle,
+      promptCopy.languageBody,
       "",
-      "Parallel delegation policy:",
-      "When the agent tool is available and the task contains two or more independent, repetitive, or separable workstreams, prefer launching multiple subagents in the same assistant message instead of waiting for one to finish before starting the next. Good parallel candidates include inspecting multiple files/modules, researching independent APIs, checking several artifacts, or comparing alternatives. Do not parallelize tasks that write to the same files, depend on another subagent's output, require shared ordering, or need user approval between steps. Give each subagent a self-contained prompt, distinct scope, and expected output. After all sibling results return, synthesize them yourself and decide the next step.",
+      persona.medicalPolicyTitle,
+      persona.medicalPolicyBody,
       "",
-      "Reusable script workflow:",
-      "When code is more than a tiny one-off command, or you expect to rerun it with changed parameters, write it to a workspace file first with write_file, then run it with bash. Prefer scripts with CLI arguments, environment variables, or a small config section so parameters can be adjusted with edit_file or command args. Do not pack large Python/JS/shell programs into bash heredocs or long `python -c` / `node -e` strings. After each run, inspect output and edit the saved script instead of regenerating a new inline command.",
+      persona.scopeHandoffTitle,
+      persona.scopeHandoffBody,
+      "",
+      promptCopy.docsPolicyTitle,
+      promptCopy.docsPolicyBody,
+      "",
+      promptCopy.offlinePolicyTitle,
+      promptCopy.offlinePolicyBody,
+      "",
+      promptCopy.automationPolicyTitle,
+      promptCopy.automationPolicyBody,
+      "",
+      "## 输出约束",
+      "",
+      "不要在回答中提及模型版本号或技术实现细节（如「本分析由 XXX 模型生成」、「使用了 XXX 技术」）。诊断依据和医学结论应基于临床证据，而非技术来源。",
+      promptCopy.userFacingPathRule,
     ];
 
     const permissionLine = formatPermissionMode(input.permissionMode);
@@ -119,7 +133,7 @@ export class PromptAssembler {
 
     if (input.additionalWorkingDirectories.length > 0) {
       lines.push("");
-      lines.push("Additional working directories you may operate in:");
+      lines.push(promptCopy.additionalWorkingDirectories);
       for (const dir of input.additionalWorkingDirectories) {
         lines.push(`- ${dir}`);
       }
@@ -129,7 +143,7 @@ export class PromptAssembler {
     const mcpBlock = formatMcpInstructions(mcpInstructions);
     if (mcpBlock) {
       lines.push("");
-      lines.push("Connected MCP server instructions:");
+      lines.push(promptCopy.mcpInstructionsLead);
       lines.push(mcpBlock);
     }
 
@@ -140,14 +154,19 @@ export class PromptAssembler {
     const lines: string[] = [];
     lines.push("<user-context>");
     lines.push(`cwd: ${input.cwd}`);
-    lines.push("IMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \"foo.html\", not an absolute path like \"/home/user/foo.html\". If the user explicitly provides a path, respect their choice.");
-    lines.push(`model: ${input.provider}/${input.model}`);
+    lines.push(promptCopy.cwdRelativePathRule);
+
+    // In multi-user mode, hide model name from system prompt
+    const isMultiUser = process.env.PILOTDECK_DISABLE_LOCAL_AUTH === '0' ||
+                        process.env.PILOTDECK_DISABLE_LOCAL_AUTH === 'false';
+    if (!isMultiUser) {
+      lines.push(`model: ${input.provider}/${input.model}`);
+    }
+
     lines.push(`permission_mode: ${input.permissionMode}`);
     if (input.runMode) {
       lines.push(`run_mode: ${input.runMode}`);
     }
-    lines.push(`platform: ${process.platform}`);
-    lines.push(`node: ${process.version}`);
     lines.push("</user-context>");
     return [lines.join("\n")];
   }
@@ -165,7 +184,8 @@ export class PromptAssembler {
       sections.push(formatCommands(commands));
     }
 
-    const skills = this.extension.listSkills();
+    const projectType = input.projectType ?? projectMetaTypeFromProjectPath(input.cwd);
+    const skills = filterSkillsForProjectType(this.extension.listSkills(), projectType);
     if (skills.length > 0) {
       sections.push(formatSkills(skills));
     }
@@ -178,22 +198,22 @@ export class PromptAssembler {
 function formatPermissionMode(mode: string): string {
   switch (mode) {
     case "default":
-      return "Permission mode: default — write/shell tools require explicit approval.";
+      return promptCopy.permissionDefault;
     case "plan":
-      return "Permission mode: plan — read-only planning mode; implementation changes are blocked at tool runtime.";
+      return promptCopy.permissionPlan;
     case "bypassPermissions":
-      return "Permission mode: bypassPermissions — all tools are auto-approved; act conservatively.";
+      return promptCopy.permissionBypass;
     default:
-      return `Permission mode: ${mode}`;
+      return promptCopy.permissionOther(mode);
   }
 }
 
 function formatRunMode(mode: string | undefined): string | undefined {
   switch (mode) {
     case "ask":
-      return "Run mode: ask — read-only analysis mode; write/action tools are blocked at tool runtime even when permission mode is bypassPermissions.";
+      return promptCopy.runModeAsk;
     case "plan":
-      return "Run mode: plan — planning mode is active.";
+      return promptCopy.runModePlan;
     default:
       return undefined;
   }
@@ -239,9 +259,9 @@ function formatCommands(commands: ContributedCommand[]): string {
 function formatSkills(skills: ContributedSkill[]): string {
   const lines = [
     "<available-skills>",
-    "Use the read_skill tool to load the full content of any skill listed below. Each entry includes the exact SKILL.md selected by the runtime.",
-    "Resolve relative references, scripts, and assets against the directory containing that SKILL.md.",
-    "Do not search the user's home directory to rediscover a skill or infer runtime/cache paths; use the listed file and paths or commands returned by the skill.",
+    promptCopy.skillsIntro1,
+    promptCopy.skillsIntro2,
+    promptCopy.skillsIntro3,
   ];
   for (const skill of skills) {
     const description = skill.description ? ` — ${skill.description}` : "";

@@ -1,4 +1,5 @@
 import express from 'express';
+import { requireAdmin } from '../middleware/requireAdmin.js';
 import { apiKeysDb, credentialsDb, notificationPreferencesDb, pushSubscriptionsDb } from '../database/db.js';
 import { getPublicKey } from '../services/vapid-keys.js';
 import { createNotificationEvent, notifyUserIfEnabled } from '../services/notification-orchestrator.js';
@@ -22,7 +23,7 @@ router.get('/permissions', async (_req, res) => {
   }
 });
 
-router.put('/permissions', async (req, res) => {
+router.put('/permissions', requireAdmin, async (req, res) => {
   try {
     const permissions = writePermissionSettings(req.body || {});
     res.json({ success: true, permissions });

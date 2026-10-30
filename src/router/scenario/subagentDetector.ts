@@ -1,4 +1,4 @@
-import type { CanonicalMessage, CanonicalToolSchema } from "../../model/index.js";
+import type { CanonicalMessage } from "../../model/index.js";
 
 const SUBAGENT_TAG_PATTERN =
   /<(?:pilotdeck|ccr)-subagent-model>([\s\S]+?)<\/(?:pilotdeck|ccr)-subagent-model>/i;
@@ -6,17 +6,12 @@ const SUBAGENT_TAG_PATTERN =
 export type SubagentDetection = {
   isSubagent: boolean;
   modelHint?: string;
-  /** True when the request was launched without an Agent / Task tool, suggesting subagent context. */
-  missingAgentTool: boolean;
   /** True when the message body contained a subagent tag we should strip in mutations. */
   taggedInUserMessage: boolean;
 };
 
-const AGENT_TOOL_NAME_PATTERN = /^(?:agent|task|launch[_-]?agent|spawn[_-]?agent)$/i;
-
 export function detectSubagent(
   messages: CanonicalMessage[],
-  tools: CanonicalToolSchema[] | undefined,
   isMainAgent: boolean,
 ): SubagentDetection {
   let modelHint: string | undefined;
@@ -38,14 +33,11 @@ export function detectSubagent(
     }
   }
 
-  const missingAgentTool =
-    !!tools &&
-    !tools.some((tool) => AGENT_TOOL_NAME_PATTERN.test(tool.name));
-
   return {
-    isSubagent: !isMainAgent || taggedInUserMessage || missingAgentTool,
+    // Absence of an `agent` tool must not mark the main conversation as a
+    // subagent. This runtime no longer registers that tool.
+    isSubagent: !isMainAgent || taggedInUserMessage,
     modelHint,
-    missingAgentTool,
     taggedInUserMessage,
   };
 }

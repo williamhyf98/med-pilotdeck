@@ -5,9 +5,11 @@ import {
   CODE_EDITOR_SETTINGS_CHANGED_EVENT,
   CODE_EDITOR_STORAGE_KEYS,
 } from '../constants/settings';
+import { safeLocalStorage } from '../../../utils/safeStorage';
+import { UI_PREFERENCES_HYDRATED_EVENT } from '../../auth/UserPreferenceSync';
 
 const readBoolean = (storageKey: string, defaultValue: boolean, falseValue = 'false') => {
-  const value = localStorage.getItem(storageKey);
+  const value = safeLocalStorage.getItem(storageKey);
   if (value === null) {
     return defaultValue;
   }
@@ -16,11 +18,11 @@ const readBoolean = (storageKey: string, defaultValue: boolean, falseValue = 'fa
 };
 
 const readWordWrap = () => {
-  return localStorage.getItem(CODE_EDITOR_STORAGE_KEYS.wordWrap) === 'true';
+  return safeLocalStorage.getItem(CODE_EDITOR_STORAGE_KEYS.wordWrap) === 'true';
 };
 
 const readFontSize = () => {
-  const stored = localStorage.getItem(CODE_EDITOR_STORAGE_KEYS.fontSize);
+  const stored = safeLocalStorage.getItem(CODE_EDITOR_STORAGE_KEYS.fontSize);
   return Number(stored ?? CODE_EDITOR_DEFAULTS.fontSize);
 };
 
@@ -43,11 +45,11 @@ export const useCodeEditorSettings = () => {
   // Mirror app theme into the legacy codeEditorTheme key so any remaining
   // localStorage readers stay in sync.
   useEffect(() => {
-    localStorage.setItem(CODE_EDITOR_STORAGE_KEYS.theme, isDarkMode ? 'dark' : 'light');
+    safeLocalStorage.setItem(CODE_EDITOR_STORAGE_KEYS.theme, isDarkMode ? 'dark' : 'light');
   }, [isDarkMode]);
 
   useEffect(() => {
-    localStorage.setItem(CODE_EDITOR_STORAGE_KEYS.wordWrap, String(wordWrap));
+    safeLocalStorage.setItem(CODE_EDITOR_STORAGE_KEYS.wordWrap, String(wordWrap));
   }, [wordWrap]);
 
   useEffect(() => {
@@ -60,10 +62,12 @@ export const useCodeEditorSettings = () => {
 
     window.addEventListener('storage', refreshFromStorage);
     window.addEventListener(CODE_EDITOR_SETTINGS_CHANGED_EVENT, refreshFromStorage);
+    window.addEventListener(UI_PREFERENCES_HYDRATED_EVENT, refreshFromStorage);
 
     return () => {
       window.removeEventListener('storage', refreshFromStorage);
       window.removeEventListener(CODE_EDITOR_SETTINGS_CHANGED_EVENT, refreshFromStorage);
+      window.removeEventListener(UI_PREFERENCES_HYDRATED_EVENT, refreshFromStorage);
     };
   }, []);
 

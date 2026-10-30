@@ -2,12 +2,13 @@
  * PilotDeck bridge — the only chat-execution entry point in `ui/server/`.
  *
  *
- *   1. Connects to the standalone PilotDeck gateway server
- *      (`pilotdeck server`, default ws://127.0.0.1:18789/ws) as a
+ *   1. Leases a per-user PilotDeck gateway (`pilotdeck server`, one child
+ *      process per user with PILOT_HOME=<root>/users/<id>) from the
+ *      gateway pool (`services/gatewayPool.js`) and talks to it as a
  *      WebSocket client. We never instantiate an in-process gateway
  *      here — that would create a second, divergent agent runtime that
- *      doesn't share `~/.pilotdeck/projects/<id>/chats/*.jsonl` writes
- *      and permission state with the CLI/TUI surfaces. One process, one
+ *      doesn't share `<home>/projects/<id>/chats/*.jsonl` writes
+ *      and permission state with the CLI/TUI surfaces. One user, one
  *      gateway.
  *   2. Maps each old "sessionId" → PilotDeck "sessionKey" (1:1, generated
  *      on first turn and remembered for resume).
@@ -21,69 +22,56 @@
  * existing `ui/server/` route handlers — those are local/disk operations
  * that do not need an agent runtime.
  *
- * Two-process launch:
+ * Launch model:
  *
- *   - `pilotdeck server` (port 18789) owns the gateway, agent loop,
- *     model router, MCP runtime, cron daemon, and on-disk session
- *     transcripts. Edit `src/**` then restart this process to pick up
- *     changes — no `npm run build` required when running via `tsx`.
- *   - `ui/server/index.js` (port 3001) is the express bridge: REST
- *     endpoints for non-agent UI concerns + a WebSocket adapter that
- *     re-shapes gateway events into the legacy NormalizedMessage frames
- *     the React frontend reducer still expects.
- *
- * The pair is started together via `cd ui && npm run dev` (or
- * `npm start`), which uses `concurrently` to launch both. Either order
- * is fine — the bridge retries the WebSocket handshake for
- * `GATEWAY_CONNECT_TIMEOUT_MS` so race conditions resolve themselves.
+ *   - `ui/server/index.js` is the express bridge: REST endpoints for
+ *     non-agent UI concerns + a WebSocket adapter that re-shapes gateway
+ *     events into the legacy NormalizedMessage frames the React frontend
+ *     reducer still expects.
+ *   - Gateways are spawned on demand by the pool on a user's first request
+ *     (no pre-started gateway), and reaped when idle or revoked. Each
+ *     gateway owns that user's agent loop, model router, MCP runtime, cron
+ *     daemon and on-disk session transcripts.
  */
 
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
-import { promises as fsPromises } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 import { installGlobalProxy } from '../../src/cli/proxy.js';
 await installGlobalProxy();
 
-import { resolvePilotHome, createProjectId, sanitizeSessionIdForPath } from './utils/pilotPaths.js';
-// Read the gateway client straight from TypeScript source via tsx — the UI
-// server is launched with `node --import tsx`, so no prior `npm run build`
-// is required. (A prior tsx 4.x JSDoc dynamic-import parse bug was fixed by
-// rewriting the offending @type annotation below to `ReturnType<typeof
-// createRemoteGateway>`, which is why this import can live on `src/` again.)
-import { createRemoteGateway } from '../../src/gateway/index.js';
+import { createProjectId, sanitizeSessionIdForPath, resolveGatewayProjectKey, resolveProjectStorageId, resolveTypedProjectDir, listProjectStorageIds, resolveAgentCwd } from './utils/pilotPaths.js';
 import {
     createVisibleErrorStatusDetail,
     isVisibleFailureStatusDetail,
 } from '../../src/status/agentStatus.js';
 import { createNormalizedMessage } from './pilotdeck-message.js';
-import { readPermissionSettings } from './services/permissionSettings.js';
+import { createSanitizingWriter, sanitizeValue, scopedSanitizeOptions } from './utils/pathSanitization.js';
+import { isExplicitCrossUserAccessRequest } from './utils/crossUserRequestGuard.js';
+import { getWebPermissionMode } from './services/webPermissionMode.js';
+import { createGatewayPool } from './services/gatewayPool.js';
+import { DISABLE_LOCAL_AUTH } from './constants/config.js';
+import { readMultiUserConfig } from './services/pilotdeckConfig.js';
+import { requireUserScope, runWithUserScope } from './middleware/userScope.js';
+import { resolveScopedHome, resolvePilotRoot } from './utils/pilotPaths.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const GENERAL_HOME = resolvePilotHome(process.env);
+const TRUSTED_GATEWAY_TURN_OPTIONS = Symbol('pilotdeck.trustedGatewayTurnOptions');
+const ACCESS_REFUSAL_REPLY = '抱歉，我无法访问该位置。它不属于您当前账号的工作区；为了保护各用户的资料，系统禁止读取或修改其他账号及系统目录中的内容，也无法确认该位置是否存在。如果您有需要我处理的材料（检查报告、影像文件、病例描述等），可以直接上传到当前对话中。请勿通过复制文件或更换工具等方式绕过访问限制。';
 
-const GATEWAY_URL =
-    process.env.PILOTDECK_GATEWAY_URL || 'ws://127.0.0.1:18789/ws';
-const GATEWAY_TOKEN_PATH =
-    process.env.PILOTDECK_GATEWAY_TOKEN_PATH ||
-    path.join(GENERAL_HOME, 'server-token');
-// The two processes (gateway + bridge) are typically started in
-// parallel by `concurrently`. We allow up to 30 s for the gateway to
-// come up before failing the first call — covers cold MCP startup on
-// slower machines.
-const GATEWAY_CONNECT_TIMEOUT_MS =
-    Number.parseInt(process.env.PILOTDECK_BRIDGE_TIMEOUT ?? '', 10) || 60_000;
-const GATEWAY_CONNECT_RETRY_INTERVAL_MS = 500;
+// Per-session / per-user keyed state. All keys carry the user id via stateKey()
+// so two users never share an entry. (stateKey is a hoisted function declaration.)
 const subagentActivityStarts = new Map();
 /** @type {Map<string, string[]>} sessionId → [toolCallId, ...] for pending agent/Task tool calls */
 const pendingAgentToolCalls = new Map();
 const visibleFailureAgentStatusEvents = new Set([
     'model_empty_response_exhausted',
     'max_turns_reached',
+    'max_tool_calls_reached',
     'max_output_recovery_exhausted',
     'model_request_failed',
     'tool_call_recovery_exhausted',
@@ -146,8 +134,17 @@ function normalizeToolErrorCode(errorCode, resultPreview) {
 
 const MAX_TOOL_RESULT_PREVIEW_CHARS = 20_000;
 
-function limitToolResultPreview(value) {
+// RAG 检索结果（med-tools rag_query / stage_plan）必须完整送达前端：引用弹窗要从
+// 这段 JSON 里解析 chunks[] 的原文，头尾截断会把中后段 chunk 连同它们的引用一起
+// 吞掉。payload 本身有界（top_k ≤ 8、单 chunk 限长），上限只防服务端异常。
+const CITATION_TOOL_NAME_RE = /rag_query|rag_search|stage_plan/i;
+const MAX_CITATION_RESULT_CHARS = 400_000;
+
+function limitToolResultPreview(value, toolName) {
     const text = typeof value === 'string' ? value : '';
+    if (toolName && CITATION_TOOL_NAME_RE.test(String(toolName)) && text.length <= MAX_CITATION_RESULT_CHARS) {
+        return text;
+    }
     if (text.length <= MAX_TOOL_RESULT_PREVIEW_CHARS) return text;
     const headLength = Math.floor(MAX_TOOL_RESULT_PREVIEW_CHARS / 2);
     const tailLength = MAX_TOOL_RESULT_PREVIEW_CHARS - headLength;
@@ -161,95 +158,74 @@ function isVisibleFailureAgentStatus(event) {
 }
 
 /**
- * Default permission mode for sessions started from the Web UI. We use
- * `default` so PilotDeck's `Permission.decide()` fully evaluates rules
- * + tool semantics — read-only tools allow, side-effecting tools either
- * surface an interactive `permission_request` (resolved via the banner)
- * or short-circuit on an allow rule the user accumulated this session.
- * Override with `PILOTDECK_WEB_PERMISSION_MODE`.
+ * The web permission mode is selected by the server for every account.
+ * Sandbox and path checks remain in force even when confirmations are bypassed.
  */
-const WEB_DEFAULT_PERMISSION_MODE =
-    process.env.PILOTDECK_WEB_PERMISSION_MODE || 'default';
+let poolInstance = null;
+function pool() {
+    if (!poolInstance) poolInstance = createGatewayPool({ config: readMultiUserConfig().gatewayPool, multiUser: !DISABLE_LOCAL_AUTH });
+    return poolInstance;
+}
 
-
-// Resolves to the Gateway returned by `createRemoteGateway`. We express
-// the type via `typeof createRemoteGateway` (the symbol is already imported
-// above) instead of a JSDoc dynamic-import annotation, because some tsx 4.x
-// builds mis-parse such tokens inside JSDoc when running through
-// `node --import tsx`, producing a spurious "Parse error" at EOF during
-// ESM rewriting on fresh installs.
-/** @type {ReturnType<typeof createRemoteGateway> | null} */
-let gatewayPromise = null;
-
-async function readGatewayToken() {
+/** Run `fn` with the current user's Gateway; the lease spans the whole call. */
+export async function withUserGateway(fn) {
+    const { userId } = requireUserScope();
+    const lease = await pool().acquire(userId);
     try {
-        const raw = await fsPromises.readFile(GATEWAY_TOKEN_PATH, 'utf8');
-        const trimmed = raw.trim();
-        return trimmed || null;
-    } catch {
-        return null;
+        return await fn(lease.gateway);
+    } finally {
+        lease.release();
     }
 }
 
-async function connectWithRetry() {
-    const deadline = Date.now() + GATEWAY_CONNECT_TIMEOUT_MS;
-    let lastError;
-    while (Date.now() < deadline) {
-        const token = await readGatewayToken();
-        if (token) {
-            try {
-                const gateway = await createRemoteGateway({
-                    url: GATEWAY_URL,
-                    token,
-                    clientName: 'web',
-                });
-                console.log(
-                    `[pilotdeck-bridge] connected → ${GATEWAY_URL}`,
-                );
-                return gateway;
-            } catch (error) {
-                lastError = error;
-            }
-        }
-        await new Promise((resolve) =>
-            setTimeout(resolve, GATEWAY_CONNECT_RETRY_INTERVAL_MS),
-        );
-    }
-    const detail = lastError instanceof Error ? `: ${lastError.message}` : '';
-    throw new Error(
-        `[pilotdeck-bridge] gateway connect failed after ${GATEWAY_CONNECT_TIMEOUT_MS}ms${detail}`,
-    );
+/**
+ * Short-RPC accessor kept for existing callers (projects.js, gateway.js,
+ * index.js always-on routes). The lease is released before this returns; the
+ * pool only closes a gateway after the idle timeout or a revocation, so short
+ * RPCs finish well inside that window. Long flows (`submitTurn`) must use
+ * `withUserGateway`.
+ */
+export async function getPilotDeckGateway() {
+    return withUserGateway(async (gateway) => gateway);
 }
 
-function ensureGateway() {
-    if (!gatewayPromise) {
-        gatewayPromise = connectWithRetry().catch((error) => {
-            // Reset so the next caller retries instead of cementing the
-            // failure forever. The deadline inside connectWithRetry()
-            // already bounds individual attempts.
-            gatewayPromise = null;
-            throw error;
-        });
-    }
-    return gatewayPromise;
+export function revokeUserGateway(userId) {
+    if (!poolInstance) return;
+    poolInstance.markRevoked(userId);
 }
 
-function resetGatewayConnection() {
-    gatewayPromise = null;
+/** Awaitable counterpart of `revokeUserGateway`: resolves once the child is gone. */
+export async function stopUserGateway(userId) {
+    if (!poolInstance) return;
+    await poolInstance.stopUser(userId);
+}
+
+export async function shutdownGatewayPool() {
+    if (poolInstance) await poolInstance.shutdown();
 }
 
 export function isGatewayUnavailableError(error) {
     const message = error instanceof Error ? error.message : String(error);
-    return /gateway websocket (closed|is not connected)|failed to connect to gateway websocket|gateway hello timed out|gateway closed during hello|gateway connect failed/i.test(message);
+    return /gateway websocket (closed|is not connected)|failed to connect to gateway websocket|gateway hello timed out|gateway closed during hello|gateway connect failed|gateway for user .* (exited|did not become ready)|too many active users/i.test(message);
 }
 
 /**
- * Public accessor for the shared gateway client. Other ui/server modules
- * (`projects.js`, etc.) await this so they share one WebSocket
- * connection instead of opening their own.
+ * Classify an error from a gateway call for an HTTP response.
+ *
+ * Pool errors already carry `status: 503`, but a lease whose socket was closed
+ * underneath it (revocation, LRU eviction, a crashed child) surfaces as a plain
+ * `Error`. Both mean "the gateway is not there right now" — a 503 the client
+ * may retry, never a 500. Returns null when the error is something else.
  */
-export async function getPilotDeckGateway() {
-    return ensureGateway();
+export function toGatewayHttpError(error) {
+    if (error?.status === 503 || isGatewayUnavailableError(error)) {
+        return {
+            status: 503,
+            code: typeof error?.code === 'string' ? error.code : 'GATEWAY_UNAVAILABLE',
+            message: error instanceof Error ? error.message : String(error),
+        };
+    }
+    return null;
 }
 
 export function getPilotDeckRepoRoot() {
@@ -263,6 +239,9 @@ export function getPilotDeckRepoRoot() {
  * the transcript and the agent state machine.
  */
 const sessionState = new Map();
+function stateKey(sessionKey) {
+    return `${requireUserScope().userId}:${sessionKey}`;
+}
 
 function isPilotDeckSessionKey(value) {
     if (typeof value !== 'string' || !value.trim()) return false;
@@ -283,7 +262,8 @@ function newSessionKey() {
 }
 
 function ensureSessionState(sessionKey, projectKey, channelKey) {
-    let state = sessionState.get(sessionKey);
+    const key = stateKey(sessionKey);
+    let state = sessionState.get(key);
     if (!state) {
         state = {
             sessionKey,
@@ -294,7 +274,7 @@ function ensureSessionState(sessionKey, projectKey, channelKey) {
             tokenBudget: null,
             hasVisibleFailureStatus: false,
         };
-        sessionState.set(sessionKey, state);
+        sessionState.set(key, state);
     } else {
         state.projectKey = projectKey;
         state.channelKey = channelKey;
@@ -309,7 +289,7 @@ function clearActiveRunIfCurrent(state, runId) {
 }
 
 export function getSessionTokenBudget(sessionKey) {
-    const state = sessionState.get(sessionKey);
+    const state = sessionState.get(stateKey(sessionKey));
     return state?.tokenBudget || {
         used: 0,
         total: 0,
@@ -407,6 +387,12 @@ function uiFilesToAttachments(files) {
     for (const file of files) {
         if (!file || typeof file !== 'object') continue;
         if (file.kind === 'document-selection' || file.kind === 'content-reference') continue;
+        // @-mentioned workspace files are path references to files already in
+        // the project. Passing them to the gateway would make the attachment
+        // resolver read and inline their full content (and resolve relative
+        // paths against the server cwd). The chat message's attachment note
+        // already carries the path, so the agent can open the file itself.
+        if (file.metadata && file.metadata.workspaceFileMention === true) continue;
         const filePath = typeof file.path === 'string' ? file.path : '';
         if (!filePath) continue;
         const metadata = (file.metadata && typeof file.metadata === 'object')
@@ -424,31 +410,105 @@ function uiFilesToAttachments(files) {
     return out.length > 0 ? out : undefined;
 }
 
-function normalizePermissionMode(value) {
-    if (value === undefined || value === null || value === '') return undefined;
-    if (value === 'default' || value === 'plan' || value === 'bypassPermissions') return value;
-    return 'default';
-}
-
 function normalizeRunMode(value) {
     if (value === undefined || value === null || value === '') return undefined;
     if (value === 'agent' || value === 'plan' || value === 'ask') return value;
     return 'agent';
 }
 
-function resolvePermissionMode(options) {
-    const explicit = normalizePermissionMode(options?.permissionMode || options?.mode);
-    // A literal "default" from the chat composer is the implicit
-    // no-special-mode position of the per-turn picker, not a real
-    // per-turn override. Let the user-level skipPermissions toggle
-    // win over it. Genuine non-default picks (plan / bypassPermissions)
-    // still take precedence — they're a deliberate per-turn decision.
-    if (explicit && explicit !== 'default') return explicit;
-    const persisted = readPermissionSettings();
-    if (persisted.skipPermissions === true) {
-        return 'bypassPermissions';
+export function createTrustedGatewayTurnOptions(options = {}) {
+    return {
+        ...options,
+        [TRUSTED_GATEWAY_TURN_OPTIONS]: true,
+    };
+}
+
+// Server-owned constrained surfaces (for example the medical API) can
+// select a server-loaded profile and narrow model-visible tools. The symbol
+// marker cannot be supplied by a JSON/WebSocket client.
+export function getGatewayTurnSafetyOverrides(options) {
+    const trusted = options?.[TRUSTED_GATEWAY_TURN_OPTIONS] === true;
+    const result = {};
+    const turnOverrides = {};
+
+    const selectedModel = typeof options?.model === 'string' ? options.model.trim() : '';
+    const separator = selectedModel.indexOf('/');
+    if (separator > 0 && separator < selectedModel.length - 1) {
+        turnOverrides.provider = selectedModel.slice(0, separator);
+        turnOverrides.model = selectedModel.slice(separator + 1);
     }
-    return explicit || normalizePermissionMode(WEB_DEFAULT_PERMISSION_MODE) || 'default';
+    if (trusted && options?.thinking && typeof options.thinking === 'object' && !Array.isArray(options.thinking)) {
+        turnOverrides.thinking = options.thinking;
+    }
+    if (options?.turnOverrides && typeof options.turnOverrides === 'object' && !Array.isArray(options.turnOverrides)) {
+        for (const key of [
+            'maxOutputTokens',
+            'temperature',
+            'topP',
+            'topK',
+            'minP',
+            'presencePenalty',
+            'frequencyPenalty',
+            'repetitionPenalty',
+            'seed',
+        ]) {
+            if (typeof options.turnOverrides[key] === 'number' && Number.isFinite(options.turnOverrides[key])) {
+                turnOverrides[key] = options.turnOverrides[key];
+            }
+        }
+    }
+    if (
+        typeof options?.profile === 'string'
+        && /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/.test(options.profile.trim())
+    ) {
+        result.profile = options.profile.trim();
+    }
+    if (Array.isArray(options?.syntheticMessages)) {
+        const syntheticMessages = options.syntheticMessages
+            .slice(0, 4)
+            .flatMap((entry) => {
+                if (!entry || typeof entry !== 'object') return [];
+                const text = typeof entry.text === 'string' ? entry.text.trim().slice(0, 4_000) : '';
+                if (!text) return [];
+                const purpose = typeof entry.purpose === 'string'
+                    && /^[a-zA-Z0-9_.:-]{1,64}$/.test(entry.purpose)
+                    ? entry.purpose
+                    : 'channel_hint';
+                return [{ text, purpose }];
+            });
+        if (syntheticMessages.length > 0) result.syntheticMessages = syntheticMessages;
+    }
+
+    if (trusted) {
+        if (options.turnOverrides && typeof options.turnOverrides === 'object' && !Array.isArray(options.turnOverrides)) {
+            Object.assign(turnOverrides, options.turnOverrides);
+        }
+        if (Number.isInteger(options.maxTurns) && options.maxTurns > 0) {
+            result.maxTurns = options.maxTurns;
+        }
+        if (Number.isInteger(options.maxToolCalls) && options.maxToolCalls > 0) {
+            result.maxToolCalls = options.maxToolCalls;
+        }
+        if (Number.isFinite(options.timeoutMs) && options.timeoutMs > 0) {
+            result.timeoutMs = options.timeoutMs;
+        }
+    }
+
+    if (options?.disableTools === true) {
+        result.canPrompt = false;
+        turnOverrides.allowedTools = [];
+    }
+    if (Object.keys(turnOverrides).length > 0) {
+        result.turnOverrides = turnOverrides;
+    }
+    return result;
+}
+
+function resolvePermissionMode(options) {
+    // Browser-provided permission modes are untrusted, including values
+    // persisted in older sessions. Plan is a separate, visible run mode.
+    if (normalizeRunMode(options?.runMode) === 'plan') return 'plan';
+    return getWebPermissionMode();
 }
 
 /**
@@ -486,6 +546,20 @@ export function gatewayEventToFrames(event, sessionId, provider) {
                     ...base,
                     kind: 'stream_delta',
                     content: event.text,
+                    ...(Array.isArray(event.citations) && event.citations.length > 0
+                        ? { citations: event.citations }
+                        : {}),
+                }),
+            ];
+        case 'assistant_text_end':
+            return [
+                createNormalizedMessage({
+                    ...base,
+                    kind: 'stream_end',
+                    // 参考来源列表随正文结束一起下发，前端据此渲染折叠面板。
+                    ...(Array.isArray(event.citations) && event.citations.length > 0
+                        ? { citations: event.citations }
+                        : {}),
                 }),
             ];
         case 'assistant_thinking_delta':
@@ -496,6 +570,27 @@ export function gatewayEventToFrames(event, sessionId, provider) {
                     content: event.text,
                 }),
             ];
+        case 'tool_activity': {
+            const safeActivityId = sanitizeMessageId(event.activityId || event.toolCallId || 'medical');
+            const terminal = event.state === 'completed' || event.state === 'failed';
+            return [
+                createNormalizedMessage({
+                    ...base,
+                    id: `tool_activity_${sanitizeMessageId(sessionId)}_${safeActivityId}`,
+                    kind: 'agent_activity',
+                    activityId: event.activityId,
+                    phase: 'medical',
+                    state: event.state,
+                    title: event.title,
+                    detail: event.detail || '',
+                    toolName: event.toolName,
+                    toolId: event.toolCallId,
+                    startedAt: event.createdAt || new Date().toISOString(),
+                    endedAt: terminal ? new Date().toISOString() : null,
+                    severity: event.severity,
+                }),
+            ];
+        }
         case 'file_artifacts':
             return [
                 createNormalizedMessage({
@@ -508,9 +603,9 @@ export function gatewayEventToFrames(event, sessionId, provider) {
             const displayName = normalizeToolDisplayName(event.name);
             const rawName = String(event.name || '').toLowerCase();
             if (rawName === 'agent' || rawName === 'task') {
-                const pending = pendingAgentToolCalls.get(base.sessionId) || [];
+                const pending = pendingAgentToolCalls.get(stateKey(base.sessionId)) || [];
                 pending.push(event.toolCallId);
-                pendingAgentToolCalls.set(base.sessionId, pending);
+                pendingAgentToolCalls.set(stateKey(base.sessionId), pending);
             }
             return [
                 createNormalizedMessage({
@@ -529,7 +624,7 @@ export function gatewayEventToFrames(event, sessionId, provider) {
                     ...base,
                     kind: 'tool_result',
                     toolId: event.toolCallId,
-                    content: limitToolResultPreview(event.resultPreview),
+                    content: limitToolResultPreview(event.resultPreview, event.toolName),
                     isError: !event.ok,
                     // errorCode lets the UI distinguish permission denials
                     // (`permission_denied` / `permission_required`) from
@@ -791,6 +886,20 @@ export function gatewayEventToFrames(event, sessionId, provider) {
                     }),
                 ];
             }
+            if (event.event === 'max_tool_calls_reached') {
+                return [
+                    createNormalizedMessage({
+                        ...base,
+                        kind: 'error',
+                        content: detail.message || 'Reached the maximum number of tool calls, so this turn has stopped. Reply with what you already know, or split the task into smaller steps.',
+                        contentI18n: detail.messageI18n,
+                        code: event.event,
+                        recoverable: false,
+                        userHint: detail.userHint,
+                        userHintI18n: detail.userHintI18n,
+                    }),
+                ];
+            }
             if (visibleFailureAgentStatusEvents.has(event.event) || isVisibleFailureStatusDetail(detail)) {
                 return [
                     createNormalizedMessage({
@@ -841,7 +950,7 @@ function createSubagentStatusFrames(event, base) {
     const subagentId = String(detail.subagentId || 'unknown');
     const status = normalizeSubagentStatus(event.event, detail);
     const subagentType = detail.subagentType || 'agent';
-    const activityKey = `${base.sessionId || ''}:${subagentId}`;
+    const activityKey = stateKey(`${base.sessionId || ''}:${subagentId}`);
     const nowMs = Date.now();
     const reportedDurationMs = Number(detail.durationMs);
     let startedAtMs = subagentActivityStarts.get(activityKey);
@@ -884,19 +993,19 @@ function createSubagentStatusFrames(event, base) {
     if (event.event === 'subagent_started') {
         let toolCallId = detail.toolCallId;
         if (!toolCallId) {
-            const pending = pendingAgentToolCalls.get(base.sessionId) || [];
+            const pending = pendingAgentToolCalls.get(stateKey(base.sessionId)) || [];
             toolCallId = pending.shift();
             if (pending.length === 0) {
-                pendingAgentToolCalls.delete(base.sessionId);
+                pendingAgentToolCalls.delete(stateKey(base.sessionId));
             } else {
-                pendingAgentToolCalls.set(base.sessionId, pending);
+                pendingAgentToolCalls.set(stateKey(base.sessionId), pending);
             }
         } else {
-            const pending = pendingAgentToolCalls.get(base.sessionId);
+            const pending = pendingAgentToolCalls.get(stateKey(base.sessionId));
             if (pending) {
                 const idx = pending.indexOf(toolCallId);
                 if (idx !== -1) pending.splice(idx, 1);
-                if (pending.length === 0) pendingAgentToolCalls.delete(base.sessionId);
+                if (pending.length === 0) pendingAgentToolCalls.delete(stateKey(base.sessionId));
             }
         }
         frames.push(createNormalizedMessage({
@@ -1045,6 +1154,173 @@ function sendBridgeStatusEvent(writer, statusEvent, sessionKey, provider) {
     }
 }
 
+export function sanitizeTraumaFormInput(value) {
+    if (value === undefined) return undefined;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('Invalid traumaForm');
+    }
+    const textLimits = {
+        injuryNarrative: 1000,
+        treatmentNarrative: 800,
+        evacuationNarrative: 500,
+        note: 500,
+    };
+    const allowedKeys = new Set(['statedSubStage', ...Object.keys(textLimits), 'vitals']);
+    if (Object.keys(value).some((key) => !allowedKeys.has(key))) {
+        throw new Error('Invalid traumaForm field');
+    }
+    if (Object.entries(textLimits).some(([key, limit]) =>
+        typeof value[key] !== 'string' || value[key].length > limit)) {
+        throw new Error('Invalid traumaForm narratives');
+    }
+    const substages = new Set([
+        'primary_first_aid', 'advanced_first_aid', 'emergency_treatment', 'surgical_resuscitation',
+    ]);
+    if (value.statedSubStage !== null && !substages.has(value.statedSubStage)) {
+        throw new Error('Invalid traumaForm statedSubStage');
+    }
+    if (!value.vitals || typeof value.vitals !== 'object' || Array.isArray(value.vitals)) {
+        throw new Error('Invalid traumaForm vitals');
+    }
+    const vitalRanges = {
+        respiratoryRate: [0, 80],
+        systolicBloodPressure: [20, 300],
+        gcs: [3, 15],
+        heartRate: [0, 300],
+        temperature: [20, 45],
+    };
+    for (const [key, item] of Object.entries(value.vitals)) {
+        const range = vitalRanges[key];
+        if (!range || typeof item !== 'number' || !Number.isFinite(item)
+            || item < range[0] || item > range[1]) {
+            throw new Error('Invalid traumaForm vital value');
+        }
+        if (key === 'temperature') {
+            if (!Number.isInteger(item * 10)) {
+                throw new Error('Invalid traumaForm temperature precision');
+            }
+        } else if (!Number.isInteger(item)) {
+            throw new Error('Invalid traumaForm vital integer');
+        }
+    }
+    const hasNarrative = Object.keys(textLimits).some((key) => value[key].trim().length > 0);
+    if (!hasNarrative && Object.keys(value.vitals).length === 0) {
+        throw new Error('Invalid traumaForm: empty submission');
+    }
+    return {
+        statedSubStage: value.statedSubStage,
+        injuryNarrative: value.injuryNarrative,
+        treatmentNarrative: value.treatmentNarrative,
+        evacuationNarrative: value.evacuationNarrative,
+        note: value.note,
+        vitals: { ...value.vitals },
+    };
+}
+
+/**
+ * Same per-request file cap the upload endpoint already enforces
+ * (`ATTACHMENT_UPLOAD_MAX_FILES` in ui/server/index.js:3107). There is no
+ * existing import path between these two modules, so this is kept as its
+ * own named constant rather than imported across them — keep the two in
+ * sync by hand if either changes.
+ */
+const TRAUMA_ATTACHMENT_MAX_FILES = 64;
+
+/** Longest `name` we'll carry through into the model prompt / case snapshot. */
+const TRAUMA_ATTACHMENT_MAX_NAME_LENGTH = 200;
+
+/**
+ * `name` flows untruncated into the interpreter station's prompt and is
+ * persisted/re-rendered in later rounds, so it must not be able to carry
+ * path separators (it's never used to build a filesystem path, but a
+ * separator-laden name reads as a path in the UI/prompt) or control
+ * characters, and must be bounded in length. Returns '' when nothing
+ * usable survives.
+ *
+ * @param {string} rawName
+ * @returns {string}
+ */
+function sanitizeTraumaAttachmentName(rawName) {
+    const stripped = rawName
+        .replace(/[\\/]/gu, '')
+        // eslint-disable-next-line no-control-regex
+        .replace(/[\x00-\x1f\x7f]/gu, '')
+        .trim();
+    return stripped.slice(0, TRAUMA_ATTACHMENT_MAX_NAME_LENGTH);
+}
+
+/**
+ * Resolve `p` to its canonical, symlink-free form and confirm it names an
+ * existing regular file — not a directory (the inbox root itself or any
+ * subdirectory under it), and not a path that doesn't exist yet. Returns
+ * null when either check fails. Requiring existence keeps this aligned
+ * with `inboxRoot` below (also `realpathSync`'d): a lexical fallback for
+ * one side and a canonical resolve for the other would let a real inbox
+ * path that hasn't been created yet compare unequal to itself whenever a
+ * symlinked path component sits between the two (e.g. macOS `/var` →
+ * `/private/var`).
+ *
+ * @param {string} p
+ * @returns {string | null}
+ */
+function resolveExistingInboxFile(p) {
+    let resolved;
+    try {
+        resolved = fs.realpathSync(p);
+    } catch {
+        return null;
+    }
+    const stat = fs.statSync(resolved, { throwIfNoEntry: false });
+    return stat && stat.isFile() ? resolved : null;
+}
+
+/**
+ * 附件路径来自前端，必须是上传端点落盘的 inbox 绝对路径。
+ * 放任任意路径会让 med_parse_medical 读到项目外的文件。
+ *
+ * Exported (like `sanitizeTraumaFormInput`) purely so it can be unit
+ * tested directly; it is not part of the public bridge API.
+ *
+ * @param {unknown} value
+ * @param {string | undefined} projectRoot
+ * @returns {Array<{ path: string; name: string }> | undefined}
+ */
+export function sanitizeTraumaAttachments(value, projectRoot) {
+    if (!Array.isArray(value) || !projectRoot) return undefined;
+    let inboxRoot;
+    try {
+        inboxRoot = fs.realpathSync(path.resolve(projectRoot, 'inbox'));
+    } catch {
+        // Inbox directory doesn't exist yet -> nothing can genuinely be inside it.
+        return undefined;
+    }
+    const sanitized = [];
+    const seenPaths = new Set();
+    for (const item of value) {
+        if (sanitized.length >= TRAUMA_ATTACHMENT_MAX_FILES) break;
+        if (!item || typeof item !== 'object') continue;
+        const rawPath = typeof item.path === 'string' ? item.path : '';
+        const rawName = typeof item.name === 'string' ? item.name : '';
+        if (!rawPath || !rawName) continue;
+        if (!path.isAbsolute(rawPath)) continue;
+        const name = sanitizeTraumaAttachmentName(rawName);
+        if (!name) continue;
+        const resolved = resolveExistingInboxFile(rawPath);
+        if (!resolved) {
+            console.warn(`[pilotdeck-bridge] dropping trauma attachment, file not found: ${rawPath}`);
+            continue;
+        }
+        if (resolved !== inboxRoot && !resolved.startsWith(`${inboxRoot}${path.sep}`)) {
+            console.warn(`[pilotdeck-bridge] dropping trauma attachment outside inbox root: resolved=${resolved} inboxRoot=${inboxRoot}`);
+            continue;
+        }
+        if (seenPaths.has(resolved)) continue;
+        seenPaths.add(resolved);
+        sanitized.push({ path: resolved, name });
+    }
+    return sanitized.length > 0 ? sanitized : undefined;
+}
+
 /**
  * Run a chat command through the PilotDeck gateway.
  *
@@ -1069,13 +1345,30 @@ function sendBridgeStatusEvent(writer, statusEvent, sessionKey, provider) {
  * @param {{send: (msg: object) => void}} writer Existing writer.
  * @param {string} provider Provider hint (kept for legacy frame branding).
  */
+/** Path-sanitization options for the scoped user, or null in single-user local mode. */
+export function currentSanitizeOptions() {
+    return scopedSanitizeOptions({
+        disableLocalAuth: DISABLE_LOCAL_AUTH,
+        userId: DISABLE_LOCAL_AUTH ? undefined : requireUserScope().userId,
+        pilotRoot: resolvePilotRoot(),
+    });
+}
+
 export async function runChatViaGateway(
     command,
     options = {},
-    writer,
+    rawWriter,
     provider = 'pilotdeck',
 ) {
-    const projectKey = options.projectPath || options.cwd || GENERAL_HOME;
+    // Multi-user: every frame leaving for the browser (assistant text, tool
+    // input/output, errors) is stripped of absolute server paths. Single-user
+    // local mode keeps real paths, which are the user's own.
+    const sanitizeOptions = currentSanitizeOptions();
+    const writer = sanitizeOptions ? createSanitizingWriter(rawWriter, sanitizeOptions) : rawWriter;
+    const projectKey = resolveGatewayProjectKey(
+        options.projectPath || options.cwd || resolveScopedHome(),
+        resolveScopedHome(),
+    );
     const channelKey = 'web';
 
     const incoming = options.sessionId || options.sessionKey;
@@ -1098,7 +1391,41 @@ export async function runChatViaGateway(
         );
     }
 
-    const runId = randomUUID();
+    // Give a fixed response before the model sees a protected path. This also
+    // prevents the model from suggesting the user copy somebody else's file.
+    if (sanitizeOptions && isExplicitCrossUserAccessRequest(command, {
+        userId: sanitizeOptions.userId,
+        pilotRoot: sanitizeOptions.pilotRoot,
+    })) {
+        const runId = typeof options?.runId === 'string' && options.runId.trim()
+            ? options.runId.trim() : randomUUID();
+        try {
+            await withUserGateway(async (gw) => {
+                if (!gw.recordRejectedTurn) throw new Error('Gateway does not support policy refusal persistence.');
+                const result = await gw.recordRejectedTurn({
+                    sessionKey, projectKey, channelKey, runId,
+                    userText: command ?? '', reply: ACCESS_REFUSAL_REPLY,
+                });
+                if (result?.recorded !== true) throw new Error('Policy refusal was not persisted.');
+            });
+            writer.send(createNormalizedMessage({ provider, sessionId: sessionKey, runId,
+                kind: 'stream_delta', content: ACCESS_REFUSAL_REPLY }));
+            writer.send(createNormalizedMessage({ provider, sessionId: sessionKey, runId, kind: 'stream_end' }));
+            writer.send(createNormalizedMessage({ provider, sessionId: sessionKey, runId,
+                kind: 'complete', exitCode: 0, success: true }));
+        } catch (error) {
+            console.error('[pilotdeck-bridge] failed to persist policy refusal:', error);
+            writer.send(createNormalizedMessage({ provider, sessionId: sessionKey, runId,
+                kind: 'error', code: 'policy_refusal_persist_failed',
+                content: '无法保存本轮拒绝记录，请稍后重试。' }));
+        }
+        return;
+    }
+
+    const requestedRunId = typeof options?.runId === 'string' && options.runId.trim()
+        ? options.runId.trim()
+        : undefined;
+    const runId = requestedRunId || randomUUID();
     state.runId = runId;
     state.active = true;
     state.hasVisibleFailureStatus = false;
@@ -1108,161 +1435,174 @@ export async function runChatViaGateway(
         ...(uiFilesToAttachments(options?.attachments) || []),
     ];
     const resolvedMode = resolvePermissionMode(options);
-    const basePermissionMode = normalizePermissionMode(options?.basePermissionMode);
+    const basePermissionMode = resolvedMode === 'plan' ? getWebPermissionMode() : undefined;
     const runMode = normalizeRunMode(options?.runMode) || (resolvedMode === 'plan' ? 'plan' : 'agent');
+    const traumaForm = sanitizeTraumaFormInput(options?.traumaForm);
+    const traumaRawInput = typeof options?.traumaRawInput === 'string' ? options.traumaRawInput : undefined;
+    const traumaExtract = options?.traumaExtract === true;
+    const traumaAttachments = sanitizeTraumaAttachments(
+        options?.traumaAttachments,
+        resolveAgentCwd(projectKey, resolveScopedHome()),
+    );
     console.log(`[pilotdeck-bridge] submitTurn runMode=${runMode} mode=${resolvedMode} (options.permissionMode=${options?.permissionMode}, options.mode=${options?.mode})`);
 
     let gw = null;
     try {
-        gw = await ensureGateway();
+        await withUserGateway(async (leasedGateway) => {
+            gw = leasedGateway;
 
-        if (staleRunId) {
-            const abortReason = options?.forceStart === true
-                ? 'user:force_start_next_turn'
-                : 'system:stale_turn';
-            const abortAction = options?.forceStart === true ? 'force-start aborting' : 'aborting stale';
-            console.log(
-                `[pilotdeck-bridge] ${abortAction} turn ${staleRunId} for ${sessionKey} before submit`,
-            );
-            try {
-                await gw.abortTurn({ sessionKey, runId: staleRunId, reason: abortReason });
-            } catch (err) {
-                if (options?.forceStart === true) {
-                    const message = 'Could not stop the current turn before sending the queued message. Please wait for the current turn to finish or try stopping it again.';
-                    console.warn('[pilotdeck-bridge] force-start abort failed:', err?.message || err);
-                    writer.send(
-                        createNormalizedMessage({
-                            provider,
-                            sessionId: sessionKey,
-                            kind: 'error',
-                            code: 'force_start_abort_failed',
-                            content: message,
-                            userHint: message,
-                        }),
-                    );
-                    clearActiveRunIfCurrent(state, staleRunId);
-                    return;
-                }
-                console.warn('[pilotdeck-bridge] stale abort failed (continuing):', err?.message || err);
-            }
-        }
-
-        const stream = gw.submitTurn({
-            sessionKey,
-            channelKey,
-            projectKey,
-            message: command ?? '',
-            runMode,
-            mode: resolvedMode,
-            runId,
-            ...(options?.thinking ? { thinking: options.thinking } : {}),
-            ...(basePermissionMode ? { basePermissionMode } : {}),
-            ...(attachments.length > 0 ? { attachments } : {}),
-            ...(options.workspaceCwd ? { workspaceCwd: options.workspaceCwd } : {}),
-        });
-
-        let sawTurnCompleted = false;
-        let sawGatewayError = false;
-        for await (const event of stream) {
-            if (isVisibleFailureAgentStatus(event)) {
-                state.hasVisibleFailureStatus = true;
-            }
-            if (event && event.type === 'error') {
-                sawGatewayError = true;
-                console.error(
-                    '[pilotdeck-bridge] gateway error event:',
-                    JSON.stringify(
-                        {
-                            sessionKey,
-                            projectKey,
-                            runId,
-                            code: event.code,
-                            message: event.message,
-                            recoverable: event.recoverable,
-                        },
-                        null,
-                        2,
-                    ),
+            if (staleRunId) {
+                const abortReason = options?.forceStart === true
+                    ? 'user:force_start_next_turn'
+                    : 'system:stale_turn';
+                const abortAction = options?.forceStart === true ? 'force-start aborting' : 'aborting stale';
+                console.log(
+                    `[pilotdeck-bridge] ${abortAction} turn ${staleRunId} for ${sessionKey} before submit`,
                 );
-            }
-            if (event && event.type === 'context_budget') {
-                state.tokenBudget = {
-                    used: event.used,
-                    displayUsed: event.displayUsed,
-                    budgetUsed: event.budgetUsed,
-                    total: event.total,
-                    effectiveTotal: event.effectiveTotal,
-                    reservedOutputTokens: event.reservedOutputTokens,
-                    ratio: event.ratio,
-                    state: event.state,
-                };
-            }
-            const compactTokenBudget = event && event.type === 'agent_status' && event.event === 'compact_completed'
-                ? tokenBudgetFromCompact(state.tokenBudget, event.detail)
-                : null;
-            const eventForFrames = compactTokenBudget
-                ? {
-                    ...event,
-                    detail: {
-                        ...(event.detail || {}),
-                        tokenBudget: compactTokenBudget,
-                    },
-                }
-                : event;
-            if (compactTokenBudget) {
-                state.tokenBudget = compactTokenBudget;
-            }
-            // Clear active flag as soon as we see turn_completed so that
-            // a subsequent submitTurn from the user (who already sees the
-            // input box) does NOT trigger the stale-abort path while we
-            // wait for the async generator to fully close.
-            if (event && event.type === 'turn_completed') {
-                sawTurnCompleted = true;
-                clearActiveRunIfCurrent(state, runId);
-            }
-            const suppressDuplicateError = eventForFrames?.type === 'error' && state.hasVisibleFailureStatus;
-            if (!suppressDuplicateError) {
-                for (const frame of gatewayEventToFrames(eventForFrames, sessionKey, provider)) {
-                    writer.send(frame);
+                try {
+                    await gw.abortTurn({ sessionKey, runId: staleRunId, reason: abortReason });
+                } catch (err) {
+                    if (options?.forceStart === true) {
+                        const message = 'Could not stop the current turn before sending the queued message. Please wait for the current turn to finish or try stopping it again.';
+                        console.warn('[pilotdeck-bridge] force-start abort failed:', err?.message || err);
+                        writer.send(
+                            createNormalizedMessage({
+                                provider,
+                                sessionId: sessionKey,
+                                kind: 'error',
+                                code: 'force_start_abort_failed',
+                                content: message,
+                                userHint: message,
+                            }),
+                        );
+                        clearActiveRunIfCurrent(state, staleRunId);
+                        return;
+                    }
+                    console.warn('[pilotdeck-bridge] stale abort failed (continuing):', err?.message || err);
                 }
             }
-        }
 
-        if (!sawTurnCompleted && !sawGatewayError) {
-            const message = 'Gateway stream ended before turn_completed; no final assistant response was received.';
-            const userHint = 'The model stream ended before PilotDeck received a final turn result. Please retry this message; if it repeats, check the gateway/model provider logs.';
-            const statusEvent = createBridgeFailureStatusEvent({
-                event: 'gateway_stream_ended_without_completion',
-                message,
-                userHint,
-            });
-            console.warn(`[pilotdeck-bridge] ${message}`, { sessionKey, projectKey, runId });
-            await recordGatewayStatusMessage(gw, {
+            const stream = gw.submitTurn({
                 sessionKey,
-                turnId: runId,
+                channelKey,
                 projectKey,
-                event: statusEvent.event,
-                text: message,
-                detail: statusEvent.detail,
+                message: command ?? '',
+                ...(traumaForm ? { traumaForm } : {}),
+                ...(traumaRawInput ? { traumaRawInput } : {}),
+                ...(traumaExtract ? { traumaExtract: true } : {}),
+                ...(traumaAttachments ? { traumaAttachments } : {}),
+                runMode,
+                mode: resolvedMode,
+                // Only an explicit user-selected plan mode enables plan submission.
+                allowPlanModeTools: runMode === 'plan' && resolvedMode === 'plan',
+                runId,
+                ...(basePermissionMode ? { basePermissionMode } : {}),
+                ...(attachments.length > 0 ? { attachments } : {}),
+                ...(options.workspaceCwd ? { workspaceCwd: options.workspaceCwd } : {}),
+                ...getGatewayTurnSafetyOverrides(options),
             });
-            state.hasVisibleFailureStatus = true;
-            sendBridgeStatusEvent(writer, statusEvent, sessionKey, provider);
-        }
+
+            let sawTurnCompleted = false;
+            let sawGatewayError = false;
+            for await (const event of stream) {
+                if (isVisibleFailureAgentStatus(event)) {
+                    state.hasVisibleFailureStatus = true;
+                }
+                if (event && event.type === 'error') {
+                    sawGatewayError = true;
+                    console.error(
+                        '[pilotdeck-bridge] gateway error event:',
+                        JSON.stringify(
+                            {
+                                sessionKey,
+                                projectKey,
+                                runId,
+                                code: event.code,
+                                message: event.message,
+                                recoverable: event.recoverable,
+                            },
+                            null,
+                            2,
+                        ),
+                    );
+                }
+                if (event && event.type === 'context_budget') {
+                    state.tokenBudget = {
+                        used: event.used,
+                        displayUsed: event.displayUsed,
+                        budgetUsed: event.budgetUsed,
+                        total: event.total,
+                        effectiveTotal: event.effectiveTotal,
+                        reservedOutputTokens: event.reservedOutputTokens,
+                        ratio: event.ratio,
+                        state: event.state,
+                    };
+                }
+                const compactTokenBudget = event && event.type === 'agent_status' && event.event === 'compact_completed'
+                    ? tokenBudgetFromCompact(state.tokenBudget, event.detail)
+                    : null;
+                const eventForFrames = compactTokenBudget
+                    ? {
+                        ...event,
+                        detail: {
+                            ...(event.detail || {}),
+                            tokenBudget: compactTokenBudget,
+                        },
+                    }
+                    : event;
+                if (compactTokenBudget) {
+                    state.tokenBudget = compactTokenBudget;
+                }
+                // Clear active flag as soon as we see turn_completed so that
+                // a subsequent submitTurn from the user (who already sees the
+                // input box) does NOT trigger the stale-abort path while we
+                // wait for the async generator to fully close.
+                if (event && event.type === 'turn_completed') {
+                    sawTurnCompleted = true;
+                    clearActiveRunIfCurrent(state, runId);
+                }
+                const suppressDuplicateError = eventForFrames?.type === 'error' && state.hasVisibleFailureStatus;
+                if (!suppressDuplicateError) {
+                    for (const frame of gatewayEventToFrames(eventForFrames, sessionKey, provider)) {
+                        writer.send(frame);
+                    }
+                }
+            }
+
+            if (!sawTurnCompleted && !sawGatewayError) {
+                const message = 'Gateway stream ended before turn_completed; no final assistant response was received.';
+                const userHint = 'The model stream ended before PilotDeck received a final turn result. Please retry this message; if it repeats, check the gateway/model provider logs.';
+                const statusEvent = createBridgeFailureStatusEvent({
+                    event: 'gateway_stream_ended_without_completion',
+                    message,
+                    userHint,
+                });
+                console.warn(`[pilotdeck-bridge] ${message}`, { sessionKey, projectKey, runId });
+                await recordGatewayStatusMessage(gw, {
+                    sessionKey,
+                    turnId: runId,
+                    projectKey,
+                    event: statusEvent.event,
+                    text: message,
+                    detail: statusEvent.detail,
+                });
+                state.hasVisibleFailureStatus = true;
+                sendBridgeStatusEvent(writer, statusEvent, sessionKey, provider);
+            }
+        });
     } catch (error) {
         const rawMessage = error instanceof Error ? error.message : String(error);
-        const gatewayUnavailable = !gw || isGatewayUnavailableError(error);
-        if (gatewayUnavailable) {
-            resetGatewayConnection();
-        }
+        // Pool errors (acquire failed / start timeout / exhausted) carry status 503.
+        const gatewayUnavailable = error?.status === 503 || isGatewayUnavailableError(error);
         const message = gatewayUnavailable ? 'PilotDeck gateway is unavailable.' : rawMessage;
         const statusEvent = gatewayUnavailable
             ? createBridgeFailureStatusEvent({
                 event: 'gateway_unavailable',
                 message,
-                userHint: 'Start or restart the PilotDeck gateway, then retry this message.',
+                userHint: 'Your PilotDeck gateway could not be started or is busy. Wait a moment, then retry this message.',
                 scope: 'preflight',
                 detail: {
-                    gatewayUrl: GATEWAY_URL,
+                    code: typeof error?.code === 'string' ? error.code : undefined,
                 },
             })
             : createBridgeFailureStatusEvent({
@@ -1288,6 +1628,7 @@ export async function runChatViaGateway(
         state.hasVisibleFailureStatus = true;
         sendBridgeStatusEvent(writer, statusEvent, sessionKey, provider);
     } finally {
+        writer.discardPending?.();
         clearActiveRunIfCurrent(state, runId);
     }
 }
@@ -1312,78 +1653,92 @@ async function recordGatewayStatusMessage(gateway, { sessionKey, turnId, project
 }
 
 export async function abortViaGateway(sessionId, _provider = 'pilotdeck') {
-    const gw = await ensureGateway();
     const sessionKey = isPilotDeckSessionKey(sessionId) ? sessionId : null;
     if (!sessionKey) return false;
-    const state = sessionState.get(sessionKey);
-    try {
-        const runId = state?.runId;
-        await gw.abortTurn({ sessionKey, runId });
-        if (state && (!runId || state.runId === runId)) {
-            state.active = false;
-            state.runId = undefined;
+    return withUserGateway(async (gw) => {
+        const state = sessionState.get(stateKey(sessionKey));
+        try {
+            const runId = state?.runId;
+            await gw.abortTurn({ sessionKey, runId });
+            if (state && (!runId || state.runId === runId)) {
+                state.active = false;
+                state.runId = undefined;
+            }
+            return true;
+        } catch (error) {
+            console.warn('[pilotdeck-bridge] abortTurn failed:', error);
+            return false;
         }
-        return true;
-    } catch (error) {
-        console.warn('[pilotdeck-bridge] abortTurn failed:', error);
-        return false;
-    }
+    });
 }
 
 export async function decidePermissionViaGateway(requestId, decision, options = {}) {
-    const gw = await ensureGateway();
-    // PermissionBus is keyed by sessionKey + requestId. We don't know
-    // which session owns the request, so try each known session.
-    for (const state of sessionState.values()) {
-        try {
-            const result = await gw.permissionDecide({
-                sessionKey: state.sessionKey,
-                requestId,
-                decision: decision === 'allow' || decision === true ? 'allow' : 'deny',
-                remember: options.remember,
-                reason: options.reason,
-            });
-            if (result?.delivered) return true;
-        } catch (error) {
-            console.warn('[pilotdeck-bridge] permissionDecide failed:', error);
+    return withUserGateway(async (gw) => {
+        // PermissionBus is keyed by sessionKey + requestId. We don't know
+        // which session owns the request, so try each of this user's known sessions.
+        for (const state of userSessionStates()) {
+            try {
+                const result = await gw.permissionDecide({
+                    sessionKey: state.sessionKey,
+                    requestId,
+                    decision: decision === 'allow' || decision === true ? 'allow' : 'deny',
+                    remember: options.remember,
+                    reason: options.reason,
+                });
+                if (result?.delivered) return true;
+            } catch (error) {
+                console.warn('[pilotdeck-bridge] permissionDecide failed:', error);
+            }
         }
-    }
-    return false;
+        return false;
+    });
 }
 
 export async function grantSessionPermissionViaGateway(sessionId, entry) {
-    const gw = await ensureGateway();
-    if (!isPilotDeckSessionKey(sessionId) || typeof entry !== 'string' || !entry.trim()) {
-        return false;
-    }
-    try {
-        const result = await gw.grantSessionPermission({
-            sessionKey: sessionId,
-            entry,
-        });
-        return Boolean(result?.granted);
-    } catch (error) {
-        console.warn('[pilotdeck-bridge] grantSessionPermission failed:', error);
-        return false;
-    }
+    return withUserGateway(async (gw) => {
+        if (!isPilotDeckSessionKey(sessionId) || typeof entry !== 'string' || !entry.trim()) {
+            return false;
+        }
+        try {
+            const result = await gw.grantSessionPermission({
+                sessionKey: sessionId,
+                entry,
+            });
+            return Boolean(result?.granted);
+        } catch (error) {
+            console.warn('[pilotdeck-bridge] grantSessionPermission failed:', error);
+            return false;
+        }
+    });
 }
 
 export function isSessionActiveViaGateway(sessionId) {
     if (!isPilotDeckSessionKey(sessionId)) return false;
-    return Boolean(sessionState.get(sessionId)?.active);
+    return Boolean(sessionState.get(stateKey(sessionId))?.active);
 }
 
 export async function getActiveTurnSnapshotFramesViaGateway(sessionId, provider = 'pilotdeck') {
     if (!isPilotDeckSessionKey(sessionId)) return [];
-    const gw = await ensureGateway();
-    if (typeof gw.getActiveTurnSnapshot !== 'function') return [];
-    const snapshot = await gw.getActiveTurnSnapshot({ sessionKey: sessionId });
-    if (!snapshot?.active || !Array.isArray(snapshot.events)) return [];
-    return snapshot.events.flatMap((event) => gatewayEventToFrames(event, sessionId, provider) || []);
+    return withUserGateway(async (gw) => {
+        if (typeof gw.getActiveTurnSnapshot !== 'function') return [];
+        const snapshot = await gw.getActiveTurnSnapshot({ sessionKey: sessionId });
+        if (!snapshot?.active || !Array.isArray(snapshot.events)) return [];
+        const frames = snapshot.events.flatMap((event) => gatewayEventToFrames(event, sessionId, provider) || []);
+        const sanitizeOptions = currentSanitizeOptions();
+        return sanitizeOptions ? sanitizeValue(frames, sanitizeOptions) : frames;
+    });
+}
+
+/** Session states owned by the current scoped user. */
+function userSessionStates() {
+    const prefix = `${requireUserScope().userId}:`;
+    return [...sessionState.entries()]
+        .filter(([key]) => key.startsWith(prefix))
+        .map(([, state]) => state);
 }
 
 export function getActiveSessionIdsViaGateway() {
-    return [...sessionState.values()]
+    return userSessionStates()
         .filter((state) => state.active)
         .map((state) => state.sessionKey);
 }
@@ -1411,25 +1766,23 @@ export function getActiveSessionIdsViaGateway() {
 function _buildSessionProjectIndex() {
     const sessionIndex = new Map();
     const dirToPath = new Map();
+    const home = resolveScopedHome(); // outside the try: a missing user scope must throw, not read as "no projects"
     try {
-        const projectsDir = path.join(GENERAL_HOME, 'projects');
-        const dirs = fs.readdirSync(projectsDir, { withFileTypes: true });
-        for (const d of dirs) {
-            if (!d.isDirectory()) continue;
-            // Resolve actual project path from .cwd marker (handles lossy encoding)
-            const cwdFile = path.join(projectsDir, d.name, '.cwd');
+        for (const projectId of listProjectStorageIds(home)) {
+            const projectDir = resolveTypedProjectDir(projectId, home);
+            const cwdFile = path.join(projectDir, '.cwd');
             try {
                 const realPath = fs.readFileSync(cwdFile, 'utf-8').trim();
-                if (realPath) dirToPath.set(d.name, realPath);
+                if (realPath) dirToPath.set(projectId, path.resolve(home, realPath));
             } catch { /* no .cwd — will use fallback below */ }
 
-            const chatsDir = path.join(projectsDir, d.name, 'chats');
+            const chatsDir = path.join(projectDir, 'chats');
             let files;
             try { files = fs.readdirSync(chatsDir); } catch { continue; }
             for (const f of files) {
                 if (!f.endsWith('.jsonl')) continue;
                 const sessionId = f.slice(0, -6);
-                sessionIndex.set(sessionId, d.name);
+                sessionIndex.set(sessionId, projectId);
             }
         }
     } catch { /* projects dir may not exist yet */ }
@@ -1438,11 +1791,12 @@ function _buildSessionProjectIndex() {
 
 function loadPersistedStatsFromDisk() {
     const result = new Map();
+    const home = resolveScopedHome(); // outside the try: a missing user scope must throw
     try {
         // Prefer new JSONL format, fall back to legacy JSON.
-        const jsonlPath = path.join(GENERAL_HOME, 'router', 'stats.jsonl');
-        const jsonPath = path.join(GENERAL_HOME, 'router', 'stats.json');
-        const legacyPath = path.join(GENERAL_HOME, 'router-stats.json');
+        const jsonlPath = path.join(home, 'router', 'stats.jsonl');
+        const jsonPath = path.join(home, 'router', 'stats.json');
+        const legacyPath = path.join(home, 'router-stats.json');
 
         let records;
         if (fs.existsSync(jsonlPath)) {
@@ -1455,15 +1809,15 @@ function loadPersistedStatsFromDisk() {
         // Build a filesystem-based sessionId→projectDirName index for
         // backward compatibility (records written before projectPath existed).
         const { sessionIndex: fsIndex, dirToPath } = _buildSessionProjectIndex();
-        const generalProjectDirName = createProjectId(GENERAL_HOME);
+        const generalProjectDirName = createProjectId(home);
 
         const resolveProjectPath = (dirName) => {
-            if (dirName === generalProjectDirName) return GENERAL_HOME;
+            if (dirName === generalProjectDirName) return home;
             const fromCwd = dirToPath.get(dirName);
             if (fromCwd) return fromCwd;
             const repoProjectDirName = createProjectId(REPO_ROOT);
             if (dirName === repoProjectDirName) return REPO_ROOT;
-            return GENERAL_HOME;
+            return home;
         };
 
         const byProject = new Map();
@@ -1480,7 +1834,7 @@ function loadPersistedStatsFromDisk() {
                     }
                 }
             }
-            if (!projectKey) projectKey = GENERAL_HOME;
+            if (!projectKey) projectKey = home;
 
             if (!byProject.has(projectKey)) {
                 byProject.set(projectKey, []);
@@ -1551,44 +1905,43 @@ function _formatPromptTitle(text) {
 }
 
 function lookupSessionTitle(sessionId, projectKey) {
-    if (_sessionTitleCache.has(sessionId)) return _sessionTitleCache.get(sessionId);
+    const cacheKey = stateKey(sessionId);
+    if (_sessionTitleCache.has(cacheKey)) return _sessionTitleCache.get(cacheKey);
     const title = _readFirstPrompt(sessionId, projectKey);
-    _sessionTitleCache.set(sessionId, title);
+    _sessionTitleCache.set(cacheKey, title);
     return title;
 }
 
-function _readFirstPrompt(sessionId, projectKey) {
-    const pilotHome = GENERAL_HOME;
-    // Sessions are stored on disk under a sanitized filename (raw sessionId
-    // may contain /, :, = which would split into nested dirs). We try
-    // both the sanitized and raw form so this also resolves any legacy files
-    // that pre-date the sanitize fix.
+function _resolveTranscriptProjectId(projectKey) {
+    const home = resolveScopedHome();
+    if (!projectKey) {
+        return resolveProjectStorageId(home, home);
+    }
+    const gatewayKey = resolveGatewayProjectKey(projectKey, home);
+    return resolveProjectStorageId(gatewayKey, home);
+}
+
+function _transcriptFileCandidates(sessionId, projectKey) {
+    const pilotHome = resolveScopedHome();
     const safeId = sanitizeSessionIdForPath(sessionId);
     const fileVariants = safeId === sessionId ? [sessionId] : [safeId, sessionId];
     const candidates = [];
-    if (projectKey) {
+    const pushForProjectId = (projectId) => {
         for (const id of fileVariants) {
-            candidates.push(path.join(pilotHome, 'projects', createProjectId(projectKey), 'chats', `${id}.jsonl`));
+            candidates.push(path.join(resolveTypedProjectDir(projectId, pilotHome), 'chats', `${id}.jsonl`));
         }
-    }
-    // Also check the general workspace (sessions may live there)
-    for (const id of fileVariants) {
-        const generalChatPath = path.join(pilotHome, 'projects', createProjectId(pilotHome), 'chats', `${id}.jsonl`);
-        if (!candidates.includes(generalChatPath)) candidates.push(generalChatPath);
-    }
+    };
+    pushForProjectId(_resolveTranscriptProjectId(projectKey));
     try {
-        const projectsDir = path.join(pilotHome, 'projects');
-        const dirs = fs.readdirSync(projectsDir, { withFileTypes: true });
-        for (const d of dirs) {
-            if (!d.isDirectory()) continue;
-            for (const id of fileVariants) {
-                const p = path.join(projectsDir, d.name, 'chats', `${id}.jsonl`);
-                if (!candidates.includes(p)) candidates.push(p);
-            }
+        for (const projectId of listProjectStorageIds(pilotHome)) {
+            pushForProjectId(projectId);
         }
     } catch { /* ignore */ }
+    return candidates;
+}
 
-    for (const filePath of candidates) {
+function _readFirstPrompt(sessionId, projectKey) {
+    for (const filePath of _transcriptFileCandidates(sessionId, projectKey)) {
         try {
             const fd = fs.openSync(filePath, 'r');
             try {
@@ -1622,7 +1975,7 @@ function _readFirstPrompt(sessionId, projectKey) {
 const _userQueriesCache = new Map();
 
 function extractUserQueries(sessionId, projectKey, limit = 20) {
-    const cacheKey = `${sessionId}::${projectKey || ''}`;
+    const cacheKey = stateKey(`${sessionId}::${projectKey || ''}`);
     const cached = _userQueriesCache.get(cacheKey);
     if (cached) {
         const currentMtime = _getTranscriptMtime(sessionId, projectKey);
@@ -1636,27 +1989,7 @@ function extractUserQueries(sessionId, projectKey, limit = 20) {
 }
 
 function _getTranscriptMtime(sessionId, projectKey) {
-    const pilotHome = GENERAL_HOME;
-    const safeId = sanitizeSessionIdForPath(sessionId);
-    const fileVariants = safeId === sessionId ? [sessionId] : [safeId, sessionId];
-    const candidates = [];
-    if (projectKey) {
-        for (const id of fileVariants) {
-            candidates.push(path.join(pilotHome, 'projects', createProjectId(projectKey), 'chats', `${id}.jsonl`));
-        }
-    }
-    try {
-        const projectsDir = path.join(pilotHome, 'projects');
-        const dirs = fs.readdirSync(projectsDir, { withFileTypes: true });
-        for (const d of dirs) {
-            if (!d.isDirectory()) continue;
-            for (const id of fileVariants) {
-                const p = path.join(projectsDir, d.name, 'chats', `${id}.jsonl`);
-                if (!candidates.includes(p)) candidates.push(p);
-            }
-        }
-    } catch { /* ignore */ }
-    for (const filePath of candidates) {
+    for (const filePath of _transcriptFileCandidates(sessionId, projectKey)) {
         try {
             return fs.statSync(filePath).mtimeMs;
         } catch { /* next */ }
@@ -1665,32 +1998,7 @@ function _getTranscriptMtime(sessionId, projectKey) {
 }
 
 function _readUserQueriesFromTranscript(sessionId, projectKey, limit) {
-    const pilotHome = GENERAL_HOME;
-    const safeId = sanitizeSessionIdForPath(sessionId);
-    const fileVariants = safeId === sessionId ? [sessionId] : [safeId, sessionId];
-    const candidates = [];
-    if (projectKey) {
-        for (const id of fileVariants) {
-            candidates.push(path.join(pilotHome, 'projects', createProjectId(projectKey), 'chats', `${id}.jsonl`));
-        }
-    }
-    for (const id of fileVariants) {
-        const generalChatPath = path.join(pilotHome, 'projects', createProjectId(pilotHome), 'chats', `${id}.jsonl`);
-        if (!candidates.includes(generalChatPath)) candidates.push(generalChatPath);
-    }
-    try {
-        const projectsDir = path.join(pilotHome, 'projects');
-        const dirs = fs.readdirSync(projectsDir, { withFileTypes: true });
-        for (const d of dirs) {
-            if (!d.isDirectory()) continue;
-            for (const id of fileVariants) {
-                const p = path.join(projectsDir, d.name, 'chats', `${id}.jsonl`);
-                if (!candidates.includes(p)) candidates.push(p);
-            }
-        }
-    } catch { /* ignore */ }
-
-    for (const filePath of candidates) {
+    for (const filePath of _transcriptFileCandidates(sessionId, projectKey)) {
         try {
             const raw = fs.readFileSync(filePath, 'utf-8');
             const queries = [];
@@ -1730,7 +2038,7 @@ function _readUserQueriesFromTranscript(sessionId, projectKey, limit) {
 const _toolSequenceCache = new Map();
 
 function _extractToolSequence(sessionId, projectKey) {
-    const cacheKey = `${sessionId}::${projectKey || ''}::tools`;
+    const cacheKey = stateKey(`${sessionId}::${projectKey || ''}::tools`);
     const cached = _toolSequenceCache.get(cacheKey);
     if (cached) {
         const currentMtime = _getTranscriptMtime(sessionId, projectKey);
@@ -1744,32 +2052,7 @@ function _extractToolSequence(sessionId, projectKey) {
 }
 
 function _readToolSequenceFromTranscript(sessionId, projectKey) {
-    const pilotHome = GENERAL_HOME;
-    const safeId = sanitizeSessionIdForPath(sessionId);
-    const fileVariants = safeId === sessionId ? [sessionId] : [safeId, sessionId];
-    const candidates = [];
-    if (projectKey) {
-        for (const id of fileVariants) {
-            candidates.push(path.join(pilotHome, 'projects', createProjectId(projectKey), 'chats', `${id}.jsonl`));
-        }
-    }
-    for (const id of fileVariants) {
-        const generalChatPath = path.join(pilotHome, 'projects', createProjectId(pilotHome), 'chats', `${id}.jsonl`);
-        if (!candidates.includes(generalChatPath)) candidates.push(generalChatPath);
-    }
-    try {
-        const projectsDir = path.join(pilotHome, 'projects');
-        const dirs = fs.readdirSync(projectsDir, { withFileTypes: true });
-        for (const d of dirs) {
-            if (!d.isDirectory()) continue;
-            for (const id of fileVariants) {
-                const p = path.join(projectsDir, d.name, 'chats', `${id}.jsonl`);
-                if (!candidates.includes(p)) candidates.push(p);
-            }
-        }
-    } catch { /* ignore */ }
-
-    for (const filePath of candidates) {
+    for (const filePath of _transcriptFileCandidates(sessionId, projectKey)) {
         try {
             const raw = fs.readFileSync(filePath, 'utf-8');
             const turns = [];
@@ -1819,7 +2102,7 @@ function _readToolSequenceFromTranscript(sessionId, projectKey) {
 const _subagentPromptCache = new Map();
 
 function _extractSubagentPrompts(sessionId, projectKey) {
-    const cacheKey = `${sessionId}::${projectKey || ''}::subprompts`;
+    const cacheKey = stateKey(`${sessionId}::${projectKey || ''}::subprompts`);
     const cached = _subagentPromptCache.get(cacheKey);
     if (cached) {
         const currentMtime = _getTranscriptMtime(sessionId, projectKey);
@@ -1832,33 +2115,8 @@ function _extractSubagentPrompts(sessionId, projectKey) {
 }
 
 function _readSubagentPromptsFromTranscript(sessionId, projectKey) {
-    const pilotHome = GENERAL_HOME;
-    const safeId = sanitizeSessionIdForPath(sessionId);
-    const fileVariants = safeId === sessionId ? [sessionId] : [safeId, sessionId];
-    const candidates = [];
-    if (projectKey) {
-        for (const id of fileVariants) {
-            candidates.push(path.join(pilotHome, 'projects', createProjectId(projectKey), 'chats', `${id}.jsonl`));
-        }
-    }
-    for (const id of fileVariants) {
-        const generalChatPath = path.join(pilotHome, 'projects', createProjectId(pilotHome), 'chats', `${id}.jsonl`);
-        if (!candidates.includes(generalChatPath)) candidates.push(generalChatPath);
-    }
-    try {
-        const projectsDir = path.join(pilotHome, 'projects');
-        const dirs = fs.readdirSync(projectsDir, { withFileTypes: true });
-        for (const d of dirs) {
-            if (!d.isDirectory()) continue;
-            for (const id of fileVariants) {
-                const p = path.join(projectsDir, d.name, 'chats', `${id}.jsonl`);
-                if (!candidates.includes(p)) candidates.push(p);
-            }
-        }
-    } catch { /* ignore */ }
-
     const promptsByTurn = new Map();
-    for (const filePath of candidates) {
+    for (const filePath of _transcriptFileCandidates(sessionId, projectKey)) {
         try {
             const raw = fs.readFileSync(filePath, 'utf-8');
             for (const line of raw.split('\n')) {
@@ -2173,7 +2431,7 @@ function mergeRecordIntoSession(routing, record) {
 }
 
 function isGeneralProject(projectKey) {
-    return path.resolve(projectKey) === path.resolve(GENERAL_HOME);
+    return path.resolve(projectKey) === path.resolve(resolveScopedHome());
 }
 
 function deriveProjectName(projectKey) {
@@ -2252,6 +2510,9 @@ export function getRouterStatsSummary() {
  * @param {(sessionId: string, frame: object) => void} [forwardToSessionWatchers]
  */
 export function registerAlwaysOnNotificationForwarding(clients, forwardToSessionWatchers) {
+    // Single-user (no-login) mode only: must be called inside a user scope. Always-on
+    // is disabled in multi-user mode, so index.js never calls this there.
+    const scope = { ...requireUserScope() };
     const knownSessions = new Set();
 
     const forwardFrame = (sessionId, frame) => {
@@ -2268,8 +2529,10 @@ export function registerAlwaysOnNotificationForwarding(clients, forwardToSession
         }
     };
 
-    ensureGateway().then((gw) => {
-        gw.onNotification((name, payload) => {
+    // The lease is intentionally never released: this subscription lives on the
+    // gateway connection, so that gateway must not be idle-reaped while we listen.
+    pool().acquire(scope.userId).then(({ gateway: gw }) => {
+        gw.onNotification((name, payload) => runWithUserScope(scope, () => {
             if (name !== 'always-on:turn-event') return;
             const { sessionKey, channelKey, event } = payload ?? {};
             if (!sessionKey || !event) return;
@@ -2325,25 +2588,83 @@ export function registerAlwaysOnNotificationForwarding(clients, forwardToSession
             if (event.type === 'turn_completed') {
                 knownSessions.delete(sessionKey);
             }
-        });
+        }));
     }).catch((err) => {
         console.warn('[pilotdeck-bridge] failed to register always-on notification forwarding:', err?.message || err);
     });
 }
 
 export async function elicitationRespondViaGateway(requestId, answer) {
-    const gw = await ensureGateway();
-    for (const state of sessionState.values()) {
-        try {
-            const result = await gw.respondElicitation({
-                sessionKey: state.sessionKey,
-                requestId,
-                answer,
-            });
-            if (result?.delivered) return true;
-        } catch (error) {
-            console.warn('[pilotdeck-bridge] respondElicitation failed:', error);
+    return withUserGateway(async (gw) => {
+        for (const state of userSessionStates()) {
+            try {
+                const result = await gw.respondElicitation({
+                    sessionKey: state.sessionKey,
+                    requestId,
+                    answer,
+                });
+                if (result?.delivered) return true;
+            } catch (error) {
+                console.warn('[pilotdeck-bridge] respondElicitation failed:', error);
+            }
         }
-    }
-    return false;
+        return false;
+    });
 }
+
+export async function traumaConfirmTransitionViaGateway({
+    projectKey,
+    sessionKey,
+    answer,
+    expectedVersion,
+}) {
+    return withUserGateway(async (gw) => {
+        if (typeof gw.traumaConfirmTransition !== 'function') {
+            throw new Error('The active gateway does not support trauma stage confirmation.');
+        }
+        return gw.traumaConfirmTransition({
+            projectKey,
+            sessionKey,
+            answer,
+            expectedVersion,
+        });
+    });
+}
+
+export async function traumaGetCaseViaGateway({ projectKey, sessionKey }) {
+    return withUserGateway(async (gw) => {
+        if (typeof gw.traumaGetCase !== 'function') {
+            throw new Error('The active gateway does not support trauma case reads.');
+        }
+        return gw.traumaGetCase({ projectKey, sessionKey });
+    });
+}
+
+export async function traumaOverrideStageViaGateway(input) {
+    return withUserGateway(async (gw) => {
+        if (typeof gw.traumaOverrideStage !== 'function') {
+            throw new Error('The active gateway does not support trauma stage overrides.');
+        }
+        return gw.traumaOverrideStage(input);
+    });
+}
+
+export async function traumaExtractFormViaGateway({ projectKey, sessionKey, rawText, caseHistory }) {
+    return withUserGateway(async (gw) => {
+        if (typeof gw.traumaExtractForm !== 'function') {
+            throw new Error('The active gateway does not support trauma form extraction.');
+        }
+        return gw.traumaExtractForm({ projectKey, sessionKey, rawText, caseHistory });
+    });
+}
+
+// Test-only hook (never exported in production).
+export const __testing = (process.env.NODE_ENV === 'test' || process.env.VITEST)
+    ? {
+        touchSession(sessionKey, patch = {}, projectKey) {
+            const state = ensureSessionState(sessionKey, projectKey ?? resolveScopedHome(), 'web');
+            Object.assign(state, patch);
+            return state;
+        },
+    }
+    : undefined;

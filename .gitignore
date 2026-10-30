@@ -50,9 +50,14 @@ jspm_packages/
 # Project-local PilotDeck user home (config, chats, plugins). Isolated via PILOT_HOME.
 # Created by scripts/start-local.sh / bootstrap-runtime.sh — do not commit secrets.
 .pilotdeck-home/
+.tmp-bootstrap-*/
 
 # Plugin Python venvs (created by bootstrap / setup.sh)
 plugins/**/.venv/
+
+# Python bytecode (regenerated on import; do not ship)
+__pycache__/
+*.py[cod]
 
 # Snowpack dependency directory (https://snowpack.dev/)
 web_modules/
@@ -82,6 +87,10 @@ web_modules/
 .env
 .env.*
 !.env.example
+
+# On-site deployment config (model URLs / keys). Template is tracked, the real
+# file is not — see config/deploy.env.example.
+config/deploy.env
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
@@ -200,11 +209,23 @@ package-lock.json
 
 # Test output
 test-results/
+tests/skill-e2e/work/
+
+# Accidental runtime dirs at repo root (data lives under PILOT_HOME/workspaces/)
+/exports/
+/.tmp/
+/scratch/
 
 # Local test drafts (force-add intentional new tests with git add -f)
 test/
 test.ts
 *.test.ts
+
+# 例外：edgeclaw-memory-core 的子包测试套件是正式产物，不是本地草稿。
+# 上面的 `test/` 和 `*.test.ts` 会在任意层级命中它，必须显式反向包含整个目录，
+# 否则新增用例会被静默丢弃（记忆模块改造计划后续任务会持续往这里加测试）。
+!src/context/memory/edgeclaw-memory-core/test/
+!src/context/memory/edgeclaw-memory-core/test/**
 
 # Auto-Research-Skills (local-only)
 Auto-Research-Skills/

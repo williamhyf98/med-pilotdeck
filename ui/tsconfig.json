@@ -14,7 +14,14 @@
     "forceConsistentCasingInFileNames": true,
     "allowJs": true,
     // "checkJs": true, 
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    // 仓库根目录为 CLI 的 ink 装了 @types/react@19，依赖包的 .d.ts 会向上解析到它，
+    // 与 ui 自己的 @types/react@18 形成两套 React 类型身份。钉死到 ui 这一份。
+    "paths": {
+      "react": ["./node_modules/@types/react"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"]
+    }
   },
   "include": ["src", "shared", "vite.config.js"]
 }

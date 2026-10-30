@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { shouldCycleRunModeOnKeyDown } from './useChatComposerState';
+import {
+  acquireAttachmentSubmission,
+  attachmentSubmissionKey,
+  shouldCycleRunModeOnKeyDown,
+} from './useChatComposerState';
 
 function keyEvent(key: string, shiftKey = false) {
   return { key, shiftKey };
@@ -26,5 +30,38 @@ describe('useChatComposerState keyboard shortcuts', () => {
       showFileDropdown: false,
       showCommandMenu: true,
     })).toBe(false);
+  });
+});
+
+describe('attachment submission lock', () => {
+  it('blocks the same upload across composer instances until the owner releases it', () => {
+    const file = { name: 'study.dcm', size: 4096, lastModified: 1234 };
+    const key = attachmentSubmissionKey('general_med', '  分析   CT  ', [file]);
+    const equivalentKey = attachmentSubmissionKey('general_med', '分析 CT', [file]);
+
+    const release = acquireAttachmentSubmission(key);
+    expect(release).not.toBeNull();
+    expect(acquireAttachmentSubmission(equivalentKey)).toBeNull();
+
+    release?.();
+    const releaseAgain = acquireAttachmentSubmission(equivalentKey);
+    expect(releaseAgain).not.toBeNull();
+    releaseAgain?.();
+  });
+
+  it('does not collide for different file metadata', () => {
+    const firstKey = attachmentSubmissionKey('general_med', '分析', [
+      { name: 'study.dcm', size: 4096, lastModified: 1234 },
+    ]);
+    const secondKey = attachmentSubmissionKey('general_med', '分析', [
+      { name: 'study.dcm', size: 8192, lastModified: 1234 },
+    ]);
+    const releaseFirst = acquireAttachmentSubmission(firstKey);
+    const releaseSecond = acquireAttachmentSubmission(secondKey);
+
+    expect(releaseFirst).not.toBeNull();
+    expect(releaseSecond).not.toBeNull();
+    releaseFirst?.();
+    releaseSecond?.();
   });
 });

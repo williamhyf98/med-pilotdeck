@@ -23,7 +23,7 @@ export function decideScenario(
     };
   }
 
-  const subagent = detectSubagent(request.messages, request.tools, isMainAgent);
+  const subagent = detectSubagent(request.messages, isMainAgent);
 
   if (subagent.modelHint) {
     return {

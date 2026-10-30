@@ -9,7 +9,8 @@ import { addProjectManually } from '../projects.js';
 import { runChatViaGateway } from '../pilotdeck-bridge.js';
 import { Octokit } from '@octokit/rest';
 import { IS_PLATFORM } from '../constants/config.js';
-import { resolvePilotHome } from '../utils/pilotPaths.js';
+import { resolveScopedHome } from '../utils/pilotPaths.js';
+import { userScopeMiddleware } from '../middleware/userScope.js';
 
 const router = express.Router();
 
@@ -29,7 +30,7 @@ const validateExternalApiKey = (req, res, next) => {
   // Trust the request and use the default user context.
   if (IS_PLATFORM) {
     try {
-      const user = userDb.getFirstUser();
+      const user = userDb.getAdminUser();
       if (!user) {
         return res.status(500).json({ error: 'Platform mode: No user found in database' });
       }
@@ -54,6 +55,9 @@ const validateExternalApiKey = (req, res, next) => {
     return res.status(401).json({ error: 'Invalid or inactive API key' });
   }
 
+  // The key is bound to its owner; userScopeMiddleware (next in the route
+  // chain) runs the request in that user's scope. validateApiKey rows carry no
+  // role column, so userScopeMiddleware's default of 'user' applies.
   req.user = user;
   next();
 };
@@ -419,8 +423,9 @@ async function cloneGitHubRepo(githubUrl, githubToken = null, projectPath) {
  */
 async function cleanupProject(projectPath, sessionId = null) {
   try {
-    // Only clean up projects in the external-projects directory
-    if (!projectPath.includes('.pilotdeck/external-projects')) {
+    // Only clean up projects in this user's external-projects directory
+    const externalRoot = path.join(resolveScopedHome(), 'external-projects');
+    if (!path.resolve(projectPath).startsWith(externalRoot + path.sep)) {
       console.warn('⚠️ Refusing to clean up non-external project:', projectPath);
       return;
     }
@@ -431,7 +436,7 @@ async function cleanupProject(projectPath, sessionId = null) {
 
     if (sessionId) {
       try {
-        const sessionPath = path.join(resolvePilotHome(), 'sessions', sessionId);
+        const sessionPath = path.join(resolveScopedHome(), 'sessions', sessionId);
         console.log('🧹 Cleaning up session directory:', sessionPath);
         await fs.rm(sessionPath, { recursive: true, force: true });
         console.log('✅ Session directory cleaned up');
@@ -826,7 +831,7 @@ class ResponseCollector {
  *     "cleanup": false
  *   }
  */
-router.post('/', validateExternalApiKey, async (req, res) => {
+router.post('/', validateExternalApiKey, userScopeMiddleware, async (req, res) => {
   const { githubUrl, projectPath, message, provider = 'pilotdeck', model, githubToken, branchName, sessionId } = req.body;
 
   // Parse stream and cleanup as booleans (handle string "true"/"false" from curl)
@@ -874,7 +879,7 @@ router.post('/', validateExternalApiKey, async (req, res) => {
       } else {
         // Generate a unique path for cloning
         const repoHash = crypto.createHash('md5').update(githubUrl + Date.now()).digest('hex');
-        targetPath = path.join(resolvePilotHome(), 'external-projects', repoHash);
+        targetPath = path.join(resolveScopedHome(), 'external-projects', repoHash);
       }
 
       finalProjectPath = await cloneGitHubRepo(githubUrl.trim(), tokenToUse, targetPath);

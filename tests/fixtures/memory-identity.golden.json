@@ -1,0 +1,172 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Shared golden fixture for MemoryScopeIdentity. Read by both the TS test (tests/context/memory/identity.spec.ts) and the JS test (ui/server/utils/memoryIdentity.test.js). If a sanitizer output changes here it must change in both implementations simultaneously.",
+  "sessionSlugCases": [
+    {
+      "sessionId": "web:s_3f2a1b",
+      "note": "bare session key — colons are kept by transcript sanitizer, replaced by case-dir sanitizer",
+      "transcriptSlug": "web:s_3f2a1b",
+      "caseDirSlug": "web_s_3f2a1b"
+    },
+    {
+      "sessionId": "tui:project=/Users/foo/work/repo:default",
+      "note": "TUI key embedding absolute path — slashes become dashes for transcript, underscores for case dir",
+      "transcriptSlug": "tui:project=-Users-foo-work-repo:default",
+      "caseDirSlug": "tui_project__Users_foo_work_repo_default"
+    },
+    {
+      "sessionId": "2026-09-16 case A",
+      "note": "spaces kept verbatim by transcript sanitizer, replaced by underscore in case dir",
+      "transcriptSlug": "2026-09-16 case A",
+      "caseDirSlug": "2026-09-16_case_A"
+    },
+    {
+      "sessionId": "patients/张三/visit_1",
+      "note": "unicode plus path separators",
+      "transcriptSlug": "patients-张三-visit_1",
+      "caseDirSlug": "patients____visit_1"
+    },
+    {
+      "sessionId": "..",
+      "note": "double-dot must not allow directory traversal above cases/ — hashed",
+      "transcriptSlug": "..",
+      "caseDirSlug": "5ec1f7e700f37c3d0b2981d0"
+    },
+    {
+      "sessionId": ".",
+      "note": "single-dot must not resolve to cases/ itself — hashed",
+      "transcriptSlug": ".",
+      "caseDirSlug": "cdb4ee2aea69cc6a83331bbe"
+    },
+    {
+      "sessionId": "",
+      "note": "empty string — transcript falls back to literal 'session', case dir to hash of empty string",
+      "transcriptSlug": "session",
+      "caseDirSlug": "e3b0c44298fc1c149afbf4c8"
+    },
+    {
+      "sessionId": "///",
+      "note": "all separators — transcript strips all to empty then falls back to 'session', case dir keeps underscores",
+      "transcriptSlug": "session",
+      "caseDirSlug": "___"
+    },
+    {
+      "sessionId": "a",
+      "note": "minimal single character — passes both sanitizers unchanged",
+      "transcriptSlug": "a",
+      "caseDirSlug": "a"
+    },
+    {
+      "sessionId": "general-med-abc123",
+      "note": "bare project-id shape — safe for both sanitizers",
+      "transcriptSlug": "general-med-abc123",
+      "caseDirSlug": "general-med-abc123"
+    },
+    {
+      "sessionId": "trauma_med-demo-session",
+      "note": "trauma project-id prefix shape — underscores and hyphens both allowed",
+      "transcriptSlug": "trauma_med-demo-session",
+      "caseDirSlug": "trauma_med-demo-session"
+    },
+    {
+      "sessionId": "sess\\win\\path",
+      "note": "single backslash per separator — one dash for transcript, one underscore for case dir",
+      "transcriptSlug": "sess-win-path",
+      "caseDirSlug": "sess_win_path"
+    },
+    {
+      "sessionId": "emoji-🩺-case",
+      "note": "emoji outside [A-Za-z0-9._-] — kept by transcript sanitizer, underscore in case dir",
+      "transcriptSlug": "emoji-🩺-case",
+      "caseDirSlug": "emoji-_-case"
+    },
+    {
+      "sessionId": "trailing-slash/",
+      "note": "trailing separator — transcript strips trailing dash, case dir leaves trailing underscore",
+      "transcriptSlug": "trailing-slash",
+      "caseDirSlug": "trailing-slash_"
+    },
+    {
+      "sessionId": "tab\there",
+      "note": "tab character — kept by transcript sanitizer, underscore in case dir",
+      "transcriptSlug": "tab\there",
+      "caseDirSlug": "tab_here"
+    }
+  ],
+  "identityCases": [
+    {
+      "note": "null projectKey resolves to the general workspace",
+      "input": { "projectKey": null, "pilotHome": "/tmp/ph" },
+      "expected": {
+        "projectId": "general",
+        "projectType": "general_medicine",
+        "projectTypeKey": "general_med"
+      }
+    },
+    {
+      "note": "bare general_med project id is returned as-is and classified correctly",
+      "input": { "projectKey": "general_med-abc123", "pilotHome": "/tmp/ph" },
+      "expected": {
+        "projectId": "general_med-abc123",
+        "projectType": "general_medicine",
+        "projectTypeKey": "general_med"
+      }
+    },
+    {
+      "note": "bare trauma_med project id with session — all six fields present",
+      "input": {
+        "projectKey": "trauma_med-demo",
+        "pilotHome": "/tmp/ph",
+        "sessionId": "web:s_3f2a1b"
+      },
+      "expected": {
+        "projectId": "trauma_med-demo",
+        "projectType": "war_trauma",
+        "projectTypeKey": "trauma_med",
+        "sessionId": "web:s_3f2a1b",
+        "transcriptSlug": "web:s_3f2a1b",
+        "caseDirSlug": "web_s_3f2a1b"
+      }
+    },
+    {
+      "note": "whitespace-only displayName is dropped — must not appear in result",
+      "input": {
+        "projectKey": "trauma_med-demo",
+        "pilotHome": "/tmp/ph",
+        "displayName": "   "
+      },
+      "expected": {
+        "projectId": "trauma_med-demo",
+        "projectType": "war_trauma",
+        "projectTypeKey": "trauma_med"
+      }
+    },
+    {
+      "note": "non-empty displayName is preserved",
+      "input": {
+        "projectKey": "general_med-clinic1",
+        "pilotHome": "/tmp/ph",
+        "displayName": "急诊科"
+      },
+      "expected": {
+        "projectId": "general_med-clinic1",
+        "projectType": "general_medicine",
+        "projectTypeKey": "general_med",
+        "displayName": "急诊科"
+      }
+    },
+    {
+      "note": "empty string sessionId is treated as absent — no slug fields in result",
+      "input": {
+        "projectKey": "trauma_med-demo",
+        "pilotHome": "/tmp/ph",
+        "sessionId": ""
+      },
+      "expected": {
+        "projectId": "trauma_med-demo",
+        "projectType": "war_trauma",
+        "projectTypeKey": "trauma_med"
+      }
+    }
+  ]
+}

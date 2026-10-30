@@ -84,14 +84,6 @@ function Resolve-NpmCommand {
   if ($npmCommand) { return $npmCommand.Source }
   Write-Fail 'npm was not found after Node.js setup. Open a new terminal or fix Node.js PATH, then rerun this script.'
 }
-function Resolve-ClawHubCommand {
-  $clawhubCommand = Get-Command clawhub.cmd -ErrorAction SilentlyContinue
-  if ($clawhubCommand) { return $clawhubCommand.Source }
-  $clawhubCommand = Get-Command clawhub -ErrorAction SilentlyContinue
-  if ($clawhubCommand) { return $clawhubCommand.Source }
-  return $null
-}
-
 function Invoke-WingetInstall([string]$PackageId, [string]$PackageName, [switch]$Optional) {
   & winget install --id $PackageId -e --accept-package-agreements --accept-source-agreements
   if ($LASTEXITCODE -eq 0) { return $true }
@@ -437,28 +429,6 @@ function Ensure-BrowserUseDependency {
   Write-Ok 'Chrome for Testing installed'
 }
 
-function Ensure-ClawHubCli {
-  Write-Step 'Checking ClawHub CLI for skill marketplace features...'
-  $clawhubPath = Resolve-ClawHubCommand
-  if ($clawhubPath) {
-    Write-Ok "ClawHub CLI already installed ($clawhubPath)"
-    return
-  }
-
-  try {
-    Invoke-Npm -Arguments @('install', '-g', 'clawhub', '--no-audit', '--no-fund', '--loglevel=error') -WorkingDirectory $InstallDir
-    Refresh-ProcessPath
-    $clawhubPath = Resolve-ClawHubCommand
-    if ($clawhubPath) {
-      Write-Ok 'ClawHub CLI installed'
-    } else {
-      Write-Step 'ClawHub CLI install completed but clawhub is not on PATH; skill marketplace features may not work until PATH is refreshed.'
-    }
-  } catch {
-    Write-Step "ClawHub CLI install failed; skill marketplace features may not work. $($_.Exception.Message)"
-  }
-}
-
 function Install-AndBuild {
   if (-not $RepoChanged -and (Test-DepsUpToDate)) {
     Write-Ok 'Dependencies and build artifacts are up to date'
@@ -539,7 +509,7 @@ for (`$i = 0; `$i -lt `$args.Count; `$i++) {
 `$env:PILOTDECK_CONFIG_PATH = `$ConfigPath
 `$env:SERVER_PORT = [string](Find-FreePort `$ServerPort)
 `$env:PILOTDECK_GATEWAY_PORT = [string](Find-FreePort `$GatewayPort)
-`$env:PILOTDECK_GATEWAY_URL = "ws://127.0.0.1:`$env:PILOTDECK_GATEWAY_PORT/ws"
+`$env:PILOTDECK_GATEWAY_PORT_BASE = `$env:PILOTDECK_GATEWAY_PORT
 & node (Join-Path `$InstallDir 'scripts\bootstrap-pilotdeck-config.mjs')
 Write-Host "pilotdeck: starting at http://localhost:`$env:SERVER_PORT"
 Set-Location (Join-Path `$InstallDir 'ui')
@@ -562,13 +532,12 @@ Install-OrUpdateRepo
 Ensure-LfsAssets
 Install-AndBuild
 Ensure-BrowserUseDependency
-Ensure-ClawHubCli
 Write-CmdLauncher
 
 $env:PILOTDECK_CONFIG_PATH = $ConfigPath
 $env:SERVER_PORT = [string](Find-FreePort $ServerPort)
 $env:PILOTDECK_GATEWAY_PORT = [string](Find-FreePort $GatewayPort)
-$env:PILOTDECK_GATEWAY_URL = "ws://127.0.0.1:$env:PILOTDECK_GATEWAY_PORT/ws"
+$env:PILOTDECK_GATEWAY_PORT_BASE = $env:PILOTDECK_GATEWAY_PORT
 Bootstrap-Config
 
 Write-Host ''
@@ -577,7 +546,7 @@ Write-Host "  App location: $InstallDir"
 Write-Host "  Config file:  $ConfigPath"
 Write-Host "  CLI command:  pilotdeck"
 Write-Host "  UI:           http://localhost:$env:SERVER_PORT"
-Write-Host "  Gateway:      $env:PILOTDECK_GATEWAY_URL"
+Write-Host "  Gateway ports: from $env:PILOTDECK_GATEWAY_PORT, one per user, started on demand"
 Write-Host ''
 Write-Host 'Open the Web UI to finish onboarding: choose a provider, paste an API key, and pick a model.'
 Write-Host ''

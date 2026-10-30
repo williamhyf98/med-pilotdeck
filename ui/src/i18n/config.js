@@ -3,8 +3,8 @@
  *
  * Configures i18next for internationalization support.
  * Features:
- * - Language detection from localStorage
- * - Fallback to English for missing translations
+ * - Language detection from localStorage, defaulting to Simplified Chinese
+ * - Fallback to English for keys a locale bundle is still missing
  * - Development mode warnings for missing keys
  *
  * Supported locales: en, zh-CN. Other locales were retired during the
@@ -41,16 +41,32 @@ import zhRouting from './locales/zh-CN/routing.json';
 import zhCodeEditor from './locales/zh-CN/codeEditor.json';
 
 import { languages } from './languages.js';
+import { STORAGE_USER_CHANGED_EVENT, getStorageUserRole, safeLocalStorage } from '../utils/safeStorage';
+
+const DEFAULT_LANGUAGE = 'zh-CN';
+const LANGUAGE_STORAGE_KEY = 'userLanguage';
+// `languageChanged` also fires on init, so the previous English default was
+// written to storage even for users who never chose a language. Clear that
+// once, otherwise the stored value would keep overriding the new default.
+// Choices made after this migration are preserved.
+const DEFAULT_MIGRATION_KEY = 'userLanguageDefaultMigratedTo';
 
 const getSavedLanguage = () => {
   try {
-    const saved = localStorage.getItem('userLanguage');
+    const saved = safeLocalStorage.getItem(LANGUAGE_STORAGE_KEY);
+    if (safeLocalStorage.getItem(DEFAULT_MIGRATION_KEY) !== DEFAULT_LANGUAGE) {
+      safeLocalStorage.setItem(DEFAULT_MIGRATION_KEY, DEFAULT_LANGUAGE);
+      if (!saved || saved === 'en') {
+        safeLocalStorage.setItem(LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE);
+        return DEFAULT_LANGUAGE;
+      }
+    }
     if (saved && languages.some(lang => lang.value === saved)) {
       return saved;
     }
-    return 'en';
+    return DEFAULT_LANGUAGE;
   } catch {
-    return 'en';
+    return DEFAULT_LANGUAGE;
   }
 };
 
@@ -103,22 +119,34 @@ i18n
     },
 
     detection: {
-      order: ['localStorage'],
-      lookupLocalStorage: 'userLanguage',
-      caches: ['localStorage'],
+      // Language is read/written through the per-user safeLocalStorage
+      // (getSavedLanguage + the languageChanged handler below); the
+      // detector must not touch the unscoped `userLanguage` key itself.
+      order: [],
+      caches: [],
     },
   });
 
 i18n.on('languageChanged', (lng) => {
   try {
-    localStorage.setItem('userLanguage', lng);
+    safeLocalStorage.setItem('userLanguage', lng);
   } catch (error) {
     console.error('Failed to save language preference:', error);
   }
   syncAlwaysOnLanguage(lng);
 });
 
+// The preference is per user; once the signed-in user changes, adopt theirs.
+if (typeof window !== 'undefined') {
+  window.addEventListener(STORAGE_USER_CHANGED_EVENT, () => {
+    const next = getSavedLanguage();
+    if (next !== i18n.language) i18n.changeLanguage(next);
+  });
+}
+
 function syncAlwaysOnLanguage(lng) {
+  // /api/config is admin-only; a normal user would just get a 403.
+  if (getStorageUserRole() !== 'admin') return;
   const alwaysOnLang = lng === 'zh-CN' ? 'zh-CN' : 'en';
   authenticatedFetch('/api/config')
     .then((r) => r.json())

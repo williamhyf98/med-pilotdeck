@@ -1,8 +1,8 @@
 import crypto from 'crypto';
 import { promises as fs } from 'fs';
 import net from 'net';
-import os from 'os';
 import path from 'path';
+import { resolvePilotRoot } from '../utils/pilotPaths.js';
 
 export const CRON_DAEMON_OWNER_KIND = 'pilotdeck-server';
 export const CRON_DAEMON_OWNER_KIND_ENV = 'PILOTDECK_CRON_DAEMON_OWNER_KIND';
@@ -10,7 +10,7 @@ export const CRON_DAEMON_OWNER_TOKEN_ENV = 'PILOTDECK_CRON_DAEMON_OWNER_TOKEN';
 export const CRON_DAEMON_OWNER_PROCESS_PID_ENV = 'PILOTDECK_CRON_DAEMON_OWNER_PROCESS_PID';
 
 function getPilotDeckConfigHomeDir() {
-  return process.env.PILOTDECK_CONFIG_DIR || process.env.PILOT_HOME || path.join(os.homedir(), '.pilotdeck');
+  return process.env.PILOTDECK_CONFIG_DIR || resolvePilotRoot();
 }
 
 function getCronDaemonOwnerPath() {

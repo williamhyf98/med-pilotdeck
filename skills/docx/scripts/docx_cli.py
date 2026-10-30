@@ -22,9 +22,11 @@ from docxlib.core import (
     inspect_docx,
     sanitize_docx,
 )
+from docxlib.convert import convert_docx_to_pdf
 from docxlib.delivery import deliver_docx
 from docxlib.fallback import fallback_create, fallback_patch
 from docxlib.lineage import latest_input_path, resolve_latest_input
+from docxlib.make import make_docx
 from docxlib.preflight import preflight_docx
 from docxlib.protocol import capabilities, schema_for
 from docxlib.qa import (
@@ -154,6 +156,18 @@ def _parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("--location")
     inspect_parser.add_argument("--max-items", type=int, default=200)
 
+    make_parser = sub.add_parser(
+        "make",
+        help="Create and validate a DOCX from title/body/Markdown/spec",
+    )
+    make_parser.add_argument("--title")
+    make_parser.add_argument("--body")
+    make_parser.add_argument("--body-file")
+    make_parser.add_argument("--markdown")
+    make_parser.add_argument("--spec")
+    make_parser.add_argument("--out", required=True)
+    make_parser.add_argument("--force", action="store_true")
+
     create_parser = sub.add_parser("create", help="Create a DOCX from a JSON specification")
     create_parser.add_argument("--spec", required=True)
     create_parser.add_argument("--out", required=True)
@@ -237,6 +251,15 @@ def _parser() -> argparse.ArgumentParser:
     render_parser.add_argument("--dpi", type=int, default=150)
     render_parser.add_argument("--emit-pdf", action="store_true")
     render_parser.add_argument("--timeout", type=int, default=120)
+
+    convert_pdf_parser = sub.add_parser(
+        "convert-pdf",
+        help="Convert an existing DOCX to PDF through the Office Renderer",
+    )
+    convert_pdf_parser.add_argument("--input", required=True)
+    convert_pdf_parser.add_argument("--out", required=True)
+    convert_pdf_parser.add_argument("--force", action="store_true")
+    convert_pdf_parser.add_argument("--timeout", type=int, default=180)
 
     validate_parser = sub.add_parser("validate", help="Validate DOCX ZIP and OOXML integrity")
     validate_parser.add_argument("--input", required=True)
@@ -484,6 +507,16 @@ def _execute(args: argparse.Namespace) -> dict[str, Any]:
             write_json(json_output, result)
             result["out"] = str(json_output)
         return result
+    if args.command == "make":
+        return make_docx(
+            args.out,
+            title=args.title,
+            body=args.body,
+            body_file=args.body_file,
+            markdown_file=args.markdown,
+            spec_file=args.spec,
+            force=args.force,
+        )
     if args.command == "create":
         acceptance = args.acceptance
         if acceptance is None and os.environ.get("PILOTDECK_WORK_DIR"):
@@ -553,6 +586,13 @@ def _execute(args: argparse.Namespace) -> dict[str, Any]:
             args.out_dir,
             dpi=args.dpi,
             emit_pdf=args.emit_pdf,
+            timeout_seconds=args.timeout,
+        )
+    if args.command == "convert-pdf":
+        return convert_docx_to_pdf(
+            args.input,
+            args.out,
+            force=args.force,
             timeout_seconds=args.timeout,
         )
     if args.command == "validate":
@@ -658,6 +698,13 @@ def main() -> int:
     args = _parser().parse_args()
     try:
         result = _execute(args)
+        if (
+            result.get("status") == "ok"
+            and "output" not in result
+            and isinstance(result.get("out"), str)
+            and str(result["out"]).lower().endswith(".docx")
+        ):
+            result["output"] = result["out"]
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result.get("status") == "ok" else 3
     except DocxSkillError as exc:

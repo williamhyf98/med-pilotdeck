@@ -91,7 +91,7 @@ const useWebSocketProviderState = (): WebSocketContextType => {
   const reconnectAttemptRef = useRef(0);
   const queuedMessagesRef = useRef<any[]>([]);
   const subscribersRef = useRef<Set<WSSubscriber>>(new Set());
-  const { token } = useAuth();
+  const { token, authDisabled } = useAuth();
 
   useEffect(() => {
     unmountedRef.current = false;
@@ -103,6 +103,9 @@ const useWebSocketProviderState = (): WebSocketContextType => {
 
     const connect = () => {
       if (unmountedRef.current || connectIdRef.current !== id) return;
+      // Without a session (logged out, or auth still loading) the gateway would
+      // only answer 4401, so stay offline until a token (or no-login mode) exists.
+      if (!IS_PLATFORM && !token && !authDisabled) return;
       setReconnectInfo((prev) => ({ ...prev, status: 'reconnecting' }));
       try {
         const wsUrl = buildWebSocketUrl(token);
@@ -162,10 +165,21 @@ const useWebSocketProviderState = (): WebSocketContextType => {
           }
         };
 
-        websocket.onclose = () => {
+        websocket.onclose = (event) => {
           if (connectIdRef.current !== id) return;
           setIsConnected(false);
           wsRef.current = null;
+          // 4401: session ended (token revoked / user disabled); 4403: not allowed.
+          // Neither is fixed by retrying, so stop reconnecting.
+          if (event.code === 4401 || event.code === 4403) {
+            setReconnectInfo({ attempt: 0, nextRetryMs: 0, status: 'disconnected' });
+            if (event.code === 4401) {
+              window.dispatchEvent(new CustomEvent('pilotdeck:auth-revoked', {
+                detail: { code: event.reason || 'TOKEN_REVOKED' },
+              }));
+            }
+            return;
+          }
           const attempt = ++reconnectAttemptRef.current;
           const delay = Math.min(
             INITIAL_RECONNECT_MS * Math.pow(BACKOFF_FACTOR, attempt - 1),
@@ -188,7 +202,24 @@ const useWebSocketProviderState = (): WebSocketContextType => {
 
     connect();
 
+    // Explicit sign-out: close for good instead of letting onclose back off and retry.
+    const onLogout = () => {
+      if (connectIdRef.current !== id) return;
+      connectIdRef.current++;
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      const ws = wsRef.current;
+      wsRef.current = null;
+      ws?.close(1000);
+      setIsConnected(false);
+      setReconnectInfo({ attempt: 0, nextRetryMs: 0, status: 'disconnected' });
+    };
+    window.addEventListener('pilotdeck:auth-logout', onLogout);
+
     return () => {
+      window.removeEventListener('pilotdeck:auth-logout', onLogout);
       connectIdRef.current++;
       clearDisconnectedQueue(queuedMessagesRef.current);
       if (reconnectTimeoutRef.current) {
@@ -206,7 +237,7 @@ const useWebSocketProviderState = (): WebSocketContextType => {
       }
       setIsConnected(false);
     };
-  }, [token]);
+  }, [token, authDisabled]);
 
   const sendMessage = useCallback((message: any) => {
     const socket = wsRef.current;

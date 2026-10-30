@@ -1,0 +1,25 @@
+[Unit]
+Description=DAMO RADAR CT inference service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=radar
+Group=radar
+UMask=0077
+WorkingDirectory=/local_data/radar-service
+EnvironmentFile=/local_data/radar-service/radar.env
+ExecStart=/local_data/radar-service/venv/bin/python /local_data/radar-service/app.py --host 10.31.112.13 --port 18120 --ssl-certfile /local_data/radar-service/tls/server.crt --ssl-keyfile /local_data/radar-service/tls/server.key
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=600
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/local_data/radar-service/work /local_data/radar-service/tmp /local_data/radar-service/cache
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

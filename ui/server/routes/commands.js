@@ -9,7 +9,7 @@ import { CURSOR_MODELS, CODEX_MODELS } from '../../shared/modelConstants.js';
 import { parseFrontmatter } from '../utils/frontmatter.js';
 import { getClaudeRuntimeModelConfig, getClaudeRuntimeModelValues } from '../utils/claude-runtime-config.js';
 import { readPilotDeckConfigFile, resolveModel } from '../services/pilotdeckConfig.js';
-import { resolvePilotHome } from '../utils/pilotPaths.js';
+import { resolveScopedHome, resolveLinkedRepoPath } from '../utils/pilotPaths.js';
 import { executeTurnkeySlashCommand } from '../turnkey-slash.js';
 import { getRegisteredCommands } from '../../../src/adapters/channel/protocol/ChannelCommandRegistry.js';
 import { runChatSearchFormatted } from '../../../src/cli/commands/chatSearch.js';
@@ -19,6 +19,19 @@ const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+function normalizeRepoProjectPath(projectPath) {
+  if (!projectPath || typeof projectPath !== 'string') return projectPath;
+  return resolveLinkedRepoPath(projectPath, resolveScopedHome());
+}
+
+function normalizeCommandContext(context) {
+  if (!context?.projectPath) return context;
+  return {
+    ...context,
+    projectPath: normalizeRepoProjectPath(context.projectPath),
+  };
+}
+
 const router = express.Router();
 
 /**
@@ -27,7 +40,6 @@ const router = express.Router();
  * on-disk command/skill or a bundled stub below are silently dropped.
  */
 const PINNED_COMMAND_NAMES = [
-  '/skill_install',
   '/projects',
   '/switch-project',
 ];
@@ -239,16 +251,6 @@ const webOnlyBuiltInCommands = [
     namespace: 'builtin',
     metadata: { type: 'builtin' }
   },
-  {
-    name: '/skill_install',
-    description:
-      'Install a skill from clawhub.com. Auto-targets ~/.pilotdeck/skills/<slug> in general chat and <project>/.pilotdeck/skills/<slug> when a project is active. Use --global / --project to override.',
-    namespace: 'builtin',
-    metadata: {
-      type: 'builtin',
-      argumentHint: '<slug> [--version <v>] [--force] [--global|--project] [--registry <url>]',
-    },
-  },
 ];
 
 // Merge commands from the centralized ChannelCommandRegistry.
@@ -290,7 +292,7 @@ async function executeSearchCommand(args, context) {
   const { result, text } = await runChatSearchFormatted({
     arg: rawArg,
     projectRoot: context?.projectPath,
-    pilotHome: resolvePilotHome(process.env),
+    pilotHome: resolveScopedHome(),
     locale: 'en',
   });
 
@@ -656,213 +658,6 @@ Custom commands can be created in:
       }
     };
   },
-
-  // /skill_install — server-side clawhub install. Deterministic, no model in
-  // the loop.
-  //
-  // Scope policy (auto-detected, override-able):
-  //   - In general chat (no projectPath in context) → user scope:
-  //   - In a project's chat (projectPath set)        → project scope:
-  //   - Explicit override: --global forces user scope, --project forces project
-  //     scope (errors out if no projectPath available).
-  //
-  // Any positional after slug is rejected. Slug is validated against a strict
-  // regex to block path traversal — execFile already prevents shell injection
-  // since args are passed as an array, but we also refuse `..` defensively.
-  '/skill_install': async (args, context) => {
-    const argList = Array.isArray(args) ? args : [];
-
-    let slug = null;
-    let version = null;
-    let force = false;
-    let scopeOverride = null; // 'user' | 'project' | null
-    let registry = null;
-
-    for (let i = 0; i < argList.length; i++) {
-      const token = argList[i];
-      if (token === '--version' && i + 1 < argList.length) {
-        version = argList[++i];
-        continue;
-      }
-      if (token === '--force') { force = true; continue; }
-      if (token === '--project') { scopeOverride = 'project'; continue; }
-      if (token === '--global' || token === '--user') { scopeOverride = 'user'; continue; }
-      if (token === '--registry' && i + 1 < argList.length) {
-        registry = argList[++i];
-        continue;
-      }
-      if (token.startsWith('--')) {
-        return {
-          type: 'builtin',
-          action: 'skillInstall',
-          data: { error: true, message: `Unknown flag: ${token}` },
-        };
-      }
-      if (slug === null) { slug = token; continue; }
-      return {
-        type: 'builtin',
-        action: 'skillInstall',
-        data: { error: true, message: `Unexpected positional argument: ${token}` },
-      };
-    }
-
-    if (!slug) {
-      return {
-        type: 'builtin',
-        action: 'skillInstall',
-        data: {
-          error: true,
-          message:
-            'Usage: /skill_install <slug> [--version <ver>] [--force] [--global|--project] [--registry <url>]',
-        },
-      };
-    }
-
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/.test(slug) || slug.includes('..')) {
-      return {
-        type: 'builtin',
-        action: 'skillInstall',
-        data: {
-          error: true,
-          message: `Invalid slug "${slug}". Allowed: [a-zA-Z0-9][a-zA-Z0-9._-]{0,99}, no "..".`,
-        },
-      };
-    }
-
-    const projectPath = context?.projectPath || null;
-
-    // PilotDeck's virtual "general" workspace roots at ~/.pilotdeck. It looks
-    // like a real projectPath but the user's mental model is general chat →
-    // user/global scope. Force user scope with --global when needed.
-    const GENERAL_CWD_PATHS = [path.resolve(resolvePilotHome(process.env))];
-    const isGeneralCwd =
-      projectPath && GENERAL_CWD_PATHS.includes(path.resolve(projectPath));
-    const effectiveProjectPath = isGeneralCwd ? null : projectPath;
-
-    const scope = scopeOverride || (effectiveProjectPath ? 'project' : 'user');
-
-    let workdir;
-    let dir;
-    if (scope === 'project') {
-      if (!effectiveProjectPath) {
-        return {
-          type: 'builtin',
-          action: 'skillInstall',
-          data: {
-            error: true,
-            message: isGeneralCwd
-              ? '--project cannot be used in general chat (no real project active). Drop --project to install globally, or open a project chat first.'
-              : '--project requires an active project (no projectPath in context).',
-          },
-        };
-      }
-      workdir = effectiveProjectPath;
-      dir = path.join('.pilotdeck', 'skills');
-    } else {
-      workdir = resolvePilotHome(process.env);
-      dir = 'skills';
-    }
-    const installPath = path.join(workdir, dir, slug);
-
-    // --no-input is a global flag, must come BEFORE the subcommand.
-    const clawArgs = ['--no-input', '--workdir', workdir, '--dir', dir];
-    if (registry) clawArgs.push('--registry', registry);
-    clawArgs.push('install', slug);
-    if (version) clawArgs.push('--version', version);
-    if (force) clawArgs.push('--force');
-
-    let stdout = '';
-    let stderr = '';
-    let runError = null;
-    try {
-      const result = await execFileAsync('clawhub', clawArgs, {
-        timeout: 120_000,
-        maxBuffer: 10 * 1024 * 1024,
-      });
-      stdout = result.stdout || '';
-      stderr = result.stderr || '';
-    } catch (e) {
-      runError = e;
-      stdout = e.stdout || '';
-      stderr = e.stderr || '';
-    }
-
-    let installed = false;
-    let skillMeta = null;
-    try {
-      await fs.access(path.join(installPath, 'SKILL.md'));
-      installed = true;
-      try {
-        const content = await fs.readFile(path.join(installPath, 'SKILL.md'), 'utf8');
-        const { data: fm } = parseFrontmatter(content);
-        skillMeta = {
-          name: fm.name || slug,
-          description: fm.description || '',
-          version: fm.version || null,
-        };
-      } catch {
-        /* SKILL.md exists but unreadable/unparseable — keep installed=true */
-      }
-    } catch {
-      /* SKILL.md missing — installed stays false */
-    }
-
-    if (runError && runError.code === 'ENOENT') {
-      return {
-        type: 'builtin',
-        action: 'skillInstall',
-        data: {
-          error: true,
-          message:
-            'clawhub CLI not found in PATH. Install it with `npm install -g clawhub`, then retry.',
-        },
-      };
-    }
-
-    // Detect "suspicious skill, --force required" — clawhub's --no-input mode
-    // refuses VirusTotal-flagged skills without explicit consent. Surface a
-    // copy-pasteable retry command instead of burying the hint in stderr.
-    const needsForce =
-      !installed &&
-      !force &&
-      (stderr || stdout).match(/Use --force to install suspicious/i) !== null;
-
-    let retryCommand = null;
-    if (needsForce) {
-      const overrideFlag =
-        scopeOverride === 'user'
-          ? ' --global'
-          : scopeOverride === 'project'
-            ? ' --project'
-            : '';
-      const versionFlag = version ? ` --version ${version}` : '';
-      const registryFlag = registry ? ` --registry ${registry}` : '';
-      retryCommand = `/skill_install ${slug}${overrideFlag} --force${versionFlag}${registryFlag}`;
-    }
-
-    return {
-      type: 'builtin',
-      action: 'skillInstall',
-      data: {
-        slug,
-        version: version || null,
-        scope,
-        scopeAutoDetected: scopeOverride === null,
-        projectPath: effectiveProjectPath,
-        rawProjectPath: projectPath,
-        isGeneralCwd,
-        installPath,
-        installed,
-        skillMeta,
-        stdout: stdout.trim(),
-        stderr: stderr.trim(),
-        exitCode: runError ? (runError.code === undefined ? 1 : runError.code) : 0,
-        errorMessage: runError ? (runError.shortMessage || runError.message) : null,
-        needsForce,
-        retryCommand,
-      },
-    };
-  },
 };
 
 /**
@@ -885,13 +680,14 @@ Custom commands can be created in:
 router.post('/list', async (req, res) => {
   try {
     const { projectPath } = req.body;
-    const pilotHome = resolvePilotHome(process.env);
+    const pilotHome = resolveScopedHome();
 
     const customCommandSources = [];
 
     if (projectPath) {
-      const projectCommandsDir = path.join(projectPath, '.pilotdeck', 'commands');
-      const projectSkillsDir = path.join(projectPath, '.pilotdeck', 'skills');
+      const repoPath = normalizeRepoProjectPath(projectPath);
+      const projectCommandsDir = path.join(repoPath, '.pilotdeck', 'commands');
+      const projectSkillsDir = path.join(repoPath, '.pilotdeck', 'skills');
       const [projectCommands, projectSkills] = await Promise.all([
         scanCommandsDirectory(projectCommandsDir, projectCommandsDir, 'project'),
         scanSkillsDirectory(projectSkillsDir, 'project'),
@@ -1018,7 +814,8 @@ router.post('/load', async (req, res) => {
  */
 router.post('/execute', async (req, res) => {
   try {
-    const { commandName, commandPath, args = [], rawArgs, rawInput, context = {} } = req.body;
+    const { commandName, commandPath, args = [], rawArgs, rawInput, context: rawContext = {} } = req.body;
+    const context = normalizeCommandContext(rawContext);
 
     if (!commandName) {
       return res.status(400).json({
@@ -1100,7 +897,7 @@ router.post('/execute', async (req, res) => {
     // Security: validate commandPath is within allowed directories.
     {
       const resolvedPath = path.resolve(commandPath);
-      const pilotHome = resolvePilotHome(process.env);
+      const pilotHome = resolveScopedHome();
       const allowedBases = [
         path.resolve(path.join(pilotHome, 'commands')),
         path.resolve(path.join(pilotHome, 'skills')),

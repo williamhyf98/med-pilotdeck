@@ -50,6 +50,44 @@
     "cancelChanges": "取消更改"
   },
   "settingsPage": {
+    "users": {
+      "title": "用户管理",
+      "newUser": "新建用户",
+      "username": "用户名",
+      "password": "密码",
+      "role": "角色",
+      "roleAdmin": "管理员",
+      "roleUser": "普通用户",
+      "active": "启用",
+      "createdAt": "创建时间",
+      "lastLogin": "最近登录",
+      "storage": "存储用量",
+      "actions": "操作",
+      "create": "创建",
+      "resetPassword": "重置密码",
+      "resetDone": "已生成新密码，仅显示这一次，请立即复制并告知用户。该用户的所有登录会话将被注销。",
+      "newPassword": "新密码",
+      "copy": "复制",
+      "copied": "已复制",
+      "close": "关闭",
+      "delete": "删除",
+      "deleteExplain": "这将删除该账号。用户的数据目录会归档到 archives/users/，不会被直接清除。",
+      "cannotDeleteSelf": "不能删除你自己的账号",
+      "cannotResetSelf": "请在「账号」页修改你自己的密码",
+      "confirm": "确认",
+      "cancel": "取消",
+      "selfLockoutWarning": "这将使你自己退出登录（你正在修改自己的账号）。是否继续？",
+      "registration": "开放注册",
+      "registrationOn": "任何人都可以在登录页自行注册账号。",
+      "registrationOff": "仅管理员可以创建账号。",
+      "errors": {
+        "LAST_ADMIN": "必须至少保留一名启用的管理员。",
+        "RESERVED_USERNAME": "该用户名为保留名称，请换一个。",
+        "USERNAME_TAKEN": "该用户名已被占用。",
+        "WEAK_CREDENTIALS": "用户名或密码不符合要求。",
+        "generic": "操作失败"
+      }
+    },
     "actions": {
       "edit": "编辑",
       "save": "保存",
@@ -58,6 +96,7 @@
     "backToApp": "返回应用",
     "backToSettings": "返回设置",
     "menu": {
+      "account": "账号",
       "general": "通用",
       "modelPool": "模型池",
       "agent": "智能体",
@@ -73,9 +112,11 @@
       "officePreview": "Office 预览",
       "privacy": "安全隐私",
       "advanced": "高级",
-      "about": "关于"
+      "about": "关于",
+      "users": "用户管理"
     },
     "titles": {
+      "account": "账号",
       "general": "通用",
       "modelPool": "模型池",
       "agent": "智能体",
@@ -91,7 +132,8 @@
       "officePreview": "扩展 / Office 预览",
       "privacy": "安全隐私",
       "advanced": "高级",
-      "about": "关于"
+      "about": "关于",
+      "users": "用户管理"
     },
     "contentComingSoon": {
       "title": "右侧内容区待接入",
@@ -136,6 +178,7 @@
       "inputSettings": "输入设置"
     },
     "darkMode": "深色模式",
+    "showProcessTrace": "显示调用过程",
     "autoExpandTools": "自动展开工具",
     "showRawParameters": "显示原始参数",
     "showThinking": "显示思考过程",
@@ -196,10 +239,11 @@
     },
     "appearanceMode": {
       "title": "主题模式",
-      "detail": "跟随系统外观，或固定为浅色 / 深色主题。",
-      "system": "系统跟随",
+      "detail": "选择浅色、深色、暖诊或指挥台主题。",
       "light": "浅色",
-      "dark": "深色"
+      "dark": "深色",
+      "warm": "暖诊",
+      "command": "指挥台"
     },
     "chatInput": {
       "title": "聊天与输入",
@@ -763,11 +807,11 @@
       },
       "officePreview": {
         "title": "Office 文件预览服务",
-        "description": "选择 Office 文件的只读预览方式。PDF 始终使用 PilotDeck 内置浏览器，不受此设置影响。",
+        "description": "DOCX、XLSX、PPTX 默认使用内置预览；DOC、XLS、PPT 等旧格式自动使用 LibreOffice。PDF 始终使用内置浏览器。",
         "fields": {
           "service": {
             "label": "预览服务",
-            "description": "内置预览无需安装，支持 DOCX、XLSX 和 PPTX；LibreOffice 兼容更多旧版格式并统一使用打印版式。"
+            "description": "此选项控制 DOCX、XLSX、PPTX 的预览方式；旧格式始终自动使用 LibreOffice。"
           },
           "binaryPath": {
             "label": "LibreOffice 可执行文件路径",
@@ -780,14 +824,14 @@
           }
         },
         "options": {
-          "builtin": "内置预览（推荐）",
-          "libreOffice": "LibreOffice 兼容预览",
+          "builtin": "现代格式内置预览（推荐）",
+          "libreOffice": "现代格式使用 LibreOffice 打印版式",
           "libreOfficeUnavailable": "LibreOffice（不可用）",
           "autoDetect": "自动探测（不指定路径）",
           "candidateAvailable": "{{path}}（可用）",
           "candidateUnavailable": "{{path}}（不可用）",
-          "candidateAvailableShort": "可用",
-          "candidateUnavailableShort": "不可用"
+          "candidateAvailableShort": "可执行（未验证转换组件）",
+          "candidateUnavailableShort": "不可执行"
         },
         "scan": {
           "button": "扫描",
@@ -796,7 +840,7 @@
         },
         "status": {
           "checking": "正在检查 LibreOffice...",
-          "available": "LibreOffice 可用",
+          "available": "检测到 LibreOffice 可执行文件（不代表所有格式转换组件均已安装）",
           "unavailable": "LibreOffice 不可用",
           "unknown": "LibreOffice 状态暂不可用",
           "error": "无法检查 LibreOffice 状态",
@@ -805,8 +849,8 @@
           "path": "路径：{{path}}",
           "version": "版本：{{version}}"
         },
-        "builtinNote": "内置预览开箱即用：DOCX 保留文档版式，XLSX 支持工作表切换和单元格选择，PPTX 支持幻灯片浏览。旧版 DOC、XLS、PPT 等格式需要 LibreOffice。",
-        "unavailableWarning": "当前选择了 LibreOffice，但本机没有可用的 LibreOffice/soffice。请安装 LibreOffice，或将预览服务切换为“内置预览”。"
+        "builtinNote": "DOCX、XLSX、PPTX 使用内置预览；DOC、XLS、PPT、WPS、ET、DPS 和 ODF 文件自动通过 LibreOffice 转换。旧格式需要本机安装 LibreOffice 及对应的 Writer、Calc 或 Impress 组件。",
+        "unavailableWarning": "未检测到 LibreOffice/soffice。现代格式仍可使用内置预览；如需预览旧格式，请安装 LibreOffice 并配置可执行文件路径。"
       },
       "models": {
         "title": "模型池",
@@ -962,6 +1006,19 @@
           "description": "记忆管线使用的提供商/模型。",
           "inherit": "继承（使用主智能体模型）"
         },
+        "traumaCapture": {
+          "label": "战创伤记忆写入",
+          "description": "战创伤项目只把协作规则写入长期记忆：汇报格式、表达偏好、工作流规则、明确纠错。生命体征、伤情分级、救治阶段、患者标识只留在病例状态里，不进任何长期记忆；留存内容写盘前还会再过一遍脱敏。",
+          "feedbackOnly": "仅协作规则（推荐）",
+          "off": "不写入"
+        },
+        "maintenanceMode": {
+          "label": "维护模式",
+          "description": "统一应用于通用医学和战创伤医学的所有已有及新建项目。立即：回答后有新内容就索引，有记忆变化才整理；定时：按下方间隔执行；手动：仅手动触发。",
+          "immediate": "立即执行",
+          "interval": "定时执行",
+          "manual": "仅手动"
+        },
         "automation": {
           "autoIndex": {
             "label": "自动索引间隔（分钟）",
@@ -974,11 +1031,11 @@
         },
         "autoIndexInterval": {
           "label": "自动索引间隔",
-          "description": "自动扫描文件的时间周期，“0”表示关闭自动任务。"
+          "description": "所有项目共用，仅定时模式使用。0 关闭按时间触发；积压达到 20 轮或 Dream 前置索引仍可能处理待办内容。"
         },
         "autoDreamInterval": {
           "label": "自动 Dream 间隔",
-          "description": "自动整理记忆的时间周期。只有自上次 Dream 以来有记忆文件更新时，自动 Dream 才会真正执行。"
+          "description": "所有项目共用，仅定时模式使用；0 关闭定时 Dream。只有记忆文件发生变化才整理，失败后会延迟重试，不改变维护模式。"
         },
         "intervalUnits": {
           "minutes": "分钟",

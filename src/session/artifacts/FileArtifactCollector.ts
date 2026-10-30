@@ -28,6 +28,14 @@ export type FileArtifactCollectorOptions = {
   cwd: string;
   allowedInputPaths?: string[];
   now?: () => Date;
+  /**
+   * When false, skip the whole-workspace baseline/diff scan and keep only
+   * paths reported by this turn's tool results. Used for the general-chat
+   * home directory, which is too large and noisy to fingerprint every turn.
+   */
+  allowWorkspaceDiff?: boolean;
+  /** When set, only files with these extensions (including the leading dot) become artifacts. */
+  allowedExtensions?: string[];
   /** @internal Test seam for verifying fingerprint-cache behavior. */
   hashFile?: (filePath: string) => Promise<string>;
 };
@@ -55,16 +63,25 @@ const EXCLUDED_DIRECTORY_NAMES = new Set([
   "build",
   "cache",
   "coverage",
+  "derived",
   "dist",
   "node_modules",
   "out",
   "qa",
+  ".pdf-qa",
+  ".docx-qa",
+  ".pptx-qa",
+  ".xlsx-qa",
+  "scratch",
   "screenshots",
   "target",
   "temp",
   "tmp",
   "venv",
 ]);
+
+const VISIBLE_ARTIFACT_ROOTS = ["inbox", "exports"] as const;
+const LEGACY_ATTACHMENT_ROOT = ".tmp/chat-attachments";
 
 const INTERNAL_FILE_PATTERNS = [
   /^\.pilotdeck_build\.(?:c|m)?js$/i,
@@ -123,6 +140,8 @@ export class FileArtifactCollector {
   private readonly cwd: string;
   private readonly now: () => Date;
   private readonly hashFile: (filePath: string) => Promise<string>;
+  private readonly allowWorkspaceDiff: boolean;
+  private readonly allowedExtensions: Set<string> | undefined;
   private readonly baseline = new Map<string, FileFingerprint>();
   private readonly explicitCandidates = new Map<string, ArtifactCandidate>();
   private readonly allowedInputPaths: Set<string>;
@@ -136,6 +155,10 @@ export class FileArtifactCollector {
     this.workspaceKey = this.cwd;
     this.now = options.now ?? (() => new Date());
     this.hashFile = options.hashFile ?? sha256File;
+    this.allowWorkspaceDiff = options.allowWorkspaceDiff !== false;
+    this.allowedExtensions = options.allowedExtensions && options.allowedExtensions.length > 0
+      ? new Set(options.allowedExtensions.map((extension) => extension.toLowerCase()))
+      : undefined;
     this.allowedInputPaths = new Set(
       (options.allowedInputPaths ?? [])
         .map((inputPath) => path.isAbsolute(inputPath) ? path.resolve(inputPath) : path.resolve(this.cwd, inputPath))
@@ -147,12 +170,14 @@ export class FileArtifactCollector {
     const collector = new FileArtifactCollector(options);
     collector.workspaceKey = await realpath(collector.cwd).catch(() => collector.cwd);
     collector.baseline.clear();
-    const cachedFingerprints = readCachedWorkspaceFingerprints(collector.cwd);
-    for (const file of await collector.scanWorkspace(cachedFingerprints)) {
-      collector.baseline.set(file.absolutePath, file.fingerprint);
+    if (collector.allowWorkspaceDiff) {
+      const cachedFingerprints = readCachedWorkspaceFingerprints(collector.cwd);
+      for (const file of await collector.scanWorkspace(cachedFingerprints)) {
+        collector.baseline.set(file.absolutePath, file.fingerprint);
+      }
+      await collector.captureAllowedInputFingerprints(collector.baseline, cachedFingerprints);
+      cacheWorkspaceFingerprints(collector.cwd, collector.baseline);
     }
-    await collector.captureAllowedInputFingerprints(collector.baseline, cachedFingerprints);
-    cacheWorkspaceFingerprints(collector.cwd, collector.baseline);
     collector.register();
     return collector;
   }
@@ -172,6 +197,10 @@ export class FileArtifactCollector {
     if (["write_file", "edit_file", "edit_notebook"].includes(result.toolName)) {
       collectKnownFilePaths(result.data, (candidate) => this.addExplicitPath(candidate));
     }
+
+    if (result.toolName.toLowerCase() === "bash") {
+      collectDocumentPathsFromBashResult(result, (candidate) => this.addExplicitPath(candidate));
+    }
   }
 
   async finish(status: FileArtifactStatus): Promise<FileArtifact[]> {
@@ -183,7 +212,9 @@ export class FileArtifactCollector {
       // Otherwise keep only paths explicitly reported by this collector's own
       // tool results.
       const collectWorkspaceDiff =
-        this.sawWorkspaceMutationCandidate && !this.hadConcurrentOverlap;
+        this.allowWorkspaceDiff
+        && this.sawWorkspaceMutationCandidate
+        && !this.hadConcurrentOverlap;
       const finalFingerprints = new Map<string, FileFingerprint>();
       if (collectWorkspaceDiff) {
         for (const file of await this.scanWorkspace(this.baseline)) {
@@ -211,7 +242,7 @@ export class FileArtifactCollector {
           }
         }
         cacheWorkspaceFingerprints(this.cwd, finalFingerprints);
-      } else {
+      } else if (this.allowWorkspaceDiff) {
         cacheWorkspaceFingerprints(this.cwd, this.baseline);
       }
 
@@ -267,7 +298,15 @@ export class FileArtifactCollector {
     reusableFingerprints?: ReadonlyMap<string, FileFingerprint>,
   ): Promise<Array<{ absolutePath: string; fingerprint: FileFingerprint }>> {
     const paths: string[] = [];
-    await walk(this.cwd, async (absolutePath) => {
+    for (const rootName of VISIBLE_ARTIFACT_ROOTS) {
+      const scanRoot = path.join(this.cwd, rootName);
+      await walk(scanRoot, async (absolutePath) => {
+        if (!this.isAllowedArtifactPath(absolutePath)) return;
+        paths.push(absolutePath);
+      });
+    }
+    const legacyAttachmentRoot = path.join(this.cwd, LEGACY_ATTACHMENT_ROOT);
+    await walk(legacyAttachmentRoot, async (absolutePath) => {
       if (!this.isAllowedArtifactPath(absolutePath)) return;
       paths.push(absolutePath);
     });
@@ -345,6 +384,10 @@ export class FileArtifactCollector {
   private isAllowedArtifactPath(absolutePath: string): boolean {
     if (isHardInternalPath(this.cwd, absolutePath)) return false;
     if (isSensitivePath(absolutePath)) return false;
+    if (!isVisibleArtifactPath(this.cwd, absolutePath)) return false;
+    if (this.allowedExtensions && !this.allowedExtensions.has(path.extname(absolutePath).toLowerCase())) {
+      return false;
+    }
     if (!isInternalPath(this.cwd, absolutePath)) return true;
     return this.allowedInputPaths.has(absolutePath);
   }
@@ -487,6 +530,16 @@ function isSensitivePath(absolutePath: string): boolean {
   return SENSITIVE_FILE_PATTERNS.some((pattern) => pattern.test(basename));
 }
 
+function isVisibleArtifactPath(root: string, absolutePath: string): boolean {
+  const relativePath = normalizeRelativePath(path.relative(root, absolutePath));
+  if (!relativePath) return false;
+  const firstSegment = relativePath.split("/")[0];
+  if (firstSegment && VISIBLE_ARTIFACT_ROOTS.includes(firstSegment as typeof VISIBLE_ARTIFACT_ROOTS[number])) {
+    return true;
+  }
+  return relativePath === LEGACY_ATTACHMENT_ROOT || relativePath.startsWith(`${LEGACY_ATTACHMENT_ROOT}/`);
+}
+
 function isHardInternalPath(root: string, absolutePath: string): boolean {
   const relativePath = normalizeRelativePath(path.relative(root, absolutePath));
   if (!relativePath) return true;
@@ -522,6 +575,79 @@ function collectKnownFilePaths(value: unknown, add: (pathValue: string) => void,
       add(child);
       continue;
     }
+    if (typeof child === "string" && /^output$/i.test(key) && looksLikeFilePath(child)) {
+      add(child);
+      continue;
+    }
     collectKnownFilePaths(child, add, depth + 1);
   }
+}
+
+function looksLikeFilePath(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed || (/\s/.test(trimmed) && !/[\\/]/.test(trimmed))) return false;
+  return /[\\/]/.test(trimmed) || /\.[A-Za-z0-9]{2,8}$/.test(trimmed);
+}
+
+function collectDocumentPathsFromBashResult(
+  result: Extract<PilotDeckToolResult, { type: "success" }>,
+  add: (pathValue: string) => void,
+): void {
+  const data = result.data && typeof result.data === "object" && !Array.isArray(result.data)
+    ? result.data as Record<string, unknown>
+    : undefined;
+  if (typeof data?.stdout === "string") {
+    collectDocumentPathsFromText(data.stdout, add);
+  }
+  for (const item of result.content) {
+    if (item.type === "text") collectDocumentPathsFromText(item.text, add);
+  }
+}
+
+function collectDocumentPathsFromText(text: string, add: (pathValue: string) => void): void {
+  if (!text) return;
+  tryParseDocumentJsonObject(text.trim(), add);
+  for (const line of text.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{") || !/\.(?:pdf|docx|pptx|xlsx|svg)/i.test(trimmed)) continue;
+    tryParseDocumentJsonObject(trimmed, add);
+  }
+  const start = text.lastIndexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    tryParseDocumentJsonObject(text.slice(start, end + 1), add);
+  }
+  const firstStart = text.indexOf("{");
+  if (firstStart >= 0 && end > firstStart && firstStart !== start) {
+    tryParseDocumentJsonObject(text.slice(firstStart, end + 1), add);
+  }
+}
+
+function tryParseDocumentJsonObject(text: string, add: (pathValue: string) => void): void {
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    collectDocumentOutputFields(parsed, add);
+  } catch {
+    // Tool stdout is often wrapped in BASH_RESULT banners; ignore non-JSON slices.
+  }
+}
+
+function collectDocumentOutputFields(value: unknown, add: (pathValue: string) => void, depth = 0): void {
+  if (depth > 4 || !value || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectDocumentOutputFields(item, add, depth + 1);
+    return;
+  }
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof child === "string" && isDocumentFilePath(child) && /^(?:output|out|file(?:Path)?|path|artifactPath)$/i.test(key)) {
+      add(child);
+      continue;
+    }
+    collectDocumentOutputFields(child, add, depth + 1);
+  }
+}
+
+function isDocumentFilePath(value: string): boolean {
+  const trimmed = value.trim().split(/[?#]/u)[0] ?? "";
+  return /\.(?:pdf|docx|pptx|xlsx|svg|html?)$/i.test(trimmed);
 }

@@ -11,6 +11,7 @@ type CodeEditorHeaderProps = {
   htmlPreview?: boolean;
   saving: boolean;
   saveSuccess: boolean;
+  showSave?: boolean;
   canGoBack?: boolean;
   parentFileName?: string | null;
   onGoBack?: (() => void) | null;
@@ -59,6 +60,7 @@ export default function CodeEditorHeader({
   htmlPreview = false,
   saving,
   saveSuccess,
+  showSave = true,
   isExpanded = false,
   onToggleExpand = null,
   canGoBack = false,
@@ -86,7 +88,7 @@ export default function CodeEditorHeader({
   return (
     <div
       className={compact
-        ? 'absolute right-2 top-1 z-10 flex h-8 items-center rounded-md bg-neutral-50 pl-2 dark:bg-neutral-900'
+        ? 'flex min-h-11 min-w-0 shrink-0 items-center justify-end overflow-x-auto border-b border-neutral-200 bg-white px-4 py-1.5 dark:border-neutral-800 dark:bg-neutral-950'
         : 'flex min-w-0 flex-shrink-0 items-center justify-between gap-2 border-b border-neutral-200 bg-white px-4 py-2 dark:border-neutral-800 dark:bg-neutral-950'}
     >
       {!compact ? (
@@ -164,7 +166,7 @@ export default function CodeEditorHeader({
           <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
         </button>
 
-        <button
+        {showSave && <button
           type="button"
           onClick={onSave}
           disabled={saving}
@@ -181,7 +183,7 @@ export default function CodeEditorHeader({
           ) : (
             <Save className="h-3.5 w-3.5" strokeWidth={1.75} />
           )}
-        </button>
+        </button>}
 
         {!isSidebar && (
           <button

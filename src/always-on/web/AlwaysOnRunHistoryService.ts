@@ -9,7 +9,7 @@
 
 import { promises as fs } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { resolvePilotHome } from "../../pilot/paths.js";
+import { homedir } from "node:os";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -281,7 +281,7 @@ function getRecordSessionId(record: RunRecord): string | undefined {
 // ---------------------------------------------------------------------------
 
 function getProjectStoreDir(projectName: string): string {
-  return projectName ? join(resolvePilotHome(), "projects", projectName) : "";
+  return projectName ? join(homedir(), ".pilotdeck", "projects", projectName) : "";
 }
 
 function extractContentText(content: unknown): string {

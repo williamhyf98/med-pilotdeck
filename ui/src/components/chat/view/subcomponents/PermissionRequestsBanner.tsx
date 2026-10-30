@@ -4,6 +4,7 @@ import type { PendingPermissionRequest } from '../../types/types';
 import { buildPilotDeckToolPermissionEntry, formatToolInputForDisplay } from '../../utils/chatPermissions';
 import { getPilotDeckSettings } from '../../utils/chatStorage';
 import { getPermissionPanel, registerPermissionPanel } from '../../tools/configs/permissionPanelRegistry';
+import { getToolDisplayName } from '../../tools/configs/toolConfigs';
 import { AskUserQuestionPanel, ExitPlanModePanel } from '../../tools/components/InteractiveRenderers';
 
 registerPermissionPanel('AskUserQuestion', AskUserQuestionPanel);
@@ -88,7 +89,7 @@ export default function PermissionRequestsBanner({
                     : t('permissionBanner.title')}
                 </div>
                 <div className="text-xs text-amber-800 dark:text-amber-200">
-                  {t('permissionBanner.tool')} <span className="font-mono">{first.toolName}</span>
+                  {t('permissionBanner.tool')} <span className="font-mono">{getToolDisplayName(first.toolName)}</span>
                 </div>
               </div>
               {permissionEntry && (

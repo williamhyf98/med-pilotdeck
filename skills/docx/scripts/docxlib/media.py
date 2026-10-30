@@ -18,7 +18,7 @@ def resolve_local_image(path_value: Any, *, base_dir: Path) -> Path:
         raise DocxSkillError("Image path is required", code="invalid-image")
     if raw_value.startswith(("http://", "https://")):
         raise DocxSkillError(
-            "Remote images are not allowed; download the asset into the turn tmp directory first",
+            "Remote images are not allowed; use a local image path already in the workspace",
             code="remote-image-not-allowed",
         )
     raw_path = Path(raw_value).expanduser()

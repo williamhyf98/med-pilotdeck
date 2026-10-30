@@ -1,4 +1,4 @@
-import type { AlwaysOnSubTab, AppTab, Project, ProjectSession } from '../../../types/app';
+import type { AlwaysOnSubTab, AppTab, Project, ProjectSession, ProjectType } from '../../../types/app';
 
 export type SessionLifecycleHandler = (sessionId?: string | null) => void;
 
@@ -37,6 +37,7 @@ export type PrdFile = {
 
 export type MainContentProps = {
   projects: Project[];
+  workspaceType?: ProjectType;
   selectedProject: Project | null;
   selectedSession: ProjectSession | null;
   activeTab: AppTab;
@@ -76,6 +77,8 @@ export type MainContentProps = {
   ) => void;
   onShowSettings: () => void;
   onSelectProjectByName?: (projectName: string) => void;
+  /** Open the create-system-project dialog (P2 empty-state CTA). */
+  onCreateProject?: () => void;
   externalMessageUpdate: number;
   /** When the URL uses /session/<file> by mistake, open the file in the editor. */
   misroutedFileFromUrl?: string | null;
@@ -84,8 +87,10 @@ export type MainContentProps = {
 
 export type MainContentStateViewProps = {
   mode: 'loading' | 'empty';
+  workspaceType?: ProjectType;
   isMobile: boolean;
   onMenuClick: () => void;
+  onCreateProject?: () => void;
 };
 
 export type MobileMenuButtonProps = {

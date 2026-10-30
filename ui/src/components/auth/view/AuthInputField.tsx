@@ -1,3 +1,5 @@
+import { LockKeyhole, UserRound } from 'lucide-react';
+
 type AuthInputFieldProps = {
   id: string;
   label: string;
@@ -8,6 +10,8 @@ type AuthInputFieldProps = {
   type?: 'text' | 'password' | 'email';
   name?: string;
   autoComplete?: string;
+  visuallyHiddenLabel?: boolean;
+  icon?: 'account' | 'password';
 };
 
 /**
@@ -26,24 +30,32 @@ export default function AuthInputField({
   type = 'text',
   name,
   autoComplete,
+  visuallyHiddenLabel = false,
+  icon,
 }: AuthInputFieldProps) {
+  const Icon = icon === 'account' ? UserRound : icon === 'password' ? LockKeyhole : null;
   return (
-    <div>
-      <label htmlFor={id} className="mb-1 block text-sm font-medium text-foreground">
+    <div className={visuallyHiddenLabel ? 'auth-screen__input-group' : undefined}>
+      <label htmlFor={id} className={visuallyHiddenLabel ? 'sr-only' : 'mb-1 block text-sm font-medium text-foreground'}>
         {label}
       </label>
-      <input
-        id={id}
-        type={type}
-        name={name ?? id}
-        autoComplete={autoComplete}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-md border border-border bg-background px-3 py-2 text-foreground focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
-        placeholder={placeholder}
-        required
-        disabled={isDisabled}
-      />
+      <div className={Icon ? 'auth-screen__field-wrap' : undefined}>
+        {Icon ? <Icon className="auth-screen__field-icon" strokeWidth={1.8} aria-hidden="true" /> : null}
+        <input
+          id={id}
+          type={type}
+          name={name ?? id}
+          autoComplete={autoComplete}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className={visuallyHiddenLabel
+            ? 'auth-screen__field'
+            : 'w-full rounded-md border border-border bg-background px-3 py-2 text-foreground focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500'}
+          placeholder={placeholder}
+          required
+          disabled={isDisabled}
+        />
+      </div>
     </div>
   );
 }

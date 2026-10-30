@@ -210,7 +210,7 @@ export class SmoothTextStream {
     if (this.options.scheduleFrame || this.fallbackTimer != null || typeof window === 'undefined') {
       return;
     }
-    this.fallbackTimer = window.setTimeout(() => {
+    this.fallbackTimer = setTimeout(() => {
       this.fallbackTimer = null;
       if (this.frame == null) return;
       this.cancelFrame(this.frame);

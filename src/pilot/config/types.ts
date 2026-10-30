@@ -1,7 +1,22 @@
+import type { MultiUserConfig } from "./parseMultiUserConfig.js";
 import type { AlwaysOnConfig } from "../../always-on/config/parseAlwaysOnConfig.js";
 import type { CronConfig } from "../../cron/config/parseCronConfig.js";
 import type { ModelConfig } from "../../model/protocol/canonical.js";
 import type { RouterConfig } from "../../router/config/schema.js";
+
+/**
+ * `multiUser.sandbox`：bash 工具的操作系统级沙箱配置（spec §16.3）。
+ * `kind` 未设置时由 `selectSandbox()` 自动探测。
+ */
+export interface SandboxConfig {
+  kind?: "bwrap" | "sandbox-exec" | "none";
+  /** 多用户模式下允许落到 none（无沙箱）。默认 false。 */
+  allowUnsandboxed?: boolean;
+  /** false = 网络隔离（bwrap --unshare-net）。默认 true（不隔离）。 */
+  network?: boolean;
+  /** 额外只读挂载的绝对路径（系统程序）。默认 []。 */
+  extraReadOnlyBinds?: string[];
+}
 
 export type PilotConfigSourceKind = "default" | "project" | "env";
 export type PilotConfigSourcePhase = "bootstrap" | "merge";
@@ -37,6 +52,7 @@ export type PilotRawConfig = {
   schemaVersion?: unknown;
   agent?: unknown;
   model?: unknown;
+  medical?: unknown;
   extension?: unknown;
   memory?: unknown;
   gateway?: unknown;
@@ -47,6 +63,7 @@ export type PilotRawConfig = {
   tools?: unknown;
   telemetry?: unknown;
   proxy?: unknown;
+  multiUser?: unknown;
   webui?: unknown;
 };
 
@@ -59,6 +76,10 @@ export type PilotAgentModelSelection = {
   id: string;
   provider: string;
   model: string;
+};
+
+export type PilotMedicalConfig = {
+  interpretationModel: PilotAgentModelSelection;
 };
 
 export type PilotAgentConfig = {
@@ -92,11 +113,15 @@ export type PilotMemoryApiType =
   | "anthropic"
   | "google";
 export type PilotMemoryReasoningMode = "answer_first" | "accuracy_first";
+/** 见 `src/trauma/memory/TraumaMemoryCapturePolicy.ts`。`eligible_turns` 仅预留。 */
+export type PilotTraumaMemoryCaptureMode = "off" | "feedback_only" | "eligible_turns";
 
 export type PilotMemoryScheduleConfig = {
   reasoningMode?: PilotMemoryReasoningMode;
   autoIndexIntervalMinutes?: number;
   autoDreamIntervalMinutes?: number;
+  /** Task 10：维护模式。immediate = 去时间门、interval = 现有行为、manual = 只手动。 */
+  maintenanceMode?: "immediate" | "interval" | "manual";
 };
 
 export type PilotMemoryConfig = {
@@ -112,6 +137,13 @@ export type PilotMemoryConfig = {
   apiType?: PilotMemoryApiType;
   schedule?: PilotMemoryScheduleConfig;
   heartbeatBatchSize?: number;
+  /**
+   * 战创伤项目的长期记忆写入策略（Task 7，§3.7）。默认 `feedback_only`。
+   *
+   * `eligible_turns` 在类型层预留但**本期拒绝启用**——配置里写它会直接报错，
+   * 避免用户误以为按轮次筛选已经生效。
+   */
+  traumaCapture?: PilotTraumaMemoryCaptureMode;
 };
 
 export type PilotGatewayConfig = {
@@ -228,6 +260,7 @@ export type PilotTelemetryConfig = {
 export type PilotConfig = {
   agent: PilotAgentConfig;
   model: ModelConfig;
+  medical?: PilotMedicalConfig;
   extension: PilotExtensionConfig;
   memory?: PilotMemoryConfig;
   gateway?: PilotGatewayConfig;
@@ -238,6 +271,7 @@ export type PilotConfig = {
   tools?: PilotToolsConfig;
   telemetry?: PilotTelemetryConfig;
   proxy?: PilotProxyConfig;
+  multiUser: MultiUserConfig;
 };
 
 export type PilotConfigSnapshot = {

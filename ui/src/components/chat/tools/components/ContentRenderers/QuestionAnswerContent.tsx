@@ -88,7 +88,7 @@ export const QuestionAnswerContent: React.FC<QuestionAnswerContentProps> = ({
 
     return (
       <div className={`rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/20 dark:text-amber-200 ${className}`}>
-        <div className="font-medium">Question payload could not be rendered.</div>
+        <div className="font-medium">问题内容无法渲染。</div>
         <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words text-[11px] opacity-80">
           {formatInvalidPayload(questions)}
         </pre>

@@ -61,6 +61,7 @@ export type ShellSharedRefs = {
 };
 
 export type UseShellRuntimeResult = {
+  deniedReason: 'ADMIN_REQUIRED' | null;
   terminalContainerRef: RefObject<HTMLDivElement>;
   terminalRef: MutableRefObject<Terminal | null>;
   wsRef: MutableRefObject<WebSocket | null>;

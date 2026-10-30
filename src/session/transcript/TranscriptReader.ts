@@ -77,7 +77,23 @@ export async function readTranscript(path: string, options: ReadTranscriptOption
     }
   }
 
+  // Older trauma turns opened a fresh transcript writer for every turn, so
+  // sequence restarted at 1 and sorting globally by sequence interleaved the
+  // conversation as user,user,assistant,assistant. Detect that legacy shape
+  // and use the append timestamps as the primary order. Normal transcripts
+  // retain the stronger monotonic-sequence ordering.
+  const sequenceOwners = new Map<number, string>();
+  const hasCrossTurnDuplicateSequence = entries.some((entry) => {
+    const owner = sequenceOwners.get(entry.sequence);
+    if (owner !== undefined && owner !== entry.turnId) return true;
+    sequenceOwners.set(entry.sequence, entry.turnId);
+    return false;
+  });
   entries.sort((left, right) => {
+    if (hasCrossTurnDuplicateSequence) {
+      const byTime = left.createdAt.localeCompare(right.createdAt);
+      if (byTime !== 0) return byTime;
+    }
     if (left.sequence !== right.sequence) return left.sequence - right.sequence;
     return left.createdAt.localeCompare(right.createdAt);
   });

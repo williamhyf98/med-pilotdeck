@@ -4,9 +4,17 @@ import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
-const PILOT_HOME = process.env.PILOT_HOME || join(homedir(), ".pilotdeck");
-const PILOTDECK_YAML_PATH = process.env.PILOTDECK_CONFIG_PATH || join(PILOT_HOME, "pilotdeck.yaml");
-const WEIXIN_CREDS_PATH = join(PILOT_HOME, "weixin-credentials.json");
+// Read lazily: `applyCliHome` may rewrite PILOT_HOME / PILOTDECK_CONFIG_PATH
+// after this module is first imported.
+function pilotHome(): string {
+  return process.env.PILOT_HOME || join(homedir(), ".pilotdeck");
+}
+function pilotdeckYamlPath(): string {
+  return process.env.PILOTDECK_CONFIG_PATH || join(pilotHome(), "pilotdeck.yaml");
+}
+function weixinCredsPath(): string {
+  return join(pilotHome(), "weixin-credentials.json");
+}
 
 const FEISHU_TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal";
 const LARK_TOKEN_URL = "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal";
@@ -67,7 +75,7 @@ async function selectPlatform(
 ): Promise<"feishu" | "weixin" | "wecom" | "all" | null> {
   const currentConfig = loadYamlConfig();
   const feishuStatus = currentConfig?.adapters?.feishu?.enabled ? "✅ 已启用" : "未配置";
-  const weixinStatus = existsSync(WEIXIN_CREDS_PATH) ? "✅ 已有凭据" : "未配置";
+  const weixinStatus = existsSync(weixinCredsPath()) ? "✅ 已有凭据" : "未配置";
   const wecomStatus = currentConfig?.adapters?.wecom?.enabled ? "✅ 已启用" : "未配置";
 
   console.log("可配置的平台：");
@@ -572,7 +580,7 @@ async function setupWeixin(rl: ReturnType<typeof createInterface>): Promise<void
 
     console.log(`\n✅ 微信登录成功！`);
     console.log(`   账号 ID: ${result.accountId}`);
-    console.log(`   凭据已保存到: ${WEIXIN_CREDS_PATH}`);
+    console.log(`   凭据已保存到: ${weixinCredsPath()}`);
     console.log(`   重启 PilotDeck 服务后生效\n`);
   } catch (e) {
     console.log(`\n❌ 微信登录失败: ${e instanceof Error ? e.message : String(e)}`);
@@ -582,8 +590,8 @@ async function setupWeixin(rl: ReturnType<typeof createInterface>): Promise<void
 
 function loadWeixinCredentials(): { accountId: string; baseUrl: string; botToken: string } | null {
   try {
-    if (!existsSync(WEIXIN_CREDS_PATH)) return null;
-    const raw = readFileSync(WEIXIN_CREDS_PATH, "utf-8");
+    if (!existsSync(weixinCredsPath())) return null;
+    const raw = readFileSync(weixinCredsPath(), "utf-8");
     const data = JSON.parse(raw);
     if (!data.baseUrl || !data.botToken || !data.accountId) return null;
     return data;
@@ -597,8 +605,8 @@ function saveWeixinCredentials(creds: {
   botToken: string;
   accountId: string;
 }): void {
-  mkdirSync(PILOT_HOME, { recursive: true });
-  writeFileSync(WEIXIN_CREDS_PATH, JSON.stringify(creds, null, 2), "utf-8");
+  mkdirSync(join(homedir(), ".pilotdeck"), { recursive: true });
+  writeFileSync(weixinCredsPath(), JSON.stringify(creds, null, 2), "utf-8");
 }
 
 function enableWeixinConfig(): void {
@@ -614,8 +622,8 @@ function enableWeixinConfig(): void {
 
 function loadYamlConfig(): Record<string, any> | null {
   try {
-    if (!existsSync(PILOTDECK_YAML_PATH)) return null;
-    const raw = readFileSync(PILOTDECK_YAML_PATH, "utf-8");
+    if (!existsSync(pilotdeckYamlPath())) return null;
+    const raw = readFileSync(pilotdeckYamlPath(), "utf-8");
     return parseYaml(raw) as Record<string, any>;
   } catch {
     return null;
@@ -623,12 +631,12 @@ function loadYamlConfig(): Record<string, any> | null {
 }
 
 function saveYamlConfig(config: Record<string, any>): void {
-  mkdirSync(dirname(PILOTDECK_YAML_PATH), { recursive: true });
+  mkdirSync(dirname(pilotdeckYamlPath()), { recursive: true });
   const yamlStr = stringifyYaml(config, {
     lineWidth: 0,
     singleQuote: false,
   });
-  writeFileSync(PILOTDECK_YAML_PATH, yamlStr, "utf-8");
+  writeFileSync(pilotdeckYamlPath(), yamlStr, "utf-8");
 }
 
 function maskSecret(value: string): string {

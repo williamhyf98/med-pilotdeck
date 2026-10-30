@@ -43,13 +43,13 @@ export function VersionBadge() {
 
   const handleRestart = useCallback(async () => {
     // Immediately blank the entire page with a restart splash
-    document.title = 'Restarting PilotDeck...';
+    document.title = 'Restarting MedPD...';
     document.body.innerHTML = '';
     document.body.style.cssText = 'margin:0;background:#0a0a0a;display:flex;align-items:center;justify-content:center;height:100vh';
     document.body.innerHTML = `
       <div style="text-align:center;font-family:system-ui,-apple-system,sans-serif">
         <svg style="width:40px;height:40px;margin-bottom:16px;animation:spin 1s linear infinite" viewBox="0 0 24 24" fill="none" stroke="#888" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></svg>
-        <p style="color:#ccc;font-size:1.1rem;margin:0 0 8px">Restarting PilotDeck...</p>
+        <p style="color:#ccc;font-size:1.1rem;margin:0 0 8px">Restarting MedPD...</p>
         <p style="color:#666;font-size:0.8rem;margin:0">Page will reload automatically when server is ready.</p>
       </div>
       <style>@keyframes spin{to{transform:rotate(360deg)}}</style>`;

@@ -212,6 +212,10 @@ PilotDeck 的三大核心能力在实际生产环境中展现出了显著的优�
 </tbody>
 </table>
 
+战创伤工作区支持“一条消息，多种意图”：系统会选定一个病例更新、知识问答、使用帮助或范围提示作为主流程，同时独立提取用户明确提出的表达偏好。当前轮偏好会立即用于本轮回答，不需要等待记忆落盘；回答成功后再将其作为当前项目的 Feedback 捕获，并由 Index / Dream 异步整理。纯偏好消息只确认偏好，不启动病例推演，也不修改 Case State。
+
+战创伤遵循两条相互独立的优先级：临床信息按“当前输入 > Case State > RAG 证据”处理；回答呈现按“当前轮偏好 > 项目 Feedback > 全局偏好 > 默认方式”处理。偏好可以改变标题、顺序、表格/列表、详略和语言，但不能覆盖医学安全、证据与引用、阶段边界、结构化字段或医务人员复核提示。记忆读取、写入、Index 或 Dream 失败均不影响已经生成的医疗回答；生命体征、伤情和患者标识不会进入战创伤长期记忆。
+
 ---
 
 ## 🖥️ 交互界面与演示
@@ -289,6 +293,8 @@ https://github.com/user-attachments/assets/a7245467-ee3c-4939-a055-c56576ac56d1
 ---
 
 ## 📦 安装与快速开始
+
+**本仓库（med-pilotdeck）从 Git 克隆后的本地开发启动**请看 [docs/local-clone-and-start.zh.md](./docs/local-clone-and-start.zh.md)（Linux / macOS / Windows、自动生成 `.pilotdeck-home/pilotdeck.yaml`、`start-local.sh`）。下文「一键安装」来自上游 PilotDeck，状态写在 `~/.pilotdeck`，**不是**同事联调用的那条路径。
 
 我们提供了 macOS/Linux 与 Windows PowerShell 下的一键安装脚本，以及适合开发者的源码启动方式。
 
@@ -461,7 +467,7 @@ docker compose up -d --build
 PilotDeck 采用开放的插件架构，插件代码与开源核心严格隔离。开发者可以通过 `plugin.json` 轻松扩展系统能力：
 
 - **MCP Servers**: 原生支持集成 Model Context Protocol 服务器。
-- **Tools & Skills**: 注册自定义工具，或通过 [ClawHub](https://www.npmjs.com/package/clawhub) 引入社区 Skill。
+- **Tools & Skills**: 注册自定义工具，并通过交付包附带内置 / 插件 Skill。
 - **Lifecycle Hooks**: 拦截 `PreToolUse`、`UserPromptSubmit` 等关键生命周期。
 - **Custom Memory**: 允许接入自定义的记忆存储 Provider。
 

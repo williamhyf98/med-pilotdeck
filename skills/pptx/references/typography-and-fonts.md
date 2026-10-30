@@ -1,19 +1,19 @@
-# Typography and fonts
+# 排版与字体
 
-## Precedence
+## 优先级
 
-Choose typography in this order:
+按此顺序选择排版：
 
-1. Explicit user or brand direction.
-2. Theme fonts inherited from a supplied PPTX.
-3. A target-platform profile requested by the user.
-4. A PilotDeck cross-platform profile inferred from the content language.
+1. 明确的用户或品牌方向。
+2. 从所提供 PPTX 继承的主题字体。
+3. 用户要求的目标平台配置。
+4. 根据内容语言推断的 PilotDeck 跨平台配置。
 
-Never replace a supplied template font merely because a PilotDeck default exists.
+切勿仅仅因为存在 PilotDeck 默认字体，就替换所提供模板的字体。
 
-## Profiles
+## 配置
 
-Resolve layout tokens before creating a net-new deck:
+在创建全新演示文稿之前解析版式令牌：
 
 ```js
 const tokens = await resolveDesignTokens({
@@ -24,43 +24,43 @@ const tokens = await resolveDesignTokens({
 const pptx = await createDeck({ lang: 'zh-CN', tokens });
 ```
 
-Available profiles:
+可用配置：
 
-- `cross-platform-en`: Arial for broad macOS and Windows compatibility.
-- `office-en`: Aptos for a known modern Microsoft Office audience.
-- `cross-platform-zh`: Arial as the logical Latin face with conservative Chinese fallback space.
-- `windows-zh`: Microsoft YaHei for a Windows-only target.
-- `macos-zh`: PingFang SC for a macOS-only target.
-- `libreoffice-zh`: Noto Sans CJK SC only when that font is installed in the rendering environment.
+- `cross-platform-en`：Arial，用于广泛的 macOS 和 Windows 兼容性。
+- `office-en`：Aptos，用于已知的现代 Microsoft Office 受众。
+- `cross-platform-zh`：Arial 作为逻辑拉丁字体，并为中文预留保守的回退空间。
+- `windows-zh`：Microsoft YaHei，用于仅 Windows 目标。
+- `macos-zh`：PingFang SC，用于仅 macOS 目标。
+- `libreoffice-zh`：仅当渲染环境已安装该字体时使用 Noto Sans CJK SC。
 
-PowerPoint does not accept a CSS-style font stack. A profile is a Harness resolution policy, not a comma-separated font name written into the PPTX.
+PowerPoint 不接受 CSS 风格的字体栈。配置是 Harness 解析策略，而不是写入 PPTX 的逗号分隔字体名。
 
-There is no Chinese font that can be assumed to be installed on every macOS and Windows system. Cross-platform defaults target readable, stable substitution rather than pixel-identical output. Require a shared licensed or embeddable font when identical typography is mandatory.
+不存在可以假定在每台 macOS 和 Windows 系统上都已安装的中文字体。跨平台默认值追求可读、稳定的替换，而不是像素级一致输出。当必须使用相同排版时，要求共享的授权或可嵌入字体。
 
-## Default sizes for a 16:9 deck
+## 16:9 演示文稿的默认字号
 
-| Element | Presentation | Dense report |
+| 元素 | 演示 | 密集报告 |
 |---|---:|---:|
-| Cover title | 32–44 pt | 28–34 pt |
-| Section title | 28–34 pt | 24–30 pt |
-| Slide title | 24–30 pt | 22–26 pt |
-| Body | 16–20 pt | 14–17 pt |
-| Chart labels | 11–14 pt | 10–12 pt |
-| Table body | 12–15 pt | 10–12 pt |
-| Footnote or source | 9–11 pt | 9–10 pt |
+| 封面标题 | 32–44 pt | 28–34 pt |
+| 章节标题 | 28–34 pt | 24–30 pt |
+| 幻灯片标题 | 24–30 pt | 22–26 pt |
+| 正文 | 16–20 pt | 14–17 pt |
+| 图表标签 | 11–14 pt | 10–12 pt |
+| 表格正文 | 12–15 pt | 10–12 pt |
+| 脚注或来源 | 9–11 pt | 9–10 pt |
 
-Use the `presentation` density for projection and the `report` density for desktop reading. Do not shrink ordinary body copy below the dense-report range merely to silence a fit warning.
+投影使用 `presentation` 密度，桌面阅读使用 `report` 密度。不要仅为消除适配警告，就把普通正文缩小到低于密集报告范围。
 
-## Chinese and mixed-language layout safety
+## 中文与中英混排的版式安全
 
-- Use a line-height factor of roughly 1.2–1.35 for Chinese body copy.
-- Reserve 10–15% vertical capacity for cross-platform font substitution.
-- Keep slide titles to one line when possible and no more than two lines.
-- Give Chinese tables more row height than equivalent English tables.
-- Use one Chinese family and one Latin family at most unless a brand system requires more.
-- Keep chart numerals and percentages consistent; Arial is a safe Latin choice.
-- Set the presentation language to `zh-CN` for simplified-Chinese content.
+- 中文正文使用大约 1.2–1.35 的行高系数。
+- 为跨平台字体替换预留 10–15% 的垂直容量。
+- 幻灯片标题尽可能保持一行，且不超过两行。
+- 中文表格比同等英文表格给予更大的行高。
+- 除非品牌系统要求更多，否则最多使用一个中文字族和一个拉丁字族。
+- 保持图表数字和百分比一致；Arial 是安全的拉丁选择。
+- 简体中文内容将演示语言设为 `zh-CN`。
 
-## Compatibility interpretation
+## 兼容性解读
 
-Treat Microsoft PowerPoint as the target viewer. LibreOffice rendering is an automated baseline. If the PPTX contains intact Chinese OOXML text but LibreOffice substitutes or omits glyphs, report a renderer compatibility warning and smoke-test the same artifact in target PowerPoint. Do not rewrite a valid deck solely to make the LibreOffice baseline look identical.
+将 Microsoft PowerPoint 视为目标阅读器。LibreOffice 渲染是自动化基线。如果 PPTX 包含完整的中文 OOXML 文本，但 LibreOffice 替换或省略了字形，则报告渲染器兼容性警告，并在目标 PowerPoint 中对该同一产物做冒烟测试。不要仅为使 LibreOffice 基线看起来完全相同而重写一份有效的演示文稿。

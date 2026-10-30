@@ -76,6 +76,7 @@ export type {
   CanonicalOutputSchema,
   CanonicalPdfBlock,
   CanonicalRole,
+  CanonicalSamplingParameter,
   CanonicalTextBlock,
   CanonicalThinkingBlock,
   CanonicalThinkingConfig,
@@ -94,6 +95,11 @@ export type {
   ProviderConfig,
   ProviderRetryConfig,
 } from "./protocol/canonical.js";
+export {
+  CANONICAL_SAMPLING_PARAMETERS,
+  requestedSamplingParameters,
+  supportsSamplingParameter,
+} from "./request/samplingParameterSupport.js";
 export {
   flattenToolResultBlockText,
   flattenToolResultContentText,

@@ -39,10 +39,13 @@ import { agentError } from "../protocol/errors.js";
 import type { AgentEvent } from "../protocol/events.js";
 import type { AgentPermissionDenial, AgentTurnResult } from "../protocol/result.js";
 import type { AgentRuntimeConfig } from "../runtime/AgentRuntimeConfig.js";
+import { isPlanToolAvailable } from "../../tool/planModeConstraints.js";
 import type { AgentRuntimeDependencies } from "../runtime/AgentRuntimeDependencies.js";
 import type { LifecycleDispatchResult } from "../../lifecycle/index.js";
 import type { PilotDeckHookEvent } from "../../extension/hooks/protocol/events.js";
 import { NullContextRuntime } from "../../context/NullContextRuntime.js";
+import { projectMetaTypeFromProjectPath } from "../../pilot/paths.js";
+import { filterToolsForProjectType } from "../../pilot/projectTypePolicy.js";
 import type { AgentContextRuntime } from "../../context/ContextRuntime.js";
 import type { ContextRecoveryDecision, ContextSupplementalToolResultMessage, TokenBudgetSnapshot } from "../../context/index.js";
 import type { PermissionMode, PermissionRule, PermissionRuleSet } from "../../permission/index.js";
@@ -52,19 +55,32 @@ import { createMissingToolResult, ensureToolResultPairing } from "./ensureToolRe
 import { LargeFileRepair, type LargeFileRepairDecision } from "./LargeFileRepair.js";
 import { resolveOutputTokenRetryBump } from "./outputTokenRetry.js";
 import { projectToolResults } from "./projectToolResults.js";
+import {
+  MAX_TOOL_CALLS_GRACE_PROMPT,
+  SKILL_SOURCE_GRACE_AFTER_TURNS,
+  SKILL_SOURCE_GRACE_PROMPT,
+  SKILL_SOURCE_STOP_AFTER_TURNS,
+  areOnlySkillSourceInspections,
+  resolveEffectiveMaxToolCalls,
+  resolveEffectiveMaxTurns,
+} from "./spinGuards.js";
 import { requiresPromptCapability } from "../../tool/userInteractionConstraints.js";
 import type { AgentRunMode } from "../protocol/input.js";
 import {
   ASK_MODE_DESCRIPTION_SUFFIX,
   isAskModeAllowedTool,
 } from "../../tool/askModeConstraints.js";
-import { buildAskModeAgentToolSchema } from "../../tool/builtin/agent.js";
 import { repairToolName } from "../../model/streaming/repairToolName.js";
 import {
   createAgentStatusDetail,
   createVisibleErrorStatusDetail,
   type AgentStatusI18nDescriptor,
 } from "../../status/agentStatus.js";
+import {
+  resolveAgentTurnExecution,
+  type AgentTurnOverrides,
+  type ResolvedAgentTurnExecution,
+} from "../profile/index.js";
 
 const TOOL_EVENT_PUMP_INTERVAL_MS = 500;
 const SUBAGENT_STATUS_HEARTBEAT_MS = 2_000;
@@ -77,10 +93,10 @@ const CIRCUIT_BREAKER_GRACE_PROMPT = [
   "(3) if you believe the tool should work, try once more with corrected input.",
 ].join(" ");
 const PLAN_MODE_REMINDER_MESSAGE = [
-  "Plan mode is active.",
-  "Read first using read-only tools, then write or refine plan markdown only under `.pilotdeck/plans/`.",
-  "Do not make implementation changes while planning.",
-  "When the plan is ready for user review, call `exit_plan_mode` with the plan file path.",
+  "计划模式已启用。",
+  "先用只读工具查看工作区材料与可用 skill；只可在 `.pilotdeck/plans/` 下写或修改计划 markdown。",
+  "规划期间不要调用医学处理、文档转换或修改业务文件。",
+  "计划完成后调用 exit_plan_mode(plan_file_path) 交给用户审核，不要只在普通回复里贴出计划后等待。",
 ].join("\n");
 
 function logAutoCompactFailure(
@@ -115,6 +131,10 @@ export type AgentLoopInput = {
   turnId: string;
   messages: CanonicalMessage[];
   maxTurns?: number;
+  /** Hard cap on tool invocations for this user turn (defaults applied in loop). */
+  maxToolCalls?: number;
+  profile?: string;
+  turnOverrides?: AgentTurnOverrides;
   runMode?: AgentRunMode;
   permissionMode?: PermissionMode;
   allowedReadFiles?: string[];
@@ -148,6 +168,7 @@ export class AgentLoop {
   private readonly readFileState: PilotDeckReadFileStateMap;
   private readonly writeSnapshots: PilotDeckWriteSnapshotMap;
   private readonly allowedReadFiles: Set<string>;
+  private readonly turnExecutions = new WeakMap<AgentLoopInput, ResolvedAgentTurnExecution>();
   private readonly transientTokenCaps = new Map<string, {
     maxContextTokens?: number;
     requestedMaxOutputTokens?: number;
@@ -175,6 +196,17 @@ export class AgentLoop {
 
   async *run(input: AgentLoopInput): AsyncGenerator<AgentEvent, AgentLoopRunResult, unknown> {
     this.clearTurnScopedTokenCaps();
+    const turnExecution = this.getTurnExecution(input);
+    if (
+      turnExecution.maxOutputTokens !== undefined
+      && turnExecution.maxOutputTokens !== this.config.maxOutputTokens
+      && turnExecution.provider
+      && turnExecution.model
+    ) {
+      this.setTransientTokenCap(turnExecution.provider, turnExecution.model, {
+        requestedMaxOutputTokens: turnExecution.maxOutputTokens,
+      });
+    }
     this.applyRunModeOverride(input.runMode);
     this.applyPermissionOverrides(input.permissionMode, input.permissionRules, input.basePermissionMode);
     for (const filePath of input.allowedReadFiles ?? []) {
@@ -182,12 +214,17 @@ export class AgentLoop {
     }
     const startedAt = this.now().toISOString();
     let messages = [...input.messages];
+    // Keep this turn's original tool results for memory before context budgeting
+    // replaces them with references/previews. Never use the accumulated allowlist.
+    const attachmentCaptureMessages = input.allowedReadFiles?.length ? [...input.messages] : undefined;
     let turnCount = 1;
     let usage: CanonicalUsage = {};
     let lastModelUsage: CanonicalUsage | undefined;
     let permissionDenials: AgentPermissionDenial[] = [];
     let structuredOutput: unknown;
     let finalMessage: CanonicalMessage | undefined;
+    const singleToolPass = turnExecution.metadata?.singleToolPass === true;
+    let singleToolPassCompleted = false;
     const toAgentStatusEvent = (status: AgentStatusMessage): AgentEvent => ({
       type: "agent_status",
       sessionId: input.sessionId,
@@ -204,13 +241,17 @@ export class AgentLoop {
       return createTurnAbortedStatus({ reason: stringifyAbortReason(input.abortSignal?.reason) });
     };
     const captureTurn = async (errored: boolean): Promise<void> => {
+      if (turnExecution.metadata?.memoryPolicy === "disabled") return;
       const hook = this.dependencies.context?.captureTurn;
       if (!hook) return;
       try {
         await hook.call(this.dependencies.context, {
           sessionId: input.sessionId,
           turnId: input.turnId,
-          messages,
+          messages: attachmentCaptureMessages ?? messages,
+          ...(attachmentCaptureMessages ? { attachmentContext: {
+            allowedReadFiles: input.allowedReadFiles!, cwd: this.config.cwd,
+          } } : {}),
           errored,
         });
       } catch {
@@ -267,6 +308,13 @@ export class AgentLoop {
     let lastToolFailureFingerprint: string | undefined;
     let transientPromptCounter = 0;
     const activeTransientPromptIds = new Set<string>();
+
+    const effectiveMaxTurns = resolveEffectiveMaxTurns(input.maxTurns);
+    const effectiveMaxToolCalls = resolveEffectiveMaxToolCalls(input.maxToolCalls);
+    let toolCallCount = 0;
+    let consecutiveSkillSourceOnlyTurns = 0;
+    let hasUsedSkillSourceGrace = false;
+    let hasUsedMaxToolCallsGrace = false;
 
     const pushTransientSyntheticPrompt = (prompt: string, purpose: string): void => {
       const transientId = this.dependencies.uuid?.() ?? `transient-${++transientPromptCounter}`;
@@ -395,10 +443,22 @@ export class AgentLoop {
 
       let pendingContextBudget: TokenBudgetSnapshot | undefined;
       const ctx = this.dependencies.context;
-      const preRoutingMaxContextTokens = this.currentMaxContextTokens(this.config.provider, this.config.model);
+      const preRoutingProvider = turnExecution.explicitModelSelection
+        ? turnExecution.provider ?? this.config.provider
+        : this.config.provider;
+      const preRoutingModel = turnExecution.explicitModelSelection
+        ? turnExecution.model ?? this.config.model
+        : this.config.model;
+      const preRoutingMaxContextTokens = this.currentMaxContextTokens(
+        preRoutingProvider,
+        preRoutingModel,
+      );
       if (ctx?.tryAutoCompact) {
         try {
-          const reservedOutputTokens = this.getReservedOutputTokens();
+          const reservedOutputTokens = this.getReservedOutputTokens(
+            preRoutingProvider,
+            preRoutingModel,
+          );
           const compact = await ctx.tryAutoCompact({
             sessionId: input.sessionId,
             turnId: input.turnId,
@@ -441,6 +501,9 @@ export class AgentLoop {
       }
 
       let request = await this.createModelRequest(messages, input);
+      if (singleToolPassCompleted) {
+        request = { ...request, tools: [] };
+      }
       if (input.abortSignal?.aborted) {
         const result = this.createTurnResult(input, {
           type: "aborted",
@@ -474,17 +537,27 @@ export class AgentLoop {
       // Split decide + execute so we can insert a post-routing compact pass
       // when the routed model's context window differs from the agent's
       // default model (the window used by the first tryAutoCompact above).
+      const decisionMetadata = {
+        ...(stickyInfo
+          ? {
+              previousTier,
+              previousProvider: stickyInfo.previousProvider,
+              previousModel: stickyInfo.previousModel,
+            }
+          : previousTier ? { previousTier } : {}),
+        ...(turnExecution.explicitModelSelection
+          ? {
+              explicitProvider: turnExecution.provider,
+              explicitModel: turnExecution.model,
+              serverValidatedModelOverride: true,
+            }
+          : {}),
+      };
       const decision = await this.dependencies.router.decide({
         request,
         sessionId: input.sessionId,
         isMainAgent: !this.config.isSubagent,
-        metadata: stickyInfo
-          ? {
-            previousTier,
-            previousProvider: stickyInfo.previousProvider,
-            previousModel: stickyInfo.previousModel,
-          }
-          : previousTier ? { previousTier } : undefined,
+        metadata: Object.keys(decisionMetadata).length > 0 ? decisionMetadata : undefined,
       });
       const routedLimits = this.getModelTokenLimits(decision.provider, decision.model);
       const routedMaxOutputTokens = routedLimits?.maxOutputTokens;
@@ -515,6 +588,9 @@ export class AgentLoop {
               const preCompactMessages = messages;
               messages = recompact.messages;
               request = await this.createModelRequest(messages, input);
+              if (singleToolPassCompleted) {
+                request = { ...request, tools: [] };
+              }
               request = this.applyTokenCapsToRequest(request, decision.provider, decision.model);
               await this.persistCompactSnapshot(input, recompact, preCompactMessages);
               yield {
@@ -570,6 +646,7 @@ export class AgentLoop {
           turnId: input.turnId,
           projectPath: this.config.cwd,
           abortSignal: input.abortSignal,
+          isMainAgent: !this.config.isSubagent,
         })) {
           yield { type: "model_event", sessionId: input.sessionId, turnId: input.turnId, event };
           applyModelEventToAssembler(assembler, event);
@@ -938,6 +1015,7 @@ export class AgentLoop {
       }
 
       messages.push(assistantMessage);
+      attachmentCaptureMessages?.push(assistantMessage);
       yield { type: "assistant_message", sessionId: input.sessionId, turnId: input.turnId, message: assistantMessage };
       await input.onDurableMessage?.(assistantMessage);
 
@@ -1482,8 +1560,18 @@ export class AgentLoop {
       }
 
       let results: PilotDeckToolResult[];
+      // Parallel reports must not interleave prose or finish before sibling
+      // results arrive. Publish the complete ordered text once the batch succeeds.
+      const deferMedicalText = toolCalls.length > 1 && toolCalls.some(call => call.name.endsWith("med_parse_medical"));
       try {
         const toolContext = this.createToolContext(input, messages);
+        if (deferMedicalText) {
+          const progress = toolContext.progress;
+          toolContext.progress = event => {
+            if (event.toolName?.endsWith("med_parse_medical") && event.metadata?.channel === "assistant_text_delta") return;
+            progress?.(event);
+          };
+        }
         if (assembled.finishReason === "length" || assembled.hasRepairedToolCalls) {
           toolContext.outputTruncated = true;
         }
@@ -1556,6 +1644,9 @@ export class AgentLoop {
 
           this.config.permissionMode = effectiveMode;
           this.config.permissionContext.mode = effectiveMode;
+          if (effectiveMode !== "plan" && this.config.runMode === "plan") {
+            this.config.runMode = "agent";
+          }
           yield { type: "mode_change_requested", sessionId: input.sessionId, turnId: input.turnId, mode: effectiveMode };
         }
         yield { type: "tool_result", sessionId: input.sessionId, turnId: input.turnId, result };
@@ -1567,6 +1658,7 @@ export class AgentLoop {
       // the runtime doesn't implement `applyToolResults` (e.g. NullContext),
       // we simply append the raw projection (legacy behaviour).
       const [toolResultMsg, ...supplementalMsgs] = projected;
+      if (toolResultMsg) attachmentCaptureMessages?.push(toolResultMsg);
       const supplementalInputs = bindSupplementalMessagesToToolCalls(pairedResults, supplementalMsgs);
       let appendedMessages: CanonicalMessage[] = projected;
       const ctxApply = this.dependencies.context?.applyToolResults;
@@ -1590,6 +1682,69 @@ export class AgentLoop {
       for (const appended of appendedMessages) {
         yield { type: "tool_results_projected", sessionId: input.sessionId, turnId: input.turnId, message: appended };
         await input.onDurableMessage?.(appended);
+      }
+      const directFinalResults = pairedResults.filter((result) =>
+        result.type === "success"
+        && typeof result.metadata?.directFinalAssistantText === "string"
+        && result.metadata.directFinalAssistantText.trim().length > 0
+      );
+      const directFinalResult = directFinalResults.length > 0 && pairedResults.every(result =>
+        result.type === "success" && (!result.toolName.endsWith("med_parse_medical") || directFinalResults.includes(result)))
+        ? directFinalResults[0]
+        : undefined;
+      if (directFinalResult?.type === "success") {
+        const directText = directFinalResults.map(result => String(result.metadata?.directFinalAssistantText ?? "")).join("\n\n---\n\n");
+        if (deferMedicalText) yield {
+          type: "tool_progress", sessionId: input.sessionId, turnId: input.turnId,
+          toolCallId: directFinalResult.toolCallId, toolName: directFinalResult.toolName,
+          message: "医学报告已完成", createdAt: this.now().toISOString(),
+          metadata: { channel: "assistant_text_delta", text: directText, modelOwner: "plugin-vlm" },
+        };
+        const directMessage: CanonicalMessage = {
+          role: "assistant",
+          content: [{ type: "text", text: directText }],
+          metadata: {
+            directToolOutput: true,
+            generationOwner: String(directFinalResult.metadata?.generationOwner ?? "tool"),
+            toolCallId: directFinalResult.toolCallId,
+            toolName: directFinalResult.toolName,
+          },
+        };
+        messages.push(directMessage);
+        attachmentCaptureMessages?.push(directMessage);
+        finalMessage = directMessage;
+        yield {
+          type: "assistant_message",
+          sessionId: input.sessionId,
+          turnId: input.turnId,
+          message: directMessage,
+        };
+        await input.onDurableMessage?.(directMessage);
+        const result = this.createTurnResult(input, {
+          type: "success",
+          stopReason: "completed",
+          usage,
+          permissionDenials,
+          turns: turnCount,
+          startedAt,
+          finalMessage,
+          structuredOutput,
+        });
+        await captureTurn(false);
+        yield { type: "turn_completed", sessionId: input.sessionId, turnId: input.turnId, result };
+        return { result, messages };
+      }
+      if (
+        singleToolPass
+        && !singleToolPassCompleted
+        && pairedResults.some((result) => result.type === "success")
+      ) {
+        singleToolPassCompleted = true;
+        pushTransientSyntheticPrompt(
+          "The approved retrieval tool has completed successfully. Tool use is now closed for this turn. "
+            + "Use the returned evidence to provide the final answer immediately as visible text, without repeating retrieval.",
+          "single_tool_pass_complete",
+        );
       }
 
       if (toolResultRepair) {
@@ -1730,11 +1885,95 @@ export class AgentLoop {
         return { result, messages };
       }
 
+      toolCallCount += toolCalls.length;
+      if (areOnlySkillSourceInspections(toolCalls)) {
+        consecutiveSkillSourceOnlyTurns += 1;
+      } else {
+        consecutiveSkillSourceOnlyTurns = 0;
+      }
+
+      if (
+        consecutiveSkillSourceOnlyTurns >= SKILL_SOURCE_GRACE_AFTER_TURNS
+        && !hasUsedSkillSourceGrace
+      ) {
+        hasUsedSkillSourceGrace = true;
+        pushTransientSyntheticPrompt(SKILL_SOURCE_GRACE_PROMPT, "skill_source_grace");
+        yield { type: "turn_continued", sessionId: input.sessionId, turnId: input.turnId, reason: "model_error" };
+        continue;
+      }
+
+      if (consecutiveSkillSourceOnlyTurns >= SKILL_SOURCE_STOP_AFTER_TURNS) {
+        const skillSpinError = agentError(
+          "agent_tool_error_loop",
+          `Stopped after ${consecutiveSkillSourceOnlyTurns} consecutive steps that only inspected skill script source. The skill likely lacks the requested capability.`,
+          undefined,
+          "Tell the user the skill limitation in plain language (for example: PDF cannot embed photos yet) and suggest an alternative such as a text-only PDF or Word/PPT with images.",
+        );
+        const result = this.createTurnResult(input, {
+          type: "error",
+          stopReason: "tool_error",
+          usage,
+          permissionDenials,
+          turns: turnCount,
+          startedAt,
+          finalMessage,
+          structuredOutput,
+          errors: [skillSpinError],
+        });
+        yield await emitStatus(createToolErrorLoopStatus({
+          error: skillSpinError,
+          repeatedFailures: consecutiveSkillSourceOnlyTurns,
+        }));
+        yield { type: "turn_failed", sessionId: input.sessionId, turnId: input.turnId, error: skillSpinError };
+        await captureTurn(result.type === "error");
+        yield { type: "turn_completed", sessionId: input.sessionId, turnId: input.turnId, result };
+        return { result, messages };
+      }
+
+      if (
+        toolCallCount >= Math.max(1, effectiveMaxToolCalls - 2)
+        && toolCallCount <= effectiveMaxToolCalls
+        && !hasUsedMaxToolCallsGrace
+      ) {
+        hasUsedMaxToolCallsGrace = true;
+        pushTransientSyntheticPrompt(MAX_TOOL_CALLS_GRACE_PROMPT, "max_tool_calls_grace");
+        yield { type: "turn_continued", sessionId: input.sessionId, turnId: input.turnId, reason: "model_error" };
+        continue;
+      }
+
+      if (toolCallCount > effectiveMaxToolCalls) {
+        const maxToolCallsError = agentError(
+          "agent_max_tool_calls_reached",
+          `Reached maximum number of tool calls (${effectiveMaxToolCalls}) for this turn.`,
+          undefined,
+          "Reply with what you already know, or split the task. If a skill cannot do something (for example embed images in PDF), say so clearly instead of calling more tools.",
+        );
+        const result = this.createTurnResult(input, {
+          type: "error",
+          stopReason: "tool_error",
+          usage,
+          permissionDenials,
+          turns: turnCount,
+          startedAt,
+          finalMessage,
+          structuredOutput,
+          errors: [maxToolCallsError],
+        });
+        yield await emitStatus(createMaxToolCallsStatus({
+          maxToolCalls: effectiveMaxToolCalls,
+          error: maxToolCallsError,
+        }));
+        yield { type: "turn_failed", sessionId: input.sessionId, turnId: input.turnId, error: maxToolCallsError };
+        await captureTurn(result.type === "error");
+        yield { type: "turn_completed", sessionId: input.sessionId, turnId: input.turnId, result };
+        return { result, messages };
+      }
+
       const nextTurnCount = turnCount + 1;
-      if (input.maxTurns && nextTurnCount > input.maxTurns) {
+      if (nextTurnCount > effectiveMaxTurns) {
         const maxTurnsError = agentError(
           "agent_max_turns_reached",
-          `Reached maximum number of turns (${input.maxTurns}).`,
+          `Reached maximum number of turns (${effectiveMaxTurns}).`,
           undefined,
           "Max turn limit reached. Increase maxTurns in config or break the task into smaller steps.",
         );
@@ -1749,7 +1988,7 @@ export class AgentLoop {
           structuredOutput,
           errors: [maxTurnsError],
         });
-        const status = createMaxTurnsStatus({ maxTurns: input.maxTurns, error: maxTurnsError });
+        const status = createMaxTurnsStatus({ maxTurns: effectiveMaxTurns, error: maxTurnsError });
         yield await emitStatus(status);
         await captureTurn(result.type === "error");
         yield { type: "turn_completed", sessionId: input.sessionId, turnId: input.turnId, result };
@@ -1785,13 +2024,47 @@ export class AgentLoop {
     }
   }
 
+  private getTurnExecution(input: AgentLoopInput): ResolvedAgentTurnExecution {
+    const cached = this.turnExecutions.get(input);
+    if (cached) return cached;
+    const resolved = resolveAgentTurnExecution({
+      base: {
+        provider: this.config.provider,
+        model: this.config.model,
+        maxOutputTokens: this.config.maxOutputTokens,
+        temperature: this.config.temperature,
+        topP: this.config.topP,
+        topK: this.config.topK,
+        minP: this.config.minP,
+        presencePenalty: this.config.presencePenalty,
+        frequencyPenalty: this.config.frequencyPenalty,
+        repetitionPenalty: this.config.repetitionPenalty,
+        seed: this.config.seed,
+        thinking: this.config.thinking,
+      },
+      profileId: input.profile,
+      turnOverrides: input.turnOverrides,
+      profiles: this.dependencies.profileRegistry,
+      availableToolNames: this.dependencies.tools.registry.list().map((tool) => tool.name),
+      isModelAvailable: this.dependencies.isModelAvailable,
+      getModelMaxOutputTokens: (provider, model) =>
+        this.getModelTokenLimits(provider, model)?.maxOutputTokens,
+    });
+    this.turnExecutions.set(input, resolved);
+    return resolved;
+  }
+
   private async createModelRequest(
     messages: CanonicalMessage[],
     input: AgentLoopInput,
     options: { emitInstructionEvents?: boolean } = {},
   ): Promise<CanonicalModelRequest> {
     const contextRuntime = this.dependencies.context ?? new NullContextRuntime();
+    const execution = this.getTurnExecution(input);
     const planTodo = this.dependencies.planTodoManager?.forSession(input.sessionId);
+    const planPromptAddendum = planTodo?.buildPromptAddendum();
+    const hasToolPolicy =
+      execution.allowedTools !== undefined || execution.deniedTools !== undefined;
     const canPrompt = input.canPrompt ?? this.config.permissionContext.canPrompt;
     const promptBlockedToolNames = canPrompt
       ? new Set<string>()
@@ -1800,13 +2073,24 @@ export class AgentLoop {
             .filter((tool) => requiresPromptCapability(tool, {}))
             .map((tool) => tool.name),
         );
-    let toolDefinitions = this.dependencies.tools.registry.list()
-      .filter((tool) => !promptBlockedToolNames.has(tool.name));
-    if (input.allowPlanModeTools !== true) {
-      toolDefinitions = toolDefinitions.filter(
-        (tool) => tool.name !== "enter_plan_mode" && tool.name !== "exit_plan_mode",
-      );
-    }
+    const projectType = projectMetaTypeFromProjectPath(this.config.cwd);
+    let toolDefinitions = filterToolsForProjectType(
+      this.dependencies.tools.registry.list(),
+      projectType,
+    ).filter((tool) => !promptBlockedToolNames.has(tool.name));
+    const allowedTools = execution.allowedTools === undefined
+      ? undefined
+      : new Set(execution.allowedTools);
+    const deniedTools = new Set(execution.deniedTools ?? []);
+    toolDefinitions = toolDefinitions.filter((tool) =>
+      (allowedTools === undefined || allowedTools.has(tool.name))
+      && !deniedTools.has(tool.name)
+    );
+    toolDefinitions = toolDefinitions.filter((tool) => isPlanToolAvailable(tool.name, {
+      permissionMode: this.config.permissionMode,
+      runMode: this.config.runMode,
+      allowPlanModeTools: input.allowPlanModeTools,
+    }));
     const requestMessages = normalizeMessagesForModelRequest(messages);
     let tools = toolDefinitions.map(toolToCanonicalSchema);
     if (this.config.runMode === "ask") {
@@ -1816,16 +2100,19 @@ export class AgentLoop {
       sessionId: input.sessionId,
       turnId: input.turnId,
       cwd: this.config.cwd,
-      provider: this.config.provider,
-      model: this.config.model,
+      provider: execution.provider ?? this.config.provider,
+      model: execution.model ?? this.config.model,
       permissionMode: this.config.permissionMode,
       runMode: this.config.runMode ?? "agent",
       additionalWorkingDirectories: this.config.permissionContext.additionalWorkingDirectories,
       messages: cloneMessages(requestMessages),
       tools,
       maxMessages: this.config.maxContextMessages,
+      memoryPolicy: execution.metadata?.memoryPolicy === "disabled" ? "disabled" : undefined,
       customSystemPrompt: this.config.systemPrompt,
-      appendSystemPrompt: planTodo?.buildPromptAddendum(),
+      appendSystemPrompt: execution.systemContext
+        ? combineSystemPromptAddenda(execution.systemContext, planPromptAddendum)
+        : planPromptAddendum,
       abortSignal: input.abortSignal,
     });
 
@@ -1842,6 +2129,11 @@ export class AgentLoop {
     }
 
     const materialized = await materializeMediaReferences(prepared.messages);
+    const preparedTools = filterToolsForProjectType(prepared.tools, projectType)
+      .filter((tool) =>
+        (allowedTools === undefined || allowedTools.has(tool.name))
+        && !deniedTools.has(tool.name)
+      );
     for (const diagnostic of materialized.diagnostics) {
       // eslint-disable-next-line no-console
       console.warn(
@@ -1850,19 +2142,36 @@ export class AgentLoop {
     }
 
     return {
-      provider: this.config.provider,
-      model: this.config.model,
+      provider: execution.provider ?? this.config.provider,
+      model: execution.model ?? this.config.model,
       messages: this.config.permissionMode === "plan"
         ? appendPlanModeReminder(materialized.messages)
         : materialized.messages,
       systemPrompt: prepared.systemPrompt ?? this.config.systemPrompt,
-      tools: prepared.tools,
-      toolChoice: this.config.toolChoice,
-      maxOutputTokens: this.config.maxOutputTokens,
-      temperature: this.config.temperature,
-      thinking: this.config.thinking,
+      tools: preparedTools,
+      toolChoice: hasToolPolicy
+        ? resolveEffectiveToolChoice(this.config.toolChoice, preparedTools)
+        : this.config.toolChoice,
+      maxOutputTokens: execution.maxOutputTokens,
+      temperature: execution.temperature,
+      ...(execution.topP !== undefined ? { topP: execution.topP } : {}),
+      ...(execution.topK !== undefined ? { topK: execution.topK } : {}),
+      ...(execution.minP !== undefined ? { minP: execution.minP } : {}),
+      ...(execution.presencePenalty !== undefined
+        ? { presencePenalty: execution.presencePenalty }
+        : {}),
+      ...(execution.frequencyPenalty !== undefined
+        ? { frequencyPenalty: execution.frequencyPenalty }
+        : {}),
+      ...(execution.repetitionPenalty !== undefined
+        ? { repetitionPenalty: execution.repetitionPenalty }
+        : {}),
+      ...(execution.seed !== undefined ? { seed: execution.seed } : {}),
+      thinking: execution.thinking,
       stream: true,
-      metadata: this.config.metadata,
+      metadata: execution.metadata
+        ? { ...(this.config.metadata ?? {}), ...execution.metadata }
+        : this.config.metadata,
       cacheBreakpoints: prepared.cacheBreakpoints,
     };
   }
@@ -2071,6 +2380,7 @@ export class AgentLoop {
     input: AgentLoopInput,
     messages: CanonicalMessage[],
   ): PilotDeckToolRuntimeContext {
+    const execution = this.getTurnExecution(input);
     const planDirectoryPath = this.dependencies.planFileManager?.getPlanDirectoryPath();
     const planTodo = this.dependencies.planTodoManager?.forSession(input.sessionId);
     const canPrompt = input.canPrompt ?? this.config.permissionContext.canPrompt;
@@ -2090,10 +2400,20 @@ export class AgentLoop {
       messageId: input.turnId,
       cwd: this.config.cwd,
       abortSignal: input.abortSignal,
+      progress: (event) => this.dependencies.eventEmitter?.(event),
       subagentTimeoutMs: this.config.subagentTimeoutMs,
       toolAliases: this.config.toolAliases,
+      ...(execution.allowedTools !== undefined || execution.deniedTools !== undefined
+        ? {
+            toolPolicy: {
+              allowedTools: execution.allowedTools,
+              deniedTools: execution.deniedTools,
+            },
+          }
+        : {}),
       runMode: this.config.runMode ?? "agent",
       permissionMode: this.config.permissionMode,
+      allowPlanModeTools: input.allowPlanModeTools,
       permissionContext,
       auditRecorder: this.dependencies.auditRecorder,
       now: this.now,
@@ -2104,10 +2424,9 @@ export class AgentLoop {
         input.turnId,
       ),
       maxResultBytes: this.config.maxResultBytes,
-      // Tools that need a secondary model call (e.g. `agent` subagents in
-      // fallback mode, `web_fetch` extraction) get a thin adapter that
-      // funnels into the router's stream so subagents inherit fallback /
-      // zero-usage retry.
+      // Tools that need a secondary model call (e.g. subagent fallback)
+      // get a thin adapter that funnels into the router's stream so nested
+      // model calls inherit fallback / zero-usage retry.
       model: {
         stream: (request, signal) =>
           this.dependencies.router.stream(request, {
@@ -2122,8 +2441,11 @@ export class AgentLoop {
       fileHistory: this.dependencies.fileHistory,
       subagentDepth: this.config.subagentDepth ?? 0,
       subagent: this.buildSubagentForkApi(input, messages),
-      modelMultimodal: this.config.modelMultimodal,
-      maxOutputTokens: this.config.maxOutputTokens,
+      modelMultimodal: execution.provider && execution.model
+        ? this.dependencies.getModelMultimodal?.(execution.provider, execution.model)
+          ?? this.config.modelMultimodal
+        : this.config.modelMultimodal,
+      maxOutputTokens: execution.maxOutputTokens,
       readFileState: this.readFileState,
       allowedReadFiles: [...this.allowedReadFiles],
       writeSnapshots: this.writeSnapshots,
@@ -2147,6 +2469,7 @@ export class AgentLoop {
     input: AgentLoopInput,
     messages: CanonicalMessage[],
   ): PilotDeckSubagentForkApi {
+    const execution = this.getTurnExecution(input);
     const depth = this.config.subagentDepth ?? 0;
     const maxDepth = this.config.maxSubagentDepth ?? 1;
     return {
@@ -2200,6 +2523,36 @@ export class AgentLoop {
           directive,
           parentConfig: {
             ...this.config,
+            provider: execution.provider ?? this.config.provider,
+            model: execution.model ?? this.config.model,
+            maxOutputTokens: execution.maxOutputTokens,
+            temperature: execution.temperature,
+            topP: execution.topP,
+            topK: execution.topK,
+            minP: execution.minP,
+            presencePenalty: execution.presencePenalty,
+            frequencyPenalty: execution.frequencyPenalty,
+            repetitionPenalty: execution.repetitionPenalty,
+            seed: execution.seed,
+            thinking: execution.thinking,
+            modelMultimodal: execution.provider && execution.model
+              ? this.dependencies.getModelMultimodal?.(execution.provider, execution.model)
+                ?? this.config.modelMultimodal
+              : this.config.modelMultimodal,
+            systemPrompt: execution.systemContext
+              ? combineSystemPromptAddenda(this.config.systemPrompt, execution.systemContext)
+              : this.config.systemPrompt,
+            metadata: execution.metadata
+              ? { ...(this.config.metadata ?? {}), ...execution.metadata }
+              : this.config.metadata,
+            ...(execution.allowedTools !== undefined || execution.deniedTools !== undefined
+              ? {
+                  toolPolicy: {
+                    allowedTools: execution.allowedTools,
+                    deniedTools: execution.deniedTools,
+                  },
+                }
+              : {}),
             subagentDepth: depth + 1,
             isSubagent: true,
           },
@@ -2481,8 +2834,14 @@ export class AgentLoop {
     basePermissionMode?: PermissionMode,
   ): void {
     if (permissionMode) {
-      if (permissionMode === "plan" && this.config.permissionMode !== "plan") {
-        this.config.permissionModeBeforePlan = basePermissionMode ?? this.config.permissionMode;
+      if (permissionMode === "plan") {
+        if (basePermissionMode && basePermissionMode !== "plan") {
+          this.config.permissionModeBeforePlan = basePermissionMode;
+        } else if (this.config.permissionMode !== "plan") {
+          this.config.permissionModeBeforePlan = this.config.permissionMode;
+        }
+      } else {
+        this.config.permissionModeBeforePlan = undefined;
       }
       this.config.permissionMode = permissionMode;
       this.config.permissionContext.mode = permissionMode;
@@ -2510,13 +2869,16 @@ export function buildTurnEnvironment(
   sessionId: string,
   turnId: string,
 ): NodeJS.ProcessEnv {
+  const resolvedCwd = path.resolve(cwd);
   return {
     ...(baseEnv ?? process.env),
     PILOTDECK_SESSION_ID: sessionId,
     PILOTDECK_TURN_ID: turnId,
+    PILOTDECK_WORKSPACE_DIR: resolvedCwd,
+    PILOTDECK_WORKSPACE_CWD: resolvedCwd,
     PILOTDECK_WORK_DIR: path.join(
-      path.resolve(cwd),
-      ".pilotdeck",
+      resolvedCwd,
+      "scratch",
       "work",
       safeWorkPathSegment(sessionId),
       safeWorkPathSegment(turnId),
@@ -2534,14 +2896,26 @@ function mergeUserRules(target: PermissionRule[], userRules: PermissionRule[] | 
   target.splice(0, target.length, ...nonUserRules, ...(userRules ?? []));
 }
 
+function combineSystemPromptAddenda(...parts: Array<string | undefined>): string | undefined {
+  const populated = parts.map((part) => part?.trim()).filter((part): part is string => Boolean(part));
+  return populated.length > 0 ? populated.join("\n\n") : undefined;
+}
+
+function resolveEffectiveToolChoice(
+  choice: AgentRuntimeConfig["toolChoice"],
+  tools: CanonicalToolSchema[],
+): AgentRuntimeConfig["toolChoice"] {
+  if (tools.length === 0) return "none";
+  if (typeof choice === "object" && !tools.some((tool) => tool.name === choice.name)) {
+    return "none";
+  }
+  return choice;
+}
+
 function filterAskModeTools(tools: PilotDeckToolDefinition[]): CanonicalToolSchema[] {
-  const agentOverride = buildAskModeAgentToolSchema();
   return tools
     .filter(isAskModeAllowedTool)
     .map((tool) => {
-      if (tool.name === "agent") {
-        return { ...toolToCanonicalSchema(tool), description: agentOverride.description, inputSchema: agentOverride.inputSchema };
-      }
       const suffix = ASK_MODE_DESCRIPTION_SUFFIX[tool.name];
       const schema = toolToCanonicalSchema(tool);
       return suffix ? { ...schema, description: schema.description + suffix } : schema;
@@ -3258,6 +3632,28 @@ function createMaxTurnsStatus(args: {
       userHintI18n: { key: "chat:agentStatus.maxTurns.hint" },
       detail: {
         maxTurns: args.maxTurns,
+      },
+    }),
+  };
+}
+
+function createMaxToolCallsStatus(args: {
+  maxToolCalls: number;
+  error: ReturnType<typeof agentError>;
+}): AgentStatusMessage {
+  const text = `Reached the maximum number of tool calls (${args.maxToolCalls}), so this turn has stopped. Reply with what you already know, or split the task into smaller steps.`;
+  return {
+    event: "max_tool_calls_reached",
+    kind: "error",
+    text,
+    detail: createAgentTurnErrorDetail({
+      message: text,
+      messageI18n: { key: "chat:agentStatus.maxToolCalls.message", params: { maxToolCalls: args.maxToolCalls } },
+      code: args.error.code,
+      userHint: args.error.userHint ?? "If a skill cannot do something (for example embed images), say so clearly instead of calling more tools. Otherwise split the task into smaller prompts.",
+      userHintI18n: { key: "chat:agentStatus.maxToolCalls.hint" },
+      detail: {
+        maxToolCalls: args.maxToolCalls,
       },
     }),
   };

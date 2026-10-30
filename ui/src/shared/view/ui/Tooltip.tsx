@@ -10,6 +10,7 @@ type TooltipProps = {
   position?: TooltipPosition;
   className?: string;
   delay?: number;
+  inline?: boolean;
 };
 
 function getArrowClasses(position: TooltipPosition): string {
@@ -33,6 +34,7 @@ function Tooltip({
   position = 'top',
   className = '',
   delay = 350,
+  inline = false,
 }: TooltipProps) {
   const [isVisible, setIsVisible] = useState(false);
   // Store the timer id without forcing re-renders while hovering.
@@ -165,8 +167,9 @@ function Tooltip({
     return <>{children}</>;
   }
 
+  const Container = inline ? 'span' : 'div';
   return (
-    <div
+    <Container
       ref={containerRef}
       className="relative inline-block"
       onMouseEnter={handleMouseEnter}
@@ -192,7 +195,7 @@ function Tooltip({
         </div>,
         document.body
       )}
-    </div>
+    </Container>
   );
 }
 

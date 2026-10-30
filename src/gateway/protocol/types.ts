@@ -1,6 +1,7 @@
 import type { AgentTurnResult } from "../../agent/index.js";
 import type { AgentStatusMessageInput } from "../../session/transcript/TranscriptWriter.js";
 import type { AgentRunMode } from "../../agent/protocol/input.js";
+import type { AgentTurnOverrides } from "../../agent/profile/types.js";
 import type {
   CronCreateInput,
   CronCreateResult,
@@ -14,6 +15,7 @@ import type {
   CronStopResult,
 } from "../../cron/protocol/types.js";
 import type { CanonicalUsage } from "../../model/index.js";
+import type { CitationMetadata, TurnFormInput } from "../../trauma/types.js";
 import type { TelemetryExecutionKind, TelemetryModule } from "../../telemetry/index.js";
 import type { SessionInfo as ProjectSessionInfo } from "../../session/index.js";
 import type {
@@ -29,6 +31,8 @@ import type {
   WebReadSubagentMessagesResult as WebUiReadSubagentMessagesResult,
   WebForkSessionInput as WebUiForkSessionInput,
   WebForkSessionResult as WebUiForkSessionResult,
+  WebRewindSessionInput as WebUiRewindSessionInput,
+  WebRewindSessionResult as WebUiRewindSessionResult,
 } from "../../web/client/protocol.js";
 import type {
   SkillCreateInput,
@@ -45,6 +49,8 @@ import type {
   SkillValidationResult,
   SkillWriteInput,
   SkillWriteResult,
+  SkillSetAvailabilityInput,
+  SkillSetAvailabilityResult,
   SkillsListInput,
   SkillsListResult,
 } from "../../extension/skills/types.js";
@@ -87,6 +93,13 @@ export type GatewaySubmitTurnInput = {
   sessionKey: string;
   channelKey: GatewayChannelKey;
   message: string;
+  traumaForm?: TurnFormInput;
+  /** 用户本轮原始自由文本，由工位 F 抽取后存入快照。 */
+  traumaRawInput?: string;
+  /** Whether the raw trauma input should be parsed by station F before the runner starts. */
+  traumaExtract?: boolean;
+  /** 战创伤本轮上传的医学附件；独立于通用路径的 attachments。 */
+  traumaAttachments?: Array<{ path: string; name: string }>;
   projectKey?: string;
   /** Override the agent session's working directory for this session. */
   workspaceCwd?: string;
@@ -105,6 +118,12 @@ export type GatewaySubmitTurnInput = {
   canPrompt?: boolean;
   runId?: string;
   maxTurns?: number;
+  /** Hard cap on tool invocations for this turn (defaults applied in AgentLoop when unset). */
+  maxToolCalls?: number;
+  /** Id of a server-loaded agent profile (for example from a plugin manifest). */
+  profile?: string;
+  /** Per-turn controls. Endpoint URLs, credentials and system prompts are intentionally absent. */
+  turnOverrides?: AgentTurnOverrides;
   /** Hard wall-clock limit for this turn. The gateway aborts and closes the session when exceeded. */
   timeoutMs?: number;
   telemetry?: {
@@ -127,6 +146,15 @@ export type GatewayRecordAgentStatusMessageInput = {
   status: AgentStatusMessageInput;
 };
 
+export type GatewayRecordRejectedTurnInput = {
+  sessionKey: string;
+  projectKey: string;
+  channelKey: string;
+  runId: string;
+  userText: string;
+  reply: string;
+};
+
 type GatewayTurnScopedEventMetadata = {
   /**
    * Stable id of the active turn that produced this event. Turn-scoped events
@@ -138,10 +166,23 @@ type GatewayTurnScopedEventMetadata = {
 export type GatewayEvent = GatewayTurnScopedEventMetadata & (
   | { type: "turn_started"; runId: string }
   | { type: "model_request_started"; model?: string; provider?: string }
-  | { type: "assistant_text_delta"; text: string }
+  | { type: "assistant_text_delta"; text: string; citations?: CitationMetadata[] }
+  | { type: "assistant_text_end"; citations?: CitationMetadata[] }
   | { type: "assistant_attachment"; attachment: GatewayOutboundAttachment }
   | { type: "file_artifacts"; artifacts: import("../../session/artifacts/FileArtifact.js").FileArtifact[] }
   | { type: "assistant_thinking_delta"; text: string }
+  | {
+      type: "tool_activity";
+      activityId: string;
+      toolCallId: string;
+      toolName: string;
+      title: string;
+      detail?: string;
+      state: "running" | "completed" | "failed";
+      phase: "medical";
+      severity?: "warning" | "error";
+      createdAt?: string;
+    }
   | { type: "tool_call_started"; toolCallId: string; name: string; argsPreview?: string }
   | {
       type: "tool_call_finished";
@@ -257,6 +298,75 @@ export type GatewayElicitationResponseInput = {
   answer: PilotDeckElicitationAnswer;
 };
 
+export type GatewayTraumaConfirmTransitionInput = {
+  sessionKey: string;
+  projectKey: string;
+  answer: "confirmed" | "declined";
+  expectedVersion: number;
+};
+
+export type GatewayTraumaCaseInput = {
+  sessionKey: string;
+  projectKey: string;
+};
+
+export type GatewayTraumaOverrideStageInput = GatewayTraumaCaseInput & {
+  actorId: string;
+  toStage: import("../../trauma/types.js").MainStage;
+  toSubStage: import("../../trauma/types.js").SubStage;
+  reason: string;
+  riskAcknowledged: true;
+  blockedOverrideConfirmed?: boolean;
+};
+
+/** 工位 F 自由文本抽取 RPC 的输入。无副作用，不写入任何状态。 */
+export type GatewayExtractTraumaFormInput = {
+  projectKey: string;
+  sessionKey: string;
+  /** 用户本轮原始输入文本。 */
+  rawText: string;
+  /** 当前病例的压缩历史，用于解析相对表述。 */
+  caseHistory: string;
+};
+
+/** 工位 F 自由文本抽取 RPC 的输出。 */
+export type GatewayExtractTraumaFormOutput = {
+  extracted: import("../../trauma/types.js").ExtractedTurnForm;
+};
+
+/** 从会话对话文本生成技能草稿 RPC 的输入。无副作用，不落盘。 */
+export type GatewaySkillGenerateDraftInput = {
+  projectKey: string;
+  sessionKey: string;
+  /** 已格式化为纯文本的完整对话（含必要截断）。 */
+  conversation: string;
+  /** 已存在的技能 slug，用于生成时避让重名。 */
+  existingSlugs?: string[];
+  /** 素材来源：聊天会话（默认）或流程图画布的文字化描述。 */
+  source?: import("../../extension/skills/draftStation.js").SkillDraftSource;
+};
+
+/** 从会话对话文本生成技能草稿 RPC 的输出。 */
+export type GatewaySkillGenerateDraftOutput = {
+  draft: import("../../extension/skills/draftStation.js").SkillDraft;
+};
+
+/** 流程图对话式编辑 RPC 的输入。无副作用，不落盘。 */
+export type GatewaySkillFlowChatInput = {
+  projectKey: string;
+  sessionKey: string;
+  /** 用户当前画布上的流程图（节点 + 连线，可能为空图）。 */
+  flow: import("../../extension/skills/flowChatStation.js").FlowChatGraph;
+  /** 完整对话历史，最后一条为用户的最新消息。 */
+  messages: import("../../extension/skills/flowChatStation.js").FlowChatMessage[];
+};
+
+/** 流程图对话式编辑 RPC 的输出：简短回复 + 修改后的完整流程图。 */
+export type GatewaySkillFlowChatOutput = {
+  reply: string;
+  flow: import("../../extension/skills/flowChatStation.js").FlowChatGraph;
+};
+
 /**
  * Web-facing permission decision input. Mirrors the elicitation
  * round-trip pattern: the agent (via `GatewayPermissionBus`) emits a
@@ -288,6 +398,8 @@ export type WebReadSubagentMessagesInput = WebUiReadSubagentMessagesInput;
 export type WebReadSubagentMessagesResult = WebUiReadSubagentMessagesResult;
 export type WebForkSessionInput = WebUiForkSessionInput;
 export type WebForkSessionResult = WebUiForkSessionResult;
+export type WebRewindSessionInput = WebUiRewindSessionInput;
+export type WebRewindSessionResult = WebUiRewindSessionResult;
 export type WebProjectSummary = WebUiProjectSummary;
 export type WebListProjectsResult = WebUiListProjectsResult;
 export type WebDescribeProjectInput = { projectKey: string };
@@ -387,6 +499,7 @@ export interface Gateway {
   newSession(input: NewSessionInput): Promise<{ sessionKey: string }>;
   closeSession(input: { sessionKey: string; reason?: string }): Promise<void>;
   recordAgentStatusMessage?(input: GatewayRecordAgentStatusMessageInput): Promise<{ recorded: boolean }>;
+  recordRejectedTurn?(input: GatewayRecordRejectedTurnInput): Promise<{ recorded: boolean }>;
   describeServer(): Promise<GatewayServerInfo>;
   getActiveTurnSnapshot?(input: GatewayActiveTurnSnapshotInput): Promise<GatewayActiveTurnSnapshot>;
   cronCreate(input: CronCreateInput): Promise<CronCreateResult>;
@@ -401,6 +514,23 @@ export interface Gateway {
    * or the session has ended).
    */
   respondElicitation(input: GatewayElicitationResponseInput): Promise<{ delivered: boolean }>;
+  traumaConfirmTransition?(
+    input: GatewayTraumaConfirmTransitionInput,
+  ): Promise<import("../../trauma/types.js").CaseSnapshot>;
+  traumaGetCase?(input: GatewayTraumaCaseInput): Promise<{
+    current: import("../../trauma/types.js").CaseState | null;
+    snapshots: import("../../trauma/types.js").CaseSnapshot[];
+  }>;
+  traumaOverrideStage?(
+    input: GatewayTraumaOverrideStageInput,
+  ): Promise<import("../../trauma/types.js").CaseSnapshot>;
+  /**
+   * 工位 F：从用户自由文本中抽取结构化表单草稿。
+   * 无副作用，不写入任何状态，供 UI 在用户确认前预览。
+   */
+  traumaExtractForm?(
+    input: GatewayExtractTraumaFormInput,
+  ): Promise<GatewayExtractTraumaFormOutput>;
   /**
    * Web Phase 2 — host responds to a `permission_request` event surfaced
    * through `submitTurn`. Resolves the agent-side permission promise so the
@@ -422,6 +552,12 @@ export interface Gateway {
    * Fork a session transcript at a prior user turn into a new session file.
    */
   forkSession(input: WebForkSessionInput): Promise<WebForkSessionResult>;
+  /**
+   * Rewind a session in place by removing its last user turn (and everything
+   * after it) from the transcript, then evicting the in-memory session so the
+   * next resume replays the truncated history.
+   */
+  rewindSession(input: WebRewindSessionInput): Promise<WebRewindSessionResult>;
   /**
    * Read a subagent's sidechain transcript and return its messages in WebMessage format.
    */
@@ -486,9 +622,16 @@ export interface Gateway {
   skillsList?(input: SkillsListInput): Promise<SkillsListResult>;
   skillRead?(input: SkillAddressInput): Promise<SkillReadResult>;
   skillWrite?(input: SkillWriteInput): Promise<SkillWriteResult>;
+  skillSetAvailability?(input: SkillSetAvailabilityInput): Promise<SkillSetAvailabilityResult>;
   skillCreate?(input: SkillCreateInput): Promise<SkillCreateResult>;
   skillDelete?(input: SkillDeleteInput): Promise<SkillDeleteResult>;
   skillImport?(input: SkillImportInput): Promise<SkillImportResult>;
   skillValidate?(input: SkillValidateInput): Promise<SkillValidationResult>;
   skillScan?(input: SkillScanInput): Promise<SkillScanResult>;
+  skillGenerateDraft?(
+    input: GatewaySkillGenerateDraftInput,
+  ): Promise<GatewaySkillGenerateDraftOutput>;
+  skillFlowChat?(
+    input: GatewaySkillFlowChatInput,
+  ): Promise<GatewaySkillFlowChatOutput>;
 }

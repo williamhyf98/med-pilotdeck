@@ -2,7 +2,6 @@
 
 import fs from 'fs';
 import net from 'net';
-import os from 'os';
 import path from 'path';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
@@ -11,6 +10,7 @@ import {
   readPilotDeckConfigFile,
   validatePilotDeckConfig,
 } from './services/pilotdeckConfig.js';
+import { resolvePilotRoot } from './utils/pilotPaths.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,8 +38,10 @@ const c = {
   dim: (text) => `${colors.dim}${text}${colors.reset}`,
 };
 
+// Mirrors the default in `database/db.js`; used for display only. The env var
+// is never defaulted here — db.js owns the default so there is exactly one.
 function defaultDatabasePath() {
-  return path.join(process.env.PILOT_HOME || path.join(os.homedir(), '.pilotdeck'), 'auth.db');
+  return path.join(resolvePilotRoot(), 'system', 'auth.db');
 }
 
 function getInstallDir() {
@@ -81,7 +83,6 @@ function applyOptions(options) {
 
   if (options.databasePath) process.env.DATABASE_PATH = options.databasePath;
   if (options.configPath) process.env.PILOTDECK_CONFIG_PATH = options.configPath;
-  if (!process.env.DATABASE_PATH) process.env.DATABASE_PATH = defaultDatabasePath();
 }
 
 function showHelp() {
@@ -111,7 +112,7 @@ Examples:
 
 Configuration:
   PilotDeck reads ~/.pilotdeck/pilotdeck.yaml by default.
-  First run opens the onboarding UI if no usable config exists.
+  First run requires a preconfigured pilotdeck.yaml (LLM onboarding UI was removed).
 `);
 }
 
@@ -140,7 +141,7 @@ function showStatus() {
   console.log(`${c.info('[INFO]')} Server Port: ${c.bright(process.env.SERVER_PORT || '3001')}`);
   console.log(`${c.info('[INFO]')} Config File: ${c.dim(configPath)}`);
   console.log(`       Status: ${record.exists ? c.ok('[OK] Exists') : c.warn('[WARN] Not found')}`);
-  console.log(`       Onboarding: ${hasUsableConfig(record) ? c.ok('[OK] Complete') : c.warn('[WARN] Required')}`);
+  console.log(`       Config: ${hasUsableConfig(record) ? c.ok('[OK] Present') : c.warn('[WARN] Missing/incomplete')}`);
   console.log(`${c.info('[INFO]')} Database: ${c.dim(dbPath)}`);
   console.log(`       Status: ${fs.existsSync(dbPath) ? c.ok('[OK] Exists') : c.warn('[WARN] Not created yet')}`);
   console.log('\n' + c.dim('═'.repeat(60)));

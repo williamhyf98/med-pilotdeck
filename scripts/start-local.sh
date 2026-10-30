@@ -9,7 +9,6 @@ source "${SCRIPT_DIR}/lib-local-runtime.sh"
 
 PID_FILE="${RUNTIME_DIR}/pilotdeck.pid"
 LOG_FILE="${RUNTIME_DIR}/logs/pilotdeck-dev.log"
-DEFAULT_PORTS=(3001 18789 5173)
 
 ensure_node22() {
   local ver major
@@ -39,6 +38,33 @@ ensure_node22() {
   fi
 }
 
+# Ports come from scripts/config.env and are hard-pinned, so the dev launcher
+# can no longer slide off a busy port. Fail loudly instead of half-starting.
+# The gateway port is only the pool's base (it probes upward for free ports),
+# so a busy base is a warning, not an abort.
+export PILOTDECK_GATEWAY_PORT_BASE="${PILOTDECK_GATEWAY_PORT}"
+assert_ports_free() {
+  local busy=() entry name port
+  if (exec 3<>"/dev/tcp/127.0.0.1/${PILOTDECK_GATEWAY_PORT}") 2>/dev/null; then
+    exec 3>&- 2>/dev/null || true
+    echo "warning: gateway-base port ${PILOTDECK_GATEWAY_PORT} is in use; the gateway pool will probe upward" >&2
+  fi
+  for entry in "SERVER_PORT:${SERVER_PORT}" \
+               "VITE_PORT:${VITE_PORT}"; do
+    name="${entry%%:*}"
+    port="${entry##*:}"
+    if (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null; then
+      exec 3>&- 2>/dev/null || true
+      busy+=("${name}=${port}")
+    fi
+  done
+  if [[ "${#busy[@]}" -gt 0 ]]; then
+    echo "error: port(s) already in use: ${busy[*]}" >&2
+    echo "  edit ${LOCAL_PORT_CONFIG} and pick a free port, or stop the owner first" >&2
+    return 1
+  fi
+}
+
 already_running() {
   if [[ -f "$PID_FILE" ]]; then
     local old_pid
@@ -56,6 +82,10 @@ already_running() {
 
 apply_local_runtime_env
 
+if [[ "${PILOTDECK_OFFICE_RENDERER_ROLE:-remote}" == "server" ]]; then
+  bash "${SCRIPT_DIR}/start-office-renderer.sh"
+fi
+
 # If project-local Node is missing, keep system/Homebrew Node 22 on PATH.
 if [[ ! -x "$(runtime_node)" ]]; then
   # Remove empty .runtime/node/bin prefix noise by re-exporting without missing bin.
@@ -66,9 +96,28 @@ fi
 ensure_node22
 assert_no_share
 
+# Medical MCP can take >60s for a full trauma stage plan.
+export PILOTDECK_MCP_TOOL_TIMEOUT_MS="${PILOTDECK_MCP_TOOL_TIMEOUT_MS:-300000}"
+
+run_llm_check() {
+  if [[ "${SKIP_LLM_CHECK:-0}" == "1" ]]; then
+    echo "==> LLM_CHECK skipped (SKIP_LLM_CHECK=1)"
+    return 0
+  fi
+  node "${SCRIPT_DIR}/check-llm-config.mjs" --pilot-home "${PILOT_HOME}"
+}
+
 if already_running; then
   exit 0
 fi
+
+check_server_preflight
+assert_ports_free
+
+# Create .pilotdeck-home + default pilotdeck.yaml when missing (before LLM check).
+node "${SCRIPT_DIR}/bootstrap-pilotdeck-config.mjs"
+
+run_llm_check
 
 mkdir -p "$(dirname "$LOG_FILE")"
 cd "$PILOTDECK_ROOT"
@@ -78,7 +127,14 @@ echo "    root:  ${PILOTDECK_ROOT}"
 echo "    home:  ${PILOT_HOME}"
 echo "    node:  $(command -v node) ($(node -v))"
 echo "    log:   ${LOG_FILE}"
-echo "    ports: server=${SERVER_PORT:-3001} gateway=${PILOTDECK_GATEWAY_PORT:-18789} vite=${VITE_PORT:-5173}"
+echo "    ports: server=${SERVER_PORT} gateway-base=${PILOTDECK_GATEWAY_PORT} vite=${VITE_PORT}  (from ${LOCAL_PORT_CONFIG})"
+if [[ -f "${PILOTDECK_ROOT}/config/deploy.env" ]]; then
+  echo "    site:  ${PILOTDECK_ROOT}/config/deploy.env"
+else
+  echo "    site:  none — med-tools will fall back to 127.0.0.1 placeholders" >&2
+  echo "           cp config/deploy.env.example config/deploy.env and fill in the model URLs" >&2
+fi
+echo "    mcp timeout: ${PILOTDECK_MCP_TOOL_TIMEOUT_MS}ms"
 
 # Foreground mode when user passes --fg
 if [[ "${1:-}" == "--fg" ]]; then
@@ -101,7 +157,7 @@ if ! kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
 fi
 
 echo "    pid:   $(cat "$PID_FILE")"
-echo "    UI:    http://localhost:${VITE_PORT:-5173}"
-echo "    API:   http://localhost:${SERVER_PORT:-3001}"
+echo "    UI:    http://localhost:${VITE_PORT}"
+echo "    API:   http://localhost:${SERVER_PORT}"
 echo "    stop:  ${SCRIPT_DIR}/stop-local.sh"
 echo "    logs:  tail -f ${LOG_FILE}"

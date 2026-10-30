@@ -16,65 +16,18 @@ export type ExitPlanModeOutput = {
   planSummary?: string;
 };
 
-const EXIT_PLAN_MODE_QUESTION = "What should happen next?";
+const EXIT_PLAN_MODE_QUESTION = "下一步怎么做？";
 const EXIT_PLAN_MODE_CONTINUE = "continue_planning";
 const EXIT_PLAN_MODE_EXECUTE = "execute_plan";
 
 const ENTER_PLAN_MODE_DESCRIPTION =
-  "Enter plan mode for complex tasks requiring exploration and design. " +
-  "Switches to a read-only phase where you explore the codebase, understand patterns, " +
-  "and write a structured plan to a plan file before making any changes. " +
-  "Prefer using this tool for non-trivial implementation tasks, especially when: " +
-  "multiple valid approaches exist, the task touches many files, " +
-  "or requirements need exploration to fully understand. " +
-  "Do NOT call this tool if you are already in plan mode.";
+  "计划模式只能由用户通过界面或 /plan 主动开启，不允许模型调用此工具切换模式。" +
+  "智能体模式下直接组织并执行医学工作区任务，可用 todo_write 跟踪多个步骤，无需进入计划审批。";
 
 const EXIT_PLAN_MODE_DESCRIPTION =
-  "Signal that your plan is complete and ready for user review. " +
-  "Pass the plan_file_path for the markdown plan you want to submit from `.pilotdeck/plans`. " +
-  "Do NOT use ask_user_question to ask about plan approval — that is exactly what this tool does.";
-
-function buildEnterPlanModeResult(planDirectoryPath: string | undefined): string {
-  const planDirectorySection = planDirectoryPath
-    ? `## Plan Directory\nCreate your plan as a markdown file under: ${planDirectoryPath}\nYou may name the file yourself, but it must live under this directory.\n`
-    : "";
-
-  return [
-    "Plan mode activated. You are now in a read-only exploration and planning phase.",
-    "",
-    planDirectorySection,
-    "## What To Do",
-    "1. Explore the codebase using read_file, grep, glob to understand existing patterns and structure",
-    "2. Identify the key files, functions, and data flows relevant to the task",
-    "3. Design your implementation approach — consider trade-offs between alternatives",
-    ...(planDirectoryPath
-      ? [
-          "4. Create and refine your own markdown plan file under the plan directory above",
-          "5. When your plan is ready, call exit_plan_mode with the plan_file_path you want to submit",
-        ]
-      : ["4. When your plan is ready, call exit_plan_mode to present it for user approval"]),
-    "",
-    "## Rules",
-    `- DO NOT call bash with write commands for any reason${planDirectoryPath ? "; use write_file/edit_file only for markdown plan files under the designated plan directory" : ""}`,
-    "- You MAY use ask_user_question to clarify requirements or choose between approaches",
-    "- Focus on understanding before proposing — read first, plan second",
-  ].join("\n");
-}
-
-function buildAlreadyInPlanModeResult(planDirectoryPath: string | undefined): string {
-  return [
-    "Plan mode is already active.",
-    "",
-    ...(planDirectoryPath
-      ? [
-          `Your plan directory is: ${planDirectoryPath}`,
-          "Continue refining markdown plan files under that directory, then submit one explicitly with exit_plan_mode(plan_file_path).",
-          "",
-        ]
-      : []),
-    "Stay in read-only exploration/planning until you are ready to call exit_plan_mode.",
-  ].join("\n");
-}
+  "提交已经写好的工作区任务计划供用户审核。" +
+  "plan_file_path 必须指向当前项目 `.pilotdeck/plans` 下的 markdown 文件。" +
+  "不要再用 ask_user_question 询问是否批准计划；本工具会展示计划并提供继续规划、开始执行和取消。";
 
 function buildApprovedPlanResult(plan: string, planFilePath: string | undefined): string {
   const locationSection = planFilePath
@@ -85,10 +38,13 @@ function buildApprovedPlanResult(plan: string, planFilePath: string | undefined)
       ]
     : [];
   return [
-    "User has approved your plan. You can now start coding.",
-    'Do NOT output any confirmation text like "Plan approved, starting implementation" — the user already knows. Proceed directly with todo_write and implementation.',
-    "Before using any non-read-only tool, you MUST call todo_write with a markdown checklist derived from the approved plan.",
-    "After each completed implementation step, call todo_write again to refresh the checklist and mark completed items with `- [x]`.",
+    "用户已批准计划。现在按计划处理医学工作区任务。",
+    "不要再输出“计划已批准、开始执行”之类确认语；用户已经知道。直接调用 todo_write，然后执行。",
+    "调用任何非只读工具前，必须先用 todo_write 建立由批准计划导出的 markdown 清单。",
+    "按计划 read_skill、调用所需的 mcp__med-tools__* 或办公工具，并只在当前工作区写业务产物。",
+    "若调用 med_parse_medical 只是多步骤计划中的一步，必须传 continuation_mode=\"material\"，",
+    "以便 G9 报告流式输出后继续完成病例报告、HTML 或其他未完成项；不要在解析成功后停止。",
+    "每完成一个执行步骤后更新 todo_write，用 `- [x]` 标记完成项。",
     "",
     ...locationSection,
     "## Approved Plan",
@@ -101,8 +57,8 @@ function buildContinuePlanningResult(feedback: string | undefined): string {
     ? `\n\nUser feedback:\n${feedback}`
     : "\n\nNo additional feedback was provided.";
   return [
-    "The user wants to continue planning before implementation.",
-    "Stay in plan mode, refine the plan file, and call exit_plan_mode again when the updated plan is ready.",
+    "用户要求继续规划，暂不执行任务。",
+    "保持计划模式，根据反馈修改计划文件；更新完成后再次调用 exit_plan_mode。",
   ].join(" ") + feedbackSection;
 }
 
@@ -148,18 +104,11 @@ export function createEnterPlanModeTool(): PilotDeckToolDefinition<Record<string
     },
     isReadOnly: () => true,
     isConcurrencySafe: () => true,
-    execute: async (_input, context) => {
-      if (context?.permissionMode === "plan") {
-        throw new PilotDeckToolRuntimeError(
-          "tool_execution_failed",
-          buildAlreadyInPlanModeResult(context?.planDirectory?.path),
-        );
-      }
-      const text = buildEnterPlanModeResult(context?.planDirectory?.path);
-      return {
-        content: [{ type: "text", text }],
-        data: { requestedMode: "plan" },
-      };
+    execute: async () => {
+      throw new PilotDeckToolRuntimeError(
+        "permission_denied",
+        "计划模式只能由用户通过界面或 /plan 主动开启，不能通过工具自动切换。",
+      );
     },
   };
 }

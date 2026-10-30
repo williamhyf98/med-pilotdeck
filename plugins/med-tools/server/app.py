@@ -1,27 +1,80 @@
-"""PilotDeck MCP server: unified medical parse + local G9-V-Med (27B)."""
+"""PilotDeck MCP server: unified medical parse + configured medical VLM."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 
+from .dicom_router import _is_nifti, route_image, specialized_ct_enabled
 from .parsers import SUPPORTED_SUFFIXES, collect_medical_files, parse_medical_file
 from .vlm_client import analyze_medical_with_vlm, get_vlm_config
+from .path_safety import assert_path_in_user_home, assert_input_tree_in_user_home
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 MEDICAL_PROMPT_PATH = PLUGIN_ROOT / "prompts" / "medical_read.md"
 DICOM_PROMPT_PATH = PLUGIN_ROOT / "prompts" / "dicom_read.md"
 
-PRESENTATION = (
-    "若 report 非空：将 report 字段原样展示给用户；不要改写、压缩、转述或重新组织。"
+PRESENTATION_TERMINAL = (
+    "continuation_mode=terminal。"
+    "若 report 非空：报告已由运行时流式写入并作为本轮最终回答；不要改写、压缩、转述或重新粘贴。"
     "最多可在报告前后各加 1–2 句说明（来源模型/是否回退/文件名/错误）。"
     "若 report 为空且 agent_continue=true：主 Agent 必须根据 summary / png_paths / warnings "
     "继续完成结构化中文医学解读，不要因 VLM 失败而中止任务。"
 )
+
+PRESENTATION_MATERIAL = (
+    "continuation_mode=material。"
+    "report/summary 是后续步骤的事实材料，不是整轮任务的终点。"
+    "若 report 非空：不要复述或改写整份报告；把它与 summary/png_paths 一并作为输入，"
+    "继续完成计划中尚未完成的步骤（例如病例报告模版、HTML、Word/PDF、救治方案）。"
+    "若 report 为空且 agent_continue=true：先根据 summary / png_paths / warnings 完成必要医学解读，"
+    "再继续后续交付步骤；不要因 VLM 失败而中止整轮任务。"
+)
+
+# Backward-compatible alias used by older tests / callers.
+PRESENTATION = PRESENTATION_TERMINAL
+
+VALID_CONTINUATION_MODES = frozenset({"terminal", "material"})
+
+SPECIALIZED_CT_GUIDANCE = (
+    "For a complete abdominal/pelvic CT route, load med-radar-ct and call "
+    "med_radar_analyze_ct. For a complete chest CT, load med-deepchest-3dmedagent "
+    "and use med_deepchest_status, med_deepchest_submit, then med_deepchest_job "
+    "until completion. For all other DICOM, load med-medical and call "
+    "med_parse_medical. Never use example results for an uploaded case."
+    if specialized_ct_enabled()
+    else
+    "For DICOM, use med_image_route then med_parse_medical when recommended. "
+    "For NIfTI, use med_image_route; med_parse_medical cannot parse NIfTI."
+)
+
+
+def _disabled_specialized_tool(tool: str) -> str:
+    return json.dumps(
+        {
+            "ok": False,
+            "status": "disabled",
+            "disabled": True,
+            "tool": tool,
+            "reason": "RADAR and DeepChest are disabled because MED_SPECIALIZED_CT_ENABLED is not 1",
+        },
+        ensure_ascii=False,
+    )
+
+
+def _normalize_continuation_mode(value: Any) -> str:
+    mode = str(value or "terminal").strip().lower()
+    return mode if mode in VALID_CONTINUATION_MODES else "terminal"
+
+
+def _presentation_for_mode(mode: str) -> str:
+    return PRESENTATION_MATERIAL if mode == "material" else PRESENTATION_TERMINAL
+
 
 mcp = FastMCP(
     "med-tools",
@@ -29,13 +82,31 @@ mcp = FastMCP(
         "Medical helper tools for PilotDeck. "
         "Prefer med_parse_medical for any supported medical attachment "
         f"(suffixes: {', '.join(sorted(SUPPORTED_SUFFIXES))}): parse locally, "
-        "then call on-box G9-V-Med for a structured report "
-        "(falls back to the main agent model when G9 is unavailable). "
-        "If report is non-empty, show it verbatim. "
+        "then call the configured medical VLM for a structured report "
+        "(falls back to the main agent model when the medical VLM is unavailable). "
+        "Use continuation_mode='terminal' for pure attachment interpretation "
+        "(default; runtime may end the turn after a successful report). "
+        "Use continuation_mode='material' when the parse is only one step of a "
+        "larger task (case report, HTML, Word/PDF, care plan) so the main agent "
+        "continues after the streamed report. "
         "If report is empty and agent_continue=true, continue the medical "
-        "interpretation yourself using summary/png_paths."
+        "interpretation yourself using summary/png_paths. "
+        "For DICOM or NIfTI volumes, call med_image_route first. It is a "
+        "local read-only preflight; wait for its result before calling another "
+        "medical tool. NIfTI needs explicit CT/body-region context; chest CT "
+        "also requires confirmed HU units. Never send NIfTI to med_parse_medical. "
+        f"{SPECIALIZED_CT_GUIDANCE} "
+        "For war-trauma knowledge Q&A: call med_trauma_rag_query, then the main "
+        "model answers from chunks (brief tips OK; not the formal five-section plan). "
+        "For a formal six-stage graded care plan: call med_trauma_stage_plan "
+        "(medical VLM inside the plugin; show care_plan verbatim)."
     ),
 )
+
+
+def _specialized_ct_tool():
+    """Keep implementations for restoration, but do not advertise disabled tools."""
+    return mcp.tool() if specialized_ct_enabled() else lambda fn: fn
 
 
 def _load_prompt(prefer_medical: bool = True) -> str:
@@ -56,7 +127,15 @@ def _resolve_derived_dir(anchor: Path) -> Path:
         derived = Path(override).expanduser().resolve()
     else:
         base = anchor if anchor.is_dir() else anchor.parent
-        derived = base / ".med-tools-derived"
+        parts = base.parts
+        if "inbox" in parts:
+            inbox_idx = parts.index("inbox")
+            batch_root = Path(*parts[: inbox_idx + 2])
+            derived = batch_root / "derived"
+        elif (base / ".med-tools-derived").is_dir():
+            derived = base / ".med-tools-derived"
+        else:
+            derived = base / "derived"
     derived.mkdir(parents=True, exist_ok=True)
     return derived
 
@@ -77,18 +156,24 @@ def _cap_summary(text: str, limit: int = 12_000) -> str:
     return text[:limit].rstrip() + "\n…[已截断]"
 
 
-def _run_medical_parse(
+def _prepare_medical_parse(
     *,
     path: str,
     max_items: int = 64,
     max_frames: int = 8,
     skip_vlm: bool = False,
+    continuation_mode: str = "terminal",
     tool_name: str = "med_parse_medical",
 ) -> Dict[str, Any]:
+    """Parse phase only (no VLM). Returns the base payload plus VLM inputs.
+
+    The returned dict carries a private ``_vlm`` key describing whether the VLM
+    should run and with what summary/images. Callers strip it before returning.
+    """
     root = _resolve_path(path)
-    derived_dir = _resolve_derived_dir(root)
     max_items = max(1, min(int(max_items or 64), 64))
     max_frames = max(1, min(int(max_frames or 8), 32))
+    mode = _normalize_continuation_mode(continuation_mode)
 
     payload: Dict[str, Any] = {
         "tool": tool_name,
@@ -108,7 +193,8 @@ def _run_medical_parse(
         "agent_continue": False,
         "primary_model": None,
         "primary_error": "",
-        "presentation": PRESENTATION,
+        "continuation_mode": mode,
+        "presentation": _presentation_for_mode(mode),
     }
 
     if not root.exists():
@@ -116,12 +202,34 @@ def _run_medical_parse(
         payload["vlm_error"] = "path missing"
         return payload
 
+    contains_nifti = (
+        root.is_file() and _is_nifti(root)
+    ) or (
+        root.is_dir() and any(
+            child.is_file()
+            and _is_nifti(child)
+            and not any(
+                part.startswith(".") or part == "derived"
+                for part in child.relative_to(root).parts
+            )
+            for child in root.rglob("*")
+        )
+    )
+    if contains_nifti:
+        payload["status"] = "degraded"
+        payload["warnings"] = [
+            "NIfTI 不受通用解析器支持；请使用 med_image_route 检查影像并选择专用流程。"
+        ]
+        payload["vlm_error"] = "unsupported NIfTI"
+        return payload
+
+    derived_dir = _resolve_derived_dir(root)
     # Discover generously so truncation warnings report true folder size;
     # parse still respects max_items (≤64).
     files = collect_medical_files(root, max_files=max(512, max_items * 8))
     discovered_count = len(files)
 
-    if not files and root.is_file():
+    if not files and root.is_file() and root.suffix.lower() in SUPPORTED_SUFFIXES:
         files = [root]
         discovered_count = 1
 
@@ -209,22 +317,30 @@ def _run_medical_parse(
 
     if skip_vlm:
         payload["vlm_error"] = "skipped"
+        payload["_vlm"] = {"run": False}
         return payload
 
-    if not combined_summary.strip() and not unique_pngs:
+    if not any_ready and not unique_pngs:
         payload["vlm_error"] = "parse failed; skipped VLM"
+        payload["_vlm"] = {"run": False}
         return payload
 
-    vlm = analyze_medical_with_vlm(
-        system_prompt=_load_prompt(prefer_medical=True),
-        summary=combined_summary,
-        png_paths=unique_pngs,
-        max_images=max(1, min(max(len(unique_pngs), 1), max_frames * max(1, len(items)))),
-        require_images=False,
-    )
+    payload["_vlm"] = {
+        "run": True,
+        "summary": combined_summary,
+        "png_paths": unique_pngs,
+        "max_images": max(1, min(max(len(unique_pngs), 1), max_frames * max(1, len(items)))),
+    }
+    return payload
+
+
+def _apply_vlm_result(payload: Dict[str, Any], vlm: Dict[str, Any]) -> Dict[str, Any]:
     payload["vlm_ok"] = bool(vlm.get("ok"))
     payload["vlm_error"] = str(vlm.get("error") or "")
     payload["report"] = str(vlm.get("report") or "")
+    # `ok` marks a directly-usable report so the runtime can finalize the turn
+    # with the streamed text (mirrors med_trauma_stage_plan's contract).
+    payload["ok"] = bool(vlm.get("ok")) and bool(payload["report"].strip())
     payload["model"] = vlm.get("model")
     payload["api_base"] = vlm.get("api_base")
     payload["fallback_used"] = bool(vlm.get("fallback_used"))
@@ -238,31 +354,114 @@ def _run_medical_parse(
     elif payload["fallback_used"] and payload["vlm_ok"] and payload["status"] == "ready":
         payload["status"] = "degraded"
         payload["warnings"] = list(payload.get("warnings") or []) + [
-            f"G9-V-Med 不可用，已回退到 {payload.get('model')} 生成报告。"
+            f"{payload.get('primary_model') or '医学模型'} 不可用，已回退到 {payload.get('model')} 生成报告。"
             f" primary_error={payload.get('primary_error') or 'unknown'}"
         ]
     return payload
 
 
-@mcp.tool()
-def med_parse_medical(
+def _run_medical_parse(
+    *,
     path: str,
     max_items: int = 64,
     max_frames: int = 8,
     skip_vlm: bool = False,
+    continuation_mode: str = "terminal",
+    tool_name: str = "med_parse_medical",
+) -> Dict[str, Any]:
+    """Blocking parse + non-streaming VLM report (used by tests / fallback callers)."""
+    payload = _prepare_medical_parse(
+        path=path,
+        max_items=max_items,
+        max_frames=max_frames,
+        skip_vlm=skip_vlm,
+        continuation_mode=continuation_mode,
+        tool_name=tool_name,
+    )
+    vlm_plan = payload.pop("_vlm", {"run": False})
+    if not vlm_plan.get("run"):
+        return payload
+
+    vlm = analyze_medical_with_vlm(
+        system_prompt=_load_prompt(prefer_medical=True),
+        summary=vlm_plan["summary"],
+        png_paths=vlm_plan["png_paths"],
+        max_images=vlm_plan["max_images"],
+        require_images=False,
+    )
+    return _apply_vlm_result(payload, vlm)
+
+
+async def _run_medical_parse_stream(
+    *,
+    path: str,
+    on_text: Callable[[str], Awaitable[None]],
+    max_items: int = 64,
+    max_frames: int = 8,
+    skip_vlm: bool = False,
+    continuation_mode: str = "terminal",
+    tool_name: str = "med_parse_medical",
+) -> Dict[str, Any]:
+    """Parse then stream the medical report through ``on_text`` (with main-agent fallback)."""
+    from .vlm_client import analyze_medical_with_vlm_stream
+
+    payload = _prepare_medical_parse(
+        path=path,
+        max_items=max_items,
+        max_frames=max_frames,
+        skip_vlm=skip_vlm,
+        continuation_mode=continuation_mode,
+        tool_name=tool_name,
+    )
+    vlm_plan = payload.pop("_vlm", {"run": False})
+    if not vlm_plan.get("run"):
+        return payload
+
+    vlm = await analyze_medical_with_vlm_stream(
+        system_prompt=_load_prompt(prefer_medical=True),
+        summary=vlm_plan["summary"],
+        on_text=on_text,
+        png_paths=vlm_plan["png_paths"],
+        max_images=vlm_plan["max_images"],
+        require_images=False,
+    )
+    payload = _apply_vlm_result(payload, vlm)
+    if vlm.get("streamed"):
+        payload["streamed"] = True
+    if vlm.get("stream_interrupted"):
+        payload["stream_interrupted"] = True
+    return payload
+
+
+@mcp.tool()
+async def med_parse_medical(
+    path: str,
+    ctx: Context,
+    max_items: int = 64,
+    max_frames: int = 8,
+    skip_vlm: bool = False,
+    continuation_mode: str = "terminal",
 ) -> str:
-    """Unified medical attachment parser + G9-V-Med report (301-aligned suffixes).
+    """Unified medical attachment parser + configured medical VLM report (301-aligned suffixes).
 
     Accepts a single file or a directory. Supported suffixes include:
-    .dcm/.dicom, .pdf, .png/.jpg/.jpeg/.bmp, .xml/.cda, .txt/.md,
+    .dcm/.dicom/.ima, .pdf, .png/.jpg/.jpeg/.bmp, .xml/.cda, .txt/.md,
     .json/.xml1, .hea/.dat and other ECG-related names (some degraded).
 
     Steps:
-    1. Local parse (metadata / text / preview images).
-    2. Unless skip_vlm, call G9-V-Med and return one structured Chinese report.
+    1. Local parse (metadata / text / preview images), including structured CDA
+       lab/observation extraction when applicable.
+    2. Unless skip_vlm, call the medical VLM and return one structured Chinese report.
 
-    Agent presentation rule (important):
-    If `report` is non-empty, show it VERBATIM (do not rewrite).
+    continuation_mode:
+    - terminal (default): pure attachment interpretation. On a successful
+      non-empty report, the runtime may treat the streamed report as the final
+      answer for this turn. Do not paste the report again.
+    - material: the report/summary is material for later steps in the same turn
+      (case report, HTML, Word/PDF, care plan). Do not rewrite the report; keep
+      working on unfinished planned steps.
+
+    NIfTI (.nii/.nii.gz) is not supported here; use med_image_route instead.
     If `report` is empty and `agent_continue` is true, continue the medical
     interpretation yourself with the main agent using summary/png_paths.
 
@@ -271,15 +470,104 @@ def med_parse_medical(
         max_items: Max files to parse from a directory (default 64, max 64).
         max_frames: Max DICOM frames / images per file for VLM (default 8).
         skip_vlm: If true, only parse; do not call the 27B model.
+        continuation_mode: "terminal" or "material" (default "terminal").
     """
-    payload = _run_medical_parse(
+    assert_input_tree_in_user_home(path)
+    streamed_chars = 0
+    pending_chunks: List[str] = []
+
+    async def flush_text() -> None:
+        nonlocal streamed_chars
+        text = "".join(pending_chunks)
+        if not text:
+            return
+        pending_chunks.clear()
+        streamed_chars += len(text)
+        await ctx.report_progress(progress=streamed_chars, message=text)
+
+    async def emit_text(text: str) -> None:
+        pending_chunks.append(text)
+        buffered = "".join(pending_chunks)
+        if len(buffered) >= 24 or "\n" in buffered:
+            await flush_text()
+
+    payload = await _run_medical_parse_stream(
         path=path,
+        on_text=emit_text,
         max_items=max_items,
         max_frames=max_frames,
         skip_vlm=skip_vlm,
+        continuation_mode=continuation_mode,
         tool_name="med_parse_medical",
     )
+    await flush_text()
+    # Remove model-related fields before returning
+    payload.pop('model', None)
+    payload.pop('primary_model', None)
+    payload.pop('fallback_model', None)
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def med_image_route(
+    path: str,
+    max_files: int = 512,
+    modality: str = "",
+    body_region: str = "",
+    intensity_units: str = "",
+    requested_model: str = "",
+) -> str:
+    """Route DICOM or NIfTI to a supported medical skill using local metadata.
+
+    NIfTI headers establish 3D geometry, not whether the CT study is complete,
+    its modality, anatomical region, HU units or contrast phase. Pass only
+    context explicitly supplied by the user or trusted examination records,
+    not a guess from the filename. For example, modality
+    may be CT, body_region abdomen/chest, intensity_units HU, and requested_model
+    radar/deepchest only when explicitly requested. An unsupported or uncertain
+    NIfTI never routes to med_parse_medical.
+
+    Args:
+        path: File or directory to inspect without running inference.
+        max_files: Maximum files to inspect for DICOM (1-2048).
+        modality: Confirmed modality (CT, MR or OTHER), if known.
+        body_region: Confirmed region (abdomen, pelvis, abdomen_pelvis, chest, etc.).
+        intensity_units: Confirmed voxel units (HU, UNKNOWN or OTHER), if known.
+        requested_model: Explicitly requested model (radar or deepchest), if any.
+    """
+    assert_input_tree_in_user_home(path)
+    result = route_image(
+        path, max_files=max(1, min(int(max_files or 512), 2048)),
+        modality=modality, body_region=body_region,
+        intensity_units=intensity_units, requested_model=requested_model,
+    )
+    # Remove model-related fields before returning
+    result.pop('model', None)
+    result.pop('primary_model', None)
+    result.pop('fallback_model', None)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def med_dicom_route(path: str, max_files: int = 512) -> str:
+    """Compatibility alias for imaging routing; use med_image_route for new calls.
+
+    DICOM routing remains unchanged; NIfTI without confirmed context requests
+    more information instead of recommending the general parser.
+
+    Args:
+        path: Absolute or relative path to a medical imaging file or directory.
+        max_files: Maximum directory files to inspect (1-2048, default 512).
+    """
+    assert_input_tree_in_user_home(path)
+    bounded_max_files = max(1, min(int(max_files or 512), 2048))
+    result = route_image(path, max_files=bounded_max_files)
+    result["tool"] = "med_dicom_route"
+    # Remove model-related fields before returning
+    result.pop('model', None)
+    result.pop('primary_model', None)
+    result.pop('fallback_model', None)
+    return json.dumps(result, ensure_ascii=False, indent=2)
 
 
 @mcp.tool()
@@ -298,6 +586,8 @@ def med_tools_health() -> str:
             "fallback_enabled": cfg["fallback_enabled"],
             "fallback_api_base": cfg["fallback_api_base"],
             "fallback_model": cfg["fallback_model"],
+            "fallback_source": cfg.get("fallback_source", "unset"),
+            "fallback_agent_ref": cfg.get("fallback_agent_ref", ""),
         },
         "supported_suffixes": sorted(SUPPORTED_SUFFIXES),
         "pydicom": False,
@@ -368,7 +658,284 @@ def med_tools_health() -> str:
     if not info["primary_ok"] and not info["fallback_ok"]:
         info["ok"] = False
 
+    try:
+        from .rag import rag_status
+
+        # Skip the local artifact reload (253 MB) but always probe the remote service.
+        info["rag"] = rag_status(validate=False, probe_remote=True)
+    except Exception as exc:  # noqa: BLE001
+        info["rag"] = {"ready": False, "reason": f"{type(exc).__name__}: {exc}"}
+
+    if specialized_ct_enabled():
+        try:
+            from .radar import radar_status
+
+            info["radar"] = radar_status(validate_runtime=False)
+        except Exception as exc:  # noqa: BLE001
+            info["radar"] = {"ready": False, "reason": f"{type(exc).__name__}: {exc}"}
+    else:
+        info["radar"] = {"ready": False, "disabled": True}
+
     return json.dumps(info, ensure_ascii=False, indent=2)
+
+
+@_specialized_ct_tool()
+def med_radar_status(validate_runtime: bool = False) -> str:
+    """Check whether the configured DAMO RADAR analysis service is ready.
+
+    Args:
+        validate_runtime: Allow a longer health-probe timeout. The remote response
+            includes internal runtime diagnostics. Do not repeat deployment
+            or hardware details in user-facing progress or medical answers.
+    """
+    if not specialized_ct_enabled():
+        return _disabled_specialized_tool("med_radar_status")
+    from .radar import radar_status
+
+    return json.dumps(
+        radar_status(validate_runtime=bool(validate_runtime)),
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@_specialized_ct_tool()
+async def med_radar_analyze_ct(
+    path: str,
+    ctx: Context,
+    top_k: int = 15,
+    threshold: float = 0.5,
+    max_cases: int = 4,
+    study_context: str = "",
+) -> str:
+    """Submit 3D CT volumes to the configured RADAR service and return scores.
+
+    Accepts a .nii/.nii.gz file, a single multi-frame 3D CT DICOM, a directory
+    containing NIfTI volumes, or a DICOM CT series directory. Single-frame
+    DICOM images are rejected. RADAR is primarily trained on contrast-enhanced
+    abdominal CT. Its scores are not calibrated clinical probabilities and do
+    not establish either presence or absence of disease.
+
+    Args:
+        path: Absolute or relative path to a 3D CT volume, multi-frame CT DICOM,
+            or DICOM series folder.
+        top_k: Maximum ranked scores returned per case (1-50, default 15).
+        threshold: Display threshold for highlighted scores (0-1, default 0.5).
+        max_cases: Maximum studies processed from a directory (1-8, default 4).
+        study_context: Known region/contrast context, e.g. "contrast-enhanced
+            abdominal CT". Leave empty when unknown; never guess metadata.
+    """
+    assert_input_tree_in_user_home(path)
+    if not specialized_ct_enabled():
+        return _disabled_specialized_tool("med_radar_analyze_ct")
+    from .radar import run_radar_analysis
+
+    await ctx.report_progress(
+        progress=1,
+        total=3,
+        message="__PILOTDECK_MEDICAL_STAGE__:inference",
+    )
+    payload = await asyncio.to_thread(
+        run_radar_analysis,
+        path=path,
+        top_k=top_k,
+        threshold=threshold,
+        max_cases=max_cases,
+        study_context=study_context,
+    )
+    await ctx.report_progress(
+        progress=2,
+        total=3,
+        message="__PILOTDECK_MEDICAL_STAGE__:artifacts",
+    )
+    # Remove model-related fields before returning
+    payload.pop('model', None)
+    payload.pop('primary_model', None)
+    payload.pop('fallback_model', None)
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@_specialized_ct_tool()
+async def med_deepchest_status() -> str:
+    """Check configured DeepChest HTTP service, file/configuration readiness and queue."""
+    if not specialized_ct_enabled():
+        return _disabled_specialized_tool("med_deepchest_status")
+    from .deepchest import call_deepchest
+    return json.dumps(await asyncio.to_thread(call_deepchest, 'health'), ensure_ascii=False)
+
+
+@_specialized_ct_tool()
+async def med_deepchest_submit(path: str, question: str, body_region: str,
+                              modality: str, intensity_units: str) -> str:
+    """Submit ONE complete chest CT (NIfTI, DICOM series folder, or DICOM ZIP).
+
+    Confirm body_region='chest', modality='CT', intensity_units='HU' from user or
+    metadata; never infer these from a random filename. NIfTI lacks modality metadata.
+    Returns job_id; use med_deepchest_job until succeeded/failed. Do not resubmit.
+    Include the original question and current presentation preferences in question.
+    """
+    assert_input_tree_in_user_home(path)
+    if not specialized_ct_enabled():
+        return _disabled_specialized_tool("med_deepchest_submit")
+    from .deepchest import call_deepchest
+    result = await asyncio.to_thread(call_deepchest, 'submit', path=path, question=question,
+                                    body_region=body_region, modality=modality, intensity_units=intensity_units)
+    # Remove model-related fields before returning
+    result.pop('model', None)
+    result.pop('primary_model', None)
+    result.pop('fallback_model', None)
+    return json.dumps(result, ensure_ascii=False)
+
+
+@_specialized_ct_tool()
+async def med_deepchest_job(job_id: str, wait_seconds: int = 30, continuation_mode: str = "terminal") -> str:
+    """Wait up to 30 seconds for a DeepChest job, return stage or saved report/artifacts.
+
+    Repeat this tool with the same job_id while waiting/running; do not start a new
+    job and do not answer from demo data. terminal presents/persists the report and
+    ends the turn. Use material if further clinical integration or export is needed.
+    """
+    if not specialized_ct_enabled():
+        return _disabled_specialized_tool("med_deepchest_job")
+    from .deepchest import call_deepchest
+    deadline = asyncio.get_running_loop().time() + min(30, max(0, wait_seconds))
+    while True:
+        result = await asyncio.to_thread(call_deepchest, 'inspect', job_id=job_id)
+        if result.get('status') not in ('waiting', 'running', 'uploading') or asyncio.get_running_loop().time() >= deadline:
+            result['ok'] = result.get('status') == 'succeeded'
+            result['continuation_mode'] = _normalize_continuation_mode(continuation_mode)
+            # Remove model-related fields before returning
+            result.pop('model', None)
+            result.pop('primary_model', None)
+            result.pop('fallback_model', None)
+            return json.dumps(result, ensure_ascii=False)
+        await asyncio.sleep(min(3, max(0, deadline - asyncio.get_running_loop().time())))
+
+
+@mcp.tool()
+def med_trauma_rag_status(validate: bool = False) -> str:
+    """Report war-trauma RAG readiness: remote service reachability + local corpus.
+
+    Args:
+        validate: If true, load and SHA-256-check the local corpus/embedding
+            artifacts now. The remote service is probed either way.
+    """
+    from .rag import rag_status
+
+    payload = rag_status(validate=bool(validate), probe_remote=True)
+    payload["tool"] = "med_trauma_rag_status"
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def med_trauma_rag_query(
+    query: str,
+    top_k: int = 3,
+    min_score: float = 0.35,
+    prefer_lexical: bool = False,
+    topic: Optional[str] = None,
+) -> str:
+    """Retrieve war-trauma textbook evidence for Q&A (not the formal stage plan).
+
+    Returns evidence only (`chunks` + sources). The PilotDeck main model answers
+    the knowledge question and may add brief disposition tips. For a formal
+    five-section graded care plan, use med_trauma_stage_plan instead.
+
+    Retrieval hits the remote med-rag service first and falls back to the local
+    corpus when it is unreachable; check `mode` / `retrieval_backend` in the
+    response to see which one answered.
+
+    Args:
+        query: Chinese/English search text (concept / keywords / injury question).
+        top_k: Number of chunks to return (1–8, default 3).
+        min_score: Minimum cosine score. Applies to the LOCAL vector mode only —
+            remote scores use a different scale and are never thresholded here.
+        prefer_lexical: Force deterministic local lexical search (skips remote
+            and the embedding call).
+        topic: Remote topic filter. Omit for the war-trauma default; pass
+            "军事医学" / "未分类" to switch; pass "" to search the whole library.
+    """
+    from .rag import query_rag
+
+    payload = query_rag(
+        query=query,
+        top_k=top_k,
+        min_score=min_score,
+        prefer_lexical=prefer_lexical,
+        topic=topic,
+    )
+    payload["tool"] = "med_trauma_rag_query"
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def med_trauma_stage_plan(
+    stage: str,
+    injury_text: str,
+    ctx: Context,
+    image_paths: Optional[List[str]] = None,
+    max_images: int = 8,
+) -> str:
+    """Generate a formal six-stage war-trauma graded care plan via the medical VLM.
+
+    One stage per call. Plugin builds the fixed Chinese prompt (stage-specific
+    task + five output sections + multi-image reading rules), calls on-box
+    The configured medical VLM is primary; the main agent model is the fallback.
+
+    Agent presentation rule (important):
+    If `care_plan` is non-empty, show it VERBATIM (do not rewrite).
+    If `care_plan` is empty and `agent_continue` is true, write the five-section
+    plan yourself and state that the medical model and fallback failed.
+
+    Args:
+        stage: One of 伤员发生地 / 野战分类场 / 收容处置组 / 重伤救治组 / 手术组 / 洗消组.
+        injury_text: Visible injury narrative for 【可见伤情】. Prefer the user's
+            compliant description verbatim; otherwise rewrite user text into a proper
+            injury narrative. Fold med_parse_medical report/summary here when present.
+            Do NOT invent image findings from photos in the Agent — pass photos via
+            image_paths so the medical model reads them.
+        image_paths: Optional absolute paths to ordinary injury photos for the medical model.
+        max_images: Max images to send (default 8, max 16).
+    """
+    from .trauma_stage_plan import generate_stage_plan_stream, _normalize_image_paths
+    for image_path in _normalize_image_paths(image_paths):
+        assert_path_in_user_home(image_path)
+
+    streamed_chars = 0
+    pending_chunks: List[str] = []
+
+    async def flush_text() -> None:
+        nonlocal streamed_chars
+        text = "".join(pending_chunks)
+        if not text:
+            return
+        pending_chunks.clear()
+        streamed_chars += len(text)
+        await ctx.report_progress(
+            progress=streamed_chars,
+            message=text,
+        )
+
+    async def emit_text(text: str) -> None:
+        pending_chunks.append(text)
+        buffered = "".join(pending_chunks)
+        if len(buffered) >= 24 or "\n" in buffered:
+            await flush_text()
+
+    payload = await generate_stage_plan_stream(
+        stage=stage,
+        injury_text=injury_text,
+        image_paths=image_paths,
+        max_images=max_images,
+        on_text=emit_text,
+    )
+    await flush_text()
+    payload["tool"] = "med_trauma_stage_plan"
+    # Remove model-related fields before returning
+    payload.pop('model', None)
+    payload.pop('primary_model', None)
+    payload.pop('fallback_model', None)
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 def main() -> None:

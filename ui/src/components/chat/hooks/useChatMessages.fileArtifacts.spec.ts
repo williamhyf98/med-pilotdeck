@@ -1,11 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import type { NormalizedMessage } from '../../../stores/useSessionStore';
 import { normalizedToChatMessages } from './useChatMessages';
+import { buildAttachmentPathNote } from '../utils/attachmentNotes';
 
 const base = {
   sessionId: 'session-1',
   provider: 'pilotdeck' as const,
 };
+
+it('renders carried-over upload placeholders exactly like refreshed history', () => {
+  const file = { name: 'MR_多帧_10帧.dcm', path: '/project/inbox/run/MR_多帧_10帧.dcm' };
+  const persisted: NormalizedMessage = { ...base, id: 'accepted-input', kind: 'text', role: 'user', timestamp: '2026-09-22T00:00:00Z', content: `分析附件${buildAttachmentPathNote([file])}` };
+  const live = normalizedToChatMessages([{ ...persisted, attachments: [{ name: file.name }] }]);
+  const refreshed = normalizedToChatMessages([persisted]);
+  expect(live[0].attachments).toHaveLength(1);
+  expect(live[0].attachments).toEqual(refreshed[0].attachments);
+  expect(live[0].attachments?.[0].path).toBe('/project/inbox/run/MR_多帧_10帧.dcm');
+});
 
 describe('file artifact message grouping', () => {
   it('attaches artifacts to the preceding final assistant reply', () => {

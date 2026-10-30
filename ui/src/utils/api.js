@@ -31,6 +31,8 @@ const appendAuthToken = (url) => {
   return `${url}${separator}token=${encodeURIComponent(token)}`;
 };
 
+const SESSION_ENDED_CODES = ['TOKEN_REVOKED', 'USER_DISABLED', 'INVALID_TOKEN', 'USER_NOT_FOUND'];
+
 // Utility function for authenticated API calls
 export const authenticatedFetch = (url, options = {}) => {
   const token = localStorage.getItem('auth-token');
@@ -56,10 +58,27 @@ export const authenticatedFetch = (url, options = {}) => {
       ...defaultHeaders,
       ...fetchOptions.headers,
     },
-  }).then((response) => {
+  }).then(async (response) => {
     const refreshedToken = response.headers.get('X-Refreshed-Token');
-    if (refreshedToken) {
+    if (refreshedToken && localStorage.getItem('auth-token') === token) {
       localStorage.setItem('auth-token', refreshedToken);
+      window.dispatchEvent(new CustomEvent('pilotdeck:token-refreshed', { detail: { token: refreshedToken } }));
+    }
+    if (response.status === 401) {
+      // Only a dead session (not e.g. BAD_CREDENTIALS) signs the user out.
+      // The body is parsed from a clone before returning so listeners see a
+      // settled state and the caller can still read the original body.
+      try {
+        const body = await response.clone().json();
+        // A response to a request sent with an older token must not sign out
+        // (or delete) a newer session, e.g. right after a password change.
+        if (SESSION_ENDED_CODES.includes(body?.code) && localStorage.getItem('auth-token') === token) {
+          localStorage.removeItem('auth-token');
+          window.dispatchEvent(new CustomEvent('pilotdeck:auth-revoked', { detail: { code: body.code } }));
+        }
+      } catch {
+        // Non-JSON 401 body: nothing to act on.
+      }
     }
     if (!suppressServerErrorToast && response.status >= 500) {
       window.dispatchEvent(new CustomEvent('pilotdeck:toast', {
@@ -169,6 +188,30 @@ export const api = {
     }),
     user: () => authenticatedFetch('/api/auth/user'),
     logout: () => authenticatedFetch('/api/auth/logout', { method: 'POST' }),
+    changePassword: (currentPassword, newPassword) => authenticatedFetch('/api/auth/password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
+  },
+
+  // Admin endpoints (admin role required)
+  admin: {
+    listUsers: () => authenticatedFetch('/api/admin/users'),
+    createUser: (username, password, role) => authenticatedFetch('/api/admin/users', {
+      method: 'POST',
+      body: JSON.stringify({ username, password, role }),
+    }),
+    patchUser: (id, patch) => authenticatedFetch(`/api/admin/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+    resetPassword: (id) => authenticatedFetch(`/api/admin/users/${id}/reset-password`, { method: 'POST' }),
+    deleteUser: (id) => authenticatedFetch(`/api/admin/users/${id}`, { method: 'DELETE' }),
+    getRegistration: () => authenticatedFetch('/api/admin/settings/registration'),
+    setRegistration: (allow) => authenticatedFetch('/api/admin/settings/registration', {
+      method: 'PUT',
+      body: JSON.stringify({ allowPublicRegistration: allow }),
+    }),
   },
 
   // Protected endpoints
@@ -226,7 +269,7 @@ export const api = {
     return authenticatedFetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages${queryString ? `?${queryString}` : ''}`);
   },
   renameProject: (projectName, displayName) =>
-    authenticatedFetch(`/api/projects/${projectName}/rename`, {
+    authenticatedFetch(`/api/projects/${encodeURIComponent(projectName)}/rename`, {
       method: 'PUT',
       body: JSON.stringify({ displayName }),
     }),
@@ -250,6 +293,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ projectPath, fromEntryId }),
     }),
+  rewindSession: (sessionId, { projectPath, fromEntryId }) =>
+    authenticatedFetch(`/api/sessions/${encodeURIComponent(sessionId)}/rewind`, {
+      method: 'POST',
+      body: JSON.stringify({ projectPath, fromEntryId }),
+    }),
   deleteProject: (projectName, force = false) =>
     authenticatedFetch(`/api/projects/${projectName}${force ? '?force=true' : ''}`, {
       method: 'DELETE',
@@ -264,6 +312,11 @@ export const api = {
     authenticatedFetch('/api/projects/create', {
       method: 'POST',
       body: JSON.stringify({ path }),
+    }),
+  createSystemProject: ({ displayName, type }) =>
+    authenticatedFetch('/api/projects/create-system', {
+      method: 'POST',
+      body: JSON.stringify({ displayName, type }),
     }),
   createWorkspace: (workspaceData) =>
     authenticatedFetch('/api/projects/create-workspace', {
@@ -280,8 +333,30 @@ export const api = {
     }
     return appendAuthToken(`/api/projects/${encodeURIComponent(projectName)}/files/content?${params.toString()}`);
   },
-  readFileBlob: (projectName, filePath) =>
-    authenticatedFetch(api.fileContentUrl(projectName, filePath)),
+  readFileBlob: (projectName, filePath, options = {}) =>
+    authenticatedFetch(api.fileContentUrl(projectName, filePath, options), {
+      cache: 'no-store',
+      signal: options.signal,
+    }),
+  niftiPreviewUrl: (projectName, filePath, cacheKey = 0) => {
+    const params = new URLSearchParams({ path: filePath, _: String(cacheKey) });
+    const suffix = /\.nii(?:\(\d+\))?\.gz$/i.test(filePath) ? 'volume.nii.gz' : 'volume.nii';
+    return appendAuthToken(`/api/projects/${encodeURIComponent(projectName)}/files/content/${suffix}?${params.toString()}`);
+  },
+  dicomPreviewMetadata: (projectName, filePath, options = {}) => {
+    const params = new URLSearchParams({
+      path: filePath,
+      metadataOnly: '1',
+      maxFrames: String(options.maxFrames || 12),
+    });
+    if (options.cacheKey !== undefined && options.cacheKey !== null) {
+      params.set('_', String(options.cacheKey));
+    }
+    return authenticatedFetch(
+      `/api/projects/${encodeURIComponent(projectName)}/files/preview/dicom?${params.toString()}`,
+      { cache: 'no-store', signal: options.signal },
+    );
+  },
   fileContentSha256: (projectName, filePath) => {
     const params = new URLSearchParams({ path: filePath, sha256: '1' });
     return authenticatedFetch(

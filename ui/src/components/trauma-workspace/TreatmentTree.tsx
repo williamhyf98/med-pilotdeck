@@ -1,0 +1,280 @@
+import { Check, Circle, Loader2, LockKeyhole, MoveRight } from 'lucide-react';
+import { cn } from '../../lib/utils';
+import type { MainStageId, RoundMemo, StageDefinition, WorkflowStatus } from './types';
+
+/**
+ * 流程树只依赖「当前落点」，不再直接依赖某一轮纪要，
+ * 这样全新病例（尚无任何轮次）也能渲染出完整的主级/子级骨架。
+ */
+export type TreePosition = {
+  /** 级别尚未确认时为 null，此时主级/子级一律显示未开始。 */
+  stageId: MainStageId | null;
+  substepIndex: number | null;
+  /** null 表示尚未产生任何轮次纪要。 */
+  round: number | null;
+  blocked?: boolean;
+  transferPending?: boolean;
+  /** 尚未根据分级定义落位时，主级/子级均显示未开始。 */
+  unplaced?: boolean;
+};
+
+type TreatmentTreeProps = {
+  stages: StageDefinition[];
+  rounds: RoundMemo[];
+  currentRoundIndex: number;
+  position: TreePosition;
+  pendingRound?: {
+    runId: string;
+    stageId: MainStageId;
+    substepIndex: number;
+    round?: number;
+  } | null;
+  selectedMemoId: string | null;
+  onSelectMemo: (memoId: string) => void;
+};
+
+function statusLabel(status: WorkflowStatus): string {
+  return {
+    future: '未开始',
+    current: '当前',
+    done: '已完成',
+    transfer: '转运准备',
+    blocked: '阻塞',
+  }[status];
+}
+
+/** 叶子节点用蓝色表示「当前」，与主级/子级的青色区分开。 */
+type CurrentTone = 'teal' | 'blue';
+
+function nodeClasses(status: WorkflowStatus, currentTone: CurrentTone = 'teal'): string {
+  return cn(
+    'workspace-card-surface border-border',
+    status === 'future' && 'opacity-45',
+    status === 'current' && (currentTone === 'blue'
+      ? 'border-blue-300 bg-blue-50/70 dark:border-blue-800 dark:bg-blue-950/30'
+      : 'border-teal-300 bg-teal-50/70 dark:border-teal-800 dark:bg-teal-950/30'),
+    status === 'done' && 'border-emerald-200 bg-emerald-50/50 dark:border-emerald-900 dark:bg-emerald-950/20',
+    status === 'transfer' && 'border-amber-300 bg-amber-50/70 dark:border-amber-800 dark:bg-amber-950/25',
+    status === 'blocked' && 'border-red-300 bg-red-50/70 dark:border-red-900 dark:bg-red-950/25',
+  );
+}
+
+function StatusBadge({ status, currentTone = 'teal' }: { status: WorkflowStatus; currentTone?: CurrentTone }) {
+  const Icon = status === 'done'
+    ? Check
+    : status === 'blocked'
+      ? LockKeyhole
+      : status === 'transfer'
+        ? MoveRight
+        : Circle;
+  return (
+    <span className={cn(
+      'inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-medium',
+      status === 'future' && 'border-neutral-200 text-neutral-400 dark:border-neutral-700 dark:text-neutral-500',
+      status === 'current' && (currentTone === 'blue'
+        ? 'border-blue-300 text-blue-700 dark:border-blue-800 dark:text-blue-300'
+        : 'border-teal-300 text-teal-700 dark:border-teal-800 dark:text-teal-300'),
+      status === 'done' && 'border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-300',
+      status === 'transfer' && 'border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-300',
+      status === 'blocked' && 'border-red-300 text-red-700 dark:border-red-800 dark:text-red-300',
+    )}
+    >
+      <Icon className="h-2.5 w-2.5" strokeWidth={2} />
+      {statusLabel(status)}
+    </span>
+  );
+}
+
+function getMainStatus(
+  stages: StageDefinition[],
+  stageId: MainStageId,
+  position: TreePosition,
+): WorkflowStatus {
+  const index = stages.findIndex((stage) => stage.id === stageId);
+  const currentIndex = stages.findIndex((stage) => stage.id === position.stageId);
+  if (position.unplaced || currentIndex < 0) return 'future';
+  if (index < currentIndex) return 'done';
+  if (index > currentIndex) return 'future';
+  return 'current';
+}
+
+function getSubStatus(
+  mainStatus: WorkflowStatus,
+  substepIndex: number,
+  position: TreePosition,
+): WorkflowStatus {
+  if (mainStatus === 'done') return 'done';
+  if (mainStatus === 'future' || position.substepIndex === null) return 'future';
+  if (substepIndex < position.substepIndex) return 'done';
+  if (substepIndex > position.substepIndex) return 'future';
+  if (position.blocked) return 'blocked';
+  if (position.transferPending) return 'transfer';
+  return 'current';
+}
+
+function getMemoStatus(memo: RoundMemo, position: TreePosition): WorkflowStatus {
+  if (memo.round !== position.round) return 'done';
+  if (memo.gate.status === 'BLOCKED') return 'blocked';
+  if (memo.transitionTone === 'warning') return 'transfer';
+  return 'current';
+}
+
+export default function TreatmentTree({
+  stages,
+  rounds,
+  currentRoundIndex,
+  position,
+  pendingRound = null,
+  selectedMemoId,
+  onSelectMemo,
+}: TreatmentTreeProps) {
+  const visibleRounds = rounds.slice(0, currentRoundIndex + 1);
+  // Before the first snapshot is persisted, the real case position is still
+  // `unplaced`. Use the pending target as a transient workflow position so
+  // ancestor nodes immediately reflect the path being generated.
+  const displayPosition: TreePosition = pendingRound
+    ? {
+      stageId: pendingRound.stageId,
+      substepIndex: pendingRound.substepIndex,
+      round: pendingRound.round ?? position.round,
+      blocked: false,
+      transferPending: false,
+      unplaced: false,
+    }
+    : position;
+
+  return (
+    <div className="space-y-2 pb-4">
+      {position.unplaced && position.round === null && !pendingRound ? (
+        <p className="rounded-md border border-dashed border-neutral-300 px-2.5 py-2 text-[9px] text-neutral-400 dark:border-neutral-700 dark:text-neutral-500">
+          等待首轮推演生成轮次纪要
+        </p>
+      ) : null}
+      {stages.map((stage) => {
+        const mainStatus = getMainStatus(stages, stage.id, displayPosition);
+        return (
+          <section key={stage.id}>
+            <div
+              aria-disabled="true"
+              className={cn('rounded-lg border px-2.5 py-2', nodeClasses(mainStatus))}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-[12px] font-semibold text-neutral-800 dark:text-neutral-100">
+                    <span className="mr-1.5 text-[10px] text-neutral-400">{stage.index}</span>
+                    {stage.name}
+                  </div>
+                  <p className="truncate text-[9px] text-muted-foreground">{stage.note}</p>
+                </div>
+                <StatusBadge status={mainStatus} />
+              </div>
+            </div>
+
+            <div className="ml-3 border-l border-border pl-3 pt-1.5">
+              {stage.substeps.map((substep, substepIndex) => {
+                const subStatus = getSubStatus(mainStatus, substepIndex, displayPosition);
+                const memos = subStatus === 'future'
+                  ? []
+                  : visibleRounds.filter(
+                    (round) => round.stageId === stage.id && round.substepIndex === substepIndex,
+                  );
+                const pendingForSubstep = (
+                  pendingRound
+                  && pendingRound.stageId === stage.id
+                  && pendingRound.substepIndex === substepIndex
+                  && !memos.some((memo) => memo.triggerMessageId === pendingRound.runId)
+                ) ? pendingRound : null;
+                const showPending = Boolean(pendingForSubstep);
+                return (
+                  <div className="relative mb-1.5" key={`${stage.id}-${substep.name}`}>
+                    <span className="absolute -left-3 top-4 w-3 border-t border-border" />
+                    <div
+                      aria-disabled="true"
+                      className={cn('rounded-md border px-2.5 py-1.5', nodeClasses(subStatus))}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-[11px] font-medium">{substep.name}</p>
+                          <p className="truncate text-[9px] text-muted-foreground">{substep.note}</p>
+                        </div>
+                        <StatusBadge status={subStatus} />
+                      </div>
+                    </div>
+
+                    {memos.length > 0 || showPending ? (
+                      <div className="ml-3 border-l border-dashed border-neutral-300 pl-3 pt-1.5 dark:border-neutral-700">
+                        {memos.map((memo) => {
+                          const selected = selectedMemoId === memo.id;
+                          const memoStatus = getMemoStatus(memo, displayPosition);
+                          const isCurrentMemo = memo.round === displayPosition.round;
+                          const highlighted = selected || (!selectedMemoId && isCurrentMemo);
+                          return (
+                            <div className="relative mb-1.5" key={memo.id}>
+                              <span className="absolute -left-3 top-4 w-3 border-t border-dashed border-neutral-300 dark:border-neutral-700" />
+                              <button
+                                type="button"
+                                aria-expanded={selected}
+                                aria-current={isCurrentMemo ? 'step' : undefined}
+                                onClick={() => onSelectMemo(memo.id)}
+                                className={cn(
+                                  'pd-card-lift relative w-full rounded-md border px-2.5 py-2 text-left',
+                                  nodeClasses(memoStatus, 'blue'),
+                                  'hover:border-neutral-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400',
+                                  'dark:hover:border-neutral-600',
+                                  !highlighted && 'trauma-tree-memo-clickable',
+                                  highlighted && 'trauma-tree-memo-selected ring-1 ring-neutral-400 dark:ring-neutral-500',
+                                )}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="min-w-0 truncate text-[10px] font-semibold">
+                                    <span className="mr-1 text-neutral-400">R{memo.round}</span>
+                                    {memo.title}
+                                  </p>
+                                  {isCurrentMemo ? (
+                                    <StatusBadge status={memoStatus} currentTone="blue" />
+                                  ) : (
+                                    <span className="shrink-0 text-[9px] text-neutral-400">{memo.time}</span>
+                                  )}
+                                </div>
+                                <p className="mt-1 line-clamp-2 text-[9px] leading-4 text-muted-foreground">
+                                  {memo.inputPoints[0]} · {memo.conclusion}
+                                </p>
+                              </button>
+                            </div>
+                          );
+                        })}
+                        {showPending ? (
+                          <div className="relative mb-1.5" data-testid="trauma-pending-round">
+                            <span className="absolute -left-3 top-4 w-3 border-t border-dashed border-neutral-300 dark:border-neutral-700" />
+                            <div
+                              aria-disabled="true"
+                              className="flex w-full cursor-wait select-none items-center justify-between gap-2 rounded-md border border-blue-300 bg-blue-50/70 px-2.5 py-2 text-left text-blue-700 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300"
+                            >
+                              <p className="min-w-0 truncate text-[10px] font-semibold">
+                                {pendingForSubstep?.round ? `R${pendingForSubstep.round} ` : ''}生成中
+                              </p>
+                              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-label="生成中" />
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : displayPosition.round === null && subStatus === 'current' && !displayPosition.unplaced ? (
+                      <div className="ml-3 border-l border-dashed border-neutral-300 pl-3 pt-1.5 dark:border-neutral-700">
+                        <div className="relative">
+                          <span className="absolute -left-3 top-4 w-3 border-t border-dashed border-neutral-300 dark:border-neutral-700" />
+                          <p className="rounded-md border border-dashed border-neutral-300 px-2.5 py-2 text-[9px] text-neutral-400 dark:border-neutral-700 dark:text-neutral-500">
+                            等待首轮推演生成轮次纪要
+                          </p>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}

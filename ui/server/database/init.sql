@@ -1,11 +1,13 @@
 -- Initialize authentication database
 PRAGMA foreign_keys = ON;
 
--- Users table (single user system)
+-- Users table
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user',
+    token_version INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_login DATETIME,
     is_active BOOLEAN DEFAULT 1,
@@ -81,15 +83,16 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 -- Session custom names (provider-agnostic display name overrides)
 CREATE TABLE IF NOT EXISTS session_names (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL DEFAULT 0,
     session_id TEXT NOT NULL,
     provider TEXT NOT NULL DEFAULT 'claude',
     custom_name TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(session_id, provider)
+    UNIQUE(user_id, session_id, provider)
 );
 
-CREATE INDEX IF NOT EXISTS idx_session_names_lookup ON session_names(session_id, provider);
+CREATE INDEX IF NOT EXISTS idx_session_names_lookup ON session_names(user_id, session_id, provider);
 
 -- App configuration table (auto-generated secrets, settings, etc.)
 CREATE TABLE IF NOT EXISTS app_config (
@@ -97,3 +100,11 @@ CREATE TABLE IF NOT EXISTS app_config (
     value TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- System-wide settings editable by admins (registration toggle etc.)
+CREATE TABLE IF NOT EXISTS system_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+INSERT OR IGNORE INTO system_settings (key, value) VALUES ('allow_public_registration', 'true');

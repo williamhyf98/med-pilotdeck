@@ -1,15 +1,81 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     buildDefaultPilotDeckConfig,
+    buildRuntimeEnv,
+    normalizePilotDeckConfig,
+    readMultiUserConfig,
     readPilotDeckConfigFile,
     sanitizeProviderCredentials,
+    __resetLegacyDbWarning,
     validatePilotDeckConfig,
 } from './pilotdeckConfig.js';
 
 const tempDirs = [];
+
+it('anchors relative runtime paths to pilot home', () => {
+    const env = buildRuntimeEnv({ webui: { runtime: { databasePath: 'system/auth.db', workspacesRoot: 'workspaces' } } });
+    const home = process.env.PILOT_HOME || join(homedir(), '.pilotdeck');
+    expect(env.DATABASE_PATH).toBe(join(home, 'system', 'auth.db'));
+    expect(env.WORKSPACES_ROOT).toBe(join(home, 'workspaces'));
+});
+
+it('ignores a pre-multi-user databasePath that points at the legacy <root>/auth.db', () => {
+    // Plan 1 leaves the legacy single-user database alone; db.js then applies
+    // its own default instead of opening and migrating it in place.
+    const home = process.env.PILOT_HOME || join(homedir(), '.pilotdeck');
+    __resetLegacyDbWarning();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+    expect(buildRuntimeEnv({ webui: { runtime: { databasePath: 'auth.db' } } }).DATABASE_PATH).toBeUndefined();
+    expect(buildRuntimeEnv({ webui: { runtime: { databasePath: './auth.db' } } }).DATABASE_PATH).toBeUndefined();
+    expect(buildRuntimeEnv({ webui: { runtime: { databasePath: join(home, 'auth.db') } } }).DATABASE_PATH).toBeUndefined();
+    // An explicit path elsewhere is still an operator choice and is honoured.
+    expect(buildRuntimeEnv({ webui: { runtime: { databasePath: '/var/db/pd.db' } } }).DATABASE_PATH).toBe('/var/db/pd.db');
+    } finally { warn.mockRestore(); __resetLegacyDbWarning(); }
+});
+
+it('warns once when webui.runtime.databasePath points at the legacy root auth.db', () => {
+    __resetLegacyDbWarning();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+        const env = buildRuntimeEnv({ webui: { runtime: { databasePath: 'auth.db' } } });
+        expect(env.DATABASE_PATH).toBeUndefined();
+        buildRuntimeEnv({ webui: { runtime: { databasePath: 'auth.db' } } });
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0][0]).toMatch(/legacy .*auth\.db.*ignored/);
+    } finally { warn.mockRestore(); __resetLegacyDbWarning(); }
+});
+
+it('does not warn for a deliberate non-legacy databasePath', () => {
+    __resetLegacyDbWarning();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+        buildRuntimeEnv({ webui: { runtime: { databasePath: '/var/db/pd.db' } } });
+        expect(warn).not.toHaveBeenCalled();
+    } finally { warn.mockRestore(); }
+});
+
+it('defaults databasePath to the system directory', () => {
+    expect(normalizePilotDeckConfig({}).webui.runtime.databasePath).toBe('system/auth.db');
+});
+
+it('uses flat UI fields first and falls back to each legacy schedule field', () => {
+    expect(normalizePilotDeckConfig({ memory: {
+        maintenanceMode: 'immediate', autoIndexIntervalMinutes: 0,
+        schedule: { maintenanceMode: 'manual', autoIndexIntervalMinutes: 90, autoDreamIntervalMinutes: 120 },
+    } }).memory).toMatchObject({ maintenanceMode: 'immediate', autoIndexIntervalMinutes: 0, autoDreamIntervalMinutes: 120 });
+    expect(normalizePilotDeckConfig({ memory: { schedule: { autoDreamIntervalMinutes: 120 } } }).memory)
+        .toMatchObject({ maintenanceMode: 'interval', autoDreamIntervalMinutes: 120 });
+});
+
+it('preserves legacy intervals while defaulting new memory configuration to immediate', () => {
+    expect(buildDefaultPilotDeckConfig().memory.maintenanceMode).toBe('immediate');
+    expect(normalizePilotDeckConfig({ memory: { autoIndexIntervalMinutes: 0 } }).memory.maintenanceMode).toBe('interval');
+    expect(normalizePilotDeckConfig({ memory: { maintenanceMode: 'manual' } }).memory.maintenanceMode).toBe('manual');
+});
 
 afterEach(() => {
     delete process.env.PILOTDECK_CONFIG_PATH;
@@ -221,5 +287,100 @@ describe('validatePilotDeckConfig gateway validation', () => {
 
         expect(config.model.providers.ollama).not.toHaveProperty('apiKey');
         expect(config.model.providers.ollama.url).toBe('http://localhost:11434/v1');
+    });
+});
+
+describe('readMultiUserConfig', () => {
+    afterEach(() => { delete process.env.PILOTDECK_GATEWAY_PORT_BASE; });
+
+    it('returns pool defaults when the yaml has no multiUser block', () => {
+        useTempConfig(null);
+        expect(readMultiUserConfig().gatewayPool).toEqual({
+            maxInstances: 30, idleTimeoutMs: 30 * 60_000, startTimeoutMs: 60_000, maxWaiting: 20, portBase: 18800, healthyAfterMs: 5 * 60_000,
+        });
+    });
+
+    it('reads multiUser.gatewayPool overrides and lets the env port base win', () => {
+        useTempConfig('multiUser:\n  gatewayPool:\n    maxInstances: 5\n    portBase: 19000\n');
+        expect(readMultiUserConfig().gatewayPool).toMatchObject({ maxInstances: 5, portBase: 19000, maxWaiting: 20 });
+        process.env.PILOTDECK_GATEWAY_PORT_BASE = '21000';
+        expect(readMultiUserConfig().gatewayPool.portBase).toBe(21000);
+    });
+});
+
+describe('maskRawYamlText', () => {
+    it('masks secret-looking values in YAML that cannot be parsed', async () => {
+        const { maskRawYamlText } = await import('./pilotdeckConfig.js');
+        const broken = [
+            'providers:',
+            '  - apiKey: sk-leak',
+            '    api_key: "sk-quoted-leak"',
+            '    token: ghp_leak',
+            '    appSecret: shh',
+            '    password: hunter2',
+            '    url: https://example.invalid/v1',
+            '  bad: [',
+            '',
+        ].join('\n');
+        const masked = maskRawYamlText(broken);
+        expect(masked).not.toContain('sk-leak');
+        expect(masked).not.toContain('sk-quoted-leak');
+        expect(masked).not.toContain('ghp_leak');
+        expect(masked).not.toContain('shh');
+        expect(masked).not.toContain('hunter2');
+        // Structure and non-secret values survive, so the editor still shows the
+        // broken document the user has to repair.
+        expect(masked).toContain('url: https://example.invalid/v1');
+        expect(masked).toContain('  bad: [');
+        expect(masked).toContain('  - apiKey: ********');
+    });
+
+    it('masks header keys that hold the credential in their value', async () => {
+        const { maskRawYamlText, maskSecrets } = await import('./pilotdeckConfig.js');
+        // None of these keys END in api_key/token/secret/..., so the suffix
+        // rule alone let `Bearer sk-…` through both maskers.
+        const raw = [
+            '      headers:',
+            '        Authorization: Bearer sk-hdr',
+            '        Proxy-Authorization: Basic sk-proxy',
+            '        Cookie: session=sk-cookie',
+            '        X-Api-Key: sk-xhdr',
+            '        X-Auth-Token: sk-xtoken',
+            '        Accept: application/json',
+            '',
+        ].join('\n');
+        const masked = maskRawYamlText(raw);
+        for (const leak of ['sk-hdr', 'sk-proxy', 'sk-cookie', 'sk-xhdr', 'sk-xtoken']) {
+            expect(masked).not.toContain(leak);
+        }
+        expect(masked).toContain('Accept: application/json');
+        expect(masked).toContain('        Authorization: ********');
+
+        expect(maskSecrets({ headers: { Authorization: 'Bearer sk-hdr', Accept: 'application/json' } }))
+            .toEqual({ headers: { Authorization: '********', Accept: 'application/json' } });
+    });
+
+    it('masks the parse error message, which quotes the offending source lines', async () => {
+        const { readPilotDeckConfigFile } = await import('./pilotdeckConfig.js');
+        const dir = mkdtempSync(join(tmpdir(), 'pilotdeck-parse-'));
+        tempDirs.push(dir);
+        const previous = process.env.PILOT_HOME;
+        process.env.PILOT_HOME = dir;
+        try {
+            writeFileSync(join(dir, 'pilotdeck.yaml'), 'providers:\n  - apiKey: sk-leak\n  bad: [\n');
+            const record = readPilotDeckConfigFile();
+            expect(record.parseError).toBeTruthy();
+            expect(JSON.stringify(record.parseError)).not.toContain('sk-leak');
+        } finally {
+            if (previous === undefined) delete process.env.PILOT_HOME;
+            else process.env.PILOT_HOME = previous;
+        }
+    });
+
+    it('leaves empty values and non-strings alone', async () => {
+        const { maskRawYamlText } = await import('./pilotdeckConfig.js');
+        expect(maskRawYamlText('apiKey:\ntoken:\n')).toBe('apiKey:\ntoken:\n');
+        expect(maskRawYamlText('')).toBe('');
+        expect(maskRawYamlText(null)).toBe('');
     });
 });

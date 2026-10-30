@@ -16,10 +16,6 @@
  *     call to compute the validation result. A future revision can lift
  *     this onto a gateway RPC that accepts base64 chunks.
  *
- *   - `/clawhub/*` — shells out to the `clawhub` CLI which writes its
- *     output to disk by itself. We just retarget the install root to
- *     `~/.pilotdeck/skills/` so installs end up where the agent looks.
- *
  * Anything else (list/read/write/create/delete/import/validate/scan) is
  * a one-line forward to the gateway. Errors raised by `SkillManagerError`
  * arrive as `{ code, message }` and we map their `code` to a sensible
@@ -31,14 +27,14 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import multer from 'multer';
+import { runWithRequestUserScope } from '../middleware/userScope.js';
 import { getPilotDeckGateway } from '../pilotdeck-bridge.js';
-import { resolvePilotHome } from '../utils/pilotPaths.js';
+import { DISABLE_LOCAL_AUTH } from '../constants/config.js';
+import { assertPathInUserHome, resolveScopedHome, isGeneralProjectKey, resolveLinkedRepoPath, resolveGatewayProjectKey } from '../utils/pilotPaths.js';
 import { moveDirectoryAcrossDevicesSafe } from '../utils/fileMoves.js';
+import { recommendSkills } from '../utils/skillRecommend.js';
 
-const execFileAsync = promisify(execFile);
 const router = express.Router();
 
 const upload = multer({
@@ -58,30 +54,30 @@ const upload = multer({
 // ---------------------------------------------------------------------------
 
 const SLUG_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/;
-const PILOT_HOME = resolvePilotHome(process.env);
 const PROJECT_DIR = '.pilotdeck';
 const SKILLS_SUBDIR = 'skills';
 const BUNDLED_SKILLS_ROOT = path.resolve(
   process.env.PILOTDECK_BUNDLED_SKILLS_DIR ||
     path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'skills'),
 );
+const MEDICAL_SKILLS_ROOT = path.resolve(
+  process.env.PILOTDECK_MEDICAL_SKILLS_DIR ||
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'plugins', 'med-tools', 'skills'),
+);
 
 function safeSlug(slug) {
   return typeof slug === 'string' && SLUG_RE.test(slug) && !slug.includes('..');
 }
 
-const GENERAL_CWD_PATHS = [path.resolve(PILOT_HOME)];
-
 function isGeneralCwd(projectPath) {
-  if (!projectPath) return false;
-  return GENERAL_CWD_PATHS.includes(path.resolve(projectPath));
+  return isGeneralProjectKey(projectPath, resolveScopedHome());
 }
 
 function resolveRequestedScope(scope, projectPath, { defaultToProjectWhenAvailable = false } = {}) {
   const generalCwd = isGeneralCwd(projectPath);
   const effectiveProjectPath = generalCwd ? null : projectPath || null;
 
-  if (scope === 'builtin') {
+  if (scope === 'builtin' || scope === 'medical') {
     return { ok: false, error: 'built-in skills are read-only' };
   }
 
@@ -110,11 +106,22 @@ function resolveRequestedScope(scope, projectPath, { defaultToProjectWhenAvailab
 }
 
 function userSkillsRoot() {
-  return path.join(PILOT_HOME, SKILLS_SUBDIR);
+  return path.join(resolveScopedHome(), SKILLS_SUBDIR);
+}
+
+function resolveProjectPathForSkills(projectPath) {
+  if (!projectPath || isGeneralCwd(projectPath)) return null;
+  return resolveLinkedRepoPath(projectPath, resolveScopedHome());
+}
+
+function gatewayProjectKey(projectPath) {
+  return resolveProjectPathForSkills(projectPath);
 }
 
 function projectSkillsRoot(projectPath) {
-  return path.join(projectPath, PROJECT_DIR, SKILLS_SUBDIR);
+  const repoRoot = resolveProjectPathForSkills(projectPath);
+  if (!repoRoot) return null;
+  return path.join(repoRoot, PROJECT_DIR, SKILLS_SUBDIR);
 }
 
 function expandHome(p) {
@@ -142,6 +149,7 @@ function classifySkillPath(skillPath, projectPath = null) {
 
   const candidates = [
     { root: BUNDLED_SKILLS_ROOT, scope: 'builtin' },
+    { root: MEDICAL_SKILLS_ROOT, scope: 'medical' },
     { root: userSkillsRoot(), scope: 'user' },
   ];
   if (projectPath && !isGeneralCwd(projectPath)) {
@@ -159,6 +167,15 @@ function classifySkillPath(skillPath, projectPath = null) {
     const slug = segments[0];
     if (!safeSlug(slug)) {
       return { ok: false, reason: `Invalid slug "${slug}"` };
+    }
+    // Multi-user only: user and project skills must resolve inside the user home
+    // (symlink-aware). Local mode keeps symlink-mode imports from anywhere.
+    if (!DISABLE_LOCAL_AUTH && (scope === 'user' || scope === 'project')) {
+      try {
+        assertPathInUserHome(abs, resolveScopedHome());
+      } catch {
+        return { ok: false, reason: 'skillPath is not inside any known skills root' };
+      }
     }
     return { ok: true, scope, slug };
   }
@@ -222,16 +239,69 @@ router.post('/list', async (req, res) => {
     const { projectPath } = req.body || {};
     const generalCwd = isGeneralCwd(projectPath);
     const effectiveProjectPath = generalCwd ? null : projectPath || null;
-    const data = await callGateway('skillsList', { projectKey: effectiveProjectPath });
+    const data = await callGateway('skillsList', { projectKey: gatewayProjectKey(projectPath) });
     res.json({
       builtin: data.builtin,
       user: data.user,
       project: data.project,
+      medical: data.medical ?? [],
       projectPath: data.projectPath,
       isGeneralCwd: generalCwd,
     });
   } catch (e) {
     sendGatewayError(res, e);
+  }
+});
+
+/**
+ * Query → skill chips for the composer.
+ *
+ * Sits next to the chat box and fires on every debounced keystroke, so it has
+ * to be cheap: `skillsList` is served from the gateway's in-memory registry,
+ * and scoring is pure string work. A short TTL cache absorbs the burst of
+ * calls a typing session produces without ever serving a stale-enough list to
+ * matter (skill edits go through `/create` etc. and are rare mid-sentence).
+ */
+const RECOMMEND_CACHE_TTL_MS = 5000;
+const recommendCache = new Map();
+
+async function listSkillsForRecommend(projectPath) {
+  const key = gatewayProjectKey(projectPath) || '';
+  const hit = recommendCache.get(key);
+  const now = Date.now();
+  if (hit && now - hit.at < RECOMMEND_CACHE_TTL_MS) return hit.skills;
+
+  const data = await callGateway('skillsList', { projectKey: gatewayProjectKey(projectPath) });
+  // Flattened in scope order; `recommendSkills` re-ranks by relevance, and
+  // `overriddenBy` entries are dropped there so a user copy replaces the
+  // builtin it shadows rather than showing both.
+  const skills = [
+    ...(data.builtin ?? []),
+    ...(data.user ?? []),
+    ...(data.project ?? []),
+    ...(data.medical ?? []),
+  ];
+  recommendCache.set(key, { at: now, skills });
+  return skills;
+}
+
+router.post('/recommend', async (req, res) => {
+  try {
+    const { query, projectType, limit } = req.body || {};
+    if (typeof query !== 'string' || !query.trim()) {
+      return res.json({ recommendations: [] });
+    }
+    const skills = await listSkillsForRecommend(req.body?.projectPath);
+    const recommendations = recommendSkills(query, skills, {
+      projectType: typeof projectType === 'string' ? projectType : null,
+      limit: Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 5) : 3,
+    });
+    res.json({ recommendations });
+  } catch (e) {
+    // A recommendation is an affordance, never a blocker — a broken scorer
+    // must not paint an error across the composer. Log and return empty.
+    console.error('[skills-recommend]', e);
+    res.json({ recommendations: [] });
   }
 });
 
@@ -243,7 +313,7 @@ router.post('/read', async (req, res) => {
     const result = await callGateway('skillRead', {
       scope: cls.scope,
       slug: cls.slug,
-      projectKey: cls.scope === 'project' ? projectPath : null,
+      projectKey: cls.scope === 'project' ? gatewayProjectKey(projectPath) : null,
     });
     res.json(result);
   } catch (e) {
@@ -262,9 +332,32 @@ router.post('/write', async (req, res) => {
     const result = await callGateway('skillWrite', {
       scope: cls.scope,
       slug: cls.slug,
-      projectKey: cls.scope === 'project' ? projectPath : null,
+      projectKey: cls.scope === 'project' ? gatewayProjectKey(projectPath) : null,
       content,
     });
+    res.json(result);
+  } catch (e) {
+    sendGatewayError(res, e);
+  }
+});
+
+router.post('/availability', async (req, res) => {
+  try {
+    const { skillPath, projectPath, availability } = req.body || {};
+    const cls = classifySkillPath(skillPath, projectPath);
+    if (!cls.ok) return res.status(400).json({ error: cls.reason });
+    if (!Array.isArray(availability) || availability.length === 0) {
+      return res.status(400).json({ error: 'availability must contain at least one option' });
+    }
+    const result = await callGateway('skillSetAvailability', {
+      scope: cls.scope,
+      slug: cls.slug,
+      projectKey: cls.scope === 'project' ? gatewayProjectKey(projectPath) : null,
+      availability,
+    });
+    if (cls.scope === 'user') {
+      await callGateway('reloadExtensions', {});
+    }
     res.json(result);
   } catch (e) {
     sendGatewayError(res, e);
@@ -279,13 +372,357 @@ router.post('/create', async (req, res) => {
     const result = await callGateway('skillCreate', {
       scope: resolved.scope,
       slug,
-      projectKey: resolved.wantProject ? resolved.projectPath : null,
+      projectKey: resolved.wantProject ? gatewayProjectKey(resolved.projectPath) : null,
       name,
       description,
       body,
       content,
     });
+    // `skillCreate` only writes to disk. The extension watcher on
+    // `$PILOT_HOME/skills` normally notices and invalidates the plugin
+    // registry on its own, but it watches recursively and swallows watch
+    // failures silently — unreliable on network/overlay mounts. Reload
+    // explicitly (same as `/availability`) so a freshly created skill is
+    // guaranteed visible to the agent on the next turn.
+    if (resolved.scope === 'user') {
+      await callGateway('reloadExtensions', {});
+    }
     res.json(result);
+  } catch (e) {
+    sendGatewayError(res, e);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Generate a skill draft from a chat session's transcript.
+//
+// Reads the authoritative JSONL through the gateway (the browser store may
+// hold a paginated slice), flattens it to plain text, and asks the gateway's
+// `skillGenerateDraft` RPC (one structured LLM call, no side effects) for a
+// draft. Creation still goes through `/create` after the user confirms.
+// ---------------------------------------------------------------------------
+
+const DRAFT_MIN_CONVERSATION_CHARS = 40;
+const DRAFT_MIN_MESSAGES = 2;
+const DRAFT_MAX_CONVERSATION_CHARS = 48000;
+const DRAFT_HEAD_CHARS = 24000;
+const DRAFT_TAIL_CHARS = 24000;
+const DRAFT_MAX_TOOL_INPUT_CHARS = 200;
+
+function formatConversationForDraft(messages) {
+  const lines = [];
+  for (const m of messages) {
+    if (!m) continue;
+    if (m.kind === 'text' && (m.role === 'user' || m.role === 'assistant')) {
+      const text = String(m.text || '').trim();
+      if (!text) continue;
+      lines.push(`${m.role === 'user' ? '用户' : '助手'}：${text}`);
+    } else if (m.kind === 'tool_use') {
+      const name = m.toolName || 'tool';
+      const arg = String(m.toolInput || '')
+        .replace(/\s+/gu, ' ')
+        .trim()
+        .slice(0, DRAFT_MAX_TOOL_INPUT_CHARS);
+      lines.push(`[助手调用工具 ${name}${arg ? `：${arg}` : ''}]`);
+    }
+    // thinking / tool_result / status / permission / error: skipped — they
+    // are either internal or too bulky to help the draft.
+  }
+  let text = lines.join('\n\n').trim();
+  if (text.length > DRAFT_MAX_CONVERSATION_CHARS) {
+    const omitted = text.length - DRAFT_HEAD_CHARS - DRAFT_TAIL_CHARS;
+    text = `${text.slice(0, DRAFT_HEAD_CHARS)}\n\n……（中间省略约 ${omitted} 字）……\n\n${text.slice(text.length - DRAFT_TAIL_CHARS)}`;
+  }
+  return text;
+}
+
+router.post('/generate-from-session', async (req, res) => {
+  try {
+    const { sessionId, projectPath } = req.body || {};
+    if (!sessionId || typeof sessionId !== 'string') {
+      return res.status(400).json({ error: 'sessionId is required' });
+    }
+    // Same project-key resolution the chat pipeline and /api/sessions/:id/messages
+    // use — NOT gatewayProjectKey(), which resolves the linked-repo skills root.
+    const chatProjectKey = resolveGatewayProjectKey(
+      String(projectPath || process.cwd()),
+      resolveScopedHome(),
+    );
+    const read = await callGateway('readSessionMessages', {
+      sessionKey: sessionId,
+      projectKey: chatProjectKey,
+    });
+    const messages = Array.isArray(read?.messages) ? read.messages : [];
+    const meaningful = messages.filter(
+      (m) => m && m.kind === 'text' && (m.role === 'user' || m.role === 'assistant')
+        && String(m.text || '').trim(),
+    );
+    const conversation = formatConversationForDraft(messages);
+    if (conversation.length < DRAFT_MIN_CONVERSATION_CHARS || meaningful.length < DRAFT_MIN_MESSAGES) {
+      // Same `{ error, code }` shape sendGatewayError produces, so the UI
+      // can branch on `code` and localise the message.
+      return res.status(422).json({
+        error: '当前对话内容太少，无法生成技能',
+        code: 'conversation_too_short',
+      });
+    }
+    let existingSlugs = [];
+    try {
+      const list = await callGateway('skillsList', { projectKey: gatewayProjectKey(projectPath) });
+      existingSlugs = [
+        ...(list.builtin ?? []),
+        ...(list.user ?? []),
+        ...(list.project ?? []),
+        ...(list.medical ?? []),
+      ].map((s) => s && s.slug).filter(Boolean);
+    } catch {
+      // Best-effort only: a failed list just weakens duplicate avoidance;
+      // /create still rejects real slug conflicts with 409.
+    }
+    const out = await callGateway('skillGenerateDraft', {
+      projectKey: chatProjectKey,
+      sessionKey: sessionId,
+      conversation,
+      existingSlugs,
+    });
+    res.json({ draft: out.draft });
+  } catch (e) {
+    sendGatewayError(res, e);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Generate a skill draft from a user-drawn flowchart.
+//
+// The flow editor sends its graph as plain JSON ({nodes, edges}); we render it
+// into a deterministic text description and reuse the same `skillGenerateDraft`
+// RPC with `source: 'flow'` (which swaps in a flowchart-specific prompt).
+// Creation still goes through `/create` after the user confirms.
+// ---------------------------------------------------------------------------
+
+const FLOW_MAX_NODES = 100;
+const FLOW_MAX_NODE_TEXT_CHARS = 2000;
+const FLOW_MIN_TEXT_NODES = 2;
+const FLOW_MIN_TOTAL_CHARS = 20;
+
+/**
+ * Render {nodes, edges} into the numbered-list text the draft station reads.
+ * Listing nodes and edges separately (instead of attempting a topological
+ * walk) keeps this robust against cycles and disconnected fragments — the
+ * LLM handles graph reasoning better than a lossy linearisation would.
+ */
+function serializeFlowForDraft(flow) {
+  const nodes = Array.isArray(flow?.nodes) ? flow.nodes : null;
+  const edges = Array.isArray(flow?.edges) ? flow.edges : [];
+  if (!nodes || nodes.length === 0) {
+    return { ok: false, error: 'flow.nodes must be a non-empty array' };
+  }
+  if (nodes.length > FLOW_MAX_NODES) {
+    return { ok: false, error: `flow.nodes exceeds ${FLOW_MAX_NODES} nodes` };
+  }
+
+  const numbering = new Map();
+  const nodeLines = [];
+  let meaningfulNodes = 0;
+  let totalChars = 0;
+  for (const [i, n] of nodes.entries()) {
+    const id = String(n?.id ?? '');
+    if (!id || numbering.has(id)) {
+      return { ok: false, error: 'every flow node needs a unique id' };
+    }
+    const label = `N${i + 1}`;
+    numbering.set(id, label);
+    const kind = n?.kind === 'decision' ? '判断' : '步骤';
+    const text = String(n?.text || '')
+      .replace(/\s+/gu, ' ')
+      .trim()
+      .slice(0, FLOW_MAX_NODE_TEXT_CHARS);
+    if (text) {
+      meaningfulNodes += 1;
+      totalChars += text.length;
+    }
+    nodeLines.push(`${label}（${kind}）：${text || '（未填写）'}`);
+  }
+
+  const edgeLines = [];
+  for (const e of edges) {
+    const from = numbering.get(String(e?.source ?? ''));
+    const to = numbering.get(String(e?.target ?? ''));
+    if (!from || !to) continue; // dangling edge — ignore
+    const branch = e?.sourceHandle === 'yes' ? '是' : e?.sourceHandle === 'no' ? '否' : null;
+    edgeLines.push(branch ? `${from} →（${branch}）→ ${to}` : `${from} → ${to}`);
+  }
+
+  const text = [
+    '【节点】',
+    ...nodeLines,
+    '',
+    '【连线】',
+    edgeLines.length > 0 ? edgeLines.join('\n') : '（无连线；请按节点顺序理解）',
+  ].join('\n');
+  return { ok: true, text, meaningfulNodes, totalChars };
+}
+
+router.post('/generate-from-flow', async (req, res) => {
+  try {
+    const { flow, projectPath } = req.body || {};
+    const serialized = serializeFlowForDraft(flow);
+    if (!serialized.ok) {
+      return res.status(400).json({ error: serialized.error, code: 'invalid_flow' });
+    }
+    if (
+      serialized.meaningfulNodes < FLOW_MIN_TEXT_NODES ||
+      serialized.totalChars < FLOW_MIN_TOTAL_CHARS
+    ) {
+      // Same `{ error, code }` shape sendGatewayError produces, so the UI
+      // can branch on `code` and localise the message.
+      return res.status(422).json({
+        error: '流程图内容太少，无法生成技能：至少需要两个填写了文字的节点',
+        code: 'flow_too_simple',
+      });
+    }
+    // Same model-resolution key the session-based route uses; the station
+    // factory only reads projectKey, so the sessionKey is a fixed marker.
+    const chatProjectKey = resolveGatewayProjectKey(
+      String(projectPath || process.cwd()),
+      resolveScopedHome(),
+    );
+    let existingSlugs = [];
+    try {
+      const list = await callGateway('skillsList', { projectKey: gatewayProjectKey(projectPath) });
+      existingSlugs = [
+        ...(list.builtin ?? []),
+        ...(list.user ?? []),
+        ...(list.project ?? []),
+        ...(list.medical ?? []),
+      ].map((s) => s && s.slug).filter(Boolean);
+    } catch {
+      // Best-effort only: a failed list just weakens duplicate avoidance;
+      // /create still rejects real slug conflicts with 409.
+    }
+    const out = await callGateway('skillGenerateDraft', {
+      projectKey: chatProjectKey,
+      sessionKey: 'flow-draft',
+      conversation: serialized.text,
+      existingSlugs,
+      source: 'flow',
+    });
+    res.json({ draft: out.draft });
+  } catch (e) {
+    sendGatewayError(res, e);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /flow-chat — conversational editing for the flow editor's side chat.
+// The UI sends the full canvas graph plus the chat history; the gateway's
+// `skill_flow_chat` RPC returns a short reply and the complete updated graph,
+// which the UI applies back to the canvas (keeping positions of surviving
+// node ids). Stateless by design: the canvas is the single source of truth,
+// so manual edits between chat turns are always reflected in the next call.
+// ---------------------------------------------------------------------------
+
+const FLOW_CHAT_MAX_EDGES = 300;
+const FLOW_CHAT_MAX_MESSAGES = 40;
+const FLOW_CHAT_MAX_MESSAGE_CHARS = 4000;
+
+/**
+ * Validate + strip the canvas graph down to the exact shape the gateway
+ * expects. Unlike `serializeFlowForDraft`, text is kept verbatim (only
+ * length-capped): the model echoes back what it reads, so collapsing
+ * whitespace here would silently rewrite untouched nodes on the canvas.
+ */
+function sanitizeFlowForChat(flow) {
+  const rawNodes = Array.isArray(flow?.nodes) ? flow.nodes : null;
+  const rawEdges = Array.isArray(flow?.edges) ? flow.edges : [];
+  if (!rawNodes) {
+    return { ok: false, error: 'flow.nodes must be an array' };
+  }
+  if (rawNodes.length > FLOW_MAX_NODES) {
+    return { ok: false, error: `flow.nodes exceeds ${FLOW_MAX_NODES} nodes` };
+  }
+  if (rawEdges.length > FLOW_CHAT_MAX_EDGES) {
+    return { ok: false, error: `flow.edges exceeds ${FLOW_CHAT_MAX_EDGES} edges` };
+  }
+  const ids = new Set();
+  const decisions = new Set();
+  const nodes = [];
+  for (const n of rawNodes) {
+    const id = String(n?.id ?? '');
+    if (!id || ids.has(id)) {
+      return { ok: false, error: 'every flow node needs a unique id' };
+    }
+    ids.add(id);
+    const kind = n?.kind === 'decision' ? 'decision' : 'step';
+    if (kind === 'decision') decisions.add(id);
+    nodes.push({ id, kind, text: String(n?.text || '').slice(0, FLOW_MAX_NODE_TEXT_CHARS) });
+  }
+  const edges = [];
+  for (const e of rawEdges) {
+    const source = String(e?.source ?? '');
+    const target = String(e?.target ?? '');
+    if (!ids.has(source) || !ids.has(target)) continue; // dangling edge — ignore
+    const sourceHandle = decisions.has(source) &&
+      (e?.sourceHandle === 'yes' || e?.sourceHandle === 'no')
+      ? e.sourceHandle
+      : null;
+    edges.push({ source, target, sourceHandle });
+  }
+  return { ok: true, flow: { nodes, edges } };
+}
+
+/**
+ * Validate the chat transcript. Older turns beyond the window are dropped
+ * silently (the canvas itself carries the accumulated state, so losing old
+ * history only costs conversational nuance); malformed entries reject.
+ */
+function sanitizeFlowChatMessages(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return { ok: false, error: 'messages must be a non-empty array' };
+  }
+  const windowed = messages.slice(-FLOW_CHAT_MAX_MESSAGES);
+  const out = [];
+  for (const m of windowed) {
+    const role = m?.role;
+    if (role !== 'user' && role !== 'assistant') {
+      return { ok: false, error: 'each message needs role "user" or "assistant"' };
+    }
+    const text = typeof m?.text === 'string' ? m.text.trim() : '';
+    if (!text) {
+      return { ok: false, error: 'each message needs non-empty text' };
+    }
+    out.push({ role, text: text.slice(0, FLOW_CHAT_MAX_MESSAGE_CHARS) });
+  }
+  if (out[out.length - 1].role !== 'user') {
+    return { ok: false, error: 'the last message must be from the user' };
+  }
+  return { ok: true, messages: out };
+}
+
+router.post('/flow-chat', async (req, res) => {
+  try {
+    const { flow, messages, projectPath } = req.body || {};
+    const sanitizedFlow = sanitizeFlowForChat(flow);
+    if (!sanitizedFlow.ok) {
+      return res.status(400).json({ error: sanitizedFlow.error, code: 'invalid_flow' });
+    }
+    const chat = sanitizeFlowChatMessages(messages);
+    if (!chat.ok) {
+      return res.status(400).json({ error: chat.error, code: 'invalid_messages' });
+    }
+    // Same model-resolution key the draft routes use; the station factory
+    // only reads projectKey, so the sessionKey is a fixed marker.
+    const chatProjectKey = resolveGatewayProjectKey(
+      String(projectPath || process.cwd()),
+      PILOT_HOME,
+    );
+    const out = await callGateway('skillFlowChat', {
+      projectKey: chatProjectKey,
+      sessionKey: 'flow-chat',
+      flow: sanitizedFlow.flow,
+      messages: chat.messages,
+    });
+    res.json({ reply: out.reply, flow: out.flow });
   } catch (e) {
     sendGatewayError(res, e);
   }
@@ -299,7 +736,7 @@ router.post('/delete', async (req, res) => {
     const result = await callGateway('skillDelete', {
       scope: cls.scope,
       slug: cls.slug,
-      projectKey: cls.scope === 'project' ? projectPath : null,
+      projectKey: cls.scope === 'project' ? gatewayProjectKey(projectPath) : null,
     });
     res.json(result);
   } catch (e) {
@@ -329,7 +766,7 @@ router.post('/import', async (req, res) => {
       sourcePath,
       slug,
       scope: resolved.scope,
-      projectKey: resolved.wantProject ? resolved.projectPath : null,
+      projectKey: resolved.wantProject ? gatewayProjectKey(resolved.projectPath) : null,
       mode,
       force,
     });
@@ -357,7 +794,7 @@ router.post('/scan', async (req, res) => {
 // session refresh.
 // ---------------------------------------------------------------------------
 
-router.post('/import-upload', upload.array('files', 500), async (req, res) => {
+router.post('/import-upload', upload.array('files', 500), (req, res) => runWithRequestUserScope(req, async () => {
   let stagingDir = null;
   try {
     const { slug: requestedSlug, scope, projectPath, force, paths: pathsJson } = req.body || {};
@@ -455,7 +892,7 @@ router.post('/import-upload', upload.array('files', 500), async (req, res) => {
     let skillSummary = null;
     try {
       const list = await callGateway('skillsList', {
-        projectKey: resolved.wantProject ? resolved.projectPath : null,
+        projectKey: resolved.wantProject ? gatewayProjectKey(resolved.projectPath) : null,
       });
       const bucket = resolved.wantProject ? list.project : list.user;
       skillSummary = bucket.find((s) => s.slug === inferredSlug) ?? null;
@@ -482,146 +919,6 @@ router.post('/import-upload', upload.array('files', 500), async (req, res) => {
     }
     sendGatewayError(res, e);
   }
-});
-
-// ---------------------------------------------------------------------------
-// ClawHub passthrough — kept here because the binary writes to disk and
-// reading it back into the gateway would just add a layer.  We retarget
-// the install root to `~/.pilotdeck/skills/` (or `<project>/.pilotdeck/
-// skills/`) so installed skills end up where the agent looks.
-// ---------------------------------------------------------------------------
-
-router.post('/clawhub/search', async (req, res) => {
-  try {
-    const { query, registry } = req.body || {};
-    if (typeof query !== 'string' || query.trim().length === 0) {
-      return res.json({ results: [] });
-    }
-    const args = ['--no-input'];
-    if (registry) args.push('--registry', registry);
-    args.push('search', query.trim());
-
-    let stdout = '';
-    try {
-      const r = await execFileAsync('clawhub', args, { timeout: 30_000, maxBuffer: 4 * 1024 * 1024 });
-      stdout = r.stdout || '';
-    } catch (e) {
-      if (e.code === 'ENOENT') {
-        return res
-          .status(503)
-          .json({ error: 'clawhub CLI not found in PATH. Install with `npm install -g clawhub`.' });
-      }
-      stdout = e.stdout || '';
-      if (!stdout) {
-        return res.status(500).json({ error: 'clawhub search failed', message: e.message });
-      }
-    }
-
-    // eslint-disable-next-line no-control-regex
-    const ANSI = /\x1b\[[0-9;]*m/g;
-    const results = [];
-    for (const rawLine of stdout.split('\n')) {
-      const line = rawLine.replace(ANSI, '').trim();
-      if (!line) continue;
-      if (line.startsWith('-') || line.toLowerCase().startsWith('searching')) continue;
-      const m = line.match(/^(\S+)\s+(.+?)\s+\(([\d.]+)\)\s*$/);
-      if (m) {
-        results.push({ slug: m[1], name: m[2], score: parseFloat(m[3]) });
-      } else {
-        const parts = line.split(/\s{2,}/);
-        if (parts.length >= 1 && safeSlug(parts[0])) {
-          results.push({ slug: parts[0], name: parts[1] || parts[0], score: null });
-        }
-      }
-    }
-    res.json({ results });
-  } catch (e) {
-    console.error('[skills/clawhub/search]', e);
-    res.status(500).json({ error: 'Search failed', message: e.message });
-  }
-});
-
-router.post('/clawhub/install', async (req, res) => {
-  try {
-    const { slug, version, force, scope, projectPath, registry } = req.body || {};
-    if (!safeSlug(slug)) {
-      return res.status(400).json({ error: `Invalid slug "${slug}".` });
-    }
-    const resolved = resolveRequestedScope(scope, projectPath, {
-      defaultToProjectWhenAvailable: true,
-    });
-    if (!resolved.ok) return res.status(400).json({ error: resolved.error });
-
-    let workdir;
-    let dir;
-    if (resolved.wantProject) {
-      workdir = resolved.projectPath;
-      dir = path.join(PROJECT_DIR, SKILLS_SUBDIR);
-    } else {
-      workdir = PILOT_HOME;
-      dir = SKILLS_SUBDIR;
-    }
-    const installPath = path.join(workdir, dir, slug);
-
-    const args = ['--no-input', '--workdir', workdir, '--dir', dir];
-    if (registry) args.push('--registry', registry);
-    args.push('install', slug);
-    if (version) args.push('--version', version);
-    if (force) args.push('--force');
-
-    let stdout = '';
-    let stderr = '';
-    let runError = null;
-    try {
-      const r = await execFileAsync('clawhub', args, { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 });
-      stdout = r.stdout || '';
-      stderr = r.stderr || '';
-    } catch (e) {
-      if (e.code === 'ENOENT') {
-        return res
-          .status(503)
-          .json({ error: 'clawhub CLI not found in PATH. Install with `npm install -g clawhub`.' });
-      }
-      runError = e;
-      stdout = e.stdout || '';
-      stderr = e.stderr || '';
-    }
-
-    let installed = false;
-    let skill = null;
-    try {
-      await fs.access(path.join(installPath, 'SKILL.md'));
-      installed = true;
-      // Pull the summary back through the gateway so descriptions reflect
-      // the same frontmatter parser the agent will use.
-      const list = await callGateway('skillsList', {
-        projectKey: resolved.wantProject ? resolved.projectPath : null,
-      });
-      const bucket = resolved.wantProject ? list.project : list.user;
-      skill = bucket.find((s) => s.slug === slug) ?? null;
-    } catch {
-      /* not installed */
-    }
-
-    const needsForce =
-      !installed && !force && (stderr || stdout).match(/Use --force to install suspicious/i) !== null;
-
-    res.json({
-      ok: installed,
-      slug,
-      scope: resolved.scope,
-      installPath,
-      installed,
-      skill,
-      stdout: stdout.trim(),
-      stderr: stderr.trim(),
-      exitCode: runError ? (runError.code === undefined ? 1 : runError.code) : 0,
-      needsForce,
-    });
-  } catch (e) {
-    console.error('[skills/clawhub/install]', e);
-    res.status(500).json({ error: 'Install failed', message: e.message });
-  }
-});
+}));
 
 export default router;

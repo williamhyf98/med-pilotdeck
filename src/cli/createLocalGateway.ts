@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync as mkdirSyncFs, renameSync } from "node:fs";
-import { dirname, resolve, join as joinPath } from "node:path";
+import { readFile, stat } from "node:fs/promises";
+import { dirname, extname, relative, resolve, join as joinPath, isAbsolute } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { EdgeClawMemoryService } from "edgeclaw-memory-core";
@@ -29,7 +30,17 @@ import {
   ToolResultBudget,
   createEdgeClawMemoryProviderFromConfig,
 } from "../context/index.js";
+import { MemoryDomainFacade } from "../context/memory/MemoryDomainFacade.js";
+import { resolveMemoryScopeIdentity } from "../context/memory/MemoryScopeIdentity.js";
+import type { TraumaPresentationMemoryProvider } from "../trauma/memory/TraumaMemoryContext.js";
+import {
+  createTraumaMemoryCaptureSink,
+  resolveTraumaMemoryCaptureMode,
+  type TraumaMemoryCaptureMode,
+  type TraumaMemoryCaptureSink,
+} from "../trauma/memory/TraumaMemoryCapturePolicy.js";
 import { FileHistoryStore } from "../session/filesystem/FileHistoryStore.js";
+import { SessionMetadataStore } from "../session/index.js";
 import type { AgentSubagentTranscriptHooks } from "../agent/runtime/AgentRuntimeDependencies.js";
 import { createPlanTodoStateManager } from "../agent/runtime/PlanTodoState.js";
 import { HookRuntime, PluginRuntime } from "../extension/index.js";
@@ -59,9 +70,22 @@ import {
   loadMcpServerConfig,
   parsePluginMcpServers,
 } from "../mcp/index.js";
-import { createModelRuntime, type ModelRuntime } from "../model/index.js";
+import { createModelRuntime, type CanonicalMessage, type ModelRuntime } from "../model/index.js";
 import { createDefaultPermissionContext, type PermissionRule } from "../permission/index.js";
 import { loadPilotConfig, resolvePilotHome, type PilotProxyConfig } from "../pilot/index.js";
+import {
+  ensureWorkspaceLayout,
+  isGeneralProjectKey,
+  projectMetaTypeFromProjectPath,
+  projectTypeKeyFromProjectId,
+  PROJECT_TYPE_KEYS,
+  resolveAgentAdditionalWorkingDirectories,
+  resolveAgentCwd,
+  resolveGatewayProjectKey,
+  resolveTraumaCaseDir,
+  resolveWorkspaceId,
+} from "../pilot/paths.js";
+import { filterSkillsForProjectType } from "../pilot/projectTypePolicy.js";
 import { createPilotConfigStoreSync, type PilotConfigStore } from "../pilot/config/PilotConfigStore.js";
 import type { PilotAgentModelSelection, PilotConfigSnapshot } from "../pilot/config/types.js";
 import { DEFAULT_JUDGE_TIMEOUT_MS, DEFAULT_ALLOWED_TOOLS, DEFAULT_TRIGGER_TIERS, type RouterConfig } from "../router/config/schema.js";
@@ -70,6 +94,7 @@ import { sanitizeSessionIdForPath } from "../session/storage/ProjectSessionStora
 import { createSessionTitleGenerator } from "../session/title/SessionTitleGenerator.js";
 import { readWebSessionMessages, readSubagentWebMessages } from "../web/server/readSessionMessages.js";
 import { forkWebSession } from "../web/server/forkSession.js";
+import { rewindWebSession } from "../web/server/rewindSession.js";
 import { describeWebProject, listWebProjects } from "../web/server/listProjects.js";
 import { BackgroundTaskRuntime, type BackgroundTaskCompletionEvent } from "../task/runtime/BackgroundTaskRuntime.js";
 import { createBuiltinRegistry, createPlanFileManager, filterAvailableTools } from "../tool/index.js";
@@ -82,17 +107,35 @@ import type {
 import { createRouterRuntime, type RouterRuntime } from "../router/index.js";
 import { SessionRouterStore } from "../router/session/SessionRouterStore.js";
 import type { RouterEventBus, RouterEvent } from "../router/protocol/events.js";
+import { shouldWriteRouterEvents } from "../router/routerEventFlags.js";
 import type { EdgeClawMemoryProvider } from "../context/index.js";
 import { loadBuiltinPlugins } from "../extension/plugins/builtin/loadBuiltinPlugins.js";
-import { SkillManager, migrateLegacyBundledSkillCopies } from "../extension/skills/index.js";
+import { SkillManager, createSkillDraftStation, createSkillFlowChatStation, migrateLegacyBundledSkillCopies } from "../extension/skills/index.js";
 import { ExtensionWatchManager, type ExtensionWatchEvent } from "./ExtensionWatchManager.js";
 import { createTelemetryCollector, type TelemetryClient } from "../telemetry/index.js";
+import {
+  createTraumaAuditLogger,
+  createExtractionStation,
+  createInterpretationStation,
+  createMcpTraumaParseClient,
+  createMcpTraumaRagClient,
+  createStructuredModelClient,
+  createKnowledgeQaStation,
+  createKnowledgeQueryRewriter,
+  createTraumaCaseStore,
+  createTraumaTurnRunner,
+  type TraumaAuditLogger,
+  type TraumaImageInput,
+  type TraumaTurnRunner,
+} from "../trauma/index.js";
 
 export type CreateLocalGatewayOptions = {
   projectRoot?: string;
   pilotHome?: string;
   /** Read-only skills shipped with this PilotDeck build. Auto-discovered when omitted. */
   builtinSkillsRoot?: string;
+  /** Read-only medical skills from plugins/med-tools. Auto-discovered when omitted. */
+  medicalSkillsRoot?: string;
   env?: Record<string, string | undefined>;
   permissionMode?: AgentRuntimeConfig["permissionMode"];
   /** Tools merged into every per-project ToolRegistry. */
@@ -162,8 +205,16 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
   const baseEnv = options.env ?? process.env;
   const projectRoot = resolve(options.projectRoot ?? process.cwd());
   const pilotHome = options.pilotHome ?? resolvePilotHome(baseEnv);
+  // Plugin manifests reference `${env:PILOT_HOME}` (e.g. med-tools MCP
+  // server command); export the resolved home into the process env so
+  // placeholder expansion sees it even when the gateway was started
+  // without PILOT_HOME set (plain `npm run dev`). On Windows use forward
+  // slashes: MSYS bash strips backslashes from arguments, turning
+  // `C:\Users\...\run.sh` into `C:Users.../run.sh`.
+  process.env.PILOT_HOME = process.platform === "win32" ? pilotHome.replace(/\\/gu, "/") : pilotHome;
   const env = options.pilotHome ? { ...baseEnv, PILOT_HOME: pilotHome } : baseEnv;
   const builtinSkillsRoot = resolveBuiltinSkillsRoot(options.builtinSkillsRoot, env);
+  const medicalSkillsRoot = resolveMedicalSkillsRoot(options.medicalSkillsRoot, env, builtinSkillsRoot);
   const legacySkillMigration = migrateLegacyBundledSkillCopies({ pilotHome, builtinSkillsRoot });
   if (legacySkillMigration.migrated.length > 0) {
     // eslint-disable-next-line no-console
@@ -280,7 +331,11 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
         }
       : undefined,
   });
-  const skillManager = new SkillManager({ pilotHome, builtinSkillsRoot });
+  const skillManager = new SkillManager({
+    pilotHome,
+    builtinSkillsRoot,
+    ...(medicalSkillsRoot ? { medicalSkillsRoot } : {}),
+  });
   const gateway = new InProcessGateway(router, {
     now,
     serverInfo: { mode: "in_process", projectKey: projectRoot },
@@ -289,6 +344,73 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
     cron: options.cron,
     skillManager,
     setSessionCwd: (sessionKey, cwd) => registry.setSessionCwd(sessionKey, cwd),
+    traumaRunnerFactory: ({ projectKey, sessionKey }) =>
+      registry.createTraumaRunner(projectKey, sessionKey),
+    traumaKnowledgeQaFactory: ({ projectKey, sessionKey }) =>
+      registry.createTraumaKnowledgeQa(projectKey, sessionKey),
+    traumaExtractorFactory: ({ projectKey, sessionKey }) =>
+      registry.createExtractionStation(projectKey, sessionKey),
+    traumaPreferenceProvider: ({ projectKey, sessionKey }) =>
+      registry.createTraumaMemoryProvider(projectKey, sessionKey)?.() ?? null,
+    skillDraftFactory: ({ projectKey }) =>
+      registry.createSkillDraftStation(projectKey),
+    skillFlowChatFactory: ({ projectKey }) =>
+      registry.createSkillFlowChatStation(projectKey),
+    traumaCaseReader: ({ projectKey, sessionKey }) =>
+      registry.readTraumaCase(projectKey, sessionKey),
+    // 战创伤长期记忆写入（Task 7）。sink 按项目构建，未启用时为 undefined。
+    captureTraumaMemory: ({ projectKey, ...turn }) => {
+      registry.createTraumaMemoryCaptureSink(projectKey)?.(turn);
+    },
+    async recordTraumaTurn(input) {
+      const storage = createAgentProjectSessionStorage({
+        projectRoot: input.projectKey,
+        pilotHome,
+        sessionId: input.sessionKey,
+        now,
+      });
+      if (input.aiTitle?.trim()) {
+        const metadataStore = new SessionMetadataStore({
+          transcript: storage.transcript,
+          sessionId: input.sessionKey,
+          now,
+        });
+        await metadataStore.saveAiTitle(input.aiTitle.trim(), input.runId);
+      }
+      const userContent = await buildTraumaUserTranscriptContent(
+        input.userText,
+        input.attachments,
+        resolveAgentCwd(input.projectKey, pilotHome),
+      );
+      await storage.transcript.recordDurableMessage(
+        input.sessionKey,
+        input.runId,
+        {
+          role: "user",
+          content: userContent,
+          metadata: { purpose: "trauma_user_input" },
+        },
+      );
+      for (const processMessage of input.processMessages ?? []) {
+        await storage.transcript.recordDurableMessage(
+          input.sessionKey,
+          input.runId,
+          processMessage,
+        );
+      }
+      await storage.transcript.recordDurableMessage(
+        input.sessionKey,
+        input.runId,
+        {
+          role: "assistant",
+          content: [{ type: "text", text: input.assistantText }],
+          metadata: {
+            purpose: "trauma_turn_runner",
+            ...(input.citations && input.citations.length > 0 ? { citations: input.citations } : {}),
+          },
+        },
+      );
+    },
     readSessionMessages: (input) =>
       readWebSessionMessages(input, {
         projectRoot: input.projectKey ? input.projectKey : fallbackProjectRoot,
@@ -305,6 +427,12 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
       }),
     forkSession: (input) =>
       forkWebSession(input, {
+        projectRoot: input.projectKey ? input.projectKey : fallbackProjectRoot,
+        pilotHome,
+        now,
+      }),
+    rewindSession: (input) =>
+      rewindWebSession(input, {
         projectRoot: input.projectKey ? input.projectKey : fallbackProjectRoot,
         pilotHome,
         now,
@@ -430,6 +558,22 @@ function resolveBuiltinSkillsRoot(
   return resolve(candidates.find((candidate) => existsSync(candidate)) ?? candidates[2]);
 }
 
+function resolveMedicalSkillsRoot(
+  configuredRoot: string | undefined,
+  env: Record<string, string | undefined>,
+  builtinSkillsRoot: string,
+): string | undefined {
+  const explicit = configuredRoot ?? env.PILOTDECK_MEDICAL_SKILLS_DIR;
+  if (explicit) return resolve(explicit);
+
+  const candidates = [
+    joinPath(dirname(builtinSkillsRoot), "plugins", "med-tools", "skills"),
+    joinPath(process.cwd(), "plugins", "med-tools", "skills"),
+  ];
+  const found = candidates.find((candidate) => existsSync(candidate));
+  return found ? resolve(found) : undefined;
+}
+
 type ProjectRuntimeRegistryOptions = {
   fallbackProjectRoot: string;
   pilotHome: string;
@@ -486,6 +630,124 @@ type ProjectRuntime = {
 const DEFAULT_BROWSER_ACTION_TIMEOUT_MS = 30_000;
 const DEFAULT_BROWSER_NAVIGATION_TIMEOUT_MS = 90_000;
 
+/**
+ * 工位 I 的 `readImage` 依赖：读取预览 PNG 并转成 base64；读不到时返回 null
+ * （契约见 `InterpretationStationDeps.readImage`）。`data` 必须是裸 base64，
+ * 不带 `data:` 前缀。
+ *
+ * Exported (like `sanitizeTraumaAttachments` in the bridge) purely so it
+ * can be unit tested directly.
+ */
+export async function readTraumaAttachmentPreviewImage(
+  path: string,
+): Promise<TraumaImageInput | null> {
+  const data = await readFile(path).catch(() => null);
+  if (!data) return null;
+  return { data: data.toString("base64"), mimeType: "image/png" };
+}
+
+type TranscriptAttachmentRef = {
+  name: string;
+  path: string;
+  size?: number;
+  mimeType?: string;
+  relativePath?: string;
+};
+
+const TRAUMA_ATTACHMENT_NOTE_MARKER = "[Files attached by user and available for reading in the project:]";
+const TRAUMA_ATTACHMENT_NOTE_END_MARKER = "[End files attached by user]";
+const TRAUMA_HISTORY_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+
+const TRAUMA_HISTORY_IMAGE_MIME_BY_EXT: Record<string, string> = {
+  ".apng": "image/apng",
+  ".avif": "image/avif",
+  ".gif": "image/gif",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".webp": "image/webp",
+};
+
+function sanitizeTranscriptAttachments(value: unknown): TranscriptAttachmentRef[] {
+  if (!Array.isArray(value)) return [];
+  const sanitized: TranscriptAttachmentRef[] = [];
+  const seenPaths = new Set<string>();
+  for (const item of value) {
+    if (sanitized.length >= 20) break;
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const path = typeof record.path === "string" ? record.path.trim() : "";
+    const name = typeof record.name === "string" ? record.name.trim() : "";
+    if (!path || !name || seenPaths.has(path)) continue;
+    seenPaths.add(path);
+    sanitized.push({
+      name,
+      path,
+      ...(typeof record.size === "number" && Number.isFinite(record.size) ? { size: record.size } : {}),
+      ...(typeof record.mimeType === "string" && record.mimeType.trim() ? { mimeType: record.mimeType.trim() } : {}),
+      ...(typeof record.relativePath === "string" && record.relativePath.trim() ? { relativePath: record.relativePath.trim() } : {}),
+    });
+  }
+  return sanitized;
+}
+
+function traumaAttachmentMimeType(attachment: TranscriptAttachmentRef): string | undefined {
+  if (attachment.mimeType) return attachment.mimeType;
+  const ext = extname(attachment.name || attachment.path).toLowerCase();
+  return TRAUMA_HISTORY_IMAGE_MIME_BY_EXT[ext];
+}
+
+function isSafeProjectFile(path: string, projectRoot: string): boolean {
+  if (!isAbsolute(path)) return false;
+  const normalizedPath = resolve(path);
+  const normalizedRoot = resolve(projectRoot);
+  const rel = relative(normalizedRoot, normalizedPath);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function buildTraumaAttachmentPathNote(attachments: TranscriptAttachmentRef[]): string {
+  if (attachments.length === 0) return "";
+  const lines = attachments.map((attachment) => {
+    if (attachment.relativePath && attachment.relativePath !== attachment.name) {
+      return `- ${attachment.name} (${attachment.relativePath}): ${attachment.path}`;
+    }
+    return `- ${attachment.name}: ${attachment.path}`;
+  });
+  return `\n\n${TRAUMA_ATTACHMENT_NOTE_MARKER}\n${lines.join("\n")}\n${TRAUMA_ATTACHMENT_NOTE_END_MARKER}\n`;
+}
+
+export async function buildTraumaUserTranscriptContent(
+  userText: string,
+  rawAttachments: unknown,
+  attachmentRoot: string,
+): Promise<CanonicalMessage["content"]> {
+  const attachments = sanitizeTranscriptAttachments(rawAttachments)
+    .filter((attachment) => isSafeProjectFile(attachment.path, attachmentRoot));
+  const content: CanonicalMessage["content"] = [];
+  const pathNote = buildTraumaAttachmentPathNote(attachments);
+  content.push({ type: "text", text: `${userText}${pathNote}` });
+  for (const attachment of attachments) {
+    const mimeType = traumaAttachmentMimeType(attachment);
+    if (!mimeType || !mimeType.startsWith("image/")) continue;
+    try {
+      const fileStat = await stat(attachment.path);
+      if (!fileStat.isFile() || fileStat.size > TRAUMA_HISTORY_IMAGE_MAX_BYTES) continue;
+      const data = await readFile(attachment.path);
+      content.push({
+        type: "image",
+        source: "base64",
+        data: data.toString("base64"),
+        mimeType,
+        bytes: fileStat.size,
+      });
+    } catch {
+      // Keep the path note. Missing/unreadable files simply won't render as inline images.
+    }
+  }
+  return content;
+}
+
 class ProjectRuntimeRegistry {
   private readonly runtimes = new Map<string, ProjectRuntime>();
   private gateway?: InProcessGateway;
@@ -517,6 +779,7 @@ class ProjectRuntimeRegistry {
 
   private _extraTools: PilotDeckToolDefinition[];
   private _sessionOverrides: SessionConfigOverrides | undefined;
+  private readonly traumaAudit: TraumaAuditLogger;
   private readonly sharedSessionStore = new SessionRouterStore({
     now: () => this.options.now().getTime(),
   });
@@ -524,6 +787,7 @@ class ProjectRuntimeRegistry {
   constructor(private readonly options: ProjectRuntimeRegistryOptions) {
     this._extraTools = options.extraTools ? [...options.extraTools] : [];
     this._sessionOverrides = options.sessionOverrides;
+    this.traumaAudit = createTraumaAuditLogger({ pilotHome: options.pilotHome });
   }
 
   /**
@@ -540,6 +804,254 @@ class ProjectRuntimeRegistry {
 
   setGateway(gateway: InProcessGateway): void {
     this.gateway = gateway;
+  }
+
+  /**
+   * 构建战创伤的只读记忆 provider（Task 6）。
+   *
+   * 记忆未启用时返回 undefined——战创伤按无记忆运行，与改造前行为一致。
+   * facade 绑定的是**本项目**的 service 实例，跨项目召回在结构上不可能发生。
+   */
+  createTraumaMemoryProvider(
+    projectKey: string,
+    sessionKey: string,
+  ): TraumaPresentationMemoryProvider | undefined {
+    const runtime = this.resolve(projectKey);
+    const service = runtime.memoryService;
+    if (!service) return undefined;
+
+    const facade = new MemoryDomainFacade({
+      service,
+      identity: resolveMemoryScopeIdentity({
+        projectKey,
+        pilotHome: this.options.pilotHome,
+        sessionId: sessionKey,
+      }),
+      logger: console,
+    });
+
+    return () => facade.readPresentationMemory();
+  }
+
+  /**
+   * 构建战创伤的长期记忆写入 sink（Task 7，`feedback_only`）。
+   *
+   * 记忆未启用、或策略为 `off` 时返回 undefined，战创伤按不写入运行。
+   * 策略非法（例如配置里写了未实现的 `eligible_turns`）时同样返回 undefined
+   * 并记 warning——配置层已经会在启动时报错，这里只是兜底，不能让它拖垮回合。
+   */
+  createTraumaMemoryCaptureSink(
+    projectKey: string,
+  ): TraumaMemoryCaptureSink | undefined {
+    const runtime = this.resolve(projectKey);
+    const service = runtime.memoryService;
+    if (!service) return undefined;
+
+    let mode: TraumaMemoryCaptureMode;
+    try {
+      mode = resolveTraumaMemoryCaptureMode(runtime.snapshot.config.memory?.traumaCapture);
+    } catch (error) {
+      console.warn(
+        "[memory] 战创伤写入策略配置无效，本项目不写入长期记忆：",
+        error instanceof Error ? error.message : String(error),
+      );
+      return undefined;
+    }
+    if (mode === "off") return undefined;
+
+    const identity = resolveMemoryScopeIdentity({
+      projectKey,
+      pilotHome: this.options.pilotHome,
+    });
+    const facade = new MemoryDomainFacade({ service, identity, logger: console });
+
+    return createTraumaMemoryCaptureSink({
+      writer: facade,
+      mode,
+      scope: identity.projectId,
+      logger: console,
+    });
+  }
+
+  async createTraumaRunner(projectKey: string, sessionKey: string): Promise<TraumaTurnRunner> {
+    const runtime = this.resolve(projectKey);
+    await runtime.pluginRuntime.refresh();
+    await this.ensureMcpReady(runtime);
+    const projectId = resolveWorkspaceId(projectKey, this.options.pilotHome);
+    const caseDirectory = resolveTraumaCaseDir(
+      projectId,
+      sessionKey,
+      this.options.pilotHome,
+    );
+    const modelSelection = runtime.snapshot.config.agent.model;
+    const model = createStructuredModelClient({
+      complete: runtime.model.complete.bind(runtime.model),
+      stream: runtime.model.stream.bind(runtime.model),
+      provider: modelSelection.provider,
+      model: modelSelection.model,
+    });
+    const rag = createMcpTraumaRagClient(async (name, input, signal) => {
+      const tool = runtime.tools.get(name);
+      if (!tool) {
+        throw new Error(`Trauma RAG tool is unavailable: ${name}`);
+      }
+      const output = await tool.execute(input, {
+        sessionId: sessionKey,
+        turnId: `trauma-rag:${this.options.now().getTime()}`,
+        abortSignal: signal,
+        cwd: runtime.projectRoot,
+        permissionMode: "bypassPermissions",
+        permissionContext: createDefaultPermissionContext({
+          cwd: runtime.projectRoot,
+          mode: "bypassPermissions",
+          bypassAvailable: true,
+        }),
+        now: this.options.now,
+      });
+      return output.data ?? output.content;
+    });
+
+    const callTraumaTool = async (name: string, toolInput: unknown, signal?: AbortSignal) => {
+      const tool = runtime.tools.get(name);
+      if (!tool) {
+        throw new Error(`Trauma tool is unavailable: ${name}`);
+      }
+      const output = await tool.execute(toolInput, {
+        sessionId: sessionKey,
+        turnId: `trauma-parse:${this.options.now().getTime()}`,
+        abortSignal: signal,
+        cwd: runtime.projectRoot,
+        permissionMode: "bypassPermissions",
+        permissionContext: createDefaultPermissionContext({
+          cwd: runtime.projectRoot,
+          mode: "bypassPermissions",
+          bypassAvailable: true,
+        }),
+        now: this.options.now,
+      });
+      return output.data ?? output.content;
+    };
+
+    // 与 med_parse_medical 共用 medical.interpretationModel；未配置时用主 Agent。
+    const interpretationSelection = runtime.snapshot.config.medical?.interpretationModel ?? modelSelection;
+    let supportsImages = false;
+    try {
+      supportsImages = runtime.model
+        .getMultimodal(interpretationSelection.provider, interpretationSelection.model)
+        .input.includes("image");
+    } catch {
+      // 主模型的多模态能力未声明时仍可执行文本分析。
+    }
+
+    const interpreter = createInterpretationStation({
+      model: createStructuredModelClient({
+        complete: runtime.model.complete.bind(runtime.model),
+        stream: runtime.model.stream.bind(runtime.model),
+        provider: interpretationSelection.provider,
+        model: interpretationSelection.model,
+      }),
+      parse: createMcpTraumaParseClient(callTraumaTool),
+      readImage: readTraumaAttachmentPreviewImage,
+      supportsImages,
+    });
+
+    return createTraumaTurnRunner({
+      store: createTraumaCaseStore(caseDirectory),
+      model,
+      rag,
+      interpreter,
+      audit: this.traumaAudit,
+      now: () => this.options.now().toISOString(),
+    });
+  }
+
+  async createExtractionStation(projectKey: string, sessionKey: string) {
+    const runtime = this.resolve(projectKey);
+    await runtime.pluginRuntime.refresh();
+    const modelSelection = runtime.snapshot.config.agent.model;
+    const model = createStructuredModelClient({
+      complete: runtime.model.complete.bind(runtime.model),
+      stream: runtime.model.stream.bind(runtime.model),
+      provider: modelSelection.provider,
+      model: modelSelection.model,
+    });
+    return createExtractionStation(model);
+  }
+
+  async createSkillDraftStation(projectKey: string) {
+    const runtime = this.resolve(projectKey);
+    await runtime.pluginRuntime.refresh();
+    const selection = runtime.snapshot.config.agent.model;
+    return createSkillDraftStation(createStructuredModelClient({
+      complete: runtime.model.complete.bind(runtime.model),
+      stream: runtime.model.stream.bind(runtime.model),
+      provider: selection.provider,
+      model: selection.model,
+    }));
+  }
+
+  async createSkillFlowChatStation(projectKey: string) {
+    const runtime = this.resolve(projectKey);
+    await runtime.pluginRuntime.refresh();
+    const selection = runtime.snapshot.config.agent.model;
+    return createSkillFlowChatStation(createStructuredModelClient({
+      complete: runtime.model.complete.bind(runtime.model),
+      stream: runtime.model.stream.bind(runtime.model),
+      provider: selection.provider,
+      model: selection.model,
+    }));
+  }
+
+  async createTraumaKnowledgeQa(projectKey: string, sessionKey: string) {
+    const runtime = this.resolve(projectKey);
+    await runtime.pluginRuntime.refresh();
+    const modelSelection = runtime.snapshot.config.agent.model;
+    const model = createStructuredModelClient({
+      complete: runtime.model.complete.bind(runtime.model),
+      stream: runtime.model.stream.bind(runtime.model),
+      provider: modelSelection.provider,
+      model: modelSelection.model,
+    });
+    const rag = createMcpTraumaRagClient(async (name, input, signal) => {
+      const tool = runtime.tools.get(name);
+      if (!tool) throw new Error(`Trauma RAG tool is unavailable: ${name}`);
+      const output = await tool.execute(input, {
+        sessionId: sessionKey,
+        turnId: `trauma-knowledge-rag:${this.options.now().getTime()}`,
+        abortSignal: signal,
+        cwd: runtime.projectRoot,
+        permissionMode: "bypassPermissions",
+        permissionContext: createDefaultPermissionContext({
+          cwd: runtime.projectRoot,
+          mode: "bypassPermissions",
+          bypassAvailable: true,
+        }),
+        now: this.options.now,
+      });
+      return output.data ?? output.content;
+    });
+    return {
+      rewriter: createKnowledgeQueryRewriter(model),
+      rag,
+      qa: createKnowledgeQaStation(model),
+    };
+  }
+
+  async readTraumaCase(projectKey: string, sessionKey: string) {
+    const projectId = resolveWorkspaceId(projectKey, this.options.pilotHome);
+    if (projectTypeKeyFromProjectId(projectId) !== PROJECT_TYPE_KEYS.war_trauma) {
+      return { current: null, snapshots: [] };
+    }
+    const store = createTraumaCaseStore(resolveTraumaCaseDir(
+      projectId,
+      sessionKey,
+      this.options.pilotHome,
+    ));
+    const [current, snapshots] = await Promise.all([
+      store.load(),
+      store.loadSnapshots(),
+    ]);
+    return { current, snapshots };
   }
 
   private emitBackgroundTaskCompletion(event: BackgroundTaskCompletionEvent): void {
@@ -563,6 +1075,20 @@ class ProjectRuntimeRegistry {
   }
 
   private buildRouterEventBus(): RouterEventBus {
+    const self = this;
+    const broadcast = (event: RouterEvent): void => {
+      if (event.type === "pilotdeck_router_retry_progress") {
+        try {
+          self.gateway?.broadcastRetryProgress(event);
+        } catch { /* best-effort */ }
+      }
+    };
+    // `<pilotHome>/router/events.jsonl` is a debug aid (PILOTDECK_ROUTER_DEBUG=1).
+    // Without the flag nothing touches the disk, but retry progress is still
+    // pushed to connected clients: that is a live feature, not a log.
+    if (!shouldWriteRouterEvents(this.options.env)) {
+      return { emit: broadcast };
+    }
     const pilotHome = this.options.pilotHome;
     const routerDir = joinPath(pilotHome, "router");
     try { mkdirSyncFs(routerDir, { recursive: true }); } catch { /* exists */ }
@@ -573,17 +1099,12 @@ class ProjectRuntimeRegistry {
         renameSync(oldPath, eventsPath);
       }
     } catch { /* best-effort migration */ }
-    const self = this;
     return {
       emit(event: RouterEvent) {
         try {
           appendFileSync(eventsPath, JSON.stringify(event) + "\n");
         } catch { /* best-effort, never crash the agent loop */ }
-        if (event.type === "pilotdeck_router_retry_progress") {
-          try {
-            self.gateway?.broadcastRetryProgress(event);
-          } catch { /* best-effort */ }
-        }
+        broadcast(event);
       },
     };
   }
@@ -629,12 +1150,14 @@ class ProjectRuntimeRegistry {
     this.sessionMcpRuntimes.clear();
 
     if (projectRoot) {
-      const runtime = this.runtimes.get(projectRoot);
+      const identityKey = resolveGatewayProjectKey(projectRoot, this.options.pilotHome);
+      const runtime = this.runtimes.get(identityKey) ?? this.runtimes.get(projectRoot);
       if (runtime?.mcpRuntime) {
         runtime.mcpRuntime.stop().catch(() => {});
       }
       runtime?.memoryService?.close();
       runtime?.router?.shutdown().catch(() => {});
+      this.runtimes.delete(identityKey);
       this.runtimes.delete(projectRoot);
     } else {
       for (const [, runtime] of this.runtimes) {
@@ -676,14 +1199,25 @@ class ProjectRuntimeRegistry {
   }
 
   resolve(projectKey?: string): ProjectRuntime {
-    const projectRoot = resolve(projectKey ?? this.options.fallbackProjectRoot);
-    this.options.onProjectActivated?.(projectRoot);
-    const cached = this.runtimes.get(projectRoot);
+    const identityKey = resolveGatewayProjectKey(
+      projectKey ?? this.options.fallbackProjectRoot,
+      this.options.pilotHome,
+    );
+    const agentCwd = resolveAgentCwd(identityKey, this.options.pilotHome);
+    // Config / plugins / MCP load against a real directory. Bare system ids are
+    // not filesystem paths — use PILOT_HOME for global config and agentCwd for
+    // project-scoped extension roots.
+    const configProjectRoot =
+      !isAbsolute(identityKey) || identityKey === resolve(this.options.pilotHome)
+        ? this.options.pilotHome
+        : identityKey;
+    this.options.onProjectActivated?.(identityKey);
+    const cached = this.runtimes.get(identityKey);
     if (cached) {
       return cached;
     }
 
-    const snapshot = loadPilotConfig({ projectRoot, env: this.options.env });
+    const snapshot = loadPilotConfig({ projectRoot: configProjectRoot, env: this.options.env });
     const model = this.options.modelFactory
       ? this.options.modelFactory(snapshot)
       : createModelRuntime(snapshot.config.model);
@@ -691,7 +1225,7 @@ class ProjectRuntimeRegistry {
       modelConfig: snapshot.config.model,
     });
     const pluginRuntime = new PluginRuntime({
-      projectRoot,
+      projectRoot: agentCwd,
       pilotHome: this.options.pilotHome,
       builtinSkillsRoot: this.options.builtinSkillsRoot,
       builtinPlugins: loadBuiltinPlugins(),
@@ -710,28 +1244,21 @@ class ProjectRuntimeRegistry {
       now: this.options.now,
       onCompletion: (event) => this.emitBackgroundTaskCompletion(event),
     });
-    const webSearchConfig = snapshot.config.tools?.webSearch;
     const tools = createBuiltinRegistry({
-      backgroundTasks: { runtime: backgroundTasks },
       readSkill: {
-        loader: (name) => pluginRuntime.loadSkillPrompt(name),
-        lister: () => pluginRuntime.getAllSkills(),
+        loader: (name, context) => {
+          const projectType = projectMetaTypeFromProjectPath(context.cwd);
+          const info = filterSkillsForProjectType(pluginRuntime.getAllSkills(), projectType)
+            .find((entry) => entry.name === name);
+          // Runtime visibility: which skill the model actually invoked.
+          console.log(`[skill] read_skill invoked: ${name}${info ? ` (${info.path})` : ""}`);
+          return info ? pluginRuntime.loadSkillPrompt(name) : Promise.resolve(undefined);
+        },
+        lister: (context) => filterSkillsForProjectType(
+          pluginRuntime.getAllSkills(),
+          projectMetaTypeFromProjectPath(context.cwd),
+        ),
       },
-      // Pass the YAML-configured web-search provider through to the built-in
-      // `web_search` tool. When absent, the tool may infer GLM/Tavily from
-      // provider-specific environment variables.
-      ...(webSearchConfig?.enabled === false
-        ? { webSearch: false as const }
-        : webSearchConfig
-          ? {
-              webSearch: {
-                ...(webSearchConfig.provider ? { provider: webSearchConfig.provider } : {}),
-                ...(webSearchConfig.apiKey ? { apiKey: webSearchConfig.apiKey } : {}),
-                ...(webSearchConfig.endpoint ? { endpoint: webSearchConfig.endpoint } : {}),
-                ...(webSearchConfig.customProvider ? { customProvider: webSearchConfig.customProvider } : {}),
-              },
-            }
-          : {}),
     });
     for (const tool of this._extraTools) {
       tools.register(tool);
@@ -741,13 +1268,20 @@ class ProjectRuntimeRegistry {
       config: snapshot.config.memory,
       modelConfig: snapshot.config.model,
       agentModel: snapshot.config.agent.model.id,
-      projectRoot,
+      projectRoot: agentCwd,
+      pilotHome: this.options.pilotHome,
       now: this.options.now,
       telemetry: this.options.telemetry,
+      // 选中提示词档案（Task 5）。不传的话战创伤项目会退回通用医学档案，
+      // allowedTypes 硬闸也就形同虚设。
+      projectType: resolveMemoryScopeIdentity({
+        projectKey: identityKey,
+        pilotHome: this.options.pilotHome,
+      }).projectType,
     });
 
     const runtime: ProjectRuntime = {
-      projectRoot,
+      projectRoot: agentCwd,
       snapshot,
       model,
       tokenAccounting,
@@ -758,11 +1292,11 @@ class ProjectRuntimeRegistry {
       memory: memory?.provider,
       memoryService: memory?.service,
       projectStorage: {
-        projectRoot,
+        projectRoot: identityKey,
         pilotHome: this.options.pilotHome,
       },
     };
-    this.runtimes.set(projectRoot, runtime);
+    this.runtimes.set(identityKey, runtime);
     return runtime;
   }
 
@@ -868,7 +1402,8 @@ class ProjectRuntimeRegistry {
       projectStorage: prepared.runtime.projectStorage,
       extendDependencies: prepared.extendDependencies,
       sessionTitleGenerator: prepared.sessionTitleGenerator,
-      collectFileArtifacts: this.shouldCollectFileArtifacts(prepared.runtime),
+      collectFileArtifacts: true,
+      ...this.fileArtifactPolicy(prepared.runtime),
     });
     return resumed.session;
   }
@@ -897,13 +1432,24 @@ class ProjectRuntimeRegistry {
       initialState: previous.state,
       seedState: previous.fileState,
       sessionTitleGenerator: prepared.sessionTitleGenerator,
-      collectFileArtifacts: this.shouldCollectFileArtifacts(prepared.runtime),
+      collectFileArtifacts: true,
+      ...this.fileArtifactPolicy(prepared.runtime),
     });
     return session;
   }
 
-  private shouldCollectFileArtifacts(runtime: ProjectRuntime): boolean {
-    return resolve(runtime.projectRoot) !== resolve(this.options.pilotHome);
+  private fileArtifactPolicy(runtime: ProjectRuntime): {
+    artifactAllowWorkspaceDiff: boolean;
+    artifactAllowedExtensions?: string[];
+  } {
+    const isGeneral = isGeneralProjectKey(runtime.projectRoot, this.options.pilotHome);
+    if (!isGeneral) {
+      return { artifactAllowWorkspaceDiff: true };
+    }
+    return {
+      artifactAllowWorkspaceDiff: false,
+      artifactAllowedExtensions: [".pdf", ".docx", ".pptx", ".xlsx", ".svg", ".html"],
+    };
   }
 
   private async prepareSessionRuntime(context: GatewaySessionContext) {
@@ -1054,6 +1600,16 @@ class ProjectRuntimeRegistry {
       eventEmitter: eventBuf.emitter,
       drainEvents: eventBuf.drain,
       tokenAccounting: runtime.tokenAccounting,
+      profileRegistry: runtime.pluginRuntime.profiles(),
+      isModelAvailable: (provider, model) =>
+        runtime.snapshot.config.model.providers[provider]?.models[model] !== undefined,
+      getModelMultimodal: (provider, model) => {
+        try {
+          return runtime.model.getMultimodal(provider, model);
+        } catch {
+          return undefined;
+        }
+      },
       getModelMaxContextTokens: (provider, model) => resolveRoutedModelMaxContextTokens({
         modelRuntime: runtime.model,
         agentModel: runtime.snapshot.config.agent.model,
@@ -1256,7 +1812,21 @@ class ProjectRuntimeRegistry {
     const agent = runtime.snapshot.config.agent;
     const override = this._sessionOverrides?.get(sessionKey);
     const permissionMode = override?.permissionMode ?? this.options.permissionMode;
-    const cwd = override?.cwd ?? runtime.projectRoot;
+    const agentCwd = resolveAgentCwd(runtime.projectRoot, this.options.pilotHome);
+    ensureWorkspaceLayout(agentCwd);
+    const cwd = override?.cwd ?? agentCwd;
+    const linkedDirs = resolveAgentAdditionalWorkingDirectories(
+      runtime.projectRoot,
+      this.options.pilotHome,
+    );
+    const additionalWorkingDirectories = [
+      ...(this.options.additionalWorkingDirectories ?? []),
+      ...linkedDirs.filter(
+        (dir) => !this.options.additionalWorkingDirectories?.some(
+          (existing) => resolve(existing) === resolve(dir),
+        ),
+      ),
+    ];
     // Hand `PermissionContext` the same live rule-set reference the
     // gateway permission hook owns (see `getLiveRuleSet`). With this
     // shared reference, an "allow + remember" decision pushed by the
@@ -1298,7 +1868,7 @@ class ProjectRuntimeRegistry {
         mode: permissionMode,
         canPrompt: override?.canPrompt ?? true,
         bypassAvailable: override?.bypassAvailable ?? true,
-        additionalWorkingDirectories: this.options.additionalWorkingDirectories,
+        additionalWorkingDirectories,
         rules: {
           allow: liveRuleSet.allow,
           deny: liveRuleSet.deny,

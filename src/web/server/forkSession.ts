@@ -12,7 +12,7 @@ import { chmod, cp, mkdir, readdir, readFile, stat, writeFile } from "node:fs/pr
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { platform } from "node:process";
 import type { CanonicalContentBlock, CanonicalMessage } from "../../model/index.js";
-import { getPilotProjectChatDir } from "../../pilot/index.js";
+import { getPilotProjectChatDir, resolveGatewayProjectKey } from "../../pilot/index.js";
 import { readTranscript } from "../../session/transcript/TranscriptReader.js";
 import {
   sanitizeSessionIdForPath,
@@ -451,7 +451,10 @@ export async function forkWebSession(
   input: WebForkSessionInput,
   options: ForkWebSessionOptions,
 ): Promise<WebForkSessionResult> {
-  const effectiveProjectRoot = input.projectKey ?? options.projectRoot;
+  const effectiveProjectRoot = resolveGatewayProjectKey(
+    input.projectKey ?? options.projectRoot,
+    options.pilotHome,
+  );
   const chatDir = getPilotProjectChatDir(effectiveProjectRoot, options.pilotHome);
   const sourceSafeId = sanitizeSessionIdForPath(input.sessionKey);
   const sourceTranscriptPath = resolve(chatDir, `${sourceSafeId}.jsonl`);

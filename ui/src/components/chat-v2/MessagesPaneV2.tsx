@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { Dispatch, ReactNode, RefObject, SetStateAction } from 'react';
+import type { Dispatch, MutableRefObject, ReactNode, RefObject, SetStateAction } from 'react';
 import { useTranslation } from 'react-i18next';
-import { XCircle, GitBranch } from 'lucide-react';
+import { GitBranch, XCircle } from 'lucide-react';
 import type {
   ChatMessage,
   ChatRunMode,
@@ -12,8 +12,10 @@ import type {
 } from '../chat/types/types';
 import type { SessionStore } from '../../stores/useSessionStore';
 import { getSessionRequestParams, isReadOnlySession, type Project, type ProjectSession, type SessionProvider } from '../../types/app';
+import { resolveProjectType } from '../app-shell/appShellSelection';
+import TraumaNewConversationEmptyState from '../trauma-workspace/TraumaNewConversationEmptyState';
 import { getIntrinsicMessageKey } from '../chat/utils/messageKeys';
-import MessageRowV2 from './MessageRowV2';
+import MessageRowV2, { type LastTurnEditController } from './MessageRowV2';
 import SubagentDetailModal from './SubagentDetailModal';
 import ChatHistorySearchBar from './ChatHistorySearchBar';
 import { useRegisterChatHistorySearchControls } from './ChatHistorySearchController';
@@ -22,6 +24,7 @@ import type { SearchableChatMessageInput } from './chatHistorySearchUtils';
 import { useSubagentMessages } from './useSubagentMessages';
 import { ProcessLiveStatus, ProcessRunHeader, StreamingThinkingPreview, type ProcessTraceStep } from './ProcessTrace';
 import { formatProcessDuration } from './processTraceUtils';
+import { getToolDisplayName } from '../chat/tools/configs/toolConfigs';
 import {
   buildRenderableMessageItems,
   getLiveProcessDetailMessages,
@@ -35,6 +38,8 @@ import {
   type LiveProcessGroup,
   type RenderableMessageItem,
 } from './processGrouping';
+import { getStorageUserId } from '../../utils/safeStorage';
+import { sanitizeUserIdFor } from '../../utils/pathSanitization';
 
 type DiffLine = { type: string; content: string; lineNum: number };
 
@@ -54,6 +59,7 @@ type MessagesPaneV2Props = {
   totalMessages: number;
   loadEarlierMessages: () => void;
   loadAllMessages: () => void;
+  navigateToChatMessageRef?: MutableRefObject<((runId: string) => void | Promise<void>) | null>;
   allMessagesLoaded: boolean;
   isLoadingAllMessages: boolean;
   provider: SessionProvider;
@@ -65,6 +71,7 @@ type MessagesPaneV2Props = {
   onGrantSessionToolPermission?: (
     suggestion: PilotDeckPermissionSuggestion,
   ) => SessionPermissionGrantResult | null | undefined;
+  showProcessTrace?: boolean;
   autoExpandTools?: boolean;
   showRawParameters?: boolean;
   showThinking?: boolean;
@@ -78,6 +85,7 @@ type MessagesPaneV2Props = {
   onFork?: (message: ChatMessage, carriedMessageCount: number) => void;
   forkDisabled?: boolean;
   forkParentSessionTitle?: string | null;
+  lastTurnEdit?: LastTurnEditController;
 };
 
 type KeyedRenderableMessageItem = RenderableMessageItem & {
@@ -85,6 +93,8 @@ type KeyedRenderableMessageItem = RenderableMessageItem & {
   renderIndex: number;
   estimatedHeight: number;
 };
+
+type AssistantTurnPanelPosition = 'single' | 'start' | 'middle' | 'end';
 
 export type VirtualMessageWindow = {
   startIndex: number;
@@ -125,6 +135,99 @@ function isRenderableAssistantProse(message: ChatMessage): boolean {
 function isSubagentThinkingPlaceholder(message: ChatMessage): boolean {
   const id = String(message.id || '');
   return Boolean(message.isThinking && (id.startsWith('subagent_thinking_') || id.startsWith('__subagent_thinking_')));
+}
+
+function isFinalOnlySafetyMessage(message: ChatMessage, includeArtifacts: boolean): boolean {
+  return Boolean(
+    message.type === 'error' ||
+    message.isInteractivePrompt ||
+    message.isInterruptedNotice ||
+    message.toolResult?.isError ||
+    (includeArtifacts && Array.isArray(message.artifacts) && message.artifacts.length > 0),
+  );
+}
+
+function isFinalAssistantResult(message: ChatMessage): boolean {
+  return (
+    message.type === 'assistant' &&
+    !message.isToolUse &&
+    !message.isThinking &&
+    !message.isStreaming &&
+    !message.isInteractivePrompt &&
+    !message.isSubagentContainer &&
+    !message.isTaskNotification &&
+    !message.isAgentActivity &&
+    !message.isAgentActivitySummary &&
+    typeof message.content === 'string' &&
+    message.content.trim().length > 0
+  );
+}
+
+function isDirectToolOutput(message: ChatMessage): boolean {
+  const metadata = message.metadata;
+  return Boolean(
+    metadata
+    && typeof metadata === 'object'
+    && !Array.isArray(metadata)
+    && (metadata as Record<string, unknown>).directToolOutput === true,
+  );
+}
+
+
+// This is a presentation projection only. The complete message stream remains
+// in the session store and JSONL transcript for audit and replay.
+// eslint-disable-next-line react-refresh/only-export-components
+export function filterMessagesForFinalOnly(
+  messages: ChatMessage[],
+  isAssistantWorking: boolean,
+): ChatMessage[] {
+  const userIndexes = messages.reduce<number[]>((indexes, message, index) => {
+    if (message.type === 'user') indexes.push(index);
+    return indexes;
+  }, []);
+  const lastUserIndex = userIndexes[userIndexes.length - 1] ?? -1;
+  const finalAssistantIndexes = new Set<number>();
+
+  userIndexes.forEach((userIndex, turnIndex) => {
+    const turnEnd = userIndexes[turnIndex + 1] ?? messages.length;
+    const isActiveTurn = isAssistantWorking && userIndex === lastUserIndex;
+    if (isActiveTurn) return;
+
+    const directToolOutputIndex = messages.findIndex((message, index) => (
+      index > userIndex
+      && index < turnEnd
+      && isFinalAssistantResult(message)
+      && isDirectToolOutput(message)
+    ));
+    if (directToolOutputIndex >= 0) {
+      finalAssistantIndexes.add(directToolOutputIndex);
+      return;
+    }
+
+
+    for (let index = turnEnd - 1; index > userIndex; index -= 1) {
+      if (isFinalAssistantResult(messages[index])) {
+        finalAssistantIndexes.add(index);
+        break;
+      }
+    }
+  });
+
+  return messages.flatMap((message, index) => {
+    if (finalAssistantIndexes.has(index)) {
+      return [message];
+    }
+    if (
+      message.type === 'user' ||
+      isFinalOnlySafetyMessage(
+        message,
+        !isAssistantWorking || index <= lastUserIndex,
+      )
+    ) {
+      return [message];
+    }
+    return [];
+  });
 }
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -212,6 +315,7 @@ function MeasuredMessageItem({
   message,
   isLast,
   compactBottomSpacing = false,
+  assistantTurnPanelPosition,
   onHeightChange,
   children,
 }: {
@@ -219,6 +323,7 @@ function MeasuredMessageItem({
   message: ChatMessage;
   isLast: boolean;
   compactBottomSpacing?: boolean;
+  assistantTurnPanelPosition?: AssistantTurnPanelPosition | null;
   onHeightChange: (itemKey: string, height: number) => void;
   children: ReactNode;
 }) {
@@ -258,13 +363,47 @@ function MeasuredMessageItem({
   return (
     <div
       ref={itemRef}
-      className={`chat-message ${isLast ? '' : compactBottomSpacing ? 'pb-2' : 'pb-4'}`}
+      className={`chat-message ${assistantTurnPanelPosition ? `pd-assistant-turn-item pd-assistant-turn-${assistantTurnPanelPosition}` : ''} ${isLast ? '' : compactBottomSpacing ? 'pb-2' : 'pb-4'}`}
       data-message-key={itemKey}
+      data-message-run-id={typeof message.runId === 'string' ? message.runId : undefined}
+      data-message-turn-id={typeof message.turnId === 'string' ? message.turnId : undefined}
       data-message-timestamp={message.timestamp ? String(message.timestamp) : undefined}
     >
-      {children}
+      {assistantTurnPanelPosition ? (
+        <div className={`pd-assistant-turn-surface pd-assistant-turn-surface-${assistantTurnPanelPosition}`}>
+          {children}
+        </div>
+      ) : children}
     </div>
   );
+}
+
+function getAssistantTurnAnchor(items: KeyedRenderableMessageItem[], index: number): string | null {
+  const item = items[index];
+  if (!item || item.message.type === 'user') return null;
+
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    const candidate = items[cursor];
+    if (candidate.message.type === 'user') return candidate.itemKey;
+  }
+
+  return 'assistant-turn-before-first-user';
+}
+
+function getAssistantTurnPanelPosition(
+  items: KeyedRenderableMessageItem[],
+  index: number,
+): AssistantTurnPanelPosition | null {
+  const anchor = getAssistantTurnAnchor(items, index);
+  if (!anchor) return null;
+
+  const joinsPrevious = getAssistantTurnAnchor(items, index - 1) === anchor;
+  const joinsNext = getAssistantTurnAnchor(items, index + 1) === anchor;
+
+  if (joinsPrevious && joinsNext) return 'middle';
+  if (joinsPrevious) return 'end';
+  if (joinsNext) return 'start';
+  return 'single';
 }
 
 function countCarriedMessagesBefore(
@@ -319,6 +458,7 @@ function MessagesPaneV2({
   totalMessages,
   loadEarlierMessages,
   loadAllMessages,
+  navigateToChatMessageRef,
   allMessagesLoaded,
   isLoadingAllMessages,
   provider,
@@ -328,6 +468,7 @@ function MessagesPaneV2({
   onFileOpen,
   onShowSettings,
   onGrantSessionToolPermission,
+  showProcessTrace = true,
   autoExpandTools,
   showRawParameters,
   showThinking,
@@ -341,7 +482,9 @@ function MessagesPaneV2({
   onFork,
   forkDisabled = false,
   forkParentSessionTitle = null,
+  lastTurnEdit,
 }: MessagesPaneV2Props) {
+  const sanitizeForUserId = sanitizeUserIdFor(getStorageUserId());
   const resolvedPlanModeActive = planModeActive || runMode === 'plan';
   const { t } = useTranslation('chat');
   const messageKeyMapRef = useRef<WeakMap<ChatMessage, string>>(new WeakMap());
@@ -352,16 +495,27 @@ function MessagesPaneV2({
   const [scrollViewport, setScrollViewport] = useState({ scrollTop: 0, height: 0 });
   const [expandedProcessRows, setExpandedProcessRows] = useState<Map<string, boolean>>(() => new Map());
   const [openSubagentId, setOpenSubagentId] = useState<string | null>(null);
-  const wasAssistantWorkingRef = useRef(isAssistantWorking);
+  const hasStoppedTraumaTurn = useMemo(() => {
+    let lastUserIndex = -1;
+    visibleMessages.forEach((message, index) => {
+      if (message.type === 'user') lastUserIndex = index;
+    });
+    return visibleMessages.slice(lastUserIndex + 1).some((message) => (
+      message.isInterruptedNotice
+      && String(message.content || '').trim() === '本轮推演已停止。'
+    ));
+  }, [visibleMessages]);
+  const isEffectiveAssistantWorking = isAssistantWorking && !hasStoppedTraumaTurn;
+  const wasAssistantWorkingRef = useRef(isEffectiveAssistantWorking);
 
-  // After the assistant turn finishes, live process panels unmount and completed
-  // summaries should start collapsed — drop any expand prefs from the live turn.
+  // After the assistant turn finishes, live process panels unmount. Drop live
+  // expand prefs so the completed last-turn summaries can use their own default.
   useEffect(() => {
-    if (wasAssistantWorkingRef.current && !isAssistantWorking) {
+    if (wasAssistantWorkingRef.current && !isEffectiveAssistantWorking) {
       setExpandedProcessRows(new Map());
     }
-    wasAssistantWorkingRef.current = isAssistantWorking;
-  }, [isAssistantWorking]);
+    wasAssistantWorkingRef.current = isEffectiveAssistantWorking;
+  }, [isEffectiveAssistantWorking]);
 
   const handleOpenSubagentDetail = useCallback((subagentId: string) => {
     setOpenSubagentId(subagentId);
@@ -370,6 +524,14 @@ function MessagesPaneV2({
   const sessionId = selectedSession?.id ?? null;
   const messageWindowScope = `${selectedProject?.fullPath || selectedProject?.name || 'no-project'}:${sessionId ?? 'new-session'}`;
   const projectPath = selectedProject?.fullPath || selectedProject?.path || undefined;
+
+  useEffect(() => {
+    setExpandedProcessRows(new Map());
+  }, [messageWindowScope]);
+
+  useEffect(() => {
+    if (!showProcessTrace) setOpenSubagentId(null);
+  }, [showProcessTrace]);
 
   const getMessageKey = useCallback((message: ChatMessage, index: number) => {
     const existingKey = messageKeyMapRef.current.get(message);
@@ -416,8 +578,10 @@ function MessagesPaneV2({
   const isExistingConversationEmpty = isEmpty && Boolean(selectedSession) && !hasSessionLoadError;
   const sessionIsReadOnly = isReadOnlySession(selectedSession);
   const liveActivities = useMemo(
-    () => activityMessages.filter((message) => message.isAgentActivity),
-    [activityMessages],
+    () => activityMessages.filter((message) => (
+      message.isAgentActivity && (showProcessTrace || message.phase === 'medical')
+    )),
+    [activityMessages, showProcessTrace],
   );
   const subagentActivities = useMemo(
     () => liveActivities.filter(isSubagentActivity),
@@ -488,7 +652,10 @@ function MessagesPaneV2({
   );
   const renderableMessages = useMemo(
     () => {
-      const lastUserIndex = isAssistantWorking
+      if (!showProcessTrace) {
+        return filterMessagesForFinalOnly(visibleMessages, isEffectiveAssistantWorking);
+      }
+      const lastUserIndex = isEffectiveAssistantWorking
         ? visibleMessages.reduce((lastIndex, message, index) => (
             message.type === 'user' ? index : lastIndex
           ), -1)
@@ -496,24 +663,26 @@ function MessagesPaneV2({
       const filtered = visibleMessages.filter((message, index) =>
         !message.isAgentActivity &&
         !isSubagentThinkingPlaceholder(message) &&
-        !(isAssistantWorking && message.isThinking && !message.isStreaming && index < lastUserIndex) &&
+        !(isEffectiveAssistantWorking && message.isThinking && !message.isStreaming && index < lastUserIndex) &&
         (!inlineThinking && isStreamingThinkingMessage(message) ? false : true) &&
         !(message.isThinking && !showThinking)
       );
       return filtered;
     },
-    [visibleMessages, showThinking, inlineThinking, isAssistantWorking],
+    [visibleMessages, showProcessTrace, showThinking, inlineThinking, isEffectiveAssistantWorking],
   );
   const liveProcessDetailMessages = useMemo(
-    () => isAssistantWorking ? getLiveProcessDetailMessages(renderableMessages) : [],
-    [isAssistantWorking, renderableMessages],
+    () => showProcessTrace && isEffectiveAssistantWorking
+      ? getLiveProcessDetailMessages(renderableMessages)
+      : [],
+    [isEffectiveAssistantWorking, renderableMessages, showProcessTrace],
   );
   const liveProcessGroups = useMemo(
-    () => isAssistantWorking
-      ? getLiveProcessGroups(renderableMessages, { isAssistantWorking })
+    () => showProcessTrace && isEffectiveAssistantWorking
+      ? getLiveProcessGroups(renderableMessages, { isAssistantWorking: true })
         .filter((group) => shouldRenderLiveProcessGroup(group, runMode))
       : [],
-    [isAssistantWorking, renderableMessages, runMode],
+    [isEffectiveAssistantWorking, renderableMessages, runMode, showProcessTrace],
   );
   const liveProcessGroupsByAnchor = useMemo(() => {
     const groupsByAnchor = new Map<number, LiveProcessGroup[]>();
@@ -525,8 +694,17 @@ function MessagesPaneV2({
     return groupsByAnchor;
   }, [liveProcessGroups]);
   const renderableMessageItems = useMemo(
-    () => buildRenderableMessageItems(renderableMessages, { isAssistantWorking }),
-    [isAssistantWorking, renderableMessages],
+    () => showProcessTrace
+      ? buildRenderableMessageItems(renderableMessages, { isAssistantWorking: isEffectiveAssistantWorking })
+      : renderableMessages.map((message, originalIndex) => ({
+        message,
+        originalIndex,
+        beforeRunAttachment: null,
+        afterRunAttachment: null,
+        beforeProcessAttachments: [],
+        afterProcessAttachments: [],
+      })),
+    [isEffectiveAssistantWorking, renderableMessages, showProcessTrace],
   );
   const keyedMessageItems = useMemo<KeyedRenderableMessageItem[]>(
     () => renderableMessageItems.map((item, index) => ({
@@ -544,6 +722,7 @@ function MessagesPaneV2({
     void heightVersion;
     return keyedMessageItems.map((item) => measuredHeightsRef.current.get(item.itemKey) ?? item.estimatedHeight);
   }, [heightVersion, keyedMessageItems]);
+  const lastUserRenderIndex = keyedMessageItems.reduce((last, item) => item.message.type === 'user' ? item.renderIndex : last, -1);
   const shouldVirtualizeMessages = keyedMessageItems.length > MESSAGE_VIRTUALIZATION_THRESHOLD;
   const virtualWindow = useMemo(
     () => shouldVirtualizeMessages
@@ -565,29 +744,30 @@ function MessagesPaneV2({
   const windowedMessageItems = shouldVirtualizeMessages
     ? keyedMessageItems.slice(virtualWindow.startIndex, virtualWindow.endIndex)
     : keyedMessageItems;
+  const [pendingNavigationRunId, setPendingNavigationRunId] = useState<string | null>(null);
   const liveProcessHeaderIndex = useMemo(() => {
-    if (!isAssistantWorking) return -1;
+    if (!isEffectiveAssistantWorking) return -1;
     for (let index = keyedMessageItems.length - 1; index >= 0; index -= 1) {
       if (keyedMessageItems[index].message.type === 'user') {
         return Math.min(index + 1, keyedMessageItems.length);
       }
     }
     return keyedMessageItems.length > 0 ? 0 : -1;
-  }, [isAssistantWorking, keyedMessageItems]);
+  }, [isEffectiveAssistantWorking, keyedMessageItems]);
   // The current turn's "started at" is anchored to the latest user message's
   // timestamp (set by the composer when the user submits). This is the only
   // signal that survives a page refresh and reliably resets between turns —
   // activity-based timing is unreliable because `activityMessages` accumulates
   // across turns in the session store.
   const liveProcessStartedAtMs = useMemo(() => {
-    if (!isAssistantWorking || liveProcessHeaderIndex <= 0) return null;
+    if (!isEffectiveAssistantWorking || liveProcessHeaderIndex <= 0) return null;
     const anchorMessage = keyedMessageItems[liveProcessHeaderIndex - 1]?.message;
     if (anchorMessage?.type !== 'user' || anchorMessage.timestamp == null) return null;
     const parsed = Date.parse(String(anchorMessage.timestamp));
     return Number.isFinite(parsed) ? parsed : null;
-  }, [isAssistantWorking, keyedMessageItems, liveProcessHeaderIndex]);
+  }, [isEffectiveAssistantWorking, keyedMessageItems, liveProcessHeaderIndex]);
   const hasLiveAssistantContent = useMemo(() => {
-    if (!isAssistantWorking || liveProcessHeaderIndex < 0) return false;
+    if (!isEffectiveAssistantWorking || liveProcessHeaderIndex < 0) return false;
     return keyedMessageItems.slice(liveProcessHeaderIndex).some((item) => (
       item.message.type === 'assistant' &&
       !item.message.isThinking &&
@@ -595,9 +775,9 @@ function MessagesPaneV2({
       typeof item.message.content === 'string' &&
       item.message.content.trim().length > 0
     ));
-  }, [isAssistantWorking, keyedMessageItems, liveProcessHeaderIndex]);
+  }, [isEffectiveAssistantWorking, keyedMessageItems, liveProcessHeaderIndex]);
   const hasPendingToolUse = useMemo(() => {
-    if (!isAssistantWorking || liveProcessHeaderIndex < 0) return false;
+    if (!isEffectiveAssistantWorking || liveProcessHeaderIndex < 0) return false;
     const liveItems = keyedMessageItems.slice(liveProcessHeaderIndex);
     let lastToolUseIdx = -1;
     for (let index = liveItems.length - 1; index >= 0; index -= 1) {
@@ -612,13 +792,13 @@ function MessagesPaneV2({
       typeof item.message.content === 'string' && item.message.content.trim().length > 0
     );
     return !hasContentAfterTool;
-  }, [isAssistantWorking, keyedMessageItems, liveProcessHeaderIndex]);
+  }, [isEffectiveAssistantWorking, keyedMessageItems, liveProcessHeaderIndex]);
   const runningSubagentActivity = useMemo(
     () => [...subagentActivities].reverse().find(isRunningActivity) || null,
     [subagentActivities],
   );
   const streamingThinkingContent = useMemo(() => {
-    if (!showThinking || !isAssistantWorking) {
+    if (!showProcessTrace || !showThinking || !isEffectiveAssistantWorking) {
       return null;
     }
     for (let i = visibleMessages.length - 1; i >= 0; i--) {
@@ -629,8 +809,59 @@ function MessagesPaneV2({
       if (msg.type === 'user') break;
     }
     return null;
-  }, [showThinking, isAssistantWorking, visibleMessages]);
+  }, [showProcessTrace, showThinking, isEffectiveAssistantWorking, visibleMessages]);
+  const finalOnlyCompletedToolSteps = useMemo<ProcessTraceStep[]>(() => {
+    if (showProcessTrace || !isEffectiveAssistantWorking) return [];
+    let lastUserIndex = -1;
+    visibleMessages.forEach((message, index) => {
+      if (message.type === 'user') lastUserIndex = index;
+    });
+    return visibleMessages
+      .slice(lastUserIndex + 1)
+      .filter((message) => (
+        message.isToolUse &&
+        Boolean(message.toolResult) &&
+        !message.toolResult?.isError &&
+        typeof message.toolName === 'string' &&
+        message.toolName.trim().length > 0
+      ))
+      .map((message, index) => ({
+        id: `final-only-tool-${message.id || index}`,
+        title: getToolDisplayName(String(message.toolName)),
+        phase: 'tool',
+        toolName: message.toolName,
+        state: 'completed',
+      }));
+  }, [isEffectiveAssistantWorking, showProcessTrace, visibleMessages]);
   const liveStatusStep = useMemo<ProcessTraceStep>(() => {
+    if (!showProcessTrace) {
+      const latestMedicalActivity = [...nonSubagentLiveActivities]
+        .reverse()
+        .find((activity) => activity.phase === 'medical');
+      if (latestMedicalActivity) {
+        return activityToLiveStep(latestMedicalActivity);
+      }
+      if (String(workingStatus?.text || '').toLowerCase().includes('uploading_attachments')) {
+        return {
+          id: 'final-only-uploading',
+          title: t('working.uploadingAttachments', { defaultValue: 'Uploading files...' }),
+          phase: 'upload',
+          state: 'running',
+        };
+      }
+      const latestCompletedCall = finalOnlyCompletedToolSteps[finalOnlyCompletedToolSteps.length - 1];
+      return {
+        id: 'final-only-processing',
+        title: latestCompletedCall
+          ? t('working.completedCalls', {
+              latest: latestCompletedCall.title,
+              defaultValue: `Completed: ${latestCompletedCall.title}`,
+            })
+          : t('working.processing', { defaultValue: 'Processing' }),
+        phase: 'working',
+        state: 'running',
+      };
+    }
     if (streamingThinkingContent) {
       return {
         id: 'live-thinking',
@@ -653,13 +884,15 @@ function MessagesPaneV2({
     hasLiveAssistantContent,
     hasPendingToolUse,
     nonSubagentLiveActivities,
+    finalOnlyCompletedToolSteps,
     runningSubagentActivity,
+    showProcessTrace,
     streamingThinkingContent,
     t,
     workingStatus,
   ]);
   const hasOpenEndedLiveProcessGroup = liveProcessGroups.some((group) => group.isRunning);
-  const shouldRenderBottomLiveStatus = isAssistantWorking && !hasOpenEndedLiveProcessGroup;
+  const shouldRenderBottomLiveStatus = isEffectiveAssistantWorking && !hasOpenEndedLiveProcessGroup;
 
   const bumpHeightVersion = useCallback(() => {
     if (heightVersionRafRef.current !== null) return;
@@ -770,6 +1003,85 @@ function MessagesPaneV2({
     ));
   }, [keyedMessageItems, messageWindowScope, scrollContainerRef]);
 
+  const findMessageNodeByRunId = useCallback((runId: string) => {
+    const nodes = scrollContainerRef.current?.querySelectorAll<HTMLElement>('.chat-message') ?? [];
+    return Array.from(nodes).find((node) => (
+      node.dataset.messageRunId === runId || node.dataset.messageTurnId === runId
+    )) ?? null;
+  }, [scrollContainerRef]);
+
+  const scrollToNode = useCallback((node: HTMLElement) => {
+    node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, []);
+
+  useEffect(() => {
+    if (!navigateToChatMessageRef) return undefined;
+    navigateToChatMessageRef.current = async (runId: string) => {
+      const target = runId.trim();
+      if (!target) return;
+      setPendingNavigationRunId(target);
+      const hasVisibleTarget = keyedMessageItems.some((item) => (
+        item.message.type === 'user'
+        && (item.message.runId === target || item.message.turnId === target)
+      ));
+      if (!hasVisibleTarget && !allMessagesLoaded && !isLoadingAllMessages) {
+        await loadAllMessages();
+      }
+    };
+    return () => {
+      if (navigateToChatMessageRef.current) {
+        navigateToChatMessageRef.current = null;
+      }
+    };
+  }, [
+    allMessagesLoaded,
+    isLoadingAllMessages,
+    keyedMessageItems,
+    loadAllMessages,
+    navigateToChatMessageRef,
+  ]);
+
+  useEffect(() => {
+    if (!pendingNavigationRunId || isLoadingAllMessages) return;
+    const targetIndex = keyedMessageItems.findIndex((item) => (
+      item.message.type === 'user'
+      && (item.message.runId === pendingNavigationRunId || item.message.turnId === pendingNavigationRunId)
+    ));
+    if (targetIndex < 0) return;
+
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const targetMounted = findMessageNodeByRunId(pendingNavigationRunId);
+    if (targetMounted) {
+      scrollToNode(targetMounted);
+      setPendingNavigationRunId(null);
+      return;
+    }
+
+    const approximateTop = measuredItemHeights
+      .slice(0, targetIndex)
+      .reduce((sum, height) => sum + height, 0);
+    const nextScrollTop = Math.max(0, approximateTop - 120);
+    container.scrollTop = nextScrollTop;
+    setScrollViewport({ scrollTop: nextScrollTop, height: container.clientHeight || 900 });
+
+    window.requestAnimationFrame(() => {
+      const node = findMessageNodeByRunId(pendingNavigationRunId);
+      if (node) {
+        scrollToNode(node);
+        setPendingNavigationRunId(null);
+      }
+    });
+  }, [
+    findMessageNodeByRunId,
+    isLoadingAllMessages,
+    keyedMessageItems,
+    measuredItemHeights,
+    pendingNavigationRunId,
+    scrollToNode,
+    scrollContainerRef,
+  ]);
+
   const renderLiveProcessDetailMessages = useCallback((detailMessages: ChatMessage[], groupId: string) => (
     detailMessages.map((message: ChatMessage, index: number) => (
       <MessageRowV2
@@ -792,7 +1104,7 @@ function MessagesPaneV2({
         onOpenSubagentDetail={handleOpenSubagentDetail}
         subagentActivityById={subagentActivityById}
         subagentThinkingById={subagentThinkingById}
-        isSessionRunning={isAssistantWorking}
+        isSessionRunning={isEffectiveAssistantWorking}
       />
     ))
   ), [
@@ -812,15 +1124,15 @@ function MessagesPaneV2({
     handleProcessExpandedChange,
     showRawParameters,
     showThinking,
-    isAssistantWorking,
+    isEffectiveAssistantWorking,
   ]);
 
   const renderLiveProcessGroup = useCallback((group: LiveProcessGroup, index: number) => {
     const isLatestGroup = liveProcessGroups[liveProcessGroups.length - 1]?.id === group.id;
     const step = getLiveProcessGroupStep(group, t, group.isRunning && isLatestGroup ? liveStatusStep : null);
     const showWebFetchWaiting = shouldShowWebFetchWaitingHint(group, resolvedPlanModeActive);
-    const toolSteps = getLiveProcessToolNameSteps(group);
-    const defaultExpanded = isAssistantWorking && toolSteps.length > 0;
+    const toolSteps = getLiveProcessToolNameSteps(group, { sanitizeForUserId });
+    const defaultExpanded = false;
     const expanded = isProcessExpanded(group.id, defaultExpanded);
     const { beforeStatusMessages, statusDetailMessages } = splitLiveProcessGroupDetailMessages(group);
     return (
@@ -851,33 +1163,45 @@ function MessagesPaneV2({
     );
   }, [
     handleProcessExpandedChange,
-    isAssistantWorking,
     isProcessExpanded,
     liveProcessGroups,
     liveStatusStep,
     resolvedPlanModeActive,
     renderLiveProcessDetailMessages,
+    sanitizeForUserId,
     t,
   ]);
 
   const renderMessageItem = useCallback((item: KeyedRenderableMessageItem) => {
-    const previousMessage = item.renderIndex > 0 ? keyedMessageItems[item.renderIndex - 1].message : null;
+    const previousItem = item.renderIndex > 0 ? keyedMessageItems[item.renderIndex - 1] : null;
+    const previousMessage = previousItem?.message ?? null;
     const nextMessage = item.renderIndex < keyedMessageItems.length - 1
       ? keyedMessageItems[item.renderIndex + 1].message
       : null;
-    const isLast = !isAssistantWorking && item.renderIndex === keyedMessageItems.length - 1;
+    const isLast = !isEffectiveAssistantWorking && item.renderIndex === keyedMessageItems.length - 1;
     const forkCarriedMessageCount = countForkCarriedMessages(
       renderableMessages,
       item.originalIndex,
       item.message,
     );
     const anchoredLiveGroups = liveProcessGroupsByAnchor.get(item.originalIndex) || [];
-    const rendersLiveHeaderAfterItem = item.renderIndex === liveProcessHeaderIndex - 1;
+    const rendersLiveHeaderAfterItem = showProcessTrace && item.renderIndex === liveProcessHeaderIndex - 1;
+    const assistantTurnPanelPosition = getAssistantTurnPanelPosition(
+      keyedMessageItems,
+      item.renderIndex,
+    );
+    const carriedRunAttachment = assistantTurnPanelPosition
+      && previousItem?.message.type === 'user'
+      ? previousItem.afterRunAttachment
+      : null;
+    const defersRunAttachmentToAssistantPanel = item.message.type === 'user'
+      && item.afterRunAttachment
+      && getAssistantTurnPanelPosition(keyedMessageItems, item.renderIndex + 1) !== null;
     const showAssistantActions = (() => {
       if (!isRenderableAssistantProse(item.message)) {
         return false;
       }
-      if (isAssistantWorking && item.renderIndex >= liveProcessHeaderIndex) {
+      if (isEffectiveAssistantWorking && item.renderIndex >= liveProcessHeaderIndex) {
         return false;
       }
 
@@ -901,7 +1225,7 @@ function MessagesPaneV2({
 
     return (
       <Fragment key={item.itemKey}>
-        {liveProcessHeaderIndex === 0 && item.renderIndex === 0 ? (
+        {showProcessTrace && liveProcessHeaderIndex === 0 && item.renderIndex === 0 ? (
           <LiveProcessHeader
             activities={nonSubagentLiveActivities}
             startedAtMs={liveProcessStartedAtMs}
@@ -913,8 +1237,15 @@ function MessagesPaneV2({
           message={item.message}
           isLast={isLast}
           compactBottomSpacing={anchoredLiveGroups.length > 0 || rendersLiveHeaderAfterItem}
+          assistantTurnPanelPosition={assistantTurnPanelPosition}
           onHeightChange={handleMeasuredItemHeight}
         >
+          {carriedRunAttachment ? (
+            <CompletedProcessHeader
+              durationMs={carriedRunAttachment.durationMs}
+              t={t}
+            />
+          ) : null}
           {item.beforeRunAttachment ? (
             <CompletedProcessHeader
               durationMs={item.beforeRunAttachment.durationMs}
@@ -939,23 +1270,27 @@ function MessagesPaneV2({
             inlineThinking={inlineThinking}
             isProcessExpanded={isProcessExpanded}
             onProcessExpandedChange={handleProcessExpandedChange}
+            defaultProcessExpanded={false}
             onOpenSubagentDetail={handleOpenSubagentDetail}
             subagentActivityById={subagentActivityById}
             subagentThinkingById={subagentThinkingById}
-            isSessionRunning={isAssistantWorking}
+            isSessionRunning={isEffectiveAssistantWorking}
             onFork={onFork}
             forkCarriedMessageCount={forkCarriedMessageCount}
             forkDisabled={forkDisabled}
             showAssistantActions={showAssistantActions}
+            lastTurnEdit={item.renderIndex === lastUserRenderIndex && item.message.type === 'user'
+              ? lastTurnEdit
+              : undefined}
           />
-          {rendersLiveHeaderAfterItem ? (
+          {showProcessTrace && rendersLiveHeaderAfterItem ? (
             <LiveProcessHeader
               activities={nonSubagentLiveActivities}
               startedAtMs={liveProcessStartedAtMs}
               t={t}
             />
           ) : null}
-          {item.afterRunAttachment ? (
+          {item.afterRunAttachment && !defersRunAttachmentToAssistantPanel ? (
             <CompletedProcessHeader
               durationMs={item.afterRunAttachment.durationMs}
               t={t}
@@ -977,7 +1312,7 @@ function MessagesPaneV2({
     handleProcessExpandedChange,
     inlineThinking,
     isProcessExpanded,
-    isAssistantWorking,
+    isEffectiveAssistantWorking,
     keyedMessageItems,
     renderableMessages,
     nonSubagentLiveActivities,
@@ -987,11 +1322,13 @@ function MessagesPaneV2({
     onFileOpen,
     onFork,
     forkDisabled,
+    lastTurnEdit, lastUserRenderIndex,
     onGrantSessionToolPermission,
     onShowSettings,
     provider,
     renderLiveProcessGroup,
     selectedProject,
+    showProcessTrace,
     showRawParameters,
     showThinking,
     subagentActivityById,
@@ -1020,6 +1357,8 @@ function MessagesPaneV2({
     renderWindowKey: `${virtualWindow.startIndex}:${virtualWindow.endIndex}`,
   });
   const searchIsRenderedByShell = useRegisterChatHistorySearchControls(chatHistorySearch);
+  const selectedProjectType = selectedProject ? resolveProjectType(selectedProject) : null;
+  const isWarTraumaProject = selectedProjectType === 'war_trauma';
 
   return (
     <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -1040,7 +1379,7 @@ function MessagesPaneV2({
         data-chat-search-surface
         onWheel={onWheel}
         onTouchMove={onTouchMove}
-        className="h-full overflow-y-auto overflow-x-hidden bg-white dark:bg-neutral-950"
+        className="h-full overflow-y-auto overflow-x-hidden bg-transparent"
       >
       {hasSessionLoadError ? (
         <div className="mx-auto flex h-full max-w-[720px] flex-col items-center justify-center gap-3 px-6 py-10 text-center">
@@ -1068,6 +1407,8 @@ function MessagesPaneV2({
             <span>{t('loading', { defaultValue: 'Loading...' })}</span>
           </div>
         </div>
+      ) : isNewConversationEmpty && isWarTraumaProject ? (
+        <TraumaNewConversationEmptyState />
       ) : isNewConversationEmpty ? (
         <div className="mx-auto flex h-full max-w-[720px] flex-col items-center justify-center gap-4 px-6 py-10 text-center">
           <div className="text-[15px] font-medium text-neutral-900 dark:text-neutral-100">
@@ -1131,7 +1472,8 @@ function MessagesPaneV2({
         </div>
       ) : (
         <div
-          className="mx-auto max-w-[860px] px-6 py-10"
+          key={messageWindowScope}
+          className="pd-conversation-enter mx-auto max-w-[860px] px-6 py-10"
           data-virtualized-messages={shouldVirtualizeMessages ? 'true' : undefined}
           data-rendered-message-count={windowedMessageItems.length}
           data-total-message-count={keyedMessageItems.length}
@@ -1202,7 +1544,7 @@ function MessagesPaneV2({
             <div aria-hidden="true" style={{ height: virtualWindow.bottomPadding }} />
           ) : null}
 
-          {isAssistantWorking &&
+          {showProcessTrace && isEffectiveAssistantWorking &&
           liveProcessHeaderIndex === keyedMessageItems.length &&
           keyedMessageItems[liveProcessHeaderIndex - 1]?.message.type !== 'user' ? (
             <LiveProcessHeader
@@ -1214,12 +1556,15 @@ function MessagesPaneV2({
 
           {shouldRenderBottomLiveStatus ? (
             <>
-              <ProcessLiveStatus step={liveStatusStep}>
-                {liveProcessDetailMessages.length > 0 && liveProcessGroups.length === 0
+              <ProcessLiveStatus
+                step={liveStatusStep}
+                steps={showProcessTrace ? [] : finalOnlyCompletedToolSteps}
+              >
+                {showProcessTrace && liveProcessDetailMessages.length > 0 && liveProcessGroups.length === 0
                   ? renderLiveProcessDetailMessages(liveProcessDetailMessages, 'bottom-live-process')
                   : null}
               </ProcessLiveStatus>
-              {!inlineThinking && streamingThinkingContent ? (
+              {showProcessTrace && !inlineThinking && streamingThinkingContent ? (
                 <StreamingThinkingPreview content={streamingThinkingContent} />
               ) : null}
             </>
@@ -1326,6 +1671,14 @@ function getLiveStatusStep(
   }
 
   const rawStatus = String(workingStatus?.text || '').toLowerCase();
+  if (rawStatus.includes('uploading_attachments')) {
+    return {
+      id: 'live-uploading',
+      title: t('working.uploadingAttachments', { defaultValue: 'Uploading files...' }),
+      phase: 'upload',
+      state: 'running',
+    };
+  }
   if (rawStatus.includes('model_request_started')) {
     if (hasPendingToolUse) {
       return {

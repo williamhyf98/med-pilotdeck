@@ -7,6 +7,18 @@ export interface MemoryMessage {
   msgId?: string;
   role: ChatRole;
   content: string;
+  attachmentEvidence?: MemoryAttachmentEvidence[];
+}
+
+/** Source material, never instructions or assistant conclusions. */
+export interface MemoryAttachmentEvidence {
+  sourceId: string;
+  sourceKind: "read_text" | "medical_parser_summary";
+  chunks: string[];
+  originalChars: number;
+  omittedChars: number;
+  /** Tool output may already be partial even when omittedChars is zero. */
+  possiblyPartial: boolean;
 }
 
 export type MemoryRoute = "none" | "user" | "project" | "mix";
@@ -72,6 +84,11 @@ export interface ProjectShortlistCandidate {
 export interface MemoryUserSummary {
   identityBackground: string[];
   files: MemoryFileRecord[];
+}
+
+export interface PresentationMemorySnapshot {
+  globalProfile?: string;
+  projectFeedback?: string;
 }
 
 export type ClearMemoryScope = "current_project" | "all_memory";
@@ -193,10 +210,23 @@ export type ReasoningMode = "answer_first" | "accuracy_first";
 export type DreamPipelineStatus = "running" | "success" | "skipped" | "failed";
 export type LastDreamSnapshotSourceAction = "dream" | "rollback";
 
+/**
+ * Task 10 —— 维护模式显式语义。
+ *
+ * - `immediate`：去掉时间门、保留内容门（`pendingSessions > 0` / `changedFiles > 0`）。
+ * - `interval`：现有行为——内容门 + 时间门。
+ * - `manual`：只有手动按钮触发，scheduled 路径跳过。
+ *
+ * **不复用 `intervalMinutes <= 0`**——那个语义保留为向后兼容的禁用开关，
+ * 与显式 `manual` 正交。
+ */
+export type MemoryMaintenanceMode = "immediate" | "interval" | "manual";
+
 export interface IndexingSettings {
   reasoningMode: ReasoningMode;
   autoIndexIntervalMinutes: number;
   autoDreamIntervalMinutes: number;
+  maintenanceMode: MemoryMaintenanceMode;
 }
 
 export type MemoryActionType =
@@ -702,6 +732,43 @@ export interface DashboardOverview {
   dashboardStatus?: DashboardStatus;
   dashboardWarning?: string | null;
   dashboardDiagnostics?: DashboardDiagnostics | null;
+  /** Task 10：当前生效的维护模式，Dashboard 直接展示。 */
+  maintenanceMode?: MemoryMaintenanceMode;
+  /** 待 Dream 的文件数（backlog 的另一半，pendingSessions 是 Index 那一半）。 */
+  changedFilesSinceLastDream?: number;
+  lastCapturedAt?: string;
+  /** 最近一次 Dream 失败/跳过的原因，成功后清空。 */
+  lastDreamFailureReason?: string;
+  /** 连续失败计数；达到阈值触发降级。 */
+  dreamConsecutiveFailures?: number;
+  /** 成本护栏触发记录：从 immediate 自动降级为 interval。 */
+  maintenanceDowngrade?: {
+    from: MemoryMaintenanceMode;
+    to: MemoryMaintenanceMode;
+    at: string;
+    reason: string;
+  } | null;
+}
+
+/**
+ * Task 10 —— 单轮对话在管线里的位置。
+ *
+ * 刻意**从既有状态推导**而不是新建一张表：`l0_sessions.indexed` 已经记录了
+ * 「捕获/已索引」，`lastDreamAt` 记录了固化时间点。再开一张 turn 状态表就会
+ * 出现两份真相，而它们必然漂移。
+ */
+export type MemoryTurnPipelineStage =
+  | "captured"
+  | "pending_index"
+  | "indexed"
+  | "pending_dream"
+  | "consolidated";
+
+export interface MemoryTurnPipelineEntry {
+  l0IndexId: string;
+  sessionKey: string;
+  capturedAt: string;
+  stage: MemoryTurnPipelineStage;
 }
 
 export interface MemoryActionResult {

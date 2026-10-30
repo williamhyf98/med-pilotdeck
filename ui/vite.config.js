@@ -28,14 +28,9 @@ export default defineConfig(({ mode }) => {
   const localNodeModules = (...segments) =>
     path.resolve(process.cwd(), 'node_modules', ...segments)
 
-  const disableLocalAuth =
-    env.PILOTDECK_DISABLE_LOCAL_AUTH !== '0' &&
-    env.PILOTDECK_DISABLE_LOCAL_AUTH !== 'false'
-
+  // The auth mode (no-login vs multi-user) is NOT baked into the bundle: the
+  // frontend asks GET /api/auth/status at runtime, so one build serves both.
   return {
-    define: {
-      'import.meta.env.VITE_DISABLE_LOCAL_AUTH': JSON.stringify(disableLocalAuth ? 'true' : 'false'),
-    },
     plugins: [react()],
     resolve: {
       alias: {
@@ -65,6 +60,30 @@ export default defineConfig(({ mode }) => {
         }
       }
     },
+    worker: {
+      // Cornerstone's DICOM codecs are split into worker chunks. Rollup cannot
+      // code-split the default IIFE worker format, so emit module workers.
+      format: 'es',
+    },
+    optimizeDeps: {
+      // Pre-bundling rewrites the loader's decode worker to a non-existent
+      // /node_modules/.vite/deps/decodeImageFrameWorker.js URL in development.
+      // Let Vite transform the package source so new URL(..., import.meta.url)
+      // resolves to a real worker module.
+      exclude: ['@cornerstonejs/dicom-image-loader'],
+      // The loader imports these Emscripten UMD factories as default exports.
+      // Pre-bundle them so Vite supplies the CommonJS/UMD interop wrapper while
+      // still transforming the loader's worker URL from source.
+      include: [
+        // The excluded loader imports this UMD dependency; pre-bundle it so
+        // native ESM does not evaluate its top-level `this.zlib` branch.
+        '@cornerstonejs/dicom-image-loader > dicom-parser',
+        '@cornerstonejs/codec-libjpeg-turbo-8bit/decodewasmjs',
+        '@cornerstonejs/codec-charls/decodewasmjs',
+        '@cornerstonejs/codec-openjpeg/decodewasmjs',
+        '@cornerstonejs/codec-openjph/wasmjs',
+      ],
+    },
     build: {
       outDir: 'dist',
       chunkSizeWarningLimit: 1000,
@@ -88,7 +107,9 @@ export default defineConfig(({ mode }) => {
       }
     },
     test: {
+      include: ['src/**/*.{test,spec}.{ts,tsx,js,jsx}', 'server/**/*.{test,spec}.{js,ts}', 'shared/**/*.{test,spec}.{js,ts}'],
       environment: 'jsdom',
+      setupFiles: ['./vitest.setup.ts'],
       server: {
         deps: {
           inline: ['react', 'react-dom']

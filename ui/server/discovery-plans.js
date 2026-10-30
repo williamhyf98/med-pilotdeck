@@ -19,7 +19,7 @@ import {
   appendAlwaysOnRunLogEvent,
   formatAlwaysOnPlanLogLine,
 } from './services/always-on-run-logs.js';
-import { resolvePilotHome, resolveProjectStorageId } from './utils/pilotPaths.js';
+import { resolveScopedHome, resolveGatewayProjectKey } from './utils/pilotPaths.js';
 
 import { DiscoveryPlanService } from '../../src/always-on/web/DiscoveryPlanService.js';
 import { buildDiscoveryContext } from '../../src/always-on/web/DiscoveryPlanContext.js';
@@ -35,10 +35,11 @@ import { DiscoveryStateStore } from '../../src/always-on/storage/DiscoveryStateS
 // ---------------------------------------------------------------------------
 
 function getService() {
-  const pilotHome = resolvePilotHome();
+  const pilotHome = resolveScopedHome();
   return new DiscoveryPlanService({
     pilotHome,
-    resolveProjectId: (projectRoot) => resolveProjectStorageId(projectRoot, pilotHome),
+    resolveProjectId: (projectRoot) =>
+      resolveProjectStorageId(resolveGatewayProjectKey(projectRoot, pilotHome), pilotHome),
     paths: { extractProjectDirectory },
     sessions: { getSessions },
     activity: { isSessionActive: isClaudeSDKSessionActive },
@@ -54,9 +55,10 @@ function getService() {
     },
     state: {
       clearActiveWorkCycleId: async (projectRoot) => {
+        const gatewayKey = resolveGatewayProjectKey(projectRoot, pilotHome);
         const paths = resolveAlwaysOnPaths({
           pilotHome,
-          projectKey: projectRoot,
+          projectKey: gatewayKey,
         });
         const store = new DiscoveryStateStore(paths);
         await store.clearActiveWorkCycleId(new Date());
@@ -85,7 +87,11 @@ export async function getProjectDiscoveryPlansOverview(projectName) {
 }
 
 export async function rerunDiscoveryPlan(projectName, planId) {
-  const projectRoot = await extractProjectDirectory(projectName);
+  const pilotHome = resolveScopedHome();
+  const projectRoot = resolveGatewayProjectKey(
+    await extractProjectDirectory(projectName),
+    pilotHome,
+  );
   const gw = await getPilotDeckGateway();
   const result = await gw.alwaysOnRerunPlan({
     projectKey: projectRoot,

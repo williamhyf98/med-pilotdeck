@@ -55,6 +55,7 @@ SUPPORTED_SUFFIXES = frozenset(
         ".bmp",
         ".dcm",
         ".dicom",
+        ".ima",
         ".ecg",
         ".wfdb",
         ".hea",
@@ -68,7 +69,7 @@ SUPPORTED_SUFFIXES = frozenset(
 
 _TEXT_SUFFIXES = {".txt", ".md", ".markdown"}
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp"}
-_DICOM_SUFFIXES = {".dcm", ".dicom"}
+_DICOM_SUFFIXES = {".dcm", ".dicom", ".ima"}
 _WFDB_SUFFIXES = {".hea", ".dat"}
 _OTHER_ECG_SUFFIXES = {".ecg", ".wfdb", ".atr", ".qrs", ".edf", ".scp"}
 _PREVIEW_TEXT_CHARS = 50_000
@@ -102,7 +103,9 @@ def parse_staged_file(
             derived_dir,
             max_long_side=max_image_long_side,
         )
-    if suffix in _DICOM_SUFFIXES:
+    if suffix in _DICOM_SUFFIXES or (
+        suffix not in SUPPORTED_SUFFIXES and _is_dicom_file(source_path)
+    ):
         return _parse_dicom(
             source_path,
             artifact_id,
@@ -129,6 +132,14 @@ def parse_staged_file(
         summary=f"未支持的附件类型：{filename}",
         warnings=[f"扩展名 {suffix or '(无)'} 不在解析器白名单内"],
     )
+
+
+def _is_dicom_file(path: Path) -> bool:
+    """Recognize DICOM exports with missing or nonstandard suffixes."""
+    from .dicom_router import _read_header
+
+    metadata, _ = _read_header(path)
+    return metadata is not None
 
 
 def _parse_text(path: Path, artifact_id: str, derived_dir: Path, max_chars: int) -> ParseOutcome:
@@ -240,6 +251,36 @@ def _parse_xml(path: Path, artifact_id: str, derived_dir: Path, max_chars: int) 
     title = _first_element_text(root, {"title"}) or path.stem
     root_name = _local_name(getattr(root, "tag", ""))
     is_cda = root_name.lower() == "clinicaldocument"
+    if is_cda:
+        from .cda_parser import summarize_cda_root
+
+        rendered, cda_meta, cda_warnings = summarize_cda_root(root, max_chars=max_chars)
+        warnings.extend(cda_warnings)
+        preview_ref = _write_text_preview(derived_dir, artifact_id, rendered)
+        structured = bool(
+            (cda_meta.get("lab_item_count") or 0) > 0
+            or (cda_meta.get("observation_pair_count") or 0) > 0
+            or (rendered and len(rendered) > 40)
+        )
+        status = "ready" if structured else "degraded"
+        if not structured:
+            warnings.append("CDA 未抽到可用的结构化检验/观察项，已降级为标题与叙述摘要。")
+        return ParseOutcome(
+            kind="document",
+            subtype="cda_xml",
+            status=status,
+            summary=f"CDA 文档\n{_cap(rendered, max_chars)}",
+            metadata={
+                "parser": parser_backend,
+                "root_element": root_name,
+                "title": cda_meta.get("title") or title,
+                **{k: v for k, v in cda_meta.items() if k != "title"},
+            },
+            warnings=warnings,
+            preview_kind="text",
+            preview_ref=preview_ref,
+        )
+
     sections = _xml_sections(root)
     narrative = _xml_narrative(root)
     lines = [f"标题：{title}", f"根元素：{root_name}"]
@@ -249,13 +290,11 @@ def _parse_xml(path: Path, artifact_id: str, derived_dir: Path, max_chars: int) 
         lines.append(narrative)
     rendered = "\n".join(lines)
     preview_ref = _write_text_preview(derived_dir, artifact_id, rendered)
-    status = "degraded" if parser_backend == "ElementTree" else "ready"
-    subtype = "cda_xml" if is_cda else "xml"
     return ParseOutcome(
         kind="document",
-        subtype=subtype,
-        status=status,
-        summary=f"{'CDA' if is_cda else 'XML'} 文档\n{_cap(rendered, max_chars)}",
+        subtype="xml",
+        status="ready" if (sections or narrative) else "degraded",
+        summary=f"XML 文档\n{_cap(rendered, max_chars)}",
         metadata={
             "parser": parser_backend,
             "root_element": root_name,
@@ -1178,9 +1217,9 @@ def collect_medical_files(path: Path, *, max_files: int = 64) -> List[Path]:
             continue
         if child.name.startswith("."):
             continue
-        if ".med-tools-derived" in child.parts:
+        if ".med-tools-derived" in child.parts or child.name == "derived":
             continue
-        if child.suffix.lower() in SUPPORTED_SUFFIXES:
+        if child.suffix.lower() in SUPPORTED_SUFFIXES or _is_dicom_file(child):
             found.append(child)
         if len(found) >= max_files:
             break

@@ -25,8 +25,9 @@ import {
 } from "../../model/index.js";
 import { listProjectSessions, readTranscript, type SessionInfo } from "../../session/index.js";
 import type { AgentTranscriptEntry } from "../../session/transcript/TranscriptEntry.js";
+import { readFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { getPilotProjectChatDir } from "../../pilot/index.js";
+import { getPilotProjectChatDir, resolveGatewayProjectKey } from "../../pilot/index.js";
 import { sanitizeSessionIdForPath } from "../../session/storage/ProjectSessionStorage.js";
 import type {
   WebReadSessionMessagesInput,
@@ -45,11 +46,18 @@ export type ReadWebSessionMessagesOptions = {
 
 const DEFAULT_HISTORY_CONTEXT_TOKENS = 200_000;
 
+function resolveEffectiveProjectRoot(
+  projectKey: string | undefined,
+  options: ReadWebSessionMessagesOptions,
+): string {
+  return resolveGatewayProjectKey(projectKey ?? options.projectRoot, options.pilotHome);
+}
+
 export async function readWebSessionMessages(
   input: WebReadSessionMessagesInput,
   options: ReadWebSessionMessagesOptions,
 ): Promise<WebReadSessionMessagesResult> {
-  const effectiveProjectRoot = input.projectKey ?? options.projectRoot;
+  const effectiveProjectRoot = resolveEffectiveProjectRoot(input.projectKey, options);
   const chatDir = getPilotProjectChatDir(effectiveProjectRoot, options.pilotHome);
   const transcriptPath = resolveTranscriptPath(input, chatDir);
   const isBackgroundTask = isBackgroundTaskInput(input);
@@ -91,9 +99,15 @@ export async function readWebSessionMessages(
     input.projectKey,
   );
   attachSubagentIds(entries, allMessages);
-  if (resolve(effectiveProjectRoot) !== resolve(options.pilotHome)) {
-    injectFileArtifactMessages(entries, allMessages, input.sessionKey, input.projectKey);
-  }
+  injectFileArtifactMessages(
+    entries,
+    allMessages,
+    input.sessionKey,
+    input.projectKey,
+    resolve(effectiveProjectRoot) === resolve(options.pilotHome)
+      ? isGeneralDocumentArtifact
+      : undefined,
+  );
   injectAgentStatusMessages(entries, allMessages, input.sessionKey, input.projectKey);
   injectErrorTurnMessages(entries, allMessages, input.sessionKey, input.projectKey);
   if (incompleteTurnIds.length > 0) {
@@ -104,6 +118,7 @@ export async function readWebSessionMessages(
   const limit = input.limit ?? allMessages.length;
   const sliceEnd = limit === 0 ? allMessages.length : offset + limit;
   const slice = allMessages.slice(offset, sliceEnd);
+  await inlineCitationChunkBodies(allMessages, slice);
 
   return {
     messages: slice,
@@ -333,7 +348,7 @@ export async function readSubagentWebMessages(
   },
   options: ReadWebSessionMessagesOptions,
 ): Promise<{ messages: WebMessage[]; total: number }> {
-  const effectiveProjectRoot = input.projectKey ?? options.projectRoot;
+  const effectiveProjectRoot = resolveEffectiveProjectRoot(input.projectKey, options);
   const chatDir = getPilotProjectChatDir(effectiveProjectRoot, options.pilotHome);
   const parentTranscriptPath = resolveTranscriptPath(input, chatDir);
 
@@ -381,6 +396,7 @@ export async function readSubagentWebMessages(
     `${input.sessionKey}::sub::${input.subagentId}`,
     input.projectKey,
   );
+  await inlineCitationChunkBodies(allMessages);
 
   return { messages: allMessages, total: allMessages.length };
 }
@@ -489,6 +505,58 @@ function parseCursor(cursor?: string): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 }
 
+/**
+ * RAG payloads that exceeded ToolResultBudget survive in the transcript only
+ * as tool_result_reference blocks (12KB head+tail preview + full body on
+ * disk). The preview cannot be parsed back into chunks, so citation popovers
+ * degrade to "no chunk text". Read the persisted body back for citation-
+ * bearing tools so history reloads keep the 原文.
+ */
+const CITATION_TOOL_NAME_RE = /rag_query|rag_search|stage_plan/i;
+const MAX_INLINE_CITATION_RESULT_BYTES = 2 * 1024 * 1024;
+
+async function inlineCitationChunkBodies(
+  allMessages: WebMessage[],
+  targets: WebMessage[] = allMessages,
+): Promise<void> {
+  const toolNameByCallId = new Map<string, string>();
+  for (const message of allMessages) {
+    if (message.kind === "tool_use" && message.toolCallId && typeof message.toolName === "string") {
+      toolNameByCallId.set(message.toolCallId, message.toolName);
+    }
+  }
+  await Promise.all(targets.map(async (message) => {
+    if (message.kind !== "tool_result" || !message.resultPath) return;
+    const toolName = message.toolName
+      ?? (message.toolCallId ? toolNameByCallId.get(message.toolCallId) : undefined);
+    if (!toolName) return;
+    if (!message.toolName) message.toolName = toolName; // reference blocks drop the name; restore it
+    if (!CITATION_TOOL_NAME_RE.test(toolName)) return;
+    if (!isPersistedToolResultPath(message.resultPath)) return;
+    try {
+      const info = await stat(message.resultPath);
+      if (!info.isFile() || info.size === 0 || info.size > MAX_INLINE_CITATION_RESULT_BYTES) return;
+      message.text = await readFile(message.resultPath, "utf8");
+      if (isRecord(message.payload)) {
+        message.payload = { ...message.payload, hasMore: false, inlinedFullResult: true };
+      }
+    } catch {
+      // persisted body may have been cleaned up; keep the preview so UI salvage still runs
+    }
+  }));
+}
+
+/** Only read back files we persisted ourselves; a doctored transcript must not leak arbitrary files to the UI. */
+function isPersistedToolResultPath(path: string): boolean {
+  if (!isAbsolute(path) || !/\.(json|txt)$/i.test(path)) return false;
+  const segments = path.split(/[\\/]+/);
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    if (segments[index] === ".pilotdeck" && segments[index + 1] === "tool-results") return true;
+    if (segments[index] === "pilotdeck-tool-output") return true;
+  }
+  return false;
+}
+
 type ProjectionContext = {
   index: number;
   sessionKey: string;
@@ -525,6 +593,10 @@ export function flattenCanonicalMessage(
   let textBuffer = "";
   let pendingImages: NonNullable<WebMessage["images"]> = [];
   let lastToolResultMessage: WebMessage | undefined;
+  const messageMetadata = message.metadata as Record<string, unknown> | undefined;
+  const messageCitations = Array.isArray(messageMetadata?.citations)
+    ? messageMetadata.citations as WebMessage["citations"]
+    : undefined;
 
   const flushText = (): void => {
     if (!textBuffer && pendingImages.length === 0) return;
@@ -537,6 +609,9 @@ export function flattenCanonicalMessage(
       role,
       kind: "text",
       text: textBuffer,
+      ...(messageCitations && messageCitations.length > 0
+        ? { citations: messageCitations }
+        : {}),
       ...(pendingImages.length > 0 ? { images: pendingImages } : {}),
       ...(context.forkUnsupportedContent
         ? {
@@ -619,6 +694,9 @@ function flushBlock(
         toolCallId: block.id,
         toolName: block.name,
         payload: block.input,
+        // Hosts display this raw input (e.g. read_skill's skillName).
+        toolInput: typeof block.input === "string" ? block.input : JSON.stringify(block.input),
+        ...(context.entryId ? { entryId: context.entryId } : {}),
         source: "history",
       });
       return;
@@ -650,6 +728,7 @@ function flushBlock(
         ...(errorCode ? { errorCode } : {}),
         ...(planData || searchData ? { payload: planData ?? searchData } : {}),
         ...(resultImages.length > 0 ? { images: resultImages } : {}),
+        ...(context.entryId ? { entryId: context.entryId } : {}),
         source: "history",
       });
       return;
@@ -1018,11 +1097,33 @@ function attachSubagentIds(
   }
 }
 
+function isGeneralDocumentArtifact(artifact: { path?: string; name?: string; mimeType?: string }): boolean {
+  if (
+    artifact.mimeType === "application/pdf"
+    || artifact.mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    || artifact.mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    || artifact.mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    || artifact.mimeType === "image/svg+xml"
+    || artifact.mimeType === "text/html"
+  ) {
+    return true;
+  }
+  const name = (artifact.name || artifact.path || "").toLowerCase();
+  return name.endsWith(".pdf")
+    || name.endsWith(".docx")
+    || name.endsWith(".pptx")
+    || name.endsWith(".xlsx")
+    || name.endsWith(".svg")
+    || name.endsWith(".html")
+    || name.endsWith(".htm");
+}
+
 function injectFileArtifactMessages(
   entries: AgentTranscriptEntry[],
   allMessages: WebMessage[],
   sessionKey: string,
   projectKey?: string,
+  artifactFilter?: (artifact: NonNullable<WebMessage["artifacts"]>[number]) => boolean,
 ): void {
   const artifactMessages: WebMessage[] = [];
   const turnsWithToolResults = new Set(
@@ -1036,9 +1137,10 @@ function injectFileArtifactMessages(
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
     if (entry.type !== "file_artifacts" || entry.artifacts.length === 0) continue;
-    const artifacts = turnsWithToolResults.has(entry.turnId)
+    const artifacts = (turnsWithToolResults.has(entry.turnId)
       ? entry.artifacts
-      : entry.artifacts.filter((artifact) => artifact.source !== "workspace_diff");
+      : entry.artifacts.filter((artifact) => artifact.source !== "workspace_diff")
+    ).filter((artifact) => (artifactFilter ? artifactFilter(artifact) : true));
     if (artifacts.length === 0) continue;
     artifactMessages.push({
       id: entry.entryId ?? `${sessionKey}-file-artifacts-${entry.turnId}-${entry.sequence}`,

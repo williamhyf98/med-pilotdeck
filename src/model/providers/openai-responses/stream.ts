@@ -76,7 +76,10 @@ export function normalizeOpenAIResponsesStreamEvent(
       return events;
     }
     const toolCall = ensureToolCall(event, state);
-    if (typeof event.arguments === "string") {
+    if (typeof event.arguments === "string" && !toolCall.argumentsBuffer) {
+      // Prefer the per-item delta buffer. Some vLLM builds emit the
+      // concatenation of ALL calls' arguments in every done event, which
+      // would otherwise overwrite the valid accumulated buffer.
       toolCall.argumentsBuffer = event.arguments;
     }
     events.push(finishToolCall(toolCall, raw));
@@ -211,14 +214,26 @@ function finishToolCall(toolCall: ToolCallState, raw: unknown): CanonicalModelEv
         + `(buf_len=${rawArguments.length})`,
       );
     } catch {
-      throw new ModelProviderError({
-        provider: "openai-responses",
-        protocol: "openai-responses",
-        code: "invalid_tool_arguments",
-        message: "OpenAI Responses stream tool call arguments are not valid JSON.",
-        retryable: true,
-        raw,
-      });
+      // vLLM emits the concatenation of all calls' argument objects in some
+      // done events; the last balanced object belongs to this call.
+      const extracted = extractLastJsonObject(rawArguments);
+      if (extracted !== undefined) {
+        input = extracted;
+        wasRepaired = true;
+        console.warn(
+          `[openai-responses-stream] extracted last JSON object for tool "${toolCall.name ?? "?"}" `
+          + `(buf_len=${rawArguments.length})`,
+        );
+      } else {
+        throw new ModelProviderError({
+          provider: "openai-responses",
+          protocol: "openai-responses",
+          code: "invalid_tool_arguments",
+          message: "OpenAI Responses stream tool call arguments are not valid JSON.",
+          retryable: true,
+          raw,
+        });
+      }
     }
   }
 
@@ -304,6 +319,50 @@ function readNumber(value: unknown): number | undefined {
 
 function safeToolCallIdPart(value: string): string {
   return value.trim().replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || "response";
+}
+
+/**
+ * Extract the last balanced top-level JSON object from a string. Used as a
+ * fallback when a provider emits several concatenated argument objects
+ * (e.g. `{"a":1}{"b":2}`) for parallel tool calls — the tail object is the
+ * one belonging to the current item.
+ */
+export function extractLastJsonObject(raw: string): unknown {
+  const end = raw.lastIndexOf("}");
+  if (end === -1) {
+    return undefined;
+  }
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = end; i >= 0; i -= 1) {
+    const ch = raw[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "}") {
+      depth += 1;
+    } else if (ch === "{") {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          return JSON.parse(raw.slice(i, end + 1));
+        } catch {
+          return undefined;
+        }
+      }
+    }
+  }
+  return undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

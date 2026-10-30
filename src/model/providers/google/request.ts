@@ -34,6 +34,11 @@ export function buildGoogleRequest(
   const config: GenerateContentConfig = {
     maxOutputTokens: request.maxOutputTokens ?? model.capabilities.maxOutputTokens,
     temperature: request.temperature,
+    topP: request.topP,
+    topK: request.topK,
+    presencePenalty: request.presencePenalty,
+    frequencyPenalty: request.frequencyPenalty,
+    seed: request.seed,
     systemInstruction: request.systemPrompt ? { text: request.systemPrompt } : undefined,
     automaticFunctionCalling: { disable: true },
     tools: tools.length > 0 ? [{ functionDeclarations: tools } satisfies Tool] : undefined,

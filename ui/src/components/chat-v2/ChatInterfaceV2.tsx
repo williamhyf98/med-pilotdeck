@@ -1,10 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { MessageSquare } from 'lucide-react';
 import { useTasksSettings } from '../../contexts/TasksSettingsContext';
 import { useToast } from '../../contexts/ToastContext';
 import { api } from '../../utils/api';
-import type { ChatInterfaceProps, ChatMessage, ChatRunMode, Provider } from '../chat/types/types';
+import type { ChatAttachment, ChatInterfaceProps, ChatMessage, ChatRunMode, Provider } from '../chat/types/types';
 import {
   getSessionRequestParams,
   isReadOnlySession,
@@ -18,13 +17,64 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { getDraftInputStorageKey, safeLocalStorage } from '../chat/utils/chatStorage';
 import { useSessionWatch } from '../../hooks/useSessionWatch';
 import MessagesPaneV2 from './MessagesPaneV2';
-import ComposerV2 from './ComposerV2';
+import type { LastTurnEditController } from './MessageRowV2';
+import ComposerV2, { PermissionRequestsSlot } from './ComposerV2';
+import ChatWelcomeV2 from './ChatWelcomeV2';
+import SkillDraftDialog from './SkillDraftDialog';
 import { buildReconnectStatusMessage, refreshSessionAfterReconnect, shouldRefreshSessionOnReconnect } from './reconnectRecovery';
 
 type PendingViewSession = {
   sessionId: string | null;
   startedAt: number;
 };
+
+export function ChatInterfaceLayout({
+  hideComposer,
+  isWelcomeMode,
+  compact: _compact,
+  messagePane,
+  composerSlot,
+  externalComposerSlot,
+  permissionSlot,
+  hiddenComposerNotice,
+  welcome,
+}: {
+  hideComposer: boolean;
+  isWelcomeMode: boolean;
+  compact: boolean;
+  messagePane: React.ReactNode;
+  composerSlot: React.ReactNode;
+  externalComposerSlot?: React.ReactNode;
+  permissionSlot?: React.ReactNode;
+  hiddenComposerNotice?: string;
+  welcome: React.ReactNode;
+}) {
+  if (hideComposer) {
+    return (
+      <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-transparent">
+        {messagePane}
+        {externalComposerSlot}
+        {permissionSlot || hiddenComposerNotice ? (
+          <div className="workspace-dock-surface shrink-0 border-t border-neutral-200 px-3 pt-3 dark:border-neutral-800">
+            {hiddenComposerNotice ? (
+              <p role="note" className="mb-3 text-[10px] leading-4 text-neutral-500 dark:text-neutral-400">
+                {hiddenComposerNotice}
+              </p>
+            ) : null}
+            {permissionSlot}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+  if (isWelcomeMode) return <>{welcome}</>;
+  return (
+    <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-transparent">
+      {messagePane}
+      {composerSlot}
+    </div>
+  );
+}
 
 // V2 chat wrapper. Reuses all business-logic hooks from legacy
 // `ChatInterface` so streaming, file-mentions, slash commands, permissions,
@@ -53,6 +103,7 @@ function ChatInterfaceV2({
   onReplaceTemporarySession,
   onNavigateToSession,
   onShowSettings,
+  showProcessTrace,
   autoExpandTools,
   showRawParameters,
   showThinking,
@@ -63,6 +114,27 @@ function ChatInterfaceV2({
   forceWelcome,
   onExitWelcome,
   compact = false,
+  hideComposer = false,
+  hiddenComposerNotice,
+  modelOverride,
+  profileOverride,
+  thinkingModeOverride,
+  turnOverrides,
+  attachmentFilesOverride,
+  onAttachmentFilesConsumed,
+  commandPrefix,
+  composerPlaceholder,
+  welcomeTitle,
+  welcomeDescription,
+  composerHeader,
+  composerFooterStart,
+  composerFooterEnd,
+  composerChrome = 'default',
+  externalComposerSlot,
+  traumaOptimisticMessageRef,
+  navigateToChatMessageRef,
+  traumaAbortUIRef,
+  onTraumaProcessStateChange,
 }: ChatInterfaceProps) {
   const { t } = useTranslation('chat');
   const { tasksEnabled: _tasksEnabled, isTaskMasterInstalled: _isTaskMasterInstalled } =
@@ -81,6 +153,17 @@ function ChatInterfaceV2({
   const [isAbortPending, setIsAbortPending] = useState(false);
   const [runMode, setRunMode] = useState<ChatRunMode>('agent');
   const [isForkPending, setIsForkPending] = useState(false);
+  // Last-turn edit & regenerate: entry currently being edited in place, the
+  // in-progress draft, the saved (not yet resent) edit, and whether a rewind +
+  // resend round-trip is running.
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState('');
+  const [savedEdit, setSavedEdit] = useState<{ entryId: string; text: string } | null>(null);
+  const [isRewindPending, setIsRewindPending] = useState(false);
+  // Session captured when the composer's "generate skill" button was clicked,
+  // so the draft keeps pointing at that transcript even if the user switches
+  // sessions while the dialog is open. Null = dialog closed.
+  const [skillDraftSessionId, setSkillDraftSessionId] = useState<string | null>(null);
   const { addToast } = useToast();
 
   const resetStreamingState = useCallback(() => {
@@ -94,12 +177,23 @@ function ChatInterfaceV2({
 
   const {
     model,
+    setModel,
     permissionMode,
-    setPermissionMode: setPermissionModeRaw,
     thinkingModelContext,
     pendingPermissionRequests,
     setPendingPermissionRequests,
   } = useChatProviderState({ selectedSession });
+
+  useEffect(() => {
+    const nextModel = modelOverride?.trim();
+    if (!nextModel || nextModel === model) return;
+    setModel(nextModel);
+    try {
+      safeLocalStorage.setItem('pilotdeck-model', nextModel);
+    } catch {
+      // The active chat still uses the in-memory override.
+    }
+  }, [model, modelOverride, setModel]);
 
   const thinkingModeAvailability = React.useMemo(
     () => getThinkingModeAvailability(thinkingModelContext),
@@ -113,14 +207,6 @@ function ChatInterfaceV2({
       return 'agent';
     });
   }, []);
-
-  const selectPermissionMode = useCallback((mode: typeof permissionMode) => {
-    setPermissionModeRaw(mode);
-    localStorage.setItem('permissionMode-default', mode);
-    if (selectedSession?.id) {
-      localStorage.setItem(`permissionMode-${selectedSession.id}`, mode);
-    }
-  }, [setPermissionModeRaw, selectedSession?.id]);
 
   const effectivePermissionMode =
     runMode === 'plan' ? 'plan' : permissionMode;
@@ -174,6 +260,71 @@ function ChatInterfaceV2({
     sessionStore,
   });
 
+  const addOptimisticTraumaMessage = useCallback((
+    text: string,
+    targetSessionId?: string | null,
+    runId?: string,
+    traumaAttachments?: Array<{ name: string; path?: string; previewUrl?: string }>,
+  ) => {
+    const hasAttachments = Boolean(traumaAttachments?.length);
+    const content = text.trim() || (hasAttachments ? '已上传医学附件' : '');
+    if (!content && !hasAttachments) return;
+    // A null target deliberately uses the hook's pending-message handoff so
+    // the bubble remains visible while a new session is being created.
+    if (!targetSessionId) {
+      pendingViewSessionRef.current = { sessionId: null, startedAt: Date.now() };
+    }
+    // Split: image files (have a previewUrl blob) go into message.images so the
+    // bubble renders actual thumbnails; everything else stays as file cards.
+    const imageEntries = traumaAttachments?.filter((a) => Boolean(a.previewUrl)) ?? [];
+    const fileEntries = traumaAttachments?.filter((a) => !a.previewUrl) ?? [];
+    const images = imageEntries.length
+      ? imageEntries.map((a) => ({ data: a.previewUrl!, name: a.name, path: a.path }))
+      : undefined;
+    const attachments: ChatAttachment[] | undefined = fileEntries.length
+      ? fileEntries.map((a) => ({ kind: 'file' as const, name: a.name, path: a.path }))
+      : undefined;
+    addMessage({
+      type: 'user',
+      content,
+      timestamp: new Date(),
+      ...(runId ? { runId, turnId: runId } : {}),
+      ...(images ? { images } : {}),
+      ...(attachments ? { attachments } : {}),
+    }, targetSessionId ?? null);
+    setIsUserScrolledUp(false);
+    setTimeout(() => scrollToBottom(), 100);
+  }, [addMessage, pendingViewSessionRef, scrollToBottom, setIsUserScrolledUp]);
+
+  useEffect(() => {
+    if (!traumaOptimisticMessageRef) return undefined;
+    traumaOptimisticMessageRef.current = addOptimisticTraumaMessage;
+    return () => {
+      if (traumaOptimisticMessageRef.current === addOptimisticTraumaMessage) {
+        traumaOptimisticMessageRef.current = null;
+      }
+    };
+  }, [addOptimisticTraumaMessage, traumaOptimisticMessageRef]);
+
+  useEffect(() => {
+    if (!traumaAbortUIRef) return undefined;
+    const abortUI = () => {
+      setIsLoading(false);
+      addMessage({
+        type: 'assistant',
+        content: '本轮推演已停止。',
+        isInterruptedNotice: true,
+        timestamp: Date.now(),
+      });
+    };
+    traumaAbortUIRef.current = abortUI;
+    return () => {
+      if (traumaAbortUIRef.current === abortUI) {
+        traumaAbortUIRef.current = null;
+      }
+    };
+  }, [addMessage, setIsLoading, traumaAbortUIRef]);
+
   const watchedSessionId = selectedSession?.id || currentSessionId || null;
   useSessionWatch({ sessionId: watchedSessionId, ws, sendMessage });
 
@@ -181,7 +332,6 @@ function ChatInterfaceV2({
     input,
     setInput,
     textareaRef,
-    inputHighlightRef,
     isTextareaExpanded: _isTextareaExpanded,
     thinkingMode,
     setThinkingMode,
@@ -198,31 +348,28 @@ function ChatInterfaceV2({
     showFileDropdown,
     filteredFiles,
     selectedFileIndex,
-    renderInputWithMentions,
     selectFile,
+    mentionedFiles,
+    removeMentionedFile,
     attachedImages,
-    attachedMedicalFolder,
-    clearAttachedMedicalFolder,
-    openMedicalFolderPicker,
-    medicalFolderInputRef,
-    handleMedicalFolderInputChange,
     setAttachedImages,
     documentReferences,
     removeDocumentReference,
     uploadingImages,
+    isSubmitPending,
     imageErrors,
     getRootProps,
     getInputProps,
     isDragActive,
     openImagePicker,
     handleSubmit,
+    regenerateWithText,
     handleInputChange,
     insertAtCursor,
     handleKeyDown,
     handlePaste,
     handleTextareaClick,
     handleTextareaInput,
-    syncInputOverlayScroll,
     handleAbortSession,
     handlePermissionDecision,
     handleGrantToolPermission,
@@ -231,11 +378,17 @@ function ChatInterfaceV2({
     isBusySendQueued,
     isBusySendConfirmed,
     cancelBusySendQueue,
+    attachedMedicalFolder,
+    clearAttachedMedicalFolder,
+    openMedicalFolderPicker,
+    medicalFolderInputRef,
+    handleMedicalFolderInputChange,
   } = useChatComposerState({
     selectedProject,
     selectedSession,
     currentSessionId,
     model,
+    profileOverride,
     runMode,
     permissionMode: effectivePermissionMode,
     basePermissionMode: permissionMode,
@@ -266,14 +419,53 @@ function ChatInterfaceV2({
     setIsUserScrolledUp,
     pendingPermissionRequests,
     setPendingPermissionRequests,
+    commandPrefix,
+    turnOverrides,
+    attachmentFilesOverride,
+    onAttachmentFilesConsumed,
     referenceOnlyPrompt: t('documentReferences.defaultPrompt', {
       defaultValue: 'Please answer based on the document selection I quoted.',
     }) as string,
   });
 
+  useEffect(() => {
+    if (!thinkingModeOverride || thinkingModeOverride === thinkingMode) return;
+    setThinkingMode(thinkingModeOverride);
+  }, [setThinkingMode, thinkingMode, thinkingModeOverride]);
+
   const handlePlanExecutionApproved = useCallback(() => {
     setRunMode('agent');
   }, []);
+
+  /**
+   * Chip click. `insertAtCursor` drops the hint at the caret without stealing
+   * focus, so a doctor can keep typing around it — the skill name in the text
+   * is what the agent routes on, not a mode toggle.
+   */
+  const handleInsertSkillHint = useCallback(
+    (text: string) => {
+      insertAtCursor(text);
+    },
+    [insertAtCursor],
+  );
+
+  // Paths for the skill-draft dialog. The general project can't own
+  // project-scope skills, so its effective path collapses to null and the
+  // dialog only offers user scope (mirrors SkillsV2's general handling).
+  const chatProjectPath = selectedProject?.fullPath ?? selectedProject?.path ?? null;
+  const isGeneralChatProject =
+    selectedProject?.name === 'general' || selectedProject?.displayName === 'general';
+  const skillDraftProjectPath = isGeneralChatProject ? null : chatProjectPath;
+
+  const handleGenerateSkill = useCallback(() => {
+    if (skillDraftSessionId) return;
+    const sessionId = currentSessionId || selectedSession?.id;
+    if (!sessionId) {
+      addToast('error', t('skillDraft.noSession', { defaultValue: '先开始一段对话，再生成技能' }));
+      return;
+    }
+    setSkillDraftSessionId(sessionId);
+  }, [skillDraftSessionId, currentSessionId, selectedSession?.id, addToast, t]);
 
   const handleWebSocketReconnect = useCallback(async () => {
     if (!selectedProject || !selectedSession) return;
@@ -336,6 +528,7 @@ function ChatInterfaceV2({
     onReplaceTemporarySession,
     onNavigateToSession,
     onWebSocketReconnect: handleWebSocketReconnect,
+    onTraumaProcessStateChange,
     sessionStore,
   });
 
@@ -353,7 +546,16 @@ function ChatInterfaceV2({
     if (!isLoading || !canAbortSession || isAbortPending) return;
     handleAbortSession();
     setIsAbortPending(true);
-  }, [canAbortSession, handleAbortSession, isAbortPending, isLoading]);
+    // Immediately reflect the stop in the UI: clear the loading state and
+    // inject a local interrupted divider so the conversation list responds
+    // at once rather than waiting for the backend's WebSocket message.
+    setIsLoading(false);
+    addMessage({
+      type: 'assistant',
+      isInterruptedNotice: true,
+      timestamp: Date.now(),
+    });
+  }, [addMessage, canAbortSession, handleAbortSession, isAbortPending, isLoading, setIsLoading]);
 
   const handleFork = useCallback(async (message: ChatMessage, _carriedPreview: number) => {
     if (isForkPending || isLoading || sessionIsReadOnly) return;
@@ -439,6 +641,160 @@ function ChatInterfaceV2({
     textareaRef,
   ]);
 
+  // Entry id of the LAST user message that is already persisted in the
+  // transcript (optimistic sends have no entryId yet). Only this turn is
+  // editable/regenerable — the backend rejects anything else.
+  const lastUserEntryId = React.useMemo(() => {
+    for (let index = chatMessages.length - 1; index >= 0; index -= 1) {
+      const candidate = chatMessages[index];
+      if (candidate.type === 'user' && candidate.entryId) return candidate.entryId;
+    }
+    return null;
+  }, [chatMessages]);
+
+  // Switching sessions drops any in-progress edit state.
+  useEffect(() => {
+    setEditingEntryId(null);
+    setEditDraft('');
+    setSavedEdit(null);
+  }, [watchedSessionId]);
+
+  // If the conversation moved on (a newer user turn exists), stale edit state
+  // for an older turn must not survive.
+  useEffect(() => {
+    if (editingEntryId && editingEntryId !== lastUserEntryId) {
+      setEditingEntryId(null);
+      setEditDraft('');
+    }
+    if (savedEdit && savedEdit.entryId !== lastUserEntryId) {
+      setSavedEdit(null);
+    }
+  }, [editingEntryId, savedEdit, lastUserEntryId]);
+
+  const handleRegenerate = useCallback(async (message: ChatMessage) => {
+    if (isRewindPending || isLoading || sessionIsReadOnly) return;
+    const sessionId = currentSessionId || selectedSession?.id;
+    const fromEntryId = message.entryId;
+    if (!sessionId || !fromEntryId || !selectedProject) {
+      addToast('error', t('lastTurnEdit.missingTarget', {
+        defaultValue: '无法定位这条提问，暂时不能重新生成。',
+      }));
+      return;
+    }
+    const savedText = savedEdit && savedEdit.entryId === fromEntryId ? savedEdit.text : null;
+    const textToSend = (savedText ?? String(message.content || '')).trim();
+    if (!textToSend) {
+      addToast('error', t('lastTurnEdit.emptyQuestion', {
+        defaultValue: '问题内容为空，无法重新生成。',
+      }));
+      return;
+    }
+
+    const projectPath = selectedProject.fullPath || selectedProject.path || '';
+    setIsRewindPending(true);
+    try {
+      const response = await api.rewindSession(sessionId, { projectPath, fromEntryId });
+      let result: {
+        removedTurnId?: string;
+        removedFromSequence?: number;
+        removedAtIso?: string;
+        error?: string;
+      } = {};
+      try {
+        result = await response.json();
+      } catch {
+        result = {};
+      }
+      if (!response.ok) {
+        throw new Error(result?.error || `Rewind failed (${response.status})`);
+      }
+
+      // Drop the removed turn from the local store. Realtime rows may lack
+      // transcript identity, so also pass the removed user message's own
+      // timestamp — everything at/after it belonged to the removed turn.
+      const rawTimestamp = message.timestamp;
+      const parsedTimestamp = rawTimestamp instanceof Date
+        ? rawTimestamp.getTime()
+        : typeof rawTimestamp === 'number'
+          ? rawTimestamp
+          : Date.parse(String(rawTimestamp));
+      sessionStore.dropTurnForRewind(sessionId, {
+        ...(result.removedTurnId ? { turnId: result.removedTurnId } : {}),
+        ...(typeof result.removedFromSequence === 'number'
+          ? { fromSequence: result.removedFromSequence }
+          : {}),
+        ...(Number.isFinite(parsedTimestamp)
+          ? { fromTimestamp: new Date(parsedTimestamp).toISOString() }
+          : {}),
+      });
+
+      setEditingEntryId(null);
+      setEditDraft('');
+      setSavedEdit(null);
+
+      const resent = regenerateWithText(textToSend, sessionId);
+      if (!resent) {
+        setInput(textToSend);
+        addToast('error', t('lastTurnEdit.resendFailed', {
+          defaultValue: '已撤回上一轮问答，但自动重发失败，问题已填入输入框，请手动发送。',
+        }));
+      }
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : String(error);
+      addToast('error', messageText || t('lastTurnEdit.failed', {
+        defaultValue: '重新生成失败。',
+      }));
+    } finally {
+      setIsRewindPending(false);
+    }
+  }, [
+    addToast,
+    currentSessionId,
+    isLoading,
+    isRewindPending,
+    regenerateWithText,
+    savedEdit,
+    selectedProject,
+    selectedSession?.id,
+    sessionIsReadOnly,
+    sessionStore,
+    setInput,
+    t,
+  ]);
+
+  const lastTurnEditController = React.useMemo<LastTurnEditController>(() => ({
+    editingEntryId,
+    editDraft,
+    savedEdit,
+    isRegenerating: isRewindPending,
+    onStartEdit: (message: ChatMessage) => {
+      if (!message.entryId) return;
+      setEditingEntryId(message.entryId);
+      setEditDraft(
+        savedEdit && savedEdit.entryId === message.entryId
+          ? savedEdit.text
+          : String(message.content || ''),
+      );
+    },
+    onDraftChange: setEditDraft,
+    onCancelEdit: () => {
+      setEditingEntryId(null);
+      setEditDraft('');
+    },
+    onSaveEdit: () => {
+      if (!editingEntryId) return;
+      const trimmed = editDraft.trim();
+      if (!trimmed) return;
+      setSavedEdit({ entryId: editingEntryId, text: trimmed });
+      setEditingEntryId(null);
+      setEditDraft('');
+    },
+    onDiscardSavedEdit: () => setSavedEdit(null),
+    onRegenerate: (message: ChatMessage) => {
+      void handleRegenerate(message);
+    },
+  }), [editingEntryId, editDraft, savedEdit, isRewindPending, handleRegenerate]);
+
   useEffect(() => {
     if (!isLoading || !canAbortSession) return;
     const handleGlobalEscape = (event: KeyboardEvent) => {
@@ -498,17 +854,14 @@ function ChatInterfaceV2({
   ) : (
     <ComposerV2
       input={input}
-      placeholder={t('composer.placeholder', {
-        defaultValue: 'Tell PilotDeck what you want to get done…',
+      placeholder={composerPlaceholder || t('composer.placeholder', {
+        defaultValue: 'Tell MedPD what you want to get done…',
       }) as string}
       textareaRef={textareaRef}
-      inputHighlightRef={inputHighlightRef}
-      renderInputWithMentions={renderInputWithMentions}
       onInputChange={handleInputChange}
       onTextareaClick={handleTextareaClick}
       onTextareaKeyDown={handleKeyDown}
       onTextareaPaste={handlePaste}
-      onTextareaScrollSync={syncInputOverlayScroll}
       onTextareaInput={handleTextareaInput}
       onInputFocusChange={handleInputFocusChange}
       onSubmit={wrappedSubmit as typeof handleSubmit}
@@ -518,8 +871,6 @@ function ChatInterfaceV2({
       medicalFolderInputRef={medicalFolderInputRef}
       onMedicalFolderInputChange={handleMedicalFolderInputChange}
       attachedImages={attachedImages}
-      attachedMedicalFolder={attachedMedicalFolder}
-      onRemoveMedicalFolder={clearAttachedMedicalFolder}
       onRemoveImage={(index) =>
         setAttachedImages((previous) =>
           previous.filter((_, currentIndex) => currentIndex !== index),
@@ -527,8 +878,13 @@ function ChatInterfaceV2({
       }
       documentReferences={documentReferences}
       onRemoveDocumentReference={removeDocumentReference}
+      mentionedFiles={mentionedFiles}
+      onRemoveMentionedFile={removeMentionedFile}
+      attachedMedicalFolder={attachedMedicalFolder}
+      onRemoveMedicalFolder={clearAttachedMedicalFolder}
         onOpenDocumentReference={onFileOpen ? (filePath) => onFileOpen(filePath) : undefined}
       uploadingImages={uploadingImages}
+      isSubmitPending={isSubmitPending}
       imageErrors={imageErrors}
       showFileDropdown={showFileDropdown}
       filteredFiles={filteredFiles}
@@ -543,6 +899,11 @@ function ChatInterfaceV2({
       onToggleCommandMenu={handleToggleCommandMenu}
       onInsertMention={() => insertAtCursor('@')}
       onInsertSlash={() => insertAtCursor('/')}
+      skillRecommendProjectPath={selectedProject?.fullPath ?? selectedProject?.path ?? null}
+      skillRecommendProjectType={selectedProject?.projectType ?? selectedProject?.type ?? null}
+      onInsertSkillHint={handleInsertSkillHint}
+      onGenerateSkill={handleGenerateSkill}
+      generateSkillDisabled={(!currentSessionId && !selectedSession?.id) || Boolean(skillDraftSessionId)}
       getRootProps={getRootProps as (...args: unknown[]) => Record<string, unknown>}
       getInputProps={getInputProps as (...args: unknown[]) => Record<string, unknown>}
       isDragActive={isDragActive}
@@ -560,106 +921,130 @@ function ChatInterfaceV2({
       handlePermissionDecision={handlePermissionDecision}
       handleGrantToolPermission={handleGrantToolPermission}
       permissionMode={permissionMode}
-      onPermissionModeChange={selectPermissionMode}
       runMode={runMode}
       onRunModeChange={setRunMode}
       planModeAvailable={true}
       onPlanExecutionApproved={handlePlanExecutionApproved}
       sendByCtrlEnter={sendByCtrlEnter}
-      chromeless={isWelcomeMode && !compact}
+      chromeless={isWelcomeMode}
+      headerSlot={composerHeader}
+      footerStartSlot={composerFooterStart}
+      footerEndSlot={composerFooterEnd}
+      chromeMode={composerChrome}
     />
   );
   const composerSlot = (
     <div data-chat-composer-slot className="min-h-0 shrink-0">
       {composer}
+      {skillDraftSessionId ? (
+        <SkillDraftDialog
+          sessionId={skillDraftSessionId}
+          projectPath={chatProjectPath}
+          effectiveProjectPath={skillDraftProjectPath}
+          onClose={() => setSkillDraftSessionId(null)}
+          onCreated={({ name }) => {
+            setSkillDraftSessionId(null);
+            addToast(
+              'success',
+              t('skillDraft.created', { name, defaultValue: '技能「{{name}}」已创建' }),
+            );
+          }}
+        />
+      ) : null}
     </div>
   );
 
-  if (isWelcomeMode) {
-    const projectName = selectedProject?.displayName || selectedProject?.name || '';
-    if (compact) {
-      return (
-        <div className="flex h-full min-w-0 flex-col bg-white dark:bg-neutral-950">
-          <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
-            <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl border border-neutral-200 bg-neutral-50 text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-              <MessageSquare className="h-4 w-4" strokeWidth={1.8} />
-            </div>
-            <p className="text-[13px] font-medium text-neutral-700 dark:text-neutral-300">
-              {t('workspace.emptyTitle', { defaultValue: 'Ask PilotDeck about this project' })}
-            </p>
-            <p className="mt-1 max-w-56 text-[12px] leading-5 text-neutral-400 dark:text-neutral-500">
-              {t('workspace.emptyDescription', {
-                defaultValue: 'Reference a workspace file with @ when you want it included.',
-              })}
-            </p>
-          </div>
-          {composerSlot}
-        </div>
-      );
-    }
+  const messagePane = (
+    <MessagesPaneV2
+      scrollContainerRef={scrollContainerRef}
+      onWheel={handleScroll}
+      onTouchMove={handleScroll}
+      isLoadingSessionMessages={isLoadingSessionMessages}
+      sessionLoadError={sessionLoadError}
+      onRetrySessionLoad={handleWebSocketReconnect}
+      chatMessages={chatMessages}
+      activityMessages={activityMessages}
+      visibleMessages={visibleMessages}
+      visibleMessageCount={visibleMessageCount}
+      isLoadingMoreMessages={isLoadingMoreMessages}
+      hasMoreMessages={hasMoreMessages}
+      totalMessages={totalMessages}
+      loadEarlierMessages={loadEarlierMessages}
+      loadAllMessages={loadAllMessages}
+      navigateToChatMessageRef={navigateToChatMessageRef}
+      allMessagesLoaded={allMessagesLoaded}
+      isLoadingAllMessages={isLoadingAllMessages}
+      provider={'pilotdeck' as Provider}
+      selectedProject={selectedProject}
+      selectedSession={selectedSession}
+      createDiff={createDiff}
+      onFileOpen={onFileOpen}
+      onShowSettings={onShowSettings}
+      onGrantSessionToolPermission={handleGrantSessionToolPermission}
+      showProcessTrace={showProcessTrace}
+      autoExpandTools={autoExpandTools}
+      showRawParameters={showRawParameters}
+      showThinking={showThinking}
+      inlineThinking={inlineThinking}
+      setInput={setInput}
+      isAssistantWorking={isLoading}
+      workingStatus={claudeStatus || pilotDeckStatus}
+      runMode={runMode}
+      planModeActive={effectivePermissionMode === 'plan'}
+      sessionStore={sessionStore}
+      onFork={sessionIsReadOnly ? undefined : handleFork}
+      forkDisabled={isForkPending}
+      lastTurnEdit={sessionIsReadOnly ? undefined : lastTurnEditController}
+    />
+  );
+  const permissionSlot = (
+    <PermissionRequestsSlot
+      pendingPermissionRequests={pendingPermissionRequests}
+      handlePermissionDecision={handlePermissionDecision}
+      handleGrantToolPermission={handleGrantToolPermission}
+      onPlanExecutionApproved={handlePlanExecutionApproved}
+    />
+  );
+
+  if (hideComposer) {
     return (
-      <div className="flex h-full flex-col bg-white dark:bg-neutral-950">
-        <div className="flex flex-1 flex-col items-center justify-center px-6">
-          <div className="w-full max-w-[720px]">
-            <h1 className="mb-8 text-center text-[26px] font-medium tracking-tight text-neutral-900 dark:text-neutral-100">
-              {selectedProject
-                ? t('welcome.greetingWithProject', {
-                    project: projectName,
-                    defaultValue: `What's on the plan today?`,
-                  })
-                : t('welcome.noProject', {
-                    defaultValue: 'Pick a project from the sidebar to get started',
-                  })}
-            </h1>
-            {composerSlot}
-          </div>
-        </div>
-      </div>
+      <ChatInterfaceLayout
+        hideComposer
+        isWelcomeMode={isWelcomeMode}
+        compact={compact}
+        messagePane={messagePane}
+        composerSlot={composerSlot}
+        externalComposerSlot={externalComposerSlot}
+        permissionSlot={pendingPermissionRequests.length > 0 ? permissionSlot : null}
+        hiddenComposerNotice={hiddenComposerNotice}
+        welcome={null}
+      />
+    );
+  }
+
+  if (isWelcomeMode) {
+    return (
+      <ChatWelcomeV2
+        selectedProject={selectedProject}
+        welcomeTitle={welcomeTitle}
+        welcomeDescription={welcomeDescription}
+        composerSlot={composerSlot}
+      />
     );
   }
 
   return (
-    <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-white dark:bg-neutral-950">
-      <MessagesPaneV2
-        scrollContainerRef={scrollContainerRef}
-        onWheel={handleScroll}
-        onTouchMove={handleScroll}
-        isLoadingSessionMessages={isLoadingSessionMessages}
-        sessionLoadError={sessionLoadError}
-        onRetrySessionLoad={handleWebSocketReconnect}
-        chatMessages={chatMessages}
-        activityMessages={activityMessages}
-        visibleMessages={visibleMessages}
-        visibleMessageCount={visibleMessageCount}
-        isLoadingMoreMessages={isLoadingMoreMessages}
-        hasMoreMessages={hasMoreMessages}
-        totalMessages={totalMessages}
-        loadEarlierMessages={loadEarlierMessages}
-        loadAllMessages={loadAllMessages}
-        allMessagesLoaded={allMessagesLoaded}
-        isLoadingAllMessages={isLoadingAllMessages}
-        provider={'pilotdeck' as Provider}
-        selectedProject={selectedProject}
-        selectedSession={selectedSession}
-        createDiff={createDiff}
-        onFileOpen={onFileOpen}
-        onShowSettings={onShowSettings}
-        onGrantSessionToolPermission={handleGrantSessionToolPermission}
-        autoExpandTools={autoExpandTools}
-        showRawParameters={showRawParameters}
-        showThinking={showThinking}
-        inlineThinking={inlineThinking}
-        setInput={setInput}
-        isAssistantWorking={isLoading}
-        workingStatus={claudeStatus || pilotDeckStatus}
-        runMode={runMode}
-        planModeActive={effectivePermissionMode === 'plan'}
-        sessionStore={sessionStore}
-        onFork={sessionIsReadOnly ? undefined : handleFork}
-        forkDisabled={isForkPending}
-      />
-      {composerSlot}
-    </div>
+    <ChatInterfaceLayout
+      hideComposer={false}
+      isWelcomeMode={false}
+      compact={compact}
+      messagePane={messagePane}
+      composerSlot={composerSlot}
+      externalComposerSlot={undefined}
+      permissionSlot={null}
+      hiddenComposerNotice={undefined}
+      welcome={null}
+    />
   );
 }
 

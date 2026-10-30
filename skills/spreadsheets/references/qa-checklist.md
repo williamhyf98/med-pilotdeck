@@ -1,62 +1,62 @@
-# QA checklist
+# 质量检查清单
 
-## Structural inspection
+## 结构检查
 
-- Confirm the expected worksheet names and count.
-- Confirm the target ranges contain the intended values and formulas.
-- Confirm tables, filters, merged ranges, validations, and conditional formatting remain in scope.
-- Confirm CSV/TSV row counts, delimiter, and row widths.
-- Confirm an edited source file was not overwritten.
-- Confirm `coverage.status` is `passed` for every non-trivial task.
-- For source-backed workbooks, confirm source hashes still match and inspect every `expectedRanges` mismatch. Do not accept sheet names plus a formula count as meaningful coverage.
-- Add `requiredCellTypes` for important KPI, amount, percentage, date, and identifier ranges so number-format contamination cannot pass as a visual-only issue.
-- When a chart is requested, confirm a native chart part, worksheet mapping, chart type, series count, source formulas, non-blank categories/values, and the requested minimum point count. An image or a one-point “trend” is not a chart pass.
-- Confirm `package.compatibility.status` is `ok`. For native charts, verify the reported drawing part and object counts, and treat malformed anchors or dangling worksheet/drawing/chart relationships as hard failures.
+- 确认预期的工作表名称和数量。
+- 确认目标范围包含预期的值和公式。
+- 确认表格、筛选、合并区域、验证和条件格式仍在范围内。
+- 确认 CSV/TSV 行数、分隔符和行宽。
+- 确认未覆盖已编辑的源文件。
+- 确认每一项非平凡任务的 `coverage.status` 为 `passed`。
+- 对于有源支撑的工作簿，确认源哈希仍然匹配，并检查每一项 `expectedRanges` 不匹配。不要把工作表名称加上公式数量当作有意义的覆盖。
+- 为重要的 KPI、金额、百分比、日期和标识符范围添加 `requiredCellTypes`，使数字格式污染不能仅作为视觉问题通过。
+- 当要求图表时，确认原生图表部件、工作表映射、图表类型、系列数量、源公式、非空类别/值，以及所要求的最小点数。图像或单点“趋势”不算图表通过。
+- 确认 `package.compatibility.status` 为 `ok`。对于原生图表，核验报告的绘图部件和对象数量，并将畸形锚点或悬空的工作表/绘图/图表关系视为硬失败。
 
-## Formula verification
+## 公式核验
 
-- Recalculate every formula-driven XLSX.
-- Inspect representative input, helper, subtotal, and final output cells.
-- Reconcile important totals with source rows.
-- Check relative and absolute references after copied formulas.
-- Check zero, blank, negative, and missing-data edge cases.
-- Run the final formula error scan.
+- 重新计算每一个由公式驱动的 XLSX。
+- 检查有代表性的输入、辅助、小计和最终输出单元格。
+- 将重要合计与源行核对。
+- 在复制公式后检查相对引用和绝对引用。
+- 检查零、空白、负数和缺失数据的边界情况。
+- 运行最终公式错误扫描。
 
-Use:
+使用：
 
 ```bash
 bash "$SHEET" audit --input "$FINAL_FILE" --out "$WORKSPACE/qa/audit.json"
 ```
 
-Do not finalize when `status` is `error`. Fix every `warning`, or register its type and concrete rationale in `warningDispositions`; unresolved warnings block `deliver`. Pay particular attention to missing cached formula results, blank sheets, oversized used ranges, and CJK fallback. Review `advisories` and `package.roundTripRisks` before any future edit of a workbook containing native charts or drawings.
+当 `status` 为 `error` 时不要定稿。修复每一项 `warning`，或在 `warningDispositions` 中登记其类型和具体理由；未解决的警告会阻断 `deliver`。特别注意缺失的缓存公式结果、空白工作表、过大的已用范围，以及 CJK 回退。在对包含原生图表或绘图的工作簿进行任何后续编辑之前，审阅 `advisories` 和 `package.roundTripRisks`。
 
-## Visual verification
+## 视觉核验
 
-Render the candidate one worksheet at a time:
+一次渲染一张工作表的候选文件：
 
 ```bash
 bash "$SHEET" render --input "$CANDIDATE" --out-dir "$WORKSPACE/qa/render" --per-sheet
 ```
 
-Inspect the montage for overall coverage, then inspect every `page-N.png` at full resolution.
+用拼图检查整体覆盖，然后以全分辨率检查每一张 `page-N.png`。
 
-Check:
+检查：
 
-- No clipped titles, labels, or important numbers.
-- No unreadably narrow columns or excessively tall wrapped rows.
-- Correct number, date, currency, and percentage formats.
-- Clear visual hierarchy and consistent spacing.
-- No accidental blank sheets or extra blank print pages.
-- No tables, images, or sections extending beyond the printable page unexpectedly.
-- No formula errors visible in cells.
-- Chinese titles, labels, chart text, and full-width punctuation have complete glyphs.
-- The reported sheet-to-page mapping is plausible and contains no automatically detected blank pages.
+- 没有被裁切的标题、标签或重要数字。
+- 没有窄到无法阅读的列，或过高的换行行。
+- 正确的数字、日期、货币和百分比格式。
+- 清晰的视觉层级和一致的间距。
+- 没有意外的空白工作表或额外的空白打印页。
+- 没有表格、图像或区块意外超出可打印页面。
+- 单元格中没有可见的公式错误。
+- 中文标题、标签、图表文本和全角标点具有完整字形。
+- 报告的工作表到页面映射合理，且不包含自动检测到的空白页。
 
-## Final integrity
+## 最终完整性
 
-- Seal the candidate with `deliver`; do not manually copy it to the final path.
-- Reopen the exported file through `inspect` after the last rebuild.
-- Confirm page count and worksheet count are plausible.
-- Confirm the final SHA-256 matches the sealed candidate and the final coverage remains passed.
-- Confirm the deliverable extension matches the requested format.
-- Deliver only the final spreadsheet unless support artifacts were requested.
+- 用 `deliver` 封存候选文件；不要手动复制到最终路径。
+- 在最后一次重建之后，通过 `inspect` 重新打开导出文件。
+- 确认页数和工作表数量合理。
+- 确认最终 SHA-256 与已封存候选文件匹配，且最终覆盖仍为通过。
+- 确认交付物扩展名与所要求的格式匹配。
+- 仅交付最终电子表格，除非请求了支持产物。

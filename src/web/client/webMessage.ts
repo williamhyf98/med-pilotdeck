@@ -46,6 +46,7 @@ function normalizeToolErrorCode(errorCode: string | undefined, resultPreview: un
 const ERROR_AGENT_STATUS_EVENTS = new Set([
   "model_empty_response_exhausted",
   "max_turns_reached",
+  "max_tool_calls_reached",
   "max_output_recovery_exhausted",
   "model_request_failed",
   "tool_call_recovery_exhausted",
@@ -109,9 +110,22 @@ export type WebMessage = {
   sequence?: number;
   toolCallId?: string;
   toolName?: string;
+  /** Raw tool-call input preview (JSON string) shown by hosts in tool bubbles. */
+  toolInput?: string;
   requestId?: string;
   ok?: boolean;
   text?: string;
+  citations?: Array<{
+    displayIndex?: number;
+    chunkId?: string;
+    text?: string;
+    index: number;
+    title: string;
+    section: string;
+    quote?: string;
+    evidenceGrade?: string;
+    evidenceQuality?: string;
+  }>;
   contentI18n?: { key: string; params?: Record<string, unknown> };
   userHintI18n?: { key: string; params?: Record<string, unknown> };
   images?: Array<{
@@ -169,8 +183,18 @@ export function createWebMessageReducerState(): WebMessageReducerState {
 
 const MAX_WEB_TOOL_RESULT_PREVIEW_CHARS = 20_000;
 
-function limitToolResultPreview(value: string | undefined): string | undefined {
+// RAG evidence payloads must stay intact: citation popovers parse `chunks[]`
+// out of this text, and the head+tail preview drops the tail chunks' bodies.
+// Bounded by the retrieval tool (top_k ≤ 8, capped chunk length); the ceiling
+// only guards against a misbehaving server.
+const CITATION_TOOL_NAME_RE = /rag_query|rag_search|stage_plan/i;
+const MAX_CITATION_RESULT_CHARS = 400_000;
+
+function limitToolResultPreview(value: string | undefined, toolName?: string): string | undefined {
   if (value === undefined || value.length <= MAX_WEB_TOOL_RESULT_PREVIEW_CHARS) {
+    return value;
+  }
+  if (toolName && CITATION_TOOL_NAME_RE.test(toolName) && value.length <= MAX_CITATION_RESULT_CHARS) {
     return value;
   }
   const headLength = Math.floor(MAX_WEB_TOOL_RESULT_PREVIEW_CHARS / 2);
@@ -205,7 +229,13 @@ export function applyWebGatewayEvent(
           ...state,
           messages: state.messages.map((m) =>
             m.id === state.currentAssistantId
-              ? { ...m, text: `${m.text ?? ""}${event.text}` }
+              ? {
+                  ...m,
+                  text: `${m.text ?? ""}${event.text}`,
+                  ...(Array.isArray(event.citations) && event.citations.length > 0
+                    ? { citations: event.citations }
+                    : {}),
+                }
               : m,
           ),
         };
@@ -220,6 +250,9 @@ export function applyWebGatewayEvent(
         role: "assistant",
         kind: "text",
         text: event.text,
+        ...(Array.isArray(event.citations) && event.citations.length > 0
+          ? { citations: event.citations }
+          : {}),
         source: "live",
       };
       return {
@@ -228,6 +261,12 @@ export function applyWebGatewayEvent(
         currentAssistantId: id,
       };
     }
+
+    case "assistant_text_end":
+      return {
+        ...state,
+        currentAssistantId: undefined,
+      };
 
     case "assistant_thinking_delta": {
       if (!event.text) {
@@ -278,6 +317,11 @@ export function applyWebGatewayEvent(
       return { ...state, messages: [...state.messages, message] };
     }
 
+    // The React Web UI receives medical activity through its dedicated
+    // transient activity channel. Do not persist it as a chat message here.
+    case "tool_activity":
+      return state;
+
     case "tool_call_started": {
       const id = newId();
       const message: WebMessage = {
@@ -291,8 +335,21 @@ export function applyWebGatewayEvent(
         toolCallId: event.toolCallId,
         toolName: normalizeToolDisplayName(event.name),
         text: event.argsPreview,
+        toolInput: event.argsPreview,
         source: "live",
       };
+      if (event.name === "read_skill" && typeof event.argsPreview === "string") {
+        // Surface WHICH skill the model invoked instead of a raw JSON blob.
+        try {
+          const parsed = JSON.parse(event.argsPreview) as Record<string, unknown>;
+          const skillName = typeof parsed.skillName === "string" ? parsed.skillName.trim() : "";
+          if (skillName) {
+            message.text = `read_skill: ${skillName}`;
+          }
+        } catch {
+          /* keep raw argsPreview */
+        }
+      }
       return {
         ...state,
         messages: [...state.messages, message],
@@ -323,7 +380,7 @@ export function applyWebGatewayEvent(
                   ...m,
                   kind: "tool_result",
                   ok: event.ok,
-                  text: limitToolResultPreview(event.resultPreview) ?? m.text,
+                  text: limitToolResultPreview(event.resultPreview, event.toolName) ?? m.text,
                   ...(eventImages ? { images: eventImages } : {}),
                   ...(normalizedErrorCode && { errorCode: normalizedErrorCode }),
                 }
@@ -342,7 +399,7 @@ export function applyWebGatewayEvent(
         kind: "tool_result",
         toolCallId: event.toolCallId,
         ok: event.ok,
-        text: limitToolResultPreview(event.resultPreview),
+        text: limitToolResultPreview(event.resultPreview, event.toolName),
         ...(eventImages ? { images: eventImages } : {}),
         ...(normalizedErrorCode && { errorCode: normalizedErrorCode }),
         source: "live",

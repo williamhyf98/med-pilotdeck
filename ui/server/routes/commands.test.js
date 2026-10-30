@@ -22,7 +22,7 @@ describe('commands routes', () => {
     tempDirs.push(pilotHome);
     process.env.PILOT_HOME = pilotHome;
 
-    const commandsDir = join(pilotHome, 'commands');
+    const commandsDir = join(pilotHome, 'users', '1', 'commands');
     mkdirSync(commandsDir, { recursive: true });
     const commandPath = join(commandsDir, 'hello.md');
     writeFileSync(commandPath, '---\ndescription: Says hello\n---\nHello $1', 'utf8');
@@ -71,8 +71,11 @@ async function createCommandsApp() {
   }));
 
   const { default: commandsRoutes } = await import('./commands.js');
+  const { userScopeMiddleware } = await import('../middleware/userScope.js');
   const app = express();
   app.use(express.json());
+  app.use((req, _res, next) => { req.user = { id: 1, role: 'admin' }; next(); });
+  app.use(userScopeMiddleware);
   app.use('/api/commands', commandsRoutes);
 
   return {

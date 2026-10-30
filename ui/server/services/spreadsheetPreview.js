@@ -1,20 +1,14 @@
 import crypto from 'crypto';
-import { execFile } from 'child_process';
 import fsPromises from 'fs/promises';
 import path from 'path';
-import { pathToFileURL } from 'url';
-import { promisify } from 'util';
 import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
 import {
-  LIBREOFFICE_TIMEOUT_MS,
   OFFICE_PREVIEW_CACHE_DIR,
   convertOfficeDocumentToPdf,
-  createLibreOfficeConversionWorkspace,
-  getLibreOfficeStatus,
+  convertOfficeDocumentToXlsx,
 } from './officePreview.js';
 
-const execFileAsync = promisify(execFile);
 const spreadsheetPreviewLocks = new Map();
 const MAX_INTERACTIVE_CELL_AREA = 1_000_000;
 const SPREADSHEET_MAIN_NAMESPACE = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
@@ -167,62 +161,7 @@ async function withPreviewLock(key, callback) {
 }
 
 async function convertSpreadsheetToXlsx(sourcePath, outputPath, cacheDir) {
-  const status = await getLibreOfficeStatus();
-  if (!status.available || !status.binaryPath) {
-    throw createSpreadsheetPreviewError(
-      'LibreOffice executable not found',
-      501,
-      'LIBREOFFICE_NOT_FOUND',
-    );
-  }
-
-  const { tempDir, profileDir } = await createLibreOfficeConversionWorkspace(cacheDir);
-  try {
-    let conversionOutput;
-    try {
-      conversionOutput = await execFileAsync(status.binaryPath, [
-        `-env:UserInstallation=${pathToFileURL(profileDir).href}`,
-        '--headless',
-        '--nologo',
-        '--nodefault',
-        '--nolockcheck',
-        '--nofirststartwizard',
-        '--convert-to',
-        'xlsx:Calc MS Excel 2007 XML',
-        '--outdir',
-        tempDir,
-        sourcePath,
-      ], {
-        timeout: LIBREOFFICE_TIMEOUT_MS,
-        maxBuffer: 8 * 1024 * 1024,
-        windowsHide: true,
-      });
-    } catch (error) {
-      error.statusCode = 500;
-      error.code = error.code || 'SPREADSHEET_XLSX_CONVERT_FAILED';
-      throw error;
-    }
-
-    const generatedName = (await fsPromises.readdir(tempDir))
-      .find((name) => name.toLowerCase().endsWith('.xlsx'));
-    if (!generatedName) {
-      const detail = String(conversionOutput?.stderr || conversionOutput?.stdout || '').trim();
-      throw createSpreadsheetPreviewError(
-        `LibreOffice did not produce an XLSX workbook${detail ? `: ${detail}` : ''}`,
-        500,
-        'SPREADSHEET_XLSX_OUTPUT_MISSING',
-      );
-    }
-
-    const pendingPath = `${outputPath}.${process.pid}.${Date.now()}.tmp`;
-    await fsPromises.copyFile(path.join(tempDir, generatedName), pendingPath);
-    await fsPromises.rename(pendingPath, outputPath);
-  } finally {
-    await Promise.all([
-      fsPromises.rm(tempDir, { recursive: true, force: true }).catch(() => {}),
-      fsPromises.rm(profileDir, { recursive: true, force: true }).catch(() => {}),
-    ]);
-  }
+  await convertOfficeDocumentToXlsx(sourcePath, outputPath, { cacheDir });
 }
 
 async function prepareSpreadsheetWorkbook(sourcePath, options = {}) {
@@ -379,6 +318,28 @@ function applyColorTint(rgb, tint) {
   return `#${adjusted.map((value) => value.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
 }
 
+const PREVIEW_FALLBACK_TEXT_COLOR = '#1F2937';
+
+function rgbLuminance(rgb) {
+  if (typeof rgb !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(rgb)) return null;
+  const channels = rgb.slice(1).match(/.{2}/g)?.map((value) => Number.parseInt(value, 16) / 255);
+  if (!channels || channels.length !== 3) return null;
+  const linear = channels.map((channel) => (
+    channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+  ));
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+}
+
+/** Keep light text on a dark fill; otherwise fall back so Univer does not paint white-on-white. */
+function previewForegroundColor(foreground, background) {
+  const fgLum = rgbLuminance(foreground);
+  if (fgLum === null) return foreground;
+  const bgLum = rgbLuminance(background);
+  const backgroundIsLight = bgLum === null || bgLum > 0.72;
+  if (fgLum > 0.72 && backgroundIsLight) return PREVIEW_FALLBACK_TEXT_COLOR;
+  return foreground;
+}
+
 function resolveExcelColor(color, themeColors) {
   const direct = excelColorToRgb(color);
   if (direct) return applyColorTint(direct, Number(color?.tint));
@@ -448,6 +409,7 @@ function mapCellStyle(cell, themeColors) {
   const background = fill.type === 'pattern' && fill.pattern !== 'none'
     ? resolveExcelColor(fill.fgColor, themeColors)
     : null;
+  const previewForeground = previewForegroundColor(foreground, background);
 
   if (font.name) style.ff = font.name;
   if (Number.isFinite(font.size)) style.fs = font.size;
@@ -455,7 +417,7 @@ function mapCellStyle(cell, themeColors) {
   if (font.italic) style.it = 1;
   if (font.underline) style.ul = { s: 1 };
   if (font.strike) style.st = { s: 1 };
-  if (foreground) style.cl = { rgb: foreground };
+  if (previewForeground) style.cl = { rgb: previewForeground };
   if (background) style.bg = { rgb: background };
   if (alignment.horizontal) style.ht = mapHorizontalAlignment(alignment.horizontal);
   if (alignment.vertical) style.vt = mapVerticalAlignment(alignment.vertical);
@@ -605,19 +567,16 @@ function worksheetToUniver(worksheet, sheetIndex, date1904, themeColors) {
     if (Object.keys(data).length > 0) columnData[columnNumber - 1] = data;
   }
 
-  const frozenView = worksheet.views?.find((view) => view.state === 'frozen');
-  const xSplit = Number(frozenView?.xSplit) || 0;
-  const ySplit = Number(frozenView?.ySplit) || 0;
   return {
     id: `sheet-${sheetIndex}`,
     name: worksheet.name,
     tabColor: resolveExcelColor(worksheet.properties?.tabColor, themeColors) || '',
     hidden: 0,
     freeze: {
-      xSplit,
-      ySplit,
-      startRow: ySplit,
-      startColumn: xSplit,
+      xSplit: 0,
+      ySplit: 0,
+      startRow: 0,
+      startColumn: 0,
     },
     rowCount,
     columnCount,
@@ -632,7 +591,7 @@ function worksheetToUniver(worksheet, sheetIndex, date1904, themeColors) {
     columnData,
     rowHeader: { width: 46 },
     columnHeader: { height: 24 },
-    showGridlines: worksheet.views?.[0]?.showGridLines === false ? 0 : 1,
+    showGridlines: 1,
     rightToLeft: worksheet.views?.[0]?.rightToLeft ? 1 : 0,
   };
 }

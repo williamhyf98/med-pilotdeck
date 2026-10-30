@@ -29,6 +29,7 @@ COPY src/ src/
 COPY scripts/ scripts/
 COPY ui/ ui/
 COPY skills/ skills/
+COPY office-renderer/ office-renderer/
 
 # Build edgeclaw-memory-core (src/ → lib/)
 RUN cd src/context/memory/edgeclaw-memory-core && npm run build
@@ -59,6 +60,7 @@ COPY --from=builder /build/dist/ dist/
 COPY --from=builder /build/src/ src/
 COPY --from=builder /build/scripts/ scripts/
 COPY --from=builder /build/skills/ skills/
+COPY --from=builder /build/office-renderer/ office-renderer/
 COPY --from=builder /build/ui/package.json ui/package.json
 COPY --from=builder /build/ui/node_modules/ ui/node_modules/
 COPY --from=builder /build/ui/server/ ui/server/
@@ -67,14 +69,11 @@ COPY --from=builder /build/ui/scripts/ ui/scripts/
 COPY --from=builder /build/ui/shared/ ui/shared/
 COPY --from=builder /build/ui/vite.config.js ui/vite.config.js
 
-# Create PilotDeck state/workspace directories used by the gateway, UI server,
-# permissions, skills/plugins, memory, auth, and router stats.
+# Create the shared PilotDeck dirs (plugins, system db). Per-user data lives
+# under users/<id>/ and is created by the server on demand.
 RUN mkdir -p \
-    /root/.pilotdeck/projects \
-    /root/.pilotdeck/router \
-    /root/.pilotdeck/skills \
     /root/.pilotdeck/plugins \
-    /root/.pilotdeck/memory \
+    /root/.pilotdeck/system \
     /workspace
 
 # Entrypoint

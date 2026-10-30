@@ -14,6 +14,8 @@ import type { SessionMetadataStore } from "../../session/metadata/SessionMetadat
 import type { SessionTitleGenerator } from "../../session/title/SessionTitleGenerator.js";
 import { createVisibleErrorStatusDetail } from "../../status/agentStatus.js";
 import { FileArtifactCollector, type FileArtifact } from "../../session/artifacts/index.js";
+import type { AgentTurnOverrides } from "../profile/types.js";
+import { sanitizeAgentTurnMetadata } from "../profile/validation.js";
 
 export type TurnRunnerOptions = {
   sessionId: string;
@@ -21,6 +23,9 @@ export type TurnRunnerOptions = {
   messages: CanonicalMessage[];
   input: AgentInput;
   maxTurns?: number;
+  maxToolCalls?: number;
+  profile?: string;
+  turnOverrides?: AgentTurnOverrides;
   runMode?: AgentRunMode;
   permissionMode?: PermissionMode;
   allowedReadFiles?: string[];
@@ -45,6 +50,10 @@ export type TurnRunnerRuntimeContext = {
   transcriptPath: string;
   /** Disable Agent-generated file artifact collection for non-project chats. */
   collectFileArtifacts?: boolean;
+  /** Skip whole-workspace fingerprinting; keep tool-reported paths only. */
+  artifactAllowWorkspaceDiff?: boolean;
+  /** Restrict collected artifacts to these extensions, e.g. `[".pdf"]`. */
+  artifactAllowedExtensions?: string[];
 };
 
 export type TurnRunnerRuntimeReloadSnapshot = {
@@ -91,6 +100,8 @@ export class TurnRunner {
           cwd: this.runtimeContext.cwd,
           allowedInputPaths: options.allowedReadFiles,
           now: this.now,
+          allowWorkspaceDiff: this.runtimeContext.artifactAllowWorkspaceDiff,
+          allowedExtensions: this.runtimeContext.artifactAllowedExtensions,
         }).catch(() => undefined);
     try {
       let artifactsFinished = false;
@@ -194,6 +205,11 @@ export class TurnRunner {
           turnId: options.turnId,
           messages,
           maxTurns: options.maxTurns,
+          maxToolCalls: options.maxToolCalls,
+          ...(options.profile !== undefined ? { profile: options.profile } : {}),
+          ...(options.turnOverrides !== undefined
+            ? { turnOverrides: options.turnOverrides }
+            : {}),
           runMode: options.runMode,
           permissionMode: options.permissionMode,
           allowedReadFiles: options.allowedReadFiles,
@@ -429,6 +445,15 @@ function acceptedInputMetadata(options: TurnRunnerOptions): Record<string, unkno
   const metadata: Record<string, unknown> = {};
   if (options.permissionMode) {
     metadata.permissionMode = options.permissionMode;
+  }
+  if (options.profile) {
+    metadata.agentProfile = options.profile;
+  }
+  if (options.turnOverrides?.metadata) {
+    metadata.turnMetadata = sanitizeAgentTurnMetadata(
+      options.turnOverrides.metadata,
+      "turnOverrides.metadata",
+    );
   }
   if (options.runMode) {
     metadata.runMode = options.runMode;

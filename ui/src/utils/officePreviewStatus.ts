@@ -1,4 +1,5 @@
 import { api } from './api';
+import { getStorageUserRole } from './safeStorage';
 
 export type OfficePreviewService = 'builtin' | 'libreoffice';
 
@@ -82,7 +83,11 @@ export async function readOfficePreviewStatus(options: { refresh?: boolean } = {
       configuredBinaryPath: String(body?.configuredBinaryPath || '').trim(),
       libreOffice: body?.libreOffice,
     };
-  } catch {
+  } catch (statusError) {
+    // The config fallback reads /api/config, which is admin-only; for anyone
+    // else it can only 403, so surface the original status failure instead
+    // (callers already treat a rejection as "status unavailable").
+    if (getStorageUserRole() !== 'admin') throw statusError;
     const fallback = await readServiceFromConfig();
     return {
       ...fallback,

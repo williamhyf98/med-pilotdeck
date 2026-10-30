@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { safeLocalStorage } from '../utils/safeStorage';
 
 const CACHE_KEY = 'PILOTDECK_GITHUB_STARS';
 const DISMISS_KEY = 'PILOTDECK_HIDE_GITHUB_STAR';
@@ -13,7 +14,7 @@ export const useGitHubStars = (owner: string, repo: string) => {
   const [starCount, setStarCount] = useState<number | null>(null);
   const [isDismissed, setIsDismissed] = useState(() => {
     try {
-      return localStorage.getItem(DISMISS_KEY) === 'true';
+      return safeLocalStorage.getItem(DISMISS_KEY) === 'true';
     } catch {
       return false;
     }
@@ -24,7 +25,7 @@ export const useGitHubStars = (owner: string, repo: string) => {
 
     // Check cache first
     try {
-      const cached = localStorage.getItem(CACHE_KEY);
+      const cached = safeLocalStorage.getItem(CACHE_KEY);
       if (cached) {
         const parsed: CachedStars = JSON.parse(cached);
         if (Date.now() - parsed.timestamp < CACHE_TTL) {
@@ -45,7 +46,7 @@ export const useGitHubStars = (owner: string, repo: string) => {
         if (typeof count === 'number') {
           setStarCount(count);
           try {
-            localStorage.setItem(CACHE_KEY, JSON.stringify({ count, timestamp: Date.now() }));
+            safeLocalStorage.setItem(CACHE_KEY, JSON.stringify({ count, timestamp: Date.now() }));
           } catch {
             // ignore
           }
@@ -61,7 +62,7 @@ export const useGitHubStars = (owner: string, repo: string) => {
   const dismiss = useCallback(() => {
     setIsDismissed(true);
     try {
-      localStorage.setItem(DISMISS_KEY, 'true');
+      safeLocalStorage.setItem(DISMISS_KEY, 'true');
     } catch {
       // ignore
     }

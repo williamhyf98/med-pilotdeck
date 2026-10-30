@@ -6,7 +6,8 @@ const GENERAL_INDEX_PROJECT_CANDIDATE_LIMIT = 30;
 function sameMessage(left, right) {
     if (!left || !right)
         return false;
-    return left.role === right.role && left.content === right.content;
+    return left.role === right.role && left.content === right.content
+        && JSON.stringify(left.attachmentEvidence ?? []) === JSON.stringify(right.attachmentEvidence ?? []);
 }
 function hasNewContent(previous, incoming) {
     if (incoming.length === 0)
@@ -527,8 +528,15 @@ export class HeartbeatIndexer {
                                     { label: "sessionKey", value: session.sessionKey },
                                     { label: "timestamp", value: session.timestamp },
                                     { label: "result", value: labels.length > 0 ? labels.map((label) => label.type).join(", ") : "none" },
+                                    { label: "attachmentSources", value: String(focusTurn.attachmentEvidence?.length ?? 0) },
+                                    { label: "attachmentChars", value: String(focusTurn.attachmentEvidence?.reduce((sum, item) => sum + item.chunks.reduce((n, chunk) => n + chunk.length, 0), 0) ?? 0) },
+                                    { label: "attachmentOmittedChars", value: String(focusTurn.attachmentEvidence?.reduce((sum, item) => sum + item.omittedChars, 0) ?? 0) },
+                                    { label: "attachmentPossiblyPartial", value: String(focusTurn.attachmentEvidence?.some((item) => item.possiblyPartial) ?? false) },
                                 ], traceI18n("trace.detail.classification_result", "Classification Result")),
                                 jsonDetail(`classification-labels-${session.l0IndexId}`, "Classification Labels", labels, traceI18n("trace.detail.classifier_candidates", "Classifier Candidates")),
+                                jsonDetail(`attachment-evidence-${session.l0IndexId}`, "附件证据摘要", (focusTurn.attachmentEvidence ?? []).map(({ sourceId, sourceKind, originalChars, omittedChars, possiblyPartial }) => ({
+                                    sourceId, sourceKind, originalChars, omittedChars, possiblyPartial,
+                                }))),
                             ],
                             ...(classificationPromptDebug ? { promptDebug: classificationPromptDebug } : {}),
                         });

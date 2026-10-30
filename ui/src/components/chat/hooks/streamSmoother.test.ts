@@ -38,147 +38,121 @@ function createManualFrameScheduler(onFrame?: () => void) {
 }
 
 describe('SmoothTextStream', () => {
-  it('renders a large chunk over many bounded frame updates', () => {
-    let now = 0;
-    const scheduler = createManualFrameScheduler(() => {
-      now += 33;
-    });
+  it('buffers bursts and renders them gradually without dropping or reordering text', () => {
+    const scheduler = createManualFrameScheduler();
     const emitted: string[] = [];
-    const text = 'abcdefghijklmnopqrstuvwxyz '.repeat(8);
+    const first = 'abcdefghijklmnopqrstuvwxyz '.repeat(4);
+    const second = '补充内容。';
     const stream = new SmoothTextStream({
       emit: (content) => emitted.push(content),
-      scheduleFrame: (callback) => scheduler.scheduleFrame(callback),
-      cancelFrame: (handle) => scheduler.cancelFrame(handle),
-      now: () => now,
-      frameMs: 33,
-      minCharsPerFrame: 3,
-      maxCharsPerFrame: 18,
+      scheduleFrame: scheduler.scheduleFrame,
+      cancelFrame: scheduler.cancelFrame,
     });
 
-    stream.append(text);
-
-    expect(emitted.length).toBe(1);
-    expect(emitted[0].length).toBeGreaterThan(0);
-    expect(emitted[0].length).toBeLessThan(text.length);
-    expect(stream.getSnapshot().targetLength).toBe(text.length);
-
+    stream.append(first);
+    expect(emitted).toEqual([]);
+    expect(scheduler.size).toBe(1);
     scheduler.runNext();
-    scheduler.runNext();
-
-    expect(emitted.length).toBeGreaterThanOrEqual(2);
     expect(emitted[0].length).toBeGreaterThan(0);
-    expect(emitted[0].length).toBeLessThan(text.length);
+    expect(emitted[0].length).toBeLessThan(first.length);
+    stream.append(second);
+    expect(scheduler.size).toBe(1);
+    scheduler.drain(200);
 
-    for (let index = 1; index < emitted.length; index += 1) {
-      const delta = emitted[index].length - emitted[index - 1].length;
-      expect(delta).toBeGreaterThan(0);
-      expect(delta).toBeLessThanOrEqual(18);
+    expect(emitted.at(-1)).toBe(first + second);
+    expect(stream.getSnapshot().pendingChars).toBe(0);
+    expect(scheduler.size).toBe(0);
+    for (let i = 1; i < emitted.length; i += 1) {
+      expect(emitted[i].startsWith(emitted[i - 1])).toBe(true);
+      expect(emitted[i].length - emitted[i - 1].length).toBeLessThanOrEqual(4);
     }
-
-    scheduler.drain();
-
-    expect(emitted[emitted.length - 1]).toBe(text);
-    expect(stream.getSnapshot().renderedLength).toBe(text.length);
   });
 
-  it('updates the moving average rate when chunk cadence changes', () => {
-    let now = 0;
-    const scheduler = createManualFrameScheduler(() => {
-      now += 33;
-    });
-    const stream = new SmoothTextStream({
-      emit: () => {},
-      scheduleFrame: (callback) => scheduler.scheduleFrame(callback),
-      cancelFrame: (handle) => scheduler.cancelFrame(handle),
-      now: () => now,
-    });
-
-    stream.append('abcd');
-    now += 40;
-    stream.append('x'.repeat(80));
-
-    const snapshot = stream.getSnapshot();
-    expect(snapshot.averageCharsPerSecond).toBeGreaterThan(400);
-    expect(snapshot.pendingChars).toBeGreaterThan(0);
-    expect(snapshot.pendingChars).toBeLessThan(84);
-  });
-
-  it('prefers whitespace and punctuation boundaries without exceeding the frame cap', () => {
-    let now = 0;
-    const scheduler = createManualFrameScheduler(() => {
-      now += 33;
-    });
+  it('pauses without emitting queued text and resumes without losing content', () => {
+    const scheduler = createManualFrameScheduler();
     const emitted: string[] = [];
     const stream = new SmoothTextStream({
       emit: (content) => emitted.push(content),
-      scheduleFrame: (callback) => scheduler.scheduleFrame(callback),
-      cancelFrame: (handle) => scheduler.cancelFrame(handle),
-      now: () => now,
-      frameMs: 33,
-      minCharsPerFrame: 6,
-      maxCharsPerFrame: 12,
+      scheduleFrame: scheduler.scheduleFrame,
+      cancelFrame: scheduler.cancelFrame,
     });
+    stream.append('第一段内容');
+    stream.pause();
+    scheduler.drain();
+    stream.append('，第二段内容');
+    expect(emitted).toEqual([]);
+    stream.resume();
+    scheduler.drain();
+    expect(emitted.at(-1)).toBe('第一段内容，第二段内容');
+    expect(stream.getSnapshot().pendingChars).toBe(0);
+  });
 
-    stream.append('hello world, next sentence.');
+  it('drains buffered text before finalizing exactly once', () => {
+    const scheduler = createManualFrameScheduler();
+    const emitted: string[] = [];
+    const completed: string[] = [];
+    const text = '诊疗建议。'.repeat(20);
+    const stream = new SmoothTextStream({
+      emit: (content) => emitted.push(content),
+      finalize: () => completed.push(emitted.at(-1) ?? ''),
+      scheduleFrame: scheduler.scheduleFrame,
+      cancelFrame: scheduler.cancelFrame,
+    });
+    const onDrainComplete = vi.fn();
+    stream.onDrainComplete = onDrainComplete;
+    stream.append(text);
+    stream.drain();
     scheduler.runNext();
-
-    expect(emitted[0].length).toBeLessThanOrEqual(12);
-    expect(/[\s,]$/.test(emitted[0])).toBe(true);
+    expect(emitted[0].length).toBeLessThan(text.length);
+    expect(completed).toEqual([]);
+    scheduler.drain();
+    expect(completed).toEqual([text]);
+    expect(onDrainComplete).toHaveBeenCalledTimes(1);
+    expect(scheduler.size).toBe(0);
   });
 
   it('flushes all buffered content and finalizes immediately', () => {
-    let now = 0;
-    const scheduler = createManualFrameScheduler(() => {
-      now += 33;
-    });
+    const scheduler = createManualFrameScheduler();
     const emitted: string[] = [];
     let finalized = 0;
     const stream = new SmoothTextStream({
       emit: (content) => emitted.push(content),
-      finalize: () => {
-        finalized += 1;
-      },
-      scheduleFrame: (callback) => scheduler.scheduleFrame(callback),
-      cancelFrame: (handle) => scheduler.cancelFrame(handle),
-      now: () => now,
+      finalize: () => { finalized += 1; },
+      scheduleFrame: scheduler.scheduleFrame,
+      cancelFrame: scheduler.cancelFrame,
     });
-
     stream.append('streaming output');
     stream.flush(true);
-
-    expect(emitted.at(-1)).toBe('streaming output');
+    scheduler.drain();
+    expect(emitted).toEqual(['streaming output']);
     expect(finalized).toBe(1);
     expect(stream.getSnapshot().targetLength).toBe(0);
     expect(stream.getSnapshot().renderedLength).toBe(0);
     expect(scheduler.size).toBe(0);
   });
 
-  it('falls back when requestAnimationFrame does not run promptly', () => {
+  it('keeps streaming with a fallback timer and stops emitting after cancellation', () => {
     vi.useFakeTimers();
-    const requestAnimationFrameSpy = vi.fn(() => 1);
-    const cancelAnimationFrameSpy = vi.fn();
-    vi.stubGlobal('window', {
-      requestAnimationFrame: requestAnimationFrameSpy,
-      cancelAnimationFrame: cancelAnimationFrameSpy,
-      setTimeout: globalThis.setTimeout,
-    });
     const emitted: string[] = [];
-
+    const stream = new SmoothTextStream({
+      emit: (content) => emitted.push(content),
+      fallbackFrameMs: 10,
+    });
     try {
-      const stream = new SmoothTextStream({
-        emit: (content) => emitted.push(content),
-        fallbackFrameMs: 10,
-      });
-
       stream.append('abcdefghijklmnopqrstuvwxyz '.repeat(4));
-
-      expect(emitted.length).toBe(1);
+      expect(emitted).toEqual([]);
+      // The fallback fires before the normal 16ms frame timer.
       vi.advanceTimersByTime(10);
-
-      expect(cancelAnimationFrameSpy).toHaveBeenCalledWith(1);
-      expect(emitted.length).toBeGreaterThan(1);
+      expect(emitted).toHaveLength(1);
+      vi.advanceTimersByTime(10);
+      expect(emitted).toHaveLength(2);
+      expect(emitted[1].length).toBeGreaterThan(emitted[0].length);
+      stream.cancel();
+      vi.advanceTimersByTime(100);
+      expect(emitted).toHaveLength(2);
+      expect(stream.getSnapshot().isScheduled).toBe(false);
     } finally {
-      vi.unstubAllGlobals();
+      stream.cancel();
       vi.useRealTimers();
     }
   });

@@ -20,6 +20,7 @@ import {
   getPluginPort,
   isPluginRunning,
 } from '../utils/plugin-process-manager.js';
+import { requireAdmin } from '../middleware/requireAdmin.js';
 
 const router = express.Router();
 
@@ -97,7 +98,10 @@ router.get('/:name/assets/*', (req, res) => {
 });
 
 // PUT /:name/enable — Toggle plugin enabled/disabled (starts/stops server if applicable)
-router.put('/:name/enable', async (req, res) => {
+// Installing, updating, enabling and removing plugins changes what code the
+// server runs for everyone — administrators only. The read endpoints above
+// stay open to every signed-in user.
+router.put('/:name/enable', requireAdmin, async (req, res) => {
   try {
     const { enabled } = req.body;
     if (typeof enabled !== 'boolean') {
@@ -137,7 +141,7 @@ router.put('/:name/enable', async (req, res) => {
 });
 
 // POST /install — Install plugin from git URL
-router.post('/install', async (req, res) => {
+router.post('/install', requireAdmin, async (req, res) => {
   try {
     const { url } = req.body;
     if (!url || typeof url !== 'string') {
@@ -170,7 +174,7 @@ router.post('/install', async (req, res) => {
 });
 
 // POST /:name/update — Pull latest from git (restarts server if running)
-router.post('/:name/update', async (req, res) => {
+router.post('/:name/update', requireAdmin, async (req, res) => {
   try {
     const pluginName = req.params.name;
 
@@ -283,7 +287,7 @@ router.all('/:name/rpc/*', async (req, res) => {
 });
 
 // DELETE /:name — Uninstall plugin (stops server first)
-router.delete('/:name', async (req, res) => {
+router.delete('/:name', requireAdmin, async (req, res) => {
   try {
     const pluginName = req.params.name;
 

@@ -125,6 +125,78 @@ describe('patchMergedStreamingMessage', () => {
 });
 
 describe('computeMerged', () => {
+  it('replaces a policy refusal with persisted same-turn history and keeps its original position', () => {
+    const reply = '抱歉，无法访问该位置。请上传您的材料。';
+    const realtime = [textMessage('local-refusal', reply, '2026-05-28T00:00:02.000Z', {
+      runId: 'denied-run', turnId: 'denied-run', isFinal: true,
+    })];
+    const server = [
+      textMessage('denied-user', '请求读取外部文件', '2026-05-28T00:00:01.000Z', {
+        role: 'user', turnId: 'denied-run',
+      }),
+      textMessage('denied-reply', reply, '2026-05-28T00:00:02.000Z', {
+        turnId: 'denied-run',
+      }),
+      textMessage('next-user', '下一轮问题', '2026-05-28T00:00:03.000Z', {
+        role: 'user', turnId: 'next-run',
+      }),
+    ];
+    expect(shouldKeepRealtimeAfterServerRefresh(realtime[0], server)).toBe(false);
+    expect(computeMerged(server, realtime).map((message) => message.id)).toEqual([
+      'denied-user', 'denied-reply', 'next-user',
+    ]);
+  });
+  it('keeps two persisted refusals with identical replies in their own turns', () => {
+    const reply = '抱歉，当前账号无权访问该位置。请上传有权使用的材料。';
+    const server = [
+      textMessage('user-1', '第一次请求', '2026-05-28T00:00:01.000Z', {
+        role: 'user', turnId: 'deny-1',
+      }),
+      textMessage('reply-1', reply, '2026-05-28T00:00:02.000Z', { turnId: 'deny-1' }),
+      textMessage('user-2', '第二次请求', '2026-05-28T00:00:03.000Z', {
+        role: 'user', turnId: 'deny-2',
+      }),
+      textMessage('reply-2', reply, '2026-05-28T00:00:04.000Z', { turnId: 'deny-2' }),
+    ];
+    const live = [textMessage('live-2', reply, '2026-05-28T00:00:04.000Z', {
+      runId: 'deny-2', turnId: 'deny-2', isFinal: true,
+    })];
+    expect(computeMerged(server, live).map((message) => message.id)).toEqual([
+      'user-1', 'reply-1', 'user-2', 'reply-2',
+    ]);
+  });
+  it('keeps an explicitly stopped realtime turn before a newer server turn', () => {
+    const server = [
+      textMessage('new-user', '新一轮输入', '2026-05-28T00:00:03.000Z', {
+        role: 'user',
+        runId: 'run-new',
+      }),
+    ];
+    const realtime = [
+      textMessage('stopped-user', '上一轮输入', '2026-05-28T00:00:01.000Z', {
+        role: 'user',
+        runId: 'run-stopped',
+        isInterruptedNotice: true,
+      }),
+      {
+        id: 'stopped-error',
+        sessionId: 'web:s_test',
+        timestamp: '2026-05-28T00:00:02.000Z',
+        provider: PROVIDER,
+        kind: 'error' as const,
+        runId: 'run-stopped',
+        content: '本轮推演已停止。',
+        isInterruptedNotice: true,
+      },
+    ];
+
+    expect(computeMerged(server, realtime).map((message) => message.id)).toEqual([
+      'stopped-user',
+      'stopped-error',
+      'new-user',
+    ]);
+  });
+
   it('keeps finalized realtime assistant text until an equivalent same-turn server text is persisted', () => {
     const server = [
       textMessage('tail-before-turn', 'Previous answer', '2026-05-28T00:00:00.000Z'),
@@ -158,6 +230,38 @@ describe('computeMerged', () => {
 
     expect(computeMerged(server, realtime).map((message) => message.id)).toEqual([
       'tail-before-turn',
+      'persisted-answer',
+    ]);
+  });
+
+  it('drops a still-streaming trauma answer once the same attachment turn is persisted', () => {
+    const server = [
+      textMessage('persisted-user', '请解读这份检查报告', '2026-05-28T00:00:00.000Z', {
+        role: 'user',
+        runId: 'run-attachment',
+        turnId: 'run-attachment',
+        attachments: [{ name: '检查报告.pdf', path: '/tmp/检查报告.pdf' }],
+      }),
+      textMessage('persisted-answer', '结构化病例报告', '2026-05-28T00:01:30.000Z', {
+        runId: 'run-attachment',
+        turnId: 'run-attachment',
+      }),
+    ];
+    const realtime: NormalizedMessage[] = [{
+      id: '__streaming_web:s_test_run-attachment',
+      sessionId: 'web:s_test',
+      timestamp: '2026-05-28T00:00:10.000Z',
+      provider: PROVIDER,
+      kind: 'stream_delta',
+      role: 'assistant',
+      content: '结构化病例报告',
+      runId: 'run-attachment',
+      serverTailIdAtStart: 'previous-turn-tail',
+    }];
+
+    expect(shouldKeepRealtimeAfterServerRefresh(realtime[0], server)).toBe(false);
+    expect(computeMerged(server, realtime).map((message) => message.id)).toEqual([
+      'persisted-user',
       'persisted-answer',
     ]);
   });
@@ -277,6 +381,85 @@ describe('turn-scoped server reconciliation', () => {
       server,
       'run-current',
     )).toEqual([]);
+  });
+
+  it('dedupes the optimistic user row when history keeps the attachment note', () => {
+    // Server history stores the agent-facing input (typed text + attachment
+    // note); the optimistic bubble stores only what the user typed.
+    const localUser = textMessage(
+      'local_1786708301909_ab12cd',
+      '请帮我分析这张x光图',
+      '2026-05-28T00:00:01.000Z',
+      { role: 'user' },
+    );
+    const serverUser = textMessage(
+      'a2f1b6c4-0000-4000-8000-000000000001',
+      '请帮我分析这张x光图\n\n[Files attached by user and available for reading in the project:]\n'
+        + '- 1-wse_0820_02_xray.jpeg: /tmp/chat-attachments/1-wse_0820_02_xray.jpeg\n'
+        + '[End files attached by user]\n',
+      '2026-05-28T00:00:02.000Z',
+      { role: 'user', turnId: 'run-current', runId: 'run-current' },
+    );
+    const serverAnswer = textMessage(
+      'a2f1b6c4-0000-4000-8000-000000000002',
+      '【资料概况】胸片一张。',
+      '2026-05-28T00:00:20.000Z',
+      { turnId: 'run-current', runId: 'run-current' },
+    );
+
+    expect(isRealtimeMessageRepresentedOnServer(localUser, [serverUser, serverAnswer])).toBe(true);
+    expect(computeMerged([serverUser, serverAnswer], [localUser]).map((m) => m.id)).toEqual([
+      serverUser.id,
+      serverAnswer.id,
+    ]);
+  });
+
+  it('dedupes a long-running optimistic user row by turn identity after the timestamp window', () => {
+    const localUser = textMessage(
+      'local_1786708301909_ab12cd',
+      '本轮信息：胸部爆震伤',
+      '2026-05-28T00:00:01.000Z',
+      { role: 'user', turnId: 'run-current', runId: 'run-current' },
+    );
+    const serverUser = textMessage(
+      'persisted-user-current',
+      '本轮信息：胸部爆震伤',
+      '2026-05-28T00:02:01.000Z',
+      { role: 'user', turnId: 'run-current', runId: 'run-current' },
+    );
+    const otherTurnSameText = textMessage(
+      'persisted-user-other',
+      '本轮信息：胸部爆震伤',
+      '2026-05-28T00:02:01.000Z',
+      { role: 'user', turnId: 'run-other', runId: 'run-other' },
+    );
+
+    expect(isRealtimeMessageRepresentedOnServer(localUser, [serverUser])).toBe(true);
+    expect(isRealtimeMessageRepresentedOnServer(localUser, [otherTurnSameText])).toBe(false);
+    expect(computeMerged([serverUser], [localUser]).map((m) => m.id)).toEqual([
+      serverUser.id,
+    ]);
+  });
+
+  it('still keeps an optimistic user row that history has not persisted yet', () => {
+    const localUser = textMessage(
+      'local_1786708301909_ab12cd',
+      '另一个问题',
+      '2026-05-28T00:00:01.000Z',
+      { role: 'user' },
+    );
+    const serverUser = textMessage(
+      'a2f1b6c4-0000-4000-8000-000000000001',
+      '请帮我分析这张x光图',
+      '2026-05-28T00:00:02.000Z',
+      { role: 'user', turnId: 'run-previous', runId: 'run-previous' },
+    );
+
+    expect(isRealtimeMessageRepresentedOnServer(localUser, [serverUser])).toBe(false);
+    expect(computeMerged([serverUser], [localUser]).map((m) => m.id)).toEqual([
+      serverUser.id,
+      localUser.id,
+    ]);
   });
 
   it('keeps a live compact boundary until history persists it, then dedupes it', () => {

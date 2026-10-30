@@ -1,131 +1,72 @@
-# DOCX Capability and Controlled Fallback Protocol
+# DOCX 能力与限制处理
 
-Read this file before deciding that the standard DOCX commands cannot perform a requested operation.
+在判定标准 DOCX 命令无法执行所要求操作之前阅读本文件。
 
-## 1. Discover, do not guess
+## 1. 发现，不要猜测
 
-Run:
-
-```bash
-bash "$DOCX_SKILL_ROOT/scripts/docx.sh" capabilities
-bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command create
-bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
-bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command review
-```
-
-The live CLI output is authoritative. Examples in documentation are not a complete capability declaration.
-
-When an operation is declared `supported`, use it. When it is `partial`, `unsupported`, or `blocked`, preserve that status and choose the next level deliberately.
-
-## 2. Decision ladder
-
-Use the lowest sufficient level:
-
-1. **Standard command** — deterministic `create`, `edit`, `review`, or another bundled operation, writing an internal candidate.
-2. **Auxiliary asset** — generate a chart, diagram, or other local image, then use a standard image block.
-3. **Targeted OOXML patch** — modify an existing DOCX through `fallback-patch` with a narrow package-part allowlist.
-4. **Full custom creation** — create a new DOCX through `fallback-create`; never use this to mutate a valuable existing package.
-5. **Report unsupported or blocked** — required for signatures, document/write protection, rights management, unsafe packages, or fidelity that cannot be verified.
-
-Do not jump from level 1 to an untracked Python builder. The inability to express one feature does not authorize reconstruction of an existing document.
-Standard creation normalizes local raster assets, and standard editing supports
-anchored inline image insertion before or after a paragraph. Use fallback only
-when a material requirement needs unsupported floating/wrapping behavior.
-
-Every successful fallback still produces only an internal candidate. It does
-not authorize direct project-root output. Run acceptance, per-page visual QA,
-preflight, and `deliver` exactly as for a standard command.
-Fallbacks do not bypass the frozen document policy: an unrequested header,
-footer, or page-number field in a new document fails preflight. Final delivery
-also remains inside the frozen workspace unless the exact external path was
-authorized during `prepare`.
-For `fallback-patch`, the input path is resolved through the session version
-chain before the controlled script runs. Use `--use-exact-input` only when the
-current user explicitly requests an older/original editing base.
-
-## 3. Targeted OOXML patch
-
-The script contract is:
+对高级编辑和审阅运行：
 
 ```bash
-python patch.py --package-dir /temporary/unpacked/package
+bash "$DOCX_TOOL" capabilities
+bash "$DOCX_TOOL" schema --command edit
+bash "$DOCX_TOOL" schema --command review
 ```
 
-The script edits only that copy. The wrapper computes pre/post hashes, rejects changes outside the allowlist, repacks the package, validates relationships and XML, and writes a manifest.
-The wrapper runs the script from its own directory with a safe environment
-allowlist. When `PILOTDECK_WORK_DIR` is set, the script must be stored beneath
-that directory. These controls reduce accidental workspace writes and secret
-inheritance; operating-system sandboxing still depends on the host tool
-permission model. A fallback script must use only its declared input argument
-and local task assets, and must not access the network.
+普通新建使用 `make`，不需要先查询 create schema。复杂新建若使用
+`make --spec`，字段以 [specifications.md](specifications.md) 为准。
 
-```bash
-bash "$DOCX_SKILL_ROOT/scripts/docx.sh" fallback-patch \
-  --input "$INPUT_DOCX" \
-  --script "$WORKSPACE/tmp/patch.py" \
-  --out "$CANDIDATE_DOCX" \
-  --manifest "$WORKSPACE/qa/fallback-manifest.json" \
-  --allow-part "word/document.xml" \
-  --reason "The standard edit schema cannot update this field structure."
-```
+实时 CLI 输出是权威。未知字段和操作会失败，而不是被忽略。
 
-Add more `--allow-part` values only when required. Patterns use shell-style matching. Common narrow targets:
+## 2. Agent 可使用的层级
 
-- `word/document.xml`
-- `word/header*.xml`
-- `word/footer*.xml`
-- `word/settings.xml`
-- `word/styles.xml`
-- `word/numbering.xml`
-- `word/_rels/*.rels`
-- `[Content_Types].xml`
+使用最低且足够的已捆绑能力：
 
-Macro, ActiveX, signature, and embedded-object parts are always forbidden. A script that changes nothing returns `partial`; a script that exceeds scope returns `blocked`.
-At least one `--allow-part` is mandatory. Existing output paths are blocked unless the user explicitly authorizes `--overwrite`.
+1. **普通新建** — `make --title/--body/--markdown/--spec --out`。
+2. **标准编辑** — `edit`、`review`、`finalize`、`sanitize`、
+   `refresh-toc` 等受控命令。
+3. **辅助资源** — 先创建本地图像，再由标准 image block 或
+   `insert_image` 插入。
+4. **报告限制** — 返回 `unsupported` 或 `blocked`，说明缺失的保真度并
+   保留源文件。
 
-## 4. Full custom creation
+不要进入第五层：不要写 Python 构建器、不要直接修补 OOXML、不要调用
+`fallback-create` 或 `fallback-patch`。这些 CLI 名称可能为旧协议兼容和
+维护测试保留，但不属于 Agent 可用契约。
 
-The script contract is:
+## 3. 常见受支持范围
 
-```bash
-python create.py --out /temporary/candidate.docx
-```
+- 新建中性 Word 文档；
+- 标题、段落、项目符号、编号、表格、图片、目录和受支持域；
+- 定向文本/段落编辑；
+- 批注和受支持的跟踪替换；
+- 接受/拒绝修订及移除批注；
+- 文本与包结构比较；
+- 元数据净化；
+- OOXML 校验、结构审计和 LibreOffice 页面渲染。
 
-Run it only for a new document when the standard creator cannot express a material requirement:
+编辑既有文档时优先保留原包。若标准 `edit` 检测到宏、签名、嵌入对象、
+复杂内容控件或其他包敏感功能，它会阻断可能有损的往返。
 
-```bash
-bash "$DOCX_SKILL_ROOT/scripts/docx.sh" fallback-create \
-  --script "$WORKSPACE/tmp/create.py" \
-  --out "$CANDIDATE_DOCX" \
-  --manifest "$WORKSPACE/qa/fallback-manifest.json" \
-  --reason "The requested native diagram structure is outside the standard create schema."
-```
+## 4. 必须保持阻断的操作
 
-The wrapper requires a new output path and a valid `.docx`, records script and output hashes, and writes a manifest. It never overwrites an existing document. The manifest does not prove visual quality; run inspect, compare where relevant, and preflight afterward.
+不要尝试绕过：
 
-## 5. Fallback manifest
+- 数字签名仍有效的编辑；
+- 文档/写入保护或密码；
+- 宏、VBA、`.docm`、`.dotm` 或活动内容；
+- 未授权的权限管理或加密内容；
+- 无法核验的不可逆涂黑；
+- 复杂移动/属性修订的静默接受或拒绝；
+- 要求 Microsoft Word 等效结果的法律级比较；
+- 未建模 OOXML 结构的有损重建。
 
-Keep the manifest with internal QA artifacts. It records:
+返回 `blocked` 或 `unsupported`，说明限制，并保留原始文件。
 
-- protocol and fallback mode;
-- reason and paths;
-- script SHA-256;
-- allowed and actually changed OOXML parts;
-- script exit status and bounded stdout/stderr;
-- output SHA-256 and validation result.
+## 5. 运行时失败
 
-If a fallback fails, do not bypass the wrapper and rerun its script directly. Correct the script or its allowlist, or report the limitation.
-
-## 6. Operations that stay blocked
-
-Do not attempt controlled fallback for:
-
-- editing a digitally signed document while claiming the signature remains valid;
-- bypassing document/write protection or claiming its credentials were verified;
-- macros, VBA, `.docm`, `.dotm`, or active content;
-- rights-managed, encrypted, or password-protected content without an authorized compatible workflow;
-- irreversible redaction without inspecting all visible text, images, links, embedded objects, and package parts;
-- accepting/rejecting complex move or property revisions as though they were simple insertions/deletions;
-- legal-grade comparison when Microsoft Word Compare or an approved equivalent is required.
-
-Return `blocked` or `unsupported`, explain the missing fidelity, and preserve the source.
+- `missing-dependencies`：报告交付包不完整并停止；不要 `fix`、pip 或切换
+  系统 Python。
+- `render-backend-unavailable`：可报告结构校验结果，但必须明确页面视觉
+  检查未完成。
+- `partial`：只报告已完成的范围，不要把文件存在当作完整成功。
+- 输出路径已存在：只有用户明确要求替换时才使用 `--force` 或对应覆盖参数。

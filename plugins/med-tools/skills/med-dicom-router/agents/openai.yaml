@@ -1,0 +1,4 @@
+interface:
+  display_name: "医学影像路由"
+  short_description: "预检 DICOM/NIfTI，按可信检查信息选择 CT 分析流程"
+  default_prompt: "使用 $med-dicom-router 调用 med_image_route 预检本轮影像，根据确认的模态、部位和单位选择支持的分析流程。"

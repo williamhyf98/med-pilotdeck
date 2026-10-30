@@ -1,31 +1,31 @@
-# Charts and data
+# 图表与数据
 
-## Validate before authoring
+## 撰写前核验
 
-For each chart, verify:
+对每张图表，核验：
 
-- Category labels and series values have matching lengths.
-- Units, date ranges, currencies, and percentage bases are explicit.
-- Displayed totals reconcile with their components.
-- Sorting and axis choices do not distort the intended comparison.
-- Zero baselines are used when the comparison requires them.
+- 类别标签与系列值的长度匹配。
+- 单位、日期范围、货币和百分比基数是明确的。
+- 显示的合计与其组成部分对得上。
+- 排序和坐标轴选择不会扭曲预期对比。
+- 当对比需要时使用零基线。
 
-Do not invent missing values. Record transformations and assumptions in source notes.
+不要编造缺失值。在来源说明中记录变换和假设。
 
-## Choose the simplest chart
+## 选择最简单的图表
 
-- Bar: compare categories or rankings.
-- Column: compare a small number of periods or categories.
-- Line: show ordered change over time.
-- Scatter: show the relationship between two numeric variables.
-- Pie or doughnut: use sparingly for a few parts of a meaningful whole.
+- Bar：比较类别或排名。
+- Column：比较少量时期或类别。
+- Line：显示随时间的有序变化。
+- Scatter：显示两个数值变量之间的关系。
+- Pie 或 doughnut：仅谨慎用于有意义整体的少数部分。
 
-Prefer one chart and one takeaway per slide. Directly label important values when that removes legend lookup. Avoid 3D effects and decorative chart elements.
+每张幻灯片优先使用一张图表和一个要点。当直接标注重要数值可以省去查找图例时，就这样做。避免 3D 效果和装饰性图表元素。
 
-## Tables
+## 表格
 
-Use tables when exact values matter more than shape or trend. Keep header names short, align numeric columns, use consistent decimals, and limit the visible row count to what can be read at full-slide scale.
+当精确值比形态或趋势更重要时使用表格。保持表头名称简短，对齐数字列，使用一致的小数位，并将可见行数限制在全幻灯片尺度下可读的范围内。
 
-## Sources
+## 来源
 
-Include a concise source footer when data came from research or a named internal system. Keep the full URL, retrieval date, query, or calculation in source notes when it would be distracting on the slide.
+当数据来自研究或具名内部系统时，加入简要的来源页脚。当完整 URL、检索日期、查询或计算会分散幻灯片注意力时，将其放在来源说明中。

@@ -1,4 +1,5 @@
 import type { MemoryMessage } from "./core/types.js";
+import { normalizeAttachmentEvidence } from "./core/utils/attachment-evidence.js";
 import { decodeEscapedUnicodeText } from "./core/utils/text.js";
 
 const MEMORY_CONTEXT_HEADER = "You are using retrieved ClawXMemory file memories for this turn.";
@@ -602,6 +603,9 @@ function normalizeSingleMessage(
     role,
     content: truncate(content, options.maxMessageChars),
   };
+  if (role === "user" && Array.isArray(msg.attachmentEvidence)) {
+    normalized.attachmentEvidence = normalizeAttachmentEvidence(msg.attachmentEvidence);
+  }
   const rawId = typeof msg.id === "string"
     ? msg.id
     : typeof nestedMessage?.id === "string"

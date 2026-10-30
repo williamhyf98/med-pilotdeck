@@ -8,7 +8,7 @@ source "${SCRIPT_DIR}/lib-local-runtime.sh"
 
 PID_FILE="${RUNTIME_DIR}/pilotdeck.pid"
 LOG_FILE="${RUNTIME_DIR}/logs/pilotdeck-dev.log"
-PORTS=(3001 18789 5173)
+PORTS=("${SERVER_PORT}" "${PILOTDECK_GATEWAY_PORT}" "${VITE_PORT}")
 
 kill_tree() {
   local pid="$1"
@@ -34,6 +34,10 @@ wait_gone() {
 }
 
 echo "==> Stopping PilotDeck"
+
+if [[ "${PILOTDECK_OFFICE_RENDERER_ROLE:-remote}" == "server" ]]; then
+  bash "${SCRIPT_DIR}/stop-office-renderer.sh" || true
+fi
 
 stopped_any=0
 
@@ -64,6 +68,16 @@ for port in "${PORTS[@]}"; do
     stopped_any=1
   fi
 done
+
+# Per-user gateways are children of the UI server; if it died without cleaning
+# up, signal the pids it recorded.
+PIDS_FILE="${PILOT_HOME:-${PILOT_HOME_DIR}}/system/gateway-pids.json"
+if [ -f "$PIDS_FILE" ]; then
+  "$(runtime_node)" -e 'const d=require(process.argv[1]);Object.values(d||{}).forEach(v=>{try{process.kill(v?.pid,"SIGTERM")}catch{}})' "$PIDS_FILE" || true
+  # Drop the file once it has been acted on: a stale pid could be recycled by
+  # the OS and signalled again on the next stop or pool start.
+  rm -f "$PIDS_FILE"
+fi
 
 # Catch orphaned launcher / gateway if ports already freed.
 pkill -f "${PILOTDECK_ROOT}/scripts/dev-launcher.mjs" 2>/dev/null || true

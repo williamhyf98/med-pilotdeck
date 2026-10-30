@@ -1,9 +1,19 @@
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, posix, resolve } from "node:path";
-import { parse as parseYaml } from "yaml";
+import { basename, isAbsolute, join, posix, relative, resolve } from "node:path";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { isMedicalSkillAvailable } from "../../pilot/medicalCapabilities.js";
 
-import { getPilotExtensionPaths } from "../../pilot/paths.js";
+import {
+  getPilotExtensionPaths,
+  isGeneralProjectKey,
+} from "../../pilot/paths.js";
+import {
+  GLOBAL_SKILL_AVAILABILITY,
+  isValidSkillAvailabilityInput,
+  normalizeSkillAvailability,
+  type SkillAvailability,
+} from "../../pilot/skillAvailability.js";
 import type {
   SkillAddressInput,
   SkillCreateInput,
@@ -23,6 +33,8 @@ import type {
   SkillValidationResult,
   SkillWriteInput,
   SkillWriteResult,
+  SkillSetAvailabilityInput,
+  SkillSetAvailabilityResult,
   SkillsListInput,
   SkillsListResult,
 } from "./types.js";
@@ -56,6 +68,8 @@ export type SkillManagerOptions = {
   pilotHome: string;
   /** Read-only skills shipped with the active PilotDeck build. */
   builtinSkillsRoot?: string;
+  /** Read-only medical skills shipped with plugins/med-tools. */
+  medicalSkillsRoot?: string;
   /**
    * "General chat" cwds we treat as not-a-real-project. Defaults to
    * `pilotHome` (~/.pilotdeck). When the caller passes a `projectKey`
@@ -76,12 +90,16 @@ export type SkillManagerOptions = {
 export class SkillManager {
   private readonly pilotHome: string;
   private readonly builtinSkillsRootPath: string | null;
+  private readonly medicalSkillsRootPath: string | null;
   private readonly generalCwdPaths: string[];
 
   constructor(options: SkillManagerOptions) {
     this.pilotHome = resolve(options.pilotHome);
     this.builtinSkillsRootPath = options.builtinSkillsRoot
       ? resolve(options.builtinSkillsRoot)
+      : null;
+    this.medicalSkillsRootPath = options.medicalSkillsRoot
+      ? resolve(options.medicalSkillsRoot)
       : null;
     const defaults = [this.pilotHome];
     this.generalCwdPaths = (options.generalCwdPaths ?? defaults).map((p) => resolve(p));
@@ -102,12 +120,22 @@ export class SkillManager {
     return this.builtinSkillsRootPath;
   }
 
+  private medicalSkillsRoot(): string {
+    if (!this.medicalSkillsRootPath) {
+      throw new SkillManagerError("not_configured", "Medical skills root is not configured.");
+    }
+    return this.medicalSkillsRootPath;
+  }
+
   private projectSkillsRoot(projectRoot: string): string {
     return getPilotExtensionPaths(projectRoot, this.pilotHome).projectSkillsDir;
   }
 
   private isGeneralCwd(projectKey: string | null | undefined): boolean {
     if (!projectKey) return false;
+    if (isGeneralProjectKey(projectKey, this.pilotHome)) {
+      return true;
+    }
     return this.generalCwdPaths.includes(resolve(projectKey));
   }
 
@@ -115,6 +143,9 @@ export class SkillManager {
   private resolveScopeRoot(scope: SkillScope, projectKey: string | null | undefined): string {
     if (scope === "builtin") {
       return this.builtinSkillsRoot();
+    }
+    if (scope === "medical") {
+      return this.medicalSkillsRoot();
     }
     if (scope === "project") {
       if (!projectKey || this.isGeneralCwd(projectKey)) {
@@ -129,10 +160,12 @@ export class SkillManager {
   }
 
   private assertMutableScope(scope: SkillScope): void {
-    if (scope === "builtin") {
+    if (scope === "builtin" || scope === "medical") {
       throw new SkillManagerError(
         "read_only",
-        "Built-in skills are read-only. Create a user or project override to edit this skill.",
+        scope === "medical"
+          ? "Medical skills are read-only."
+          : "Built-in skills are read-only. Create a user or project override to edit this skill.",
       );
     }
   }
@@ -157,12 +190,17 @@ export class SkillManager {
     const effectiveProject = this.isGeneralCwd(projectKey) ? null : projectKey;
 
     const builtinSkills = this.builtinSkillsRootPath
-      ? await listSkillsIn(this.builtinSkillsRootPath, "builtin")
+      ? await listSkillsIn(this.builtinSkillsRootPath, "builtin", this.pilotHome)
       : [];
-    const userSkills = await listSkillsIn(this.userSkillsRoot(), "user");
+    const userSkills = await listSkillsIn(this.userSkillsRoot(), "user", this.pilotHome);
     const projectSkills = effectiveProject
-      ? await listSkillsIn(this.projectSkillsRoot(effectiveProject), "project")
+      ? await listSkillsIn(this.projectSkillsRoot(effectiveProject), "project", this.pilotHome)
       : [];
+
+    const allMedicalSkills = this.medicalSkillsRootPath
+      ? await listSkillsIn(this.medicalSkillsRootPath, "medical", this.pilotHome)
+      : [];
+    const medicalSkills = allMedicalSkills;
 
     const builtinSlugs = new Set(builtinSkills.map((skill) => skill.slug));
     const userSlugs = new Set(userSkills.map((skill) => skill.slug));
@@ -186,11 +224,15 @@ export class SkillManager {
         ...skill,
         ...(builtinSlugs.has(skill.slug) ? { overridesBuiltin: true } : {}),
       })),
+      medical: medicalSkills,
       projectPath: effectiveProject,
     };
   }
 
   async read(input: SkillAddressInput): Promise<SkillReadResult> {
+    if (!isMedicalSkillAvailable(input.slug)) {
+      throw new SkillManagerError("not_found", `Skill "${input.slug}" is not available.`);
+    }
     const skillDir = this.resolveSkillDir(input);
     const skillFile = join(skillDir, "SKILL.md");
     let content: string;
@@ -202,7 +244,10 @@ export class SkillManager {
       }
       throw e;
     }
-    const skill = await readSkillMeta(skillDir, input.scope);
+    const skill = await readSkillMeta(skillDir, input.scope, this.pilotHome);
+    if (skill && !isMedicalSkillAvailable(skill.name)) {
+      throw new SkillManagerError("not_found", `Skill "${input.slug}" is not available.`);
+    }
     return { content, scope: input.scope, slug: input.slug, skill };
   }
 
@@ -215,7 +260,46 @@ export class SkillManager {
     await fs.mkdir(skillDir, { recursive: true });
     const skillFile = join(skillDir, "SKILL.md");
     await fs.writeFile(skillFile, input.content, "utf8");
-    const skill = await readSkillMeta(skillDir, input.scope);
+    const skill = await readSkillMeta(skillDir, input.scope, this.pilotHome);
+    return { ok: true, scope: input.scope, slug: input.slug, skill };
+  }
+
+  async setAvailability(
+    input: SkillSetAvailabilityInput,
+  ): Promise<SkillSetAvailabilityResult> {
+    if (!isValidSkillAvailabilityInput(input.availability)) {
+      throw new SkillManagerError("invalid_input", "Skill availability contains an invalid option.");
+    }
+    const availability = normalizeSkillAvailability(input.availability);
+    if (availability.length === 0) {
+      throw new SkillManagerError("invalid_input", "At least one availability option is required.");
+    }
+    if (input.scope === "medical") {
+      throw new SkillManagerError("read_only", `Medical skill "${input.slug}" has fixed global availability.`);
+    } else if (input.scope === "user") {
+      const skillDir = this.resolveSkillDir(input);
+      const skillFile = join(skillDir, "SKILL.md");
+      let content: string;
+      try {
+        content = await fs.readFile(skillFile, "utf8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          throw new SkillManagerError("not_found", `SKILL.md not found at ${skillFile}.`);
+        }
+        throw error;
+      }
+      await fs.writeFile(
+        skillFile,
+        replaceFrontmatterAvailability(content, availability),
+        "utf8",
+      );
+    } else {
+      throw new SkillManagerError("read_only", "This skill has fixed availability.");
+    }
+    const skill = await readSkillMeta(this.resolveSkillDir(input), input.scope, this.pilotHome);
+    if (!skill) {
+      throw new SkillManagerError("not_found", `Skill "${input.slug}" was not found.`);
+    }
     return { ok: true, scope: input.scope, slug: input.slug, skill };
   }
 
@@ -246,7 +330,7 @@ export class SkillManager {
           });
     const skillFile = join(skillDir, "SKILL.md");
     await fs.writeFile(skillFile, finalContent, "utf8");
-    const skill = await readSkillMeta(skillDir, input.scope);
+    const skill = await readSkillMeta(skillDir, input.scope, this.pilotHome);
     return {
       ok: true,
       scope: input.scope,
@@ -360,7 +444,7 @@ export class SkillManager {
     await fs.mkdir(root, { recursive: true });
 
     if (importMode === "symlink") {
-      await fs.symlink(resolvedSource, targetDir, "dir");
+      await fs.symlink(relative(root, resolvedSource), targetDir, "dir");
     } else {
       await fs.cp(resolvedSource, targetDir, {
         recursive: true,
@@ -370,7 +454,7 @@ export class SkillManager {
       });
     }
 
-    const skill = await readSkillMeta(targetDir, input.scope);
+    const skill = await readSkillMeta(targetDir, input.scope, this.pilotHome);
     return {
       ok: true,
       mode: importMode,
@@ -583,7 +667,11 @@ function parseCompatFrontmatter(fmRaw: string): Record<string, unknown> {
   return result;
 }
 
-async function readSkillMeta(skillDir: string, scope: SkillScope): Promise<SkillSummary | null> {
+async function readSkillMeta(
+  skillDir: string,
+  scope: SkillScope,
+  _pilotHome?: string,
+): Promise<SkillSummary | null> {
   const skillFile = join(skillDir, "SKILL.md");
   let content: string;
   try {
@@ -592,6 +680,10 @@ async function readSkillMeta(skillDir: string, scope: SkillScope): Promise<Skill
     return null;
   }
   const fm = parseSkillFrontmatter(content);
+  const availability = resolveSummaryAvailability(
+    scope,
+    fm.availability,
+  );
   let mtime: number | null = null;
   try {
     const stat = await fs.stat(skillFile);
@@ -612,9 +704,54 @@ async function readSkillMeta(skillDir: string, scope: SkillScope): Promise<Skill
     skillFile,
     skillDir,
     scope,
-    readonly: scope === "builtin",
+    readonly: scope === "builtin" || scope === "medical",
     mtime,
+    availability,
+    availabilityMutable: false,
+    department: optionalFrontmatterString(fm.department),
+    category: optionalFrontmatterString(fm.category),
   };
+}
+
+/**
+ * `department` / `category` are optional display axes, so anything that
+ * isn't a non-empty string (missing key, list, number, bare `~`) collapses
+ * to null rather than throwing — a malformed hint must never make a skill
+ * unloadable.
+ */
+function optionalFrontmatterString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function resolveSummaryAvailability(
+  _scope: SkillScope,
+  _frontmatterAvailability: unknown,
+): SkillAvailability[] {
+  return [...GLOBAL_SKILL_AVAILABILITY];
+}
+
+function replaceFrontmatterAvailability(
+  content: string,
+  availability: readonly SkillAvailability[],
+): string {
+  const normalizedContent = content.replace(/\r\n/gu, "\n");
+  if (!normalizedContent.startsWith("---\n")) {
+    return `---\navailability:\n${availability.map((entry) => `  - ${entry}`).join("\n")}\n---\n${normalizedContent}`;
+  }
+  const end = normalizedContent.indexOf("\n---", 4);
+  if (end === -1) {
+    throw new SkillManagerError("invalid_input", "SKILL.md frontmatter is not closed.");
+  }
+  const parsed = parseYaml(normalizedContent.slice(4, end)) as unknown;
+  const frontmatter = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : {};
+  frontmatter.availability = [...availability];
+  const bodyStart = end + (normalizedContent[end + 4] === "\n" ? 5 : 4);
+  const body = normalizedContent.slice(bodyStart).replace(/^\n/u, "");
+  return `---\n${stringifyYaml(frontmatter).trimEnd()}\n---\n${body}`;
 }
 
 async function buildSkillScanFolder(skillDir: string, folderName: string): Promise<SkillScanFolder> {
@@ -660,7 +797,11 @@ async function buildSkillScanFolder(skillDir: string, folderName: string): Promi
   };
 }
 
-async function listSkillsIn(root: string, scope: SkillScope): Promise<SkillSummary[]> {
+async function listSkillsIn(
+  root: string,
+  scope: SkillScope,
+  pilotHome?: string,
+): Promise<SkillSummary[]> {
   let entries: import("node:fs").Dirent[];
   try {
     entries = await fs.readdir(root, { withFileTypes: true });
@@ -670,7 +811,7 @@ async function listSkillsIn(root: string, scope: SkillScope): Promise<SkillSumma
   }
   const skills: SkillSummary[] = [];
   for (const entry of entries) {
-    if (!isValidSlug(entry.name)) continue;
+    if (!isValidSlug(entry.name) || !isMedicalSkillAvailable(entry.name)) continue;
     let isSkillDir = entry.isDirectory();
     if (!isSkillDir && entry.isSymbolicLink()) {
       // Accept symlinks-to-directories (the import-as-symlink path
@@ -683,8 +824,8 @@ async function listSkillsIn(root: string, scope: SkillScope): Promise<SkillSumma
       }
     }
     if (!isSkillDir) continue;
-    const meta = await readSkillMeta(join(root, entry.name), scope);
-    if (!meta) continue;
+    const meta = await readSkillMeta(join(root, entry.name), scope, pilotHome);
+    if (!meta || !isMedicalSkillAvailable(meta.name)) continue;
     skills.push(meta);
   }
   skills.sort((a, b) => a.slug.localeCompare(b.slug));

@@ -249,6 +249,10 @@ export const useEditorSidebar = ({
     setEditorExpanded((previous) => !previous);
   }, []);
 
+  useEffect(() => {
+    if (!editingFile) setEditorExpanded(false);
+  }, [editingFile]);
+
   const handleResizeStart = useCallback(
     (event: ReactMouseEvent<HTMLDivElement>) => {
       if (isMobile) {

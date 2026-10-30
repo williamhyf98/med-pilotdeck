@@ -9,6 +9,7 @@
  */
 
 import { McpClient, McpClientError, type McpClientOptions } from "../client/McpClient.js";
+import { isMedToolDisabled } from "../../pilot/medicalCapabilities.js";
 import type {
   PilotDeckMcpClientStatusEntry,
   PilotDeckMcpServerInstructions,
@@ -95,7 +96,7 @@ export class McpRuntime {
       if (client.getStatus() !== "ready") continue;
       try {
         const tools = await client.listTools();
-        out.push(...tools);
+        out.push(...tools.filter((tool) => !isMedToolDisabled(tool.wireName)));
       } catch {
         // skip — `start()` already recorded the error
       }

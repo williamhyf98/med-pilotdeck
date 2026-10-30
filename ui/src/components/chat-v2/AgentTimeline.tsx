@@ -15,21 +15,22 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import type { ProcessTraceStep } from './ProcessTrace';
+import { getToolDisplayName } from '../chat/tools/configs/toolConfigs';
 
 const PHASE_LABELS: Record<string, string> = {
-  rag: 'Searching',
-  search: 'Searching',
-  read: 'Reading',
-  edit: 'Editing',
-  write: 'Writing',
-  tool: 'Using tool',
-  command: 'Running command',
-  bash: 'Running command',
-  think: 'Thinking',
-  plan: 'Planning',
-  subtask: 'Sub-task',
-  code: 'Coding',
-  review: 'Reviewing',
+  rag: '检索中',
+  search: '检索中',
+  read: '读取中',
+  edit: '编辑中',
+  write: '写入中',
+  tool: '使用工具',
+  command: '执行命令',
+  bash: '执行命令',
+  think: '思考中',
+  plan: '规划中',
+  subtask: '子任务',
+  code: '编码中',
+  review: '复核中',
 };
 
 const PHASE_ICONS: Record<string, LucideIcon> = {
@@ -96,9 +97,10 @@ function normalizePhase(raw: string): string {
 type AgentTimelineProps = {
   steps: ProcessTraceStep[];
   className?: string;
+  expandAll?: boolean;
 };
 
-export function AgentTimeline({ steps, className = '' }: AgentTimelineProps) {
+export function AgentTimeline({ steps, className = '', expandAll = false }: AgentTimelineProps) {
   const groups = useMemo(() => groupStepsByPhase(steps), [steps]);
 
   if (groups.length === 0) return null;
@@ -109,7 +111,7 @@ export function AgentTimeline({ steps, className = '' }: AgentTimelineProps) {
         <TimelineGroupRow
           key={group.id}
           group={group}
-          defaultExpanded={idx === groups.length - 1 && group.isRunning}
+          defaultExpanded={expandAll || (idx === groups.length - 1 && group.isRunning)}
         />
       ))}
     </div>
@@ -134,7 +136,7 @@ function TimelineGroupRow({
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className={`group inline-flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-[13px] leading-relaxed transition hover:bg-neutral-100 dark:hover:bg-neutral-800/60 ${
+        className={`pd-process-group group inline-flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-[13px] leading-relaxed transition hover:bg-neutral-100 dark:hover:bg-neutral-800/60 ${
           group.isRunning
             ? 'text-neutral-600 dark:text-neutral-300'
             : 'text-neutral-400 dark:text-neutral-500'
@@ -178,14 +180,16 @@ function TimelineGroupRow({
 function TimelineStepRow({ step }: { step: ProcessTraceStep }) {
   const isRunning = step.state === 'running';
   const isFailed = step.state === 'failed' || step.severity === 'error';
-  const toolLabel = step.toolName || step.title || 'Step';
-  const target = (step.target || step.detail || '').trim();
+  const toolLabel = step.title || (step.toolName ? getToolDisplayName(step.toolName) : 'Step');
+  const target = (step.target || '').trim();
   const context = (step.context || '').trim();
   const resultDetail = (step.resultDetail || '').trim();
+  const commandDetail = (step.detail || '').trim();
+  const showCommand = Boolean(commandDetail && commandDetail !== target);
 
   return (
     <div
-      className={`flex min-w-0 items-start gap-2 py-0.5 text-[12px] leading-relaxed ${
+      className={`pd-process-step flex min-w-0 items-start gap-2 py-0.5 text-[12px] leading-relaxed ${
         isFailed
           ? 'text-amber-600 dark:text-amber-400'
           : isRunning
@@ -196,7 +200,7 @@ function TimelineStepRow({ step }: { step: ProcessTraceStep }) {
       <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-50" />
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-baseline gap-1.5">
-          <span className="shrink-0 font-medium text-neutral-700 dark:text-neutral-200">
+          <span className="pd-process-step-title shrink-0 font-medium text-neutral-700 dark:text-neutral-200">
             {toolLabel}
           </span>
           {target ? (
@@ -204,23 +208,29 @@ function TimelineStepRow({ step }: { step: ProcessTraceStep }) {
               <span className="shrink-0 text-neutral-400 dark:text-neutral-600" aria-hidden>
                 /
               </span>
-              <span className="min-w-0 truncate font-mono text-[11.5px] text-sky-700 dark:text-sky-400">
+              <span
+                className="min-w-0 break-all font-mono text-[11.5px] text-sky-700 dark:text-sky-400"
+                title={target}
+              >
                 {target}
               </span>
             </>
           ) : null}
           {context ? (
-            <span className="ml-auto min-w-0 max-w-[45%] shrink-0 truncate text-[11px] text-neutral-400 dark:text-neutral-500">
+            <span className="pd-process-step-detail ml-auto min-w-0 max-w-[45%] shrink-0 truncate text-[11px] text-neutral-400 dark:text-neutral-500">
               {context}
             </span>
           ) : null}
         </div>
+        {showCommand ? (
+          <div className="pd-process-step-detail mt-0.5 break-all font-mono text-[11px] leading-4 text-neutral-400 dark:text-neutral-500" title={commandDetail}>
+            {commandDetail}
+          </div>
+        ) : null}
         {resultDetail ? (
-          <div className="mt-0.5 truncate font-mono text-[11px] leading-4 text-neutral-400 dark:text-neutral-500">
+          <div className="pd-process-step-detail mt-0.5 break-all font-mono text-[11px] leading-4 text-neutral-400 dark:text-neutral-500">
             <span className="text-neutral-500 dark:text-neutral-600">&gt;</span>
             {' '}
-            {toolLabel}
-            {' / '}
             {resultDetail}
           </div>
         ) : null}

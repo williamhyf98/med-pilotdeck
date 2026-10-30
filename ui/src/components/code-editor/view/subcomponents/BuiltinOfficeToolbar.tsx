@@ -96,7 +96,7 @@ export default function BuiltinOfficeToolbar({
 
   return (
     <div className="relative z-20 min-w-0 shrink-0">
-      <div className="flex min-h-12 w-full min-w-0 items-center gap-1 overflow-x-auto border-b border-neutral-200 bg-white px-3 dark:border-neutral-800 dark:bg-neutral-950">
+      <div className="flex min-h-12 w-full min-w-0 scroll-pr-5 items-center gap-1 overflow-x-auto overscroll-x-contain border-b border-neutral-200 bg-white pl-3 pr-5 dark:border-neutral-800 dark:bg-neutral-950">
       {navigationAvailable && onToggleNavigation ? (
         <>
           <button
@@ -228,6 +228,7 @@ export default function BuiltinOfficeToolbar({
           <Download className="h-4 w-4" strokeWidth={1.75} />
         </a>
       ) : null}
+      <span aria-hidden="true" className="h-px w-2 shrink-0" />
       </div>
       {searchOpen ? (
         <FloatingFileSearchControls

@@ -155,6 +155,17 @@ export const TOOL_CONFIGS: Record<string, ToolDisplayConfig> = {
   // FILE OPERATION TOOLS
   // ============================================================================
 
+  read_skill: {
+    input: {
+      type: 'one-line',
+      label: 'read_skill',
+      getValue: (input) => (input && typeof input.skillName === 'string' ? input.skillName : ''),
+    },
+    result: {
+      hidden: true,
+    },
+  },
+
   Read: {
     input: {
       type: 'one-line',
@@ -671,13 +682,13 @@ export const TOOL_CONFIGS: Record<string, ToolDisplayConfig> = {
           !Array.isArray(answers) &&
           Object.keys(answers).length > 0;
         if (count === 1) {
-          const header = questions[0]?.header || 'Question';
-          return hasAnswers ? `${header} — answered` : header;
+          const header = questions[0]?.header || '确认提问';
+          return hasAnswers ? `${header} — 已回答` : header;
         }
         if (count === 0 && input.questions) {
-          return 'Question payload';
+          return '提问内容';
         }
-        return hasAnswers ? `${count} questions — answered` : `${count} questions`;
+        return hasAnswers ? `${count} 个问题 — 已回答` : `${count} 个问题`;
       },
       defaultOpen: true,
       contentType: 'question-answer',
@@ -796,4 +807,37 @@ export function shouldHideToolResult(toolName: string, toolResult: any): boolean
   }
 
   return false;
+}
+
+const TOOL_DISPLAY_NAMES: Record<string, string> = {
+  AskUserQuestion: '确认提问',
+  ask_user_question: '确认提问',
+  Bash: '终端命令',
+  bash: '终端命令',
+  Read: '读取文件',
+  read_file: '读取文件',
+  Write: '写入文件',
+  write_file: '写入文件',
+  Edit: '编辑文件',
+  edit_file: '编辑文件',
+  Grep: '文本搜索',
+  grep: '文本搜索',
+  Glob: '文件匹配',
+  glob: '文件匹配',
+  Task: '任务',
+  agent: '任务',
+  web_search: '网页搜索',
+  web_fetch: '网页抓取',
+  med_radar_analyze_ct: 'RADAR CT 分析',
+  med_parse_medical: '医疗附件解析',
+  med_image_route: '医学影像分诊',
+  med_dicom_route: 'DICOM 文件路由',
+  med_trauma_rag_query: '战创伤知识检索',
+  med_trauma_stage_plan: '战创伤分阶段救治方案',
+  med_tools_health: '插件健康检查',
+};
+
+export function getToolDisplayName(toolName: string): string {
+  const canonicalToolName = getCanonicalToolName(toolName);
+  return TOOL_DISPLAY_NAMES[canonicalToolName] || TOOL_DISPLAY_NAMES[toolName] || canonicalToolName;
 }

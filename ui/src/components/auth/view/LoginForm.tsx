@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import AuthErrorAlert from './AuthErrorAlert';
 import AuthInputField from './AuthInputField';
 import AuthScreenLayout from './AuthScreenLayout';
+import RegisterForm from './RegisterForm';
 
 type LoginFormState = {
   username: string;
@@ -23,7 +24,8 @@ const initialState: LoginFormState = {
  */
 export default function LoginForm() {
   const { t } = useTranslation('auth');
-  const { login } = useAuth();
+  const { login, registrationOpen, sessionEndedCode } = useAuth();
+  const [mode, setMode] = useState<'login' | 'register'>('login');
 
   const [formState, setFormState] = useState<LoginFormState>(initialState);
   const [errorMessage, setErrorMessage] = useState('');
@@ -54,21 +56,30 @@ export default function LoginForm() {
     [formState.password, formState.username, login, t],
   );
 
+  if (mode === 'register') {
+    return <RegisterForm onBack={() => setMode('login')} />;
+  }
+
+  const sessionNotice =
+    sessionEndedCode === 'USER_DISABLED'
+      ? t('errors.disabled')
+      : sessionEndedCode
+        ? t('errors.revoked')
+        : '';
+
   return (
-    <AuthScreenLayout
-      title={t('login.title')}
-      description={t('login.description')}
-      footerText="Enter your credentials to access PilotDeck"
-    >
-      <form onSubmit={handleSubmit} className="space-y-4">
+    <AuthScreenLayout title={t('login.title')}>
+      <form onSubmit={handleSubmit} className="auth-screen__form">
+        <p className="auth-screen__description">{t('login.description')}</p>
         <AuthInputField
           id="username"
           label={t('login.username')}
           value={formState.username}
           onChange={(value) => updateField('username', value)}
-          placeholder={t('login.placeholders.username')}
+          placeholder={t('login.account')}
           isDisabled={isSubmitting}
           autoComplete="username"
+          visuallyHiddenLabel
         />
 
         <AuthInputField
@@ -76,21 +87,32 @@ export default function LoginForm() {
           label={t('login.password')}
           value={formState.password}
           onChange={(value) => updateField('password', value)}
-          placeholder={t('login.placeholders.password')}
+          placeholder={t('login.password')}
           isDisabled={isSubmitting}
           type="password"
           autoComplete="current-password"
+          visuallyHiddenLabel
         />
 
-        <AuthErrorAlert errorMessage={errorMessage} />
+        <AuthErrorAlert errorMessage={errorMessage || sessionNotice} />
 
         <button
           type="submit"
           disabled={isSubmitting}
-          className="w-full rounded-md bg-blue-600 px-4 py-2 font-medium text-white transition-colors duration-200 hover:bg-blue-700 disabled:bg-blue-400"
+          className="auth-screen__submit"
         >
           {isSubmitting ? t('login.loading') : t('login.submit')}
         </button>
+
+        {registrationOpen ? (
+          <button
+            type="button"
+            onClick={() => setMode('register')}
+            className="auth-screen__link"
+          >
+            {t('login.registerLink')}
+          </button>
+        ) : null}
       </form>
     </AuthScreenLayout>
   );

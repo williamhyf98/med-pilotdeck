@@ -1,24 +1,27 @@
-"""Call local G9-V-Med (OpenAI-compatible) for medical multimodal reports.
+"""Call the configured OpenAI-compatible medical model for multimodal reports.
 
 When the primary medical VLM is down, optionally fall back to the main agent
-model (GPT-5.5 by default) so medical tasks still produce a report.
+model from PilotDeck config (`agent.model` in pilotdeck.yaml) so medical tasks
+still produce a report. Explicit ``MED_VLM_FALLBACK_*`` env vars still win.
 """
 
 from __future__ import annotations
 
 import base64
+import json
 import mimetypes
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import httpx
 
+from .pilotdeck_model_config import config_candidates, load_config, resolve_model
 
-DEFAULT_API_BASE = "http://127.0.0.1:8030/v1"
-DEFAULT_MODEL = "G9-V-Med"
-DEFAULT_FALLBACK_API_BASE = "https://llm-center.modelbest.co/llm/v1"
-DEFAULT_FALLBACK_MODEL = "gpt-5.5"
+# Fallback LLM defaults are empty on purpose: resolve from pilotdeck.yaml
+# ``agent.model`` (+ matching ``model.providers`` url/apiKey) unless env overrides.
+DEFAULT_FALLBACK_API_BASE = ""
+DEFAULT_FALLBACK_MODEL = ""
 
 
 def _env(name: str, default: str = "") -> str:
@@ -30,17 +33,75 @@ def _truthy(name: str, default: str = "1") -> bool:
     return _env(name, default).lower() in {"1", "true", "yes", "on"}
 
 
+def _pilotdeck_config_candidates() -> List[Path]:
+    return config_candidates()
+
+
+def _split_provider_model(ref: str) -> tuple[str, str]:
+    value = (ref or "").strip()
+    if not value:
+        return "", ""
+    if "/" in value:
+        provider, _, model = value.partition("/")
+        return provider.strip(), model.strip()
+    return "", value
+
+
+def _load_main_agent_llm_from_pilotdeck(config_path: str = "") -> Optional[Dict[str, str]]:
+    """Read main-agent LLM settings from pilotdeck.yaml.
+
+    Uses ``agent.model`` (``provider/modelId``) and the matching entry under
+    ``model.providers.<provider>`` for url / apiKey.
+    """
+    paths = [Path(config_path)] if config_path else _pilotdeck_config_candidates()
+    raw = load_config(paths)
+    if raw is None:
+        return None
+    agent = raw.get("agent")
+    ref = str(agent.get("model") or "").strip() if isinstance(agent, dict) else ""
+    return resolve_model(raw, ref)
+
+
+def _load_medical_llm_from_pilotdeck() -> Optional[Dict[str, str]]:
+    raw = load_config(_pilotdeck_config_candidates())
+    if raw is None:
+        return None
+    medical = raw.get("medical")
+    ref = str(medical.get("interpretationModel") or "").strip() if isinstance(medical, dict) else ""
+    if not ref:
+        agent = raw.get("agent")
+        ref = str(agent.get("model") or "").strip() if isinstance(agent, dict) else ""
+    return resolve_model(raw, ref)
+
+
 def get_vlm_config() -> Dict[str, str]:
+    main_agent = _load_main_agent_llm_from_pilotdeck() or {}
+    primary = _load_medical_llm_from_pilotdeck() or {}
+    fallback_model = _env("MED_VLM_FALLBACK_MODEL", main_agent.get("model") or DEFAULT_FALLBACK_MODEL)
+    fallback_api_base = _env(
+        "MED_VLM_FALLBACK_API_BASE",
+        main_agent.get("api_base") or DEFAULT_FALLBACK_API_BASE,
+    ).rstrip("/")
+    fallback_api_key = _env(
+        "MED_VLM_FALLBACK_API_KEY",
+        main_agent.get("api_key") or "",
+    )
     return {
-        "api_base": _env("MED_VLM_API_BASE", DEFAULT_API_BASE).rstrip("/"),
-        "model": _env("MED_VLM_MODEL", DEFAULT_MODEL),
-        "api_key": _env("MED_VLM_API_KEY", "EMPTY"),
+        "api_base": _env("MED_VLM_API_BASE", primary.get("api_base") or "").rstrip("/"),
+        "model": _env("MED_VLM_MODEL", primary.get("model") or ""),
+        "api_key": _env("MED_VLM_API_KEY", primary.get("api_key") or ""),
         "fallback_enabled": "1" if _truthy("MED_VLM_FALLBACK_ENABLED", "1") else "0",
-        "fallback_api_base": _env(
-            "MED_VLM_FALLBACK_API_BASE", DEFAULT_FALLBACK_API_BASE
-        ).rstrip("/"),
-        "fallback_model": _env("MED_VLM_FALLBACK_MODEL", DEFAULT_FALLBACK_MODEL),
-        "fallback_api_key": _env("MED_VLM_FALLBACK_API_KEY", ""),
+        "fallback_api_base": fallback_api_base,
+        "fallback_model": fallback_model,
+        "fallback_api_key": fallback_api_key,
+        "fallback_source": (
+            "env"
+            if _env("MED_VLM_FALLBACK_MODEL")
+            or _env("MED_VLM_FALLBACK_API_BASE")
+            or _env("MED_VLM_FALLBACK_API_KEY")
+            else ("pilotdeck.yaml" if main_agent else "unset")
+        ),
+        "fallback_agent_ref": main_agent.get("agent_ref") or "",
     }
 
 
@@ -54,7 +115,10 @@ def get_fallback_vlm_config() -> Optional[Dict[str, str]]:
         primary = cfg["api_key"]
         if primary and primary.upper() not in {"EMPTY", "NONE", "NULL"}:
             api_key = primary
-    if not api_key or not cfg["fallback_api_base"] or not cfg["fallback_model"]:
+    if not cfg["fallback_api_base"] or not cfg["fallback_model"]:
+        return None
+    # Local OpenAI-compatible servers often use placeholder keys such as EMPTY.
+    if not api_key:
         return None
     return {
         "api_base": cfg["fallback_api_base"],
@@ -170,16 +234,114 @@ def _chat_completion(
         return response.json()
 
 
-def analyze_medical_with_vlm(
+def _extract_delta_text(data: Dict[str, Any]) -> str:
+    choices = data.get("choices") or []
+    if not choices:
+        return ""
+    delta = (choices[0] or {}).get("delta") or {}
+    content = delta.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: List[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                parts.append(str(item.get("text") or ""))
+            elif isinstance(item, str):
+                parts.append(item)
+        return "".join(parts)
+    return ""
+
+
+async def _chat_completion_stream(
+    *,
+    cfg: Dict[str, str],
+    system_prompt: str,
+    user_content: List[Dict[str, Any]],
+    max_tokens: int,
+    timeout_s: float,
+    include_chat_template_kwargs: bool,
+    on_text: Callable[[str], Awaitable[None]],
+) -> Dict[str, Any]:
+    """Stream one OpenAI-compatible completion and accumulate its final text."""
+    payload: Dict[str, Any] = {
+        "model": cfg["model"],
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        "stream": True,
+        "temperature": 0.2,
+        "max_tokens": max(512, max_tokens),
+    }
+    if include_chat_template_kwargs:
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+    headers = {
+        "Authorization": f"Bearer {cfg['api_key']}",
+        "Content-Type": "application/json",
+    }
+    url = f"{cfg['api_base']}/chat/completions"
+    parts: List[str] = []
+    usage: Optional[Dict[str, Any]] = None
+    timeout = httpx.Timeout(timeout_s)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        async with client.stream("POST", url, json=payload, headers=headers) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line or line.startswith(":"):
+                    continue
+                if not line.startswith("data:"):
+                    continue
+                body = line[5:].strip()
+                if not body or body == "[DONE]":
+                    continue
+                data = json.loads(body)
+                if isinstance(data.get("usage"), dict):
+                    usage = data["usage"]
+                text = _extract_delta_text(data)
+                if not text:
+                    continue
+                parts.append(text)
+                await on_text(text)
+    return {"report": "".join(parts).strip(), "usage": usage}
+
+
+def build_plain_user_content(
+    *,
+    text: str,
+    png_paths: Optional[List[str]] = None,
+    max_images: int = 8,
+) -> List[Dict[str, Any]]:
+    """Build OpenAI multimodal user content from free-form text + optional images."""
+    content: List[Dict[str, Any]] = [{"type": "text", "text": (text or "").strip() or "（无文本）"}]
+    for png in (png_paths or [])[: max(0, int(max_images))]:
+        path = Path(png)
+        if not path.is_file():
+            continue
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": _image_to_data_url(path)},
+            }
+        )
+    return content
+
+
+def chat_vlm(
     *,
     system_prompt: str,
-    summary: str,
+    user_text: str,
     png_paths: Optional[List[str]] = None,
     max_images: int = 8,
     timeout_s: float = 180.0,
+    primary_timeout_s: Optional[float] = None,
     require_images: bool = False,
+    empty_continue_hint: str = "请主 Agent 根据已有摘要与图像继续完成任务。",
 ) -> Dict[str, Any]:
-    """Call G9-V-Med first; on failure optionally fall back to GPT-5.5."""
+    """Call the medical model first; on failure optionally fall back to the main agent model.
+
+    Returns the usual med-tools VLM payload with ``report`` holding assistant text.
+    """
     cfg = get_vlm_config()
     paths = [p for p in (png_paths or []) if p]
     if require_images and not paths:
@@ -192,10 +354,10 @@ def analyze_medical_with_vlm(
             "agent_continue": True,
             "report": "",
         }
-    if not (summary or "").strip() and not paths:
+    if not (user_text or "").strip() and not paths:
         return {
             "ok": False,
-            "error": "没有可用的摘要或图像，跳过 VLM。",
+            "error": "没有可用的文本或图像，跳过 VLM。",
             "model": cfg["model"],
             "api_base": cfg["api_base"],
             "fallback_used": False,
@@ -203,8 +365,8 @@ def analyze_medical_with_vlm(
             "report": "",
         }
 
-    user_content = build_medical_user_content(
-        summary=summary or "（无文本摘要）",
+    user_content = build_plain_user_content(
+        text=user_text or "（无文本）",
         png_paths=paths,
         max_images=max_images,
     )
@@ -220,6 +382,11 @@ def analyze_medical_with_vlm(
         }
 
     max_tokens = int(_env("MED_VLM_MAX_TOKENS", "8192"))
+    primary_timeout = (
+        float(primary_timeout_s)
+        if primary_timeout_s is not None
+        else min(timeout_s, 30.0)
+    )
     primary_error = ""
     try:
         data = _chat_completion(
@@ -231,7 +398,7 @@ def analyze_medical_with_vlm(
             system_prompt=system_prompt,
             user_content=user_content,
             max_tokens=max_tokens,
-            timeout_s=min(timeout_s, 30.0),
+            timeout_s=primary_timeout,
             include_chat_template_kwargs=True,
         )
         report = _extract_assistant_text(data)
@@ -280,7 +447,7 @@ def analyze_medical_with_vlm(
                 "ok": False,
                 "error": (
                     f"{primary_error}；回退模型 {fallback['model']} 也返回空内容。"
-                    "请主 Agent 根据 summary / png_paths 继续完成医学解读。"
+                    f"{empty_continue_hint}"
                 ),
                 "model": fallback["model"],
                 "api_base": fallback["api_base"],
@@ -307,7 +474,7 @@ def analyze_medical_with_vlm(
             "ok": False,
             "error": (
                 f"{primary_error}；回退模型也失败：{type(exc).__name__}: {exc}。"
-                "请主 Agent 根据 summary / png_paths 继续完成医学解读。"
+                f"{empty_continue_hint}"
             ),
             "model": fallback["model"],
             "api_base": fallback["api_base"],
@@ -317,6 +484,297 @@ def analyze_medical_with_vlm(
             "agent_continue": True,
             "report": "",
         }
+
+
+async def chat_vlm_stream(
+    *,
+    system_prompt: str,
+    user_text: str,
+    on_text: Callable[[str], Awaitable[None]],
+    png_paths: Optional[List[str]] = None,
+    max_images: int = 8,
+    timeout_s: float = 180.0,
+    primary_timeout_s: Optional[float] = None,
+    require_images: bool = False,
+    empty_continue_hint: str = "请主 Agent 根据已有摘要与图像继续完成任务。",
+) -> Dict[str, Any]:
+    """Stream medical model text through ``on_text`` while retaining the final report."""
+    cfg = get_vlm_config()
+    paths = [p for p in (png_paths or []) if p]
+    user_content = build_plain_user_content(
+        text=user_text or "（无文本）",
+        png_paths=paths,
+        max_images=max_images,
+    )
+    has_image = any(part.get("type") == "image_url" for part in user_content)
+    if require_images and not has_image:
+        return {
+            "ok": False,
+            "error": "预览图像无法读取，无法调用视觉模型。",
+            "model": cfg["model"],
+            "api_base": cfg["api_base"],
+            "fallback_used": False,
+            "agent_continue": True,
+            "report": "",
+        }
+    if not (user_text or "").strip() and not has_image:
+        return {
+            "ok": False,
+            "error": "没有可用的文本或图像，跳过 VLM。",
+            "model": cfg["model"],
+            "api_base": cfg["api_base"],
+            "fallback_used": False,
+            "agent_continue": True,
+            "report": "",
+        }
+
+    max_tokens = int(_env("MED_VLM_MAX_TOKENS", "8192"))
+    primary_timeout = (
+        float(primary_timeout_s)
+        if primary_timeout_s is not None
+        else min(timeout_s, 30.0)
+    )
+    emitted: List[str] = []
+
+    async def emit(text: str) -> None:
+        emitted.append(text)
+        await on_text(text)
+
+    primary_error = ""
+    try:
+        data = await _chat_completion_stream(
+            cfg={
+                "api_base": cfg["api_base"],
+                "model": cfg["model"],
+                "api_key": cfg["api_key"],
+            },
+            system_prompt=system_prompt,
+            user_content=user_content,
+            max_tokens=max_tokens,
+            timeout_s=primary_timeout,
+            include_chat_template_kwargs=True,
+            on_text=emit,
+        )
+        report = str(data.get("report") or "").strip()
+        if report:
+            return {
+                "ok": True,
+                "error": "",
+                "model": cfg["model"],
+                "api_base": cfg["api_base"],
+                "fallback_used": False,
+                "agent_continue": False,
+                "report": report,
+                "usage": data.get("usage"),
+                "streamed": True,
+            }
+        primary_error = "主医疗模型返回空内容"
+    except Exception as exc:
+        primary_error = f"调用医疗视觉模型失败：{type(exc).__name__}: {exc}"
+
+    # Once primary text has reached the UI, do not append a second model's
+    # unrelated continuation into the same assistant stream.
+    if emitted:
+        return {
+            "ok": False,
+            "error": f"{primary_error}；主模型流式输出中断。{empty_continue_hint}",
+            "model": cfg["model"],
+            "api_base": cfg["api_base"],
+            "fallback_used": False,
+            "agent_continue": True,
+            "report": "".join(emitted).strip(),
+            "streamed": True,
+            "stream_interrupted": True,
+        }
+
+    fallback = get_fallback_vlm_config()
+    if fallback is None:
+        return {
+            "ok": False,
+            "error": primary_error,
+            "model": cfg["model"],
+            "api_base": cfg["api_base"],
+            "fallback_used": False,
+            "agent_continue": True,
+            "report": "",
+        }
+
+    fallback_max_tokens = int(
+        _env("MED_VLM_FALLBACK_MAX_TOKENS", _env("MED_VLM_MAX_TOKENS", "8192"))
+    )
+    try:
+        data = await _chat_completion_stream(
+            cfg=fallback,
+            system_prompt=system_prompt,
+            user_content=user_content,
+            max_tokens=fallback_max_tokens,
+            timeout_s=timeout_s,
+            include_chat_template_kwargs=False,
+            on_text=emit,
+        )
+        report = str(data.get("report") or "").strip()
+        if not report:
+            return {
+                "ok": False,
+                "error": (
+                    f"{primary_error}；回退模型 {fallback['model']} 也返回空内容。"
+                    f"{empty_continue_hint}"
+                ),
+                "model": fallback["model"],
+                "api_base": fallback["api_base"],
+                "primary_model": cfg["model"],
+                "primary_error": primary_error,
+                "fallback_used": True,
+                "agent_continue": True,
+                "report": "",
+            }
+        return {
+            "ok": True,
+            "error": "",
+            "model": fallback["model"],
+            "api_base": fallback["api_base"],
+            "primary_model": cfg["model"],
+            "primary_error": primary_error,
+            "fallback_used": True,
+            "agent_continue": False,
+            "report": report,
+            "usage": data.get("usage"),
+            "streamed": True,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": (
+                f"{primary_error}；回退模型也失败：{type(exc).__name__}: {exc}。"
+                f"{empty_continue_hint}"
+            ),
+            "model": fallback["model"],
+            "api_base": fallback["api_base"],
+            "primary_model": cfg["model"],
+            "primary_error": primary_error,
+            "fallback_used": True,
+            "agent_continue": True,
+            "report": "".join(emitted).strip(),
+            "streamed": bool(emitted),
+            "stream_interrupted": bool(emitted),
+        }
+
+
+def analyze_medical_with_vlm(
+    *,
+    system_prompt: str,
+    summary: str,
+    png_paths: Optional[List[str]] = None,
+    max_images: int = 8,
+    timeout_s: float = 180.0,
+    require_images: bool = False,
+) -> Dict[str, Any]:
+    """Call the medical model first; on failure optionally fall back to the main agent model."""
+    cfg = get_vlm_config()
+    paths = [p for p in (png_paths or []) if p]
+    if require_images and not paths:
+        return {
+            "ok": False,
+            "error": "没有可用的预览图像，无法调用视觉模型。",
+            "model": cfg["model"],
+            "api_base": cfg["api_base"],
+            "fallback_used": False,
+            "agent_continue": True,
+            "report": "",
+        }
+    if not (summary or "").strip() and not paths:
+        return {
+            "ok": False,
+            "error": "没有可用的摘要或图像，跳过 VLM。",
+            "model": cfg["model"],
+            "api_base": cfg["api_base"],
+            "fallback_used": False,
+            "agent_continue": True,
+            "report": "",
+        }
+
+    # Keep medical-report-specific user text (section checklist), then reuse chat_vlm path.
+    user_content = build_medical_user_content(
+        summary=summary or "（无文本摘要）",
+        png_paths=paths,
+        max_images=max_images,
+    )
+    if require_images and not any(part.get("type") == "image_url" for part in user_content):
+        return {
+            "ok": False,
+            "error": "预览图像无法读取，无法调用视觉模型。",
+            "model": cfg["model"],
+            "api_base": cfg["api_base"],
+            "fallback_used": False,
+            "agent_continue": True,
+            "report": "",
+        }
+
+    # Reuse chat_vlm by packing the already-built multimodal parts into user_text+images
+    # would double-encode images; call the shared completion loop via a thin shim:
+    text_part = ""
+    for part in user_content:
+        if part.get("type") == "text":
+            text_part = str(part.get("text") or "")
+            break
+    return chat_vlm(
+        system_prompt=system_prompt,
+        user_text=text_part,
+        png_paths=paths,
+        max_images=max_images,
+        timeout_s=timeout_s,
+        primary_timeout_s=min(timeout_s, 30.0),
+        require_images=False,
+        empty_continue_hint="请主 Agent 根据 summary / png_paths 继续完成医学解读。",
+    )
+
+
+async def analyze_medical_with_vlm_stream(
+    *,
+    system_prompt: str,
+    summary: str,
+    on_text: Callable[[str], Awaitable[None]],
+    png_paths: Optional[List[str]] = None,
+    max_images: int = 8,
+    timeout_s: float = 180.0,
+    require_images: bool = False,
+) -> Dict[str, Any]:
+    """Streaming counterpart of ``analyze_medical_with_vlm`` (medical model → main-agent fallback)."""
+    cfg = get_vlm_config()
+    paths = [p for p in (png_paths or []) if p]
+    if not (summary or "").strip() and not paths:
+        return {
+            "ok": False,
+            "error": "没有可用的摘要或图像，跳过 VLM。",
+            "model": cfg["model"],
+            "api_base": cfg["api_base"],
+            "fallback_used": False,
+            "agent_continue": True,
+            "report": "",
+        }
+
+    user_content = build_medical_user_content(
+        summary=summary or "（无文本摘要）",
+        png_paths=paths,
+        max_images=max_images,
+    )
+    text_part = ""
+    for part in user_content:
+        if part.get("type") == "text":
+            text_part = str(part.get("text") or "")
+            break
+
+    return await chat_vlm_stream(
+        system_prompt=system_prompt,
+        user_text=text_part,
+        on_text=on_text,
+        png_paths=paths,
+        max_images=max_images,
+        timeout_s=timeout_s,
+        primary_timeout_s=min(timeout_s, 120.0),
+        require_images=require_images,
+        empty_continue_hint="请主 Agent 根据 summary / png_paths 继续完成医学解读。",
+    )
 
 
 def analyze_dicom_with_vlm(

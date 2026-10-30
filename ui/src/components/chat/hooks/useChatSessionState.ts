@@ -113,18 +113,22 @@ export function getStreamContentKey(messages: ChatMessage[]): string {
 /*  Helper: Convert a ChatMessage to a NormalizedMessage for the store */
 /* ------------------------------------------------------------------ */
 
-function chatMessageToNormalized(
+export function chatMessageToNormalized(
   msg: ChatMessage,
   sessionId: string,
   provider: SessionProvider,
 ): NormalizedMessage | null {
-  const id = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const id = msg.id || `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const ts = msg.timestamp instanceof Date
     ? msg.timestamp.toISOString()
     : typeof msg.timestamp === 'number'
       ? new Date(msg.timestamp).toISOString()
       : String(msg.timestamp);
-  const base = { id, sessionId, timestamp: ts, provider };
+  const turnIdentity = {
+    ...((typeof msg.runId === 'string' && msg.runId.trim()) ? { runId: msg.runId.trim() } : {}),
+    ...((typeof msg.turnId === 'string' && msg.turnId.trim()) ? { turnId: msg.turnId.trim() } : {}),
+  };
+  const base = { id, sessionId, timestamp: ts, provider, ...turnIdentity };
 
   if (msg.isToolUse) {
     return {
@@ -149,6 +153,17 @@ function chatMessageToNormalized(
       summary: msg.content || '',
     } as NormalizedMessage;
   }
+  if (msg.isInterruptedNotice) {
+    return {
+      // Use the local_interrupt_ prefix so the dedup logic in useSessionStore
+      // recognises and drops this entry once the real interrupted message
+      // arrives from the server.
+      ...base,
+      id: `local_interrupt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      kind: 'interrupted',
+      content: msg.content || '',
+    } as NormalizedMessage;
+  }
   if (msg.type === 'error') {
     return {
       ...base,
@@ -159,8 +174,8 @@ function chatMessageToNormalized(
   }
   // Carry user-attached image data URLs through the normalize round-trip
   // so the optimistic message render and any re-derivation from the
-  // session store both show the thumbnails. NormalizedMessage.images is
-  // `string[]` of data URLs; we only attach it on user-side text frames.
+  // session store both show the thumbnails. Local optimistic images are
+  // stored as data URLs; persisted history may restore richer image objects.
   const images = msg.type === 'user' && Array.isArray(msg.images)
     ? msg.images
         .filter((img) => img && typeof img.data === 'string')

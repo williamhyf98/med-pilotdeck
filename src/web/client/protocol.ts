@@ -44,11 +44,36 @@ type WebGatewayEventMetadata = {
   runId?: string;
 };
 
+export type WebCitationMetadata = {
+  displayIndex?: number;
+  chunkId?: string;
+  text?: string;
+  index: number;
+  title: string;
+  section: string;
+  quote?: string;
+  evidenceGrade?: string;
+  evidenceQuality?: string;
+};
+
 export type WebGatewayEvent = WebGatewayEventMetadata & (
   | { type: "turn_started"; runId: string }
-  | { type: "assistant_text_delta"; text: string }
+  | { type: "assistant_text_delta"; text: string; citations?: WebCitationMetadata[] }
+  | { type: "assistant_text_end" }
   | { type: "assistant_thinking_delta"; text: string }
   | { type: "file_artifacts"; artifacts: import("../../session/artifacts/FileArtifact.js").FileArtifact[] }
+  | {
+      type: "tool_activity";
+      activityId: string;
+      toolCallId: string;
+      toolName: string;
+      title: string;
+      detail?: string;
+      state: "running" | "completed" | "failed";
+      phase: "medical";
+      severity?: "warning" | "error";
+      createdAt?: string;
+    }
   | {
       type: "tool_call_started";
       toolCallId: string;
@@ -58,6 +83,8 @@ export type WebGatewayEvent = WebGatewayEventMetadata & (
   | {
       type: "tool_call_finished";
       toolCallId: string;
+      /** Mirrors `GatewayEvent.tool_call_finished.toolName`; lets the reducer exempt citation payloads from preview truncation. */
+      toolName?: string;
       ok: boolean;
       resultPreview?: string;
       /** Mirrors `GatewayEvent.tool_call_finished.errorCode`. */
@@ -137,6 +164,7 @@ export type WebGatewayMethod =
   | "read_session_messages"
   | "read_subagent_messages"
   | "fork_session"
+  | "rewind_session"
   | "rename_session"
   | "delete_session"
   | "list_projects"
@@ -145,6 +173,7 @@ export type WebGatewayMethod =
   | "skill_list"
   | "skill_read"
   | "skill_write"
+  | "skill_set_availability"
   | "skill_create"
   | "skill_delete"
   | "skill_import"
@@ -159,6 +188,9 @@ export type WebSubmitTurnInput = {
   message: string;
   projectKey?: string;
   attachments?: WebChannelAttachment[];
+  traumaForm?: unknown;
+  traumaRawInput?: string;
+  traumaExtract?: boolean;
   runMode?: WebAgentRunMode;
   mode?: WebGatewayMode;
   basePermissionMode?: WebGatewayMode;
@@ -306,6 +338,26 @@ export type WebForkSessionResult = {
   carriedMessageCount: number;
   runMode?: WebAgentRunMode;
   mode?: WebGatewayMode;
+};
+
+export type WebRewindSessionInput = {
+  sessionKey: string;
+  projectKey?: string;
+  /** Transcript entry id of the LAST user turn to remove (accepted_input entryId). */
+  fromEntryId: string;
+};
+
+export type WebRewindSessionResult = {
+  /** Turn id of the removed user turn. */
+  removedTurnId: string;
+  /** Sequence of the removed accepted_input; entries at or after it were dropped. */
+  removedFromSequence: number;
+  /** ISO timestamp when the rewind was applied. */
+  removedAtIso: string;
+  /** Plain text of the removed user question (for resend/prefill). */
+  removedText: string;
+  /** How many transcript entries were dropped. */
+  removedEntryCount: number;
 };
 
 export type WebActiveTurnSnapshotInput = {

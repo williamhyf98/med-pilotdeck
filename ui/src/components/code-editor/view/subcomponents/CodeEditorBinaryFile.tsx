@@ -3,12 +3,14 @@ import {
   lazy,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
 } from 'react';
 import type { IWorkbookData } from '@univerjs/core';
 import { useTranslation } from 'react-i18next';
+import { Download, Maximize2, Minimize2 } from 'lucide-react';
 import { useWebSocket } from '../../../../contexts/WebSocketContext';
 import { api } from '../../../../utils/api';
 import {
@@ -21,6 +23,8 @@ import {
 import type { CodeEditorFile } from '../../types/types';
 import {
   isBuiltinOfficeFile,
+  isDicomFile,
+  isNiftiFile,
   isImageFile,
   isOfficeFile,
   isPdfFile,
@@ -37,15 +41,18 @@ import ContentReferenceMenu from './ContentReferenceMenu';
 import PdfDocumentPreview from './PdfDocumentPreview';
 import RegionSelectionOverlay, { type CapturedRegion } from './RegionSelectionOverlay';
 import SpreadsheetTabs, { type SpreadsheetSheetTab } from './SpreadsheetTabs';
-
-const SpreadsheetInteractivePreview = lazy(
-  () => import('./SpreadsheetInteractivePreview'),
-);
+import SpreadsheetInteractivePreview from './SpreadsheetInteractivePreview';
 const DocxBuiltinPreview = lazy(
   () => import('./DocxBuiltinPreview'),
 );
 const PptxBuiltinPreview = lazy(
   () => import('./PptxBuiltinPreview'),
+);
+const DicomPreview = lazy(
+  () => import('./DicomPreview'),
+);
+const NiftiPreview = lazy(
+  () => import('./NiftiPreview'),
 );
 
 type CodeEditorBinaryFileProps = {
@@ -61,6 +68,7 @@ type CodeEditorBinaryFileProps = {
   title: string;
   message: string;
   headerPrefix?: ReactNode;
+  isActive?: boolean;
 };
 
 type BlobSource = 'raw' | 'office-pdf';
@@ -115,6 +123,20 @@ function getFileTypeBadge(filename: string) {
       label: 'PDF',
       className: 'bg-red-600 text-white text-[7px]',
       titleKey: 'fileTypes.pdf',
+    };
+  }
+  if (isDicomFile(filename)) {
+    return {
+      label: 'DCM',
+      className: 'bg-cyan-700 text-white text-[7px]',
+      titleKey: 'fileTypes.dicom',
+    };
+  }
+  if (isNiftiFile(filename)) {
+    return {
+      label: 'NII',
+      className: 'bg-cyan-700 text-white text-[7px]',
+      titleKey: 'fileTypes.dicom',
     };
   }
   if (isImageFile(filename)) {
@@ -750,12 +772,13 @@ function FallbackContent({
   );
 }
 
-function ImagePreview({ projectName, file, title, message, onClose }: {
+function ImagePreview({ projectName, file, title, message, onClose, toolbarActions }: {
   projectName?: string;
   file: CodeEditorFile;
   title: string;
   message: string;
   onClose: () => void;
+  toolbarActions?: ReactNode;
 }) {
   const { blob, errorMessage, loading } = useFileBlob(projectName, file.path, true);
   const blobUrl = useObjectUrl(blob);
@@ -764,9 +787,9 @@ function ImagePreview({ projectName, file, title, message, onClose }: {
   const imageRef = useRef<HTMLImageElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
 
-  if (loading && !blobUrl) return <PreviewSpinner />;
+  if (loading && !blobUrl) return <>{toolbarActions}<PreviewSpinner /></>;
   if (errorMessage || imgError || !blobUrl) {
-    return <FallbackContent title={title} message={message} onClose={onClose} />;
+    return <>{toolbarActions}<FallbackContent title={title} message={message} onClose={onClose} /></>;
   }
 
   const capabilities: ReferenceCapabilities = {
@@ -800,13 +823,14 @@ function ImagePreview({ projectName, file, title, message, onClose }: {
 
   return (
     <div className="flex h-full w-full flex-col bg-neutral-50 dark:bg-neutral-900">
-      <div className="flex h-11 shrink-0 items-center justify-end border-b border-neutral-200 bg-white px-3 dark:border-neutral-800 dark:bg-neutral-950">
+      <div className="flex min-h-11 shrink-0 items-center justify-end border-b border-neutral-200 bg-white pl-4 dark:border-neutral-800 dark:bg-neutral-950">
         <ContentReferenceMenu
           capabilities={capabilities}
           activeMode={referenceMode}
           onSelectMode={(mode) => setReferenceMode(mode === 'region' ? mode : null)}
           onCancelMode={() => setReferenceMode(null)}
         />
+        {toolbarActions}
       </div>
       <div ref={viewportRef} className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
         <img
@@ -988,6 +1012,7 @@ function SpreadsheetPreview({
   onClose,
   isFullscreen,
   onToggleFullscreen,
+  isActive = true,
 }: {
   service: OfficePreviewService;
   projectName?: string;
@@ -996,6 +1021,7 @@ function SpreadsheetPreview({
   onClose: () => void;
   isFullscreen: boolean;
   onToggleFullscreen?: (() => void) | null;
+  isActive?: boolean;
 }) {
   const { t } = useTranslation('codeEditor');
   const [zoom, setZoom] = useState(1);
@@ -1019,6 +1045,9 @@ function SpreadsheetPreview({
     refreshKey,
   } = useSpreadsheetPreviewManifest(projectName, file.path, printPreviewEnabled);
   const [selectedSheetIndex, setSelectedSheetIndex] = useState<number | null>(null);
+  const sheetHostRef = useRef<HTMLDivElement | null>(null);
+  const [sheetHostReady, setSheetHostReady] = useState(false);
+  const autoRefreshDoneForPathRef = useRef<string | null>(null);
 
   const reload = useCallback((options: ReloadOptions = {}) => {
     setRuntimeError(null);
@@ -1032,7 +1061,45 @@ function SpreadsheetPreview({
     setZoom(1);
     setRuntimeError(null);
     setSelectedSheetIndex(null);
+    setSheetHostReady(false);
+    autoRefreshDoneForPathRef.current = null;
   }, [file.path]);
+
+  useEffect(() => {
+    if (isActive) autoRefreshDoneForPathRef.current = null;
+  }, [isActive]);
+
+  useEffect(() => {
+    if (!isActive || !interactiveEnabled || interactiveFailure) return undefined;
+    if (!interactiveData || selectedSheetIndex === null) return undefined;
+    if (autoRefreshDoneForPathRef.current === file.path) return undefined;
+    const timer = window.setTimeout(() => {
+      if (autoRefreshDoneForPathRef.current === file.path) return;
+      autoRefreshDoneForPathRef.current = file.path;
+      reload({ force: true });
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [
+    file.path,
+    interactiveData,
+    interactiveEnabled,
+    interactiveFailure,
+    isActive,
+    reload,
+    selectedSheetIndex,
+  ]);
+
+  useLayoutEffect(() => {
+    const host = sheetHostRef.current;
+    if (!host) return undefined;
+    const update = () => {
+      setSheetHostReady(host.clientWidth >= 8 && host.clientHeight >= 8);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [file.path, interactiveData?.revision]);
 
   const activeManifest = usePrintPreview ? manifest : interactiveData;
 
@@ -1079,59 +1146,67 @@ function SpreadsheetPreview({
           )}
         />
       );
+    } else if (!sheetHostReady) {
+      sheetContent = <PreviewSpinner label={t('spreadsheetPreview.loadingInteractive')} />;
     } else {
       sheetContent = (
-        <Suspense fallback={<PreviewSpinner label={t('spreadsheetPreview.loadingInteractive')} />}>
-          <SpreadsheetInteractivePreview
-            key={interactiveData.revision}
-            workbook={interactiveData.workbook}
-            projectName={projectName}
-            fileName={file.name}
-            filePath={file.path}
-            revision={interactiveData.revision}
-            activeSheetIndex={selectedSheetIndex}
-            zoom={zoom}
-            onActiveSheetChange={setSelectedSheetIndex}
-            onError={(error) => setRuntimeError(error.message)}
-          />
-        </Suspense>
+        <SpreadsheetInteractivePreview
+          key={interactiveData.revision}
+          workbook={interactiveData.workbook}
+          projectName={projectName}
+          fileName={file.name}
+          filePath={file.path}
+          revision={interactiveData.revision}
+          activeSheetIndex={selectedSheetIndex}
+          zoom={zoom}
+          onActiveSheetChange={setSelectedSheetIndex}
+          onError={(error) => setRuntimeError(error.message)}
+        />
       );
     }
   } else if (manifestLoading && !manifest) {
     sheetContent = <PreviewSpinner label={t('spreadsheetPreview.readingWorkbook')} />;
   } else if (manifestError || !manifest) {
     const needsLibreOffice = manifestErrorCode === 'LIBREOFFICE_NOT_FOUND';
+    const conversionUnavailable = manifestErrorCode === 'SPREADSHEET_XLSX_OUTPUT_MISSING'
+      || manifestErrorCode === 'SPREADSHEET_XLSX_CONVERT_FAILED';
     sheetContent = (
       <FallbackContent
-        title={needsLibreOffice ? t('officePreview.libreOfficeUnavailableTitle') : title}
+        title={needsLibreOffice ? t('officePreview.libreOfficeUnavailableTitle') : conversionUnavailable ? t('officePreview.conversionUnavailableTitle') : title}
         message={needsLibreOffice
           ? t('officePreview.libreOfficeUnavailableMessage')
+          : conversionUnavailable
+            ? t('officePreview.conversionUnavailableMessage')
           : manifestError || t('spreadsheetPreview.failedMessage')}
         onClose={onClose}
         actions={(
           <>
             <DownloadButton projectName={projectName} file={file} />
-            {needsLibreOffice && <OfficePreviewSettingsButton />}
+            {(needsLibreOffice || conversionUnavailable) && <OfficePreviewSettingsButton />}
           </>
         )}
       />
     );
   } else {
     const needsLibreOffice = sheetErrorCode === 'LIBREOFFICE_NOT_FOUND';
+    const conversionUnavailable = sheetErrorCode === 'LIBREOFFICE_OUTPUT_MISSING'
+      || sheetErrorCode === 'LIBREOFFICE_CONVERT_FAILED';
     if (sheetLoading || selectedSheetIndex === null) {
       sheetContent = <PreviewSpinner label={t('spreadsheetPreview.renderingSheet')} />;
     } else if (sheetError || !previewUrl) {
       sheetContent = (
         <FallbackContent
-          title={needsLibreOffice ? t('officePreview.libreOfficeUnavailableTitle') : title}
+          title={needsLibreOffice ? t('officePreview.libreOfficeUnavailableTitle') : conversionUnavailable ? t('officePreview.conversionUnavailableTitle') : title}
           message={needsLibreOffice
             ? t('officePreview.libreOfficeUnavailableMessage')
+            : conversionUnavailable
+              ? t('officePreview.conversionUnavailableMessage')
             : sheetError || t('spreadsheetPreview.failedMessage')}
           onClose={onClose}
           actions={(
             <>
               <DownloadButton projectName={projectName} file={file} />
-              {needsLibreOffice && <OfficePreviewSettingsButton />}
+              {(needsLibreOffice || conversionUnavailable) && <OfficePreviewSettingsButton />}
             </>
           )}
         />
@@ -1187,7 +1262,7 @@ function SpreadsheetPreview({
           {warning}
         </div>
       )}
-      <div className="min-h-0 flex-1">{sheetContent}</div>
+      <div ref={sheetHostRef} className="flex min-h-[240px] flex-1 flex-col overflow-hidden">{sheetContent}</div>
       {activeManifest && (
         <SpreadsheetTabs
           sheets={activeManifest.sheets}
@@ -1222,14 +1297,18 @@ function OfficePreview({
 
   if (loading && !previewUrl) return <PreviewSpinner label={t('officePreview.converting')} />;
   if (errorMessage || !previewUrl) {
-    const needsLibreOffice = errorCode === 'LIBREOFFICE_NOT_FOUND'
+    const conversionUnavailable = errorCode === 'LIBREOFFICE_OUTPUT_MISSING'
+      || errorCode === 'LIBREOFFICE_CONVERT_FAILED';
+    const needsLibreOffice = !conversionUnavailable && (errorCode === 'LIBREOFFICE_NOT_FOUND'
       || errorMessage?.includes('LibreOffice')
-      || errorMessage === 'LIBREOFFICE_NOT_FOUND';
+      || errorMessage === 'LIBREOFFICE_NOT_FOUND');
     const fallbackTitle = needsLibreOffice
       ? t('officePreview.libreOfficeUnavailableTitle')
+      : conversionUnavailable ? t('officePreview.conversionUnavailableTitle')
       : title;
     const fallbackMessage = needsLibreOffice
       ? t('officePreview.libreOfficeUnavailableMessage')
+      : conversionUnavailable ? t('officePreview.conversionUnavailableMessage')
       : errorMessage || t('officePreview.failedMessage');
 
     return (
@@ -1350,6 +1429,7 @@ function OfficeFilePreviewRouter({
   onClose,
   isFullscreen,
   onToggleFullscreen,
+  isActive = true,
 }: {
   projectName?: string;
   file: CodeEditorFile;
@@ -1357,25 +1437,43 @@ function OfficeFilePreviewRouter({
   onClose: () => void;
   isFullscreen: boolean;
   onToggleFullscreen?: (() => void) | null;
+  isActive?: boolean;
 }) {
   const { t } = useTranslation('codeEditor');
   const { status, loading } = useOfficePreviewService();
   const service = status?.service || 'builtin';
+  const usesLibreOffice = service === 'libreoffice' || !isBuiltinOfficeFile(file.name);
 
   if (loading) {
     return <PreviewSpinner label={t('officePreview.checkingService')} />;
   }
-  if (service === 'libreoffice') {
+  if (usesLibreOffice && status?.libreOffice?.available === false) {
+    return (
+      <FallbackContent
+        title={t('officePreview.libreOfficeUnavailableTitle')}
+        message={t('officePreview.libreOfficeUnavailableMessage')}
+        onClose={onClose}
+        actions={(
+          <>
+            <DownloadButton projectName={projectName} file={file} />
+            <OfficePreviewSettingsButton />
+          </>
+        )}
+      />
+    );
+  }
+  if (usesLibreOffice) {
     return isSpreadsheetFile(file.name)
       ? (
         <SpreadsheetPreview
-          service={service}
+          service="libreoffice"
           projectName={projectName}
           file={file}
           title={title}
           onClose={onClose}
           isFullscreen={isFullscreen}
           onToggleFullscreen={onToggleFullscreen}
+          isActive={isActive}
         />
       )
       : (
@@ -1390,24 +1488,6 @@ function OfficeFilePreviewRouter({
       );
   }
 
-  if (!isBuiltinOfficeFile(file.name)) {
-    return (
-      <FallbackContent
-        title={t('officePreview.unsupportedBuiltinTitle')}
-        message={t('officePreview.unsupportedBuiltinMessage', {
-          extension: `.${getExtension(file.name)}`,
-        })}
-        onClose={onClose}
-        actions={(
-          <>
-            <DownloadButton projectName={projectName} file={file} />
-            <OfficePreviewSettingsButton />
-          </>
-        )}
-      />
-    );
-  }
-
   if (isSpreadsheetFile(file.name)) {
     return (
       <SpreadsheetPreview
@@ -1418,6 +1498,7 @@ function OfficeFilePreviewRouter({
         onClose={onClose}
         isFullscreen={isFullscreen}
         onToggleFullscreen={onToggleFullscreen}
+        isActive={isActive}
       />
     );
   }
@@ -1447,50 +1528,26 @@ export default function CodeEditorBinaryFile({
   title,
   message,
   headerPrefix,
+  isActive = true,
 }: CodeEditorBinaryFileProps) {
   const { t } = useTranslation('codeEditor');
   const iconBtn =
     'flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100';
 
   const isImage = isImageFile(file.name);
+  const isDicom = isDicomFile(file.name);
+  const isNifti = isNiftiFile(file.name);
   const isPdf = isPdfFile(file.name);
   const isOffice = isOfficeFile(file.name);
-  const canPreview = isImage || isPdf || isOffice;
-  const hasEmbeddedDocumentToolbar = isPdf || isOffice;
+  const canPreview = isDicom || isNifti || isImage || isPdf || isOffice;
+  const hasEmbeddedDocumentToolbar = isDicom || isNifti || isPdf || isOffice;
   const documentIsFullscreen = isSidebar ? isExpanded : isFullscreen;
   const onToggleDocumentFullscreen = isSidebar ? onToggleExpand : onToggleFullscreen;
-
-  const previewContent = isImage
-    ? <ImagePreview projectName={projectName} file={file} title={title} message={message} onClose={onClose} />
-    : isPdf
-      ? (
-        <PdfPreview
-          projectName={projectName}
-          file={file}
-          title={title}
-          message={message}
-          onClose={onClose}
-          isFullscreen={documentIsFullscreen}
-          onToggleFullscreen={onToggleDocumentFullscreen}
-        />
-      )
-      : isOffice
-        ? (
-          <OfficeFilePreviewRouter
-            projectName={projectName}
-            file={file}
-            title={title}
-            onClose={onClose}
-            isFullscreen={documentIsFullscreen}
-            onToggleFullscreen={onToggleDocumentFullscreen}
-          />
-        )
-        : <FallbackContent title={title} message={message} onClose={onClose} />;
 
   const headerTopBar = (
     <div
       className={compactHeader
-        ? 'absolute right-2 top-1 z-10 flex h-8 items-center rounded-md bg-neutral-50 px-1 dark:bg-neutral-900'
+        ? 'flex min-h-11 shrink-0 items-center justify-end gap-1 bg-white px-4 py-1.5 dark:bg-neutral-950'
         : 'flex flex-shrink-0 items-center justify-between border-b border-neutral-200 bg-white px-4 py-2 dark:border-neutral-800 dark:bg-neutral-950'}
     >
       {!compactHeader && (
@@ -1502,31 +1559,28 @@ export default function CodeEditorBinaryFile({
         </div>
       )}
       <div className="flex shrink-0 items-center gap-0.5">
-        {!isSidebar && !hasEmbeddedDocumentToolbar && (
+        {!hasEmbeddedDocumentToolbar && projectName ? (
+          <a href={api.fileDownloadUrl(projectName, file.path)} download={file.name}
+            className={iconBtn} title={t('actions.download')} aria-label={t('actions.download')}>
+            <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
+          </a>
+        ) : null}
+        {!hasEmbeddedDocumentToolbar && (isSidebar ? Boolean(onToggleExpand) : true) && (
           <button
             type="button"
-            onClick={onToggleFullscreen}
+            onClick={isSidebar ? onToggleExpand ?? undefined : onToggleFullscreen}
             className={iconBtn}
-            title={isFullscreen ? t('actions.exitFullscreen') : t('actions.fullscreen')}
+            title={isSidebar
+              ? (isExpanded ? t('actions.collapse') : t('actions.expand'))
+              : (isFullscreen ? t('actions.exitFullscreen') : t('actions.fullscreen'))}
+            aria-label={isSidebar
+              ? (isExpanded ? t('actions.collapse') : t('actions.expand'))
+              : (isFullscreen ? t('actions.exitFullscreen') : t('actions.fullscreen'))}
           >
-            {isFullscreen ? (
-              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.75}
-                  d="M9 9V4.5M9 9H4.5M9 9L3.5 3.5M9 15v4.5M9 15H4.5M9 15l-5.5 5.5M15 9h4.5M15 9V4.5M15 9l5.5-5.5M15 15h4.5M15 15v4.5m0-4.5l5.5 5.5"
-                />
-              </svg>
+            {(isSidebar ? isExpanded : isFullscreen) ? (
+              <Minimize2 className="h-3.5 w-3.5" strokeWidth={1.75} />
             ) : (
-              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.75}
-                  d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"
-                />
-              </svg>
+              <Maximize2 className="h-3.5 w-3.5" strokeWidth={1.75} />
             )}
           </button>
         )}
@@ -1546,12 +1600,30 @@ export default function CodeEditorBinaryFile({
     </div>
   );
 
+  const previewContent = isDicom
+    ? <Suspense fallback={<PreviewSpinner label={t('dicomPreview.loading')} />}>
+        <DicomPreview projectName={projectName} file={file} isFullscreen={documentIsFullscreen} onToggleFullscreen={onToggleDocumentFullscreen} />
+      </Suspense>
+    : isNifti
+    ? <Suspense fallback={<PreviewSpinner label={t('dicomPreview.loading')} />}>
+        <NiftiPreview projectName={projectName} file={file} isFullscreen={documentIsFullscreen} onToggleFullscreen={onToggleDocumentFullscreen} />
+      </Suspense>
+    : isImage
+    ? <ImagePreview projectName={projectName} file={file} title={title} message={message} onClose={onClose} toolbarActions={headerTopBar} />
+    : isPdf
+      ? <PdfPreview projectName={projectName} file={file} title={title} message={message} onClose={onClose} isFullscreen={documentIsFullscreen} onToggleFullscreen={onToggleDocumentFullscreen} />
+      : isOffice
+        ? <OfficeFilePreviewRouter projectName={projectName} file={file} title={title} onClose={onClose} isFullscreen={documentIsFullscreen} onToggleFullscreen={onToggleDocumentFullscreen} isActive={isActive} />
+        : <FallbackContent title={title} message={message} onClose={onClose} />;
+
   if (isSidebar) {
     return (
       <div className="relative flex h-full w-full flex-col bg-white dark:bg-neutral-950">
         {headerPrefix}
-        {!compactHeader || !headerPrefix ? headerTopBar : null}
-        {previewContent}
+        {!isImage && (!compactHeader || !headerPrefix || !hasEmbeddedDocumentToolbar)
+          ? headerTopBar
+          : null}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{previewContent}</div>
       </div>
     );
   }
@@ -1572,8 +1644,8 @@ export default function CodeEditorBinaryFile({
     <div className={containerClassName}>
       <div className={innerClassName}>
         {headerPrefix}
-        {headerTopBar}
-        {previewContent}
+        {!isImage ? headerTopBar : null}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{previewContent}</div>
       </div>
     </div>
   );

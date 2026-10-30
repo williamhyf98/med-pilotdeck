@@ -4,23 +4,14 @@ import { hashText } from "./utils/id.js";
 export const GENERAL_PROJECT_META_DIR = "GeneralProjects";
 export const GENERAL_PROJECT_MEMORY_DIR = "Project";
 export const GENERAL_FEEDBACK_MEMORY_DIR = "Feedback";
+export const GENERAL_WORKSPACE_DIR = join(homedir(), ".pilotdeck");
 export const EXTERNAL_RECORD_PREFIX = "external:";
 export const EXTERNAL_PROJECT_PREFIX = "external-project:";
-/** Resolve the "general" workspace root (`PILOT_HOME`, else `~/.pilotdeck`). */
-export function getGeneralWorkspaceDir() {
-    return process.env.PILOT_HOME
-        ? resolve(process.env.PILOT_HOME)
-        : join(homedir(), ".pilotdeck");
-}
-/**
- * @deprecated Use getGeneralWorkspaceDir()
- */
-export const GENERAL_WORKSPACE_DIR = getGeneralWorkspaceDir();
 export function normalizeWorkspacePath(workspacePath) {
     return resolve(workspacePath);
 }
 export function isGeneralWorkspaceDir(workspaceDir) {
-    return normalizeWorkspacePath(workspaceDir) === normalizeWorkspacePath(getGeneralWorkspaceDir());
+    return normalizeWorkspacePath(workspaceDir) === normalizeWorkspacePath(GENERAL_WORKSPACE_DIR);
 }
 export function getWorkspaceMemoryMode(workspaceDir) {
     return isGeneralWorkspaceDir(workspaceDir) ? "general" : "single";

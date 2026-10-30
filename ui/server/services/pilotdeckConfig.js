@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { parseGatewayConfig } from '../../../src/pilot/config/parseGatewayConfig.js';
+import { resolvePilotRoot } from '../utils/pilotPaths.js';
 
 // Source of truth: ~/.pilotdeck/pilotdeck.yaml. The disk format and the
 // "internal" config object are the same V2 schema — no more adapter layer.
@@ -24,12 +25,23 @@ import { parseGatewayConfig } from '../../../src/pilot/config/parseGatewayConfig
 // schemas. UI server just round-trips them.
 
 const CONFIG_VERSION = 1;
-const PILOT_HOME_DIR = process.env.PILOT_HOME || path.join(os.homedir(), '.pilotdeck');
-const DEFAULT_CONFIG_PATH = path.join(PILOT_HOME_DIR, 'pilotdeck.yaml');
-const MASK = '********';
+// pilotdeck.yaml is a system-level file: it lives in the shared root, not in a
+// per-user home. Functions (not constants) so nothing is resolved at import time.
+function pilotHomeDir() { return resolvePilotRoot(); }
+function defaultConfigPath() { return path.join(pilotHomeDir(), 'pilotdeck.yaml'); }
+export const MASK = '********';
 
 const SECRET_KEY_RE = /(api[_-]?key|token|secret|password|auth[_-]?token|access[_-]?token|bot[_-]?token|app[_-]?token|encoding[_-]?aes[_-]?key)$/i;
-const SECRET_EXACT_KEYS = new Set(['key', 'apiKey', 'api_key', 'authToken', 'accessToken']);
+// Compared lower-cased, so `APIKEY` and `Authorization` are caught too.
+// The HTTP header names matter because a provider may carry its credential in
+// `headers:` rather than `apiKey:` — and none of them *end* in a secret-looking
+// word, so SECRET_KEY_RE alone lets `Authorization: Bearer sk-…` through.
+const SECRET_EXACT_KEYS = new Set([
+  'key', 'apikey', 'api_key', 'authtoken', 'accesstoken',
+  'authorization', 'proxy-authorization', 'proxyauthorization', 'proxy_authorization',
+  'cookie', 'set-cookie', 'setcookie', 'set_cookie',
+  'x-api-key', 'x-auth-token',
+]);
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -73,6 +85,7 @@ export function buildDefaultPilotDeckConfig() {
     },
     memory: {
       enabled: true,
+      maintenanceMode: 'immediate',
       reasoningMode: 'answer_first',
       autoIndexIntervalMinutes: 30,
       autoDreamIntervalMinutes: 60,
@@ -80,6 +93,9 @@ export function buildDefaultPilotDeckConfig() {
       includeAssistant: true,
       maxMessageChars: 6000,
       heartbeatBatchSize: 30,
+      // 战创伤长期记忆写入策略（Task 7）。'off' | 'feedback_only'。
+      // 'eligible_turns' 本期未实现，写入后端会直接报错。
+      traumaCapture: 'feedback_only',
     },
     webui: {
       runtime: {
@@ -87,8 +103,8 @@ export function buildDefaultPilotDeckConfig() {
         serverPort: 3001,
         vitePort: 5173,
         apiTimeoutMs: 120000,
-        databasePath: path.join(PILOT_HOME_DIR, 'auth.db'),
-        workspacesRoot: os.homedir(),
+        databasePath: 'system/auth.db',
+        workspacesRoot: '~',
       },
       officePreview: {
         service: 'builtin',
@@ -106,6 +122,19 @@ export function buildDefaultPilotDeckConfig() {
 export function normalizePilotDeckConfig(input) {
   const source = isRecord(input) ? input : {};
   const normalized = deepMerge(buildDefaultPilotDeckConfig(), source);
+  // The settings UI owns flat fields; nested fields are legacy fallbacks only.
+  for (const key of ['maintenanceMode', 'reasoningMode', 'autoIndexIntervalMinutes', 'autoDreamIntervalMinutes']) {
+    const value = source.memory?.[key] ?? source.memory?.schedule?.[key];
+    if (value !== undefined) normalized.memory[key] = value;
+  }
+  // Old files do not identify whether their timing values were user-chosen.
+  // Preserve their interval semantics instead of inheriting the new default.
+  if (isRecord(source.memory) && source.memory.maintenanceMode === undefined) {
+    normalized.memory.maintenanceMode = source.memory.schedule?.maintenanceMode
+      ?? ((source.memory.autoIndexIntervalMinutes !== undefined || source.memory.autoDreamIntervalMinutes !== undefined
+        || source.memory.schedule?.autoIndexIntervalMinutes !== undefined || source.memory.schedule?.autoDreamIntervalMinutes !== undefined)
+        ? 'interval' : 'immediate');
+  }
   const sourceOfficePreview = isRecord(source.webui?.officePreview)
     ? source.webui.officePreview
     : {};
@@ -328,7 +357,8 @@ export function validatePilotDeckConfig(config) {
 // ─── Secret masking ──────────────────────────────────────────────────────────
 
 function isSecretKey(key) {
-  return SECRET_EXACT_KEYS.has(key) || SECRET_KEY_RE.test(key);
+  if (typeof key !== 'string') return false;
+  return SECRET_EXACT_KEYS.has(key.toLowerCase()) || SECRET_KEY_RE.test(key);
 }
 
 export function maskSecrets(value) {
@@ -380,6 +410,10 @@ function providerProtocolToMemoryApi(protocol) {
   return 'openai-completions';
 }
 
+// The legacy-path warning is emitted once per process; the hook lets tests reset it.
+let warnedLegacyDbPath = false;
+export function __resetLegacyDbWarning() { warnedLegacyDbPath = false; }
+
 export function buildRuntimeEnv(config) {
   const normalized = normalizePilotDeckConfig(config);
   const main = resolveModel(normalized, normalized.agent.model, { allowMissing: true });
@@ -393,8 +427,22 @@ export function buildRuntimeEnv(config) {
     PILOTDECK_MEMORY_ENABLED: normalized.memory?.enabled ? '1' : '0',
   };
 
-  if (runtime.databasePath) env.DATABASE_PATH = expandTilde(runtime.databasePath);
-  if (runtime.workspacesRoot) env.WORKSPACES_ROOT = expandTilde(runtime.workspacesRoot);
+  // Persist portable values; resolve them only at the process boundary.
+  // A config written before multi-user pins the legacy single-user location
+  // `<root>/auth.db`. Honouring it would open and migrate that database in
+  // place, which Plan 1 must not do: drop the value and let database/db.js
+  // apply its own default (`<root>/system/auth.db`). Any other path is a
+  // deliberate operator choice and is honoured.
+  const databasePath = runtime.databasePath
+    ? path.resolve(pilotHomeDir(), expandTilde(runtime.databasePath))
+    : '';
+  if (databasePath && databasePath !== path.join(pilotHomeDir(), 'auth.db')) {
+    env.DATABASE_PATH = databasePath;
+  } else if (databasePath && !warnedLegacyDbPath) {
+    console.warn('[config] webui.runtime.databasePath points at the legacy <root>/auth.db and is ignored; the account database lives at system/auth.db');
+    warnedLegacyDbPath = true;
+  }
+  if (runtime.workspacesRoot) env.WORKSPACES_ROOT = path.resolve(pilotHomeDir(), expandTilde(runtime.workspacesRoot));
   const proxyUrl = normalized.proxy?.url
     || (typeof normalized.proxy === 'string' ? normalized.proxy : '')
     || runtime.httpsProxy || '';
@@ -491,11 +539,13 @@ export function buildMemoryDefaults(config) {
       reasoningMode: memory.reasoningMode,
       autoIndexIntervalMinutes: memory.autoIndexIntervalMinutes,
       autoDreamIntervalMinutes: memory.autoDreamIntervalMinutes,
+      maintenanceMode: memory.maintenanceMode,
     },
     captureStrategy: memory.captureStrategy,
     includeAssistant: memory.includeAssistant,
     maxMessageChars: memory.maxMessageChars,
     heartbeatBatchSize: memory.heartbeatBatchSize,
+    traumaCapture: memory.traumaCapture,
   };
 }
 
@@ -505,7 +555,7 @@ export function getPilotDeckConfigPath() {
   if (process.env.PILOTDECK_CONFIG_PATH?.trim()) {
     return process.env.PILOTDECK_CONFIG_PATH.trim();
   }
-  return DEFAULT_CONFIG_PATH;
+  return defaultConfigPath();
 }
 
 export function readPilotDeckConfigFile() {
@@ -531,11 +581,30 @@ export function readPilotDeckConfigFile() {
       raw,
       config: buildDefaultPilotDeckConfig(),
       rawYaml: null,
-      parseError: error instanceof Error ? error.message : String(error),
+      // The YAML parser quotes the offending source lines back in its
+      // message, so an unparseable file would otherwise leak `apiKey: sk-…`
+      // through every surface that reports the parse error.
+      parseError: maskRawYamlText(error instanceof Error ? error.message : String(error)),
     };
   }
   const config = normalizePilotDeckConfig(parsed);
   return { exists: true, configPath, raw, config, rawYaml: parsed, parseError: null };
+}
+
+/** Multi-user settings (`multiUser.gatewayPool.*` in pilotdeck.yaml) with defaults. */
+export function readMultiUserConfig() {
+  const { config } = readPilotDeckConfigFile();
+  const mu = config?.multiUser ?? {};
+  return {
+    gatewayPool: {
+      maxInstances: Number(mu.gatewayPool?.maxInstances) || 30,
+      idleTimeoutMs: Number(mu.gatewayPool?.idleTimeoutMs) || 30 * 60_000,
+      startTimeoutMs: Number(mu.gatewayPool?.startTimeoutMs) || 60_000,
+      maxWaiting: Number(mu.gatewayPool?.maxWaiting) || 20,
+      healthyAfterMs: Number(mu.gatewayPool?.healthyAfterMs) || 5 * 60_000,
+      portBase: Number(process.env.PILOTDECK_GATEWAY_PORT_BASE) || Number(mu.gatewayPool?.portBase) || 18800,
+    },
+  };
 }
 
 // Keep `router.scenarios.default` aligned with `agent.model` whenever we
@@ -705,6 +774,31 @@ export function configToYaml(config) {
 export function rawYamlToMaskedString(rawYaml) {
   const obj = isRecord(rawYaml) ? rawYaml : {};
   return stringifyYaml(maskSecrets(obj), { lineWidth: 0 });
+}
+
+// `rawYamlToMaskedString` needs a parsed document. When pilotdeck.yaml does not
+// parse, the UI still shows the raw text so the user can repair it — and that
+// text must not carry credentials. Mask line-wise instead: any `key: value`
+// whose key looks secret (same predicate as `maskSecrets`) keeps its key,
+// indentation, list dash and trailing comment, and loses only the value.
+const RAW_SECRET_LINE_RE = /^(\s*(?:-\s*)?)(['"]?)([A-Za-z0-9_.\-]+)\2(\s*:\s*)(.*)$/;
+
+export function maskRawYamlText(rawText) {
+  if (typeof rawText !== 'string' || rawText === '') return '';
+  return rawText
+    .split('\n')
+    .map((line) => {
+      const match = RAW_SECRET_LINE_RE.exec(line);
+      if (!match) return line;
+      const [, indent, quote, key, separator, value] = match;
+      if (!isSecretKey(key)) return line;
+      if (value.trim() === '') return line;
+      // Keep a trailing `# comment` so the document still reads the same.
+      const commentAt = value.search(/\s#/);
+      const comment = commentAt >= 0 ? value.slice(commentAt) : '';
+      return `${indent}${quote}${key}${quote}${separator}${MASK}${comment}`;
+    })
+    .join('\n');
 }
 
 export function parseConfigYaml(raw) {

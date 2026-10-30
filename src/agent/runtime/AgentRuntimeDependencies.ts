@@ -1,4 +1,9 @@
-import type { CanonicalMessage, CanonicalModelEvent, CanonicalModelRequest } from "../../model/index.js";
+import type {
+  CanonicalMessage,
+  CanonicalModelEvent,
+  CanonicalModelRequest,
+  MultimodalConstraints,
+} from "../../model/index.js";
 import type {
   PilotDeckElicitationChannel,
   PilotDeckToolAuditRecorder,
@@ -14,6 +19,7 @@ import type { AgentContextRuntime } from "../../context/ContextRuntime.js";
 import type { TokenAccountingRuntime } from "../../context/index.js";
 import type { RouterRuntime } from "../../router/index.js";
 import type { AgentEvent, AgentEventEmitter } from "../protocol/events.js";
+import type { AgentProfileResolver } from "../profile/types.js";
 
 /**
  * Narrow view of the router that the agent loop actually consumes. Tests can
@@ -104,6 +110,11 @@ export type AgentRuntimeDependencies = {
    */
   getModelMaxOutputTokens?: (provider: string, model: string) => number | undefined;
   getModelTokenLimits?: (provider: string, model: string) => { maxContextTokens: number; maxOutputTokens?: number } | undefined;
+  /** Server-owned profile lookup. Gateway clients only submit an id. */
+  profileRegistry?: AgentProfileResolver;
+  /** Authoritative provider/model validation for per-turn selections. */
+  isModelAvailable?: (provider: string, model: string) => boolean;
+  getModelMultimodal?: (provider: string, model: string) => MultimodalConstraints | undefined;
   now?: () => Date;
   uuid?: () => string;
   auditRecorder?: PilotDeckToolAuditRecorder;

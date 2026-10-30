@@ -23,9 +23,16 @@ export type OpenAIStreamState = {
   thinkFsm: ThinkFsmMode;
   tagBuffer: string;
   reasoningSnapshot: string;
+  /**
+   * Hold text deltas back until a think marker arrives so Qwen3-style
+   * reasoning (which ends with a bare `</think>`) can be reclassified as
+   * thinking instead of streaming as visible text.
+   */
+  holdBackInlineThink: boolean;
+  holdbackText: string;
 };
 
-export function createOpenAIStreamState(): OpenAIStreamState {
+export function createOpenAIStreamState(options: { holdBackInlineThink?: boolean } = {}): OpenAIStreamState {
   return {
     started: false,
     toolCalls: new Map(),
@@ -34,6 +41,8 @@ export function createOpenAIStreamState(): OpenAIStreamState {
     thinkFsm: "NORMAL",
     tagBuffer: "",
     reasoningSnapshot: "",
+    holdBackInlineThink: options.holdBackInlineThink ?? false,
+    holdbackText: "",
   };
 }
 
@@ -58,17 +67,41 @@ export function splitThinkContent(
 
   while (current.length > 0) {
     if (state.thinkFsm === "NORMAL") {
-      const idx = current.indexOf(THINK_OPEN);
+      const openIdx = current.indexOf(THINK_OPEN);
+      const closeIdx = current.indexOf(THINK_CLOSE);
+      // Qwen3-style reasoning ends with a bare `</think>` and no opener.
+      const isBareClose = closeIdx !== -1 && (openIdx === -1 || closeIdx < openIdx);
+      const idx = isBareClose ? closeIdx : openIdx;
       if (idx !== -1) {
-        const before = current.substring(0, idx);
-        if (before.length > 0) {
-          events.push({ type: "text_delta", text: before, raw });
+        const before = `${state.holdbackText}${current.substring(0, idx)}`;
+        state.holdbackText = "";
+        if (isBareClose) {
+          if (before.length > 0) {
+            events.push({ type: "thinking_delta", text: before, raw });
+          }
+          // No opener: reasoning is over, the remainder is answer text.
+          current = current.substring(idx + THINK_CLOSE.length);
+        } else {
+          if (before.length > 0) {
+            events.push({ type: "text_delta", text: before, raw });
+          }
+          current = current.substring(idx + THINK_OPEN.length);
+          state.thinkFsm = "THINKING";
         }
-        current = current.substring(idx + THINK_OPEN.length);
-        state.thinkFsm = "THINKING";
+        // Marker seen: any further text is the answer; stream it live.
+        state.holdBackInlineThink = false;
       } else {
-        // Check if the tail could be a partial `<think>` open tag
-        const buffered = bufferPartialTag(current, THINK_OPEN);
+        // Check if the tail could be a partial `<think>` / `</think>` tag
+        const buffered = Math.max(
+          bufferPartialTag(current, THINK_OPEN),
+          bufferPartialTag(current, THINK_CLOSE),
+        );
+        if (state.holdBackInlineThink) {
+          state.holdbackText += current.substring(0, current.length - buffered);
+          state.tagBuffer = current.substring(current.length - buffered);
+          current = "";
+          continue;
+        }
         if (buffered > 0) {
           state.tagBuffer = current.substring(current.length - buffered);
           const safe = current.substring(0, current.length - buffered);
@@ -193,6 +226,12 @@ export function normalizeOpenAIStreamEvent(
 
     if (choiceRecord.finish_reason) {
       const fr = normalizeOpenAIFinishReason(choiceRecord.finish_reason);
+      // Flush any held-back text (holdBackInlineThink mode with no think
+      // marker in this stream) before closing the message.
+      if (state.holdbackText.length > 0) {
+        events.push({ type: "text_delta", text: state.holdbackText, raw });
+        state.holdbackText = "";
+      }
       events.push(...finishToolCalls(state, raw, fr, choiceIndex));
       events.push({ type: "message_end", finishReason: fr, raw });
     }

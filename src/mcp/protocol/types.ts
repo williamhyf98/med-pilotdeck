@@ -19,8 +19,8 @@ export type PilotDeckMcpServerSpec =
        */
       perSession?: boolean;
       /**
-       * Per-server tool-call timeout in milliseconds. When omitted, falls
-       * back to `PILOTDECK_MCP_TOOL_TIMEOUT_MS` (default 60000).
+       * Per-server call timeout in milliseconds (plugin `mcp.json`). When set,
+       * `McpRuntime` prefers it over the global `callTimeoutMs` default.
        */
       timeoutMs?: number;
     }
@@ -29,7 +29,10 @@ export type PilotDeckMcpServerSpec =
       transport: "streamable_http";
       url: string;
       headers?: Record<string, string>;
-      /** Per-server tool-call timeout in milliseconds. */
+      /**
+       * Per-server call timeout in milliseconds (plugin `mcp.json`). When set,
+       * `McpRuntime` prefers it over the global `callTimeoutMs` default.
+       */
       timeoutMs?: number;
     };
 

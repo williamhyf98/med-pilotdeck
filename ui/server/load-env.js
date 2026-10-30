@@ -1,5 +1,5 @@
+import '../../scripts/register-deploy-env.mjs';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -47,10 +47,10 @@ export function assertRequiredPilotDeckEnv() {
 export function loadRootPilotDeckEnv() {
   applyDerivedRuntimeEnv();
 
-  if (!process.env.DATABASE_PATH) {
-    process.env.DATABASE_PATH = path.join(process.env.PILOT_HOME || path.join(os.homedir(), '.pilotdeck'), 'auth.db');
-  }
-
+  // DATABASE_PATH is deliberately NOT defaulted here: `database/db.js` owns the
+  // default (`<PILOT_ROOT>/system/auth.db`). Setting it here would make that
+  // default dead and point the one shared account DB at the legacy
+  // single-user location `<PILOT_ROOT>/auth.db`.
   return hasPilotDeckConfigFile();
 }
 

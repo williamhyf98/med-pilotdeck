@@ -15,6 +15,22 @@ const webSocketMock = vi.hoisted(() => ({
   subscribers: new Set<(message: unknown) => void>(),
 }));
 
+class ResizeObserverMock {
+  private readonly callback: ResizeObserverCallback;
+
+  constructor(callback: ResizeObserverCallback) {
+    this.callback = callback;
+  }
+
+  observe(target: Element) {
+    Object.defineProperty(target, 'clientWidth', { configurable: true, value: 800 });
+    Object.defineProperty(target, 'clientHeight', { configurable: true, value: 600 });
+    this.callback([], this as unknown as ResizeObserver);
+  }
+
+  disconnect() {}
+}
+
 vi.mock('../../../../contexts/WebSocketContext', () => ({
   useWebSocket: () => ({
     subscribe: (handler: (message: unknown) => void) => {
@@ -73,6 +89,17 @@ vi.mock('./PptxBuiltinPreview', () => ({
   default: () => <div>Built-in PPTX preview</div>,
 }));
 
+vi.mock('./DicomPreview', () => ({
+  default: ({ file }: { file: { name: string } }) => (
+    <div data-testid="dicom-preview">Cornerstone preview: {file.name}</div>
+  ),
+}));
+vi.mock('./NiftiPreview', () => ({
+  default: ({ file }: { file: { name: string } }) => (
+    <div data-testid="nifti-preview">NIfTI preview: {file.name}</div>
+  ),
+}));
+
 const baseProps = {
   file: {
     name: 'archive.bin',
@@ -98,6 +125,7 @@ function broadcastConfigReload(config: unknown) {
 }
 
 beforeEach(() => {
+  vi.stubGlobal('ResizeObserver', ResizeObserverMock);
   readOfficePreviewStatusMock.mockReset();
   readOfficePreviewStatusMock.mockResolvedValue({
     service: 'builtin',
@@ -109,6 +137,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   webSocketMock.subscribers.clear();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -119,11 +148,25 @@ describe('CodeEditorBinaryFile', () => {
     expect(screen.getByText('archive.bin')).not.toBeNull();
   });
 
-  it('does not add an empty overlay above the workspace file tabs', () => {
-    const { container } = render(<CodeEditorBinaryFile {...baseProps} compactHeader />);
+  it('adds a workspace expansion action above image and fallback previews', () => {
+    const onToggleExpand = vi.fn();
+    const { rerender } = render(
+      <CodeEditorBinaryFile {...baseProps} compactHeader onToggleExpand={onToggleExpand} />,
+    );
 
     expect(screen.queryByText('archive.bin')).toBeNull();
-    expect(container.querySelector('.absolute.right-2.top-1')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'actions.expand' }));
+    expect(onToggleExpand).toHaveBeenCalledOnce();
+
+    rerender(
+      <CodeEditorBinaryFile
+        {...baseProps}
+        compactHeader
+        isExpanded
+        onToggleExpand={onToggleExpand}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'actions.collapse' })).not.toBeNull();
   });
 
   it('enables page navigation and workspace expansion for PDF files', () => {
@@ -146,6 +189,44 @@ describe('CodeEditorBinaryFile', () => {
     preview.click();
     expect(onToggleExpand).toHaveBeenCalledOnce();
     expect(readOfficePreviewStatusMock).not.toHaveBeenCalled();
+  });
+
+  it('opens DICOM files in the Cornerstone preview instead of binary fallback', async () => {
+    render(
+      <CodeEditorBinaryFile
+        {...baseProps}
+        file={{
+          name: 'chest-ct.dcm',
+          path: '/workspace/hundouluo/chest-ct.dcm',
+          diffInfo: null,
+        }}
+      />,
+    );
+
+    expect(await screen.findByTestId('dicom-preview')).not.toBeNull();
+    expect(screen.getByText('Cornerstone preview: chest-ct.dcm')).not.toBeNull();
+    expect(screen.queryByText('Preview unavailable')).toBeNull();
+  });
+
+  it('opens compressed NIfTI files in the image viewer', async () => {
+    render(
+      <CodeEditorBinaryFile
+        {...baseProps}
+        file={{ name: 'TotalSegmentator_example_ct.nii.gz', path: '/workspace/CT/TotalSegmentator_example_ct.nii.gz', diffInfo: null }}
+      />,
+    );
+    expect(await screen.findByTestId('nifti-preview')).not.toBeNull();
+    expect(screen.queryByText('Preview unavailable')).toBeNull();
+  });
+
+  it('opens historically renamed compressed NIfTI attachments', async () => {
+    render(
+      <CodeEditorBinaryFile
+        {...baseProps}
+        file={{ name: 'TotalSegmentator_example_ct.nii(2).gz', path: '/workspace/CT/inbox/test/TotalSegmentator_example_ct.nii(2).gz', diffInfo: null }}
+      />,
+    );
+    expect(await screen.findByTestId('nifti-preview')).not.toBeNull();
   });
 
   it('keeps the fullscreen action available for image previews outside the sidebar', () => {
@@ -448,7 +529,18 @@ describe('CodeEditorBinaryFile', () => {
     expect(await screen.findByText('Built-in DOCX preview')).not.toBeNull();
   });
 
-  it('guides legacy Office formats to LibreOffice while built-in preview is selected', async () => {
+  it('previews legacy DOC with LibreOffice even when modern files use built-in preview', async () => {
+    readOfficePreviewStatusMock.mockResolvedValueOnce({
+      service: 'builtin',
+      configuredBinaryPath: '',
+      libreOffice: { available: true },
+    });
+    const pdf = vi.spyOn(api, 'preflightOfficePdfPreview').mockResolvedValue(
+      new Response(new Uint8Array([37, 80, 68, 70]), {
+        status: 206,
+        headers: { 'Content-Type': 'application/pdf' },
+      }),
+    );
     render(
       <CodeEditorBinaryFile
         {...baseProps}
@@ -460,7 +552,72 @@ describe('CodeEditorBinaryFile', () => {
       />,
     );
 
-    expect(await screen.findByText('officePreview.unsupportedBuiltinTitle')).not.toBeNull();
+    expect(await screen.findByRole('button', { name: 'PDF preview' })).not.toBeNull();
+    expect(pdf).toHaveBeenCalled();
+  });
+
+  it('converts legacy XLS to a sheet preview in built-in mode', async () => {
+    readOfficePreviewStatusMock.mockResolvedValueOnce({
+      service: 'builtin',
+      configuredBinaryPath: '',
+      libreOffice: { available: true },
+    });
+    const manifest = vi.spyOn(api, 'spreadsheetPreviewManifest').mockResolvedValue(new Response(
+      JSON.stringify({
+        version: 1,
+        revision: 'converted-revision',
+        activeSheetIndex: 0,
+        sheets: [{ index: 0, name: 'Sheet1' }],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+    vi.spyOn(api, 'preflightSpreadsheetSheetPreview').mockResolvedValue(
+      new Response(new Uint8Array([37, 80, 68, 70]), { status: 206 }),
+    );
+    render(
+      <CodeEditorBinaryFile
+        {...baseProps}
+        file={{ name: 'legacy.xls', path: '/workspace/hundouluo/legacy.xls', diffInfo: null }}
+      />,
+    );
+    expect(await screen.findByRole('button', { name: 'PDF preview' })).not.toBeNull();
+    expect(manifest).toHaveBeenCalled();
+  });
+
+  it('explains that LibreOffice is needed for legacy Office when not installed', async () => {
+    const pdf = vi.spyOn(api, 'preflightOfficePdfPreview');
+    render(
+      <CodeEditorBinaryFile
+        {...baseProps}
+        file={{
+          name: 'legacy-report.doc',
+          path: '/workspace/hundouluo/legacy-report.doc',
+          diffInfo: null,
+        }}
+      />,
+    );
+
+    expect(await screen.findByText('officePreview.libreOfficeUnavailableTitle')).not.toBeNull();
     expect(screen.getByText('officePreview.configureService')).not.toBeNull();
+    expect(pdf).not.toHaveBeenCalled();
+  });
+
+  it('explains a missing conversion component when soffice cannot produce PDF', async () => {
+    readOfficePreviewStatusMock.mockResolvedValueOnce({
+      service: 'builtin',
+      configuredBinaryPath: '',
+      libreOffice: { available: true },
+    });
+    vi.spyOn(api, 'preflightOfficePdfPreview').mockResolvedValue(new Response(
+      JSON.stringify({ code: 'LIBREOFFICE_OUTPUT_MISSING', error: 'Failed to generate Office PDF preview' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } },
+    ));
+    render(
+      <CodeEditorBinaryFile
+        {...baseProps}
+        file={{ name: 'legacy.doc', path: '/workspace/hundouluo/legacy.doc', diffInfo: null }}
+      />,
+    );
+    expect(await screen.findByText('officePreview.conversionUnavailableTitle')).not.toBeNull();
   });
 });

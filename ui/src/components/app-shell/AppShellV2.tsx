@@ -8,7 +8,7 @@ import { useDeviceSettings } from '../../hooks/useDeviceSettings';
 import { useSessionProtection } from '../../hooks/useSessionProtection';
 import { useProjectsState } from '../../hooks/useProjectsState';
 import Settings from '../settings/Settings';
-import ProjectCreationWizard from '../project-creation-wizard';
+import SystemProjectCreateDialog from '../project-creation/SystemProjectCreateDialog';
 import { normalizeProjectForSettings, type SettingsProject } from '../../lib/projectSettings';
 import {
   sessionDisplayTitle,
@@ -20,14 +20,22 @@ import {
   type AppTab,
   type Project,
   type ProjectSession,
+  type ProjectType,
   type SessionProvider,
 } from '../../types/app';
 import { api } from '../../utils/api';
 import { resolveMarkdownFileHref } from '../chat/utils/resolveMarkdownFileHref';
 import type { SessionNavigationOptions } from '../main-content/types/types';
 import SidebarV2 from './SidebarV2';
+import DesktopSidebarFrame from './DesktopSidebarFrame';
 import MainAreaV2 from './MainAreaV2';
-import { chooseDefaultProject } from './appShellSelection';
+import {
+  chooseDefaultProject,
+  findMostRecentProject,
+  findMostRecentSessionTarget,
+  resolveProjectType,
+  shouldPreserveTabOnSessionSelection,
+} from './appShellSelection';
 import { ConnectionBanner } from '../ui/ConnectionBanner';
 
 type TypedSettingsProps = {
@@ -92,8 +100,8 @@ const isUnreadWorthyMessage = (message: unknown): boolean => {
 // outer chrome (sidebar + breadcrumb header per prototype/shadcn.html).
 export default function AppShellV2() {
   const navigate = useNavigate();
-  // Match the four V2 URL shapes and hoist params up. A single wildcard route
-  // owns this shell so state survives every URL transition.
+  // Match the project/session URL shapes. A single wildcard route owns this
+  // shell so state survives every URL transition.
   const matchProjectChat = useMatch('/p/:projectName/c/:sessionId');
   const matchProject = useMatch('/p/:projectName');
   const matchLegacySession = useMatch('/session/:sessionId');
@@ -105,6 +113,7 @@ export default function AppShellV2() {
 
   const { isMobile } = useDeviceSettings({ trackPWA: false });
   const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
+  const [workspaceType, setWorkspaceType] = useState<ProjectType>('general_medicine');
   const { ws, sendMessage, latestMessage, isConnected, subscribe } = useWebSocket();
   const wasConnectedRef = useRef(false);
   const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => new Set());
@@ -133,6 +142,7 @@ export default function AppShellV2() {
     setShowSettings,
     openSettings,
     refreshProjectsSilently,
+    updateProjectDisplayName,
     sidebarSharedProps,
     handleProjectSelect,
     handleSessionSelect,
@@ -152,6 +162,11 @@ export default function AppShellV2() {
     isMobile,
     activeSessions,
   });
+
+  useEffect(() => {
+    const selectedType = selectedProject ? resolveProjectType(selectedProject) : null;
+    if (selectedType) setWorkspaceType(selectedType);
+  }, [selectedProject]);
 
   const misroutedFileFromUrl = useMemo(() => {
     if (!sessionId) return null;
@@ -195,9 +210,9 @@ export default function AppShellV2() {
     navigate,
   ]);
 
-  // Default selection: prefer a regular project. General is only the fallback
-  // when no regular project exists. Explicit project/session URLs still own
-  // selection and are never overridden here.
+  // Default selection: first real project. With no projects, stay unselected
+  // so the empty state can prompt create-project (P2). Explicit project/session
+  // URLs still own selection and are never overridden here.
   const didDefaultProjectRef = useRef(false);
   useEffect(() => {
     if (didDefaultProjectRef.current) return;
@@ -211,7 +226,10 @@ export default function AppShellV2() {
       return;
     }
     const target = chooseDefaultProject(sidebarSharedProps.projects);
-    if (!target) return;
+    if (!target) {
+      didDefaultProjectRef.current = true;
+      return;
+    }
     handleProjectSelect(target);
     navigate(`/p/${encodeURIComponent(target.name)}`, { replace: true });
     didDefaultProjectRef.current = true;
@@ -361,7 +379,11 @@ export default function AppShellV2() {
     }
   }, [isConnected, selectedSession?.id, sendMessage]);
 
-  const onShowSettings = useCallback(() => setShowSettings(true), [setShowSettings]);
+  // Always (re)set the landing tab so a previous deep link does not stick.
+  const onShowSettings = useCallback(
+    (initialTab?: string) => openSettings(initialTab),
+    [openSettings],
+  );
   const onCloseSettings = useCallback(() => setShowSettings(false), [setShowSettings]);
   const onMenuClick = useCallback(() => setSidebarOpen(true), [setSidebarOpen]);
   const onCollapseSidebar = useCallback(() => {
@@ -381,8 +403,7 @@ export default function AppShellV2() {
     }
   }, [activeTab, isMobile]);
 
-  // Project creation wizard (local existing / new local / github clone). The
-  // sidebar's Projects-section "+" opens this; row-level "+" is for new sessions.
+  // System project create (name + type).
   const [showNewProject, setShowNewProject] = useState(false);
   const handleOpenNewProject = useCallback(() => setShowNewProject(true), []);
   const handleCloseNewProject = useCallback(() => setShowNewProject(false), []);
@@ -392,10 +413,8 @@ export default function AppShellV2() {
 
     // Auto-jump into the new project's empty new-conversation screen so the
     // user doesn't accidentally keep chatting under the previously selected
-    // project (typically "general") after closing the wizard. The wizard
-    // hands back the freshly created project from POST /create-workspace
-    // (and the clone SSE complete event), which is the same `{ name,
-    // displayName, fullPath, path }` shape as the sidebar list entries.
+    // After create, open a new chat in the new project (do not fall back to
+    // any virtual workspace).
     const projectName = typeof project?.name === 'string' ? project.name : '';
     if (!projectName) return;
     const newProject = project as Project;
@@ -403,6 +422,10 @@ export default function AppShellV2() {
     navigate(`/p/${encodeURIComponent(projectName)}`);
     setActiveTab('chat');
   }, [handleNewSession, navigate, refreshProjectsSilently, setActiveTab]);
+  const handleProjectRenamed = useCallback((projectName: string, displayName: string) => {
+    updateProjectDisplayName(projectName, displayName);
+    void refreshProjectsSilently();
+  }, [refreshProjectsSilently, updateProjectDisplayName]);
 
   // Project deletion (V2): hover-revealed trash button on each row -> confirm dialog
   // -> DELETE /api/projects/:name (force=true). Reuses the shared cleanup callback
@@ -498,6 +521,31 @@ export default function AppShellV2() {
     [handleProjectSelect, navigate],
   );
 
+  const handleOpenProjectFiles = useCallback(
+    (project: Project) => {
+      const sameProject = project.name === selectedProject?.name;
+      if (!sameProject) {
+        handleProjectSelect(project);
+      }
+      navigate(`/p/${encodeURIComponent(project.name)}`);
+      if (sameProject && activeTab === 'files') {
+        setActiveTab('chat');
+      } else {
+        setActiveTab('files');
+      }
+      if (isMobile) setSidebarOpen(false);
+    },
+    [
+      activeTab,
+      handleProjectSelect,
+      isMobile,
+      navigate,
+      selectedProject?.name,
+      setActiveTab,
+      setSidebarOpen,
+    ],
+  );
+
   const handleSelectSession = useCallback(
     (
       project: Project,
@@ -522,11 +570,11 @@ export default function AppShellV2() {
       } else {
         navigate(`/session/${sessId}`);
       }
-      if (!options?.preserveActiveTab) {
+      if (!shouldPreserveTabOnSessionSelection(activeTab, options?.preserveActiveTab)) {
         setActiveTab('chat');
       }
     },
-    [handleProjectSelect, handleSessionSelect, navigate, selectedProject?.name, setActiveTab],
+    [activeTab, handleProjectSelect, handleSessionSelect, navigate, selectedProject?.name, setActiveTab],
   );
 
   const handleSelectTab = useCallback(
@@ -549,22 +597,57 @@ export default function AppShellV2() {
     [navigate, selectedProject, setActiveTab, setSelectedSession],
   );
 
+  const handleSectionChange = useCallback((section: ProjectType) => {
+    didDefaultProjectRef.current = true;
+    setWorkspaceType(section);
+
+    const recentTarget = findMostRecentSessionTarget(sidebarSharedProps.projects, section);
+    if (recentTarget) {
+      handleSelectSession(recentTarget.project, recentTarget.session.id);
+      return;
+    }
+
+    const recentProject = findMostRecentProject(sidebarSharedProps.projects, section);
+    if (recentProject) {
+      handleProjectSelect(recentProject);
+      setSelectedSession(null);
+      setActiveTab('chat');
+      navigate(`/p/${encodeURIComponent(recentProject.name)}`);
+      return;
+    }
+
+    setSelectedProject(null);
+    setSelectedSession(null);
+    setActiveTab('chat');
+    navigate('/');
+  }, [
+    handleProjectSelect,
+    handleSelectSession,
+    navigate,
+    setActiveTab,
+    setSelectedProject,
+    setSelectedSession,
+    sidebarSharedProps.projects,
+  ]);
+
   const handleStartNewSession = useCallback(
     (project: Project | null, options?: SessionNavigationOptions) => {
+      const nextTab = options?.preserveActiveTab ? activeTab : 'chat';
       if (project) {
         handleNewSession(project);
         navigate(`/p/${encodeURIComponent(project.name)}`);
-        setActiveTab(options?.preserveActiveTab ? 'files' : 'chat');
+        setActiveTab(nextTab);
       } else if (selectedProject) {
         handleNewSession(selectedProject);
-        setActiveTab(options?.preserveActiveTab ? 'files' : 'chat');
+        setActiveTab(nextTab);
       } else {
         // No project context yet — land on /, MainContent's empty state
-        // will prompt the user to create or pick a project.
+        // No project context yet — land on /, MainContent empty state shows
+        // create-project CTA (P2).
         navigate('/');
       }
     },
-    [handleNewSession, navigate, selectedProject, setActiveTab],
+    [activeTab, handleNewSession, navigate, selectedProject, setActiveTab],
   );
 
   // Wrap the two session-lifecycle callbacks coming out of useSessionProtection
@@ -592,6 +675,7 @@ export default function AppShellV2() {
   const sidebar = (
     <SidebarV2
       projects={sidebarSharedProps.projects}
+      section={workspaceType}
       selectedProject={selectedProject}
       selectedSession={selectedSession}
       activeTab={activeTab}
@@ -602,6 +686,8 @@ export default function AppShellV2() {
       onSelectSession={handleSelectSession}
 	      onStartNewSession={handleStartNewSession}
 	      onCreateProject={handleOpenNewProject}
+	      onProjectRenamed={handleProjectRenamed}
+	      onOpenProjectFiles={handleOpenProjectFiles}
 	      onRequestDeleteProject={handleRequestDeleteProject}
 	      onRequestDeleteSession={handleRequestDeleteSession}
 	      onShowSettings={onShowSettings}
@@ -610,19 +696,24 @@ export default function AppShellV2() {
 	      onCollapse={onCollapseSidebar}
 	      onLoadMoreSessions={loadMoreSessions}
 	      loadingMoreProjectIds={loadingMoreProjectIds}
+	      onSectionChange={handleSectionChange}
+	      onSelectTab={handleSelectTab}
 	    />
   );
 
   return (
-    <div className="ui-v2 fixed inset-0 flex flex-col bg-white font-sans text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+    <div
+      className="ui-v2 workspace-canvas fixed inset-0 flex flex-col font-sans text-foreground"
+      data-workspace-type={workspaceType}
+    >
       <ConnectionBanner />
       <div className="flex min-h-0 flex-1">
       {!isMobile ? (
-        desktopSidebarOpen ? sidebar : null
+        <DesktopSidebarFrame open={desktopSidebarOpen}>{sidebar}</DesktopSidebarFrame>
       ) : (
         <div
-          className={`fixed inset-0 z-50 flex transition-opacity duration-150 ease-out ${
-            sidebarOpen ? 'visible opacity-100' : 'invisible opacity-0'
+          className={`fixed inset-0 z-50 flex transition-[opacity,visibility] duration-[420ms] ease-in-out ${
+            sidebarOpen ? 'visible opacity-100' : 'pointer-events-none invisible opacity-0'
           }`}
         >
           <button
@@ -632,7 +723,7 @@ export default function AppShellV2() {
             aria-label="Close sidebar"
           />
           <div
-            className={`relative h-full w-[85vw] max-w-sm transform transition-transform duration-150 ${
+            className={`relative h-full w-[85vw] max-w-sm transform transition-transform duration-[420ms] ${
               sidebarOpen ? 'translate-x-0' : '-translate-x-full'
             }`}
             onClick={(e) => e.stopPropagation()}
@@ -645,6 +736,7 @@ export default function AppShellV2() {
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <MainAreaV2
           projects={sidebarSharedProps.projects}
+          workspaceType={workspaceType}
           selectedProject={selectedProject}
           selectedSession={selectedSession}
           activeTab={activeTab}
@@ -680,6 +772,7 @@ export default function AppShellV2() {
               navigate(`/p/${encodeURIComponent(target.name)}`);
             }
           }}
+          onCreateProject={handleOpenNewProject}
           isSidebarCollapsed={!isMobile && !desktopSidebarOpen}
           onOpenSidebar={onOpenDesktopSidebar}
           externalMessageUpdate={externalMessageUpdate}
@@ -702,9 +795,10 @@ export default function AppShellV2() {
 
       {showNewProject
         ? ReactDOM.createPortal(
-            <ProjectCreationWizard
+            <SystemProjectCreateDialog
               onClose={handleCloseNewProject}
-              onProjectCreated={handleProjectCreated}
+              onCreated={handleProjectCreated}
+              initialProjectType={workspaceType}
             />,
             document.body,
           )
@@ -755,6 +849,7 @@ function DeleteProjectDialog({
   onCancel,
   onConfirm,
 }: DeleteProjectDialogProps) {
+  const { t } = useTranslation('sidebar');
   const sessionCount = project.sessions?.length ?? 0;
   const displayName = project.displayName || project.name;
 
@@ -766,7 +861,9 @@ function DeleteProjectDialog({
             <Trash2 className="h-5 w-5" strokeWidth={1.75} />
           </div>
           <div className="min-w-0 flex-1">
-            <h3 className="text-base font-semibold text-foreground">Delete project?</h3>
+            <h3 className="text-base font-semibold text-foreground">
+              {t('deleteConfirmation.title', { defaultValue: 'Delete project?' })}
+            </h3>
             <p className="mt-1 break-all text-sm text-muted-foreground">
               <span className="font-mono text-xs">{displayName}</span>
             </p>
@@ -775,20 +872,25 @@ function DeleteProjectDialog({
 
         <div className="space-y-3 p-5">
           <p className="text-sm text-foreground">
-            This removes the project from PilotDeck and deletes its session metadata.
+            {t('deleteConfirmation.body', {
+              defaultValue:
+                'This permanently deletes the project’s conversations and project memory.',
+            })}
             {sessionCount > 0 ? (
               <>
                 {' '}
-                <span className="font-medium">
-                  {sessionCount} session{sessionCount === 1 ? '' : 's'}
-                </span>{' '}
-                will also be removed.
+                {t('deleteConfirmation.sessionCount', {
+                  count: sessionCount,
+                  defaultValue: 'About {{count}} conversation(s) will be removed.',
+                })}
               </>
             ) : null}
           </p>
           <p className="text-xs text-muted-foreground">
-            Files on disk are <span className="font-medium text-foreground">not</span> deleted —
-            only PilotDeck&apos;s reference to them.
+            {t('deleteConfirmation.archiveNote', {
+              defaultValue:
+                'Generated files are archived on disk (not permanently wiped). Conversations and project memory cannot be recovered.',
+            })}
           </p>
           {error ? (
             <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -804,7 +906,7 @@ function DeleteProjectDialog({
             disabled={isDeleting}
             className="inline-flex h-9 items-center justify-center rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground hover:bg-accent disabled:opacity-50"
           >
-            Cancel
+            {t('actions.cancel', { defaultValue: 'Cancel' })}
           </button>
           <button
             type="button"
@@ -813,7 +915,9 @@ function DeleteProjectDialog({
             className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-destructive px-3 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-60"
           >
             {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" strokeWidth={1.75} />}
-            {isDeleting ? 'Deleting…' : 'Delete project'}
+            {isDeleting
+              ? t('deleteConfirmation.deleting', { defaultValue: 'Deleting…' })
+              : t('deleteConfirmation.deleteProject', { defaultValue: 'Delete project' })}
           </button>
         </div>
       </div>
@@ -836,8 +940,12 @@ function DeleteSessionDialog({
   onCancel,
   onConfirm,
 }: DeleteSessionDialogProps) {
+  const { t } = useTranslation('sidebar');
   const projectName = target.project.displayName || target.project.name;
   const sessionTitle = sessionDisplayTitle(target.session);
+  const isWarTrauma =
+    target.project.projectType === 'war_trauma' ||
+    target.project.type === 'war_trauma';
 
   return (
     <div className="fixed inset-0 z-[65] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
@@ -847,7 +955,7 @@ function DeleteSessionDialog({
             <Trash2 className="h-5 w-5" strokeWidth={1.75} />
           </div>
           <div className="min-w-0 flex-1">
-            <h3 className="text-base font-semibold text-foreground">Delete conversation?</h3>
+            <h3 className="text-base font-semibold text-foreground">{t('actions.deleteSession')}</h3>
             <p className="mt-1 truncate text-sm text-muted-foreground">
               {sessionTitle}
             </p>
@@ -856,8 +964,14 @@ function DeleteSessionDialog({
 
         <div className="space-y-3 p-5">
           <p className="text-sm text-foreground">
-            This removes the conversation from <span className="font-medium">{projectName}</span>.
+            {t('messages.deleteSessionConfirm')}
           </p>
+
+          {isWarTrauma ? (
+            <p className="text-sm text-destructive">
+              {t('messages.deleteSessionTraumaCaseWarning')}
+            </p>
+          ) : null}
 
           {error ? (
             <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -873,7 +987,7 @@ function DeleteSessionDialog({
             disabled={isDeleting}
             className="inline-flex h-9 items-center justify-center rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground hover:bg-accent disabled:opacity-50"
           >
-            Cancel
+            {t('actions.cancel')}
           </button>
           <button
             type="button"
@@ -882,7 +996,7 @@ function DeleteSessionDialog({
             className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-destructive px-3 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-60"
           >
             {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" strokeWidth={1.75} />}
-            {isDeleting ? 'Deleting…' : 'Delete conversation'}
+            {isDeleting ? t('status.deleting') : t('actions.deleteSession')}
           </button>
         </div>
       </div>

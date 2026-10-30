@@ -12,7 +12,8 @@ import {
 
 const ATTACHMENT_NOTE_MARKER = '[Files attached by user and available for reading in the project:]';
 const ATTACHMENT_NOTE_END_MARKER = '[End files attached by user]';
-const MEDICAL_FOLDER_NOTE_MARKER = '[Medical materials folder attached — parse with med_parse_medical on the folder path:]';
+const MEDICAL_FOLDER_NOTE_MARKER = '[Medical materials folder attached:]';
+const LEGACY_MEDICAL_FOLDER_NOTE_MARKER = '[Medical materials folder attached — parse with med_parse_medical on the folder path:]';
 const MEDICAL_FOLDER_NOTE_END_MARKER = '[End medical materials folder]';
 // Older transcripts have no end marker. Their next canonical text block may
 // be concatenated directly onto the final path during history projection.
@@ -20,6 +21,7 @@ const LEGACY_ATTACHMENT_NOTE_TERMINATORS = [
   ATTACHMENT_NOTE_END_MARKER,
   MEDICAL_FOLDER_NOTE_END_MARKER,
   MEDICAL_FOLDER_NOTE_MARKER,
+  LEGACY_MEDICAL_FOLDER_NOTE_MARKER,
   '[Attachment diagnostics]',
   '[Registered attachment files in this session:]',
   '[PDF attachment:',
@@ -53,7 +55,7 @@ export function buildMedicalFolderPathNote(folder: MedicalFolderPathNote): strin
     }
   }
   lines.push(
-    '- instruction: Call mcp__med-tools__med_parse_medical with path set to the folder above (not individual files). Do not use read_file on DICOM/PDF/CDA/ECG binaries. Show the returned report field verbatim.',
+    '- instruction: For DICOM or NIfTI (.nii/.nii.gz), first load med-dicom-router and await med_image_route, then follow its selected workflow. NIfTI requires confirmed CT/body region (and HU for DeepChest); never pass it to med_parse_medical. For other supported medical files, call mcp__med-tools__med_parse_medical with path set to the folder above (not individual files). Do not use read_file on medical binaries. Pure interpretation uses continuation_mode="terminal": the runtime displays and saves the original report, then ends the turn. Composite tasks use continuation_mode="material": preserve the original interpretation in the final deliverable and complete the requested analysis/files without repeating a summary of the report.',
   );
   return `\n\n${MEDICAL_FOLDER_NOTE_MARKER}\n${lines.join('\n')}\n${MEDICAL_FOLDER_NOTE_END_MARKER}\n`;
 }
@@ -127,10 +129,14 @@ export function parseUserAttachmentNote(content: unknown): {
     ...parsedContentReferences.references.map(contentReferenceToAttachment),
   ];
 
-  const folderMarkerIndex = text.indexOf(MEDICAL_FOLDER_NOTE_MARKER);
+  const folderMarker = [MEDICAL_FOLDER_NOTE_MARKER, LEGACY_MEDICAL_FOLDER_NOTE_MARKER]
+    .map((marker) => ({ marker, index: text.indexOf(marker) }))
+    .filter(({ index }) => index >= 0)
+    .sort((a, b) => a.index - b.index)[0];
+  const folderMarkerIndex = folderMarker?.index ?? -1;
   if (folderMarkerIndex >= 0) {
     const before = text.slice(0, folderMarkerIndex);
-    const afterMarker = text.slice(folderMarkerIndex + MEDICAL_FOLDER_NOTE_MARKER.length);
+    const afterMarker = text.slice(folderMarkerIndex + folderMarker.marker.length);
     const endIndex = afterMarker.indexOf(MEDICAL_FOLDER_NOTE_END_MARKER);
     const remainder = endIndex >= 0
       ? afterMarker.slice(endIndex + MEDICAL_FOLDER_NOTE_END_MARKER.length)
@@ -156,8 +162,11 @@ export function parseUserAttachmentNote(content: unknown): {
     const separator = line.indexOf(': ');
     if (separator < 0) continue;
 
-    const name = line.slice(2, separator).trim();
+    const rawName = line.slice(2, separator).trim();
     const filePath = line.slice(separator + 2).trim();
+    const relativePathMatch = rawName.match(/^(.*?)\s+\(([^()]*)\)$/);
+    const name = relativePathMatch?.[1]?.trim() || rawName;
+    const relativePath = relativePathMatch?.[2]?.trim();
     if (!name || !filePath) continue;
     const mimeType = inferAttachmentMimeType(name, filePath);
     if (isImageAttachmentMime(mimeType)) continue;
@@ -166,6 +175,7 @@ export function parseUserAttachmentNote(content: unknown): {
       name,
       path: filePath,
       mimeType,
+      ...(relativePath ? { relativePath } : {}),
     });
   }
 
@@ -202,12 +212,34 @@ export function mergeUserAttachments(
   fallback: ChatAttachment[],
 ): ChatAttachment[] {
   const merged: ChatAttachment[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, number>();
+  const all = [...preferred, ...fallback];
+  const claimedPaths = new Set<string>();
 
-  for (const attachment of [...preferred, ...fallback]) {
+  for (const original of all) {
+    let attachment = original;
+    // Optimistic upload chips have no path yet. Reconcile them with the
+    // server's file, without collapsing distinct files that share a name.
+    if ((!original.kind || original.kind === 'file') && !original.path && !original.filePath) {
+      const resolved = all.find((candidate) => (
+        (candidate.kind || 'file') === (original.kind || 'file')
+        && candidate.name === original.name
+        && Boolean(candidate.path || candidate.filePath)
+        && !claimedPaths.has(attachmentIdentity(candidate))
+        && (!original.relativePath || candidate.relativePath === original.relativePath)
+      ));
+      if (resolved) {
+        claimedPaths.add(attachmentIdentity(resolved));
+        attachment = { ...original, ...resolved };
+      }
+    }
     const identity = attachmentIdentity(attachment);
-    if (seen.has(identity)) continue;
-    seen.add(identity);
+    const existingIndex = seen.get(identity);
+    if (existingIndex !== undefined) {
+      merged[existingIndex] = { ...attachment, ...merged[existingIndex] };
+      continue;
+    }
+    seen.set(identity, merged.length);
     merged.push(attachment);
   }
 

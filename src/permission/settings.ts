@@ -22,15 +22,11 @@ const TOOL_NAME_ALIASES = new Map<string, string>([
   ["Read", "read_file"],
   ["Write", "write_file"],
   ["Edit", "edit_file"],
-  ["NotebookEdit", "edit_notebook"],
   ["MultiEdit", "edit_file"],
   ["Glob", "glob"],
   ["Grep", "grep"],
   ["Bash", "bash"],
-  ["Task", "agent"],
   ["TodoWrite", "todo_write"],
-  ["WebFetch", "web_fetch"],
-  ["WebSearch", "web_search"],
 ]);
 
 export function getPermissionSettingsPath(env: NodeJS.ProcessEnv = process.env): string {

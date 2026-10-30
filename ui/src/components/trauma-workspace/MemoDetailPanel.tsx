@@ -1,0 +1,241 @@
+import { ChevronDown, X } from 'lucide-react';
+import { useState } from 'react';
+import { CitationChunkModal } from '../chat/utils/CitationPopover';
+import { cn } from '../../lib/utils';
+import { TRAUMA_STAGES } from './demoCase';
+import { gateStatusLabel } from './domain/displayLabels';
+import type { GateStatus, RoundMemo, Trend } from './types';
+
+type MemoDetailPanelProps = {
+  memo: RoundMemo;
+  isLatest: boolean;
+  onClose: () => void;
+};
+
+const trendMarks: Record<Trend, string> = {
+  up: '↑',
+  down: '↓',
+  flat: '→',
+  unknown: '',
+};
+
+function Card({
+  title,
+  meta,
+  className,
+  children,
+}: {
+  title: string;
+  meta?: React.ReactNode;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className={cn('workspace-card-surface rounded-lg border border-border p-3', className)}>
+      <header className="mb-2.5 flex items-center justify-between gap-2">
+        <h3 className="flex items-center gap-2 text-[12px] font-semibold">
+          <span className="h-3 w-0.5 rounded-full bg-teal-500" />
+          {title}
+        </h3>
+        {meta ? <div className="text-[10px] text-neutral-400">{meta}</div> : null}
+      </header>
+      {children}
+    </section>
+  );
+}
+
+function Metric({ label, value, tone }: { label: string; value: string; tone?: 'info' | 'warning' | 'danger' | 'success' }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 border-b border-dashed border-border py-1.5 last:border-0">
+      <span className="text-[10px] text-muted-foreground">{label}</span>
+      <span className={cn(
+        'text-right text-[11px] font-medium',
+        tone === 'info' && 'text-teal-700 dark:text-teal-300',
+        tone === 'warning' && 'text-amber-700 dark:text-amber-300',
+        tone === 'danger' && 'text-red-700 dark:text-red-300',
+        tone === 'success' && 'text-emerald-700 dark:text-emerald-300',
+      )}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function GateBadge({ status }: { status: GateStatus }) {
+  return (
+    <span className={cn(
+      'rounded-full border px-2 py-0.5 text-[9px] font-semibold',
+      status === 'ASSESSING' && 'border-neutral-300 text-neutral-500 dark:border-neutral-700 dark:text-neutral-400',
+      status === 'READY' && 'border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-300',
+      status === 'BLOCKED' && 'border-red-300 text-red-700 dark:border-red-800 dark:text-red-300',
+      status === 'COMPLETED' && 'border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-300',
+    )}
+    >
+      {gateStatusLabel(status)}
+    </span>
+  );
+}
+
+export default function MemoDetailPanel({ memo, isLatest, onClose }: MemoDetailPanelProps) {
+  const [openEvidence, setOpenEvidence] = useState<RoundMemo['evidence'][number] | null>(null);
+  const [showUnused, setShowUnused] = useState(false);
+  const unusedEvidence = memo.evidence.filter(item => !item.used);
+  const stage = TRAUMA_STAGES.find((item) => item.id === memo.stageId);
+  const substep = memo.substepIndex === null ? undefined : stage?.substeps[memo.substepIndex];
+  const usedEvidence = memo.evidence
+    .filter((item) => item.used)
+    // 与正文角标、参考来源列表保持同一顺序，方便用户按编号对照全文。
+    .slice()
+    .sort((left, right) => (left.citationIndex ?? Number.MAX_SAFE_INTEGER) - (right.citationIndex ?? Number.MAX_SAFE_INTEGER));
+
+  return (
+    <div className="space-y-2.5 pb-4">
+      <section className="workspace-card-surface rounded-lg border border-border p-3">
+        <header className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="truncate text-[9px] text-neutral-400">
+              {stage?.index} {stage?.name} › {substep?.name} › 第 {memo.round} 轮
+            </p>
+            <h2 className="mt-0.5 text-[14px] font-semibold">{memo.title}</h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="收起轮次详情"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </header>
+        <Metric label="快照类型" value={isLatest ? '本轮最新状态' : '历史轮次快照'} tone={isLatest ? 'info' : undefined} />
+        <Metric label="下一医学目标" value={memo.nextTarget} />
+      </section>
+
+      <Card title="当前状态" meta={memo.patient.updatedAt}>
+        <p className="mb-1.5 text-[9px] font-semibold uppercase tracking-wider text-neutral-400">生命体征</p>
+        <div className="grid grid-cols-2 gap-1.5">
+          {memo.patient.vitals.map((vital) => (
+            <div
+              key={vital.label}
+              className={cn(
+                'pd-card-lift rounded-md border border-border bg-transparent px-2 py-1.5',
+                vital.abnormal && 'border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/25',
+              )}
+            >
+              <p className="text-[9px] text-neutral-400">{vital.label}</p>
+              <p className={cn('mt-0.5 text-[11px] font-semibold', vital.abnormal && 'text-amber-700 dark:text-amber-300')}>
+                {vital.value} <span className="text-[9px]">{trendMarks[vital.trend]}</span>
+              </p>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-3">
+          <Metric label="当前机构" value={memo.facility} />
+          <Metric label="机构能力" value={memo.capability} tone="info" />
+        </div>
+
+        <p className="mb-1.5 mt-3 text-[9px] font-semibold uppercase tracking-wider text-neutral-400">待补充信息</p>
+        <div className="flex flex-wrap gap-1">
+          {memo.patient.missingInformation.map((item) => (
+            <span key={item} className="rounded-full border border-dashed border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[9px] text-amber-700 dark:border-amber-800 dark:bg-amber-950/25 dark:text-amber-300">
+              {item}
+            </span>
+          ))}
+        </div>
+      </Card>
+
+      <Card title="当前行动计划" meta="限定于当前级别">
+        <ol className="space-y-2">
+          {memo.actions.map((action, index) => (
+            <li key={action} className="flex gap-2 text-[10px] leading-4 text-neutral-600 dark:text-neutral-300">
+              <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-teal-50 text-[9px] font-semibold text-teal-700 dark:bg-teal-950 dark:text-teal-300">
+                {index + 1}
+              </span>
+              {action}
+            </li>
+          ))}
+        </ol>
+        <p className="mt-2.5 rounded-md bg-transparent px-2 py-1.5 text-[9px] leading-4 text-muted-foreground">
+          下一阶段所需能力：{memo.nextStageCapability}
+        </p>
+      </Card>
+
+      <Card title="本轮纪要" meta="输入与输出要点">
+        <p className="mb-1 text-[9px] font-semibold text-neutral-400">输入要点</p>
+        <ul className="space-y-1 text-[10px] text-neutral-600 dark:text-neutral-300">
+          {memo.inputPoints.map((item) => <li key={item}>· {item}</li>)}
+        </ul>
+        <p className="mb-1 mt-2.5 text-[9px] font-semibold text-neutral-400">处置要点</p>
+        <ul className="space-y-1 text-[10px] text-neutral-600 dark:text-neutral-300">
+          {memo.actionPoints.map((item) => <li key={item}>· {item}</li>)}
+        </ul>
+        <p className="mt-2.5 border-l-2 border-teal-500 pl-2 text-[10px] font-medium">{memo.conclusion}</p>
+      </Card>
+
+      <Card title="动态分类" meta={memo.classification.label}>
+        <Metric label="伤势状态" value={memo.classification.severity} />
+        <Metric label="救治优先级" value={memo.classification.treatmentPriority} />
+        <Metric label="后送优先级" value={memo.classification.transportPriority} />
+      </Card>
+
+      <Card
+        title="阶段转换状态"
+        meta={<GateBadge status={memo.gate.status} />}
+        className={cn(
+          memo.gate.status === 'BLOCKED' && 'border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/20',
+          memo.gate.status === 'COMPLETED' && 'border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/20',
+        )}
+      >
+        <p className="text-[11px] font-semibold">{memo.gate.title}</p>
+        <p className="mt-1 text-[10px] leading-4 text-muted-foreground">{memo.gate.description}</p>
+        <div className="mt-2 rounded-md border border-border bg-transparent px-2 py-1.5 text-[9px] leading-4 text-muted-foreground">
+          <strong>执行状态：</strong>{memo.gate.confirmation}
+        </div>
+      </Card>
+
+      <details className="workspace-card-surface group overflow-hidden rounded-lg border border-border">
+        <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2.5 text-[11px] font-semibold">
+          知识块依据 · 已使用 {usedEvidence.length} 条
+          <ChevronDown className="h-3.5 w-3.5 text-neutral-400 transition group-open:rotate-180" />
+        </summary>
+        <div className="space-y-2 border-t border-border p-2.5">
+          {usedEvidence.length > 0 ? (
+            usedEvidence.map((evidence) => (
+              <article key={evidence.id} className="rounded-md border border-border bg-transparent p-2">
+                <button type="button" className="mb-1 text-xs text-blue-700 underline dark:text-blue-300" onClick={() => setOpenEvidence(evidence)}>查看原文</button>
+                <div className="flex flex-wrap items-center justify-between gap-1.5">
+                  <p className="flex min-w-0 items-center gap-1 text-[9px] font-semibold">
+                    {evidence.citationIndex !== undefined ? (
+                      <span className="shrink-0 rounded bg-blue-100 px-1 text-[8px] font-medium text-blue-700 dark:bg-blue-900 dark:text-blue-300">
+                        [{evidence.citationIndex}]
+                      </span>
+                    ) : null}
+                    <span className="min-w-0">{evidence.title}</span>
+                  </p>
+                  <span className="text-[8px] text-teal-700 dark:text-teal-300">{evidence.score}</span>
+                </div>
+                <p className="mt-1 text-[8px] text-neutral-400">{evidence.source} · 本轮已使用</p>
+                <p className="mt-1.5 text-[9px] leading-4 text-neutral-600 dark:text-neutral-300">{evidence.text}</p>
+              </article>
+            ))
+          ) : (
+            <p className="rounded-md border border-dashed border-border bg-transparent px-2 py-2 text-[9px] text-muted-foreground">
+              暂无本轮已使用的知识块。
+            </p>
+          )}
+        </div>
+      </details>
+      {unusedEvidence.length > 0 && <details className="workspace-card-surface rounded-lg border border-border p-3" onToggle={event => setShowUnused(event.currentTarget.open)}>
+        <summary className="cursor-pointer text-xs text-muted-foreground">未引用知识块 · {unusedEvidence.length} 条</summary>
+        {showUnused && <div className="mt-2 space-y-2">{unusedEvidence.map(evidence => (
+          <button key={evidence.id} type="button" className="block w-full rounded border border-border p-2 text-left text-xs" onClick={() => setOpenEvidence(evidence)}>
+            <span className="mr-2 text-muted-foreground">未引用</span>{evidence.title} · 查看原文
+          </button>
+        ))}</div>}
+      </details>}
+      {openEvidence && <CitationChunkModal cite={{ index: openEvidence.citationIndex ?? 0, chunkId: openEvidence.id, title: openEvidence.title, section: openEvidence.section ?? '', text: openEvidence.text }} displayIndex={openEvidence.citationIndex ?? 0} onClose={() => setOpenEvidence(null)} />}
+    </div>
+  );
+}
