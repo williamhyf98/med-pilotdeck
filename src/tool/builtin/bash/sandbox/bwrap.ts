@@ -20,7 +20,12 @@ export type BwrapSandboxConfig = {
 const SYSTEM_RO_BINDS = ["/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc/alternatives", "/etc/ssl", "/etc/resolv.conf"];
 
 /** 从宿主透传的环境变量白名单；HOME / TMPDIR / PILOT_HOME 由 wrap() 固定设置。 */
-const PASSTHROUGH_ENV_KEYS = ["PATH", "LANG"] as const;
+const PASSTHROUGH_ENV_KEYS = [
+  "PATH",
+  "LANG",
+  "PILOTDECK_OFFICE_RENDERER_URL",
+  "PILOTDECK_OFFICE_RENDERER_TOKEN",
+] as const;
 
 const PROBE_TIMEOUT_MS = 10_000;
 

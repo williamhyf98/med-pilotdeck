@@ -82,6 +82,10 @@ already_running() {
 
 apply_local_runtime_env
 
+if [[ "${PILOTDECK_OFFICE_RENDERER_ROLE:-remote}" == "server" ]]; then
+  bash "${SCRIPT_DIR}/start-office-renderer.sh"
+fi
+
 # If project-local Node is missing, keep system/Homebrew Node 22 on PATH.
 if [[ ! -x "$(runtime_node)" ]]; then
   # Remove empty .runtime/node/bin prefix noise by re-exporting without missing bin.

@@ -29,6 +29,7 @@ COPY src/ src/
 COPY scripts/ scripts/
 COPY ui/ ui/
 COPY skills/ skills/
+COPY office-renderer/ office-renderer/
 
 # Build edgeclaw-memory-core (src/ → lib/)
 RUN cd src/context/memory/edgeclaw-memory-core && npm run build
@@ -59,6 +60,7 @@ COPY --from=builder /build/dist/ dist/
 COPY --from=builder /build/src/ src/
 COPY --from=builder /build/scripts/ scripts/
 COPY --from=builder /build/skills/ skills/
+COPY --from=builder /build/office-renderer/ office-renderer/
 COPY --from=builder /build/ui/package.json ui/package.json
 COPY --from=builder /build/ui/node_modules/ ui/node_modules/
 COPY --from=builder /build/ui/server/ ui/server/

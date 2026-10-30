@@ -1,20 +1,14 @@
 import crypto from 'crypto';
-import { execFile } from 'child_process';
 import fsPromises from 'fs/promises';
 import path from 'path';
-import { pathToFileURL } from 'url';
-import { promisify } from 'util';
 import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
 import {
-  LIBREOFFICE_TIMEOUT_MS,
   OFFICE_PREVIEW_CACHE_DIR,
   convertOfficeDocumentToPdf,
-  createLibreOfficeConversionWorkspace,
-  getLibreOfficeStatus,
+  convertOfficeDocumentToXlsx,
 } from './officePreview.js';
 
-const execFileAsync = promisify(execFile);
 const spreadsheetPreviewLocks = new Map();
 const MAX_INTERACTIVE_CELL_AREA = 1_000_000;
 const SPREADSHEET_MAIN_NAMESPACE = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
@@ -167,62 +161,7 @@ async function withPreviewLock(key, callback) {
 }
 
 async function convertSpreadsheetToXlsx(sourcePath, outputPath, cacheDir) {
-  const status = await getLibreOfficeStatus();
-  if (!status.available || !status.binaryPath) {
-    throw createSpreadsheetPreviewError(
-      'LibreOffice executable not found',
-      501,
-      'LIBREOFFICE_NOT_FOUND',
-    );
-  }
-
-  const { tempDir, profileDir } = await createLibreOfficeConversionWorkspace(cacheDir);
-  try {
-    let conversionOutput;
-    try {
-      conversionOutput = await execFileAsync(status.binaryPath, [
-        `-env:UserInstallation=${pathToFileURL(profileDir).href}`,
-        '--headless',
-        '--nologo',
-        '--nodefault',
-        '--nolockcheck',
-        '--nofirststartwizard',
-        '--convert-to',
-        'xlsx:Calc MS Excel 2007 XML',
-        '--outdir',
-        tempDir,
-        sourcePath,
-      ], {
-        timeout: LIBREOFFICE_TIMEOUT_MS,
-        maxBuffer: 8 * 1024 * 1024,
-        windowsHide: true,
-      });
-    } catch (error) {
-      error.statusCode = 500;
-      error.code = error.code || 'SPREADSHEET_XLSX_CONVERT_FAILED';
-      throw error;
-    }
-
-    const generatedName = (await fsPromises.readdir(tempDir))
-      .find((name) => name.toLowerCase().endsWith('.xlsx'));
-    if (!generatedName) {
-      const detail = String(conversionOutput?.stderr || conversionOutput?.stdout || '').trim();
-      throw createSpreadsheetPreviewError(
-        `LibreOffice did not produce an XLSX workbook${detail ? `: ${detail}` : ''}`,
-        500,
-        'SPREADSHEET_XLSX_OUTPUT_MISSING',
-      );
-    }
-
-    const pendingPath = `${outputPath}.${process.pid}.${Date.now()}.tmp`;
-    await fsPromises.copyFile(path.join(tempDir, generatedName), pendingPath);
-    await fsPromises.rename(pendingPath, outputPath);
-  } finally {
-    await Promise.all([
-      fsPromises.rm(tempDir, { recursive: true, force: true }).catch(() => {}),
-      fsPromises.rm(profileDir, { recursive: true, force: true }).catch(() => {}),
-    ]);
-  }
+  await convertOfficeDocumentToXlsx(sourcePath, outputPath, { cacheDir });
 }
 
 async function prepareSpreadsheetWorkbook(sourcePath, options = {}) {

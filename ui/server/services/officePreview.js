@@ -19,7 +19,10 @@ const MAC_FONTCONFIG_FILES = [
   '/opt/homebrew/etc/fonts/fonts.conf',
   '/usr/local/etc/fonts/fonts.conf',
 ];
-const OFFICE_PREVIEW_CONVERSION_VERSION = 2;
+const OFFICE_PREVIEW_CONVERSION_VERSION = 3;
+const OFFICE_RENDERER_TIMEOUT_MS = Number(
+  process.env.PILOTDECK_OFFICE_RENDERER_TIMEOUT_MS || 180000,
+);
 
 export function getLibreOfficeConversionEnvironment({
   platform = process.platform,
@@ -66,6 +69,13 @@ export function getConfiguredOfficePreviewSettings() {
 
 export function getConfiguredOfficePreviewService() {
   return getConfiguredOfficePreviewSettings().service;
+}
+
+export function getOfficeRendererSettings(environment = process.env) {
+  return {
+    url: String(environment.PILOTDECK_OFFICE_RENDERER_URL || '').trim().replace(/\/+$/, ''),
+    token: String(environment.PILOTDECK_OFFICE_RENDERER_TOKEN || '').trim(),
+  };
 }
 
 function getConfiguredLibreOfficeBinaryPath() {
@@ -282,12 +292,52 @@ async function probeLibreOfficeCandidate(candidate) {
   }
 }
 
+async function probeOfficeRenderer(renderer) {
+  if (!renderer.url) return { available: false, binaryPath: null, version: '' };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(`${renderer.url}/health`, {
+      signal: controller.signal,
+      headers: renderer.token ? { Authorization: `Bearer ${renderer.token}` } : {},
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok || body?.status !== 'ok') {
+      return { available: false, binaryPath: null, version: '' };
+    }
+    return {
+      available: true,
+      binaryPath: null,
+      version: body?.version || body?.service || 'Office Renderer',
+      remote: true,
+      capabilities: body?.capabilities || [],
+    };
+  } catch {
+    return { available: false, binaryPath: null, version: '' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 let libreOfficeStatusPromise = null;
 let libreOfficeStatusCacheKey = '';
 let libreOfficeCandidateStatusesPromise = null;
 let libreOfficeCandidateStatusesCacheKey = '';
 
 export async function getLibreOfficeStatus(options = {}) {
+  const renderer = getOfficeRendererSettings();
+  if (renderer.url) {
+    const cacheKey = JSON.stringify({ renderer: renderer.url });
+    if (options.forceRefresh || cacheKey !== libreOfficeStatusCacheKey) {
+      libreOfficeStatusPromise = null;
+      libreOfficeStatusCacheKey = cacheKey;
+    }
+    if (!libreOfficeStatusPromise) {
+      libreOfficeStatusPromise = probeOfficeRenderer(renderer);
+    }
+    return libreOfficeStatusPromise;
+  }
+
   const candidates = getLibreOfficeCandidates();
   const cacheKey = JSON.stringify(candidates);
 
@@ -319,6 +369,7 @@ export async function getLibreOfficeStatus(options = {}) {
 }
 
 export async function getLibreOfficeCandidateStatuses(options = {}) {
+  if (getOfficeRendererSettings().url) return [];
   const candidates = getScannableLibreOfficeCandidates();
   const cacheKey = JSON.stringify(candidates);
 
@@ -341,23 +392,79 @@ async function getLibreOfficeBinary() {
   return status.available ? status.binaryPath : null;
 }
 
+async function requestOfficeRenderer(renderer, endpoint, sourcePath, outputName) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OFFICE_RENDERER_TIMEOUT_MS);
+  try {
+    const sourceName = path.basename(sourcePath);
+    const headerName = /^[\x20-\x7e]+$/.test(sourceName)
+      ? sourceName
+      : `input${path.extname(sourceName).toLowerCase() || '.bin'}`;
+    const response = await fetch(`${renderer.url}${endpoint}`, {
+      method: 'POST',
+      body: await fsPromises.readFile(sourcePath),
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-File-Name': headerName,
+        ...(renderer.token ? { Authorization: `Bearer ${renderer.token}` } : {}),
+      },
+    });
+    const body = Buffer.from(await response.arrayBuffer());
+    if (!response.ok) {
+      let detail = body.toString('utf8').trim();
+      try {
+        const parsed = JSON.parse(detail);
+        detail = parsed.error || detail;
+      } catch {
+        // Keep the renderer's plain-text error.
+      }
+      const error = createOfficePreviewError(
+        detail || `Office Renderer returned HTTP ${response.status}`,
+        response.status >= 500 ? 502 : response.status,
+        'OFFICE_RENDERER_FAILED',
+      );
+      throw error;
+    }
+    if (!body.length) {
+      throw createOfficePreviewError(
+        `Office Renderer returned an empty ${outputName}`,
+        502,
+        'OFFICE_RENDERER_OUTPUT_MISSING',
+      );
+    }
+    return body;
+  } catch (error) {
+    if (error?.code === 'OFFICE_RENDERER_FAILED' || error?.code === 'OFFICE_RENDERER_OUTPUT_MISSING') {
+      throw error;
+    }
+    throw createOfficePreviewError(
+      `Office Renderer request failed: ${error instanceof Error ? error.message : String(error)}`,
+      503,
+      'OFFICE_RENDERER_UNAVAILABLE',
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function convertOfficeDocumentToPdf(sourcePath, options = {}) {
   const resolvedSourcePath = options.projectRoot
     ? resolvePathInsideRoot(options.projectRoot, sourcePath)
     : path.resolve(sourcePath);
-  const binary = await getLibreOfficeBinary();
-  if (!binary) {
-    throw createOfficePreviewError('LibreOffice executable not found', 501, 'LIBREOFFICE_NOT_FOUND');
-  }
-
   const stats = await fsPromises.stat(resolvedSourcePath);
   if (!stats.isFile()) {
     throw createOfficePreviewError('Office preview source is not a file', 404, 'OFFICE_PREVIEW_SOURCE_NOT_FOUND');
   }
+  const renderer = getOfficeRendererSettings();
+  const binary = renderer.url ? null : await getLibreOfficeBinary();
+  if (!renderer.url && !binary) {
+    throw createOfficePreviewError('LibreOffice executable not found', 501, 'LIBREOFFICE_NOT_FOUND');
+  }
   const conversionEnvironment = getLibreOfficeConversionEnvironment();
   const cacheKey = crypto
     .createHash('sha256')
-    .update(`${OFFICE_PREVIEW_CONVERSION_VERSION}:${conversionEnvironment.FONTCONFIG_FILE || ''}:${resolvedSourcePath}:${stats.size}:${stats.mtimeMs}`)
+    .update(`${OFFICE_PREVIEW_CONVERSION_VERSION}:${renderer.url || ''}:${conversionEnvironment.FONTCONFIG_FILE || ''}:${resolvedSourcePath}:${stats.size}:${stats.mtimeMs}`)
     .digest('hex');
   const cacheDir = path.join(OFFICE_PREVIEW_CACHE_DIR, cacheKey);
 
@@ -376,6 +483,7 @@ export async function convertOfficeDocumentToPdf(sourcePath, options = {}) {
       force: options.force,
       resolvedSourcePath,
       conversionEnvironment,
+      renderer,
     });
   })();
   officePreviewConversionLocks.set(cacheKey, conversionPromise);
@@ -395,6 +503,7 @@ async function convertOfficeDocumentToPdfWithCache({
   force,
   resolvedSourcePath,
   conversionEnvironment,
+  renderer,
 }) {
   const lockDir = `${cacheDir}.lock`;
   let releaseLock = null;
@@ -421,8 +530,21 @@ async function convertOfficeDocumentToPdfWithCache({
       return resolvePathInsideRoot(cacheDir, lockedCachedPdf);
     }
 
-    const { tempDir, profileDir } = await createLibreOfficeConversionWorkspace(cacheDir);
+    if (renderer.url) {
+      const pdf = await requestOfficeRenderer(
+        renderer,
+        '/v1/convert/pdf',
+        resolvedSourcePath,
+        'PDF',
+      );
+      const outputPdf = path.join(cacheDir, `${path.basename(resolvedSourcePath, path.extname(resolvedSourcePath))}.pdf`);
+      const pendingPdfPath = `${outputPdf}.${process.pid}.${Date.now()}.tmp`;
+      await fsPromises.writeFile(pendingPdfPath, pdf);
+      await fsPromises.rename(pendingPdfPath, outputPdf);
+      return resolvePathInsideRoot(cacheDir, path.basename(outputPdf));
+    }
 
+    const { tempDir, profileDir } = await createLibreOfficeConversionWorkspace(cacheDir);
     const args = [
       `-env:UserInstallation=${pathToFileURL(profileDir).href}`,
       '--headless',
@@ -474,5 +596,84 @@ async function convertOfficeDocumentToPdfWithCache({
     await Promise.all(entries
       .filter((entry) => entry.startsWith('convert-') || entry.endsWith('.tmp'))
       .map((entry) => fsPromises.rm(path.join(cacheDir, entry), { recursive: true, force: true }).catch(() => {})));
+  }
+}
+
+export async function convertOfficeDocumentToXlsx(sourcePath, outputPath, options = {}) {
+  const resolvedSourcePath = options.projectRoot
+    ? resolvePathInsideRoot(options.projectRoot, sourcePath)
+    : path.resolve(sourcePath);
+  const stats = await fsPromises.stat(resolvedSourcePath).catch(() => null);
+  if (!stats?.isFile()) {
+    throw createOfficePreviewError(
+      'Office conversion source is not a file',
+      404,
+      'OFFICE_PREVIEW_SOURCE_NOT_FOUND',
+    );
+  }
+  const renderer = getOfficeRendererSettings();
+  await fsPromises.mkdir(path.dirname(outputPath), { recursive: true });
+  if (renderer.url) {
+    const workbook = await requestOfficeRenderer(
+      renderer,
+      '/v1/convert/xlsx',
+      resolvedSourcePath,
+      'XLSX workbook',
+    );
+    const pendingPath = `${outputPath}.${process.pid}.${Date.now()}.tmp`;
+    await fsPromises.writeFile(pendingPath, workbook);
+    await fsPromises.rename(pendingPath, outputPath);
+    return outputPath;
+  }
+
+  const binary = await getLibreOfficeBinary();
+  if (!binary) {
+    throw createOfficePreviewError('LibreOffice executable not found', 501, 'LIBREOFFICE_NOT_FOUND');
+  }
+  const workspace = await createLibreOfficeConversionWorkspace(
+    options.cacheDir || path.dirname(outputPath),
+  );
+  try {
+    const conversionOutput = await execFileAsync(binary, [
+      `-env:UserInstallation=${pathToFileURL(workspace.profileDir).href}`,
+      '--headless',
+      '--nologo',
+      '--nodefault',
+      '--nolockcheck',
+      '--nofirststartwizard',
+      '--convert-to',
+      'xlsx:Calc MS Excel 2007 XML',
+      '--outdir',
+      workspace.tempDir,
+      resolvedSourcePath,
+    ], {
+      timeout: LIBREOFFICE_TIMEOUT_MS,
+      maxBuffer: 8 * 1024 * 1024,
+      windowsHide: true,
+      env: getLibreOfficeConversionEnvironment(),
+    });
+    const generatedName = (await fsPromises.readdir(workspace.tempDir))
+      .find((name) => name.toLowerCase().endsWith('.xlsx'));
+    if (!generatedName) {
+      const detail = String(conversionOutput?.stderr || conversionOutput?.stdout || '').trim();
+      throw createOfficePreviewError(
+        `LibreOffice did not produce an XLSX workbook${detail ? `: ${detail}` : ''}`,
+        500,
+        'SPREADSHEET_XLSX_OUTPUT_MISSING',
+      );
+    }
+    const pendingPath = `${outputPath}.${process.pid}.${Date.now()}.tmp`;
+    await fsPromises.copyFile(path.join(workspace.tempDir, generatedName), pendingPath);
+    await fsPromises.rename(pendingPath, outputPath);
+    return outputPath;
+  } catch (error) {
+    error.statusCode = error.statusCode || 500;
+    error.code = error.code || 'SPREADSHEET_XLSX_CONVERT_FAILED';
+    throw error;
+  } finally {
+    await Promise.all([
+      fsPromises.rm(workspace.tempDir, { recursive: true, force: true }).catch(() => {}),
+      fsPromises.rm(workspace.profileDir, { recursive: true, force: true }).catch(() => {}),
+    ]);
   }
 }

@@ -43,7 +43,10 @@ load_local_port_config() {
       value="${value%\'}"
     fi
     case "$key" in
-      SERVER_PORT|PILOTDECK_GATEWAY_PORT|VITE_PORT)
+      SERVER_PORT|PILOTDECK_GATEWAY_PORT|VITE_PORT|\
+      PILOTDECK_OFFICE_RENDERER_URL|PILOTDECK_OFFICE_RENDERER_TOKEN|\
+      PILOTDECK_OFFICE_RENDERER_HOST|PILOTDECK_OFFICE_RENDERER_PORT|\
+      PILOTDECK_OFFICE_RENDERER_ROLE)
         current="${!key:-}"
         if [[ -z "$current" ]]; then
           export "${key}=${value}"

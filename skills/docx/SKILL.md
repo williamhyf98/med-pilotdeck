@@ -1,6 +1,6 @@
 ---
 name: docx
-description: 读取、创建、编辑、审阅、比较、净化、渲染并校验工作区 Microsoft Word .docx 文档。输入或交付物是 .docx 时使用本技能，包括把对话里刚生成的方案、病例报告导出为 Word。所有转换只通过捆绑的 docx.sh 完成。
+description: 读取、创建、编辑、审阅、比较、净化、渲染、转换并校验工作区 Microsoft Word .docx 文档。输入或交付物是 .docx 时使用本技能，包括把对话里刚生成的方案、病例报告导出为 Word。所有转换只通过捆绑的 docx.sh 完成。
 ---
 
 # Word DOCX
@@ -56,6 +56,10 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" make \
 `make` 会使用内置 A4 模板和捆绑 Noto Sans SC，创建并校验 DOCX。成功 JSON
 中的 `output` 是用户交付文件。页面 PNG 不是离线现场的必需能力；没有预览也
 不要安装渲染后端。`preview`、`audit` 和内部候选只用于检查，不要交付。
+
+如果需要目视核对页面，必须把**同一次 `make` 返回 JSON 中 `preview` 数组的完整路径原样**
+传给 `read_file`，不要根据 `output`、工作目录或哈希片段自行拼接路径。一次生成多个 DOCX
+时，按每个 `make` 结果逐个读取对应的 `page-1.png`；不要把不同结果中的路径片段混合。
 
 ## 把对话里已有的方案做成 Word
 
@@ -141,6 +145,19 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" validate --input source.docx
 bash "$DOCX_SKILL_ROOT/scripts/docx.sh" audit --input source.docx --out "$PWD/scratch/qa/audit.json"
 bash "$DOCX_SKILL_ROOT/scripts/docx.sh" render --input source.docx --out-dir "$PWD/scratch/qa/render"
 ```
+
+把已有 Word 转成 PDF：
+
+```bash
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" convert-pdf \
+  --input source.docx \
+  --out "$PWD/exports/result.pdf"
+```
+
+`convert-pdf` 优先把 DOCX 内容上传到配置的 Office Renderer（默认是
+node12 的 19400 端口），由受控的 LibreOffice Worker 完成转换；没有配置远程
+Renderer 时才回退到本机 LibreOffice。输入和输出必须是不同文件，已有 PDF
+只有显式传 `--force` 才会替换。
 
 若命令返回 `unsupported` 或 `blocked`，说明限制并停止。
 

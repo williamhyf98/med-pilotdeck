@@ -64,7 +64,7 @@ RUN set -eux; \
   cp -a ui/dist ui/server ui/shared ui/public ui/package.json "$stage/ui/"; \
   cp -a node_modules "$stage/"; \
   cp -a ui/node_modules "$stage/ui/"; \
-  cp -a scripts skills plugins package.json pnpm-lock.yaml pnpm-workspace.yaml "$stage/"; \
+  cp -a office-renderer scripts skills plugins package.json pnpm-lock.yaml pnpm-workspace.yaml "$stage/"; \
   cp -a config/deploy.env.example "$stage/config/"; \
   cp -a README-OFFLINE.zh-CN.md "$stage/"; \
   cp -a "$stage/config/deploy.env.example" "$stage/config/deploy.env"; \

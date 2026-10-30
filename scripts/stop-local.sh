@@ -35,6 +35,10 @@ wait_gone() {
 
 echo "==> Stopping PilotDeck"
 
+if [[ "${PILOTDECK_OFFICE_RENDERER_ROLE:-remote}" == "server" ]]; then
+  bash "${SCRIPT_DIR}/stop-office-renderer.sh" || true
+fi
+
 stopped_any=0
 
 if [[ -f "$PID_FILE" ]]; then
@@ -69,7 +73,7 @@ done
 # up, signal the pids it recorded.
 PIDS_FILE="${PILOT_HOME:-${PILOT_HOME_DIR}}/system/gateway-pids.json"
 if [ -f "$PIDS_FILE" ]; then
-  node -e 'const d=require(process.argv[1]);Object.values(d||{}).forEach(v=>{try{process.kill(v?.pid,"SIGTERM")}catch{}})' "$PIDS_FILE" || true
+  "$(runtime_node)" -e 'const d=require(process.argv[1]);Object.values(d||{}).forEach(v=>{try{process.kill(v?.pid,"SIGTERM")}catch{}})' "$PIDS_FILE" || true
   # Drop the file once it has been acted on: a stale pid could be recycled by
   # the OS and signalled again on the next stop or pool start.
   rm -f "$PIDS_FILE"

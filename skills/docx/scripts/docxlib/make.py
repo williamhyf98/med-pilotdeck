@@ -11,7 +11,7 @@ from typing import Any
 from .audit import audit_docx
 from .common import DocxSkillError, assert_valid_docx, load_json, temporary_sibling
 from .core import create_docx
-from .render import find_soffice, render_docx
+from .render import find_soffice, office_renderer_configured, render_docx
 
 
 HEADING_RE = re.compile(r"^(#{1,3})\s+(.+?)\s*$")
@@ -213,19 +213,19 @@ def make_docx(
     audit = audit_docx(candidate, audit_path, profile="draft")
     preview: list[str] = []
     render_warning: str | None = None
-    if find_soffice():
-        try:
+    try:
+        if office_renderer_configured() or find_soffice():
             rendered = render_docx(candidate, render_dir, dpi=144)
             preview = [str(path) for path in rendered.get("images", [])]
-        except DocxSkillError as exc:
-            if exc.code != "render-runtime-unavailable":
-                raise
-            render_warning = str(exc)
-    else:
-        render_warning = (
-            "LibreOffice is unavailable; structural validation passed but "
-            "page preview rendering was skipped"
-        )
+        else:
+            render_warning = (
+                "LibreOffice is unavailable; structural validation passed but "
+                "page preview rendering was skipped"
+            )
+    except (DocxSkillError, OSError) as exc:
+        # Page previews are optional. Even probing a LibreOffice executable can
+        # fail inside the command sandbox; keep the validated DOCX candidate.
+        render_warning = f"Page preview rendering was skipped: {type(exc).__name__}: {exc}"
 
     output.parent.mkdir(parents=True, exist_ok=True)
     with temporary_sibling(output, suffix=".tmp.docx") as staged:

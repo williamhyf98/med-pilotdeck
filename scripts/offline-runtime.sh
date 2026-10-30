@@ -86,6 +86,7 @@ prepare_environment() {
   export PILOTDECK_SKIP_BROWSER_OPEN=1
   export PILOTDECK_GATEWAY_PORT="${PILOTDECK_GATEWAY_PORT:-18789}"
   export SERVER_PORT="${SERVER_PORT:-3010}"
+  export PILOTDECK_OFFICE_RENDERER_PORT="${PILOTDECK_OFFICE_RENDERER_PORT:-19400}"
   # The UI server starts one Gateway per user on demand; this is only the first
   # port its pool tries, so there is no single gateway URL to export.
   export PILOTDECK_GATEWAY_PORT_BASE="${PILOTDECK_GATEWAY_PORT_BASE:-$PILOTDECK_GATEWAY_PORT}"

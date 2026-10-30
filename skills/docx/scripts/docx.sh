@@ -103,17 +103,21 @@ cmd_check() {
   if [[ -f "$BUNDLED_FONT_DIR/NotoSansSC-VF.ttf" ]]; then
     font_ok=true
   fi
-  if ! soffice_path="$(find_soffice)"; then
+  local remote_renderer=false
+  if [[ -n "${PILOTDECK_OFFICE_RENDERER_URL:-}" ]]; then
+    remote_renderer=true
+  elif ! soffice_path="$(find_soffice)"; then
     soffice_path=""
   fi
-  printf '{"status":"%s","code":"%s","python":%s,"python_path":"%s","dependencies":%s,"venv":"%s","bundled_font":%s,"bundled_font_dir":"%s","libreoffice":%s,"libreoffice_path":"%s","render_dependencies":%s,"render_available":%s}\n' \
+  printf '{"status":"%s","code":"%s","python":%s,"python_path":"%s","dependencies":%s,"venv":"%s","bundled_font":%s,"bundled_font_dir":"%s","libreoffice":%s,"libreoffice_path":"%s","office_renderer":%s,"office_renderer_url":"%s","render_dependencies":%s,"render_available":%s}\n' \
     "$([[ "$py_ok" == true && "$deps_ok" == true && "$font_ok" == true ]] && printf ok || printf error)" \
     "$([[ "$py_ok" == true && "$deps_ok" == true && "$font_ok" == true ]] && printf dependencies-ready || printf missing-dependencies)" \
     "$py_ok" "$py" "$deps_ok" "$VENV_DIR" \
     "$font_ok" "$BUNDLED_FONT_DIR" \
     "$([[ -n "$soffice_path" ]] && printf true || printf false)" "$soffice_path" \
+    "$remote_renderer" "${PILOTDECK_OFFICE_RENDERER_URL:-}" \
     "$render_deps_ok" \
-    "$([[ -n "$soffice_path" && "$deps_ok" == true && "$render_deps_ok" == true && "$font_ok" == true ]] && printf true || printf false)"
+    "$([[ "$remote_renderer" == true || -n "$soffice_path" ]] && [[ "$deps_ok" == true && "$render_deps_ok" == true && "$font_ok" == true ]] && printf true || printf false)"
   [[ "$py_ok" == true && "$deps_ok" == true && "$font_ok" == true ]]
 }
 
@@ -166,7 +170,7 @@ case "${1:-}" in
     if [[ -n "$py" ]]; then
       exec "$py" "$SCRIPT_DIR/docx_cli.py" --help
     fi
-    printf 'Usage: docx.sh <check|make|inspect|edit|review|finalize|compare|sanitize|render|refresh-toc|validate|audit|preflight|deliver|resolve-latest|self-test> [options]\n'
+    printf 'Usage: docx.sh <check|make|inspect|edit|review|finalize|compare|sanitize|render|convert-pdf|refresh-toc|validate|audit|preflight|deliver|resolve-latest|self-test> [options]\n'
     ;;
   *)
     if ! runtime_ready; then
@@ -175,8 +179,10 @@ case "${1:-}" in
     fi
     py="$(venv_python)"
     soffice_path=""
-    if ! soffice_path="$(find_soffice)"; then
-      soffice_path=""
+    if [[ -z "${PILOTDECK_OFFICE_RENDERER_URL:-}" ]]; then
+      if ! soffice_path="$(find_soffice)"; then
+        soffice_path=""
+      fi
     fi
     export DOCX_SKILL_SOFFICE="$soffice_path"
     export DOCX_SKILL_FONT_DIR="$BUNDLED_FONT_DIR"

@@ -41,6 +41,23 @@
         "MED_RAG_SERVICE_MAX_CHARS_PER_CHUNK": "${env:MED_RAG_SERVICE_MAX_CHARS_PER_CHUNK:-1800}",
         "MED_RAG_TOPIC": "${env:MED_RAG_TOPIC:-战创伤}"
       }
+    },
+    "mineru-ingest-tools": {
+      "command": "node",
+      "args": ["${env:PILOT_HOME}/plugins/med-tools/run-mineru-ingest.cjs"],
+      "timeoutMs": 900000,
+      "env": {
+        "PILOT_HOME": "${env:PILOT_HOME}",
+        "PILOTDECK_DISABLE_LOCAL_AUTH": "${env:PILOTDECK_DISABLE_LOCAL_AUTH}",
+        "HOME": "${env:HOME}",
+        "PATH": "${env:PATH}",
+        "MED_RAG_MINERU_CONFIG_FILE": "${env:MED_RAG_MINERU_CONFIG_FILE}",
+        "MED_RAG_MINERU_LAUNCHER": "${env:MED_RAG_MINERU_LAUNCHER}",
+        "MED_RAG_MINERU_MODEL_ROOT": "${env:MED_RAG_MINERU_MODEL_ROOT}",
+        "MED_RAG_MINERU_INGEST_ROOT": "${env:MED_RAG_MINERU_INGEST_ROOT}",
+        "MED_RAG_MINERU_DEFAULT_CPU_THREADS": "${env:MED_RAG_MINERU_DEFAULT_CPU_THREADS:-8}",
+        "MED_RAG_MINERU_MAX_WORKERS": "${env:MED_RAG_MINERU_MAX_WORKERS:-1}"
+      }
     }
   }
 }

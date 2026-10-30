@@ -39,4 +39,4 @@ INDEX_URL="${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
 
 chmod +x "${ROOT}/run.sh"
 echo "med-tools setup complete: ${ROOT}/.venv (${VENV_PY})"
-"${VENV_PY}" -c "import mcp, pydicom, PIL, numpy, httpx; print('imports ok')"
+"${VENV_PY}" -c "import mcp, fastapi, uvicorn, pydicom, PIL, numpy, httpx; print('imports ok')"

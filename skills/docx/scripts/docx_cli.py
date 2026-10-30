@@ -22,6 +22,7 @@ from docxlib.core import (
     inspect_docx,
     sanitize_docx,
 )
+from docxlib.convert import convert_docx_to_pdf
 from docxlib.delivery import deliver_docx
 from docxlib.fallback import fallback_create, fallback_patch
 from docxlib.lineage import latest_input_path, resolve_latest_input
@@ -250,6 +251,15 @@ def _parser() -> argparse.ArgumentParser:
     render_parser.add_argument("--dpi", type=int, default=150)
     render_parser.add_argument("--emit-pdf", action="store_true")
     render_parser.add_argument("--timeout", type=int, default=120)
+
+    convert_pdf_parser = sub.add_parser(
+        "convert-pdf",
+        help="Convert an existing DOCX to PDF through the Office Renderer",
+    )
+    convert_pdf_parser.add_argument("--input", required=True)
+    convert_pdf_parser.add_argument("--out", required=True)
+    convert_pdf_parser.add_argument("--force", action="store_true")
+    convert_pdf_parser.add_argument("--timeout", type=int, default=180)
 
     validate_parser = sub.add_parser("validate", help="Validate DOCX ZIP and OOXML integrity")
     validate_parser.add_argument("--input", required=True)
@@ -576,6 +586,13 @@ def _execute(args: argparse.Namespace) -> dict[str, Any]:
             args.out_dir,
             dpi=args.dpi,
             emit_pdf=args.emit_pdf,
+            timeout_seconds=args.timeout,
+        )
+    if args.command == "convert-pdf":
+        return convert_docx_to_pdf(
+            args.input,
+            args.out,
+            force=args.force,
             timeout_seconds=args.timeout,
         )
     if args.command == "validate":
