@@ -37,12 +37,9 @@ class MinerURemoteClientTests(unittest.TestCase):
             home.mkdir()
             source = home / "document.pdf"
             source.write_bytes(b"%PDF")
-            token_file = home / "token"
-            token_file.write_text("test-token\n", encoding="utf-8")
             environment = {
                 "PILOT_HOME": str(home),
                 "MED_RAG_MINERU_API_BASE": "http://127.0.0.1:18890",
-                "MED_RAG_MINERU_API_TOKEN_FILE": str(token_file),
             }
             with RemoteMinerUClient(environment=environment, transport=httpx.MockTransport(respond)) as client:
                 response = client.submit_file(source, {"title": "测试"})
@@ -50,37 +47,30 @@ class MinerURemoteClientTests(unittest.TestCase):
         self.assertEqual(response["job_id"], job_id)
         self.assertIn(b'filename="document.pdf"', requests[0].content)
         self.assertNotIn(str(source).encode(), requests[0].content)
-        self.assertEqual(requests[0].headers["authorization"], "Bearer test-token")
+        self.assertIsNone(requests[0].headers.get("authorization"))
 
-    def test_missing_remote_configuration_fails_closed(self) -> None:
+    def test_missing_remote_base_fails_closed_but_token_is_optional(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             home = Path(temp_dir)
             with self.assertRaises(ValueError):
                 RemoteMinerUClient(
                     environment={
                         "PILOT_HOME": str(home),
-                        "MED_RAG_MINERU_API_BASE": "http://10.31.112.13:18890",
-                    }
-                )
-            with self.assertRaises(ValueError):
-                RemoteMinerUClient(
-                    environment={
-                        "PILOT_HOME": str(home),
-                        "MED_RAG_MINERU_API_BASE": "http://10.31.112.13:18890",
-                        "MED_RAG_MINERU_API_TOKEN": "secret",
                     }
                 )
 
-    def test_plain_http_is_limited_to_loopback_for_ssh_tunnel(self) -> None:
+    def test_plain_http_is_allowed_for_node12_internal_address(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            with self.assertRaises(ValueError):
-                RemoteMinerUClient(
-                    environment={
-                        "PILOT_HOME": temp_dir,
-                        "MED_RAG_MINERU_API_BASE": "http://10.31.112.13:18890",
-                        "MED_RAG_MINERU_API_TOKEN": "secret",
-                    }
-                )
+            with RemoteMinerUClient(
+                environment={
+                    "PILOT_HOME": temp_dir,
+                    "MED_RAG_MINERU_API_BASE": "http://10.31.112.13:18890",
+                },
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(200, json={"ok": True})
+                ),
+            ) as client:
+                self.assertTrue(client.health()["ok"])
 
     def test_service_maps_remote_result_and_does_not_redownload_bundle(self) -> None:
         requests: list[httpx.Request] = []
@@ -110,6 +100,8 @@ class MinerURemoteClientTests(unittest.TestCase):
         def respond(request: httpx.Request) -> httpx.Response:
             requests.append(request)
             if request.method == "POST":
+                if request.url.path.endswith("/acknowledge"):
+                    return httpx.Response(204)
                 return httpx.Response(
                     202,
                     json={
@@ -155,7 +147,6 @@ class MinerURemoteClientTests(unittest.TestCase):
                 "PILOT_HOME": str(home),
                 "MED_RAG_MINERU_INGEST_ROOT": str(home / "ingest"),
                 "MED_RAG_MINERU_API_BASE": "http://127.0.0.1:18890",
-                "MED_RAG_MINERU_API_TOKEN": "test-token",
             }
             with RemoteMinerUClient(
                 environment=environment, transport=httpx.MockTransport(respond)
@@ -168,11 +159,18 @@ class MinerURemoteClientTests(unittest.TestCase):
                 self.assertEqual(first["manifest"]["schema_version"], "mineru-ingest-chunks-v1")
                 self.assertEqual(second["status"], "succeeded")
                 self.assertTrue(service.validate(submitted["job_id"])["ok"])
+                self.assertTrue(service.acknowledge(submitted["job_id"])["acknowledged"])
 
             artifact_requests = [
                 request for request in requests if "/artifacts/" in request.url.path
             ]
             self.assertEqual(len(artifact_requests), len(files))
+            acknowledge_requests = [
+                request for request in requests if request.url.path.endswith("/acknowledge")
+            ]
+            self.assertEqual(len(acknowledge_requests), 1)
+            self.assertEqual(acknowledge_requests[0].content, b"")
+            self.assertEqual(acknowledge_requests[0].headers.get("content-length"), "0")
 
     def test_http_errors_are_converted_without_server_paths(self) -> None:
         def respond(_request: httpx.Request) -> httpx.Response:
@@ -186,7 +184,6 @@ class MinerURemoteClientTests(unittest.TestCase):
                 environment={
                     "PILOT_HOME": str(root),
                     "MED_RAG_MINERU_API_BASE": "http://127.0.0.1:18890",
-                    "MED_RAG_MINERU_API_TOKEN": "test-token",
                 },
                 transport=httpx.MockTransport(respond),
             ) as client:

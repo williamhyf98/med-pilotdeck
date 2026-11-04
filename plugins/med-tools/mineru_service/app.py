@@ -18,7 +18,6 @@ from typing import Any, Awaitable, Callable, Mapping
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 
-from .auth import TokenAuthenticator
 from .config import MinerUServiceConfig
 from .doctor import runtime_doctor
 from .worker import run_job
@@ -47,6 +46,7 @@ def create_app(
     max_upload_bytes: int | None = None,
     max_jobs: int | None = None,
     job_timeout_seconds: float | None = None,
+    cleanup_interval_seconds: float = 60.0,
 ) -> FastAPI:
     values = dict(os.environ if runtime_environment is None else runtime_environment)
     root_path = Path(root).expanduser().resolve()
@@ -62,11 +62,6 @@ def create_app(
     if configured_max_upload < 1 or configured_max_jobs < 1 or configured_timeout <= 0:
         raise ValueError("MinerU service limits must be positive")
 
-    authenticator = (
-        TokenAuthenticator(api_tokens)
-        if api_tokens is not None
-        else TokenAuthenticator.from_environment(values, config.api_token_file)
-    )
     queue: asyncio.Queue[Path] = asyncio.Queue(maxsize=configured_max_jobs)
     active: set[str] = set()
     service_lock = None
@@ -109,13 +104,12 @@ def create_app(
         write_json(status_path(job_dir), value)
         return value
 
-    def tenant_root(principal: str) -> Path:
-        return root_path / "tenants" / principal
+    jobs_root = root_path / "jobs"
 
-    def job_dir_for(principal: str, job_id: str) -> Path:
+    def job_dir_for(job_id: str) -> Path:
         if not JOB_ID_RE.fullmatch(job_id):
             raise HTTPException(status_code=404, detail="Unknown job")
-        job_dir = tenant_root(principal) / "jobs" / job_id
+        job_dir = jobs_root / job_id
         if not status_path(job_dir).is_file():
             raise HTTPException(status_code=404, detail="Unknown job")
         return job_dir
@@ -237,7 +231,7 @@ def create_app(
     def health_payload() -> dict[str, Any]:
         report = runtime_doctor(config, values)
         return {
-            "ok": bool(report["ok"]) and authenticator.configured,
+            "ok": bool(report["ok"]),
             "service": "mineru-http",
             "runtime": report["runtime"],
             "cuda": report["cuda"],
@@ -253,7 +247,7 @@ def create_app(
                 "available_slots": max(0, configured_max_jobs - len(active)),
             },
             "supported_inputs": list(SUPPORTED_INPUT_SUFFIXES),
-            "authentication": {"configured": authenticator.configured},
+            "authentication": {"configured": False, "mode": "trusted-internal"},
         }
 
     async def consume() -> None:
@@ -275,6 +269,7 @@ def create_app(
                     job_dir,
                     status="succeeded",
                     phase="complete",
+                    succeeded_at=time.time(),
                     parser=result.get("parser") or {},
                 )
             except asyncio.CancelledError:
@@ -305,25 +300,29 @@ def create_app(
 
     async def cleanup() -> None:
         while True:
-            await asyncio.sleep(60)
+            await asyncio.sleep(max(0.01, float(cleanup_interval_seconds)))
             cutoff = time.time() - config.retention_seconds
-            for status_file in (root_path / "tenants").glob("*/jobs/*/status.json"):
+            for status_file in jobs_root.glob("*/status.json"):
                 try:
                     value = json.loads(status_file.read_text(encoding="utf-8"))
                 except (OSError, json.JSONDecodeError):
                     continue
                 if (
                     value.get("status") in {"succeeded", "failed"}
-                    and float(value.get("updated_at", 0)) < cutoff
+                    and float(
+                        value.get("succeeded_at")
+                        or value.get("failed_at")
+                        or value.get("updated_at", 0)
+                    )
+                    < cutoff
                     and status_file.parent.name not in active
                 ):
                     shutil.rmtree(status_file.parent, ignore_errors=True)
 
     def mark_restarted_jobs() -> None:
-        jobs_root = root_path / "tenants"
         if not jobs_root.is_dir():
             return
-        for status_file in jobs_root.glob("*/jobs/*/status.json"):
+        for status_file in jobs_root.glob("*/status.json"):
             try:
                 value = json.loads(status_file.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
@@ -341,6 +340,7 @@ def create_app(
     async def lifespan(_app: FastAPI):
         nonlocal cleanup_task, worker_task, service_lock
         root_path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        jobs_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(root_path, 0o700)
         try:
             import fcntl
@@ -380,12 +380,6 @@ def create_app(
 
     @app.middleware("http")
     async def authenticate(request: Request, call_next: Callable[..., Awaitable[Response]]):
-        if not authenticator.configured:
-            return JSONResponse({"detail": "service authentication is unavailable"}, status_code=503)
-        principal = authenticator.principal_for(request.headers.get("authorization", ""))
-        if principal is None:
-            return JSONResponse({"detail": "invalid credentials"}, status_code=401)
-        request.state.principal = principal
         if request.method == "POST":
             try:
                 content_length = int(request.headers.get("content-length", "-1"))
@@ -443,9 +437,8 @@ def create_app(
             },
             max_timeout=max(1, int(configured_timeout)),
         )
-        principal = request.state.principal
         job_id = secrets.token_hex(16)
-        job_dir = tenant_root(principal) / "jobs" / job_id
+        job_dir = jobs_root / job_id
         job_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
         input_dir = job_dir / "input"
         input_dir.mkdir(mode=0o700)
@@ -511,15 +504,15 @@ def create_app(
 
     @app.get("/v1/mineru/jobs/{job_id}")
     async def inspect_job(request: Request, job_id: str) -> dict[str, Any]:
-        return public_status(job_dir_for(request.state.principal, job_id))
+        return public_status(job_dir_for(job_id))
 
     @app.get("/v1/mineru/jobs/{job_id}/result")
     async def result(request: Request, job_id: str) -> dict[str, Any]:
-        return result_payload(job_dir_for(request.state.principal, job_id))
+        return result_payload(job_dir_for(job_id))
 
     @app.get("/v1/mineru/jobs/{job_id}/validate")
     async def validate(request: Request, job_id: str) -> dict[str, Any]:
-        job_dir = job_dir_for(request.state.principal, job_id)
+        job_dir = job_dir_for(job_id)
         current = read_status(job_dir)
         if current.get("status") != "succeeded":
             return {"ok": False, "job_id": job_id, "status": current.get("status")}
@@ -538,7 +531,7 @@ def create_app(
 
     @app.get("/v1/mineru/jobs/{job_id}/artifacts/{artifact_name:path}")
     async def artifact(request: Request, job_id: str, artifact_name: str):
-        job_dir = job_dir_for(request.state.principal, job_id)
+        job_dir = job_dir_for(job_id)
         if read_status(job_dir).get("status") != "succeeded":
             raise HTTPException(status_code=409, detail="Job has not succeeded")
         path = artifact_file(job_dir, artifact_name)
@@ -548,13 +541,19 @@ def create_app(
             headers={"X-MinerU-Artifact-SHA256": _sha256_file(path)},
         )
 
+    @app.post("/v1/mineru/jobs/{job_id}/acknowledge", status_code=204)
+    async def acknowledge(job_id: str) -> Response:
+        job_dir = job_dir_for(job_id)
+        if read_status(job_dir).get("status") != "succeeded":
+            raise HTTPException(status_code=409, detail="Job has not succeeded")
+        shutil.rmtree(job_dir, ignore_errors=False)
+        return Response(status_code=204)
+
     return app
 
 
 def configured_app() -> FastAPI:
     config = MinerUServiceConfig.from_environment()
-    if not config.api_token_file and not os.environ.get("MINERU_SERVICE_API_TOKEN"):
-        raise ValueError("MINERU_SERVICE_API_TOKEN_FILE is required")
     return create_app(config.root)
 
 
@@ -643,9 +642,8 @@ def _sha256_file(path: Path) -> str:
 
 
 def _status_for_active(root: Path, job_id: str) -> dict[str, Any]:
-    for path in root.glob(f"tenants/*/jobs/{job_id}/status.json"):
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
-    return {}
+    path = root / "jobs" / job_id / "status.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}

@@ -33,7 +33,6 @@ class MinerUServiceConfig:
     max_jobs: int
     job_timeout_seconds: int
     retention_seconds: int
-    api_token_file: Path | None
 
     @classmethod
     def from_environment(
@@ -63,7 +62,6 @@ class MinerUServiceConfig:
         if max_workers != 1:
             raise ValueError("node12 MinerU service requires exactly one worker")
 
-        token_file_raw = str(values.get("MINERU_SERVICE_API_TOKEN_FILE", "")).strip()
         return cls(
             root=root,
             launcher=launcher,
@@ -81,11 +79,8 @@ class MinerUServiceConfig:
                 values, "MINERU_SERVICE_JOB_TIMEOUT", 3600
             ),
             retention_seconds=_int_value(
-                values, "MINERU_SERVICE_RETENTION_SECONDS", 86400
+                values, "MINERU_SERVICE_RETENTION_SECONDS", 3600
             ),
-            api_token_file=Path(token_file_raw).expanduser().resolve()
-            if token_file_raw
-            else None,
         )
 
     def runtime_environment(self) -> dict[str, str]:

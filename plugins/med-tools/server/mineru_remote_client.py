@@ -54,12 +54,6 @@ class RemoteMinerUClient:
         parsed = urlparse(base)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError("MED_RAG_MINERU_API_BASE must be an HTTP(S) URL")
-        if parsed.scheme == "http" and parsed.hostname not in {
-            "127.0.0.1",
-            "localhost",
-            "::1",
-        }:
-            raise ValueError("plain HTTP is allowed only for the SSH tunnel loopback")
         self.base_url = base
         self.token = _read_token(self.environment)
         ca_bundle = str(self.environment.get("MED_RAG_MINERU_CA_BUNDLE", "")).strip()
@@ -68,9 +62,10 @@ class RemoteMinerUClient:
         connect_timeout = _float_env(
             self.environment, "MED_RAG_MINERU_CONNECT_TIMEOUT", 10.0
         )
+        headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
         self._http = httpx.Client(
             base_url=self.base_url,
-            headers={"Authorization": f"Bearer {self.token}"},
+            headers=headers,
             timeout=httpx.Timeout(
                 connect=connect_timeout,
                 read=_float_env(self.environment, "MED_RAG_MINERU_READ_TIMEOUT", 60.0),
@@ -130,6 +125,22 @@ class RemoteMinerUClient:
     def validate(self, job_id: str) -> dict[str, Any]:
         self._validate_job_id(job_id)
         return self._json_request("GET", f"/v1/mineru/jobs/{job_id}/validate")
+
+    def acknowledge(self, job_id: str) -> dict[str, Any]:
+        self._validate_job_id(job_id)
+        try:
+            response = self._request_with_retry(
+                "POST",
+                f"/v1/mineru/jobs/{job_id}/acknowledge",
+                content=b"",
+            )
+        except httpx.HTTPError as exc:
+            raise RemoteMinerUError("MinerU service network request failed") from exc
+        if response.status_code >= 400:
+            self._response_json(response)
+        if response.status_code not in {200, 202, 204}:
+            raise RemoteMinerUError("MinerU service returned an invalid acknowledgement")
+        return {"job_id": job_id, "acknowledged": True}
 
     def download(self, job_id: str, artifact_name: str) -> bytes:
         self._validate_job_id(job_id)
@@ -351,6 +362,19 @@ class RemoteMinerUIngestService:
             "warnings": [],
         }
 
+    def acknowledge(self, job_id: str) -> dict[str, Any]:
+        mapping = self._mapping(job_id)
+        response = self.client.acknowledge(job_id)
+        value = {
+            "exists": True,
+            "job_id": job_id,
+            "acknowledged": bool(response.get("acknowledged", False)),
+            "source_path": mapping["source_path"],
+            "job_dir": str(self._local_job_dir(job_id)),
+        }
+        self._write_local_status(job_id, value)
+        return value
+
     def submit_batch(self, *, documents: list[Any], **kwargs: Any) -> dict[str, Any]:
         if not isinstance(documents, list) or not documents:
             raise ValueError("documents must be a non-empty list")
@@ -481,7 +505,7 @@ class RemoteMinerUIngestService:
         return value
 
 
-def _read_token(environment: Mapping[str, str]) -> str:
+def _read_token(environment: Mapping[str, str]) -> str | None:
     direct = str(environment.get("MED_RAG_MINERU_API_TOKEN", "")).strip()
     token_file = str(environment.get("MED_RAG_MINERU_API_TOKEN_FILE", "")).strip()
     if token_file:
@@ -489,9 +513,7 @@ def _read_token(environment: Mapping[str, str]) -> str:
             direct = Path(token_file).read_text(encoding="utf-8").strip()
         except OSError as exc:
             raise OSError("MinerU API token file cannot be read") from exc
-    if not direct:
-        raise ValueError("MED_RAG_MINERU_API_TOKEN or token file is required")
-    return direct
+    return direct or None
 
 
 def _float_env(environment: Mapping[str, str], name: str, default: float) -> float:

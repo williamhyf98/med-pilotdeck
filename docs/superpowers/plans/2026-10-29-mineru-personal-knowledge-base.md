@@ -6,9 +6,74 @@
 
 **Architecture:** MinerU 核心只负责授权文档的解析、结构化切块、图片/页码产物和任务状态，不直接修改当前战创伤 RAG，也不负责知识库查询。Mac 本地保留 stdio MCP 作为统一工具入口；生产/远程模式由 node12 提供独立 MinerU HTTP 服务，Mac 通过上传文件、查询任务和下载标准化 bundle 调用它。未来个人知识库编排层复用同一 ingest 契约，随后使用当前 embedding 服务，将文档、chunk、资产和向量写入当前用户目录下的 SQLite 数据库。
 
-**Tech Stack:** Python、FastMCP、FastAPI/Uvicorn、外部 MinerU runtime、现有 `med-tools` Python venv、SQLite、NumPy、HTTPX、SSH 隧道、HTTPS/TLS、当前多用户 `PILOT_HOME`/`resolveScopedHome()` 路径模型。
+**Tech Stack:** Python、FastMCP、FastAPI/Uvicorn、外部 MinerU runtime、现有 `med-tools` Python venv、SQLite、NumPy、HTTPX、node12 内网 HTTP、当前多用户 `PILOT_HOME`/`resolveScopedHome()` 路径模型；SSH 隧道和 HTTPS/TLS 仅作为旧部署或未来不可信网络的可选方案。
 
 **Spec:** 本文档同时是设计规格和实施计划，来源为 `origin/feat/jiang-rag` 的提交 `3c6dfc8` 及其测试/验收文档，并结合当前分支 `feat/multi-user-v2` 的多用户路径和插件启动约束。
+
+## 2026-11-02 已确认需求和目标方案
+
+本节覆盖此前方案中关于远程传输、token、任务保留和路径传输的旧约定。后续实现以本节为准。
+
+### 本阶段范围
+
+- 前端和 API 对外只传项目相对路径，例如 `CT/MR_多帧_10帧.dcm`。
+- 服务端根据当前项目根目录解析为当前服务器上的真实绝对路径，再交给 Gateway、MCP、DICOM/NIfTI 解析器和其他文件工具。
+- MinerU 由 node12 提供内网 HTTP 服务；Mac 通过 node12 的内网 hostname/地址和端口直接调用。
+- MinerU 服务采用无 token 的内网可信模式。任何能访问 node12 MinerU 端口的内网机器都可以调用。
+- node12 不再依赖 Mac 本地 `mineru-node12.token` 或服务端 `api-tokens.env`。
+- 每个任务仍由服务端生成不可预测的随机 `job_id`，用于异步轮询、结果下载和短期任务目录定位。
+- MinerU 只负责解析、切块和标准化产物，不生成 embedding，不直接写个人知识库数据库。
+- Mac/本地知识库编排层负责下载、校验、embedding 和 `knowledge.db` 事务写入。
+- 个人知识库写入事务成功后发送任务完成确认，node12 立即删除该任务的输入、原始解析结果、中间文件和标准化产物。
+- 未收到完成确认时，任务从 node12 解析完成时间起最多保留 1 小时，随后自动删除。
+- node12 任务目录只作为短期重试缓存，不作为正式知识库或长期备份。
+
+### 本阶段暂不处理
+
+- `USERPROFILE` 兼容性问题。
+- 主模型、embedding 模型地址和模型 ID。
+- 旧历史 transcript、旧绝对路径和迁移脚本。
+- Cron、Always-On、飞书和微信。
+- 现有战创伤 RAG 查询链路。
+
+### 路径和安全边界
+
+前端/API 的相对路径不能直接传给底层文件工具。服务端必须在进入文件系统、MCP 或医学解析工具前，根据项目 ID 和当前工作区完成解析，并拒绝绝对路径、`..` 逃逸、外部 symlink 和项目根目录外的目标。历史数据暂不重写，但新产生的消息、任务映射和 API 返回不得写入服务器绝对路径。
+
+无 token MinerU 模式不提供用户级身份认证或用户级任务权限隔离。它提供的是：
+
+- 随机 `job_id` 带来的任务目录隔离和并发隔离；
+- 服务端禁止客户端指定 node12 任意路径；
+- 只允许下载任务登记的标准化产物；
+- 上传大小、队列容量、任务超时和来源网络由服务控制；
+- node12 内网、防火墙和端口访问控制作为主要安全边界。
+
+如果未来需要不可信网络或严格的用户级权限隔离，再引入 token、mTLS、统一代理或其他身份机制；本阶段不实现该能力。
+
+### 任务生命周期
+
+```text
+Mac 上传文件
+  -> node12 生成随机 job_id 并暂存输入
+  -> MinerU GPU 解析和切块
+  -> node12 生成标准化 bundle
+  -> Mac 轮询、下载并校验 bundle
+  -> 本地 embedding
+  -> 本地 knowledge.db 事务提交成功
+  -> Mac 发送完成确认
+  -> node12 立即删除该 job_id 的全部任务目录
+```
+
+异常路径：
+
+```text
+node12 解析成功但未收到完成确认
+  -> 保留任务最多 1 小时
+  -> 允许 Mac 根据 job_id 重试状态查询、下载或本地入库
+  -> 超时后自动删除
+```
+
+“无确认”不等于解析结果无用。它可能表示网络中断、下载中断、embedding 暂时不可用、本地数据库事务回滚或客户端崩溃。1 小时窗口用于重试这些阶段；一旦确认本地知识库事务成功，node12 侧数据不再承担正式存储职责。
 
 ## Global Constraints
 
@@ -23,16 +88,18 @@
 - node12 是 MinerU 的集中式 GPU 计算节点；Mac 不安装 MinerU、模型权重或 CUDA，只通过远程服务提交文件。
 - 远程请求必须上传文件内容，不允许把 Mac 的本地绝对路径传给 node12；node12 只接受服务端生成的任务目录和内部相对路径。
 - 远程 HTTP 服务必须使用异步任务、有限队列、单 worker 和任务级超时；不能为每个请求开放任意服务器路径下载。
-- 远程服务必须依据已认证的用户/租户身份选择 node12 侧隔离目录，不能信任客户端传入的 `user_id` 作为唯一授权依据。
-- 开发阶段优先使用 SSH 隧道访问 node12 回环 HTTP；直接内网访问或生产部署必须使用 HTTPS/TLS、Bearer Token 或 mTLS，并校验证书。
+- node12 MinerU 目标服务使用内网 hostname/地址监听并直接提供内网 HTTP；不得只绑定 `127.0.0.1`。调用方能否访问由 node12 内网路由和防火墙决定。
+- 本阶段不使用 MinerU Bearer Token、Mac token 文件或按 token 租户隔离。随机 `job_id` 只用于任务定位和任务级隔离，不等同于用户身份认证。
+- 不把 node12 MinerU 端口暴露到公网。若未来跨越不可信网络，再单独设计 HTTPS/TLS、Bearer Token 或 mTLS。
 - 默认使用复制而不是 hardlink，避免用户 Bundle 或资产修改基础数据。
 - 所有异步任务必须有稳定 job id、源文件 SHA-256、解析配置指纹和明确的失败状态。
 - 未完成任务的 Future 保存在进程内；第一阶段不承诺服务重启后自动恢复。
+- node12 的任务目录只作临时缓存：本地知识库确认成功后立即删除；无确认时从解析完成起最多保留 1 小时。
 
 ## Review Focus
 
 - 用户 A 传入用户 B、系统目录或 symlink 外部目标时，MCP 必须拒绝且不读取文件。
-- 用户 A 不能通过 job id、manifest、asset path 或 SQLite 路径访问用户 B 的数据。
+- 用户 A 不能通过项目相对路径、manifest、asset path 或 SQLite 路径访问用户 B 的本地知识库数据；node12 无 token 模式不承诺最终用户级 job 权限隔离。
 - MinerU 解析成功但 embedding 服务不可用时，必须保留可重试的解析产物，不得标记为完整入库成功。
 - embedding 模型或维度变化时，旧向量不能被静默混用。
 - 插件管理接口的 `requireAdmin`、当前主 MCP launcher 和现有远程 RAG 行为必须保持不变。
@@ -50,7 +117,7 @@
 - 支持单文件异步任务和批处理。
 - 支持健康检查、状态查询、结果查询和产物校验。
 - node12 提供独立 HTTP 服务，接收文件上传并异步执行真实 MinerU。
-- Mac 通过本地 Remote Client 调用 node12 服务；开发阶段使用 SSH 隧道，生产阶段使用 HTTPS。
+- Mac 通过本地 Remote Client 直接调用 node12 内网服务；不依赖互联网或 SSH 隧道。
 - 供后续个人知识库读取 `chunks.jsonl`、`pages.jsonl`、`assets.jsonl`。
 
 第一阶段明确不做：
@@ -79,13 +146,13 @@
 
 ### 1.3 与 node12 服务的边界及后续实施顺序
 
-现有 node12 HTTP 服务常驻时不常驻 GPU 显存；它在 PDF 解析任务期间启动独立的 CUDA MinerU 子进程，结束后退出。服务目前一次只接收一个任务：Mac 或 node12 上传文件，拿到 HTTP 202 和任务 ID，轮询 `queued -> running -> succeeded/failed`，再下载并校验 Markdown、content list、model JSON、`chunks.jsonl`、`pages.jsonl`、`assets.jsonl`、manifest 与质量报告。node12 的产物保留 24 小时，因此未来个人知识库必须在过期前将需要的原文和解析结果**复制到用户自己的持久目录**；node12 的任务目录只能作为临时解析区。参见 `docs/mineru-node12-service.zh.md`。
+现有 node12 HTTP 服务常驻时不常驻 GPU 显存；它在 PDF 解析任务期间启动独立的 CUDA MinerU 子进程，结束后退出。服务目前一次只接收一个任务：Mac 或 node12 上传文件，拿到 HTTP 202 和任务 ID，轮询 `queued -> running -> succeeded/failed`，再下载并校验 Markdown、content list、model JSON、`chunks.jsonl`、`pages.jsonl`、`assets.jsonl`、manifest 与质量报告。node12 的任务目录只作为临时解析区：本地知识库事务确认成功后立即删除；未收到确认时从解析完成起最多保留 1 小时，用于网络、下载、embedding 或本地入库失败后的重试。
 
 后续从登录用户上传界面开始，服务端先检查身份和知识库归属，把源文件存进该用户的 `$PILOT_HOME/knowledge-bases/<knowledge_base_id>/sources/`，异步调用现有 MinerU MCP 的 `submit -> status -> result -> validate`，将解析产物和图片资产复制到同一用户知识库目录。仅当校验通过，才读取 `chunks.jsonl` 的 `contents` 批量请求现有 embedding 服务，将 chunks、页码、文档版本、资产路径和向量写进该知识库的 SQLite `knowledge.db`。**目前尚未实现 embedding、数据库入库和知识库检索**；不应把“MinerU 任务成功”显示为“已加入知识库”。
 
 导入状态应区分 `parsing`、`parsed`、`embedding`、`ready`、`failed_parse`、`failed_embedding`；embedding 暂不可用时保留已解析的文档并支持只重试 embedding。用源文件 SHA-256、解析参数和 embedding 模型/维度识别重复导入或模型升级，避免混用不同模型的向量。查询时先确认当前用户及知识库权限，对问题生成同模型向量，检索对应 chunks，并返回原文标题、章节和页码；可增加 SQLite FTS5 作为关键词检索和 embedding 不可用时的降级。由于实测出现 `satellite -> satelite` 和空格合并，导入界面需要让用户预览解析文字，不能用产物 SHA-256 校验代替 OCR 质量验收。
 
-正式多用户接入前，须从当前单一 `pilotdeck` token 过渡到按用户隔离的授权；多用户网关把 `PILOT_HOME` 设置为各自的 `users/<id>`，应分别配置访问凭据、存储路径和访问控制，禁止用同一 token 把不同用户任务混入同一个租户。生产网络访问还需完成 HTTPS/CA 与超时、断连验收。上述工作按第 8 至 10 节分阶段完成。
+当前个人知识库的用户隔离由 Mac/本地 Gateway 的 `PILOT_HOME`、知识库目录和 `knowledge.db` 负责；node12 MinerU 本身是内网单租户解析服务，不承担最终用户身份隔离。后续若开放到不可信网络，必须重新引入远程身份认证和任务授权。
 
 ## 2. 旧分支内容取舍
 
@@ -185,9 +252,9 @@ MED_RAG_MINERU_MAX_UPLOAD_BYTES=
 - `MED_RAG_MINERU_LAUNCHER` 通过 `shlex.split` 解析，禁止拼接未经解析的 shell 命令。
 - `MED_RAG_MINERU_DEFAULT_DEVICE` 本地默认使用 `cpu`；node12 GPU 服务固定配置为 `cuda`，客户端不得通过普通请求任意选择设备。
 - `MED_RAG_MINERU_REMOTE_MODE=local` 时使用当前本地 stdio MCP；`remote` 时由本地 client 调用 node12 HTTP 服务。
-- `MED_RAG_MINERU_API_BASE`、token 文件和 CA bundle 只存在于部署配置，不提交真实地址、密钥或证书。
+- `MED_RAG_MINERU_API_BASE` 只存在于部署配置，不提交真实部署地址。无 token 模式下不配置 `MED_RAG_MINERU_API_TOKEN_FILE` 或 `MED_RAG_MINERU_API_TOKEN`；CA bundle 仅在未来启用 TLS 时配置。
 - 当前 MCP 传输仍使用 stdio；node12 HTTP 是独立服务传输层，不把 stdio MCP 直接暴露到网络。
-- SSH 隧道开发时，node12 HTTP 服务只监听 `127.0.0.1`；生产 HTTPS 服务才允许绑定受控内网地址。
+- 目标部署为 node12 内网直连：客户端使用 node12 hostname/内网地址，服务端绑定 node12 可达的内网接口或受防火墙保护的监听地址，不绑定 `127.0.0.1`。SSH 隧道只作为旧部署或故障排查手段，不是目标调用链。
 
 ## 4. MCP 接口契约
 
@@ -627,18 +694,21 @@ node12 有 8 张 NVIDIA A800 80GB。2.6.5 和 2.7.0 均已使用 `pipeline + cud
 Mac PilotDeck
   -> 本地 mineru-ingest-tools stdio MCP
   -> Remote MinerU Client
-  -> node12 HTTPS/SSH-tunnel HTTP API
-  -> node12 上传暂存和用户/租户隔离目录
+  -> node12 内网 HTTP API（hostname/内网地址）
+  -> node12 上传暂存和随机 job_id 任务目录
   -> MinerU CLI + CUDA GPU
   -> node12 标准化 bundle
   -> Mac 下载 bundle
   -> 当前用户 PILOT_HOME/knowledge-bases/<id>/
-  -> 后续 embedding 和 knowledge.db
+  -> embedding 和 knowledge.db
+  -> 成功确认后 node12 立即清理任务目录
 ```
 
 node12 本地运行的 PilotDeck 可以直接调用同一 HTTP API 的回环地址，也可以在明确的本地模式下继续使用 stdio MCP。生产部署推荐所有调用方都走同一 HTTP 契约，避免 Mac 和 node12 出现两套行为。
 
 文件必须通过 `multipart/form-data` 上传。Mac 的本地绝对路径只在本地使用，不能传给 node12。node12 生成任务 ID、保存上传文件、调用现有 `MinerUIngestService`/adapter，并只允许下载该任务登记的标准化产物。
+
+目标网络模型是内网可信单租户服务：凡是能访问 node12 MinerU 端口的机器都可以提交任务、轮询自己持有的 `job_id` 并下载该任务产物。服务不识别最终用户，也不接受 `user_id`、输出目录或 node12 路径作为授权依据。
 
 第一版服务可以复用现有 CLI 子进程边界，每个任务单独生成隔离 `HOME`、缓存、临时目录和输出目录；不要为了复用模型而先引入全局单例。确认稳定性和吞吐后，再评估长驻 MinerU worker。
 
@@ -651,6 +721,7 @@ GET  /health
 POST /v1/mineru/jobs
 GET  /v1/mineru/jobs/{job_id}
 GET  /v1/mineru/jobs/{job_id}/result
+POST /v1/mineru/jobs/{job_id}/acknowledge
 GET  /v1/mineru/jobs/{job_id}/artifacts/{artifact_name}
 ```
 
@@ -680,6 +751,8 @@ uploading -> queued -> running -> succeeded
 
 服务重启后，未完成任务必须变为明确的 `failed/service_restarted` 或 `not_live`，不能继续显示为运行中。结果接口只有在任务成功且 manifest 校验通过后才允许返回。
 
+`acknowledge` 只能接收服务端生成的 `job_id`，用于表示本地 embedding 和 `knowledge.db` 事务已经成功提交。确认成功后立即删除该任务的输入、原始 MinerU 产物、标准化 bundle、中间目录和状态文件。未确认的成功任务从 `succeeded_at` 起最多保留 1 小时，清理任务必须自动删除；job id 不存在时返回 404。确认接口不提供用户权限隔离，随机 job id 只作为任务级能力标识。
+
 ### Task 7: 固定 node12 MinerU runtime 和部署配置
 
 **Files:**
@@ -698,10 +771,12 @@ MED_RAG_MINERU_LAUNCHER='"/local_data/medical/Med-Rag/UltraRAG/.venv/bin/python"
 MED_RAG_MINERU_MODEL_ROOT='/local_data/models/opendatalab/PDF-Extract-Kit-1___0'
 MED_RAG_MINERU_DEFAULT_DEVICE=cuda
 MED_RAG_MINERU_MAX_WORKERS=1
-MINERU_SERVICE_BIND=127.0.0.1
+MINERU_SERVICE_BIND=node12内网hostname或内网IP
 MINERU_SERVICE_PORT=18890
-MINERU_SERVICE_MAX_UPLOAD_BYTES=2147483648
+MINERU_SERVICE_MAX_UPLOAD_BYTES=52428800
+MINERU_SERVICE_MAX_JOBS=1
 MINERU_SERVICE_JOB_TIMEOUT=3600
+MINERU_SERVICE_RETENTION_SECONDS=3600
 ```
 
 - [x] 固定 MinerU 版本、Python 解释器和模型目录，禁止服务启动时在线下载模型。
@@ -710,6 +785,8 @@ MINERU_SERVICE_JOB_TIMEOUT=3600
 - [x] 配置单 Uvicorn worker；禁止使用多个 worker 共享同一任务队列和 GPU。
 - [x] 写 runtime doctor，检查 Python、MinerU 版本、模型文件、CUDA 和输出目录权限。
 - [x] 写 node12 直接 CLI smoke 脚本，失败时输出完整诊断但不修改既有 UltraRAG 产物。
+- [ ] 验证服务绑定 node12 内网 hostname/地址后，Mac 和其他允许的内网机器可以直接访问 `18890`，不依赖 SSH 隧道。
+- [ ] 验证 node12 防火墙只开放受控内网范围，不允许公网访问。
 
 ### Task 8: 实现 node12 MinerU HTTP 服务
 
@@ -718,26 +795,30 @@ MINERU_SERVICE_JOB_TIMEOUT=3600
 - Create: `plugins/med-tools/mineru_service/__init__.py`
 - Create: `plugins/med-tools/mineru_service/app.py`
 - Create: `plugins/med-tools/mineru_service/worker.py`
-- Create: `plugins/med-tools/mineru_service/auth.py`
 - Test: `plugins/med-tools/tests/test_mineru_http_service.py`
 
 实现边界：
 
-- `app.py` 只负责 HTTP、鉴权、上传和任务查询，不重复实现切块逻辑。
-- `worker.py` 负责为任务建立服务端 `PILOT_HOME`/租户根目录，并调用现有 `MinerUIngestService`。
+- `app.py` 只负责 HTTP、内网访问边界、上传、任务查询、完成确认和清理，不重复实现切块逻辑。
+- `worker.py` 负责为任务建立服务端 `PILOT_HOME`/任务根目录，并调用现有 `MinerUIngestService`。
 - 任务目录不能由请求中的路径决定；使用服务端生成的 job id 和受控目录。
 - 每个任务保存上传文件 SHA-256、解析配置、当前 phase、状态和错误摘要。
 - 结果下载只允许 manifest 登记的 `chunks.jsonl`、`pages.jsonl`、`assets.jsonl`、assets 目录和必要的质量报告。
-- 错误响应不暴露 node12 绝对路径、模型路径、Python 命令或其他租户信息。
+- 完成确认只接受服务端生成的 `job_id`；确认成功后立即递归删除该任务目录。
+- 清理任务以 `succeeded_at + 3600` 为兜底期限；失败任务也必须按独立保留策略清理，不得无限积累。
+- 错误响应不暴露 node12 绝对路径、模型路径、Python 命令或其他内部部署信息。
 - 服务文档页和 OpenAPI 默认关闭，避免暴露内部接口说明。
 
 - [x] 写健康检查：依赖配置、模型目录、CUDA、队列容量和当前运行数分别返回。
 - [x] 写 multipart 上传、空文件、超限文件、非法参数和不支持扩展名测试。
 - [x] 写任务状态转换、队列满、超时、异常和服务重启测试。
 - [x] 写结果 allowlist 和任意路径下载拒绝测试。
-- [x] 写 token 校验、恒定时间比较和缺失凭据拒绝测试。
-- [x] 写租户/用户隔离测试，确认 A 不能查询或下载 B 的任务。
 - [x] 写成功任务的 manifest、chunks、pages、assets 完整性测试。
+- [ ] 写无 Authorization Header 也能通过内网调用的测试。
+- [ ] 写随机 job id、非法 job id 和不存在 job id 的任务定位测试。
+- [ ] 写本地入库确认后立即删除任务目录的测试。
+- [ ] 写无确认时从 `succeeded_at` 起 1 小时后自动删除的测试。
+- [ ] 写未完成任务不被提前删除、确认请求幂等和重复清理安全的测试。
 
 ### Task 9: 增加 Mac 远程客户端并复用现有 MCP 契约
 
@@ -758,16 +839,21 @@ MINERU_SERVICE_JOB_TIMEOUT=3600
 4. 成功后将标准化 bundle 下载到当前用户的 `PILOT_HOME`，再由本地路径安全层校验。
 5. 远程任务失败时保留服务端错误摘要和本地可重试状态，不重复提交新任务。
 6. HTTP 请求使用连接超时、读取超时、轮询间隔和有限重试；上传和结果下载不能无限等待。
-7. HTTPS 默认校验证书；只有 SSH 隧道开发配置才允许访问本地回环 `http://`。
+7. 本地 embedding 和 `knowledge.db` 事务成功提交后调用 `acknowledge`；确认请求成功后不再依赖 node12 任务目录。
+8. 未确认任务在 1 小时窗口内允许重新下载和重试本地入库；窗口结束后本地状态明确标记为远程缓存已过期，需要重新提交。
+9. 目标调用地址为 node12 内网 hostname/地址，不发送 Authorization Header，不读取 token 文件。
 
 - [x] 测试 multipart 上传不会传递 Mac 绝对路径。
 - [x] 测试远程 submit/status/result/validate 的 JSON 映射保持现有 MCP 工具契约。
-- [x] 测试网络断开、HTTP 401/404/413/429/5xx 和任务失败的错误转换。
+- [x] 测试网络断开、HTTP 404/413/429/5xx 和任务失败的错误转换。
 - [x] 测试重复查询同一 job 不会重复上传或重复生成本地资产。
 - [x] 测试下载后的 bundle 仍通过当前用户路径、manifest 和 SHA-256 校验。
-- [x] 测试远程配置缺失时 fail closed，不静默回退到共享路径或任意本地目录。
+- [ ] 测试网络断开后在 1 小时缓存窗口内恢复连接，可以继续下载同一 job。
+- [ ] 测试本地 knowledge.db 提交成功后发送确认，并验证 node12 任务立即清理。
+- [ ] 测试 embedding 或本地入库失败时不发送确认，允许在 1 小时内复用已解析 bundle。
+- [ ] 测试远程配置缺失时 fail closed，不静默回退到共享路径或任意本地目录。
 
-### Task 10: 开发隧道、生产 HTTPS 和进程守护
+### Task 10: node12 内网直连和进程守护
 
 **Files:**
 
@@ -776,27 +862,22 @@ MINERU_SERVICE_JOB_TIMEOUT=3600
 - Optional: `packaging/mineru-service/`
 - Test: `plugins/med-tools/tests/test_mineru_remote_transport.py`
 
-开发模式：
-
-```bash
-# node12 服务只监听 127.0.0.1:18890
-ssh -N -L 18890:127.0.0.1:18890 node12
-```
-
-Mac 使用 `http://127.0.0.1:18890`，SSH 负责跨主机加密；该模式不作为生产服务地址。
-
-生产模式：
+目标模式：
 
 ```text
-Mac/node12 -> HTTPS reverse proxy -> node12 MinerU service
+Mac/内网客户端 -> http://node12内网hostname:18890 -> node12 MinerU service
 ```
 
-- [x] 配置 HTTPS 证书、CA、Bearer Token 或 mTLS。
-- [x] 客户端默认校验证书，禁止通过关闭 TLS 校验解决部署问题。
-- [x] 反向代理限制来源网段、请求方法、上传大小和超时时间。
+- node12 MinerU 服务监听 node12 可达的内网 hostname/地址，不绑定 `127.0.0.1`。
+- Mac 和其他允许的内网机器直接使用 node12 服务地址，不建立 SSH 隧道。
+- 不配置 MinerU Bearer Token，不创建 Mac token 文件，不创建服务端 token 映射文件。
+- 通过内网路由、防火墙和端口访问范围限制调用边界；不允许公网暴露。
+- 反向代理或防火墙限制来源网段、请求方法、上传大小和超时时间。
 - [x] node12 服务使用 systemd user service 或等价守护方式，退出 SSH 后仍能运行。
 - [x] 不把真实地址、密钥、证书和服务端绝对路径提交到 Git。
 - [ ] 记录服务版本、MinerU 版本、任务耗时、失败 phase 和 GPU 使用情况，不记录完整文档内容到普通日志。
+- [ ] 验证没有公网连接时，只要 Mac 到 node12 内网端口可达，仍可完成上传、轮询和产物下载。
+- [ ] 若 hostname 解析到多个地址，确认服务绑定地址和客户端解析结果一致；必要时使用固定内网 IP 作为监听地址、hostname 作为访问地址。
 
 ### Task 11: Mac/node12 远程端到端验收
 
@@ -806,15 +887,17 @@ Mac/node12 -> HTTPS reverse proxy -> node12 MinerU service
 - Optional: `scripts/mineru-remote-smoke.sh`
 - Test: `plugins/med-tools/tests/test_mineru_remote_e2e.py`
 
-- [x] node12 服务 doctor 和 Mac SSH 隧道 `GET /health` 确认 runtime、model、CUDA 和 queue 状态。
-- [x] Mac 通过 SSH 隧道上传真实 PDF，完成 `202 -> queued -> running -> succeeded`。
+- [ ] node12 服务 doctor 和 Mac 内网直连 `GET /health` 确认 runtime、model、CUDA 和 queue 状态。
+- [ ] Mac 通过 node12 内网地址上传真实 PDF，完成 `202 -> queued -> running -> succeeded`。
 - [x] Mac 下载 bundle，验证 Markdown、content list、model、chunks、pages、assets JSONL 和质量报告（小样本无图片文件）。
 - [x] Mac 端验收结果中不出现 node12 绝对路径和其他用户信息。
-- [x] 使用第二个 token 验证无法查询、下载首个租户的 job、manifest 和资产。
+- [ ] 确认无 Authorization Header 时，Mac 和其他允许的内网机器都可以调用服务。
 - [ ] 上传超限、队列满、MinerU 超时、服务重启和网络中断均返回可恢复状态（已验证队列满和服务重启，其他待测）。
-- [ ] 使用 HTTPS 部署再次完成健康检查、上传、轮询和结果下载，并确认客户端证书校验生效。
+- [ ] 本地 embedding 和 `knowledge.db` 写入成功后调用 `acknowledge`，确认 node12 任务立即删除。
+- [ ] embedding 或本地入库失败时不确认，1 小时内可复用同一 job 的 node12 产物重试。
+- [ ] 未确认任务超过 1 小时后自动删除，并向本地状态返回“远程缓存已过期”。
 - [ ] node12 本地 PilotDeck 和 Mac PilotDeck 通过同一 HTTP 契约得到一致结果（已验收 Mac MCP 和 HTTP，node12 本地 PilotDeck 未验收）。
-- [ ] 验收后再决定是否将 embedding 计算放在 Mac 本地或后续也服务化到 node12。
+- [x] embedding 由本地知识库编排层负责，不由 MinerU node12 服务生成。
 
 ## 8. 个人知识库数据库阶段
 
@@ -875,7 +958,7 @@ ingestion_jobs
 - 每批最多 64 个文本。
 - 使用 `contents` 作为默认 embedding 输入，同时保留 `text` 作为证据正文。
 - 向量以 `float32` BLOB 保存，记录 model、dimension 和 norm。
-- embedding 失败时保留解析成功状态，任务可重试。
+- embedding 失败时保留 Mac 当前用户目录中的解析 bundle 和 `parsed/failed_embedding` 状态，任务可重试；不要依赖 node12 的临时目录作为长期重试存储。
 - 不将向量写入旧战创伤 `.npy` Bundle。
 
 建议接口：
@@ -917,7 +1000,7 @@ class KnowledgeBaseService:
         self,
         *,
         knowledge_base_id: str,
-        source_path: str,
+        source_path: str,  # 项目相对路径；服务端解析为当前项目内的真实路径
         title: str | None = None,
         parser_options: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]
@@ -949,11 +1032,14 @@ deleted
 6. 批量生成 embedding。
 7. 将 chunks、向量和 assets 写入用户目录。
 8. 成功后提交为 `ready`。
-9. 失败时保留可诊断状态，不留下半完成的 ready 数据。
+9. 只有 `knowledge.db` 事务提交成功后才调用 node12 `acknowledge`；确认成功后 node12 立即删除远程任务目录。
+10. 失败时保留可诊断状态，不留下半完成的 ready 数据；远程未确认缓存最多保留 1 小时，过期后需要重新提交源文件。
 
 - [ ] 写重复导入幂等测试。
 - [ ] 写解析成功、embedding 失败、重试成功测试。
 - [ ] 写事务回滚测试。
+- [ ] 写数据库事务成功后才发送远程完成确认的测试。
+- [ ] 写远程缓存过期后重新提交源文件的测试。
 - [ ] 写删除文档后数据库和资产清理测试。
 - [ ] 写两个用户不能互相访问知识库的测试。
 
@@ -1069,7 +1155,7 @@ submit -> status polling -> result -> validate
 ### 12.2 多用户测试
 
 - 用户 A 不能读取用户 B 的 source。
-- 用户 A 不能查询用户 B 的 job。
+- node12 内网调用方可以查询其持有的随机 `job_id`；本地 Gateway 必须阻止用户 A 读取用户 B 的本地导入任务映射。
 - 用户 A 不能提交用户 B 的 manifest。
 - 用户 A 不能激活或读取用户 B 的数据库。
 - 用户 A 不能读取用户 B 的图片。
@@ -1109,7 +1195,7 @@ submit -> status polling -> result -> validate
 7. 固定 node12 MinerU runtime 和部署配置。
 8. node12 MinerU HTTP 服务。
 9. Mac 远程 client 和现有 MCP 契约适配。
-10. SSH 隧道、生产 HTTPS 和进程守护。
+10. node12 内网直连和进程守护。
 11. Mac/node12 远程端到端验收。
 12. SQLite 个人知识库 schema。
 13. embedding 持久化。
@@ -1126,8 +1212,8 @@ feat: add scoped MinerU ingestion core
 feat: expose MinerU ingestion MCP
 test: add multi-user MinerU isolation coverage
 feat: add node12 MinerU HTTP service
-feat: add remote MinerU client over SSH tunnel/HTTPS
-test: add remote MinerU upload and bundle acceptance
+feat: add remote MinerU client over node12 internal HTTP
+test: add remote MinerU upload, bundle, acknowledge, and cleanup acceptance
 feat: add per-user knowledge base SQLite storage
 feat: add knowledge base embedding ingestion
 feat: add knowledge base upload and retrieval APIs
@@ -1141,10 +1227,10 @@ feat: add knowledge base asset presentation
 - 不用旧分支的 `rag_bundle.py` 代替用户级数据库。
 - 不使用 hardlink 共享用户 Bundle 资产。
 - 不让 MinerU MCP 直接读取任意服务器绝对路径。
-- 不让单个用户通过 HTTP 服务访问其他用户任务。
+- 不把 node12 无 token 服务误描述为用户级权限隔离服务；最终用户隔离必须在 Mac/Gateway 和个人知识库目录完成。
 - 不把 Mac 本地绝对路径直接传给 node12 MinerU 服务。
 - 不把 MinerU CLI 或 stdio MCP 直接暴露到公网。
-- 不在没有限流、鉴权和证书校验的情况下把 node12 服务作为生产接口。
+- 不把 node12 MinerU 端口暴露到公网；内网部署必须配置来源网段、端口访问控制、上传限制、队列限制和任务清理。
 - 不通过修改现有战创伤 RAG 查询逻辑来实现个人知识库。
 - 不在第一阶段为了图片展示修改聊天消息流和 Markdown 处理。
 
@@ -1163,10 +1249,12 @@ feat: add knowledge base asset presentation
 远程 MinerU 服务阶段完成的最低标准：
 
 - node12 的固定 MinerU runtime、模型目录和 CUDA 配置通过 doctor 和真实 PDF smoke。
-- node12 HTTP 服务支持上传、异步任务、状态查询、结果下载和健康检查。
-- Mac 通过 SSH 隧道完成开发验收，生产配置支持 HTTPS 和证书校验。
+- node12 HTTP 服务支持上传、异步任务、状态查询、结果下载、完成确认和健康检查。
+- Mac 和其他允许的内网机器可以通过 node12 hostname/内网地址直接调用；不依赖互联网、SSH 隧道或 token 文件。
 - Mac 和 node12 使用同一 HTTP 契约得到一致的标准化 bundle。
-- 服务端任务、上传文件、产物和日志均有用户/租户隔离，不能通过路径参数越权。
+- 每个任务使用随机 `job_id` 和独立目录，不能通过请求路径参数读取 node12 任意文件。
+- 本地知识库事务成功后 node12 任务立即清理；无确认任务从 `succeeded_at` 起最多保留 1 小时。
+- 通过内网、防火墙、端口限制、上传限制、队列限制和任务清理完成服务级安全控制；不把无 token 服务暴露到公网。
 
 完整个人知识库完成的最低标准：
 

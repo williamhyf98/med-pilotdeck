@@ -15,7 +15,7 @@ from mineru_service.app import create_app
 
 class MinerUHTTPServiceTests(unittest.TestCase):
     def _headers(self, token: str = "test-token") -> dict[str, str]:
-        return {"Authorization": f"Bearer {token}"}
+        return {}
 
     def _success_runner(self, job: Path) -> None:
         manifest = {
@@ -100,15 +100,11 @@ class MinerUHTTPServiceTests(unittest.TestCase):
         self.assertIn("cuda", payload)
         self.assertNotIn(temp_dir, response.text)
 
-    def test_missing_or_wrong_credentials_are_rejected(self) -> None:
+    def test_requests_without_credentials_are_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             app = create_app(Path(temp_dir), api_tokens={"test-token": "tenant-a"})
             with TestClient(app) as client:
-                self.assertEqual(client.get("/health").status_code, 401)
-                self.assertEqual(
-                    client.get("/health", headers=self._headers("wrong")).status_code,
-                    401,
-                )
+                self.assertNotEqual(client.get("/health").status_code, 401)
 
     def test_upload_validation_rejects_empty_unsupported_and_oversized_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -261,34 +257,50 @@ printf '[{"type":"text","text":"测试内容","page_idx":0}]' > "$parsed/${stem}
         )
         self.assertNotIn(str(root), json.dumps(result, ensure_ascii=False))
 
-    def test_tenant_cannot_read_another_tenants_job(self) -> None:
+    def test_acknowledge_deletes_completed_job_immediately(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            app = create_app(root, runner=self._success_runner)
+            with TestClient(app) as client:
+                submitted = client.post(
+                    "/v1/mineru/jobs",
+                    files={"file": ("source.pdf", b"%PDF-1.4 sample")},
+                ).json()
+                job_id = submitted["job_id"]
+                status = self._wait_for_status(client, job_id, {})
+                self.assertEqual(status["status"], "succeeded", status)
+                self.assertEqual(
+                    client.post(f"/v1/mineru/jobs/{job_id}/acknowledge").status_code,
+                    204,
+                )
+                self.assertFalse((root / "jobs" / job_id).exists())
+                self.assertEqual(
+                    client.get(f"/v1/mineru/jobs/{job_id}").status_code,
+                    404,
+                )
+
+    def test_unacknowledged_completed_job_is_removed_after_retention(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
             app = create_app(
-                Path(temp_dir),
-                api_tokens={"a-token": "tenant-a", "b-token": "tenant-b"},
+                root,
                 runner=self._success_runner,
+                runtime_environment={"MINERU_SERVICE_RETENTION_SECONDS": "1"},
+                cleanup_interval_seconds=0.01,
             )
             with TestClient(app) as client:
                 submitted = client.post(
                     "/v1/mineru/jobs",
-                    headers=self._headers("a-token"),
                     files={"file": ("source.pdf", b"%PDF-1.4 sample")},
                 ).json()
                 job_id = submitted["job_id"]
-                self.assertEqual(
-                    client.get(
-                        f"/v1/mineru/jobs/{job_id}",
-                        headers=self._headers("b-token"),
-                    ).status_code,
-                    404,
-                )
-                self.assertEqual(
-                    client.get(
-                        f"/v1/mineru/jobs/{job_id}/result",
-                        headers=self._headers("b-token"),
-                    ).status_code,
-                    404,
-                )
+                status = self._wait_for_status(client, job_id, {})
+                self.assertEqual(status["status"], "succeeded", status)
+                for _ in range(200):
+                    if not (root / "jobs" / job_id).exists():
+                        break
+                    time.sleep(0.01)
+                self.assertFalse((root / "jobs" / job_id).exists())
 
     def test_restart_marks_nonterminal_jobs_failed(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -296,7 +308,7 @@ printf '[{"type":"text","text":"测试内容","page_idx":0}]' > "$parsed/${stem}
             app = create_app(root, api_tokens={"test-token": "tenant-a"})
             with TestClient(app) as client:
                 job_id = "a" * 32
-                job_dir = root / "tenants" / "tenant-a" / "jobs" / job_id
+                job_dir = root / "jobs" / job_id
                 job_dir.mkdir(parents=True)
                 (job_dir / "status.json").write_text(
                     json.dumps(

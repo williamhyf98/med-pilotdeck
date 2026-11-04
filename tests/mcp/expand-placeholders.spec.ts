@@ -13,10 +13,18 @@ test("bundled medical MCP receives its scoped home and login mode explicitly", (
         process.env.PILOTDECK_DISABLE_LOCAL_AUTH = "0";
         const plugin = JSON.parse(readFileSync("plugins/med-tools/plugin.json", "utf8"));
         const { servers } = parsePluginMcpServers(plugin.mcpServers);
-        assert.equal(servers.length, 1);
-        assert.equal(servers[0].transport, "stdio");
-        assert.equal(servers[0].env?.PILOT_HOME, "/data/pilotdeck/users/2");
-        assert.equal(servers[0].env?.PILOTDECK_DISABLE_LOCAL_AUTH, "0");
+
+        // The med-tools plugin bundles two stdio servers: the medical tool set and
+        // the MinerU ingestion tool set. Both must inherit the scoped home.
+        assert.deepEqual(
+            servers.map((server) => server.id).sort(),
+            ["med-tools", "mineru-ingest-tools"],
+        );
+        for (const server of servers) {
+            assert.equal(server.transport, "stdio");
+            assert.equal(server.env?.PILOT_HOME, "/data/pilotdeck/users/2");
+            assert.equal(server.env?.PILOTDECK_DISABLE_LOCAL_AUTH, "0");
+        }
     } finally {
         if (previousHome === undefined) delete process.env.PILOT_HOME;
         else process.env.PILOT_HOME = previousHome;
