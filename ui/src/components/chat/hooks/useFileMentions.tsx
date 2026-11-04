@@ -19,7 +19,7 @@ export interface MentionableFile {
   name: string;
   /** Project-relative path (built from tree names). Unique key in the dropdown. */
   path: string;
-  /** Server-side absolute path from the tree node, when known. */
+  /** Legacy absolute path from older file-tree responses, when present. */
   absolutePath?: string;
 }
 
@@ -28,7 +28,7 @@ export interface MentionedFile {
   name: string;
   /** Project-relative path — identity for dedupe/removal. */
   relativePath: string;
-  /** Absolute path on the server when known; preferred in the agent-visible note. */
+  /** Legacy absolute path retained only for old in-memory state compatibility. */
   absolutePath?: string;
 }
 

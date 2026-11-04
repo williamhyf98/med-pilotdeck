@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import type { Project } from '../../../types/app';
+import { getProjectRelativePath } from '../../../utils/workspaceFileMention';
 import type { CodeEditorDiffInfo, CodeEditorFile, CodeEditorTab } from '../types/types';
 
 type UseEditorSidebarOptions = {
@@ -11,15 +12,23 @@ type UseEditorSidebarOptions = {
 
 const buildEditorFile = (
   filePath: string,
-  projectName: string | undefined,
+  project: Project | null,
   diffInfo: CodeEditorDiffInfo | null = null,
 ): CodeEditorFile => {
-  const normalizedPath = filePath.replace(/\\/g, '/');
+  const normalizedPath = (
+    project?.name
+      ? getProjectRelativePath(
+        filePath,
+        project.fullPath || project.path || '',
+        project.name,
+      )
+      : null
+  ) || filePath.replace(/\\/g, '/');
   const fileName = normalizedPath.split('/').pop() || filePath;
   return {
     name: fileName,
     path: normalizedPath,
-    projectName,
+    projectName: project?.name,
     diffInfo,
   };
 };
@@ -60,7 +69,7 @@ export const useEditorSidebar = ({
 
   const handleFileOpen = useCallback(
     (filePath: string, diffInfo: CodeEditorDiffInfo | null = null) => {
-      const nextFile = buildEditorFile(filePath, selectedProject?.name, diffInfo);
+      const nextFile = buildEditorFile(filePath, selectedProject, diffInfo);
       setTabsState((previous) => {
         const existing = previous.tabs.find((tab) => tab.fileStack[0]?.path === nextFile.path);
         if (existing) {
@@ -91,13 +100,13 @@ export const useEditorSidebar = ({
         };
       });
     },
-    [selectedProject?.name],
+    [selectedProject],
   );
 
   // Push onto the stack when following a markdown cross-reference inside preview.
   const handlePreviewFileOpen = useCallback(
     (filePath: string) => {
-      const nextFile = buildEditorFile(filePath, selectedProject?.name);
+      const nextFile = buildEditorFile(filePath, selectedProject);
       setTabsState((previous) => {
         if (!previous.activeTabId) return previous;
         return {
@@ -115,7 +124,7 @@ export const useEditorSidebar = ({
         };
       });
     },
-    [selectedProject?.name],
+    [selectedProject],
   );
 
   const handleFileGoBack = useCallback(() => {

@@ -5,6 +5,7 @@ import { isBinaryFile } from '../utils/binaryFile';
 
 type UseCodeEditorDocumentParams = {
   file: CodeEditorFile;
+  projectName?: string;
   projectPath?: string;
 };
 
@@ -16,7 +17,7 @@ const getErrorMessage = (error: unknown) => {
   return String(error);
 };
 
-export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocumentParams) => {
+export const useCodeEditorDocument = ({ file, projectName, projectPath }: UseCodeEditorDocumentParams) => {
   // `content` is the editor's authoritative buffer. We never put an error
   // placeholder in here — if a load fails, the surface is hidden and the
   // user sees an error panel instead. Otherwise a stray Ctrl+S would
@@ -30,7 +31,7 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isBinary, setIsBinary] = useState(false);
-  const fileProjectName = file.projectName ?? projectPath;
+  const fileProjectName = projectName ?? file.projectName ?? projectPath;
   const filePath = file.path;
   const fileDiffNewString = file.diffInfo?.new_string;
   const fileDiffOldString = file.diffInfo?.old_string;

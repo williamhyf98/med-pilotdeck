@@ -31,6 +31,23 @@ function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
   });
 }
 
+async function assertNiftiPreviewAvailable(url: string) {
+  const response = await fetch(url, {
+    method: 'HEAD',
+    cache: 'no-store',
+  });
+  if (response.ok) return;
+
+  let detail = '';
+  try {
+    const payload = await response.json() as { error?: string; code?: string };
+    detail = payload.error || payload.code || '';
+  } catch {
+    // HEAD responses normally have no body.
+  }
+  throw new Error(detail || `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`);
+}
+
 async function initialize() {
   if (!initPromise) {
     initPromise = (async () => {
@@ -122,6 +139,7 @@ export default function NiftiPreview({
       ]);
       if (disposed) return;
       const url = new URL(api.niftiPreviewUrl(projectName, file.path, reloadKey), window.location.href).href;
+      await assertNiftiPreviewAvailable(url);
       const imageIds = await withTimeout(nifti.createNiftiImageIdsAndCacheMetadata({ url }), 90_000);
       if (disposed) {
         return;

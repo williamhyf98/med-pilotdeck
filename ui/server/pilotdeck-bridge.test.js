@@ -7,10 +7,35 @@ import {
     createTrustedGatewayTurnOptions,
     gatewayEventToFrames,
     getGatewayTurnSafetyOverrides,
+    resolveProjectAttachmentPath,
     isGatewayUnavailableError,
     sanitizeTraumaAttachments,
     sanitizeTraumaFormInput,
 } from './pilotdeck-bridge.js';
+
+describe('resolveProjectAttachmentPath', () => {
+    it('resolves project-relative paths for the gateway', () => {
+        expect(resolveProjectAttachmentPath(
+            '/workspace/project-a',
+            'inbox/run/scan.dcm',
+        )).toBe('/workspace/project-a/inbox/run/scan.dcm');
+    });
+
+    it('keeps legacy absolute paths only inside the current project', () => {
+        expect(resolveProjectAttachmentPath(
+            '/workspace/project-a',
+            '/workspace/project-a/inbox/scan.dcm',
+        )).toBe('/workspace/project-a/inbox/scan.dcm');
+        expect(resolveProjectAttachmentPath(
+            '/workspace/project-a',
+            '/workspace/project-b/secret.txt',
+        )).toBeNull();
+        expect(resolveProjectAttachmentPath(
+            '/workspace/project-a',
+            '../secret.txt',
+        )).toBeNull();
+    });
+});
 
 describe('sanitizeTraumaFormInput', () => {
     it('forwards the supported structural fields', () => {

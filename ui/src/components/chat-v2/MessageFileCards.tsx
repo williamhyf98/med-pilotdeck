@@ -15,7 +15,7 @@ import type { Project } from '../../types/app';
 import { api } from '../../utils/api';
 import {
   ADD_WORKSPACE_FILE_MENTION_EVENT,
-  getWorkspaceRelativePath,
+  getProjectRelativePath,
 } from '../../utils/workspaceFileMention';
 import type { ChatAttachment, ChatFileArtifact } from '../chat/types/types';
 import { cn } from '../../lib/utils.js';
@@ -75,7 +75,9 @@ function resolveRelativePath(filePath: string, project: Project | null): string 
   if (!filePath) return null;
   const root = project?.fullPath || project?.path || '';
   if (!root) return filePath.replace(/^\.\//, '') || null;
-  return getWorkspaceRelativePath(filePath, root);
+  return project?.name
+    ? getProjectRelativePath(filePath, root, project.name)
+    : null;
 }
 
 function fullDisplayPath(filePath: string, project: Project | null): string {

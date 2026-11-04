@@ -3,7 +3,12 @@ import { describe, expect, it } from 'vitest';
 import type { Project } from '../../../types/app';
 import { useEditorSidebar } from './useEditorSidebar';
 
-const project = { name: 'project-a', path: '/workspace/project-a' } as Project;
+const project = {
+  name: 'project-a',
+  displayName: 'CT',
+  fullPath: '/Users/william/.pilotdeck/users/1/workspaces/general_med/project-a',
+  path: '/Users/william/.pilotdeck/users/1/workspaces/general_med/project-a',
+} as Project;
 
 describe('useEditorSidebar file tabs', () => {
   it('opens files in unique tabs and activates an existing tab without duplicating it', () => {
@@ -22,6 +27,19 @@ describe('useEditorSidebar file tabs', () => {
 
     expect(result.current.editorTabs).toHaveLength(2);
     expect(result.current.activeFilePath).toBe('docs/one.md');
+  });
+
+  it('normalizes absolute and migrated project paths before previewing them', () => {
+    const { result } = renderHook(() => useEditorSidebar({ selectedProject: project, isMobile: false }));
+
+    act(() => result.current.handleFileOpen(
+      '/Users/william/.pilotdeck/workspaces/general_med/project-a/inbox/scan.dcm',
+    ));
+
+    expect(result.current.editorTabs[0].fileStack[0]).toMatchObject({
+      path: 'inbox/scan.dcm',
+      projectName: 'project-a',
+    });
   });
 
   it('keeps markdown preview navigation inside its tab and supports going back', () => {

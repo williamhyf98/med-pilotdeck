@@ -1634,7 +1634,7 @@ app.get('/api/projects/:projectName/file', ...requireUser, async (req, res) => {
         }
 
         const content = await fsPromises.readFile(resolved, 'utf8');
-        res.json({ content, path: resolved });
+        res.json({ content, path: projectRelativePath(projectRoot, resolved) });
     } catch (error) {
         console.error('Error reading file:', error);
         if (error.code === 'ENOENT') {
@@ -2091,7 +2091,7 @@ app.put('/api/projects/:projectName/file', ...requireUser, async (req, res) => {
 
         res.json({
             success: true,
-            path: resolved,
+            path: projectRelativePath(projectRoot, resolved),
             message: 'File saved successfully'
         });
     } catch (error) {
@@ -2129,7 +2129,7 @@ app.get('/api/projects/:projectName/files', ...requireUser, async (req, res) => 
         }
 
         const files = await getFileTree(actualPath, 10, 0, true);
-        res.json(files);
+        res.json(projectRelativeFileTree(files, actualPath));
     } catch (error) {
         console.error('[ERROR] File tree error:', error.message);
         res.status(500).json({ error: error.message });
@@ -2155,6 +2155,20 @@ function validatePathInProject(projectRoot, targetPath) {
         return { valid: false, error: 'Path must be under project root' };
     }
     return { valid: true, resolved };
+}
+
+function projectRelativePath(projectRoot, targetPath) {
+    return path.relative(projectRoot, targetPath).split(path.sep).join('/');
+}
+
+function projectRelativeFileTree(items, projectRoot) {
+    return items.map((item) => ({
+        ...item,
+        path: projectRelativePath(projectRoot, item.path),
+        ...(Array.isArray(item.children)
+            ? { children: projectRelativeFileTree(item.children, projectRoot) }
+            : {}),
+    }));
 }
 
 /**
@@ -2243,7 +2257,7 @@ app.post('/api/projects/:projectName/files/create', ...requireUser, async (req, 
 
         res.json({
             success: true,
-            path: resolvedPath,
+            path: projectRelativePath(projectRoot, resolvedPath),
             name,
             type,
             message: `${type === 'file' ? 'File' : 'Directory'} created successfully`
@@ -2318,8 +2332,8 @@ app.put('/api/projects/:projectName/files/rename', ...requireUser, async (req, r
 
         res.json({
             success: true,
-            oldPath: resolvedOldPath,
-            newPath: resolvedNewPath,
+            oldPath: projectRelativePath(projectRoot, resolvedOldPath),
+            newPath: projectRelativePath(projectRoot, resolvedNewPath),
             newName,
             message: 'Renamed successfully'
         });
@@ -2384,7 +2398,7 @@ app.delete('/api/projects/:projectName/files', ...requireUser, async (req, res) 
 
         res.json({
             success: true,
-            path: resolvedPath,
+            path: projectRelativePath(projectRoot, resolvedPath),
             type: stats.isDirectory() ? 'directory' : 'file',
             message: 'Deleted successfully'
         });
@@ -2555,7 +2569,7 @@ const uploadFilesHandler = async (req, res) => {
 
                 uploadedFiles.push({
                     name: fileName,
-                    path: destPath,
+                    path: projectRelativePath(projectRoot, destPath),
                     size: file.size,
                     mimeType: file.mimetype
                 });
@@ -2564,7 +2578,7 @@ const uploadFilesHandler = async (req, res) => {
             res.json({
                 success: true,
                 files: uploadedFiles,
-                targetPath: resolvedTargetDir,
+                targetPath: projectRelativePath(projectRoot, resolvedTargetDir),
                 message: `Uploaded ${uploadedFiles.length} file(s) successfully`
             });
         } catch (error) {
@@ -3593,7 +3607,7 @@ app.post('/api/projects/:projectName/upload-attachments', ...requireUser, async 
                     images.push({
                         name: storedFile.name,
                         data: `data:${file.mimetype};base64,${buffer.toString('base64')}`,
-                        path: storedFile.path,
+                        path: projectRelativePath(projectRoot, storedFile.path),
                         relativePath: storedFile.relativePath,
                         size: storedFile.size,
                         mimeType: storedFile.mimeType,
@@ -3601,12 +3615,15 @@ app.post('/api/projects/:projectName/upload-attachments', ...requireUser, async 
                     continue;
                 }
 
-                files.push(storedFile);
+                files.push({
+                    ...storedFile,
+                    path: projectRelativePath(projectRoot, storedFile.path),
+                });
             }
 
             let folderPath = null;
             if (useTree && attachmentDir) {
-                folderPath = attachmentDir;
+                folderPath = projectRelativePath(projectRoot, attachmentDir);
             }
 
             if (files.length === 0 && images.length === 0 && attachmentDir) {
@@ -3618,7 +3635,9 @@ app.post('/api/projects/:projectName/upload-attachments', ...requireUser, async 
                 images,
                 files,
                 folderPath,
-                attachmentDir: files.length || images.length ? attachmentDir : null,
+                attachmentDir: files.length || images.length
+                    ? projectRelativePath(projectRoot, attachmentDir)
+                    : null,
             });
         } catch (error) {
             console.error('Error processing attachments:', error);

@@ -20,3 +20,25 @@ it('does not turn an upload placeholder filename into a preview or download path
   fireEvent.click(screen.getByRole('button', { name: 'scan.dcm' }));
   expect(onBrowse).toHaveBeenCalledWith('inbox/upload/scan.dcm');
 });
+
+it('maps a pre-migration attachment path back into the current project', () => {
+  const onBrowse = vi.fn();
+  const project = {
+    name: 'project-a',
+    fullPath: '/Users/william/.pilotdeck/users/1/workspaces/general_med/project-a',
+  } as Project;
+
+  render(
+    <UserAttachmentCards
+      attachments={[{
+        name: 'scan.dcm',
+        path: '/Users/william/.pilotdeck/workspaces/general_med/project-a/inbox/scan.dcm',
+      }]}
+      project={project}
+      onBrowse={onBrowse}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole('button', { name: 'scan.dcm' }));
+  expect(onBrowse).toHaveBeenCalledWith('inbox/scan.dcm');
+});

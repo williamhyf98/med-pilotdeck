@@ -355,7 +355,27 @@ function tokenBudgetFromCompact(previousBudget, detail) {
  * @param {unknown} images
  * @returns {Array<{type:'image',name?:string,path?:string,mimeType:string,content:string,bytes?:number}>|undefined}
  */
-function uiImagesToAttachments(images) {
+export function resolveProjectAttachmentPath(projectRoot, targetPath) {
+    if (typeof projectRoot !== 'string' || !projectRoot.trim()) return null;
+    if (typeof targetPath !== 'string' || !targetPath.trim()) return null;
+
+    const root = path.resolve(projectRoot);
+    const rawPath = targetPath.replace(/\\/g, path.sep);
+    // New clients send project-relative paths. Absolute paths are accepted
+    // only for legacy history and only when they remain inside this project.
+    if (
+        !path.isAbsolute(rawPath)
+        && (/^[A-Za-z]:[\\/]/.test(targetPath) || targetPath.startsWith('//'))
+    ) {
+        return null;
+    }
+    const resolved = path.resolve(root, rawPath);
+    const relative = path.relative(root, resolved);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) return null;
+    return resolved;
+}
+
+function uiImagesToAttachments(images, projectRoot) {
     if (!Array.isArray(images) || images.length === 0) return undefined;
     const out = [];
     for (const img of images) {
@@ -372,7 +392,14 @@ function uiImagesToAttachments(images) {
         out.push({
             type: 'image',
             name: typeof img.name === 'string' ? img.name : undefined,
-            ...(typeof img.path === 'string' && img.path ? { path: img.path } : {}),
+            ...(
+                typeof img.path === 'string' && img.path
+                    ? (() => {
+                        const resolved = resolveProjectAttachmentPath(projectRoot, img.path);
+                        return resolved ? { path: resolved } : {};
+                    })()
+                    : {}
+            ),
             mimeType,
             content: base64,
             ...(typeof img.size === 'number' ? { bytes: img.size } : {}),
@@ -381,7 +408,7 @@ function uiImagesToAttachments(images) {
     return out.length > 0 ? out : undefined;
 }
 
-function uiFilesToAttachments(files) {
+function uiFilesToAttachments(files, projectRoot) {
     if (!Array.isArray(files) || files.length === 0) return undefined;
     const out = [];
     for (const file of files) {
@@ -394,14 +421,15 @@ function uiFilesToAttachments(files) {
         // already carries the path, so the agent can open the file itself.
         if (file.metadata && file.metadata.workspaceFileMention === true) continue;
         const filePath = typeof file.path === 'string' ? file.path : '';
-        if (!filePath) continue;
+        const resolvedPath = resolveProjectAttachmentPath(projectRoot, filePath);
+        if (!resolvedPath) continue;
         const metadata = (file.metadata && typeof file.metadata === 'object')
             ? file.metadata
             : undefined;
         out.push({
             type: 'file',
             name: typeof file.name === 'string' ? file.name : undefined,
-            path: filePath,
+            path: resolvedPath,
             mimeType: typeof file.mimeType === 'string' ? file.mimeType : undefined,
             ...(typeof file.size === 'number' ? { bytes: file.size } : {}),
             ...(metadata ? { metadata } : {}),
@@ -1431,8 +1459,8 @@ export async function runChatViaGateway(
     state.hasVisibleFailureStatus = false;
 
     const attachments = [
-        ...(uiImagesToAttachments(options?.images) || []),
-        ...(uiFilesToAttachments(options?.attachments) || []),
+        ...(uiImagesToAttachments(options?.images, projectKey) || []),
+        ...(uiFilesToAttachments(options?.attachments, projectKey) || []),
     ];
     const resolvedMode = resolvePermissionMode(options);
     const basePermissionMode = resolvedMode === 'plan' ? getWebPermissionMode() : undefined;

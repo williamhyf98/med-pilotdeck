@@ -35,6 +35,7 @@ import { formatXml } from '../utils/xmlPreview';
 type CodeEditorProps = {
   file: CodeEditorFile;
   onClose: () => void;
+  projectName?: string;
   projectPath?: string;
   isSidebar?: boolean;
   isExpanded?: boolean;
@@ -53,6 +54,7 @@ type CodeEditorProps = {
 export default function CodeEditor({
   file,
   onClose,
+  projectName,
   projectPath,
   isSidebar = false,
   isExpanded = false,
@@ -102,11 +104,12 @@ export default function CodeEditor({
     saveError,
     isBinary,
     isDirty,
-    projectName,
+    projectName: resolvedProjectName,
     handleSave,
     handleDownload,
   } = useCodeEditorDocument({
     file,
+    projectName,
     projectPath,
   });
 
@@ -139,9 +142,9 @@ export default function CodeEditor({
   }, [file.path]);
 
   const htmlPreviewUrl = useMemo(() => {
-    if (!isHtmlFile || !projectName) return null;
-    return api.projectPreviewUrl(projectName, file.path, projectPath);
-  }, [file.path, isHtmlFile, projectName, projectPath]);
+    if (!isHtmlFile || !resolvedProjectName) return null;
+    return api.projectPreviewUrl(resolvedProjectName, file.path, projectPath);
+  }, [file.path, isHtmlFile, projectPath, resolvedProjectName]);
 
   const textSearchMatches = useMemo(
     () => findTextSearchMatches(content, searchQuery),
@@ -371,7 +374,7 @@ export default function CodeEditor({
     return (
       <CodeEditorBinaryFile
         file={file}
-        projectName={projectName}
+        projectName={resolvedProjectName}
         isSidebar={isSidebar}
         compactHeader={compactHeader}
         isFullscreen={isFullscreen}

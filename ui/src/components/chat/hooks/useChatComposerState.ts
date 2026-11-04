@@ -1174,11 +1174,11 @@ export function useChatComposerState({
       // dedupes away on reload.
       const mentionNoteFiles = submitMentionedFiles.map((file) => ({
         name: file.name,
-        path: file.absolutePath || file.relativePath,
+        path: file.relativePath,
       }));
       const mentionAttachments: ChatAttachment[] = submitMentionedFiles.map((file) => ({
         name: file.name,
-        path: file.absolutePath || file.relativePath,
+        path: file.relativePath,
         relativePath: file.relativePath,
         metadata: { workspaceFileMention: true },
       }));

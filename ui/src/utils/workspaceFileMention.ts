@@ -67,6 +67,40 @@ export function getWorkspaceRelativePath(
   return normalizeRelativePath(relativePath);
 }
 
+/**
+ * Resolve a file path against the current project, including paths persisted
+ * before the per-user workspace migration changed the absolute root.
+ */
+export function getProjectRelativePath(
+  filePath: string,
+  workspaceRoot: string,
+  projectName: string,
+): string | null {
+  const directPath = getWorkspaceRelativePath(filePath, workspaceRoot);
+  if (directPath) return directPath;
+
+  const normalizedFilePath = trimTrailingSlashes(normalizeSlashes(filePath));
+  const normalizedRoot = trimTrailingSlashes(normalizeSlashes(workspaceRoot));
+  if (!normalizedFilePath || !normalizedRoot || !isAbsolutePath(normalizedFilePath)) {
+    return null;
+  }
+
+  const rootSegments = normalizedRoot.split('/').filter(Boolean);
+  const projectIndex = rootSegments.lastIndexOf(projectName);
+  const workspacesIndex = rootSegments.lastIndexOf('workspaces');
+  if (projectIndex < 0 || workspacesIndex < 0 || projectIndex <= workspacesIndex) {
+    return null;
+  }
+
+  const legacyRootSuffix = `/${rootSegments.slice(workspacesIndex, projectIndex + 1).join('/')}/`;
+  const legacyRootIndex = normalizedFilePath.lastIndexOf(legacyRootSuffix);
+  if (legacyRootIndex < 0) return null;
+
+  return normalizeRelativePath(
+    normalizedFilePath.slice(legacyRootIndex + legacyRootSuffix.length),
+  );
+}
+
 export type FileMentionInsertion = {
   input: string;
   cursorPosition: number;

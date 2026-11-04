@@ -637,6 +637,7 @@ function MainContent({
             onToggleEditorExpand: handleToggleEditorExpand,
             onPreviewFileOpen: handlePreviewFileOpen,
             onGoBack: handleFileGoBack,
+            projectName: selectedProject?.name,
             projectPath: selectedProject?.path,
           }}
         />

@@ -21,6 +21,7 @@ type EditorSidebarProps = {
   onToggleEditorExpand: () => void;
   onPreviewFileOpen?: (filePath: string) => void;
   onGoBack?: () => void;
+  projectName?: string;
   projectPath?: string;
   fillSpace?: boolean;
   workspaceMode?: boolean;
@@ -49,6 +50,7 @@ export default function EditorSidebar({
   onToggleEditorExpand,
   onPreviewFileOpen,
   onGoBack,
+  projectName,
   projectPath,
   fillSpace,
   workspaceMode = false,
@@ -184,6 +186,7 @@ export default function EditorSidebar({
       >
         <CodeEditor
           file={file}
+          projectName={projectName}
           projectPath={projectPath}
           onPreviewFileOpen={onPreviewFileOpen}
           canGoBack={canGoBack}

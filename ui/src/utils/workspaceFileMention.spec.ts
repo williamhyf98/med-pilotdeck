@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  getProjectRelativePath,
   getWorkspaceRelativePath,
   hasWorkspaceFileMention,
   insertWorkspaceFileMention,
@@ -30,6 +31,34 @@ describe('getWorkspaceRelativePath', () => {
 
   it('rejects relative paths that escape the workspace', () => {
     expect(getWorkspaceRelativePath('../report.docx', '/workspace')).toBeNull();
+  });
+});
+
+describe('getProjectRelativePath', () => {
+  const currentRoot = '/Users/william/.pilotdeck/users/1/workspaces/general_med/project-a';
+
+  it('resolves a current absolute path to a project-relative path', () => {
+    expect(getProjectRelativePath(
+      `${currentRoot}/inbox/scan.dcm`,
+      currentRoot,
+      'project-a',
+    )).toBe('inbox/scan.dcm');
+  });
+
+  it('resolves an absolute path from before the per-user migration', () => {
+    expect(getProjectRelativePath(
+      '/Users/william/.pilotdeck/workspaces/general_med/project-a/inbox/scan.dcm',
+      currentRoot,
+      'project-a',
+    )).toBe('inbox/scan.dcm');
+  });
+
+  it('rejects an unrelated absolute path', () => {
+    expect(getProjectRelativePath(
+      '/tmp/project-a/inbox/scan.dcm',
+      currentRoot,
+      'project-a',
+    )).toBeNull();
   });
 });
 

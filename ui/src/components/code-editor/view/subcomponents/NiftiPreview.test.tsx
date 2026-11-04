@@ -64,7 +64,7 @@ vi.mock('@cornerstonejs/tools', () => ({
 }));
 vi.mock('../../../../utils/api', () => ({
   api: {
-    niftiPreviewUrl: vi.fn(() => '/api/projects/CT/files/content/volume.nii.gz?path=scan.nii.gz'),
+    niftiPreviewUrl: vi.fn((projectName: string) => `/api/projects/${projectName}/files/content/volume.nii.gz?path=scan.nii.gz`),
     fileDownloadUrl: vi.fn(() => '/download'),
   },
 }));
@@ -73,6 +73,7 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => k
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 it('loads a 3D stack and navigates its slices', async () => {
@@ -80,9 +81,15 @@ it('loads a 3D stack and navigates its slices', async () => {
     observe() {}
     disconnect() {}
   });
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+  }));
+  vi.stubGlobal('fetch', fetchMock);
   const { unmount } = render(
     <NiftiPreview
-      projectName="CT"
+      projectName="project-id"
       file={{ name: 'scan.nii.gz', path: 'scan.nii.gz', diffInfo: null }}
       isFullscreen={false}
     />,
@@ -92,9 +99,37 @@ it('loads a 3D stack and navigates its slices', async () => {
   expect(mocks.viewport.setStack).toHaveBeenCalledWith(
     ['nifti:test?frame=0', 'nifti:test?frame=1', 'nifti:test?frame=2'], 1,
   );
+  expect(fetchMock).toHaveBeenCalledWith(
+    expect.stringContaining('/api/projects/project-id/files/content/volume.nii.gz'),
+    expect.objectContaining({ method: 'HEAD', cache: 'no-store' }),
+  );
   fireEvent.click(screen.getByRole('button', { name: '下一层' }));
   expect(mocks.viewport.setImageIdIndex).toHaveBeenCalledWith(2);
   unmount();
   await waitFor(() => expect(mocks.engine.destroy).toHaveBeenCalled());
   vi.unstubAllGlobals();
+});
+
+it('shows the server error instead of waiting for the loader timeout', async () => {
+  vi.stubGlobal('ResizeObserver', class {
+    observe() {}
+    disconnect() {}
+  });
+  vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: false,
+    status: 404,
+    statusText: 'Not Found',
+    json: async () => ({ error: 'File not found', code: 'FILE_NOT_FOUND' }),
+  })));
+
+  render(
+    <NiftiPreview
+      projectName="project-id"
+      file={{ name: 'scan.nii.gz', path: 'scan.nii.gz', diffInfo: null }}
+      isFullscreen={false}
+    />,
+  );
+
+  expect(await screen.findByText('File not found')).not.toBeNull();
+  expect(mocks.createIds).not.toHaveBeenCalled();
 });
