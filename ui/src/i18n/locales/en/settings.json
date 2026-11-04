@@ -807,11 +807,11 @@
       },
       "officePreview": {
         "title": "Office File Preview Service",
-        "description": "DOCX, XLSX and PPTX use built-in preview by default; legacy Office files automatically use LibreOffice. PDF always uses the built-in viewer.",
+        "description": "DOCX, XLSX and PPTX use built-in preview by default; legacy Office files use the intranet Office Renderer. PDF uses the built-in viewer.",
         "fields": {
           "service": {
             "label": "Preview service",
-            "description": "This option controls DOCX, XLSX and PPTX. Legacy formats always use LibreOffice automatically."
+            "description": "This option controls DOCX, XLSX and PPTX. Legacy formats always use the intranet Office Renderer."
           },
           "binaryPath": {
             "label": "LibreOffice executable path",
@@ -825,8 +825,8 @@
         },
         "options": {
           "builtin": "Built-in preview for modern files (recommended)",
-          "libreOffice": "LibreOffice print layout for modern files",
-          "libreOfficeUnavailable": "LibreOffice (unavailable)",
+          "libreOffice": "Intranet print layout for modern files",
+          "libreOfficeUnavailable": "Intranet print layout (unavailable)",
           "autoDetect": "Auto-detect (no fixed path)",
           "candidateAvailable": "{{path}} (available)",
           "candidateUnavailable": "{{path}} (unavailable)",
@@ -839,18 +839,18 @@
           "scanning": "Scanning available paths..."
         },
         "status": {
-          "checking": "Checking LibreOffice...",
-          "available": "LibreOffice executable detected (conversion modules may still be missing)",
-          "unavailable": "LibreOffice is unavailable",
-          "unknown": "LibreOffice status is temporarily unavailable",
-          "error": "Could not check LibreOffice status",
+          "checking": "Checking intranet Office Renderer...",
+          "available": "Intranet Office Renderer is available",
+          "unavailable": "Intranet Office Renderer is unavailable",
+          "unknown": "Office Renderer status is temporarily unavailable",
+          "error": "Could not check Office Renderer status",
           "refresh": "Check again",
           "noDetectedPaths": "No candidate paths were found yet. You can still enter a full path manually and check again.",
           "path": "Path: {{path}}",
           "version": "Version: {{version}}"
         },
-        "builtinNote": "DOCX, XLSX and PPTX use built-in preview. DOC, XLS, PPT, WPS, ET, DPS and ODF files are converted automatically by LibreOffice. Legacy files require LibreOffice and the relevant Writer, Calc or Impress component.",
-        "unavailableWarning": "No LibreOffice/soffice executable was detected. Modern files still work with built-in preview; install LibreOffice to preview legacy files."
+        "builtinNote": "DOCX, XLSX and PPTX use built-in preview. DOC, XLS, PPT, WPS, ET, DPS and ODF files are converted by the intranet Office Renderer. The application host does not need LibreOffice.",
+        "unavailableWarning": "The intranet Office Renderer is unavailable. Built-in preview still works for modern files; ask an administrator to check the Renderer service and PILOTDECK_OFFICE_RENDERER_URL for legacy files."
       },
       "models": {
         "title": "Model Pool",

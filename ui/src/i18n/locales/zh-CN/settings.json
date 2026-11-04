@@ -807,11 +807,11 @@
       },
       "officePreview": {
         "title": "Office 文件预览服务",
-        "description": "DOCX、XLSX、PPTX 默认使用内置预览；DOC、XLS、PPT 等旧格式自动使用 LibreOffice。PDF 始终使用内置浏览器。",
+        "description": "DOCX、XLSX、PPTX 默认使用内置预览；旧格式通过内网 Office Renderer 转换。PDF 始终使用内置浏览器。",
         "fields": {
           "service": {
             "label": "预览服务",
-            "description": "此选项控制 DOCX、XLSX、PPTX 的预览方式；旧格式始终自动使用 LibreOffice。"
+            "description": "此选项控制 DOCX、XLSX、PPTX 的预览方式；旧格式始终使用内网 Office Renderer。"
           },
           "binaryPath": {
             "label": "LibreOffice 可执行文件路径",
@@ -825,8 +825,8 @@
         },
         "options": {
           "builtin": "现代格式内置预览（推荐）",
-          "libreOffice": "现代格式使用 LibreOffice 打印版式",
-          "libreOfficeUnavailable": "LibreOffice（不可用）",
+          "libreOffice": "现代格式使用内网打印版式服务",
+          "libreOfficeUnavailable": "内网打印版式服务（不可用）",
           "autoDetect": "自动探测（不指定路径）",
           "candidateAvailable": "{{path}}（可用）",
           "candidateUnavailable": "{{path}}（不可用）",
@@ -839,18 +839,18 @@
           "scanning": "正在扫描可用路径..."
         },
         "status": {
-          "checking": "正在检查 LibreOffice...",
-          "available": "检测到 LibreOffice 可执行文件（不代表所有格式转换组件均已安装）",
-          "unavailable": "LibreOffice 不可用",
-          "unknown": "LibreOffice 状态暂不可用",
-          "error": "无法检查 LibreOffice 状态",
+          "checking": "正在检查内网 Office Renderer...",
+          "available": "内网 Office Renderer 可用",
+          "unavailable": "内网 Office Renderer 不可用",
+          "unknown": "Office Renderer 状态暂不可用",
+          "error": "无法检查 Office Renderer 状态",
           "refresh": "重新检查",
           "noDetectedPaths": "暂未扫描到可用候选路径。你仍然可以手动填写完整路径后重新检查。",
           "path": "路径：{{path}}",
           "version": "版本：{{version}}"
         },
-        "builtinNote": "DOCX、XLSX、PPTX 使用内置预览；DOC、XLS、PPT、WPS、ET、DPS 和 ODF 文件自动通过 LibreOffice 转换。旧格式需要本机安装 LibreOffice 及对应的 Writer、Calc 或 Impress 组件。",
-        "unavailableWarning": "未检测到 LibreOffice/soffice。现代格式仍可使用内置预览；如需预览旧格式，请安装 LibreOffice 并配置可执行文件路径。"
+        "builtinNote": "DOCX、XLSX、PPTX 使用内置预览；DOC、XLS、PPT、WPS、ET、DPS 和 ODF 文件通过内网 Office Renderer 转换。应用端无需安装 LibreOffice。",
+        "unavailableWarning": "内网 Office Renderer 不可用。现代格式仍可使用内置预览；如需预览旧格式，请联系管理员检查 Renderer 服务和 PILOTDECK_OFFICE_RENDERER_URL。"
       },
       "models": {
         "title": "模型池",

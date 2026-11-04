@@ -89,10 +89,10 @@
     "unsupportedBuiltinMessage": "Built-in preview does not support {{extension}} files. Enable LibreOffice compatibility preview in Settings, or download the file and open it with a system application.",
     "disabledTitle": "Cannot preview binary file",
     "disabledMessage": "No Office file preview service is configured. Configure the Office file preview service in Settings, or download the file and open it locally.",
-    "libreOfficeUnavailableTitle": "LibreOffice is unavailable",
-    "libreOfficeUnavailableMessage": "Previewing this file requires LibreOffice, but no soffice executable was found. Install LibreOffice and check its executable path in Settings, or download the file.",
-    "conversionUnavailableTitle": "LibreOffice could not convert this file",
-    "conversionUnavailableMessage": "soffice was detected but did not produce a preview. The relevant Writer, Calc or Impress component may be missing, or the file may be incompatible. You can download and open it locally.",
+    "libreOfficeUnavailableTitle": "Intranet Office Renderer is unavailable",
+    "libreOfficeUnavailableMessage": "This preview requires the intranet Office Renderer. Ask an administrator to check its service and address, or download the file.",
+    "conversionUnavailableTitle": "Office Renderer could not convert this file",
+    "conversionUnavailableMessage": "The intranet service did not produce a preview. Its Writer, Calc or Impress component may be missing, or the file may be incompatible. You can download and open it locally.",
     "failedMessage": "Failed to generate Office file preview."
   },
   "builtinOfficePreview": {

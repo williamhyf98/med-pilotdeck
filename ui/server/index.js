@@ -1784,8 +1784,7 @@ app.get('/api/office-preview/status', ...requireUser, officePreviewStatusRateLim
 });
 
 // Convert Office files to PDF for lightweight read-only preview.
-// This is an optional fallback for legacy Office/PPT formats; it only works
-// when LibreOffice/soffice is available on the host.
+// Legacy Office/PPT formats use the configured intranet Office Renderer.
 app.get('/api/projects/:projectName/files/preview/pdf', ...requireUser, officePreviewPdfRateLimiter, async (req, res) => {
     try {
         const { projectName } = req.params;
@@ -1820,7 +1819,7 @@ app.get('/api/projects/:projectName/files/preview/pdf', ...requireUser, officePr
         const officePreviewService = getConfiguredOfficePreviewService();
         if (!isLibreOfficePreviewAllowed(extension, officePreviewService)) {
             return res.status(409).json({
-                error: 'LibreOffice preview service is not selected',
+                error: 'Office print-layout preview service is not selected',
                 code: 'LIBREOFFICE_PREVIEW_NOT_SELECTED',
             });
         }
@@ -1835,11 +1834,9 @@ app.get('/api/projects/:projectName/files/preview/pdf', ...requireUser, officePr
         console.error('Error generating Office PDF preview:', error);
         if (!res.headersSent) {
             res.status(error.statusCode || 500).json({
-                error: error.code === 'LIBREOFFICE_NOT_FOUND'
-                    ? 'LibreOffice executable not found'
-                    : error.code === 'OFFICE_PREVIEW_DISABLED'
-                        ? 'Office preview service is disabled'
-                        : 'Failed to generate Office PDF preview',
+                error: error.code === 'OFFICE_PREVIEW_DISABLED'
+                    ? 'Office preview service is disabled'
+                    : 'Failed to generate Office PDF preview',
                 code: error.code || 'OFFICE_PREVIEW_FAILED',
             });
         }
@@ -1946,7 +1943,7 @@ app.get('/api/projects/:projectName/files/preview/spreadsheet/sheet', ...require
         const officePreviewService = getConfiguredOfficePreviewService();
         if (!isLibreOfficePreviewAllowed(extension, officePreviewService)) {
             return res.status(409).json({
-                error: 'LibreOffice preview service is not selected',
+                error: 'Office print-layout preview service is not selected',
                 code: 'LIBREOFFICE_PREVIEW_NOT_SELECTED',
             });
         }

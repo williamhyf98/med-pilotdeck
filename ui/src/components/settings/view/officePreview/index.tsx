@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertCircle, Check, RefreshCw } from "lucide-react";
+import { AlertCircle, RefreshCw } from "lucide-react";
 import { usePilotDeckConfig } from "../../../../hooks/usePilotDeckConfig";
 import { cn } from "../../../../lib/utils";
 import {
@@ -12,7 +12,6 @@ import {
 import {
   FormRow,
   Select,
-  TextInput,
 } from "../../shared/components/Inputs";
 import {
   ConfigSaveError,
@@ -39,7 +38,6 @@ function OfficePreviewSection({
   const [statusError, setStatusError] = useState<string | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
   const [statusReloadKey, setStatusReloadKey] = useState(0);
-  const [scanListOpen, setScanListOpen] = useState(false);
   const service = normalizeOfficePreviewService(
     config.webui?.officePreview?.service,
   );
@@ -78,25 +76,10 @@ function OfficePreviewSection({
     !statusLoading && status?.libreOffice?.available === false;
   const libreOfficeUnknown =
     !statusLoading && !statusError && !libreOfficeStatusKnown;
-  const configuredBinaryPath =
-    config.webui?.officePreview?.binaryPath ?? "";
-  const detectedBinaryPaths = status?.libreOffice?.candidates ?? [];
   const setService = (next: OfficePreviewService) =>
     onChange(
       patch(config, ["webui", "officePreview", "service"], next),
     );
-  const setBinaryPath = (next: string) =>
-    onChange(
-      patch(config, ["webui", "officePreview", "binaryPath"], next),
-    );
-  const selectBinaryPath = (next: string) => {
-    setBinaryPath(next);
-    setScanListOpen(false);
-  };
-  const scanLibreOfficePaths = () => {
-    setScanListOpen(true);
-    setStatusReloadKey((value) => value + 1);
-  };
 
   return (
     <SettingsSection
@@ -139,129 +122,6 @@ function OfficePreviewSection({
                 ]}
               />
             </div>
-          </FormRow>
-
-          <FormRow
-              label={t(
-                "pilotDeckConfig.panels.officePreview.fields.binaryPath.label",
-              )}
-              description={t(
-                "pilotDeckConfig.panels.officePreview.fields.binaryPath.description",
-              )}
-            >
-              <div className="relative space-y-2">
-                <div className="flex gap-2">
-                  <div className="min-w-0 flex-1">
-                    <TextInput
-                      value={configuredBinaryPath}
-                      placeholder={t(
-                        "pilotDeckConfig.panels.officePreview.fields.binaryPath.placeholder",
-                      )}
-                      monospace
-                      onChange={setBinaryPath}
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={scanLibreOfficePaths}
-                    className="inline-flex h-[34px] shrink-0 items-center gap-1.5 rounded-md border border-border px-3 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                  >
-                    <RefreshCw
-                      className={cn(
-                        "h-3.5 w-3.5",
-                        scanListOpen && statusLoading && "animate-spin",
-                      )}
-                    />
-                    {t(
-                      "pilotDeckConfig.panels.officePreview.scan.button",
-                    )}
-                  </button>
-                </div>
-
-                {scanListOpen && (
-                  <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-lg border border-border bg-popover shadow-lg">
-                    <div className="border-b border-border px-3 py-2 text-[12px] font-medium text-foreground">
-                      {t(
-                        "pilotDeckConfig.panels.officePreview.scan.title",
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => selectBinaryPath("")}
-                      className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-[12px] transition-colors hover:bg-accent"
-                    >
-                      <span className="min-w-0 truncate text-foreground">
-                        {t(
-                          "pilotDeckConfig.panels.officePreview.options.autoDetect",
-                        )}
-                      </span>
-                      {!configuredBinaryPath && (
-                        <Check className="h-3.5 w-3.5 shrink-0 text-green-500" />
-                      )}
-                    </button>
-                    {statusLoading ? (
-                      <div className="flex items-center gap-2 px-3 py-3 text-[12px] text-muted-foreground">
-                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                        {t(
-                          "pilotDeckConfig.panels.officePreview.scan.scanning",
-                        )}
-                      </div>
-                    ) : detectedBinaryPaths.length > 0 ? (
-                      <div className="max-h-64 overflow-auto border-t border-border">
-                        {detectedBinaryPaths.map((candidate) => (
-                          <button
-                            key={candidate.binaryPath}
-                            type="button"
-                            disabled={!candidate.available}
-                            onClick={() =>
-                              selectBinaryPath(candidate.binaryPath)
-                            }
-                            className="flex w-full items-start justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            <span className="min-w-0">
-                              <span
-                                className="block truncate font-mono text-[11px] text-foreground"
-                                title={candidate.binaryPath}
-                              >
-                                {candidate.binaryPath}
-                              </span>
-                              <span
-                                className={cn(
-                                  "mt-0.5 block truncate text-[11px]",
-                                  candidate.available
-                                    ? "text-green-600 dark:text-green-400"
-                                    : "text-muted-foreground",
-                                )}
-                              >
-                                {candidate.available
-                                  ? t(
-                                      "pilotDeckConfig.panels.officePreview.options.candidateAvailableShort",
-                                    )
-                                  : t(
-                                      "pilotDeckConfig.panels.officePreview.options.candidateUnavailableShort",
-                                    )}
-                                {candidate.version
-                                  ? ` · ${candidate.version}`
-                                  : ""}
-                              </span>
-                            </span>
-                            {configuredBinaryPath ===
-                              candidate.binaryPath && (
-                              <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-500" />
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="border-t border-border px-3 py-3 text-[12px] leading-5 text-muted-foreground">
-                        {t(
-                          "pilotDeckConfig.panels.officePreview.status.noDetectedPaths",
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
           </FormRow>
 
           <div className="space-y-2 px-4 py-3">
