@@ -7,6 +7,7 @@ import { createGetCurrentTimeTool } from "../builtin/getCurrentTime.js";
 import { createEnterPlanModeTool, createExitPlanModeTool } from "../builtin/planMode.js";
 import { createReadFileTool } from "../builtin/readFile.js";
 import { createReadSkillTool, type ReadSkillDeps } from "../builtin/readSkill.js";
+import { createOfficeToPdfTool } from "../builtin/officeToPdf.js";
 import { createTodoWriteTool } from "../builtin/todoWrite.js";
 import { createWriteFileTool } from "../builtin/writeFile.js";
 import { ToolRegistry } from "./ToolRegistry.js";
@@ -33,6 +34,7 @@ export function createBuiltinRegistry(options?: CreateBuiltinRegistryOptions): T
   const registry = new ToolRegistry();
   registry.register(createGetCurrentTimeTool());
   registry.register(createReadFileTool());
+  registry.register(createOfficeToPdfTool());
   registry.register(createGlobTool());
   registry.register(createGrepTool());
   registry.register(createEditFileTool());

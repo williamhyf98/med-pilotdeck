@@ -15,22 +15,20 @@ class MakeOptionalRenderTest(unittest.TestCase):
     def test_permission_denied_while_probing_preview_still_delivers_docx(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "申请单.docx"
-            with patch(
-                "docxlib.make.find_soffice",
-                side_effect=PermissionError(1, "Operation not permitted"),
-            ):
+            with patch.dict("os.environ", {}, clear=True):
                 result = make_docx(output, title="检查申请单", body="姓名：张某")
 
             self.assertEqual(result["status"], "ok")
             self.assertEqual(result["validation"]["status"], "ok")
-            self.assertIn("PermissionError", result["warning"])
+            self.assertIn("未完成视觉验收", result["warning"])
             self.assertTrue(output.is_file())
 
     def test_permission_denied_during_preview_still_delivers_docx(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "申请单.docx"
             with (
-                patch("docxlib.make.find_soffice", return_value="/Applications/LibreOffice.app/Contents/MacOS/soffice"),
+                patch.dict("os.environ", {"PILOTDECK_OFFICE_RENDERER_URL": "http://renderer:19400"}),
+                patch("docxlib.make.office_renderer_configured", return_value=True),
                 patch("docxlib.make.render_docx", side_effect=PermissionError(1, "Operation not permitted")),
             ):
                 result = make_docx(output, title="检查申请单", body="姓名：张某")

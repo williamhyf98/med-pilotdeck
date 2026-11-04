@@ -48,36 +48,8 @@ runtime_ready() {
   ' "$RUNTIME_CACHE" >/dev/null 2>&1
 }
 
-find_soffice() {
-  if command -v soffice >/dev/null 2>&1; then
-    command -v soffice
-    return 0
-  fi
-  local mac_path="/Applications/LibreOffice.app/Contents/MacOS/soffice"
-  if [[ -x "$mac_path" ]]; then
-    printf '%s\n' "$mac_path"
-    return 0
-  fi
-  local windows_path="/c/Program Files/LibreOffice/program/soffice.exe"
-  if [[ -x "$windows_path" ]]; then
-    printf '%s\n' "$windows_path"
-    return 0
-  fi
-  return 1
-}
-
-find_pdf_renderer() {
-  for candidate in pdftoppm mutool magick; do
-    if command -v "$candidate" >/dev/null 2>&1; then
-      command -v "$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
-
 cmd_check() {
-  local node_path="" npm_path="" soffice_path="" renderer_path=""
+  local node_path="" npm_path=""
   local node_ok=false deps_ok=false font_ok=false recalculate_available=false render_available=false
   if node_path="$(find_node)"; then
     node_ok=true
@@ -89,18 +61,14 @@ cmd_check() {
   if [[ -f "$BUNDLED_FONT_DIR/NotoSansSC-VF.ttf" ]]; then
     font_ok=true
   fi
-  soffice_path="$(find_soffice || true)"
-  renderer_path="$(find_pdf_renderer || true)"
-  if [[ -n "$soffice_path" ]]; then
+  if [[ -n "${PILOTDECK_OFFICE_RENDERER_URL:-}" ]]; then
     recalculate_available=true
-  fi
-  if [[ -n "$soffice_path" && -n "$renderer_path" ]]; then
     render_available=true
   fi
-  printf '{"status":"%s","node":%s,"node_path":"%s","npm_path":"%s","dependencies":%s,"runtime":"%s","bundled_font":%s,"bundled_font_dir":"%s","libreoffice_path":"%s","recalculate_available":%s,"pdf_renderer_path":"%s","render_available":%s}\n' \
+  printf '{"status":"%s","node":%s,"node_path":"%s","npm_path":"%s","dependencies":%s,"runtime":"%s","bundled_font":%s,"bundled_font_dir":"%s","office_renderer_url":"%s","recalculate_available":%s,"render_available":%s}\n' \
     "$([[ "$node_ok" == true && "$deps_ok" == true && "$font_ok" == true ]] && printf ok || printf missing_dependencies)" \
     "$node_ok" "$node_path" "$npm_path" "$deps_ok" "$RUNTIME_CACHE" "$font_ok" "$BUNDLED_FONT_DIR" \
-    "$soffice_path" "$recalculate_available" "$renderer_path" "$render_available"
+    "${PILOTDECK_OFFICE_RENDERER_URL:-}" "$recalculate_available" "$render_available"
   [[ "$node_ok" == true && "$deps_ok" == true && "$font_ok" == true ]]
 }
 
@@ -154,8 +122,6 @@ case "${1:-}" in
     fi
     export SPREADSHEET_SKILL_ROOT="$SKILL_DIR"
     export SPREADSHEET_RUNTIME_ROOT="$RUNTIME_CACHE"
-    export SPREADSHEET_SKILL_SOFFICE="$(find_soffice || true)"
-    export SPREADSHEET_SKILL_PDF_RENDERER="$(find_pdf_renderer || true)"
     export SPREADSHEET_SKILL_FONT_DIR="$BUNDLED_FONT_DIR"
     export SAL_FONTPATH="$BUNDLED_FONT_DIR"
     exec "$(find_node)" "$SCRIPT_DIR/spreadsheet_cli.mjs" "$@"

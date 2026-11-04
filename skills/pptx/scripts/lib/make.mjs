@@ -300,10 +300,10 @@ export async function makePptx(options = {}) {
       });
       preview = render.images ?? render.slides ?? [];
     } catch (error) {
-      renderWarning = `Page rendering was skipped after an optional renderer error: ${error instanceof Error ? error.message : String(error)}`;
+      renderWarning = `未完成视觉验收：${error instanceof Error ? error.message : String(error)}`;
     }
   } else {
-    renderWarning = 'LibreOffice/PDF rasterization is unavailable; structural validation passed and page PNG rendering was skipped';
+    renderWarning = '未完成视觉验收：Office Renderer is not configured; structural validation passed';
   }
 
   await fs.mkdir(path.dirname(output), { recursive: true });

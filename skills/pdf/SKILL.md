@@ -1,6 +1,6 @@
 ---
 name: pdf
-description: 读取、创建、编辑、合并、拆分、旋转、填写、渲染并校验工作区 PDF。输入或交付物是 .pdf 时使用本技能，包括把对话里刚生成的救治方案、病例报告导出为 PDF。所有转换只通过捆绑的 pdf.sh 完成。
+description: 读取、创建、编辑、合并、拆分、旋转、填写、渲染并校验工作区 PDF。输入或交付物是 .pdf 时使用本技能，包括把对话里刚生成的救治方案、病例报告导出为 PDF。已有 DOCX、XLSX 或 PPTX 转 PDF 时使用注册工具 office_to_pdf，不要用本技能重新排版 Office 文件。
 ---
 
 # PDF
@@ -13,6 +13,13 @@ PDF_SKILL_ROOT="$(dirname "<path>")"
 
 `pdf.sh` 会自己定位完整的隔离运行时、捆绑字体和渲染组件。缺任何一项都会
 返回 JSON 错误「交付包不完整」；此时停止并报告，不要改走其它实现。
+
+## Office 转 PDF 的边界
+
+已有 `.docx`、`.xlsx` 或 `.pptx` 要转换成 PDF 时，调用注册工具
+`office_to_pdf`。不要用 `pdf.sh make` 把 Office 文件内容重建成 PDF，也不要
+直接调用 `soffice` 或 LibreOffice。`pdf.sh` 只负责从文本/Markdown/spec 新建
+PDF，以及读取、编辑、合并、拆分、旋转和渲染已有 PDF。
 
 ## Agent 可用表面
 

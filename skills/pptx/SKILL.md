@@ -1,6 +1,6 @@
 ---
 name: pptx
-description: 创建、读取、审计和安全修改 Microsoft PowerPoint .pptx 演示文稿。输入或交付物是 .pptx 时使用本技能。所有转换只通过捆绑的 pptx.sh 完成。
+description: 创建、读取、审计和安全修改 Microsoft PowerPoint .pptx 演示文稿。输入或交付物是 .pptx 时使用本技能。已有 PPTX 转 PDF 时使用注册工具 office_to_pdf；其余转换只通过捆绑的 pptx.sh 完成。
 ---
 
 # PowerPoint PPTX
@@ -13,6 +13,12 @@ PPTX_SKILL_ROOT="$(dirname "<path>")"
 
 `pptx.sh` 会定位完整的隔离运行时和内置布局库。运行时未就绪时会返回
 「交付包不完整」；此时停止并报告，不要改走其它实现。
+
+## PPTX 转 PDF
+
+已有 PPTX 要转换为 PDF 时，调用注册工具 `office_to_pdf`，不要把幻灯片内容
+重新写成 PDF，也不要直接调用 LibreOffice。该工具统一通过 node12 Office
+Renderer 执行。
 
 ## Agent 可用表面
 
@@ -72,7 +78,7 @@ bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" make \
 `make` 使用内置 16:9 布局库、PptxGenJS 和 Noto Sans SC 字体声明，运行
 OOXML 检查和结构审计。成功 JSON 的 `output` 是用户交付文件。
 
-页面 PNG 不是离线现场硬依赖。没有 LibreOffice 时 `preview` 为空并带
+页面 PNG 不是离线现场硬依赖。Office Renderer 不可用时 `preview` 为空并带
 warning，但 PPTX 仍可交付；不要为此安装任何软件。
 
 ## 配色主题
@@ -191,7 +197,7 @@ bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" audit --input "$INPUT_PPTX" --out "$PWD/
 
 ## 旧版 `.ppt`
 
-`convert` 需要 LibreOffice，因此离线现场通常不可用。返回
+`convert` 需要内网 Office Renderer，后端不可用时返回
 `unsupported` 并保留源文件；不要安装转换器。原生 `.pptx` 不受影响。
 
 ## 其它保留命令

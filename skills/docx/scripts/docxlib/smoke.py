@@ -44,7 +44,7 @@ from .qa import (
     initialize_visual_qa,
     record_visual_review,
 )
-from .render import find_soffice, render_docx
+from .render import office_renderer_configured, render_docx
 from .review import finalize_docx, review_docx
 from .toc import refresh_toc, toc_status
 
@@ -1458,7 +1458,7 @@ with zipfile.ZipFile(a.out, "a", compression=zipfile.ZIP_DEFLATED) as archive:
 
         rendered_pages = 0
         preflight_status = "not-run"
-        if find_soffice():
+        if office_renderer_configured():
             builtin_style_gate = preflight_docx(
                 created,
                 root / "builtin-style-gate-render",

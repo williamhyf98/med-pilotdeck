@@ -1,6 +1,6 @@
 ---
 name: spreadsheets
-description: 创建、读取、审计和安全修改 .xlsx、.csv、.tsv 表格。所有转换只通过捆绑 spreadsheet.sh 完成。旧版 .xls 仅在已有转换后端时支持。
+description: 创建、读取、审计和安全修改 .xlsx、.csv、.tsv 表格。已有 XLSX 转 PDF 时使用注册工具 office_to_pdf；其余转换只通过捆绑 spreadsheet.sh 完成。旧版 .xls 仅在已有转换后端时支持。
 ---
 
 # 电子表格
@@ -13,6 +13,12 @@ SPREADSHEET_SKILL_ROOT="$(dirname "<path>")"
 
 `spreadsheet.sh` 会定位完整的隔离运行时和内置图表/审计工具。运行时未就绪
 时会返回「交付包不完整」；此时停止并报告，不要改走其它实现。
+
+## XLSX 转 PDF
+
+已有 XLSX 要转换为 PDF 时，调用注册工具 `office_to_pdf`，不要用
+`spreadsheet.sh` 重新生成 PDF，也不要直接调用 LibreOffice。该工具统一通过
+node12 Office Renderer 执行。
 
 ## Agent 可用表面
 
@@ -109,12 +115,12 @@ bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make \
 }
 ```
 
-## 公式与 LibreOffice
+## 公式与远程 Office Renderer
 
 - 派生值必须保留为 Excel 公式，不要硬编码计算结果。
 - 公式使用英文函数名，不带前导 `=`，避免整列引用。
-- 有 LibreOffice 时，`make` 会重算缓存结果。
-- 没有 LibreOffice 时，公式仍写入 XLSX，并设置
+- Office Renderer 可用时，`make` 会远程重算缓存结果。
+- Office Renderer 不可用时，公式仍写入 XLSX，并设置
   `fullCalcOnLoad/forceFullCalc`，让 Excel 打开时重算；返回 warning，
   不要安装软件。
 - 不要把占位 `result: 0` 当作核验结果。
@@ -166,15 +172,15 @@ bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" audit --input "$INPUT" --o
 
 ## 旧版 XLS
 
-`convert-legacy` 需要 LibreOffice。后端不存在时返回 `unsupported` 并保留
+`convert-legacy` 需要内网 Office Renderer。后端不存在时返回 `unsupported` 并保留
 源文件；不要现场安装转换器。
 
 ## 保留命令
 
 - `inspect`：工作表、区域、样式、公式和兼容性
 - `audit`：公式错误、结构、图表、覆盖率和警告
-- `render`：仅环境已有渲染后端时可选使用
-- `convert-legacy` / `recalculate`：仅已有 LibreOffice 时
+- `render`：通过内网 Office Renderer 获取页图
+- `convert-legacy` / `recalculate`：通过内网 Office Renderer
 - `deliver`：高级候选封印兼容路径
 
 `scaffold` / `build` 仅为维护与旧 self-test 保留，不属于 Agent 契约。

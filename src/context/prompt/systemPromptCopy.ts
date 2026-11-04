@@ -51,6 +51,7 @@ export type SystemPromptCopy = {
   offlinePolicyBody: string;
   automationPolicyTitle: string;
   automationPolicyBody: string;
+  officeConversionPolicy: string;
   permissionDefault: string;
   permissionPlan: string;
   permissionBypass: string;
@@ -95,6 +96,8 @@ const EN: SystemPromptCopy = {
   automationPolicyTitle: "Bundled automation policy:",
   automationPolicyBody:
     "Use registered tools and bundled skill entrypoints for all transformations. Stage tool inputs only as declarative content such as Markdown, JSON, CSV, or TSV. In agent mode, break complex tasks into steps, organize execution with todo_write when useful, and proceed within the active permissions. Never switch to plan mode autonomously. Ask questions only when necessary information is missing. Only when the user explicitly enables plan mode should you write a plan and submit it with exit_plan_mode for approval before execution. Simple questions and single clear deliverables should proceed directly. If no bundled tool supports the requested operation, explain the limitation instead of inventing a new implementation.",
+  officeConversionPolicy:
+    "Office conversion rule: when an existing DOCX, XLSX, or PPTX must become a PDF, call the registered office_to_pdf tool. Do not use pdf.sh make to re-layout the Office file and do not call LibreOffice directly. Use the PDF skill for creating a new PDF from text/Markdown/spec or operating on an existing PDF. After office_to_pdf succeeds, validate and deliver its PDF instead of generating another PDF.",
   permissionDefault: "Permission mode: default — write/shell tools require explicit approval.",
   permissionPlan: "Permission mode: plan — read-only planning mode; implementation changes are blocked at tool runtime.",
   permissionBypass: "Permission mode: bypassPermissions — all tools are auto-approved; act conservatively.",
@@ -157,6 +160,8 @@ const ZH: SystemPromptCopy = {
   automationPolicyTitle: "随附自动化策略：",
   automationPolicyBody:
     "所有转换类操作都使用已注册工具与随附技能入口。工具输入只能是声明式内容，例如 Markdown、JSON、CSV 或 TSV。智能体模式下，复杂任务可自主拆解，按需使用 todo_write 组织执行，并遵守当前操作权限；不得自行切换计划模式，仅在缺少必要信息时向用户提问。只有用户主动开启计划模式后，才编写计划并用 exit_plan_mode 提交审批，批准后执行。简单问答或单一明确产物直接执行。若没有随附工具支持所需操作，请说明限制，不要自行另造实现。",
+  officeConversionPolicy:
+    "Office 文件转换规则：已有 DOCX、XLSX 或 PPTX 要转换成 PDF 时，调用已注册的 office_to_pdf 工具。不要用 pdf.sh make 重新排版 Office 文件，也不要直接调用 LibreOffice。只有从文本/Markdown/spec 新建 PDF，或操作已有 PDF 时，才使用 PDF skill。office_to_pdf 成功后校验并直接交付它返回的 PDF，不要再次生成另一份 PDF。",
   permissionDefault: "Permission mode: default — 写文件 / shell 工具需要明确批准。",
   permissionPlan: "Permission mode: plan — 只读规划模式；实现类改动会在工具运行时被拦截。",
   permissionBypass: "Permission mode: bypassPermissions — 所有工具自动批准，操作需保守。",

@@ -13,12 +13,28 @@ import zipfile
 from pathlib import Path
 
 
+OFFICE_TO_PDF_INPUT_EXTENSIONS = {
+    "doc",
+    "docx",
+    "wps",
+    "xls",
+    "xlsx",
+    "et",
+    "ppt",
+    "pptx",
+    "dps",
+    "odt",
+    "ods",
+    "odp",
+}
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("render-docx", "convert"), required=True)
+    parser.add_argument("--mode", choices=("render-docx", "render-office", "convert"), required=True)
     parser.add_argument("--input", required=True)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--target", choices=("pdf", "xlsx"))
+    parser.add_argument("--target", choices=("pdf", "xlsx", "pptx", "xls", "ppt"))
     parser.add_argument("--dpi", type=int, default=144)
     parser.add_argument("--emit-pdf", action="store_true")
     parser.add_argument("--include-text", action="store_true")
@@ -27,6 +43,7 @@ def _parse_args() -> argparse.Namespace:
 
 def _configure_environment() -> None:
     # A worker must never recursively call the remote Renderer.
+    os.environ["PILOTDECK_OFFICE_RENDERER_WORKER"] = "1"
     os.environ.pop("PILOTDECK_OFFICE_RENDERER_URL", None)
     os.environ.pop("PILOTDECK_OFFICE_RENDERER_TOKEN", None)
     os.environ.setdefault("DOCX_SKILL_SOFFICE", "/usr/bin/soffice")
@@ -60,21 +77,48 @@ def _render_docx(args: argparse.Namespace) -> dict:
     return result
 
 
+def _seed_libreoffice_profile(profile_dir: Path) -> None:
+    import sys
+
+    scripts_dir = Path(__file__).resolve().parents[1] / "scripts"
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    from docxlib.render import _seed_libreoffice_profile as seed_profile
+
+    seed_profile(profile_dir)
+
+
+def _libreoffice_environment(profile_dir: Path) -> dict[str, str]:
+    environment = os.environ.copy()
+    environment["HOME"] = str(profile_dir)
+    bundled_font_dir = environment.get("DOCX_SKILL_FONT_DIR", "").strip()
+    if bundled_font_dir and Path(bundled_font_dir).is_dir():
+        environment["SAL_FONTPATH"] = bundled_font_dir
+    return environment
+
+
 def _convert(args: argparse.Namespace) -> dict:
     target = args.target
-    if target not in {"pdf", "xlsx"}:
+    if target not in {"pdf", "xlsx", "pptx", "xls", "ppt"}:
         raise ValueError("conversion target is required")
 
     input_path = Path(args.input).resolve()
     output_dir = Path(args.output_dir).resolve()
+    if target == "pdf" and input_path.suffix.lower().lstrip(".") not in OFFICE_TO_PDF_INPUT_EXTENSIONS:
+        raise ValueError(
+            "unsupported Office input format for PDF conversion: "
+            f"{input_path.suffix or '(missing extension)'}"
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
     profile_parent = Path(os.environ.get("TMPDIR", str(output_dir)))
     profile_parent.mkdir(parents=True, exist_ok=True)
-    output_format = (
-        "pdf"
-        if target == "pdf"
-        else "xlsx:Calc MS Excel 2007 XML"
-    )
+    output_format = {
+        "pdf": "pdf",
+        "xlsx": "xlsx:Calc MS Excel 2007 XML",
+        "pptx": "pptx:Impress MS PowerPoint 2007 XML",
+        "xls": "xls:MS Excel 97",
+        "ppt": "ppt:MS PowerPoint 97",
+    }[target]
     with tempfile.TemporaryDirectory(
         prefix="pilotdeck-office-profile-",
         dir=str(profile_parent),
@@ -83,10 +127,14 @@ def _convert(args: argparse.Namespace) -> dict:
             prefix="pilotdeck-office-output-",
             dir=str(profile_parent),
         ) as convert_dir:
+            profile_path = Path(profile_dir).resolve()
+            _seed_libreoffice_profile(profile_path)
             command = [
                 os.environ.get("DOCX_SKILL_SOFFICE", "/usr/bin/soffice"),
-                f"-env:UserInstallation={Path(profile_dir).as_uri()}",
+                f"-env:UserInstallation={profile_path.as_uri()}",
                 "--headless",
+                "--invisible",
+                "--norestore",
                 "--nologo",
                 "--nodefault",
                 "--nolockcheck",
@@ -103,6 +151,7 @@ def _convert(args: argparse.Namespace) -> dict:
                 text=True,
                 errors="replace",
                 timeout=120,
+                env=_libreoffice_environment(profile_path),
                 check=False,
             )
             generated = sorted(
@@ -123,6 +172,32 @@ def _convert(args: argparse.Namespace) -> dict:
                 "output": str(result_path),
                 "size": result_path.stat().st_size,
             }
+
+
+def _render_office(args: argparse.Namespace) -> dict:
+    import pymupdf
+
+    pdf_result = _convert(argparse.Namespace(**{**vars(args), "target": "pdf"}))
+    pdf_path = Path(pdf_result["output"])
+    output_dir = Path(args.output_dir)
+    images = []
+    with pymupdf.open(pdf_path) as document:
+        if not document.page_count:
+            raise ValueError("Office Renderer produced an empty PDF")
+        if document.page_count > 200:
+            raise ValueError("Office Renderer page limit exceeded")
+        scale = args.dpi / 72
+        for index, page in enumerate(document):
+            image = output_dir / f"page-{index + 1}.png"
+            page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False).save(image)
+            images.append(str(image))
+    return {
+        "status": "ok",
+        "pages": len(images),
+        "images": images,
+        "pdf": str(pdf_path) if args.emit_pdf else None,
+        "dpi": args.dpi,
+    }
 
 
 def _write_render_archive(output_dir: Path, result: dict, emit_pdf: bool) -> Path:
@@ -159,8 +234,12 @@ def main() -> int:
     args = _parse_args()
     _configure_environment()
     try:
-        result = _render_docx(args) if args.mode == "render-docx" else _convert(args)
-        if args.mode == "render-docx":
+        result = (
+            _render_docx(args) if args.mode == "render-docx"
+            else _render_office(args) if args.mode == "render-office"
+            else _convert(args)
+        )
+        if args.mode in {"render-docx", "render-office"}:
             result["archive"] = str(
                 _write_render_archive(Path(args.output_dir), result, args.emit_pdf)
             )

@@ -65,31 +65,12 @@ runtime_missing_json() {
   printf '{"status":"error","code":"missing-dependencies","error":"交付包不完整：DOCX 本地运行时未就绪。请使用完整交付包，不要在现场安装依赖或自行编写 Python。"}\n'
 }
 
-find_soffice() {
-  local mac_path="/Applications/LibreOffice.app/Contents/MacOS/soffice"
-  if [[ -x "$mac_path" ]]; then
-    printf '%s\n' "$mac_path"
-    return 0
-  fi
-  if command -v soffice >/dev/null 2>&1; then
-    command -v soffice
-    return 0
-  fi
-  local windows_path="/c/Program Files/LibreOffice/program/soffice.exe"
-  if [[ -x "$windows_path" ]]; then
-    printf '%s\n' "$windows_path"
-    return 0
-  fi
-  return 1
-}
-
 cmd_check() {
   local py=""
   local py_ok=false
   local deps_ok=false
   local render_deps_ok=false
   local font_ok=false
-  local soffice_path=""
   if py="$(find_python)"; then
     py_ok=true
   fi
@@ -106,18 +87,15 @@ cmd_check() {
   local remote_renderer=false
   if [[ -n "${PILOTDECK_OFFICE_RENDERER_URL:-}" ]]; then
     remote_renderer=true
-  elif ! soffice_path="$(find_soffice)"; then
-    soffice_path=""
   fi
-  printf '{"status":"%s","code":"%s","python":%s,"python_path":"%s","dependencies":%s,"venv":"%s","bundled_font":%s,"bundled_font_dir":"%s","libreoffice":%s,"libreoffice_path":"%s","office_renderer":%s,"office_renderer_url":"%s","render_dependencies":%s,"render_available":%s}\n' \
+  printf '{"status":"%s","code":"%s","python":%s,"python_path":"%s","dependencies":%s,"venv":"%s","bundled_font":%s,"bundled_font_dir":"%s","office_renderer":%s,"office_renderer_url":"%s","render_dependencies":%s,"render_available":%s}\n' \
     "$([[ "$py_ok" == true && "$deps_ok" == true && "$font_ok" == true ]] && printf ok || printf error)" \
     "$([[ "$py_ok" == true && "$deps_ok" == true && "$font_ok" == true ]] && printf dependencies-ready || printf missing-dependencies)" \
     "$py_ok" "$py" "$deps_ok" "$VENV_DIR" \
     "$font_ok" "$BUNDLED_FONT_DIR" \
-    "$([[ -n "$soffice_path" ]] && printf true || printf false)" "$soffice_path" \
     "$remote_renderer" "${PILOTDECK_OFFICE_RENDERER_URL:-}" \
     "$render_deps_ok" \
-    "$([[ "$remote_renderer" == true || -n "$soffice_path" ]] && [[ "$deps_ok" == true && "$render_deps_ok" == true && "$font_ok" == true ]] && printf true || printf false)"
+    "$([[ "$remote_renderer" == true ]] && [[ "$deps_ok" == true && "$render_deps_ok" == true && "$font_ok" == true ]] && printf true || printf false)"
   [[ "$py_ok" == true && "$deps_ok" == true && "$font_ok" == true ]]
 }
 
@@ -178,13 +156,6 @@ case "${1:-}" in
       exit 2
     fi
     py="$(venv_python)"
-    soffice_path=""
-    if [[ -z "${PILOTDECK_OFFICE_RENDERER_URL:-}" ]]; then
-      if ! soffice_path="$(find_soffice)"; then
-        soffice_path=""
-      fi
-    fi
-    export DOCX_SKILL_SOFFICE="$soffice_path"
     export DOCX_SKILL_FONT_DIR="$BUNDLED_FONT_DIR"
     exec "$py" "$SCRIPT_DIR/docx_cli.py" "$@"
     ;;

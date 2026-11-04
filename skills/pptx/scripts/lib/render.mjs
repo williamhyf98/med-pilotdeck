@@ -1,22 +1,7 @@
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
 import { loadDependencies } from './runtime.mjs';
-
-function run(command, args, options = {}) {
-  const result = spawnSync(command, args, {
-    encoding: 'utf8',
-    stdio: options.quiet ? 'pipe' : ['ignore', 'pipe', 'pipe'],
-    ...options,
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`${command} exited with ${result.status}: ${(result.stderr || result.stdout || '').trim()}`);
-  }
-  return result;
-}
+import { officeRendererUrl, requestOfficeRenderer } from '../../../office-renderer-client.mjs';
 
 function numericSort(a, b) {
   const aNum = Number(path.basename(a).match(/(\d+)/)?.[1] ?? 0);
@@ -25,9 +10,8 @@ function numericSort(a, b) {
 }
 
 export function renderingAvailability() {
-  const soffice = process.env.PPTX_SKILL_SOFFICE || null;
-  const renderer = process.env.PPTX_SKILL_PDF_RENDERER || null;
-  return { available: Boolean(soffice && renderer), soffice, renderer };
+  const url = officeRendererUrl();
+  return { available: Boolean(url), backend: 'office-renderer', url };
 }
 
 async function clearPriorSlides(outputDir) {
@@ -35,31 +19,6 @@ async function clearPriorSlides(outputDir) {
   await Promise.all(entries
     .filter((entry) => entry.isFile() && /^slide-\d+\.png$/i.test(entry.name))
     .map((entry) => fs.unlink(path.join(outputDir, entry.name))));
-}
-
-async function renderPdf(pdfPath, outputDir, dpi, renderer) {
-  const base = path.basename(renderer).toLowerCase();
-  if (base.includes('pdftoppm')) {
-    run(renderer, ['-png', '-r', String(dpi), pdfPath, path.join(outputDir, 'slide')]);
-    return;
-  }
-  if (base.includes('mutool')) {
-    run(renderer, ['draw', '-r', String(dpi), '-o', path.join(outputDir, 'slide-%d.png'), pdfPath]);
-    return;
-  }
-  if (base.includes('magick')) {
-    run(renderer, ['-density', String(dpi), pdfPath, path.join(outputDir, 'slide-%d.png')]);
-    const zero = path.join(outputDir, 'slide-0.png');
-    if (await fs.stat(zero).then(() => true).catch(() => false)) {
-      const files = (await fs.readdir(outputDir)).filter((name) => /^slide-\d+\.png$/.test(name)).sort(numericSort).reverse();
-      for (const name of files) {
-        const number = Number(name.match(/(\d+)/)[1]);
-        await fs.rename(path.join(outputDir, name), path.join(outputDir, `slide-${number + 1}.png`));
-      }
-    }
-    return;
-  }
-  throw new Error(`Unsupported PDF renderer: ${renderer}`);
 }
 
 export async function createMontage(imageFiles, outputPath, options = {}) {
@@ -94,36 +53,41 @@ export async function createMontage(imageFiles, outputPath, options = {}) {
 
 export async function renderPptx(inputPath, outputDir, options = {}) {
   const availability = renderingAvailability();
-  if (!availability.available) {
-    throw new Error('Rendering requires LibreOffice plus pdftoppm, mutool, or ImageMagick');
-  }
+  if (!availability.available) throw new Error('Office Renderer is not configured');
   const input = path.resolve(inputPath);
   const output = path.resolve(outputDir);
   const dpi = Number(options.dpi ?? 144);
   await fs.mkdir(output, { recursive: true });
   await clearPriorSlides(output);
-  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'pilotdeck-pptx-render-'));
-  const profile = path.join(temp, 'lo-profile');
-  await fs.mkdir(profile, { recursive: true });
+  const { JSZip } = loadDependencies();
+  const format = path.extname(input).toLowerCase() === '.ppt' ? 'ppt' : 'pptx';
+  const archive = await JSZip.loadAsync(await requestOfficeRenderer(
+    input, `/v1/render/${format}?dpi=${dpi}&emit_pdf=${options.pdf ? 1 : 0}`,
+    { magic: Buffer.from('PK') },
+  ));
+  const manifestEntry = archive.file('manifest.json');
+  if (!manifestEntry) throw new Error('Office Renderer did not include a manifest');
+  const manifest = JSON.parse(await manifestEntry.async('string'));
+  const imageNames = manifest.images;
+  if (!Array.isArray(imageNames)) throw new Error('Office Renderer returned an invalid image list');
+  if (manifest.pages !== imageNames.length || !imageNames.length || imageNames.length > 200) {
+    throw new Error('Office Renderer returned an invalid page count');
+  }
+  const staged = [];
   try {
-    run(availability.soffice, [
-      `-env:UserInstallation=${pathToFileURL(profile).href}`,
-      '--headless',
-      '--convert-to',
-      'pdf',
-      '--outdir',
-      temp,
-      input,
-    ]);
-    const pdf = path.join(temp, `${path.parse(input).name}.pdf`);
-    const exists = await fs.stat(pdf).then(() => true).catch(() => false);
-    if (!exists) throw new Error(`LibreOffice did not produce ${pdf}`);
-    await renderPdf(pdf, output, dpi, availability.renderer);
+    for (let index = 0; index < imageNames.length; index += 1) {
+      if (imageNames[index] !== `page-${index + 1}.png`) throw new Error('Office Renderer returned an invalid page name');
+      const entry = archive.file(imageNames[index]);
+      if (!entry) throw new Error('Office Renderer omitted a page image');
+      const destination = path.join(output, `slide-${index + 1}.png`);
+      await fs.writeFile(destination, await entry.async('nodebuffer'));
+      staged.push(destination);
+    }
     const slides = (await fs.readdir(output))
       .filter((name) => /^slide-\d+\.png$/i.test(name))
       .map((name) => path.join(output, name))
       .sort(numericSort);
-    if (!slides.length) throw new Error('PDF renderer did not produce any slide images');
+    if (!slides.length) throw new Error('Office Renderer did not produce any slide images');
     let montage = null;
     if (options.montage !== false) {
       montage = path.resolve(options.montage || path.join(output, 'montage.png'));
@@ -131,15 +95,17 @@ export async function renderPptx(inputPath, outputDir, options = {}) {
     }
     let exportedPdf = null;
     if (options.pdf) {
+      const pdfEntry = archive.file('result.pdf');
+      if (!pdfEntry) throw new Error('Office Renderer omitted the requested PDF');
       exportedPdf = path.resolve(options.pdf);
       await fs.mkdir(path.dirname(exportedPdf), { recursive: true });
-      await fs.copyFile(pdf, exportedPdf);
+      await fs.writeFile(exportedPdf, await pdfEntry.async('nodebuffer'));
     }
     return {
       status: 'passed',
-      baseline: 'libreoffice',
-      engine: availability.soffice,
-      rasterizer: availability.renderer,
+      baseline: 'office-renderer',
+      engine: 'remote-office-renderer',
+      rasterizer: 'server',
       input,
       output,
       dpi,
@@ -147,10 +113,12 @@ export async function renderPptx(inputPath, outputDir, options = {}) {
       montage,
       pdf: exportedPdf,
       slideCount: slides.length,
-      compatibilityNote: 'LibreOffice rendering is a baseline and may substitute fonts differently from Microsoft PowerPoint.',
+      compatibilityNote: 'The Office Renderer runs LibreOffice on node12 as an automated baseline and may substitute fonts differently from Microsoft PowerPoint.',
     };
   } finally {
-    await fs.rm(temp, { recursive: true, force: true });
+    if (staged.length !== imageNames.length) {
+      await Promise.all(staged.map((file) => fs.rm(file, { force: true })));
+    }
   }
 }
 

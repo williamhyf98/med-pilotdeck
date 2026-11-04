@@ -7,7 +7,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs, required, numberArg } from './lib/args.mjs';
 import { auditPptx } from './lib/audit.mjs';
-import { convertLegacyPpt, convertWithLibreOffice } from './lib/convert.mjs';
+import { convertLegacyPpt, convertWithOfficeRenderer } from './lib/convert.mjs';
 import { verifyFinalPptx } from './lib/delivery.mjs';
 import { inspectPptx, writeManifest } from './lib/ooxml.mjs';
 import { compareRenderedDirectories, renderPptx, renderingAvailability } from './lib/render.mjs';
@@ -520,7 +520,7 @@ async function selfTest(args) {
       });
 
       const legacyExportDir = path.join(workspace, 'legacy-export');
-      const exportedLegacy = await convertWithLibreOffice(cjkSource, {
+      const exportedLegacy = await convertWithOfficeRenderer(cjkSource, {
         outputDir: legacyExportDir,
         format: 'ppt',
         filter: 'MS PowerPoint 97',
@@ -587,7 +587,7 @@ async function selfTest(args) {
         outputExists: corruptOutputExists,
       };
     } else {
-      result.checks.render = { status: 'skipped', reason: 'LibreOffice or PDF renderer is unavailable' };
+      result.checks.render = { status: 'skipped', reason: 'Office Renderer is not configured' };
     }
     return result;
   } catch (error) {

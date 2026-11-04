@@ -77,7 +77,10 @@ multiUser:
 ```
 
 默认已只读挂载现存的系统程序路径（如 `/usr`、`/bin`）和项目运行时；
-`/usr/bin/python3`、`/usr/bin/libreoffice` 等如果位于 `/usr`，无需重复添加。
+应用端的 DOCX/PPTX/XLSX 转换、公式重算与页面渲染通过内网 HTTP Office
+Renderer 完成，不需要在应用端安装或挂载 LibreOffice。仅 Renderer 节点需
+预置 LibreOffice Writer、Calc、Impress、字体和 PyMuPDF；部署配置见
+[Office Renderer 部署说明](office-renderer.zh-CN.md)。
 **不要**把数据根、`users/`、`system/` 或其他用户目录加入
 `extraReadOnlyBinds`。`network: true` 是默认值，医学技能需要访问服务时
 不要开启网络隔离；`kind: none`/`allowUnsandboxed: true` 不适用于生产部署。

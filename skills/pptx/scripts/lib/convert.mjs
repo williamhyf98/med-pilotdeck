@@ -2,24 +2,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
 import { inspectPptx } from './ooxml.mjs';
 import { compareRenderedDirectories, renderPptx, renderingAvailability } from './render.mjs';
+import { requestOfficeRenderer } from '../../../office-renderer-client.mjs';
 
 const OLE_MAGIC = Buffer.from([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]);
-
-function run(command, args) {
-  const result = spawnSync(command, args, {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`${command} exited with ${result.status}: ${(result.stderr || result.stdout || '').trim()}`);
-  }
-  return result;
-}
 
 async function writeJson(file, value) {
   const output = path.resolve(file);
@@ -31,17 +18,6 @@ async function writeJson(file, value) {
 async function sha256File(file) {
   const buffer = await fs.readFile(file);
   return crypto.createHash('sha256').update(buffer).digest('hex');
-}
-
-async function findConvertedFile(outputDir, extension) {
-  const entries = await fs.readdir(outputDir, { withFileTypes: true });
-  const candidates = entries
-    .filter((entry) => entry.isFile() && path.extname(entry.name).toLocaleLowerCase() === `.${extension.toLocaleLowerCase()}`)
-    .map((entry) => path.join(outputDir, entry.name));
-  if (candidates.length !== 1) {
-    throw new Error(`LibreOffice produced ${candidates.length} .${extension} files in ${outputDir}; expected exactly one`);
-  }
-  return candidates[0];
 }
 
 export async function detectPresentationFormat(inputPath) {
@@ -61,31 +37,21 @@ export async function detectPresentationFormat(inputPath) {
   }
 }
 
-export async function convertWithLibreOffice(inputPath, options = {}) {
-  const availability = renderingAvailability();
-  const soffice = options.soffice || availability.soffice;
-  if (!soffice) throw new Error('LibreOffice is required for presentation conversion');
+export async function convertWithOfficeRenderer(inputPath, options = {}) {
   const input = path.resolve(inputPath);
   const outputDir = path.resolve(options.outputDir);
   const format = String(options.format || '').toLocaleLowerCase();
-  if (!format) throw new Error('Conversion format is required');
-  await fs.mkdir(outputDir, { recursive: true });
-  const profileRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'pilotdeck-pptx-convert-profile-'));
-  try {
-    const filter = options.filter ? `${format}:${options.filter}` : format;
-    run(soffice, [
-      `-env:UserInstallation=${pathToFileURL(profileRoot).href}`,
-      '--headless',
-      '--convert-to',
-      filter,
-      '--outdir',
-      outputDir,
-      input,
-    ]);
-    return findConvertedFile(outputDir, format);
-  } finally {
-    await fs.rm(profileRoot, { recursive: true, force: true });
+  if (!((format === 'pptx' && path.extname(input).toLowerCase() === '.ppt')
+    || (format === 'ppt' && path.extname(input).toLowerCase() === '.pptx'))) {
+    throw new Error('Remote presentation conversion supports .ppt to .pptx and .pptx to .ppt');
   }
+  await fs.mkdir(outputDir, { recursive: true });
+  const output = path.join(outputDir, `${path.parse(input).name}.${format}`);
+  const converted = await requestOfficeRenderer(input, `/v1/convert/${format}`, {
+    magic: format === 'pptx' ? Buffer.from('PK') : OLE_MAGIC,
+  });
+  await fs.writeFile(output, converted);
+  return output;
 }
 
 async function atomicCopy(source, output, force) {
@@ -137,9 +103,9 @@ export async function convertLegacyPpt(inputPath, outputPath, options = {}) {
     if (input === output) throw new Error('Conversion must preserve the source and write to a distinct .pptx output');
     const availability = renderingAvailability();
     if (!availability.available) {
-      throw new Error('Verified .ppt conversion requires LibreOffice plus pdftoppm, mutool, or ImageMagick');
+      throw new Error('Verified .ppt conversion requires Office Renderer');
     }
-    report.conversion.engine = availability.soffice;
+    report.conversion.engine = availability.backend;
     const sourceHashBefore = await sha256File(input);
     const format = await detectPresentationFormat(input);
     report.source.format = format;
@@ -150,11 +116,10 @@ export async function convertLegacyPpt(inputPath, outputPath, options = {}) {
 
     let candidate;
     if (format === 'ppt') {
-      candidate = await convertWithLibreOffice(input, {
+      candidate = await convertWithOfficeRenderer(input, {
         outputDir: path.join(workspace, 'converted'),
         format: 'pptx',
         filter: 'Impress MS PowerPoint 2007 XML',
-        soffice: availability.soffice,
       });
       report.warnings.push({
         code: 'legacy_features_require_target_viewer_review',
@@ -201,7 +166,7 @@ export async function convertLegacyPpt(inputPath, outputPath, options = {}) {
         code: 'conversion_visual_difference',
         maxDifference: fidelity.maxDifference,
         threshold: fidelity.threshold,
-        message: 'Converted pages differ from the LibreOffice rendering of the source .ppt; inspect the paired PNGs.',
+        message: 'Converted pages differ from the Office Renderer baseline rendering of the source .ppt; inspect the paired PNGs.',
       });
     }
     const sourceHashAfter = await sha256File(input);

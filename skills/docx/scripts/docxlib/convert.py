@@ -1,10 +1,6 @@
 from __future__ import annotations
 
 import os
-import platform
-import shutil
-import subprocess
-import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -16,11 +12,7 @@ from .common import (
     require_docx_path,
     temporary_sibling,
 )
-from .render import (
-    _seed_libreoffice_profile,
-    find_soffice,
-    get_office_renderer_url,
-)
+from .render import get_office_renderer_url
 
 
 PDF_CONTENT_TYPE = "application/pdf"
@@ -117,96 +109,6 @@ def _convert_remote(
     return payload, renderer_url
 
 
-def _convert_local(
-    source: Path,
-    *,
-    timeout_seconds: int,
-) -> tuple[bytes, str]:
-    soffice = find_soffice()
-    if not soffice:
-        raise DocxSkillError(
-            "LibreOffice soffice was not found; configure "
-            "PILOTDECK_OFFICE_RENDERER_URL or install LibreOffice",
-            status="unsupported",
-            code="office-conversion-backend-unavailable",
-            details={"backend": "LibreOffice"},
-        )
-
-    isolated_temp_root = (
-        "/private/tmp"
-        if platform.system() == "Darwin" and Path("/private/tmp").is_dir()
-        else None
-    )
-    with tempfile.TemporaryDirectory(
-        prefix="pilotdeck_soffice_profile_",
-        dir=isolated_temp_root,
-    ) as profile_dir:
-        with tempfile.TemporaryDirectory(
-            prefix="pilotdeck_soffice_output_",
-            dir=isolated_temp_root,
-        ) as convert_dir:
-            profile_path = Path(profile_dir).resolve()
-            _seed_libreoffice_profile(profile_path)
-            env = os.environ.copy()
-            env["HOME"] = profile_dir
-            bundled_font_dir = os.environ.get("DOCX_SKILL_FONT_DIR", "").strip()
-            if bundled_font_dir and Path(bundled_font_dir).is_dir():
-                env["SAL_FONTPATH"] = bundled_font_dir
-            if platform.system() == "Darwin" and Path("/private/tmp").is_dir():
-                env["TMPDIR"] = "/private/tmp"
-            command = [
-                soffice,
-                f"-env:UserInstallation={profile_path.as_uri()}",
-                "--headless",
-                "--invisible",
-                "--norestore",
-                "--nologo",
-                "--nodefault",
-                "--nolockcheck",
-                "--nofirststartwizard",
-                "--convert-to",
-                "pdf",
-                "--outdir",
-                convert_dir,
-                str(source),
-            ]
-            launch_command = (
-                ["/bin/sh", "-c", 'exec "$@"', "pilotdeck-soffice", *command]
-                if platform.system() == "Darwin"
-                else command
-            )
-            try:
-                process = subprocess.run(
-                    launch_command,
-                    capture_output=True,
-                    text=True,
-                    errors="replace",
-                    timeout=timeout_seconds,
-                    env=env,
-                    check=False,
-                )
-            except subprocess.TimeoutExpired as exc:
-                raise DocxSkillError(
-                    f"LibreOffice conversion timed out after {timeout_seconds} seconds",
-                    code="office-conversion-timeout",
-                ) from exc
-
-            candidates = sorted(Path(convert_dir).glob("*.pdf"))
-            if process.returncode != 0 or not candidates:
-                detail = (
-                    process.stderr
-                    or process.stdout
-                    or "unknown conversion error"
-                ).strip()
-                raise DocxSkillError(
-                    f"LibreOffice failed to create a PDF: {detail[:1000]}",
-                    code="office-conversion-failed",
-                )
-            payload = candidates[0].read_bytes()
-            _validate_pdf_bytes(payload)
-            return payload, soffice
-
-
 def convert_docx_to_pdf(
     input_path: str | Path,
     output_path: str | Path,
@@ -221,16 +123,13 @@ def convert_docx_to_pdf(
     output = _output_pdf_path(source, output_path, force=force)
 
     renderer_url = get_office_renderer_url()
-    if renderer_url:
-        payload, renderer = _convert_remote(
-            source,
-            timeout_seconds=timeout_seconds,
+    if not renderer_url:
+        raise DocxSkillError(
+            "Office Renderer is not configured; local LibreOffice fallback is disabled",
+            status="unsupported",
+            code="office-renderer-not-configured",
         )
-    else:
-        payload, renderer = _convert_local(
-            source,
-            timeout_seconds=timeout_seconds,
-        )
+    payload, renderer = _convert_remote(source, timeout_seconds=timeout_seconds)
 
     with temporary_sibling(output, suffix=".tmp.pdf") as staged:
         staged.write_bytes(payload)

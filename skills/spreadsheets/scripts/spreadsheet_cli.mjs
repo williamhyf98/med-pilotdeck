@@ -6,18 +6,16 @@ import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 import {
   injectNativeCharts,
   inspectDrawingPackage,
   inspectNativeCharts,
   pruneEmptyDrawingParts,
 } from "./lib/native-charts.mjs";
+import { officeRendererUrl, requestOfficeRenderer } from "../../office-renderer-client.mjs";
 
-const execFileAsync = promisify(execFile);
 const runtimeRoot = process.env.SPREADSHEET_RUNTIME_ROOT;
 const skillRoot = process.env.SPREADSHEET_SKILL_ROOT ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -330,16 +328,28 @@ async function collectSpreadsheetCompatibilityIssues(zip) {
 }
 
 async function loadXlsx(filePath) {
+  const normalizeImportedTables = (workbook) => {
+    // LibreOffice can omit tableStyleInfo. ExcelJS reads that as null but its
+    // serializer dereferences style.theme when an edited workbook is saved.
+    for (const worksheet of workbook.worksheets) {
+      for (const table of Object.values(worksheet.tables ?? {})) {
+        if (table.table?.style == null) {
+          table.table.style = { theme: null, showRowStripes: false };
+        }
+      }
+    }
+    return workbook;
+  };
   const workbook = new ExcelJS.Workbook();
   try {
     await workbook.xlsx.readFile(path.resolve(filePath));
-    return workbook;
+    return normalizeImportedTables(workbook);
   } catch (error) {
     const normalizedPackage = await normalizePrefixedSpreadsheetPackage(filePath);
     if (!normalizedPackage) throw error;
     const normalizedWorkbook = new ExcelJS.Workbook();
     await normalizedWorkbook.xlsx.load(normalizedPackage);
-    return normalizedWorkbook;
+    return normalizeImportedTables(normalizedWorkbook);
   }
 }
 
@@ -501,7 +511,7 @@ function addTableFromRange(worksheet, { name, range, style = { theme: "TableStyl
     ref: `${columnLetters(bounds.startCol)}${bounds.startRow}`,
     headerRow: true,
     totalsRow: false,
-    style: cloneCellStyle(style),
+    style: cloneCellStyle(style ?? { theme: "TableStyleMedium2", showRowStripes: true }),
     columns,
     rows,
   });
@@ -1474,45 +1484,6 @@ async function auditDelimited(filePath) {
   };
 }
 
-function findSoffice() {
-  const configured = process.env.SPREADSHEET_SKILL_SOFFICE;
-  if (configured) return configured;
-  if (process.platform === "darwin") return "/Applications/LibreOffice.app/Contents/MacOS/soffice";
-  return "soffice";
-}
-
-function findRenderer() {
-  return process.env.SPREADSHEET_SKILL_PDF_RENDERER || "";
-}
-
-async function runLibreOffice(args, profileDir) {
-  const soffice = findSoffice();
-  if (!soffice || !(await pathExists(soffice)) && path.isAbsolute(soffice)) {
-    throw new Error("LibreOffice was not found. Install LibreOffice or expose soffice on PATH.");
-  }
-  const fontDirectories = [
-    process.env.SPREADSHEET_SKILL_FONT_DIR,
-  ].filter(Boolean);
-  const availableFontDirectories = [];
-  for (const directory of fontDirectories) if (await pathExists(directory)) availableFontDirectories.push(directory);
-  const fontCache = path.join(profileDir, "font-cache");
-  await fs.mkdir(fontCache, { recursive: true });
-  const fontconfigPath = path.join(profileDir, "fonts.conf");
-  const xmlEscape = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-  await fs.writeFile(fontconfigPath, `<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig>${availableFontDirectories.map((directory) => `<dir>${xmlEscape(directory)}</dir>`).join("")}<cachedir>${xmlEscape(fontCache)}</cachedir></fontconfig>`, "utf8");
-  const profileArg = `-env:UserInstallation=${pathToFileURL(profileDir).href}`;
-  const result = await execFileAsync(soffice, [
-    profileArg,
-    "--headless",
-    "--nologo",
-    "--nodefault",
-    "--nofirststartwizard",
-    "--norestore",
-    ...args,
-  ], { timeout: 120000, maxBuffer: 10 * 1024 * 1024, env: { ...process.env, FONTCONFIG_FILE: fontconfigPath } });
-  return { stdout: result.stdout, stderr: result.stderr };
-}
-
 async function prepareWorkbookForRecalculation(inputPath, outputPath) {
   const source = await fs.readFile(inputPath);
   const zip = await JSZip.loadAsync(source);
@@ -1552,29 +1523,15 @@ async function recalculateWorkbook(inputPath, outputPath) {
   try {
     const sourceDir = path.join(tempRoot, "source");
     const convertedDir = path.join(tempRoot, "converted");
-    const profileDir = path.join(tempRoot, "profile");
-    await Promise.all([
-      fs.mkdir(sourceDir, { recursive: true }),
-      fs.mkdir(convertedDir, { recursive: true }),
-      fs.mkdir(profileDir, { recursive: true }),
-    ]);
+    await Promise.all([fs.mkdir(sourceDir, { recursive: true }), fs.mkdir(convertedDir, { recursive: true })]);
     const sourcePath = path.join(sourceDir, "workbook.xlsx");
     await prepareWorkbookForRecalculation(inputPath, sourcePath);
-    const conversion = await runLibreOffice([
-      "--convert-to",
-      "xlsx:Calc MS Excel 2007 XML",
-      "--outdir",
-      convertedDir,
-      sourcePath,
-    ], profileDir);
     const convertedPath = path.join(convertedDir, "workbook.xlsx");
-    if (!(await pathExists(convertedPath))) {
-      throw new Error(`LibreOffice did not produce a recalculated XLSX. ${conversion.stderr || conversion.stdout}`.trim());
-    }
+    await fs.writeFile(convertedPath, await requestOfficeRenderer(sourcePath, "/v1/convert/xlsx", { magic: Buffer.from("PK") }));
     const compatibilityNormalization = await normalizeLibreOfficeRoundTripPackage(convertedPath);
     await ensureParent(outputPath);
     await fs.copyFile(convertedPath, outputPath);
-    return { output: path.resolve(outputPath), engine: "LibreOffice", compatibilityNormalization };
+    return { output: path.resolve(outputPath), engine: "office-renderer", compatibilityNormalization };
   } finally {
     await fs.rm(tempRoot, { recursive: true, force: true });
   }
@@ -1589,13 +1546,11 @@ async function convertLegacyXls(inputPath, outputPath) {
   try {
     const sourceDir = path.join(tempRoot, "source");
     const convertedDir = path.join(tempRoot, "converted");
-    const profileDir = path.join(tempRoot, "profile");
-    await Promise.all([fs.mkdir(sourceDir, { recursive: true }), fs.mkdir(convertedDir, { recursive: true }), fs.mkdir(profileDir, { recursive: true })]);
+    await Promise.all([fs.mkdir(sourceDir, { recursive: true }), fs.mkdir(convertedDir, { recursive: true })]);
     const sourcePath = path.join(sourceDir, "workbook.xls");
     await fs.copyFile(inputPath, sourcePath);
-    const conversion = await runLibreOffice(["--convert-to", "xlsx:Calc MS Excel 2007 XML", "--outdir", convertedDir, sourcePath], profileDir);
     const convertedPath = path.join(convertedDir, "workbook.xlsx");
-    if (!(await pathExists(convertedPath))) throw new Error(`LibreOffice did not convert the legacy XLS file. ${conversion.stderr || conversion.stdout}`.trim());
+    await fs.writeFile(convertedPath, await requestOfficeRenderer(sourcePath, "/v1/convert/xlsx", { magic: Buffer.from("PK") }));
     const compatibilityNormalization = await normalizeLibreOfficeRoundTripPackage(convertedPath);
     const workbook = await loadXlsx(convertedPath);
     if (workbook.worksheets.length === 0) throw new Error("Converted XLSX has no worksheets");
@@ -1604,7 +1559,7 @@ async function convertLegacyXls(inputPath, outputPath) {
     await fs.copyFile(convertedPath, outputPath);
     const audit = await auditXlsx(outputPath);
     if (audit.status === "error") throw new Error("Converted XLSX failed structural or formula audit");
-    return { status: audit.status, input: path.resolve(inputPath), output: path.resolve(outputPath), engine: "LibreOffice", compatibilityNormalization, audit };
+    return { status: audit.status, input: path.resolve(inputPath), output: path.resolve(outputPath), engine: "office-renderer", compatibilityNormalization, audit };
   } finally {
     await fs.rm(tempRoot, { recursive: true, force: true });
   }
@@ -2437,12 +2392,19 @@ async function commandMake(options) {
     const rawPath = path.join(tempRoot, "raw.xlsx");
     const stagedPath = path.join(tempRoot, "candidate.xlsx");
     await workbook.xlsx.writeFile(rawPath);
-    const canRecalculate = facts.formulaCount > 0 && Boolean(process.env.SPREADSHEET_SKILL_SOFFICE);
-    if (canRecalculate) {
-      await recalculateWorkbook(rawPath, stagedPath);
-    } else {
-      await fs.copyFile(rawPath, stagedPath);
+    let canRecalculate = false;
+    let recalculationWarning = null;
+    if (facts.formulaCount > 0 && officeRendererUrl()) {
+      try {
+        await recalculateWorkbook(rawPath, stagedPath);
+        canRecalculate = true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!/Office Renderer is (not configured|unavailable)|Office Renderer returned HTTP (404|502|503|504)/i.test(message)) throw error;
+        recalculationWarning = `Office Renderer is unavailable; formulas will recalculate when opened: ${message}`;
+      }
     }
+    if (!canRecalculate) await fs.copyFile(rawPath, stagedPath);
     const chartResult = await injectNativeCharts(stagedPath, nativeCharts, { JSZip, loadXlsx });
     const audit = await auditXlsx(stagedPath, requirements, {
       allowMissingCachedResults: facts.formulaCount > 0 && !canRecalculate,
@@ -2452,19 +2414,19 @@ async function commandMake(options) {
     }
     let preview = [];
     let warning = null;
-    if (process.env.SPREADSHEET_SKILL_SOFFICE && process.env.SPREADSHEET_SKILL_PDF_RENDERER) {
+    if (officeRendererUrl()) {
       try {
         const rendered = await renderWorkbook(stagedPath, renderDir, { perSheet: true });
         preview = rendered.pages;
       } catch (error) {
-        warning = `Optional page rendering failed: ${error instanceof Error ? error.message : String(error)}`;
+        warning = `未完成视觉验收：${error instanceof Error ? error.message : String(error)}`;
       }
     } else {
-      warning = "LibreOffice/PDF rasterization is unavailable; structural validation passed and page rendering was skipped";
+      warning = "未完成视觉验收：Office Renderer is not configured; structural validation passed";
     }
     if (facts.formulaCount > 0 && !canRecalculate) {
       warning = [
-        "LibreOffice is unavailable; formulas were preserved with full recalculation requested when opened in Excel",
+        recalculationWarning || "Office Renderer is unavailable; formulas were preserved with full recalculation requested when opened in Excel",
         warning,
       ].filter(Boolean).join("; ");
     }
@@ -2666,17 +2628,14 @@ async function convertToXlsxForRender(inputPath, tempRoot) {
 }
 
 async function renderWorkbook(inputPath, outputDir, { pdfPath, montagePath, perSheet = false } = {}) {
-  const renderer = findRenderer();
-  if (!renderer) throw new Error("No PDF renderer was found. Install pdftoppm, mutool, or ImageMagick.");
+  if (!officeRendererUrl()) throw new Error("Office Renderer is not configured");
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pilotdeck-spreadsheet-render-"));
   try {
     const sourceDir = path.join(tempRoot, "source");
     const pdfDir = path.join(tempRoot, "pdf");
-    const profileDir = path.join(tempRoot, "profile");
     await Promise.all([
       fs.mkdir(sourceDir, { recursive: true }),
       fs.mkdir(pdfDir, { recursive: true }),
-      fs.mkdir(profileDir, { recursive: true }),
       fs.mkdir(outputDir, { recursive: true }),
     ]);
     for (const name of await fs.readdir(outputDir)) {
@@ -2710,29 +2669,27 @@ async function renderWorkbook(inputPath, outputDir, { pdfPath, montagePath, perS
     }
     const sourcePath = path.join(sourceDir, "workbook.xlsx");
     await fs.copyFile(xlsxInput, sourcePath);
-    const conversion = await runLibreOffice([
-      "--convert-to",
-      "pdf:calc_pdf_Export",
-      "--outdir",
-      pdfDir,
-      sourcePath,
-    ], profileDir);
-    const generatedPdf = path.join(pdfDir, "workbook.pdf");
-    if (!(await pathExists(generatedPdf))) {
-      throw new Error(`LibreOffice did not produce a PDF. ${conversion.stderr || conversion.stdout}`.trim());
+    const archive = await JSZip.loadAsync(await requestOfficeRenderer(sourcePath, "/v1/render/xlsx?dpi=144&emit_pdf=1", { magic: Buffer.from("PK") }));
+    const manifestEntry = archive.file("manifest.json");
+    if (!manifestEntry) throw new Error("Office Renderer did not include a manifest");
+    const manifest = JSON.parse(await manifestEntry.async("string"));
+    const images = manifest.images;
+    if (!Array.isArray(images) || !images.length || images.length > 200 || images.length !== manifest.pages) {
+      throw new Error("Office Renderer returned an invalid page count");
     }
+    const generatedPdf = path.join(pdfDir, "workbook.pdf");
+    const pdfEntry = archive.file("result.pdf");
+    if (!pdfEntry) throw new Error("Office Renderer omitted the requested PDF");
+    await fs.writeFile(generatedPdf, await pdfEntry.async("nodebuffer"));
 
     const finalPdf = pdfPath ?? path.join(outputDir, "workbook.pdf");
     await ensureParent(finalPdf);
     await fs.copyFile(generatedPdf, finalPdf);
-    const prefix = path.join(outputDir, "page");
-    const rendererName = path.basename(renderer).toLowerCase();
-    if (rendererName.startsWith("pdftoppm")) {
-      await execFileAsync(renderer, ["-png", "-r", "144", generatedPdf, prefix], { timeout: 120000, maxBuffer: 10 * 1024 * 1024 });
-    } else if (rendererName.startsWith("mutool")) {
-      await execFileAsync(renderer, ["draw", "-r", "144", "-o", `${prefix}-%d.png`, generatedPdf], { timeout: 120000, maxBuffer: 10 * 1024 * 1024 });
-    } else {
-      await execFileAsync(renderer, ["-density", "144", generatedPdf, `${prefix}-%d.png`], { timeout: 120000, maxBuffer: 10 * 1024 * 1024 });
+    for (let index = 0; index < images.length; index += 1) {
+      if (images[index] !== `page-${index + 1}.png`) throw new Error("Office Renderer returned an invalid page name");
+      const entry = archive.file(images[index]);
+      if (!entry) throw new Error("Office Renderer omitted a page image");
+      await fs.writeFile(path.join(outputDir, `page-${index + 1}.png`), await entry.async("nodebuffer"));
     }
     const pageNames = (await fs.readdir(outputDir)).filter((name) => /^page-?\d+\.png$/i.test(name)).sort(naturalPageSort);
     if (pageNames.length === 0) throw new Error("The PDF renderer produced no page images");
@@ -2809,13 +2766,23 @@ async function commandDeliver(options) {
     throw new Error(`Candidate workbook has unresolved audit warnings: ${audit.warningDispositions.unresolved.map((warning) => warning.type).join(", ")}`);
   }
 
-  const rendered = await runStage("render", () => renderWorkbook(inputPath, qaDir, { perSheet: true, montagePath: path.join(qaDir, "montage.png") }));
-  const blankPages = rendered.pageStats.filter((page) => page.blank);
-  if (blankPages.length > 0) {
-    throw new Error(`Candidate workbook produced ${blankPages.length} blank print page(s): ${blankPages.map((page) => `${page.sheet}:${path.basename(page.path)}`).join(", ")}`);
+  let rendered = null;
+  let renderWarning = null;
+  let renderCoverage = { status: "not_checked", reason: "visual review was not completed" };
+  let blankPages = [];
+  try {
+    rendered = await runStage("render", () => renderWorkbook(inputPath, qaDir, { perSheet: true, montagePath: path.join(qaDir, "montage.png") }));
+    blankPages = rendered.pageStats.filter((page) => page.blank);
+    if (blankPages.length > 0) {
+      throw new Error(`Candidate workbook produced ${blankPages.length} blank print page(s): ${blankPages.map((page) => `${page.sheet}:${path.basename(page.path)}`).join(", ")}`);
+    }
+    renderCoverage = evaluateRenderRequirements(rendered, requirements);
+    if (renderCoverage.status === "failed") throw new Error(`Candidate workbook failed render requirements: ${renderCoverage.failures.map((failure) => failure.type).join(", ")}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/Office Renderer is (not configured|unavailable)|Office Renderer returned HTTP (404|502|503|504)/i.test(message)) throw error;
+    renderWarning = `未完成视觉验收：${message}`;
   }
-  const renderCoverage = evaluateRenderRequirements(rendered, requirements);
-  if (renderCoverage.status === "failed") throw new Error(`Candidate workbook failed render requirements: ${renderCoverage.failures.map((failure) => failure.type).join(", ")}`);
 
   await ensureParent(outputPath);
   const temporaryOutput = path.join(path.dirname(path.resolve(outputPath)), `.${path.basename(outputPath)}.${process.pid}.tmp`);
@@ -2834,7 +2801,7 @@ async function commandDeliver(options) {
     throw new Error("Final deliverable failed post-seal verification");
   }
   const report = {
-    status: finalAudit.status,
+    status: renderWarning ? "passed_with_warnings" : finalAudit.status,
     output: path.resolve(outputPath),
     sha256: finalSha256,
     coverage: finalAudit.coverage,
@@ -2842,6 +2809,7 @@ async function commandDeliver(options) {
     audit: finalAudit,
     render: rendered,
     blankPages,
+    ...(renderWarning ? { warning: renderWarning } : {}),
   };
   await emitReport(report, options.report && String(options.report));
 }
@@ -2933,7 +2901,7 @@ async function createSelfTestWorkbook() {
 async function commandSelfTest(options) {
   const outputDir = options.out ? String(options.out) : path.join(os.tmpdir(), `pilotdeck-spreadsheets-self-test-${Date.now()}`);
   await fs.mkdir(outputDir, { recursive: true });
-  if (!process.env.SPREADSHEET_SKILL_SOFFICE) {
+  if (!officeRendererUrl()) {
     const output = path.join(outputDir, "offline-self-test.xlsx");
     const illustration = path.join(outputDir, "illustration.png");
     // Minimal valid 1x1 PNG
@@ -2995,7 +2963,7 @@ async function commandSelfTest(options) {
         recalculate: "skipped",
         render: "skipped",
       },
-      warning: "LibreOffice is unavailable; recalculation, rendering, and legacy XLS conversion checks were skipped",
+      warning: "Office Renderer is unavailable; recalculation, rendering, and legacy XLS conversion checks were skipped",
     });
     return;
   }
@@ -3405,14 +3373,13 @@ async function commandSelfTest(options) {
   steps.push({ name: "native-chart-data-quality", status: "ok", error: blankChartError.message });
 
   const legacySourceDir = path.join(outputDir, "legacy-source");
-  const legacyProfileDir = path.join(outputDir, "legacy-profile");
-  await Promise.all([fs.mkdir(legacySourceDir, { recursive: true }), fs.mkdir(legacyProfileDir, { recursive: true })]);
+  await fs.mkdir(legacySourceDir, { recursive: true });
   const legacySeed = path.join(legacySourceDir, "legacy-seed.xlsx");
   const legacySeedWorkbook = createWorkbook();
   legacySeedWorkbook.addWorksheet("旧格式").addRows([["名称", "数值"], ["测试", 42]]);
   await legacySeedWorkbook.xlsx.writeFile(legacySeed);
-  await runLibreOffice(["--convert-to", "xls:MS Excel 97", "--outdir", legacySourceDir, legacySeed], legacyProfileDir);
   const legacyXls = path.join(legacySourceDir, "legacy-seed.xls");
+  await fs.writeFile(legacyXls, await requestOfficeRenderer(legacySeed, "/v1/convert/xls", { magic: Buffer.from([0xD0, 0xCF, 0x11, 0xE0]) }));
   if (!(await pathExists(legacyXls))) throw new Error("Self-test could not create a legacy XLS fixture");
   const legacyConverted = path.join(outputDir, "legacy-converted.xlsx");
   await convertLegacyXls(legacyXls, legacyConverted);

@@ -139,12 +139,11 @@ def _page_layout_metrics(pixmap: fitz.Pixmap) -> dict[str, Any]:
 
 
 def find_soffice() -> str | None:
+    if os.environ.get("PILOTDECK_OFFICE_RENDERER_WORKER") != "1":
+        return None
     configured = os.environ.get("DOCX_SKILL_SOFFICE", "").strip()
     if configured and Path(configured).is_file():
         return configured
-    mac_path = Path("/Applications/LibreOffice.app/Contents/MacOS/soffice")
-    if mac_path.is_file():
-        return str(mac_path)
     discovered = shutil.which("soffice")
     if discovered:
         return discovered
@@ -159,7 +158,10 @@ def get_office_renderer_url() -> str | None:
 
 
 def office_renderer_configured() -> bool:
-    return get_office_renderer_url() is not None
+    return (
+        get_office_renderer_url() is not None
+        or os.environ.get("PILOTDECK_OFFICE_RENDERER_WORKER") == "1"
+    )
 
 
 def _remote_renderer_error(
@@ -364,7 +366,8 @@ def render_docx(
     out_dir.mkdir(parents=True, exist_ok=True)
     for stale in out_dir.glob("page-*.png"):
         stale.unlink()
-    if office_renderer_configured():
+    renderer_url = get_office_renderer_url()
+    if renderer_url:
         return _render_docx_remote(
             source,
             out_dir,
@@ -372,6 +375,12 @@ def render_docx(
             emit_pdf=emit_pdf,
             include_text=include_text,
             timeout_seconds=timeout_seconds,
+        )
+    if os.environ.get("PILOTDECK_OFFICE_RENDERER_WORKER") != "1":
+        raise DocxSkillError(
+            "Office Renderer is not configured; local LibreOffice is restricted to the remote Worker",
+            status="unsupported",
+            code="office-renderer-not-configured",
         )
 
     if fitz is None:

@@ -6,6 +6,7 @@ import { createBuiltinRegistry } from "../../../src/tool/registry/createBuiltinR
 const KEPT_WITHOUT_READ_SKILL = [
   "get_current_time",
   "read_file",
+  "office_to_pdf",
   "glob",
   "grep",
   "edit_file",

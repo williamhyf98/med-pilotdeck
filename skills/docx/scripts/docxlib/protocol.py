@@ -750,7 +750,7 @@ def capabilities() -> dict[str, Any]:
             },
         },
         "runtime_dependencies": {
-            "libreoffice": {
+            "office_renderer": {
                 "required_for": [
                     "render",
                     "refresh-toc",
@@ -758,7 +758,7 @@ def capabilities() -> dict[str, Any]:
                     "qa-init",
                 ],
                 "probe_command": "check",
-                "installation": "external",
+                "installation": "intranet-service",
                 "missing_result": "unsupported",
             }
         },
@@ -939,11 +939,11 @@ def capabilities() -> dict[str, Any]:
                             "manual path or digest copying."
                         ),
                     ),
-                    "libreoffice_render": _capability(
+                    "office_renderer_render": _capability(
                         "supported",
                         reason=(
-                            "Requires a LibreOffice executable detected by the check "
-                            "command; a missing runtime returns unsupported."
+                            "Requires a configured intranet Office Renderer; "
+                            "an unavailable service prevents visual rendering."
                         ),
                     ),
                     "automatic_visual_judgment": _capability(

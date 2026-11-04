@@ -103,24 +103,18 @@ class ConvertPdfTest(unittest.TestCase):
                 convert_docx_to_pdf(source, output)
             self.assertEqual(raised.exception.code, "output-exists")
 
-    def test_without_renderer_uses_local_conversion_backend(self):
+    def test_without_renderer_reports_unavailable_without_local_fallback(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "source.docx"
             output = root / "result.pdf"
             minimal_docx(source)
-            pdf = b"%PDF-1.7\nlocal\n%%EOF\n"
-            with (
-                patch.dict("os.environ", {}, clear=True),
-                patch(
-                    "docxlib.convert._convert_local",
-                    return_value=(pdf, "/usr/bin/soffice"),
-                ),
-            ):
-                result = convert_docx_to_pdf(source, output)
+            with patch.dict("os.environ", {}, clear=True):
+                with self.assertRaises(DocxSkillError) as raised:
+                    convert_docx_to_pdf(source, output)
 
-            self.assertEqual(result["renderer"], "/usr/bin/soffice")
-            self.assertEqual(output.read_bytes(), pdf)
+            self.assertEqual(raised.exception.code, "office-renderer-not-configured")
+            self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":

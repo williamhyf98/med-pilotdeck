@@ -1,6 +1,6 @@
 ---
 name: docx
-description: 读取、创建、编辑、审阅、比较、净化、渲染、转换并校验工作区 Microsoft Word .docx 文档。输入或交付物是 .docx 时使用本技能，包括把对话里刚生成的方案、病例报告导出为 Word。所有转换只通过捆绑的 docx.sh 完成。
+description: 读取、创建、编辑、审阅、比较、净化、渲染、转换并校验工作区 Microsoft Word .docx 文档。输入或交付物是 .docx 时使用本技能，包括把对话里刚生成的方案、病例报告导出为 Word。已有 DOCX 转 PDF 优先使用注册工具 office_to_pdf；其余 Word 操作使用捆绑的 docx.sh。
 ---
 
 # Word DOCX
@@ -14,6 +14,23 @@ DOCX_SKILL_ROOT="$(dirname "<path>")"
 
 `docx.sh` 会自己定位完整的隔离运行时和捆绑字体。本地运行时未就绪时会返回
 JSON 错误「交付包不完整」；此时停止并报告，不要改走其它实现。
+
+## Office 转 PDF
+
+已有 DOCX 要转换成 PDF 时，优先调用注册工具 `office_to_pdf`：
+
+```text
+office_to_pdf(
+  input_file="source.docx",
+  output_file="exports/result.pdf"
+)
+```
+
+该工具通过统一的 Office Renderer 执行，Mac 和 node12 都不直接调用
+LibreOffice。不要使用 `pdf.sh make` 重新排版 DOCX，不要直接调用 `soffice`。
+下面的 `docx.sh convert-pdf` 仅保留给兼容脚本和维护测试；如果
+`office_to_pdf` 不可用，应报告 Renderer 未配置或不可用，不要绕过它改走本机
+LibreOffice。
 
 ## Agent 可用表面
 
@@ -146,7 +163,7 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" audit --input source.docx --out "$PWD/sc
 bash "$DOCX_SKILL_ROOT/scripts/docx.sh" render --input source.docx --out-dir "$PWD/scratch/qa/render"
 ```
 
-把已有 Word 转成 PDF：
+兼容脚本：把已有 Word 转成 PDF：
 
 ```bash
 bash "$DOCX_SKILL_ROOT/scripts/docx.sh" convert-pdf \
@@ -156,7 +173,7 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" convert-pdf \
 
 `convert-pdf` 优先把 DOCX 内容上传到配置的 Office Renderer（默认是
 node12 的 19400 端口），由受控的 LibreOffice Worker 完成转换；没有配置远程
-Renderer 时才回退到本机 LibreOffice。输入和输出必须是不同文件，已有 PDF
+Renderer 时直接报告不可用，不回退本机 LibreOffice。输入和输出必须是不同文件，已有 PDF
 只有显式传 `--force` 才会替换。
 
 若命令返回 `unsupported` 或 `blocked`，说明限制并停止。

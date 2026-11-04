@@ -11,7 +11,7 @@ from typing import Any
 from .audit import audit_docx
 from .common import DocxSkillError, assert_valid_docx, load_json, temporary_sibling
 from .core import create_docx
-from .render import find_soffice, office_renderer_configured, render_docx
+from .render import office_renderer_configured, render_docx
 
 
 HEADING_RE = re.compile(r"^(#{1,3})\s+(.+?)\s*$")
@@ -214,17 +214,16 @@ def make_docx(
     preview: list[str] = []
     render_warning: str | None = None
     try:
-        if office_renderer_configured() or find_soffice():
+        if office_renderer_configured():
             rendered = render_docx(candidate, render_dir, dpi=144)
             preview = [str(path) for path in rendered.get("images", [])]
         else:
             render_warning = (
-                "LibreOffice is unavailable; structural validation passed but "
-                "page preview rendering was skipped"
+                "未完成视觉验收：Office Renderer is unavailable; structural validation passed"
             )
     except (DocxSkillError, OSError) as exc:
-        # Page previews are optional. Even probing a LibreOffice executable can
-        # fail inside the command sandbox; keep the validated DOCX candidate.
+        # Page previews are optional; keep the validated DOCX candidate if the
+        # remote renderer is temporarily unavailable.
         render_warning = f"Page preview rendering was skipped: {type(exc).__name__}: {exc}"
 
     output.parent.mkdir(parents=True, exist_ok=True)

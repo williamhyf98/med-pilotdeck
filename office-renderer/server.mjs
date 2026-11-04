@@ -28,6 +28,12 @@ const JOB_ROOT = path.join(PROJECT_ROOT, '.runtime', 'office-renderer', 'jobs');
 const WORKER_PATH = path.join(MODULE_ROOT, 'worker.py');
 const PYTHON_PATH = findPythonPath();
 const BWRAP_PATH = process.env.PILOTDECK_OFFICE_RENDERER_BWRAP || 'bwrap';
+const OFFICE_TO_PDF_INPUT_EXTENSIONS = new Set([
+  'doc', 'docx', 'wps',
+  'xls', 'xlsx', 'et',
+  'ppt', 'pptx', 'dps',
+  'odt', 'ods', 'odp',
+]);
 
 let activeJobs = 0;
 const pendingJobs = [];
@@ -74,6 +80,10 @@ function authorized(req) {
 function safeFileName(value, fallback) {
   const name = path.basename(String(value || '').replaceAll('\\', '/'));
   return /^[A-Za-z0-9._-]{1,160}$/.test(name) ? name : fallback;
+}
+
+function fileExtension(fileName) {
+  return path.extname(fileName).slice(1).toLowerCase();
 }
 
 async function readRequestBody(req) {
@@ -265,10 +275,42 @@ async function handleRenderDocx(req, res) {
   res.end(archive);
 }
 
+async function handleRenderOffice(req, res, extension) {
+  if (!authorized(req)) return json(res, 401, { error: 'Unauthorized', code: 'office-renderer-unauthorized' });
+  const body = await readRequestBody(req);
+  const dpi = Math.max(72, Math.min(200, Number.parseInt(new URL(req.url, 'http://renderer').searchParams.get('dpi') || '144', 10) || 144));
+  const emitPdf = new URL(req.url, 'http://renderer').searchParams.get('emit_pdf') === '1';
+  const name = safeFileName(req.headers['x-file-name'], `input.${extension}`);
+  if (fileExtension(name) !== extension) {
+    throw rendererError(`Expected .${extension} input`, 415, 'office-input-format-unsupported');
+  }
+  const archive = await enqueue(() => withJob({ body, inputName: name }, async (jobDir) => {
+    const result = await runWorker(jobDir, { mode: 'render-office', inputName: name, dpi, emitPdf });
+    return makeRenderArchive(jobDir, result);
+  }));
+  res.statusCode = 200;
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Length', archive.length);
+  res.end(archive);
+}
+
 async function handleConvert(req, res, target) {
   if (!authorized(req)) return json(res, 401, { error: 'Unauthorized', code: 'office-renderer-unauthorized' });
   const body = await readRequestBody(req);
-  const inputName = safeFileName(req.headers['x-file-name'], `input.${target === 'xlsx' ? 'xls' : 'docx'}`);
+  const fallbackExtension = { xlsx: 'xls', pptx: 'ppt', ppt: 'pptx', xls: 'xlsx' }[target] || 'bin';
+  const inputName = safeFileName(req.headers['x-file-name'], `input.${fallbackExtension}`);
+  if (target === 'pdf' && !OFFICE_TO_PDF_INPUT_EXTENSIONS.has(fileExtension(inputName))) {
+    throw rendererError(
+      `Unsupported Office input format for PDF conversion: ${fileExtension(inputName) || '(missing extension)'}`,
+      415,
+      'office-input-format-unsupported',
+    );
+  }
+  const allowed = { xlsx: ['xls', 'xlsx', 'ods'], pptx: ['ppt'], xls: ['xlsx'], ppt: ['pptx'] };
+  if (allowed[target] && !allowed[target].includes(fileExtension(inputName))) {
+    throw rendererError(`Unsupported .${fileExtension(inputName)} input for ${target}`, 415, 'office-input-format-unsupported');
+  }
   const output = await enqueue(() => withJob(
     { body, inputName },
     async (jobDir) => {
@@ -281,7 +323,7 @@ async function handleConvert(req, res, target) {
     },
   ));
   res.statusCode = 200;
-  res.setHeader('Content-Type', target === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Type', target === 'pdf' ? 'application/pdf' : 'application/octet-stream');
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Content-Length', output.length);
   res.end(output);
@@ -297,15 +339,25 @@ async function requestHandler(req, res) {
         port: RENDERER_PORT,
         worker: existsSync(WORKER_PATH),
         bwrap: BWRAP_PATH,
-        capabilities: ['docx-render', 'office-to-pdf', 'office-to-xlsx'],
+        capabilities: ['docx-render', 'pptx-render', 'xlsx-render', 'office-to-pdf', 'office-to-xlsx', 'office-to-pptx', 'office-to-xls', 'office-to-ppt'],
+        conversions: {
+          pdf: [...OFFICE_TO_PDF_INPUT_EXTENSIONS],
+          xlsx: ['xls', 'xlsx', 'ods'],
+        },
       });
     }
     if (req.method !== 'POST') {
       return json(res, 405, { error: 'Method not allowed', code: 'office-renderer-method-not-allowed' });
     }
     if (url.pathname === '/v1/render/docx') return await handleRenderDocx(req, res);
+    if (url.pathname === '/v1/render/pptx') return await handleRenderOffice(req, res, 'pptx');
+    if (url.pathname === '/v1/render/ppt') return await handleRenderOffice(req, res, 'ppt');
+    if (url.pathname === '/v1/render/xlsx') return await handleRenderOffice(req, res, 'xlsx');
     if (url.pathname === '/v1/convert/pdf') return await handleConvert(req, res, 'pdf');
     if (url.pathname === '/v1/convert/xlsx') return await handleConvert(req, res, 'xlsx');
+    if (url.pathname === '/v1/convert/pptx') return await handleConvert(req, res, 'pptx');
+    if (url.pathname === '/v1/convert/xls') return await handleConvert(req, res, 'xls');
+    if (url.pathname === '/v1/convert/ppt') return await handleConvert(req, res, 'ppt');
     return json(res, 404, { error: 'Not found', code: 'office-renderer-not-found' });
   } catch (error) {
     const statusCode = Number.isInteger(error?.statusCode) ? error.statusCode : 500;

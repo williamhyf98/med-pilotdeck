@@ -52,12 +52,14 @@ export async function verifyFinalPptx(inputPath, options = {}) {
   });
 
   const availability = renderingAvailability();
+  const rendererUnavailable = (message) => /Office Renderer is (not configured|unavailable)|Office Renderer returned HTTP (404|502|503|504)/i.test(message);
   let render;
   if (!availability.available) {
     render = {
       status: 'skipped',
-      baseline: 'libreoffice',
-      reason: 'LibreOffice or a supported PDF renderer is unavailable',
+      baseline: 'office-renderer',
+      reason: 'Office Renderer is not configured',
+      warning: '未完成视觉验收：Office Renderer is not configured',
       availability,
     };
   } else {
@@ -87,10 +89,13 @@ export async function verifyFinalPptx(inputPath, options = {}) {
         };
       }
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const unavailable = rendererUnavailable(message);
       render = {
-        status: 'failed',
-        baseline: 'libreoffice',
-        error: error instanceof Error ? error.message : String(error),
+        status: unavailable ? 'skipped' : 'failed',
+        baseline: 'office-renderer',
+        error: message,
+        ...(unavailable ? { warning: `未完成视觉验收：${message}` } : {}),
       };
     }
   }
@@ -177,8 +182,8 @@ export async function verifyFinalPptx(inputPath, options = {}) {
     render,
     compatibility: {
       targetViewer: 'Microsoft PowerPoint',
-      automatedBaseline: 'LibreOffice plus PDF rasterization',
-      note: 'A LibreOffice font substitution warning is not by itself proof of a PowerPoint artifact defect.',
+      automatedBaseline: 'Office Renderer (node12 LibreOffice Worker) plus PDF rasterization',
+      note: 'A renderer font substitution warning is not by itself proof of a PowerPoint artifact defect.',
     },
   };
   report.report = path.join(qaDir, 'delivery.json');

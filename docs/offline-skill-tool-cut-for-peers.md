@@ -35,7 +35,11 @@ ClawHub、browser-use、IM 适配器、遥测，也不是「内置工具」，�
 | `frontend-slides` | 工作区单文件医学 HTML（无 CDN / 无公网部署）                 |
 
 
-办公五件套与 HTML 展示**不要求公网**。系统依赖（LibreOffice、Poppler 等）需打进离线包或在目标机预装。文档类 Skill 如何调用 `*.sh`、为何必须留 `bash` 并做加固，见 6.1。`frontend-slides` 不走 `*.sh`，由模型 `write_file` 出 HTML。
+办公五件套与 HTML 展示**不要求公网**。Office 的转换、公式重算和页面渲染
+通过医院内网 HTTP Renderer 完成；仅 Renderer 节点预置 LibreOffice，应用端
+无需安装。其他系统依赖按技能打进离线包或在相应服务节点预装。文档类 Skill
+如何调用 `*.sh`、为何必须留 `bash` 并做加固，见 6.1。`frontend-slides`
+不走 `*.sh`，由模型 `write_file` 出 HTML。
 
 ### 2.2 明确依赖公网或云 SaaS
 
@@ -124,6 +128,20 @@ Linux 离线包通常没有这套图形环境和操作员工作流。即使 `.md
 
 
 
+### 3.1.1 依赖内网服务的本地工具
+
+这一类既不是纯本地能力，也不出公网：它调用医院内网的 Office Renderer。注册名同样以 `createBuiltinRegistry` 为准。
+
+| 工具 | 作用 | 备注 |
+| --- | --- | --- |
+| `office_to_pdf` | 把工作区已有的 DOCX / XLSX / PPTX 转成 PDF，保留分页与版式 | 通过 `PILOTDECK_OFFICE_RENDERER_URL` 调用内网 Renderer，只上传文件内容，不下发本机路径。未配置或 Renderer 不可达时工具标记为不可用并报错，**不会回落本机 LibreOffice**。输入输出必须是不同文件，默认不覆盖已有 PDF。 |
+
+相关约定：
+
+- 已有 Office 文件转 PDF 一律走本工具；`pdf.sh make` 只用于从文本 / Markdown / spec 新建 PDF。
+- 结构审计与 OOXML 校验是本地能力；Renderer 不可用时仍可交付文件，但必须标记「未完成视觉验收」。
+- LibreOffice 只允许在 Renderer 服务端的受控 Worker 中运行（环境变量 `PILOTDECK_OFFICE_RENDERER_WORKER=1`）。
+
 ### 3.2 明确出网
 
 
@@ -193,6 +211,7 @@ Linux 离线包通常没有这套图形环境和操作员工作流。即使 `.md
 | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
 | 文档 Skill | `pdf` `docx` `pptx` `spreadsheets` `diagram-maker` `frontend-slides`                                                                                           | 对话里读/改/生成 Office、PDF、医学 HTML。底层脚本是本机 Python（HTML 由模型写文件），见 6.1   |
 | 3.1 本地工具 | `read_file` / `write_file` / `edit_file` / `glob` / `grep` / `bash` / `read_skill` / `todo_write` / `ask_user_question` / `get_current_time` | 文档 Skill 目前靠 `bash` 调 `*.sh`；领域能力走插件 MCP，不走这些 |
+| 3.1.1 内网服务工具 | `office_to_pdf` | DOCX / XLSX / PPTX 转 PDF 走内网 Office Renderer；Renderer 不可用时明确报不可用，不回落本机 LibreOffice |
 
 
 **建议删除（coding、开发工作站、放大失控面）：**

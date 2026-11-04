@@ -26,6 +26,27 @@ test("default prompt exposes bundled declarative automation instead of a script 
   assert.doesNotMatch(prompt, /write it to a workspace file first/u);
 });
 
+test("default prompt routes Office-to-PDF conversion to the registered tool", () => {
+  const assembler = new PromptAssembler({
+    listMcpInstructions: () => [],
+    listCommands: () => [],
+    listSkills: () => [],
+  } as never);
+  const prompt = assembler.assemble({
+    cwd: "/workspace",
+    provider: "test",
+    model: "test",
+    permissionMode: "bypassPermissions",
+    additionalWorkingDirectories: [],
+    tools: [],
+  }).joined;
+
+  assert.match(prompt, /已有 DOCX、XLSX 或 PPTX 要转换成 PDF/u);
+  assert.match(prompt, /office_to_pdf/u);
+  assert.match(prompt, /不要用 pdf\.sh make/u);
+  assert.match(prompt, /不要直接调用 LibreOffice/u);
+});
+
 test("model-visible write and bash descriptions do not recommend generated programs", () => {
   const descriptions = [
     createWriteFileTool().description,

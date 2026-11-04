@@ -10,7 +10,7 @@
 | --- | --- |
 | 通用 Skill | `pdf` `docx` `pptx` `spreadsheets` `diagram-maker` `frontend-slides` |
 | 医学 Skill | `med-medical` `med-case-report` `med-trauma-assist` `med-trauma-stage-plan`（插件目录，不复制进根 `skills/`） |
-| 内置工具 | `read_file` `write_file` `edit_file` `glob` `grep` `bash` `read_skill` `todo_write` `ask_user_question` `get_current_time` |
+| 内置工具 | `read_file` `write_file` `edit_file` `glob` `grep` `bash` `read_skill` `todo_write` `ask_user_question` `get_current_time` `office_to_pdf` |
 | 插件 MCP | `mcp__med-tools__*` 全部保留 |
 
 实现原则：一次只做一个阶段；能用配方/文案解决的不要上 Playwright 或 Python 沙箱；禁止把公网版 skill 原样拷回。
