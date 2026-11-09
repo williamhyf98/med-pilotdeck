@@ -232,13 +232,13 @@
     "permissionMode": "Permission Mode",
     "modes": {
       "default": "Default Mode",
-      "bypassPermissions": "Bypass Permissions",
+      "bypassPermissions": "Compatibility Mode",
       "plan": "Plan Mode"
     },
     "descriptions": {
-      "default": "Only trusted commands (ls, cat, grep, git status, etc.) run automatically. Other commands are skipped. Can write to workspace.",
-      "bypassPermissions": "Full system access with no restrictions. All commands run automatically with full disk and network access. Use with caution.",
-      "plan": "Planning mode - no commands are executed"
+      "default": "Ordinary built-in operations run within the task; unsafe paths and unregistered commands are denied.",
+      "bypassPermissions": "Compatibility mode; task paths, registered commands and administrator blocks still apply.",
+      "plan": "Planning mode - task-local inspection and plan writing only"
     },
     "technicalDetails": "Technical details"
   },
@@ -312,9 +312,9 @@
     "contextStatusUnknownBody": "No token budget has been reported yet. It will appear after the next model response.",
     "permissions": {
       "default": "Default Permissions",
-      "defaultDescription": "Ask before risky operations",
-      "bypassPermissions": "Full Access",
-      "bypassPermissionsDescription": "Skip confirmations and allow full access",
+      "defaultDescription": "Ordinary task operations run automatically",
+      "bypassPermissions": "Compatibility Mode",
+      "bypassPermissionsDescription": "System safety policy and task paths still apply",
       "change": "Select permission mode"
     },
     "runModes": {

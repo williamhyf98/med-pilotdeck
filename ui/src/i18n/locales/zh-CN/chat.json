@@ -232,13 +232,13 @@
     "permissionMode": "权限模式",
     "modes": {
       "default": "默认模式",
-      "bypassPermissions": "无限制模式",
+      "bypassPermissions": "兼容模式",
       "plan": "计划模式"
     },
     "descriptions": {
-      "default": "只有受信任的命令（ls、cat、grep、git status 等）自动运行。其他命令将被跳过。可以写入工作区。",
-      "bypassPermissions": "完全的系统访问，无限制。所有命令自动运行，具有完整的磁盘和网络访问权限。请谨慎使用。",
-      "plan": "计划模式 - 不执行任何命令"
+      "default": "任务内的普通内置操作自动运行；违规路径和未登记命令直接拒绝。",
+      "bypassPermissions": "兼容模式；任务目录、登记命令和管理员禁用规则仍然生效。",
+      "plan": "计划模式 - 仅允许任务内只读检查和撰写计划"
     },
     "technicalDetails": "技术细节"
   },
@@ -295,9 +295,9 @@
     "contextStatusUnknownBody": "尚未上报 token 用量，会在下一次模型响应后显示。",
     "permissions": {
       "default": "默认权限",
-      "defaultDescription": "需要风险操作时先询问",
-      "bypassPermissions": "完全访问权限",
-      "bypassPermissionsDescription": "跳过确认并允许完全访问",
+      "defaultDescription": "任务内普通操作自动执行",
+      "bypassPermissions": "兼容模式",
+      "bypassPermissionsDescription": "仍受系统安全策略和任务目录限制",
       "change": "选择权限模式"
     },
     "runModes": {

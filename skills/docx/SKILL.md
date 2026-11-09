@@ -1,16 +1,11 @@
 ---
 name: docx
-description: 读取、创建、编辑、审阅、比较、净化、渲染、转换并校验工作区 Microsoft Word .docx 文档。输入或交付物是 .docx 时使用本技能，包括把对话里刚生成的方案、病例报告导出为 Word。已有 DOCX 转 PDF 优先使用注册工具 office_to_pdf；其余 Word 操作使用捆绑的 docx.sh。
+description: 读取、创建、编辑、审阅、比较、净化、渲染、转换并校验工作区 Microsoft Word .docx 文档。输入或交付物是 .docx 时使用本技能，包括把对话里刚生成的方案、病例报告导出为 Word。新建 DOCX 使用结构化工具 docx_make；已有 DOCX 转 PDF 优先使用注册工具 office_to_pdf；其余 Word 操作使用捆绑的 docx.sh。
 ---
 
 # Word DOCX
 
-只用 `read_skill` 返回的 `<path>` 所在目录。那就是本技能根目录。不要用
-`$PILOT_HOME/skills/docx`，不要在用户 skills 目录里查找本技能。
-
-```bash
-DOCX_SKILL_ROOT="$(dirname "<path>")"
-```
+新建 DOCX 时调用结构化工具 `docx_make`，不要拼接 Bash 或自行查找脚本。已有文档的检查、编辑、审阅和高级 QA 才使用系统登记的 DOCX Skill 业务入口。
 
 `docx.sh` 会自己定位完整的隔离运行时和捆绑字体。本地运行时未就绪时会返回
 JSON 错误「交付包不完整」；此时停止并报告，不要改走其它实现。
@@ -34,31 +29,43 @@ LibreOffice。
 
 ## Agent 可用表面
 
-- 只调用本技能的 `docx.sh`
+- 创建新 DOCX：只调用 `docx_make`
+- `docx_make` 的输入使用 `title`、`body`、`body_file_path`、`markdown_path`、
+  `spec_path`、`output_path`、`force` 和 `timeout_ms`
+- 需要创建声明式内容时，用 `write_file` 写入 `scratch/` 下的 `.md` / `.json`，
+  再把相对任务路径传给 `docx_make`
+
 - 只用 `.md` / `.json` 暂存声明式内容
 - 不搜索运行时、缓存、系统字体或替代工具
 - 命令返回 `unsupported`、`blocked` 或「交付包不完整」时立即停止并报告
 
-## 输出位置
-
-用户给了路径就用用户的路径。否则写到当前工作目录下的 `exports/`：
+需要确认能力或复杂规范时，调用已登记的查询入口：
 
 ```bash
-mkdir -p "$PWD/exports"
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" capabilities
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command create
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command review
 ```
 
-例如用户要「病例报告.docx」：
-`--out "$PWD/exports/病例报告.docx"`。
+不要调用 `docx.sh --help`，也不要通过 `find`、`grep` 或读取脚本源码猜测参数。
+
+## 输出位置
+
+交付文件写入本任务 `exports/`；中间文件写入 `scratch/`。需要目录时使用文件工具或由技能创建，不调用 `mkdir`。
+
+例如用户要「病例报告.docx」：`output_path: "exports/病例报告.docx"`。
 
 ## 新建 Word
 
 常见新建只调用 `make`：
 
-```bash
-bash "$DOCX_SKILL_ROOT/scripts/docx.sh" make \
-  --title "病例报告" \
-  --body "【病例报告】" \
-  --out "$PWD/exports/病例报告.docx"
+```json
+{
+  "title": "病例报告",
+  "body": "【病例报告】",
+  "output_path": "exports/病例报告.docx"
+}
 ```
 
 可用参数：
@@ -87,12 +94,12 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" make \
 长文不要塞进 `--body "..."`。用 `write_file` 把完整原文写成 Markdown，
 再交给 `make`：
 
-```bash
-mkdir -p "$PWD/scratch/qa"
-bash "$DOCX_SKILL_ROOT/scripts/docx.sh" make \
-  --title "救治方案" \
-  --markdown "$PWD/scratch/qa/content.md" \
-  --out "$PWD/exports/救治方案.docx"
+```json
+{
+  "title": "救治方案",
+  "markdown_path": "scratch/docx/content.md",
+  "output_path": "exports/救治方案.docx"
+}
 ```
 
 Markdown 中：
@@ -125,10 +132,12 @@ Word 插图只能用磁盘路径，不能用聊天气泡里的图。创面照等
 
 ## 检查或读取
 
+以下是高级维护能力的兼容入口；新建文档不要通过这些命令完成。
+
 ```bash
 bash "$DOCX_SKILL_ROOT/scripts/docx.sh" inspect \
-  --input "$INPUT_DOCX" \
-  --out "$PWD/scratch/qa/inspection.json"
+  --input "inbox/source.docx" \
+  --out "$PILOTDECK_WORK_DIR/docx/qa/inspection.json"
 ```
 
 按需使用 `--summary`、`--search`、`--location`。只读任务不要创建新的 DOCX。
@@ -141,8 +150,7 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" inspect \
 
 ### 定向编辑
 
-对 `edit` 先运行 `prepare --existing-document`，再查询
-`schema --command edit`，把 patch JSON 放在本轮 `PILOTDECK_WORK_DIR` 下。
+对 `edit` 使用已登记的参数，把 patch JSON 放在本轮 `scratch/` 下。
 调用 `resolve-latest` 取得最新版本，然后按工作流完成 edit、QA、preflight
 和 deliver。
 
@@ -150,17 +158,17 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" inspect \
 
 `review` 用于添加批注和修订替换；`finalize` 用于接受/拒绝修订和移除批注。
 先阅读 [ooxml-and-safety.md](references/ooxml-and-safety.md)，并查询
-`schema --command review`。
+技能参考文档中的声明式字段。
 
 ### 其他保留能力
 
 ```bash
-bash "$DOCX_SKILL_ROOT/scripts/docx.sh" compare --before old.docx --after new.docx --out "$PWD/scratch/qa/compare.json"
-bash "$DOCX_SKILL_ROOT/scripts/docx.sh" sanitize --input source.docx --out "$INTERNAL_CANDIDATE"
-bash "$DOCX_SKILL_ROOT/scripts/docx.sh" refresh-toc --input source.docx --out "$INTERNAL_CANDIDATE" --render-dir "$INTERNAL_RENDER_DIR"
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" compare --before old.docx --after new.docx --out "$PILOTDECK_WORK_DIR/docx/qa/compare.json"
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" sanitize --input source.docx --out "$PILOTDECK_WORK_DIR/docx/qa/candidate.docx"
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" refresh-toc --input source.docx --out "$PILOTDECK_WORK_DIR/docx/qa/candidate.docx" --render-dir "$PILOTDECK_WORK_DIR/docx/qa/render"
 bash "$DOCX_SKILL_ROOT/scripts/docx.sh" validate --input source.docx
-bash "$DOCX_SKILL_ROOT/scripts/docx.sh" audit --input source.docx --out "$PWD/scratch/qa/audit.json"
-bash "$DOCX_SKILL_ROOT/scripts/docx.sh" render --input source.docx --out-dir "$PWD/scratch/qa/render"
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" audit --input source.docx --out "$PILOTDECK_WORK_DIR/docx/qa/audit.json"
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" render --input source.docx --out-dir "$PILOTDECK_WORK_DIR/docx/qa/render"
 ```
 
 兼容脚本：把已有 Word 转成 PDF：

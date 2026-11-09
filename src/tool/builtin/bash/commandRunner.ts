@@ -5,15 +5,21 @@ import { resolvePilotHome } from "../../../pilot/paths.js";
 import { selectSandbox, type CommandSandbox } from "./sandbox/index.js";
 import { grantForms, skillCacheEnv } from "./sandbox/grants.js";
 import { resolveAppRoot } from "./sandbox/bwrap.js";
+import { resolveTaskGrants } from "./sandbox/taskGrants.js";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
+import { DEFAULT_RESOURCE_LIMITS } from "../../../security/policy/resourceLimits.js";
 
 export type PilotDeckCommandOptions = {
   cwd: string;
+  /** 注册业务命令的任务根：只挂载 inbox/scratch/exports。 */
+  taskRoot?: string;
   env?: NodeJS.ProcessEnv;
-  /** 用户 home（沙箱可写根）。缺省时取 env 中的 PILOT_HOME。 */
+  /** 用户 home（旧内部命令的沙箱根；注册命令由 taskRoot 收紧）。 */
   userHome?: string;
   timeoutMs: number;
+  /** Hard cap applied while stdout/stderr are being read. */
+  maxOutputBytes?: number;
   signal?: AbortSignal;
   /** Called on each stdout chunk as it arrives. Errors thrown by the callback are swallowed. */
   onStdout?: (chunk: string) => void;
@@ -27,10 +33,12 @@ export type PilotDeckCommandResult = {
   stderr: string;
   timedOut: boolean;
   durationMs: number;
+  outputLimitExceeded?: "stdout" | "stderr" | "combined";
 };
 
 export type PilotDeckCommandRunner = {
   run(command: string, options: PilotDeckCommandOptions): Promise<PilotDeckCommandResult>;
+  runRegistered?(file: string, args: string[], options: PilotDeckCommandOptions): Promise<PilotDeckCommandResult>;
 };
 
 type SpawnShell = typeof spawn;
@@ -143,6 +151,18 @@ export class NodeShellCommandRunner implements PilotDeckCommandRunner {
   constructor(private readonly spawnShell: SpawnShell = spawn) {}
 
   run(command: string, options: PilotDeckCommandOptions): Promise<PilotDeckCommandResult> {
+    return this.launch(command, options);
+  }
+
+  runRegistered(file: string, args: string[], options: PilotDeckCommandOptions): Promise<PilotDeckCommandResult> {
+    if (!isAbsolute(file)) return Promise.reject(new Error("Registered executable must have an absolute system path."));
+    if (options.taskRoot && (!_sandbox || _sandbox.kind === "none")) {
+      return Promise.reject(new Error("Task-scoped registered commands require an OS sandbox."));
+    }
+    return this.launch({ file, args }, options);
+  }
+
+  private launch(invocation: string | { file: string; args: string[] }, options: PilotDeckCommandOptions): Promise<PilotDeckCommandResult> {
     const startedAt = Date.now();
     return new Promise((resolve, reject) => {
       const isWindows = process.platform === "win32";
@@ -152,33 +172,66 @@ export class NodeShellCommandRunner implements PilotDeckCommandRunner {
       // setsid() 会以 EPERM 失败。因此 bwrap 不使用独立进程组，改为对 bwrap 进程本身发信号；
       // --unshare-pid + --die-with-parent 保证沙箱内的进程随之结束。
       const detached = !isWindows && sandbox?.kind !== "bwrap";
-      const launch = sandbox
-        ? sandbox.wrap(command, {
-            cwd: options.cwd,
-            userHome: options.userHome ?? resolvePilotHome(options.env ?? process.env),
+      const userHome = options.userHome ?? resolvePilotHome(options.env ?? process.env);
+      // A registered command may only see inbox/scratch/exports. The task root
+      // itself is intentionally not mounted/readable, so launching with it as
+      // cwd makes macOS getcwd() fail and Linux bubblewrap cannot chdir there.
+      // Run from scratch instead; all registered arguments are already resolved
+      // against the task root and the script's output boundary is unchanged.
+      const taskGrants = typeof invocation !== "string" && options.taskRoot
+        ? resolveTaskGrants(userHome, options.taskRoot)
+        : undefined;
+      const launchCwd = taskGrants?.writable[0] ?? options.cwd;
+      const sandboxOptions = {
+            cwd: launchCwd,
+            userHome,
+            ...(typeof invocation !== "string" && options.taskRoot ? { taskRoot: options.taskRoot } : {}),
             env: options.env ?? process.env,
-          })
+          };
+      if (sandbox && typeof invocation !== "string" && !sandbox.wrapArgv) {
+        reject(new Error("Registered argv execution is unavailable in this sandbox."));
+        return;
+      }
+      const wrapped = sandbox
+        ? typeof invocation === "string"
+          ? sandbox.wrap(invocation, sandboxOptions)
+          : sandbox.wrapArgv!(invocation, sandboxOptions)
         : undefined;
       const spawnEnv = sandbox?.kind === "sandbox-exec"
-        ? { ...options.env, HOME: options.userHome ?? resolvePilotHome(options.env ?? process.env),
-            PILOT_HOME: options.userHome ?? resolvePilotHome(options.env ?? process.env),
-            XDG_CACHE_HOME: join(options.userHome ?? resolvePilotHome(options.env ?? process.env), ".cache"),
-            TMPDIR: join(options.userHome ?? resolvePilotHome(options.env ?? process.env), ".tmp"),
+        ? { ...options.env, HOME: options.taskRoot ?? options.userHome ?? resolvePilotHome(options.env ?? process.env),
+            PILOT_HOME: options.taskRoot ?? options.userHome ?? resolvePilotHome(options.env ?? process.env),
+            XDG_CACHE_HOME: options.taskRoot
+              ? join(options.taskRoot, "scratch", ".cache")
+              : join(options.userHome ?? resolvePilotHome(options.env ?? process.env), ".cache"),
+            TMPDIR: typeof invocation === "string"
+              ? join(options.userHome ?? resolvePilotHome(options.env ?? process.env), ".tmp")
+              : options.taskRoot
+                ? join(options.taskRoot, "scratch")
+                : options.env?.TMPDIR,
             ...skillCacheEnv(resolveAppRoot()) }
         : options.env;
-      const child = launch
-        ? this.spawnShell(launch.file, launch.args, {
-            cwd: options.cwd,
+      const child = wrapped
+        ? this.spawnShell(wrapped.file, wrapped.args, {
+            cwd: launchCwd,
             env: spawnEnv,
             shell: false,
             detached,
             windowsHide: isWindows,
             stdio: ["ignore", "pipe", "pipe"],
           })
-        : this.spawnShell(command, {
+        : typeof invocation === "string"
+          ? this.spawnShell(invocation, {
             cwd: options.cwd,
             env: options.env,
             shell: true,
+            detached,
+            windowsHide: isWindows,
+            stdio: ["ignore", "pipe", "pipe"],
+          })
+          : this.spawnShell(invocation.file, invocation.args, {
+            cwd: options.cwd,
+            env: options.env,
+            shell: false,
             detached,
             windowsHide: isWindows,
             stdio: ["ignore", "pipe", "pipe"],
@@ -187,6 +240,8 @@ export class NodeShellCommandRunner implements PilotDeckCommandRunner {
       let stdout = "";
       let stderr = "";
       let timedOut = false;
+      let outputLimitExceeded: "stdout" | "stderr" | "combined" | undefined;
+      let capturedOutputBytes = 0;
       let settled = false;
 
       function killProcessGroup() {
@@ -255,8 +310,8 @@ export class NodeShellCommandRunner implements PilotDeckCommandRunner {
           clearTimeout(closeFallback);
           closeFallback = undefined;
         }
-        stdout += stdoutDecoder.flush();
-        stderr += stderrDecoder.flush();
+        appendOutput("stdout", stdoutDecoder.flush());
+        appendOutput("stderr", stderrDecoder.flush());
         cleanup();
         resolve({
           exitCode,
@@ -264,34 +319,21 @@ export class NodeShellCommandRunner implements PilotDeckCommandRunner {
           stderr,
           timedOut,
           durationMs: Date.now() - startedAt,
+          ...(outputLimitExceeded ? { outputLimitExceeded } : {}),
         });
       }
 
       child.stdout?.on("data", (chunk: Buffer) => {
         const text = stdoutDecoder.decode(chunk);
-        stdout += text;
-        if (options.onStdout) {
-          try {
-            options.onStdout(text);
-          } catch {
-            // Progress callbacks are fire-and-forget; never crash the runner.
-          }
-        }
+        appendOutput("stdout", text);
       });
       child.stderr?.on("data", (chunk: Buffer) => {
         const text = stderrDecoder.decode(chunk);
-        stderr += text;
-        if (options.onStderr) {
-          try {
-            options.onStderr(text);
-          } catch {
-            // Progress callbacks are fire-and-forget; never crash the runner.
-          }
-        }
+        appendOutput("stderr", text);
       });
       child.on("error", (error) => {
-        stdout += stdoutDecoder.flush();
-        stderr += stderrDecoder.flush();
+        appendOutput("stdout", stdoutDecoder.flush());
+        appendOutput("stderr", stderrDecoder.flush());
         cleanup();
         if (options.signal?.aborted) {
           resolve({
@@ -300,6 +342,7 @@ export class NodeShellCommandRunner implements PilotDeckCommandRunner {
             stderr,
             timedOut: true,
             durationMs: Date.now() - startedAt,
+            ...(outputLimitExceeded ? { outputLimitExceeded } : {}),
           });
           return;
         }
@@ -318,8 +361,39 @@ export class NodeShellCommandRunner implements PilotDeckCommandRunner {
       child.on("close", (exitCode) => {
         finish(exitCode);
       });
+
+      function appendOutput(stream: "stdout" | "stderr", text: string): void {
+        if (!text || outputLimitExceeded) return;
+        const maxBytes = options.maxOutputBytes ?? DEFAULT_RESOURCE_LIMITS.maxToolOutputBytes;
+        const available = Math.max(0, maxBytes - capturedOutputBytes);
+        const textBytes = Buffer.byteLength(text, "utf8");
+        const retained = textBytes <= available ? text : truncateUtf8(text, available);
+        if (stream === "stdout") stdout += retained;
+        else stderr += retained;
+        capturedOutputBytes += Buffer.byteLength(retained, "utf8");
+        if (textBytes > available) {
+          outputLimitExceeded = stdout.length > 0 && stderr.length > 0 ? "combined" : stream;
+          killProcessGroup();
+          forceResolveAfterKill();
+          return;
+        }
+        if (!retained) return;
+        const callback = stream === "stdout" ? options.onStdout : options.onStderr;
+        try {
+          callback?.(retained);
+        } catch {
+          // Progress callbacks are fire-and-forget; never crash the runner.
+        }
+      }
     });
   }
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  if (maxBytes <= 0) return "";
+  const bytes = Buffer.from(value, "utf8");
+  if (bytes.byteLength <= maxBytes) return value;
+  return bytes.subarray(0, maxBytes).toString("utf8").replace(/\uFFFD$/u, "");
 }
 
 export type ShellOutputDecoder = {

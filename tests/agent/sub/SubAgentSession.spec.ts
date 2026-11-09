@@ -195,9 +195,9 @@ test("read-only subagent evaluates bash safety from the real command", async () 
     const runtime = new ToolRuntime(scoped, new PermissionRuntime());
     const readResult = await runtime.execute({ id: "read-command", name: "bash", input: { command: "pwd" } }, runtimeContext(config));
     assert.equal(readResult.type, "success");
-    assert.deepEqual(commands, ["pwd"]);
+    assert.deepEqual(commands, [], "registered workspace inspection does not launch a shell");
     const writeResult = await runtime.execute({ id: "write-command", name: "bash", input: { command: "touch blocked.txt" } }, runtimeContext(config));
     assert.equal(writeResult.type, "error");
     assert.equal(writeResult.type === "error" ? writeResult.error.code : "", "ask_mode_violation");
-    assert.deepEqual(commands, ["pwd"], "blocked command must not reach the shell runner");
+    assert.deepEqual(commands, [], "blocked command must not reach the shell runner");
 });

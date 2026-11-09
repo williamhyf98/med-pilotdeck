@@ -73,6 +73,30 @@ test("only the user home is writable: userHome is the sole --bind", () => {
   assert.deepEqual(writable, ["/home/u1"]);
 });
 
+test("registered task commands mount inbox read-only and only scratch/exports writable", () => {
+  const root = mkdtempSync(join(tmpdir(), "bwrap-task-"));
+  try {
+    const home = join(root, "users", "1");
+    const task = join(home, "workspaces", "current");
+    for (const folder of ["inbox", "scratch", "exports"]) mkdirSync(join(task, folder), { recursive: true });
+    mkdirSync(join(home, "workspaces", "other"), { recursive: true });
+    const sandbox = new BwrapSandbox({ ...baseConfig, network: false });
+    const launch = sandbox.wrapArgv({ file: "/bin/bash", args: ["/app/skills/pdf/scripts/pdf.sh", "make"] }, {
+      cwd: task, taskRoot: task, userHome: home, env: { TMPDIR: join(task, "scratch", ".tmp") },
+    });
+    const grants = sandbox.grants(home, task);
+    assert.deepEqual(grants.writable.filter((p) => p.startsWith(home)),
+      [join(task, "scratch"), join(task, "exports")]);
+    assert.ok(grants.readOnly.includes(join(task, "inbox")));
+    assert.ok(!launch.args.includes("--bind") || !launch.args.some((arg, index) =>
+      arg === "--bind" && launch.args[index + 1] === home));
+    assert.ok(!launch.args.includes(join(home, "workspaces", "other")));
+    assert.deepEqual(launch.args.slice(-3), ["/bin/bash", "/app/skills/pdf/scripts/pdf.sh", "make"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("adds --unshare-net only when network is disabled", (t) => {
   const root = mkdtempSync(join(tmpdir(), "bwrap-net-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));

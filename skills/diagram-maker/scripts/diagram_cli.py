@@ -9,11 +9,14 @@ import json
 import math
 import os
 import re
+import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "_shared"))
 
 
 COLORS = {
@@ -611,6 +614,21 @@ def self_test_command() -> dict[str, Any]:
         return {"status": "ok", "self_test": True, "nodes": 3, "edges": 2}
 
 
+def capabilities_command() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "skill": "diagram-maker",
+        "commands": ["make"],
+        "pathContract": {
+            "inputs": ["inbox", "scratch", "exports"],
+            "intermediateOutputs": ["scratch"],
+            "finalOutputs": ["exports"],
+            "remoteResources": False,
+        },
+        "imageFields": [],
+    }
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="diagram.sh")
     subcommands = root.add_subparsers(dest="command", required=True)
@@ -625,6 +643,7 @@ def parser() -> argparse.ArgumentParser:
     make.add_argument("--out", required=True)
     make.add_argument("--force", action="store_true")
     make.set_defaults(theme_explicit="--theme" in os.sys.argv)
+    subcommands.add_parser("capabilities", help="List the registered diagram capability surface")
     subcommands.add_parser("self-test", help="Run a dependency-free smoke test")
     return root
 
@@ -632,7 +651,13 @@ def parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = parser().parse_args()
     try:
-        result = self_test_command() if args.command == "self-test" else make_command(args)
+        result = (
+            self_test_command()
+            if args.command == "self-test"
+            else capabilities_command()
+            if args.command == "capabilities"
+            else make_command(args)
+        )
     except (DiagramError, OSError, UnicodeError, json.JSONDecodeError) as exc:
         print(json.dumps({"status": "error", "code": "invalid-diagram-input", "error": str(exc)}, ensure_ascii=False))
         return 2

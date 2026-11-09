@@ -1,5 +1,9 @@
 # API 快速入门
 
+> **维护者专用。** 本文介绍的 builder、`scaffold` 和 `build` 只用于离线交付包开发与自测，
+> 不属于普通 Agent 的调用面。普通 Agent 只能调用 `pptx.sh capabilities` 以及
+> `SKILL.md` 列出的已登记业务子命令，不得创建或执行 `.mjs` 构建器。
+
 所有命令示例都假定使用下列按轮次限定的路径。将每个构建器、候选文件、转换、渲染和报告都放在 `WORKSPACE` 下；只有 `FINAL_PPTX` 面向用户。
 
 ```bash

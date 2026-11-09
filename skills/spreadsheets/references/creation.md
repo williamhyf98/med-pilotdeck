@@ -1,6 +1,7 @@
 # 创建与受控编辑表格
 
-Agent 只填写 `spreadsheet.sh make` 参数；不要编写 JavaScript 或 Python。
+普通 Agent 通过结构化工具 `spreadsheets_make` 创建或受控修改表格；
+不要编写 JavaScript 或 Python。本文的 spec 字段通过 `spec_path` 传入。
 
 ## Markdown
 
@@ -137,11 +138,12 @@ Markdown 只适合一张简单表。公式、图表和多个工作表使用 JSON
 
 调用：
 
-```bash
-bash "$SHEET" make \
-  --input "$INPUT_XLSX" \
-  --spec "$PILOTDECK_WORK_DIR/spreadsheets/edits.json" \
-  --out "$PWD/exports/修改后.xlsx"
+```json
+{
+  "input_path": "inbox/source.xlsx",
+  "spec_path": "scratch/spreadsheets/edits.json",
+  "output_path": "exports/修改后.xlsx"
+}
 ```
 
 不覆盖输入文件。已有工作表禁止 `headers` / `rows`，避免整表误重建。

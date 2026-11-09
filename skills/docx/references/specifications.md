@@ -226,6 +226,9 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
 栅格图像在插入前会被解码，透明度会展平到
 白色背景上，完全空白或无效的图像会被拒绝。
 
+图片宽度字段是 `width_inches`，单位为英寸；不支持 `width_cm`。
+如果使用厘米，请先换算为英寸（厘米 ÷ 2.54）。
+
 ### 目录与域
 
 ```json

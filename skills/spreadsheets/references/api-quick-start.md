@@ -1,5 +1,10 @@
 # JavaScript 构建器 API
 
+> **维护者专用。** 本文介绍的 JavaScript builder、`scaffold` 和 `build` 只用于离线交付包
+> 开发与自测，不属于普通 Agent 的调用面。普通 Agent 只能调用
+> `spreadsheet.sh capabilities` 以及 `SKILL.md` 列出的已登记业务子命令，不得创建或执行
+> `.mjs` 构建器。
+
 使用一个可执行的 `.mjs` 构建器。构建器导出默认异步函数，并返回 ExcelJS 工作簿或 `{ workbook, requirements }`。
 
 ## 构建器约定

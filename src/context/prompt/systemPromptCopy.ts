@@ -112,7 +112,8 @@ const EN: SystemPromptCopy = {
   userFacingPathRule:
     'Never include absolute paths or path fragments containing user IDs in any output shown to the user (including reasoning, plans, and replies). Use relative paths such as "src/main.ts" or virtual paths such as "~/projects/..." where "~" means your working directory. For bash commands, prefer relative paths and cd over constructing absolute paths. This output rule does not change the paths needed for tool calls.',
   skillsIntro1:
-    "Use the read_skill tool to load the full content of any skill listed below. Each entry includes the exact SKILL.md selected by the runtime.",
+    "Use the read_skill tool to load the full content of a listed skill when the task needs skill-specific instructions, advanced editing, audit, rendering, or a declarative specification. "
+    + "For a simple new document request that exactly matches a registered structured *_make tool, call that tool directly; do not call Bash or an interpreter.",
   skillsIntro2:
     "Resolve relative references, bundled entrypoints, and assets against the directory containing that SKILL.md.",
   skillsIntro3:
@@ -176,7 +177,8 @@ const ZH: SystemPromptCopy = {
   userFacingPathRule:
     '在所有输出给用户的内容中（包括思考、计划和回复），永远不要包含绝对路径或包含用户 ID 的路径片段。只使用相对路径（如 src/main.ts）或虚拟根路径（如 ~/projects/...，其中 ~ 代表你的工作目录）。执行 bash 命令时优先使用相对路径和 cd 切换目录，不要拼接绝对路径。该输出约束不改变工具调用所需的路径。',
   skillsIntro1:
-    "使用 read_skill 工具加载下列任一技能的完整内容。每条包含运行时选定的 SKILL.md 精确路径。",
+    "当任务需要技能专用规则、高级编辑、审计、渲染或声明式规格时，使用 read_skill 工具加载下列技能的完整内容。"
+    + "如果只是简单新建文档，且已有对应的结构化 *_make 工具，则直接调用该工具；不要调用 Bash 或解释器。",
   skillsIntro2:
     "相对引用、随附入口脚本和资源，一律相对该 SKILL.md 所在目录解析。",
   skillsIntro3:

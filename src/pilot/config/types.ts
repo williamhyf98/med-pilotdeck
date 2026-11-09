@@ -52,6 +52,7 @@ export type PilotRawConfig = {
   schemaVersion?: unknown;
   agent?: unknown;
   model?: unknown;
+  customEnv?: unknown;
   medical?: unknown;
   extension?: unknown;
   memory?: unknown;
@@ -260,6 +261,7 @@ export type PilotTelemetryConfig = {
 export type PilotConfig = {
   agent: PilotAgentConfig;
   model: ModelConfig;
+  customEnv: Record<string, string>;
   medical?: PilotMedicalConfig;
   extension: PilotExtensionConfig;
   memory?: PilotMemoryConfig;

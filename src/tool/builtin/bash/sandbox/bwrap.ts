@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CommandSandbox } from "./index.js";
 import { appReadOnlyGrants, grantForms, skillCacheEnv, type SandboxGrants } from "./grants.js";
+import { resolveTaskGrants } from "./taskGrants.js";
 
 export type BwrapSandboxConfig = {
   /** 代码根目录（含 package.json），只读挂载。 */
@@ -25,6 +26,9 @@ const PASSTHROUGH_ENV_KEYS = [
   "LANG",
   "PILOTDECK_OFFICE_RENDERER_URL",
   "PILOTDECK_OFFICE_RENDERER_TOKEN",
+  "PILOTDECK_WORKSPACE_DIR",
+  "PILOTDECK_WORKSPACE_CWD",
+  "PILOTDECK_WORK_DIR",
 ] as const;
 
 const PROBE_TIMEOUT_MS = 10_000;
@@ -35,20 +39,23 @@ export class BwrapSandbox implements CommandSandbox {
 
   constructor(private readonly config: BwrapSandboxConfig) {}
 
-  grants(userHome: string): SandboxGrants {
+  grants(userHome: string, taskRoot?: string): SandboxGrants {
     const readOnly = [...SYSTEM_RO_BINDS, ...appReadOnlyGrants(this.config.appRoot, this.config.nodeBinDir),
       ...this.config.extraBinds.map((bind) => resolve(bind))].filter(existsSync);
     return {
-      readOnly: [...new Set(readOnly.flatMap(grantForms))],
-      writable: grantForms(userHome),
+      readOnly: [...new Set([...readOnly, ...(taskRoot ? [resolveTaskGrants(userHome, taskRoot).inbox] : [])].flatMap(grantForms))],
+      writable: taskRoot
+        ? resolveTaskGrants(userHome, taskRoot).writable.flatMap(grantForms)
+        : grantForms(userHome),
     };
   }
 
-  wrap(command: string, options: { cwd: string; userHome: string; env: NodeJS.ProcessEnv }): { file: string; args: string[] } {
+  wrap(command: string, options: { cwd: string; userHome: string; taskRoot?: string; env: NodeJS.ProcessEnv }): { file: string; args: string[] } {
     const { appRoot, nodeBinDir, network, extraBinds } = this.config;
     const cwd = resolve(options.cwd);
     const userHome = resolve(options.userHome);
-    if (existsSync(userHome)) mkdirSync(join(userHome, ".tmp"), { recursive: true });
+    const taskGrants = options.taskRoot ? resolveTaskGrants(userHome, options.taskRoot) : undefined;
+    if (!taskGrants && existsSync(userHome)) mkdirSync(join(userHome, ".tmp"), { recursive: true });
     const args: string[] = [
       // 清空宿主环境，下方只通过 --setenv 注入白名单，避免密钥随子进程泄漏
       "--clearenv",
@@ -64,9 +71,13 @@ export class BwrapSandbox implements CommandSandbox {
     for (const path of appReadOnlyGrants(appRoot, nodeBinDir)) {
       args.push("--ro-bind", path, path);
     }
+    if (taskGrants) {
+      args.push("--ro-bind", taskGrants.inbox, taskGrants.inbox);
+      for (const dir of taskGrants.writable) args.push("--bind", dir, dir);
+    } else {
+      args.push("--bind", userHome, userHome);
+    }
     args.push(
-      // 用户 home 是唯一可写区域
-      "--bind", userHome, userHome,
       // 隔离与生命周期
       "--unshare-pid",
       "--unshare-ipc",
@@ -91,12 +102,17 @@ export class BwrapSandbox implements CommandSandbox {
       args.push("--setenv", key, value);
     }
     args.push(
-      "--setenv", "HOME", userHome,
-      "--setenv", "TMPDIR", join(userHome, ".tmp"),
-      "--setenv", "PILOT_HOME", userHome,
+      "--setenv", "HOME", options.taskRoot ?? userHome,
+      "--setenv", "TMPDIR", options.env.TMPDIR || (taskGrants ? join(taskGrants.writable[0], ".tmp") : join(userHome, ".tmp")),
+      "--setenv", "PILOT_HOME", options.taskRoot ?? userHome,
     );
     args.push("/bin/sh", "-c", command);
     return { file: "bwrap", args };
+  }
+
+  wrapArgv(argv: { file: string; args: string[] }, options: { cwd: string; userHome: string; taskRoot?: string; env: NodeJS.ProcessEnv }): { file: string; args: string[] } {
+    const launch = this.wrap("", options);
+    return { file: launch.file, args: [...launch.args.slice(0, -3), argv.file, ...argv.args] };
   }
 
   async probe(): Promise<{ ok: true } | { ok: false; reason: string }> {

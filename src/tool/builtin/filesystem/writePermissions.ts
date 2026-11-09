@@ -13,6 +13,16 @@ export function checkFilesystemWritePermission(
     return { type: "passthrough" };
   }
 
+  // Agent writes are task-scoped. A rejected path must remain a hard deny;
+  // permission rules and bypass mode must not turn it into an external write.
+  if (context.taskRoot) {
+    return {
+      type: "deny",
+      reason: { type: "safety", message: workspaceResolved.error.message },
+      message: workspaceResolved.error.message,
+    };
+  }
+
   const outsideResolved = resolvePilotDeckWorkspacePath(inputPath, context, {
     forWrite: true,
     allowOutsideWorkspace: true,

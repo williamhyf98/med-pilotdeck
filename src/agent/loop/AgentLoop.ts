@@ -94,7 +94,7 @@ const CIRCUIT_BREAKER_GRACE_PROMPT = [
 ].join(" ");
 const PLAN_MODE_REMINDER_MESSAGE = [
   "计划模式已启用。",
-  "先用只读工具查看工作区材料与可用 skill；只可在 `.pilotdeck/plans/` 下写或修改计划 markdown。",
+  "先用只读工具查看工作区材料与可用 skill；只可在 `scratch/plans/` 下写或修改计划 markdown。",
   "规划期间不要调用医学处理、文档转换或修改业务文件。",
   "计划完成后调用 exit_plan_mode(plan_file_path) 交给用户审核，不要只在普通回复里贴出计划后等待。",
 ].join("\n");
@@ -2415,6 +2415,7 @@ export class AgentLoop {
       permissionMode: this.config.permissionMode,
       allowPlanModeTools: input.allowPlanModeTools,
       permissionContext,
+      taskRoot: this.config.cwd,
       auditRecorder: this.dependencies.auditRecorder,
       now: this.now,
       env: buildTurnEnvironment(
@@ -2423,6 +2424,7 @@ export class AgentLoop {
         input.sessionId,
         input.turnId,
       ),
+      networkAccess: this.config.networkAccess,
       maxResultBytes: this.config.maxResultBytes,
       // Tools that need a secondary model call (e.g. subagent fallback)
       // get a thin adapter that funnels into the router's stream so nested

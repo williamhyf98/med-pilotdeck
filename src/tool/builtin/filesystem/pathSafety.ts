@@ -17,13 +17,25 @@ export const CROSS_USER_ACCESS_DENIED =
 export function resolvePilotDeckWorkspacePath(
   inputPath: string,
   context: PilotDeckToolRuntimeContext,
-  options?: { forWrite?: boolean; mustExist?: boolean; allowOutsideWorkspace?: boolean; allowRegisteredReadFiles?: boolean },
+  options?: {
+    forWrite?: boolean;
+    mustExist?: boolean;
+    allowOutsideWorkspace?: boolean;
+    allowRegisteredReadFiles?: boolean;
+    allowTaskRoot?: boolean;
+  },
 ): PilotDeckPathSafetyResult {
   if (!inputPath || inputPath.includes("\0")) {
     return {
       ok: false,
       error: toolError("invalid_tool_input", "Path must be a non-empty string without null bytes."),
     };
+  }
+
+  if (context.taskRoot) {
+    const sharedReadOnly = resolveSharedReadOnlyPath(inputPath, options);
+    if (sharedReadOnly) return sharedReadOnly;
+    return resolveAgentTaskPath(inputPath, context, options);
   }
 
   const absolutePath = path.resolve(path.isAbsolute(inputPath) ? inputPath : path.join(context.cwd, inputPath));
@@ -116,6 +128,219 @@ export function resolvePilotDeckWorkspacePath(
   return { ok: true, absolutePath, relativePath, root };
 }
 
+function resolveAgentTaskPath(
+  inputPath: string,
+  context: PilotDeckToolRuntimeContext,
+  options?: {
+    forWrite?: boolean;
+    mustExist?: boolean;
+    allowOutsideWorkspace?: boolean;
+    allowRegisteredReadFiles?: boolean;
+    allowTaskRoot?: boolean;
+  },
+): PilotDeckPathSafetyResult {
+  const taskRoot = path.resolve(context.taskRoot!);
+  const isAbsoluteInput = path.isAbsolute(inputPath);
+
+  // Registered attachments are a system-issued, exact-file read capability.
+  // They are checked before the normal relative-path rule because channel
+  // attachments currently arrive as absolute paths.
+  if (!options?.forWrite && options?.allowRegisteredReadFiles && isAbsoluteInput) {
+    const registered = resolveRegisteredReadPath(inputPath, context);
+    if (registered) {
+      return {
+        ok: true,
+        absolutePath: registered,
+        relativePath: path.relative(taskRoot, registered) || ".",
+        root: taskRoot,
+      };
+    }
+  }
+
+  if (
+    isAbsoluteInput
+    || inputPath.includes("\\")
+    || inputPath.split("/").some((part) => part === "..")
+  ) {
+    return taskPathDenied();
+  }
+
+  const cwd = path.resolve(context.cwd);
+  if (!isPathWithinRoot(cwd, taskRoot) || hasSymlinkComponent(cwd, taskRoot)) {
+    return taskPathDenied();
+  }
+
+  const absoluteInput = inputPath.replace(/\\/g, "/");
+  const usesWorkDir = absoluteInput === "$PILOTDECK_WORK_DIR"
+    || absoluteInput.startsWith("$PILOTDECK_WORK_DIR/");
+  const workDir = usesWorkDir ? resolveTaskWorkDir(context, taskRoot) : undefined;
+  if (usesWorkDir && !workDir) return taskPathDenied();
+  const absolutePath = absoluteInput === "$PILOTDECK_WORK_DIR"
+    ? workDir!
+    : absoluteInput.startsWith("$PILOTDECK_WORK_DIR/")
+      ? path.resolve(workDir!, absoluteInput.slice("$PILOTDECK_WORK_DIR/".length))
+      : path.resolve(cwd, inputPath);
+  const relativePath = path.relative(taskRoot, absolutePath);
+  if (relativePath === "" || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    if (!options?.allowTaskRoot || options.forWrite) return taskPathDenied();
+    return validateTaskPath(absolutePath, relativePath, taskRoot, context, options);
+  }
+
+  const firstPart = relativePath.split(path.sep)[0];
+  const allowedRoots = options?.forWrite ? ["scratch", "exports"] : ["inbox", "scratch", "exports"];
+  if (!firstPart || !allowedRoots.includes(firstPart)) {
+    return taskPathDenied();
+  }
+  if (options?.forWrite && firstPart === "inbox") {
+    return taskPathDenied();
+  }
+
+  return validateTaskPath(absolutePath, relativePath, taskRoot, context, options);
+}
+
+function resolveTaskWorkDir(
+  context: PilotDeckToolRuntimeContext,
+  taskRoot: string,
+): string | undefined {
+  const configured = String(context.env?.PILOTDECK_WORK_DIR ?? "").trim();
+  if (!configured) return path.join(taskRoot, "scratch", "work");
+  const workDir = path.resolve(configured);
+  const relativeWorkDir = path.relative(taskRoot, workDir);
+  const parts = relativeWorkDir.split(path.sep);
+  if (
+    !relativeWorkDir
+    || path.isAbsolute(relativeWorkDir)
+    || relativeWorkDir.startsWith(`..${path.sep}`)
+    || relativeWorkDir === ".."
+    || parts[0] !== "scratch"
+    || parts[1] !== "work"
+    || hasSymlinkComponent(workDir, taskRoot)
+  ) {
+    return undefined;
+  }
+  return workDir;
+}
+
+/**
+ * Agent task calls may read the bundled skills and plugins that are shared by
+ * all users. Keep this capability read-only and return paths relative to the
+ * application root so tools do not expose task-root escape paths in results.
+ */
+function resolveSharedReadOnlyPath(
+  inputPath: string,
+  options?: {
+    forWrite?: boolean;
+    mustExist?: boolean;
+  },
+): PilotDeckPathSafetyResult | undefined {
+  if (options?.forWrite) return undefined;
+
+  const appRoot = resolveAppRootForWhitelist();
+  if (!appRoot) return undefined;
+
+  const normalized = inputPath.replace(/\\/g, "/");
+  const isRelativeSharedPath =
+    !path.isAbsolute(inputPath)
+    && !normalized.split("/").some((part) => part === "..")
+    && /^(?:skills|plugins)(?:\/|$)/u.test(normalized);
+  const candidate = isRelativeSharedPath
+    ? path.resolve(appRoot, normalized)
+    : path.isAbsolute(inputPath)
+      ? path.resolve(inputPath)
+      : undefined;
+  if (!candidate) return undefined;
+
+  const realCandidate = resolveForContainment(candidate);
+  if (!realCandidate || !isUnderSharedReadOnlyRoot(realCandidate)) return undefined;
+
+  if (options?.mustExist) {
+    const real = safeRealpath(candidate);
+    if (!real || (!isRegularFile(real) && !isDirectory(real))) {
+      return {
+        ok: false,
+        error: toolError("file_not_found", `File ${inputPath} does not exist.`),
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    absolutePath: candidate,
+    relativePath: path.relative(appRoot, candidate) || ".",
+    root: appRoot,
+  };
+}
+
+function validateTaskPath(
+  absolutePath: string,
+  relativePath: string,
+  taskRoot: string,
+  context: PilotDeckToolRuntimeContext,
+  options?: { forWrite?: boolean; mustExist?: boolean },
+): PilotDeckPathSafetyResult {
+  if (hasSymlinkComponent(absolutePath, taskRoot)) {
+    return taskPathDenied();
+  }
+
+  if (options?.mustExist) {
+    const real = safeRealpath(absolutePath);
+    const realRoot = safeRealpath(taskRoot);
+    if (!real || !realRoot || !isPathWithinRoot(real, realRoot)) {
+      return {
+        ok: false,
+        error: toolError("file_not_found", `File ${relativePath || "."} does not exist.`),
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    absolutePath,
+    relativePath: relativePath || ".",
+    root: taskRoot,
+  };
+}
+
+function resolveRegisteredReadPath(
+  inputPath: string,
+  context: PilotDeckToolRuntimeContext,
+): string | undefined {
+  const requested = path.resolve(inputPath);
+  for (const allowedPath of context.allowedReadFiles ?? []) {
+    const allowed = path.resolve(allowedPath);
+    if (requested === allowed || requested === (safeRealpath(allowed) ?? allowed)) {
+      const real = safeRealpath(requested);
+      if (real && isRegularFile(real)) return real;
+    }
+  }
+  return undefined;
+}
+
+function taskPathDenied(): PilotDeckPathSafetyResult {
+  return {
+    ok: false,
+    error: toolError("path_not_allowed", "Path is outside the current task inputs and outputs."),
+  };
+}
+
+function hasSymlinkComponent(target: string, root: string): boolean {
+  const absoluteTarget = path.resolve(target);
+  const absoluteRoot = path.resolve(root);
+  if (!isPathWithinRoot(absoluteTarget, absoluteRoot)) return true;
+  const relativeTarget = path.relative(absoluteRoot, absoluteTarget);
+  let current = absoluteRoot;
+  for (const part of relativeTarget ? relativeTarget.split(path.sep) : []) {
+    current = path.join(current, part);
+    try {
+      if (lstatSync(current).isSymbolicLink()) return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") break;
+      return true;
+    }
+  }
+  return false;
+}
+
 export function toWorkspaceRelativePath(absolutePath: string, root: string): string {
   return path.relative(root, absolutePath) || ".";
 }
@@ -171,6 +396,14 @@ function isUnderSharedReadOnlyRoot(target: string): boolean {
     const root = path.join(appRoot, name);
     return isPathWithinRoot(target, safeRealpath(root) ?? root);
   });
+}
+
+function isDirectory(value: string): boolean {
+  try {
+    return statSync(value).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /** Nearest ancestor of this module that contains package.json (works for src/ and dist/ layouts). */

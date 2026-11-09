@@ -32,6 +32,11 @@ export {
   parseMcpToolWireName,
 } from "./runtime/wireName.js";
 export {
+  getMcpToolCapabilities,
+  mergeMcpServerSources,
+  SYSTEM_REGISTERED_MCP_SERVER_IDS,
+} from "./runtime/mcpCapabilities.js";
+export {
   MAX_MCP_TOOL_DESCRIPTION_LENGTH,
   truncateMcpToolDescription,
 } from "./runtime/truncate.js";
@@ -41,5 +46,7 @@ export type {
   PilotDeckMcpServerSpec,
   PilotDeckMcpStatus,
   PilotDeckMcpToolAnnotations,
+  PilotDeckMcpArtifactPolicy,
+  PilotDeckMcpToolCapabilities,
   PilotDeckMcpToolSpec,
 } from "./protocol/types.js";

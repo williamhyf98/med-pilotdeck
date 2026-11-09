@@ -95,6 +95,7 @@ export interface NormalizedMessage {
     size: number;
     sha256: string;
     mimeType?: string;
+    description?: string;
     createdAt: string;
   }>;
   toolName?: string;

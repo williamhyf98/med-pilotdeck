@@ -99,6 +99,10 @@ cmd_check() {
   [[ "$py_ok" == true && "$deps_ok" == true && "$font_ok" == true ]]
 }
 
+cmd_capabilities() {
+  printf '%s\n' '{"status":"ok","skill":"docx","commands":["make","capabilities","schema","inspect","edit","review","finalize","compare","sanitize","render","convert-pdf","refresh-toc","validate","audit","preflight","deliver","resolve-latest"],"pathContract":{"inputs":["inbox","scratch","exports"],"intermediateOutputs":["scratch"],"finalOutputs":["exports"],"remoteResources":false},"imageFields":["content[].path","patch.operations[].path","width_inches"]}'
+}
+
 cmd_bootstrap_runtime() {
   local bootstrap=""
   if command -v python3 >/dev/null 2>&1; then
@@ -128,6 +132,10 @@ cmd_bootstrap_runtime() {
 }
 
 case "${1:-}" in
+  capabilities)
+    shift
+    cmd_capabilities "$@"
+    ;;
   check)
     shift
     cmd_check "$@"
@@ -148,7 +156,7 @@ case "${1:-}" in
     if [[ -n "$py" ]]; then
       exec "$py" "$SCRIPT_DIR/docx_cli.py" --help
     fi
-    printf 'Usage: docx.sh <check|make|inspect|edit|review|finalize|compare|sanitize|render|convert-pdf|refresh-toc|validate|audit|preflight|deliver|resolve-latest|self-test> [options]\n'
+    printf 'Usage: docx.sh <check|capabilities|make|inspect|edit|review|finalize|compare|sanitize|render|convert-pdf|refresh-toc|validate|audit|preflight|deliver|resolve-latest|self-test> [options]\n'
     ;;
   *)
     if ! runtime_ready; then

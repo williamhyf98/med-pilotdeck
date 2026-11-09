@@ -5,21 +5,22 @@ Python。
 
 ## 固定流程
 
-- 常见新建只使用 `docx.sh make`。
-- 短文使用 `--title`、`--body`、`--out`。
-- 对话里已有的长文先写成 Markdown，再使用 `--markdown`。
-- 复杂表格、图片或精确结构可使用 `--spec`，字段必须符合
+- 常见新建只使用结构化工具 `docx_make`。
+- 短文使用 `title`、`body`、`output_path`。
+- 对话里已有的长文先写成 Markdown，再使用 `markdown_path`。
+- 复杂表格、图片或精确结构可使用 `spec_path`，字段必须符合
   [specifications.md](specifications.md) 的 create schema。
 - 不要调用 `fix`、`fallback-create` 或自己编写 python-docx 脚本。
 - 运行时未就绪时停止，并报告交付包不完整。
 
 ## 示例
 
-```bash
-bash "$DOCX_TOOL" make \
-  --title "救治方案" \
-  --markdown "$PWD/scratch/qa/content.md" \
-  --out "$PWD/exports/救治方案.docx"
+```json
+{
+  "title": "救治方案",
+  "markdown_path": "scratch/docx/content.md",
+  "output_path": "exports/救治方案.docx"
+}
 ```
 
 重复生成同一路径时，只有用户明确需要替换旧输出才使用 `--force`。
@@ -33,7 +34,7 @@ bash "$DOCX_TOOL" make \
 
 ## spec 约定
 
-`--spec` 接受现有严格 create spec。至少包括：
+`spec_path` 接受现有严格 create spec。至少包括：
 
 ```json
 {
@@ -52,7 +53,7 @@ bash "$DOCX_TOOL" make \
 ```
 
 不要为了普通文本生成先执行 `prepare` / `schema`；它们保留给高级编辑与审阅
-工作流。`make` 会把 spec 复制到内部工作目录，最终只交付 `output` 指向的
+工作流。`docx_make` 会把 spec 复制到内部工作目录，最终只交付 `output` 指向的
 DOCX。
 
 ## 字体与校验

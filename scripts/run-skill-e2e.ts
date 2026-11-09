@@ -8,7 +8,7 @@
  *   npx tsx scripts/run-skill-e2e.ts --only pdf,docx
  */
 import { randomUUID } from "node:crypto";
-import { cp, mkdir, readFile, readdir } from "node:fs/promises";
+import { access, cp, mkdir, readFile, readdir } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { connectRemoteGatewayIfAvailable } from "../src/gateway/index.js";
@@ -60,10 +60,27 @@ type CaseResult = {
   kind: CaseKind;
   skill: string;
   pass: boolean;
+  skipped?: boolean;
   reasons: string[];
   tools: string[];
   elapsedMs: number;
 };
+
+async function missingLocalFixtures(c: CaseDef): Promise<string[]> {
+  const paths = [
+    ...(c.copyDir ? [c.copyDir] : []),
+    ...(c.attachments ?? []).map((attachment) => attachment.from),
+  ];
+  const missing = await Promise.all(paths.map(async (fixture) => {
+    try {
+      await access(join(FIXTURE_ROOT, fixture));
+      return null;
+    } catch {
+      return fixture;
+    }
+  }));
+  return missing.filter((fixture): fixture is string => fixture !== null);
+}
 
 function parseOnlyFlag(argv: string[]): Set<string> | undefined {
   const idx = argv.indexOf("--only");
@@ -402,24 +419,25 @@ function printSummary(results: CaseResult[]): number {
   const pad = Math.max(...results.map((r) => r.id.length), 8);
   process.stdout.write("\n=== skill e2e ===\n");
   for (const r of results) {
-    const status = r.pass ? "PASS" : "FAIL";
-    const extra = r.pass ? "" : `  ${r.reasons.join("; ")}`;
+    const status = r.skipped ? "SKIP" : r.pass ? "PASS" : "FAIL";
+    const extra = r.pass && !r.skipped ? "" : `  ${r.reasons.join("; ")}`;
     process.stdout.write(
       `${r.id.padEnd(pad)}  ${status}  ${(r.elapsedMs / 1000).toFixed(1)}s  tools=[${r.tools.join(", ")}]${extra}\n`,
     );
   }
-  const failedDocs = results.filter((r) => !r.pass && DOCUMENT_KINDS.has(r.kind));
-  const failedAny = results.filter((r) => !r.pass);
+  const failedDocs = results.filter((r) => !r.pass && !r.skipped && DOCUMENT_KINDS.has(r.kind));
+  const failedAny = results.filter((r) => !r.pass && !r.skipped);
+  const skipped = results.filter((r) => r.skipped).length;
   if (failedDocs.length > 0) {
     process.stdout.write(
       `\n文档skill not pass: ${failedDocs.map((r) => r.id).join(", ")}\n`,
     );
   }
   if (failedAny.length > 0) {
-    process.stdout.write(`OVERALL FAIL (${failedAny.length}/${results.length})\n`);
+    process.stdout.write(`OVERALL FAIL (${failedAny.length} failed, ${skipped} skipped)\n`);
     return 1;
   }
-  process.stdout.write(`OVERALL PASS (${results.length}/${results.length})\n`);
+  process.stdout.write(`OVERALL PASS (${results.length - skipped} run, ${skipped} skipped)\n`);
   return 0;
 }
 
@@ -449,6 +467,15 @@ async function main(): Promise<void> {
   try {
     for (const c of cases) {
       process.stderr.write(`\n--- ${c.id} (new session) ---\n`);
+      const missing = await missingLocalFixtures(c);
+      if (missing.length) {
+        results.push({
+          id: c.id, kind: c.kind, skill: c.skill, pass: false, skipped: true,
+          reasons: [`local-only fixtures unavailable: ${missing.join(", ")}`],
+          tools: [], elapsedMs: 0,
+        });
+        continue;
+      }
       results.push(await runCase(gateway, c));
     }
     process.exitCode = printSummary(results);

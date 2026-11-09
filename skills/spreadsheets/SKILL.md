@@ -1,15 +1,11 @@
 ---
 name: spreadsheets
-description: 创建、读取、审计和安全修改 .xlsx、.csv、.tsv 表格。已有 XLSX 转 PDF 时使用注册工具 office_to_pdf；其余转换只通过捆绑 spreadsheet.sh 完成。旧版 .xls 仅在已有转换后端时支持。
+description: 创建、读取、审计和安全修改 .xlsx、.csv、.tsv 表格。新建表格使用结构化工具 spreadsheets_make；已有 XLSX 转 PDF 时使用注册工具 office_to_pdf；其余转换只通过捆绑 spreadsheet.sh 完成。旧版 .xls 仅在已有转换后端时支持。
 ---
 
 # 电子表格
 
-只用 `read_skill` 返回的 `<path>` 所在目录：
-
-```bash
-SPREADSHEET_SKILL_ROOT="$(dirname "<path>")"
-```
+新建表格时调用结构化工具 `spreadsheets_make`，不要拼接 Bash 或自行查找脚本。已有表格的检查、审计、修改和高级 QA 才使用系统登记的表格 Skill 业务入口。
 
 `spreadsheet.sh` 会定位完整的隔离运行时和内置图表/审计工具。运行时未就绪
 时会返回「交付包不完整」；此时停止并报告，不要改走其它实现。
@@ -22,22 +18,28 @@ node12 Office Renderer 执行。
 
 ## Agent 可用表面
 
-- 只调用本技能的 `spreadsheet.sh`
+- 创建新表格：只调用 `spreadsheets_make`
+- `spreadsheets_make` 的输入使用 `title`、`body`、`body_file_path`、`markdown_path`、
+  `csv_path`、`tsv_path`、`spec_path`、`input_path`、`sheet`、`encoding`、
+  `infer_types`、`output_path`、`force` 和 `timeout_ms`
+- 需要创建声明式内容时，用 `write_file` 写入 `scratch/` 下的 `.md` / `.json` / `.csv` / `.tsv`，
+  再把相对任务路径传给 `spreadsheets_make`
+
+- 需要查看能力时可调用 `spreadsheet.sh capabilities`
 - 只用 `.md` / `.json` / `.csv` / `.tsv` 暂存声明式内容
 - 不搜索运行时、缓存、系统字体或替代工具
 - 命令返回 `unsupported`、`blocked` 或「交付包不完整」时立即停止并报告
 - 输入材料尚未被现有工具转换为结构化数据时，明确说明缺少抽取能力并停止；
   不要自行补充新的解析实现
 
+`capabilities` 只用于查看已登记的业务入口和路径契约；不要调用
+`spreadsheet.sh --help`、`scaffold`、`build` 或自行编写 `.mjs` 构建器。
+
 ## 输出位置
 
-用户给了路径就使用；否则输出到当前工作目录的 `exports/`：
+交付文件写入本任务 `exports/`；中间文件写入 `scratch/`。需要目录时使用文件工具或由技能创建，不调用 `mkdir`。
 
-```bash
-mkdir -p "$PWD/exports"
-```
-
-中间 Markdown/JSON 放在 `scratch/qa/` 或 `PILOTDECK_WORK_DIR`，不要交付。
+中间 Markdown/JSON/CSV/TSV 放在 `$PILOTDECK_WORK_DIR/spreadsheets/`，不要交付。
 
 ## 新建表格
 
@@ -45,41 +47,41 @@ mkdir -p "$PWD/exports"
 
 短内容：
 
-```bash
-bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make \
-  --title "战创伤救治清单" \
-  --body "现场评估
-
-控制出血
-
-快速后送" \
-  --out "$PWD/exports/战创伤救治清单.xlsx"
+```json
+{
+  "title": "战创伤救治清单",
+  "body": "现场评估\n\n控制出血\n\n快速后送",
+  "output_path": "exports/战创伤救治清单.xlsx"
+}
 ```
 
 Markdown 管道表：
 
-```bash
-bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make \
-  --title "救治清单" \
-  --markdown "$PWD/scratch/qa/table.md" \
-  --out "$PWD/exports/救治清单.xlsx"
+```json
+{
+  "title": "救治清单",
+  "markdown_path": "scratch/spreadsheets/table.md",
+  "output_path": "exports/救治清单.xlsx"
+}
 ```
 
 导入分隔文件：
 
-```bash
-bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make \
-  --csv "$INPUT_CSV" \
-  --out "$PWD/exports/导入结果.xlsx"
+```json
+{
+  "csv_path": "inbox/data.csv",
+  "output_path": "exports/导入结果.xlsx"
+}
 ```
 
 多工作表、公式、数字格式、表格对象、数据验证、条件格式和原生图表使用
 `--spec`：
 
-```bash
-bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make \
-  --spec "$PWD/scratch/qa/workbook.json" \
-  --out "$PWD/exports/统计工作簿.xlsx"
+```json
+{
+  "spec_path": "scratch/spreadsheets/workbook.json",
+  "output_path": "exports/统计工作簿.xlsx"
+}
 ```
 
 可用参数：
@@ -109,7 +111,7 @@ bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make \
     "headers": ["阶段", "人数"],
     "rows": [["一级", 10]],
     "images": [
-      { "path": "/abs/.../inbox/<batch>/1-wound.jpg", "anchor": "G2", "width": 400, "height": 300 }
+      { "path": "/当前任务/inbox/<batch>/1-wound.jpg", "anchor": "G2", "width": 400, "height": 300 }
     ]
   }]
 }
@@ -132,7 +134,7 @@ bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make \
 
 ```bash
 bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" inspect \
-  --input "$INPUT_XLSX" \
+  --input "inbox/source.xlsx" \
   --out "$PILOTDECK_WORK_DIR/spreadsheets/inspection.json"
 ```
 
@@ -142,11 +144,12 @@ bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" inspect \
 
 安全的现有工作簿用受控 spec 修改单元格/公式，输出新文件：
 
-```bash
-bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make \
-  --input "$INPUT_XLSX" \
-  --spec "$PILOTDECK_WORK_DIR/spreadsheets/edits.json" \
-  --out "$PWD/exports/修改后.xlsx"
+```json
+{
+  "input_path": "inbox/source.xlsx",
+  "spec_path": "scratch/spreadsheets/edits.json",
+  "output_path": "exports/修改后.xlsx"
+}
 ```
 
 已有工作表只能使用 `cells`、`formulas`、`numberFormats`、`validations`、
@@ -164,8 +167,8 @@ bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make \
 ## 读取与审计
 
 ```bash
-bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" inspect --input "$INPUT" --sheet "汇总" --range "A1:H30" --styles
-bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" audit --input "$INPUT" --out "$PILOTDECK_WORK_DIR/spreadsheets/audit.json"
+bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" inspect --input "inbox/source.xlsx" --sheet "汇总" --range "A1:H30" --styles
+bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" audit --input "inbox/source.xlsx" --out "$PILOTDECK_WORK_DIR/spreadsheets/audit.json"
 ```
 
 只读请求不要生成新表格。

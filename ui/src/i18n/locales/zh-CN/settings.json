@@ -112,6 +112,8 @@
       "officePreview": "Office 预览",
       "privacy": "安全隐私",
       "advanced": "高级",
+      "securityServices": "内网服务",
+      "allowedCommands": "允许命令",
       "about": "关于",
       "users": "用户管理"
     },
@@ -132,8 +134,60 @@
       "officePreview": "扩展 / Office 预览",
       "privacy": "安全隐私",
       "advanced": "高级",
+      "securityServices": "内网服务",
+      "allowedCommands": "允许命令",
       "about": "关于",
       "users": "用户管理"
+    },
+    "securityPolicy": {
+      "services": {
+        "description": "查看系统已登记的本机回环和内网功能服务。只能编辑已登记服务的地址，不能新增任意网络出口。",
+        "service": "服务",
+        "address": "地址",
+        "source": "来源",
+        "status": "状态",
+        "actions": "操作",
+        "protocol": "协议",
+        "host": "主机",
+        "port": "端口",
+        "empty": "当前没有已登记的服务。"
+      },
+      "commands": {
+        "description": "管理系统预注册的业务命令能力。此页面不能开放任意解释器、Shell 字符串或可执行文件路径。",
+        "registeredDescription": "仅能缩小系统注册表声明的参数、目录和超时范围。",
+        "enabled": "启用命令",
+        "details": "查看命令限制",
+        "options": "允许的参数",
+        "inputRoots": "输入目录",
+        "outputRoots": "输出目录",
+        "writable": "允许写入",
+        "timeout": "超时"
+      },
+      "status": {
+        "not_tested": "未测试",
+        "reachable": "可连通",
+        "unreachable": "不可连通",
+        "disabled": "已禁用"
+      },
+      "revision": {
+        "label": "当前生效版本",
+        "description": "保存时会校验版本，避免覆盖其他管理员刚刚保存的修改。"
+      },
+      "actions": {
+        "refresh": "刷新",
+        "loading": "正在加载…",
+        "test": "测试连接",
+        "edit": "编辑",
+        "save": "保存",
+        "saving": "保存中…",
+        "saved": "已保存并重新加载策略。",
+        "cancel": "取消"
+      },
+      "errors": {
+        "load": "无法加载安全策略。",
+        "save": "无法保存安全策略。",
+        "test": "服务测试失败。"
+      }
     },
     "contentComingSoon": {
       "title": "右侧内容区待接入",
@@ -506,7 +560,7 @@
   "permissions": {
     "title": "权限设置",
     "controlTitle": "权限控制",
-    "description": "管理助手可以无需询问即可运行的工具。从聊天中点击「添加权限」授予的项也会落到这里。",
+    "description": "内置普通工具在任务目录范围内自动运行；安全策略和管理员禁用规则仍会拦截违规操作。",
     "export": "导出",
     "import": "导入",
     "importExportHint": "可将权限列表导出为 JSON，便于备份或与他人共享。",
@@ -518,8 +572,8 @@
     "importSuccess": "导入完成，新增 {{addedAllowed}} 个允许工具与 {{addedBlocked}} 个禁用工具。",
     "skipPermissions": {
       "title": "跳过权限确认",
-      "description": "工具调用不再弹出确认，等同于 bypassPermissions。仅建议在可信工作区中开启。",
-      "warning": "当前已跳过权限确认。下方允许/禁用规则仍会保存，但这个全局模式会让智能体无需询问即可运行工具。"
+      "description": "兼容旧会话的绕过模式；不会绕过命令注册、任务路径或管理员禁用规则。",
+      "warning": "任务路径、注册命令与管理员禁用规则始终生效。普通内置操作在默认模式下也会自动运行。"
     },
     "allowedTools": {
       "title": "允许的工具",
@@ -567,17 +621,17 @@
       "modes": {
         "default": {
           "title": "默认",
-          "description": "只有受信任的命令（ls、cat、grep、git status 等）会自动运行。其他命令将被跳过。可以写入工作区。"
+          "description": "任务目录内的普通内置操作自动运行；违规路径和未注册命令直接拒绝。"
         },
         "bypassPermissions": {
           "title": "绕过权限",
-          "description": "完全系统访问，无任何限制。所有命令自动运行，具有完整的磁盘和网络访问权限。请谨慎使用。"
+          "description": "兼容模式：仍受任务目录、注册命令和管理员禁用规则限制。"
         }
       },
       "technicalDetails": "技术详情",
       "technicalInfo": {
-        "default": "sandboxMode=workspace-write, approvalPolicy=untrusted。受信任的命令：cat、cd、grep、head、ls、pwd、tail、git status/log/diff/show、find（不带 -exec）等。",
-        "bypassPermissions": "sandboxMode=danger-full-access, approvalPolicy=never。完全系统访问权限，仅在可信环境中使用。",
+        "default": "内置工具按已登记能力执行；文件访问限于当前任务目录，Bash 只接受注册命令。",
+        "bypassPermissions": "仅兼容旧会话；不会跳过系统安全策略、任务路径和管理员禁用规则。",
         "overrideNote": "您可以使用聊天界面中的模式按钮按会话覆盖此设置。"
       }
     },

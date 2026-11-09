@@ -21,6 +21,7 @@ export type FileArtifact = {
   size: number;
   sha256: string;
   mimeType?: string;
+  description?: string;
   createdAt: string;
 };
 

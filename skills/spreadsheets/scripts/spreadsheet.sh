@@ -76,6 +76,10 @@ runtime_missing_json() {
   printf '{"status":"error","code":"missing-dependencies","error":"交付包不完整：表格本地运行时未就绪。请使用完整交付包，不要在现场安装依赖或自行编写 JavaScript。"}\n'
 }
 
+cmd_capabilities() {
+  printf '%s\n' '{"status":"ok","skill":"spreadsheets","commands":["make","capabilities","inspect","audit","render","convert-legacy","recalculate","deliver"],"pathContract":{"inputs":["inbox","scratch","exports"],"intermediateOutputs":["scratch"],"finalOutputs":["exports"],"remoteResources":false},"imageFields":["sheets[].images[].path"]}'
+}
+
 cmd_bootstrap_runtime() {
   local npm_path="" expected=""
   find_node >/dev/null || {
@@ -100,6 +104,10 @@ cmd_bootstrap_runtime() {
 }
 
 case "${1:-}" in
+  capabilities)
+    shift
+    cmd_capabilities "$@"
+    ;;
   check)
     shift
     cmd_check "$@"
@@ -113,7 +121,7 @@ case "${1:-}" in
     exit 2
     ;;
   ""|-h|--help|help)
-    printf 'Usage: spreadsheet.sh <check|make|inspect|audit|render|convert-legacy|recalculate|deliver|self-test> [options]\n'
+    printf 'Usage: spreadsheet.sh <check|capabilities|make|inspect|audit|render|convert-legacy|recalculate|deliver|self-test> [options]\n'
     ;;
   *)
     if ! runtime_ready; then

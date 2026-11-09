@@ -1,4 +1,5 @@
 import type { PermissionResult } from "../../permission/index.js";
+import type { PilotDeckCapability } from "../../security/policy/types.js";
 import { PilotDeckToolRuntimeError } from "../protocol/errors.js";
 import type { PilotDeckToolDefinition, PilotDeckToolExecutionOutput } from "../protocol/types.js";
 import type { PilotDeckToolInputSchema } from "../protocol/schema.js";
@@ -13,6 +14,8 @@ export type CreateMcpToolOptions = {
   description?: string;
   inputSchema?: PilotDeckToolInputSchema;
   adapter?: PilotDeckMcpToolAdapter;
+  /** Required system-registered capabilities for this legacy adapter. */
+  capabilities?: readonly PilotDeckCapability[];
 };
 
 export function createMcpTool(options: CreateMcpToolOptions): PilotDeckToolDefinition {
@@ -26,7 +29,25 @@ export function createMcpTool(options: CreateMcpToolOptions): PilotDeckToolDefin
     isReadOnly: () => true,
     isConcurrencySafe: () => false,
     isOpenWorld: () => true,
-    checkPermissions: async (): Promise<PermissionResult> => ({ type: "passthrough" }),
+    ...(options.capabilities ? {
+      capabilityPolicy: {
+        declared: options.capabilities,
+        required: () => options.capabilities!,
+      },
+    } : {}),
+    checkPermissions: async (): Promise<PermissionResult> => {
+      if (!options.capabilities) {
+        return {
+          type: "deny",
+          reason: {
+            type: "safety",
+            message: `MCP tool ${wireName} has no registered capability profile.`,
+          },
+          message: `MCP tool ${wireName} has no registered capability profile.`,
+        };
+      }
+      return { type: "passthrough" };
+    },
     execute: async (input): Promise<PilotDeckToolExecutionOutput> => {
       if (!options.adapter) {
         throw new PilotDeckToolRuntimeError("unsupported_tool", "MCP adapter is not configured.");

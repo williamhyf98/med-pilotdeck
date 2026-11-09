@@ -14,7 +14,7 @@
  *
  * 只记录行为：调了哪些工具、产物是否落在用户工作区、帧里是否泄露绝对路径。不评估医学内容。
  */
-import { readFile, readdir, mkdir, writeFile } from "node:fs/promises";
+import { access, readFile, readdir, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, extname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,6 +23,18 @@ const REPO_ROOT = resolve(SCRIPT_DIR, "..");
 const CASES_PATH = join(REPO_ROOT, "tests/skill-e2e/cases-multiuser.json");
 const FIXTURE_ROOT = join(REPO_ROOT, "tests/skill-e2e/fixtures");
 const REPORT_ROOT = join(REPO_ROOT, "tests/skill-e2e/work");
+
+async function missingLocalFixtures(c: { attachments?: Array<{ from: string }> }): Promise<string[]> {
+  const missing = await Promise.all((c.attachments ?? []).map(async (attachment) => {
+    try {
+      await access(join(FIXTURE_ROOT, attachment.from));
+      return null;
+    } catch {
+      return attachment.from;
+    }
+  }));
+  return missing.filter((fixture): fixture is string => fixture !== null);
+}
 
 type CaseDef = {
   id: string;
@@ -535,6 +547,16 @@ async function main(): Promise<void> {
   const results: CaseResult[] = [];
   for (const c of cases) {
     process.stderr.write(`\n--- [tier ${c.tier}] ${c.id} ---\n`);
+    const missing = await missingLocalFixtures(c);
+    if (missing.length) {
+      results.push({
+        id: c.id, tier: c.tier, skill: c.skill, status: "UNTESTABLE",
+        leak: false, metadataLeak: false,
+        reasons: [`本地测试素材未提供：${missing.join(", ")}`],
+        tools: [], outputs: [], elapsedMs: 0,
+      });
+      continue;
+    }
     try {
       const r = await runCase(c, { token: user.token, userHome, project, outDir });
       results.push(r);

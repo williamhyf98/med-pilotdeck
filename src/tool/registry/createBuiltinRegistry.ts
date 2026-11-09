@@ -10,10 +10,23 @@ import { createReadSkillTool, type ReadSkillDeps } from "../builtin/readSkill.js
 import { createOfficeToPdfTool } from "../builtin/officeToPdf.js";
 import { createTodoWriteTool } from "../builtin/todoWrite.js";
 import { createWriteFileTool } from "../builtin/writeFile.js";
+import { createPdfMakeTool, type CreatePdfMakeToolOptions } from "../builtin/pdfMake.js";
+import {
+  createDiagramMakeTool,
+  createDocxMakeTool,
+  createPptxMakeTool,
+  createSpreadsheetMakeTool,
+  type CreateDocumentMakeToolOptions,
+} from "../builtin/documentMakeTools.js";
 import { ToolRegistry } from "./ToolRegistry.js";
 
 export type CreateBuiltinRegistryOptions = {
   bash?: CreateBashToolOptions;
+  pdfMake?: CreatePdfMakeToolOptions;
+  docxMake?: CreateDocumentMakeToolOptions;
+  pptxMake?: CreateDocumentMakeToolOptions;
+  spreadsheetMake?: CreateDocumentMakeToolOptions;
+  diagramMake?: CreateDocumentMakeToolOptions;
   /**
    * `read_skill` builtin. **Opt-in** — pass `{ loader, lister }` to
    * register; absent or `false` keeps it out of the registry.
@@ -40,6 +53,11 @@ export function createBuiltinRegistry(options?: CreateBuiltinRegistryOptions): T
   registry.register(createEditFileTool());
   registry.register(createWriteFileTool());
   registry.register(createBashTool(options?.bash));
+  registry.register(createPdfMakeTool(options?.pdfMake));
+  registry.register(createDocxMakeTool(options?.docxMake));
+  registry.register(createPptxMakeTool(options?.pptxMake));
+  registry.register(createSpreadsheetMakeTool(options?.spreadsheetMake));
+  registry.register(createDiagramMakeTool(options?.diagramMake));
   if (options?.askUserQuestion !== false) {
     registry.register(createAskUserQuestionTool());
   }

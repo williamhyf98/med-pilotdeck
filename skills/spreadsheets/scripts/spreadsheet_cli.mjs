@@ -8,6 +8,7 @@ import path from "node:path";
 import process from "node:process";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { assertTaskResource } from "../../_shared/task-paths.mjs";
 import {
   injectNativeCharts,
   inspectDrawingPackage,
@@ -1918,7 +1919,10 @@ function resolveLocalImagePath(pathValue, baseDir, label) {
       `${label}: remote images are not allowed; use a local workspace path (prefer absolute $WS/inbox/...)`,
     );
   }
-  const resolved = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(baseDir, raw);
+  const resolved = assertTaskResource(
+    path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(baseDir, raw),
+    label,
+  );
   if (!existsSync(resolved)) {
     throw new Error(`${label}: image not found: ${resolved}`);
   }
@@ -2485,6 +2489,21 @@ async function commandInspect(options) {
     report = extension === ".xlsx" ? await inspectXlsx(inputPath, options) : await inspectDelimited(inputPath, options);
   }
   await emitReport(report, options.out && String(options.out));
+}
+
+async function commandCapabilities() {
+  await emitReport({
+    status: "ok",
+    skill: "spreadsheets",
+    commands: ["make", "inspect", "audit", "render", "convert-legacy", "recalculate", "deliver"],
+    pathContract: {
+      inputs: ["inbox", "scratch", "exports"],
+      intermediateOutputs: ["scratch"],
+      finalOutputs: ["exports"],
+      remoteResources: false,
+    },
+    imageFields: ["sheets[].images[].path"],
+  });
 }
 
 async function commandAudit(options) {
@@ -3461,6 +3480,7 @@ function printHelp() {
 async function main() {
   const { command, options } = parseArgs(process.argv.slice(2));
   switch (command) {
+    case "capabilities": await commandCapabilities(options); break;
     case "make": await commandMake(options); break;
     case "scaffold": await commandScaffold(options); break;
     case "build": await commandBuild(options); break;

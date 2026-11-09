@@ -80,6 +80,7 @@ const SIMPLE_READ_COMMANDS = new Set([
   "ls",
   "printf",
   "pwd",
+  "stat",
   "wc",
   "whoami",
 ]);

@@ -112,6 +112,8 @@
       "officePreview": "Office Preview",
       "privacy": "Security & Privacy",
       "advanced": "Advanced",
+      "securityServices": "Internal Services",
+      "allowedCommands": "Allowed Commands",
       "about": "About",
       "users": "User management"
     },
@@ -132,8 +134,60 @@
       "officePreview": "Extensions / Office Preview",
       "privacy": "Security & Privacy",
       "advanced": "Advanced",
+      "securityServices": "Internal Services",
+      "allowedCommands": "Allowed Commands",
       "about": "About",
       "users": "User management"
+    },
+    "securityPolicy": {
+      "services": {
+        "description": "View the loopback and internal service endpoints registered by the system. Only registered services can be edited; arbitrary network egress cannot be added.",
+        "service": "Service",
+        "address": "Address",
+        "source": "Source",
+        "status": "Status",
+        "actions": "Actions",
+        "protocol": "Protocol",
+        "host": "Host",
+        "port": "Port",
+        "empty": "No registered services are currently available."
+      },
+      "commands": {
+        "description": "Manage pre-registered business command capabilities. This page cannot enable arbitrary interpreters, shell strings, or executable paths.",
+        "registeredDescription": "Only the registered parameter, directory, and timeout ceilings can be narrowed.",
+        "enabled": "Enable command",
+        "details": "View command limits",
+        "options": "Allowed options",
+        "inputRoots": "Input directories",
+        "outputRoots": "Output directories",
+        "writable": "Allow writes",
+        "timeout": "Timeout"
+      },
+      "status": {
+        "not_tested": "Not tested",
+        "reachable": "Reachable",
+        "unreachable": "Unreachable",
+        "disabled": "Disabled"
+      },
+      "revision": {
+        "label": "Active revision",
+        "description": "Saves validate the revision so one administrator cannot overwrite another administrator's recent change."
+      },
+      "actions": {
+        "refresh": "Refresh",
+        "loading": "Loading…",
+        "test": "Test connection",
+        "edit": "Edit",
+        "save": "Save",
+        "saving": "Saving…",
+        "saved": "Saved and policy reloaded.",
+        "cancel": "Cancel"
+      },
+      "errors": {
+        "load": "Unable to load the security policy.",
+        "save": "Unable to save the security policy.",
+        "test": "Service test failed."
+      }
     },
     "contentComingSoon": {
       "title": "Right panel content is not connected yet",
@@ -506,7 +560,7 @@
   "permissions": {
     "title": "Permission Settings",
     "controlTitle": "Permission Control",
-    "description": "Manage which tools the assistant can run without asking. Grants from the chat \"Add permission\" button land here too.",
+    "description": "Ordinary built-in tools run automatically within the task workspace; safety policies and administrator blocks still apply.",
     "export": "Export",
     "import": "Import",
     "importExportHint": "Share or back up your tool permissions as JSON.",
@@ -518,8 +572,8 @@
     "importSuccess": "Imported. Added {{addedAllowed}} allowed and {{addedBlocked}} blocked tools.",
     "skipPermissions": {
       "title": "Skip permission prompts",
-      "description": "Run tool calls without asking for confirmation. This maps to bypassPermissions and should only be used in trusted workspaces.",
-      "warning": "Permission prompts are currently bypassed. Allowed and blocked rules below are still saved, but this global mode lets the agent run without asking."
+      "description": "Compatibility mode for older sessions; it cannot override registered commands, task paths or administrator blocks.",
+      "warning": "Task paths, registered commands and administrator blocks always apply. Ordinary built-in operations also run automatically in default mode."
     },
     "allowedTools": {
       "title": "Allowed Tools",
@@ -567,17 +621,17 @@
       "modes": {
         "default": {
           "title": "Default",
-          "description": "Only trusted commands (ls, cat, grep, git status, etc.) run automatically. Other commands are skipped. Can write to workspace."
+          "description": "Ordinary task-scoped built-in operations run automatically; unsafe paths and unregistered commands are denied."
         },
         "bypassPermissions": {
           "title": "Bypass Permissions",
-          "description": "Full system access with no restrictions. All commands run automatically with full disk and network access. Use with caution."
+          "description": "Compatibility mode; task paths, registered commands and administrator blocks still apply."
         }
       },
       "technicalDetails": "Technical details",
       "technicalInfo": {
-        "default": "sandboxMode=workspace-write, approvalPolicy=untrusted. Trusted commands: cat, cd, grep, head, ls, pwd, tail, git status/log/diff/show, find (without -exec), etc.",
-        "bypassPermissions": "sandboxMode=danger-full-access, approvalPolicy=never. Full system access, use only in trusted environments.",
+        "default": "Built-in tools follow registered capabilities; files stay in the task workspace and Bash accepts only registered commands.",
+        "bypassPermissions": "Compatibility only; system policy, task paths and administrator blocks remain enforced.",
         "overrideNote": "You can override this per-session using the mode button in the chat interface."
       }
     },

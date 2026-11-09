@@ -41,6 +41,7 @@ import pluginsRoutes from './routes/plugins.js';
 import messagesRoutes from './routes/messages.js';
 import agentRoutes from './routes/agent.js';
 import updateRoutes from './routes/update.js';
+import securityPolicyRoutes from './routes/securityPolicy.js';
 
 /**
  * Inline handlers index.js hands over, with the chain each is mounted behind.
@@ -87,6 +88,7 @@ export function buildApiRouter({
   api.use('/mcp-utils', ...requireAdminChain, mcpUtilsRoutes);
   api.use('/gateway', ...requireAdminChain, gatewayRoutes);
   api.use('/update', ...requireAdminChain, updateRoutes);
+  api.use('/security-policy', ...requireAdminChain, securityPolicyRoutes);
 
   // ── Per-user surfaces ─────────────────────────────────────────────────
   api.use('/projects', ...requireUser, projectsRoutes);

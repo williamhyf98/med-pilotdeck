@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { CommandSandbox } from "./index.js";
 import { appReadOnlyGrants, grantForms, type SandboxGrants } from "./grants.js";
+import { resolveTaskGrants } from "./taskGrants.js";
 
 export type SandboxExecConfig = {
   /** 代码根目录，只读。 */
@@ -36,8 +37,9 @@ function subpaths(paths: string[]): string {
 }
 
 /** Framework Python calls realpath on each ancestor of a shared venv. */
-function metadataAncestors(config: SandboxExecConfig): string[] {
-  const prefixes = ["/Users", ...appReadOnlyGrants(config.appRoot, config.nodeBinDir)];
+function metadataAncestors(config: SandboxExecConfig, taskRoot?: string): string[] {
+  const prefixes = ["/Users", ...appReadOnlyGrants(config.appRoot, config.nodeBinDir),
+    ...(taskRoot ? [taskRoot] : [])];
   const result = new Set<string>();
   for (const grant of prefixes) {
     for (const spelling of pathForms(grant)) {
@@ -52,9 +54,11 @@ function metadataAncestors(config: SandboxExecConfig): string[] {
 }
 
 /** 生成 SBPL profile（spec §16.5）。 */
-export function buildSandboxProfile(config: SandboxExecConfig, userHome: string): string {
-  const readDirs = [...SYSTEM_READ_DIRS, ...appReadOnlyGrants(config.appRoot, config.nodeBinDir)].flatMap(pathForms);
-  const writeDirs = [...pathForms(userHome), ...SYSTEM_WRITE_DIRS];
+export function buildSandboxProfile(config: SandboxExecConfig, userHome: string, taskRoot?: string): string {
+  const task = taskRoot ? resolveTaskGrants(userHome, taskRoot) : undefined;
+  const readDirs = [...SYSTEM_READ_DIRS, ...appReadOnlyGrants(config.appRoot, config.nodeBinDir),
+    ...(task ? [task.inbox, ...task.writable] : [])].flatMap(pathForms);
+  const writeDirs = [...(task ? task.writable : [userHome]).flatMap(pathForms), ...SYSTEM_WRITE_DIRS];
   return [
     "(version 1)",
     "(deny default)",
@@ -63,8 +67,8 @@ export function buildSandboxProfile(config: SandboxExecConfig, userHome: string)
     "(allow network*)",
     // Read metadata only for each ancestor. Subpath /Users would also reveal
     // the names of every user account through stat() calls.
-    `(allow file-read-metadata ${[...new Set(metadataAncestors(config))].map((p) => `(literal "${escapeSbpl(p)}")`).join(" ")})`,
-    `(allow file-read* (literal "/") ${subpaths(readDirs)})`,
+    `(allow file-read-metadata ${[...new Set(metadataAncestors(config, taskRoot))].map((p) => `(literal "${escapeSbpl(p)}")`).join(" ")})`,
+    `(allow file-read* (literal "/") (literal "/dev/urandom") ${subpaths(readDirs)})`,
     `(allow file* (literal "/dev/null") ${subpaths(writeDirs)})`,
     "",
   ].join("\n");
@@ -88,19 +92,26 @@ export class SandboxExecSandbox implements CommandSandbox {
 
   constructor(private readonly config: SandboxExecConfig) {}
 
-  grants(userHome: string): SandboxGrants {
+  grants(userHome: string, taskRoot?: string): SandboxGrants {
+    const task = taskRoot ? resolveTaskGrants(userHome, taskRoot) : undefined;
     return {
-      readOnly: [...new Set([...SYSTEM_READ_DIRS, ...appReadOnlyGrants(this.config.appRoot, this.config.nodeBinDir)].flatMap(pathForms))],
-      writable: [...new Set([...SYSTEM_WRITE_DIRS, userHome].flatMap(pathForms))],
-      metadataOnly: metadataAncestors(this.config),
+      readOnly: [...new Set([...SYSTEM_READ_DIRS, ...appReadOnlyGrants(this.config.appRoot, this.config.nodeBinDir),
+        ...(task ? [task.inbox, ...task.writable] : [])].flatMap(pathForms))],
+      writable: [...new Set([...SYSTEM_WRITE_DIRS, ...(task ? task.writable : [userHome])].flatMap(pathForms))],
+      metadataOnly: metadataAncestors(this.config, taskRoot),
     };
   }
 
-  wrap(command: string, options: { cwd: string; userHome: string; env: NodeJS.ProcessEnv }): { file: string; args: string[] } {
-    mkdirSync(join(options.userHome, ".tmp"), { recursive: true });
+  wrap(command: string, options: { cwd: string; userHome: string; taskRoot?: string; env: NodeJS.ProcessEnv }): { file: string; args: string[] } {
+    if (!options.taskRoot) mkdirSync(join(options.userHome, ".tmp"), { recursive: true });
     // Inline the profile: a command with write access to userHome must never be
     // able to replace the policy file between wrap() and sandbox-exec startup.
-    return { file: SANDBOX_EXEC_BIN, args: ["-p", buildSandboxProfile(this.config, options.userHome), "/bin/sh", "-c", command] };
+    return { file: SANDBOX_EXEC_BIN, args: ["-p", buildSandboxProfile(this.config, options.userHome, options.taskRoot), "/bin/sh", "-c", command] };
+  }
+
+  wrapArgv(argv: { file: string; args: string[] }, options: { cwd: string; userHome: string; taskRoot?: string; env: NodeJS.ProcessEnv }): { file: string; args: string[] } {
+    const launch = this.wrap("", options);
+    return { file: launch.file, args: [...launch.args.slice(0, -3), argv.file, ...argv.args] };
   }
 
   async probe(): Promise<{ ok: true } | { ok: false; reason: string }> {

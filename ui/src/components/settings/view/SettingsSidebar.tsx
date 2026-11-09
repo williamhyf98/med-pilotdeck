@@ -32,6 +32,8 @@ const MENU_ITEMS_ADMIN: SettingsMenuItemI18n[] = [
     ],
   },
   { key: "advanced", labelKey: "settingsPage.menu.advanced" },
+  { key: "securityServices", labelKey: "settingsPage.menu.securityServices" },
+  { key: "allowedCommands", labelKey: "settingsPage.menu.allowedCommands" },
 ];
 
 const ACCOUNT_ITEM: SettingsMenuItemI18n = {

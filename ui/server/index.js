@@ -141,6 +141,7 @@ import { DISABLE_LOCAL_AUTH, IS_PLATFORM } from './constants/config.js';
 import { getConnectableHost } from '../shared/networkHosts.js';
 import { contentDispositionAttachment } from './utils/downloadHeaders.js';
 import { createSessionWatchRegistry } from './session-watch-registry.js';
+import { toSocketProjects } from './utils/projectSocketPayload.js';
 
 const requireUser = [authenticateToken, userScopeMiddleware];
 
@@ -380,7 +381,10 @@ async function setupProjectsWatcher() {
                     // Notify only this user's connected clients about the project changes
                     const updateMessage = JSON.stringify({
                         type: 'projects_updated',
-                        projects: updatedProjects,
+                        projects: toSocketProjects(updatedProjects, {
+                            userId,
+                            pilotRoot: resolvePilotRoot(),
+                        }),
                         timestamp: new Date().toISOString(),
                         changeType: eventType,
                         changedFile: path.relative(rootPath, filePath),

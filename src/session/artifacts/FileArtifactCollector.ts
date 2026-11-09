@@ -22,6 +22,8 @@ type ArtifactCandidate = {
   absolutePath: string;
   source: FileArtifactSource;
   fingerprint?: FileFingerprint;
+  mimeType?: string;
+  description?: string;
 };
 
 export type FileArtifactCollectorOptions = {
@@ -188,9 +190,20 @@ export class FileArtifactCollector {
     }
     if (result.type !== "success") return;
 
+    for (const artifact of result.artifacts ?? []) {
+      if (artifact.role !== "final") continue;
+      this.addExplicitPath(artifact.path, {
+        mimeType: artifact.mimeType,
+        description: artifact.description,
+      });
+    }
+
     for (const item of result.content) {
       if (item.type === "file") {
-        this.addExplicitPath(item.path);
+        this.addExplicitPath(item.path, {
+          mimeType: item.mimeType,
+          description: item.description,
+        });
       }
     }
 
@@ -268,10 +281,24 @@ export class FileArtifactCollector {
     this.registered = false;
   }
 
-  private addExplicitPath(candidate: string): void {
+  private addExplicitPath(
+    candidate: string,
+    metadata: Pick<ArtifactCandidate, "mimeType" | "description"> = {},
+  ): void {
     const absolutePath = path.resolve(this.cwd, candidate);
     if (!isWithin(this.cwd, absolutePath) || !this.isAllowedArtifactPath(absolutePath)) return;
-    this.explicitCandidates.set(absolutePath, { absolutePath, source: "tool" });
+    const existing = this.explicitCandidates.get(absolutePath);
+    this.explicitCandidates.set(absolutePath, {
+      absolutePath,
+      source: "tool",
+      ...(existing?.fingerprint ? { fingerprint: existing.fingerprint } : {}),
+      ...(metadata.mimeType ?? existing?.mimeType
+        ? { mimeType: metadata.mimeType ?? existing?.mimeType }
+        : {}),
+      ...(metadata.description ?? existing?.description
+        ? { description: metadata.description ?? existing?.description }
+        : {}),
+    });
   }
 
   private register(): void {
@@ -376,7 +403,10 @@ export class FileArtifactCollector {
       status: statusValue,
       size: fingerprint.size,
       sha256: fingerprint.sha256,
-      ...(mimeTypeForPath(candidate.absolutePath) ? { mimeType: mimeTypeForPath(candidate.absolutePath) } : {}),
+      ...(candidate.mimeType ?? mimeTypeForPath(candidate.absolutePath)
+        ? { mimeType: candidate.mimeType ?? mimeTypeForPath(candidate.absolutePath) }
+        : {}),
+      ...(candidate.description ? { description: candidate.description } : {}),
       createdAt: this.now().toISOString(),
     };
   }

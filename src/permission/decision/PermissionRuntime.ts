@@ -1,5 +1,7 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import type { PilotDeckToolDefinition, PilotDeckToolRuntimeContext } from "../../tool/index.js";
+import { evaluateCapabilityPolicy } from "../../security/policy/types.js";
+import type { PilotDeckCapability } from "../../security/policy/types.js";
 import { buildPlanModeViolationMessage, buildPlanModeBashViolationMessage } from "../../tool/planModeConstraints.js";
 import { matchPermissionRule } from "../policy/matchPermissionRule.js";
 import type {
@@ -12,6 +14,8 @@ import type {
 } from "../protocol/types.js";
 
 export class PermissionRuntime {
+  constructor(private readonly registeredCapabilities: readonly PilotDeckCapability[] = []) {}
+
   async decide(
     tool: PilotDeckToolDefinition,
     input: unknown,
@@ -19,6 +23,63 @@ export class PermissionRuntime {
     toolCallId: string,
   ): Promise<PermissionDecision> {
     const permissionContext = context.permissionContext;
+    // Bash's system registry is a mandatory boundary, before user/session allow and bypass.
+    if (tool.name === "bash") {
+      const gate = await tool.checkPermissions?.(input, context);
+      if (!gate || gate.type !== "allow") {
+        return gate?.type === "deny" || gate?.type === "cancel"
+          ? gate
+          : deny({ type: "safety", message: "Bash requires an enabled registered command." });
+      }
+    }
+    // Agent-visible builtins have their own path/operation checks; a valid
+    // ordinary call needs no separate user approval. This is deliberately an
+    // explicit registry, so a newly installed MCP cannot inherit auto-allow.
+    if (context.taskRoot && !tool.capabilityPolicy && AUTO_EXECUTE_BUILTINS.has(tool.name)) {
+      const denyRule = findMatchingRule(permissionContext.rules.deny, tool.name, input, permissionContext);
+      if (denyRule) return denyFromRule(denyRule);
+      if (permissionContext.mode === "plan" && !tool.isReadOnly(input)
+        && !isPlanDirectoryWrite(tool, input, permissionContext)) {
+        return deny({ type: "mode", mode: "plan", message: buildPlanModeDenyMessage(tool.name, input) });
+      }
+      const checked = await tool.checkPermissions?.(input, context);
+      if (checked?.type === "deny" || checked?.type === "cancel") return checked;
+      if (checked?.type === "ask") return deny({ type: "safety", message: `Operation is outside the registered ${tool.name} scope.` });
+      return allow({ type: "safety", message: `Registered built-in tool ${tool.name} is allowed.` });
+    }
+    if (tool.capabilityPolicy) {
+      const requiredCapabilities = tool.capabilityPolicy.required(input, context);
+      if (!Array.isArray(requiredCapabilities) || requiredCapabilities.length === 0) {
+        return deny({ type: "safety", message: `Capability-scoped tool ${tool.name} must declare a required capability.` });
+      }
+      const capabilityDecision = evaluateCapabilityPolicy(
+        requiredCapabilities,
+        tool.capabilityPolicy.declared,
+        registeredCapabilitiesForContext(this.registeredCapabilities, context),
+      );
+      if (capabilityDecision.type === "deny") {
+        return deny({ type: "safety", message: capabilityDecision.message });
+      }
+      const scopedDeny = findMatchingRule(permissionContext.rules.deny, tool.name, input, permissionContext);
+      if (scopedDeny) return denyFromRule(scopedDeny);
+      if (
+        permissionContext.mode === "plan"
+        && !tool.isReadOnly(input)
+        && !isPlanDirectoryWrite(tool, input, permissionContext)
+      ) {
+        return deny({
+          type: "mode",
+          mode: "plan",
+          message: buildPlanModeDenyMessage(tool.name, input),
+        });
+      }
+      const toolPermission = await tool.checkPermissions?.(input, context);
+      if (toolPermission?.type === "deny" || toolPermission?.type === "cancel") return toolPermission;
+      if (toolPermission?.type === "ask") {
+        return deny({ type: "safety", message: `Capability-scoped tool ${tool.name} requires a registered policy decision.` });
+      }
+      return allow({ type: "safety", message: `Registered capability permits ${tool.name}.` });
+    }
     const sessionAllowRule = findMatchingRule(
       permissionContext.rules.allow.filter((rule) => rule.source === "session"),
       tool.name,
@@ -143,6 +204,26 @@ export class PermissionRuntime {
     });
   }
 }
+
+function registeredCapabilitiesForContext(
+  registered: readonly PilotDeckCapability[],
+  context: PilotDeckToolRuntimeContext,
+): readonly PilotDeckCapability[] {
+  const networkCapabilities: PilotDeckCapability[] = context.networkAccess
+    ? context.networkAccess.listServices().map((service) => ({
+        kind: "network" as const,
+        id: service.id,
+      }))
+    : [];
+  return [...registered, ...networkCapabilities];
+}
+
+const AUTO_EXECUTE_BUILTINS = new Set([
+  "bash", "read_file", "write_file", "edit_file", "glob", "grep",
+  "get_current_time", "read_skill", "office_to_pdf", "pdf_make", "docx_make",
+  "pptx_make", "spreadsheets_make", "diagram_make", "todo_write",
+  "ask_user_question", "exit_plan_mode",
+]);
 
 function normalizeToolPermission(
   result: PermissionResult | undefined,
@@ -337,7 +418,7 @@ function summarizeInput(input: unknown): string {
 
 /**
  * Returns true when a filesystem write tool (write_file / edit_file) targets
- * a markdown file under the project-local `.pilotdeck/plans` directory.
+ * a markdown file under the task-local `scratch/plans` directory.
  * Resolves relative paths against the permission context cwd so `./foo.md`
  * and the absolute path both match.
  */

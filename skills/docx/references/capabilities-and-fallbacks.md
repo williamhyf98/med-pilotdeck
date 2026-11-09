@@ -7,10 +7,13 @@
 对高级编辑和审阅运行：
 
 ```bash
-bash "$DOCX_TOOL" capabilities
-bash "$DOCX_TOOL" schema --command edit
-bash "$DOCX_TOOL" schema --command review
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" capabilities
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
+bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command review
 ```
+
+Agent 通过系统登记的命令调用 `capabilities` 和 `schema`；不要调用
+`docx.sh --help` 或搜索脚本源码。
 
 普通新建使用 `make`，不需要先查询 create schema。复杂新建若使用
 `make --spec`，字段以 [specifications.md](specifications.md) 为准。

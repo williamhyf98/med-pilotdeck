@@ -81,18 +81,18 @@ test("read_file explicit limit reads a large file range without auto paging", as
 test("read_file auto-shrinks oversized persisted tool-result ref ranges", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "pilotdeck-read-ref-autopage-"));
     try {
-        const refPath = join(projectRoot, ".pilotdeck", "tool-results", "refs", "result-0001.txt");
-        await mkdir(join(projectRoot, ".pilotdeck", "tool-results", "refs"), { recursive: true });
+        const refPath = join(projectRoot, "scratch", "tool-results", "refs", "result-0001.txt");
+        await mkdir(join(projectRoot, "scratch", "tool-results", "refs"), { recursive: true });
         await writeFile(refPath, Array.from({ length: 300 }, (_, index) => `line-${index + 1} ${"x".repeat(1200)}`).join("\n"));
         const result = await createReadFileTool().execute({
-            file_path: ".pilotdeck/tool-results/refs/result-0001.txt",
+            file_path: "scratch/tool-results/refs/result-0001.txt",
             offset: 1,
             limit: 200,
         }, context(projectRoot));
         const text = textOf(result);
         assert.match(text, /^1\|line-1/m);
         assert.match(text, /persisted tool result was too large for the requested range/);
-        assert.match(text, /Continue with read_file\({ file_path: "\.pilotdeck\/tool-results\/refs\/result-0001\.txt", offset: \d+, limit: \d+ }\)/);
+        assert.match(text, /Continue with read_file\({ file_path: "scratch\/tool-results\/refs\/result-0001\.txt", offset: \d+, limit: \d+ }\)/);
         assert.equal(result.data.autoPaged, true);
         assert.ok(result.data.endLine < 200);
         assert.ok(result.data.nextOffset > 1);

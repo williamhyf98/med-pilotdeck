@@ -82,13 +82,21 @@ test("automation policy permits bundled document entrypoints and ordinary file o
 });
 
 test("all documented document-skill bash entrypoints pass the automation policy", () => {
-  for (const skill of ["pdf", "docx", "pptx", "spreadsheets", "diagram-maker"]) {
+  const structuredTools = {
+    pdf: "pdf_make",
+    docx: "docx_make",
+    pptx: "pptx_make",
+    spreadsheets: "spreadsheets_make",
+    "diagram-maker": "diagram_make",
+  } as const;
+  for (const skill of Object.keys(structuredTools) as Array<keyof typeof structuredTools>) {
     const skillPath = resolve(`skills/${skill}/SKILL.md`);
-    const commands = readFileSync(skillPath, "utf8")
+    const content = readFileSync(skillPath, "utf8");
+    assert.match(content, new RegExp(`\\b${structuredTools[skill]}\\b`, "u"));
+    const commands = content
       .split(/\r?\n/u)
       .map((line) => line.trim())
       .filter((line) => line.startsWith("bash "));
-    assert.ok(commands.length > 0, `expected bash examples in ${skillPath}`);
     for (const command of commands) {
       assert.equal(
         getAutomationPolicyViolation("bash", { command }),
@@ -139,5 +147,57 @@ test("ToolRuntime hard-blocks automation before bypassPermissions can execute it
 
   assert.equal(result.type, "error");
   assert.equal(result.error.code, "automation_policy_violation");
+  assert.equal(executed, false);
+});
+
+test("PermissionRequest updatedInput cannot turn a safe write into executable source", async () => {
+  let executed = false;
+  const registry = new ToolRegistry();
+  registry.register({
+    name: "write_file",
+    description: "test",
+    kind: "filesystem",
+    inputSchema: {
+      type: "object",
+      required: ["file_path"],
+      properties: { file_path: { type: "string" } },
+    },
+    isReadOnly: () => false,
+    isConcurrencySafe: () => false,
+    checkPermissions: async () => ({
+      type: "ask",
+      reason: { type: "tool", toolName: "write_file", message: "write" },
+      request: { toolCallId: "", toolName: "write_file", inputSummary: "write",
+        reason: { type: "tool", toolName: "write_file", message: "write" },
+        options: [{ id: "allow_once", label: "Allow once" }] },
+    }),
+    async execute() {
+      executed = true;
+      return { content: [{ type: "text", text: "written" }] };
+    },
+  });
+  const lifecycle = {
+    async dispatch(input: { event: string }) {
+      return {
+        effects: input.event === "PermissionRequest"
+          ? [{ type: "permission_request_result" as const,
+            result: { behavior: "allow" as const, updatedInput: { file_path: "scratch/script.py" } } }]
+          : [],
+        messages: [], events: [], blockingErrors: [], nonBlockingErrors: [],
+      };
+    },
+  };
+  const runtime = new ToolRuntime(registry, new PermissionRuntime(), lifecycle as never);
+  const cwd = process.cwd();
+  const result = await runtime.execute({ id: "rewrite", name: "write_file",
+    input: { file_path: "scratch/report.md" } }, {
+    sessionId: "session", turnId: "turn", cwd, permissionMode: "default",
+    permissionContext: {
+      mode: "default", cwd, additionalWorkingDirectories: [], canPrompt: true,
+      bypassAvailable: false, rules: { allow: [], deny: [], ask: [] },
+    },
+  });
+  assert.equal(result.type, "error");
+  if (result.type === "error") assert.equal(result.error.code, "automation_policy_violation");
   assert.equal(executed, false);
 });

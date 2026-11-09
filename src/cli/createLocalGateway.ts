@@ -68,9 +68,16 @@ import {
   McpRuntime,
   createMcpToolDefinitionsFromRuntime,
   loadMcpServerConfig,
+  mergeMcpServerSources,
   parsePluginMcpServers,
 } from "../mcp/index.js";
 import { createModelRuntime, type CanonicalMessage, type ModelRuntime } from "../model/index.js";
+import { createSecurityPolicyStore, type SecurityPolicyStore } from "../security/policy/PolicyStore.js";
+import {
+  collectNetworkServices,
+  NetworkAccessController,
+  NetworkServiceRegistry,
+} from "../network/serviceRegistry.js";
 import { createDefaultPermissionContext, type PermissionRule } from "../permission/index.js";
 import { loadPilotConfig, resolvePilotHome, type PilotProxyConfig } from "../pilot/index.js";
 import {
@@ -205,6 +212,7 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
   const baseEnv = options.env ?? process.env;
   const projectRoot = resolve(options.projectRoot ?? process.cwd());
   const pilotHome = options.pilotHome ?? resolvePilotHome(baseEnv);
+  const systemHome = resolve(baseEnv.PILOTDECK_SYSTEM_HOME ?? pilotHome);
   // Plugin manifests reference `${env:PILOT_HOME}` (e.g. med-tools MCP
   // server command); export the resolved home into the process env so
   // placeholder expansion sees it even when the gateway was started
@@ -231,10 +239,12 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
   const now = () => new Date();
   const telemetry = options.telemetry ?? createTelemetryCollector({ env, pilotHome });
   const ownsTelemetry = !options.telemetry;
+  const securityPolicyStore = createSecurityPolicyStore({ env });
   let registry!: ProjectRuntimeRegistry;
   let router: SessionRouter | undefined;
   const extensionWatchManager = new ExtensionWatchManager({
     pilotHome,
+    globalMcpHome: systemHome,
     builtinSkillsRoot,
     onChange: (event) => {
       handleExtensionWatchEvent(event, registry, router);
@@ -261,7 +271,9 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
     modelFactory: options.__testModelFactory,
     autoElicitation: options.autoElicitation,
     telemetry,
+    securityPolicyStore,
     onProjectActivated: (activeProjectRoot) => extensionWatchManager.watchProject(activeProjectRoot),
+    systemHome,
   });
   const defaultRuntime = registry.resolve();
   const memoryDiagnosticsEnabled = isGatewayMemoryDiagnosticsEnabled(
@@ -288,6 +300,7 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
     }
     // eslint-disable-next-line no-console
     console.log("[pilotdeck] Config reloaded, invalidating runtimes:", changedPaths.join(", "));
+    applyConfiguredEnvironment(options.env ?? process.env, event.nextSnapshot.config.customEnv);
     registry.invalidate();
     if (memoryDiagnosticsEnabled) {
       logGatewayMemoryDiagnostic({
@@ -584,17 +597,31 @@ type ProjectRuntimeRegistryOptions = {
   extraTools?: PilotDeckToolDefinition[];
   sessionOverrides?: SessionConfigOverrides;
   additionalWorkingDirectories?: string[];
+  systemHome: string;
   /** @internal Test hook from `CreateLocalGatewayOptions.__testModelFactory`. */
   modelFactory?: (snapshot: PilotConfigSnapshot) => ModelRuntime;
   autoElicitation?: boolean;
   telemetry: TelemetryClient;
+  securityPolicyStore: SecurityPolicyStore;
   onProjectActivated?: (projectRoot: string) => void;
 };
+
+function applyConfiguredEnvironment(
+  env: Record<string, string | undefined>,
+  configured: Record<string, string> | undefined,
+): void {
+  if (!configured) return;
+  for (const [key, value] of Object.entries(configured)) {
+    env[key] = value;
+    process.env[key] = value;
+  }
+}
 
 type ProjectRuntime = {
   projectRoot: string;
   snapshot: ReturnType<typeof loadPilotConfig>;
   model: ModelRuntime;
+  networkAccess: NetworkAccessController;
   tokenAccounting: TokenAccountingRuntime;
   router: RouterRuntime;
   pluginRuntime: PluginRuntime;
@@ -1218,9 +1245,22 @@ class ProjectRuntimeRegistry {
     }
 
     const snapshot = loadPilotConfig({ projectRoot: configProjectRoot, env: this.options.env });
+    applyConfiguredEnvironment(this.options.env, snapshot.config.customEnv);
+    const networkRegistry = new NetworkServiceRegistry(
+      collectNetworkServices({ model: snapshot.config.model, env: this.options.env }),
+    );
+    const networkAccess = new NetworkAccessController({
+      registry: networkRegistry,
+      refreshPolicy: async () => (await this.options.securityPolicyStore.reload()).network,
+      onEvent: (event) => {
+        if (event.type === "denied") {
+          console.warn(`[network] denied ${event.url}: ${event.reason ?? "unregistered target"}`);
+        }
+      },
+    });
     const model = this.options.modelFactory
       ? this.options.modelFactory(snapshot)
-      : createModelRuntime(snapshot.config.model);
+      : createModelRuntime(snapshot.config.model, { networkAccess });
     const tokenAccounting = new TokenAccountingRuntime({
       modelConfig: snapshot.config.model,
     });
@@ -1284,6 +1324,7 @@ class ProjectRuntimeRegistry {
       projectRoot: agentCwd,
       snapshot,
       model,
+      networkAccess,
       tokenAccounting,
       router,
       pluginRuntime,
@@ -1356,17 +1397,22 @@ class ProjectRuntimeRegistry {
     if (runtime.mcpReady) return runtime.mcpReady;
     runtime.mcpReady = (async () => {
       try {
-        const configServers = loadMcpServerConfig(runtime.projectRoot, this.options.pilotHome);
+        const configServers = loadMcpServerConfig(
+          runtime.projectRoot,
+          this.options.pilotHome,
+          this.options.systemHome,
+        );
         for (const diagnostic of configServers.diagnostics) {
           // eslint-disable-next-line no-console
           console.warn(`[pilotdeck] Ignoring invalid MCP config ${diagnostic.path}: ${diagnostic.message}`);
         }
-        const rawServers = {
-          ...runtime.pluginRuntime.mcpServers(),
-          ...configServers.servers,
-        };
+        const rawServers = mergeMcpServerSources(
+          runtime.pluginRuntime.mcpServers(),
+          configServers.servers,
+        );
         const { servers } = parsePluginMcpServers(rawServers);
         if (servers.length === 0) return;
+        runtime.networkAccess.registerServices({ mcpServers: servers });
 
         const sharedServers = servers.filter((s) => s.transport !== "stdio" || !s.perSession);
         const perSessionServers = servers.filter((s) => s.transport === "stdio" && s.perSession);
@@ -1374,7 +1420,9 @@ class ProjectRuntimeRegistry {
         runtime.perSessionServerSpecs = perSessionServers.length > 0 ? perSessionServers : undefined;
 
         if (sharedServers.length > 0) {
-          const mcp = new McpRuntime(sharedServers);
+          const mcp = new McpRuntime(sharedServers, {
+            clientOptions: { networkAccess: runtime.networkAccess },
+          });
           runtime.mcpRuntime = mcp;
           await mcp.start();
           const defs = await createMcpToolDefinitionsFromRuntime(mcp);
@@ -1481,7 +1529,9 @@ class ProjectRuntimeRegistry {
         }
         return spec;
       });
-      const sessionMcp = new McpRuntime(patchedPerSpecs);
+      const sessionMcp = new McpRuntime(patchedPerSpecs, {
+        clientOptions: { networkAccess: runtime.networkAccess },
+      });
       this.sessionMcpRuntimes.set(context.sessionKey, sessionMcp);
       try {
         await sessionMcp.start();
@@ -1770,7 +1820,9 @@ class ProjectRuntimeRegistry {
           };
         },
       };
-      const planFileManager = createPlanFileManager({ projectRoot });
+      const planFileManager = createPlanFileManager({
+        projectRoot: resolveAgentCwd(runtime.projectRoot, this.options.pilotHome),
+      });
       const planTodoManager = createPlanTodoStateManager();
       return {
         context: contextRuntime,
@@ -1863,6 +1915,7 @@ class ProjectRuntimeRegistry {
       maxContextTokens,
       maxOutputTokens,
       thinking: agent.thinking,
+      networkAccess: runtime.networkAccess,
       permissionContext: createDefaultPermissionContext({
         cwd,
         mode: permissionMode,

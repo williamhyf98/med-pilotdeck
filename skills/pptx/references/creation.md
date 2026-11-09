@@ -1,14 +1,16 @@
 # 创建 PowerPoint
 
-Agent 只填写 `pptx.sh make` 的参数；不要编写 JavaScript 或 Python。
+普通 Agent 通过结构化工具 `pptx_make` 创建演示文稿；本页的字段用于
+`spec_path`，不要求 Agent 编写 JavaScript 或 Python。
 
 ## 常见调用
 
-```bash
-bash "$PPTX_TOOL" make \
-  --title "演示标题" \
-  --markdown "$PWD/scratch/qa/slides.md" \
-  --out "$PWD/exports/演示标题.pptx"
+```json
+{
+  "title": "演示标题",
+  "markdown_path": "scratch/pptx/slides.md",
+  "output_path": "exports/演示标题.pptx"
+}
 ```
 
 短内容可直接用 `--body`；长内容用 `--body-file` 或 `--markdown`。

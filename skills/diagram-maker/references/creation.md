@@ -5,7 +5,7 @@ Excalidraw 元素数组。
 
 ## 固定流程
 
-- 新建图示只使用 `diagram.sh make`。
+- 新建图示只使用结构化工具 `diagram_make`，不要拼接 Bash。
 - 短线性流程使用 `--title` + `--body`。
 - 分支流程使用 `--markdown` Mermaid 子集。
 - 架构节点、分组和语义类型使用 `--spec` JSON。

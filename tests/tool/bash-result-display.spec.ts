@@ -1,7 +1,7 @@
 // @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ToolResultBudget } from "../../src/context/budget/ToolResultBudget.js";
@@ -15,15 +15,19 @@ function createRuntime(runner) {
     registry.register(createBashTool({ runner }));
     return new ToolRuntime(registry, new PermissionRuntime());
 }
-function context() {
+async function context(dir) {
+    const cwd = join(dir, "workspace");
+    await mkdir(join(cwd, "exports"), { recursive: true });
+    await mkdir(join(cwd, "scratch"), { recursive: true });
     return {
         sessionId: "s1",
         turnId: "t1",
-        cwd: process.cwd(),
+        cwd,
+        env: { ...process.env, PILOT_HOME: dir },
         permissionMode: "bypassPermissions",
         permissionContext: {
             mode: "bypassPermissions",
-            cwd: process.cwd(),
+            cwd,
             additionalWorkingDirectories: [],
             canPrompt: true,
             bypassAvailable: true,
@@ -33,8 +37,10 @@ function context() {
     };
 }
 test("bash success result is formatted with assertions, stdout, and stderr", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pilotdeck-bash-display-"));
+    try {
     const runtime = createRuntime({
-        async run() {
+        async runRegistered() {
             return {
                 exitCode: 0,
                 stdout: "hello stdout\n",
@@ -44,7 +50,7 @@ test("bash success result is formatted with assertions, stdout, and stderr", asy
             };
         },
     });
-    const result = await runtime.execute({ id: "call-bash", name: "bash", input: { command: "echo hello" } }, context());
+    const result = await runtime.execute({ id: "call-bash", name: "bash", input: { command: 'bash "$PDF_SKILL_ROOT/scripts/pdf.sh" make --body hello --out exports/a.pdf' } }, await context(dir));
     assert.equal(result.type, "success");
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
     assert.match(text, /BASH_RESULT\[success\]\[stdout_data\]/);
@@ -52,13 +58,16 @@ test("bash success result is formatted with assertions, stdout, and stderr", asy
     assert.match(text, /stderr_visible: true/);
     assert.match(text, /stdout:\nhello stdout/);
     assert.match(text, /stderr:\nwarning stderr/);
+    } finally {
+        await rm(dir, { recursive: true, force: true });
+    }
 });
 test("bash failure tool result includes raw stdout and stderr tail for UI and model", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pilotdeck-bash-error-budget-"));
     const stderrTail = "TAIL ROOT CAUSE: missing package @example/pkg";
     try {
         const runtime = createRuntime({
-            async run() {
+            async runRegistered() {
                 return {
                     exitCode: 1,
                     stdout: `stdout start\n${"o".repeat(9000)}\nstdout tail`,
@@ -68,14 +77,15 @@ test("bash failure tool result includes raw stdout and stderr tail for UI and mo
                 };
             },
         });
-        const result = await runtime.execute({ id: "call-bash", name: "bash", input: { command: "git status" } }, context());
+        const command = 'bash "$PDF_SKILL_ROOT/scripts/pdf.sh" make --body x --out exports/a.pdf';
+        const result = await runtime.execute({ id: "call-bash", name: "bash", input: { command } }, await context(dir));
         assert.equal(result.type, "error");
         const text = result.content[0]?.type === "text" ? result.content[0].text : "";
         assert.match(text, /TOOL_ERROR\[tool_execution_failed\]\[bash\]/);
         assert.match(text, /Raw tool details:/);
         assert.match(text, /Diagnostic:/);
         assert.match(text, /BASH_FAILURE_DIAGNOSTIC/);
-        assert.match(text, /- command: git status/);
+        assert.match(text, /- command: bash "\$PDF_SKILL_ROOT\/scripts\/pdf\.sh" make/);
         assert.match(text, /- exit_code: 1/);
         assert.match(text, /stdout:/);
         assert.match(text, /stderr:/);
@@ -102,8 +112,10 @@ test("bash failure tool result includes raw stdout and stderr tail for UI and mo
     }
 });
 test("bash failure diagnostic extracts Python traceback location and exception", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pilotdeck-bash-traceback-"));
+    try {
     const runtime = createRuntime({
-        async run() {
+        async runRegistered() {
             return {
                 exitCode: 1,
                 stdout: "",
@@ -113,19 +125,22 @@ test("bash failure diagnostic extracts Python traceback location and exception",
             };
         },
     });
-    const result = await runtime.execute({ id: "call-bash", name: "bash", input: { command: "bash \"/opt/pilotdeck/skills/pdf/scripts/pdf.sh\" self-test" } }, context());
+    const result = await runtime.execute({ id: "call-bash", name: "bash", input: { command: 'bash "$PDF_SKILL_ROOT/scripts/pdf.sh" make --body x --out exports/a.pdf' } }, await context(dir));
     assert.equal(result.type, "error");
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
     assert.match(text, /BASH_FAILURE_DIAGNOSTIC/);
     assert.match(text, /likely_cause: TypeError: bad frame/);
     assert.match(text, /failing_location: \/tmp_workspace\/script\.py:3 in main/);
+    } finally {
+        await rm(dir, { recursive: true, force: true });
+    }
 });
 test("bash success keeps full output for ToolResultBudget persistence", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pilotdeck-bash-budget-"));
     const tail = "TAIL IMPORTANT SUCCESS MARKER";
     try {
         const runtime = createRuntime({
-            async run() {
+            async runRegistered() {
                 return {
                     exitCode: 0,
                     stdout: `stdout start\n${"x".repeat(260_000)}\n${tail}`,
@@ -135,7 +150,7 @@ test("bash success keeps full output for ToolResultBudget persistence", async ()
                 };
             },
         });
-        const result = await runtime.execute({ id: "call-bash", name: "bash", input: { command: "cat huge.log" } }, context());
+        const result = await runtime.execute({ id: "call-bash", name: "bash", input: { command: 'bash "$PDF_SKILL_ROOT/scripts/pdf.sh" make --body x --out exports/a.pdf' } }, await context(dir));
         assert.equal(result.type, "success");
         const text = result.content[0]?.type === "text" ? result.content[0].text : "";
         assert.match(text, new RegExp(tail));

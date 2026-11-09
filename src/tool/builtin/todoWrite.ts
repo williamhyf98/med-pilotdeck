@@ -84,7 +84,7 @@ export function createTodoWriteTool(): PilotDeckToolDefinition<TodoWriteInput, T
         "在适用时，建议保留一个最终校验检查点，用于核对产出内容、格式、数量、额外产物和关键约束。",
         "本工具只更新清单，不写文件、不提交，也不能替代最终计划。",
         "在计划模式下，不要用 todo_write 来撰写计划本身，也不要把待办清单当成最终计划。",
-        "在计划模式下，todo_write 只能用于组织规划工作，例如探查、分析，以及在 `.pilotdeck/plans/` 下撰写 markdown 计划。计划就绪后，向用户展示并等待其退出计划模式。",
+        "在计划模式下，todo_write 只能用于组织规划工作，例如探查、分析，以及在 `scratch/plans/` 下撰写 markdown 计划。计划就绪后，向用户展示并等待其退出计划模式。",
       ].join(" "),
     kind: "session",
     inputSchema: {

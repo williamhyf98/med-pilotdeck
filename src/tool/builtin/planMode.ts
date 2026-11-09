@@ -26,7 +26,7 @@ const ENTER_PLAN_MODE_DESCRIPTION =
 
 const EXIT_PLAN_MODE_DESCRIPTION =
   "提交已经写好的工作区任务计划供用户审核。" +
-  "plan_file_path 必须指向当前项目 `.pilotdeck/plans` 下的 markdown 文件。" +
+  "plan_file_path 必须指向当前任务 `scratch/plans` 下的 markdown 文件。" +
   "不要再用 ask_user_question 询问是否批准计划；本工具会展示计划并提供继续规划、开始执行和取消。";
 
 function buildApprovedPlanResult(plan: string, planFilePath: string | undefined): string {
@@ -126,7 +126,7 @@ export function createExitPlanModeTool(): PilotDeckToolDefinition<ExitPlanModeIn
       properties: {
         plan_file_path: {
           type: "string",
-          description: "Path to the markdown plan file to submit from the current project's `.pilotdeck/plans` directory.",
+          description: "Path to the markdown plan file under the current task's `scratch/plans` directory.",
         },
       },
     },
@@ -151,7 +151,7 @@ export function createExitPlanModeTool(): PilotDeckToolDefinition<ExitPlanModeIn
       if (!resolvedPlanFilePath) {
         throw new PilotDeckToolRuntimeError(
           "invalid_tool_input",
-          "plan_file_path must point to a markdown file under the current project's .pilotdeck/plans directory.",
+          "plan_file_path must point to a markdown file under the current task's scratch/plans directory.",
         );
       }
       let plan: string;

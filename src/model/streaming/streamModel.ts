@@ -21,14 +21,18 @@ import { buildProviderChatEndpointCandidates, isExpectedProviderResponseShape } 
 import { StreamingCheckpointManager } from "./StreamingCheckpoint.js";
 import { buildLiteLLMContinuationRequest } from "./continuationRequest.js";
 import { NetworkFetchError, networkFetch } from "../../network/fetch.js";
+import type { NetworkAccessController } from "../../network/serviceRegistry.js";
 
 export type ModelTransport = typeof fetch;
 
 export type ModelRuntimeOptions = {
   fetch?: ModelTransport;
+  networkAccess?: NetworkAccessController;
   googleClientFactory?: GoogleClientFactory;
   signal?: AbortSignal;
   streamTimeoutMs?: number;
+  /** Called once the provider has accepted the request and returned a stream/response. */
+  onConnectionEstablished?: () => void;
   onRetryProgress?: (progress: ModelStreamRetryProgress) => void;
 };
 
@@ -42,7 +46,8 @@ export type ModelStreamRetryProgress = {
 };
 
 export const LITELLM_DEFAULT_MAX_RETRIES = 2;
-export const LITELLM_DEFAULT_REQUEST_TIMEOUT_MS = 6_000_000;
+export const LITELLM_DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
+export const LITELLM_DEFAULT_STREAM_MAX_DURATION_MS = 600_000;
 export const LITELLM_COMPLETION_HTTP_FALLBACK_MS = 600_000;
 export const LITELLM_REPEATED_STREAMING_CHUNK_LIMIT = 100;
 export const LITELLM_INITIAL_RETRY_DELAY_MS = 500;
@@ -100,7 +105,7 @@ export async function complete(
     const body = buildModelRequest(nonStreamingRequest, config);
     let response: Response;
     try {
-      response = await sendProviderRequest(provider, body, false, options.fetch ?? fetch, options.signal);
+      response = await sendProviderRequest(provider, body, false, options.fetch ?? fetch, options.signal, options);
     } catch (error) {
       if (attempt < maxRetries && isRetryableRequestError(error)) {
         const delayMs = retryBaseDelay * (attempt + 1);
@@ -177,6 +182,7 @@ export async function* streamModel(
     let response: Response;
     try {
       response = await sendProviderRequest(provider, body, true, options.fetch ?? fetch, options.signal, options);
+      options.onConnectionEstablished?.();
     } catch (error) {
       if (attempt < maxRetries && isRetryableStreamError(error)) {
         const delayMs = calculateRetryDelay(provider, attempt);
@@ -341,6 +347,7 @@ async function sendGoogleCompleteRequest(
   options: ModelRuntimeOptions,
 ): Promise<unknown> {
   try {
+    await options.networkAccess?.assertAllowed(provider.url);
     const body = withGoogleAbortSignal(buildModelRequest(request, {
       providers: { [provider.id]: provider },
     }) as Record<string, unknown>, options.signal);
@@ -378,7 +385,9 @@ async function* streamGoogleProviderRequest(params: {
       }
 
       const client = (params.options.googleClientFactory ?? createGoogleClient)(params.provider);
+      await params.options.networkAccess?.assertAllowed(params.provider.url);
       const stream = await client.models.generateContentStream(body as unknown as GoogleRequestBody);
+      params.options.onConnectionEstablished?.();
       const state = createGoogleStreamState();
       let sawTerminalEvent = false;
       const streamGuard = createStreamGuard(params.provider);
@@ -594,7 +603,10 @@ type StreamGuard = {
 
 function createStreamGuard(provider: ProviderConfig): StreamGuard {
   const startedAt = Date.now();
-  const maxDurationMs = provider.retry?.maxStreamingDurationMs ?? LITELLM_STREAM_MAX_DURATION_MS;
+  const maxDurationMs =
+    provider.retry?.maxStreamingDurationMs
+    ?? LITELLM_STREAM_MAX_DURATION_MS
+    ?? LITELLM_DEFAULT_STREAM_MAX_DURATION_MS;
   const repeatedChunkLimit = provider.retry?.repeatedChunkLimit ?? LITELLM_REPEATED_STREAMING_CHUNK_LIMIT;
   let lastText: string | undefined;
   let repeatedCount = 1;
@@ -671,7 +683,7 @@ async function sendProviderRequest(
       body: JSON.stringify(finalBody),
       signal: controller.signal,
     };
-    return await sendWithEndpointFallback(provider, stream, transport, fetchOptions);
+    return await sendWithEndpointFallback(provider, stream, transport, fetchOptions, options ?? {});
   } catch (error) {
     if (signal?.aborted) {
       throw createAbortError(signal.reason);
@@ -701,6 +713,7 @@ async function sendWithEndpointFallback(
   stream: boolean,
   transport: ModelTransport,
   fetchOptions: RequestInit,
+  options: ModelRuntimeOptions,
 ): Promise<Response> {
   const endpoints = buildProviderChatEndpointCandidates({ protocol: provider.protocol, baseUrl: provider.url });
   let lastResponse: Response | undefined;
@@ -708,6 +721,7 @@ async function sendWithEndpointFallback(
     const response = await networkFetch(endpoint, fetchOptions, {
       signal: fetchOptions.signal instanceof AbortSignal ? fetchOptions.signal : undefined,
       fetchImpl: transport === fetch ? undefined : transport,
+      networkAccess: options.networkAccess,
       timeoutMs: provider.timeoutMs,
       retry: { maxRetries: 0, retryOnPost: true },
     });

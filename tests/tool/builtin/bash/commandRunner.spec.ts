@@ -45,6 +45,10 @@ function fakeSandbox(kind: CommandSandbox["kind"] = "bwrap"): CommandSandbox & {
       wrapCalls.push({ command, options });
       return { file: "/fake/sandbox-launcher", args: ["--wrapped", command] };
     },
+    wrapArgv(argv, options) {
+      wrapCalls.push({ argv, options });
+      return { file: "/fake/sandbox-launcher", args: ["--wrapped-argv", argv.file, ...argv.args] };
+    },
     async probe() {
       return { ok: true };
     },
@@ -64,6 +68,90 @@ test("without a sandbox the command is handed to the shell as before", async () 
   assert.deepEqual(calls[0].args, []);
   assert.equal(calls[0].options.shell, true);
   assert.equal(calls[0].options.cwd, "/work");
+});
+
+test("registered argv never goes through a shell, including inside a sandbox", async () => {
+  const calls: SpawnCall[] = [];
+  const runner = new NodeShellCommandRunner(recordingSpawn(calls));
+  await runner.runRegistered("/bin/bash", ["/trusted/pdf.sh", "make", "--body", "a; id"], {
+    cwd: "/work", env: {}, timeoutMs: 5000,
+  });
+  assert.equal(calls[0]?.file, "/bin/bash");
+  assert.deepEqual(calls[0]?.args, ["/trusted/pdf.sh", "make", "--body", "a; id"]);
+  assert.equal(calls[0]?.options.shell, false);
+
+  const sandbox = fakeSandbox("bwrap");
+  setCommandSandbox(sandbox);
+  await runner.runRegistered("/bin/bash", ["/trusted/pdf.sh", "make"], {
+    cwd: "/work", env: {}, userHome: "/home/u", timeoutMs: 5000,
+  });
+  assert.equal(calls[1]?.options.shell, false);
+  assert.deepEqual(sandbox.wrapCalls[0], {
+    argv: { file: "/bin/bash", args: ["/trusted/pdf.sh", "make"] },
+    options: { cwd: "/work", userHome: "/home/u", env: {} },
+  });
+});
+
+test("registered task commands launch from scratch because the task root is not mounted", async () => {
+  const root = mkdtempSync(join(tmpdir(), "registered-cwd-"));
+  const task = join(root, "workspaces", "case");
+  mkdirSync(join(task, "inbox"), { recursive: true });
+  mkdirSync(join(task, "scratch"), { recursive: true });
+  mkdirSync(join(task, "exports"), { recursive: true });
+  try {
+    const calls: SpawnCall[] = [];
+    const sandbox = fakeSandbox("bwrap");
+    setCommandSandbox(sandbox);
+    const runner = new NodeShellCommandRunner(recordingSpawn(calls));
+
+    await runner.runRegistered("/bin/bash", ["/trusted/pdf.sh", "make"], {
+      cwd: task,
+      taskRoot: task,
+      userHome: root,
+      env: { TMPDIR: "/host/temp" },
+      timeoutMs: 5000,
+    });
+
+    assert.equal((sandbox.wrapCalls[0] as { options: { cwd: string } }).options.cwd, join(task, "scratch"));
+    assert.equal(calls[0].options.cwd, join(task, "scratch"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("sandbox-exec task commands get a task-local temporary directory", async () => {
+  const root = mkdtempSync(join(tmpdir(), "registered-tmpdir-"));
+  const task = join(root, "workspaces", "case");
+  mkdirSync(join(task, "inbox"), { recursive: true });
+  mkdirSync(join(task, "scratch"), { recursive: true });
+  mkdirSync(join(task, "exports"), { recursive: true });
+  try {
+    const calls: SpawnCall[] = [];
+    setCommandSandbox(fakeSandbox("sandbox-exec"));
+    const runner = new NodeShellCommandRunner(recordingSpawn(calls));
+
+    await runner.runRegistered("/bin/bash", ["/trusted/spreadsheet.sh", "make"], {
+      cwd: task,
+      taskRoot: task,
+      userHome: root,
+      env: {},
+      timeoutMs: 5000,
+    });
+
+    assert.equal(calls[0]?.options.env?.TMPDIR, join(task, "scratch"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("task-scoped registered argv requires an OS sandbox even when none is configured", async () => {
+  const calls: SpawnCall[] = [];
+  const runner = new NodeShellCommandRunner(recordingSpawn(calls));
+  const options = { cwd: "/work", taskRoot: "/work", userHome: "/home/u", env: {}, timeoutMs: 5000 };
+  await assert.rejects(runner.runRegistered("/bin/bash", ["/trusted/pdf.sh"], options), /OS sandbox/u);
+  setCommandSandbox(fakeSandbox("none"));
+  await assert.rejects(runner.runRegistered("/bin/bash", ["/trusted/pdf.sh"], options), /OS sandbox/u);
+  assert.equal(calls.length, 0);
 });
 
 test("with a sandbox, wrap() receives cwd, userHome, env and its argv is spawned without a shell", async () => {

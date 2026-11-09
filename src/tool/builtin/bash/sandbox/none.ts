@@ -12,6 +12,10 @@ export class NoneSandbox implements CommandSandbox {
     return { file: "/bin/sh", args: ["-c", command] };
   }
 
+  wrapArgv(argv: { file: string; args: string[] }): { file: string; args: string[] } {
+    return argv;
+  }
+
   async probe(): Promise<{ ok: true }> {
     return { ok: true };
   }

@@ -91,6 +91,7 @@ export function loadPilotConfig(options: PilotConfigLoadOptions = {}): PilotConf
   throwConfigErrorIfFatal(diagnostics);
 
   const model = parseModel(rawConfig.model, env, diagnostics);
+  const customEnv = parseCustomEnv(rawConfig.customEnv, diagnostics);
   const agent = parseAgent(rawConfig.agent, model, diagnostics);
   const medical = parseMedical(rawConfig.medical, model, diagnostics);
   const extension = parseExtension(rawConfig.extension, diagnostics);
@@ -158,6 +159,7 @@ export function loadPilotConfig(options: PilotConfigLoadOptions = {}): PilotConf
     config: {
       agent,
       model,
+      customEnv,
       ...(medical ? { medical } : {}),
       extension,
       ...(memory ? { memory } : {}),
@@ -307,6 +309,7 @@ function validateTopLevel(rawConfig: PilotRawConfig, diagnostics: PilotConfigDia
     "schemaVersion",
     "agent",
     "model",
+    "customEnv",
     "medical",
     "extension",
     "memory",
@@ -694,6 +697,38 @@ function parseTelemetryConfig(raw: unknown): PilotTelemetryConfig {
   return {
     enabled: isRecord(raw) && (raw as Record<string, unknown>).enabled === true,
   };
+}
+
+function parseCustomEnv(
+  raw: unknown,
+  diagnostics: PilotConfigDiagnostic[],
+): Record<string, string> {
+  if (raw === undefined) return {};
+  if (!isRecord(raw)) {
+    diagnostics.push({
+      code: "CONFIG_CUSTOM_ENV_INVALID",
+      severity: "fatal",
+      message: "customEnv must be an object with string values.",
+      path: "customEnv",
+      recoverable: false,
+    });
+    return {};
+  }
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!key || typeof value !== "string") {
+      diagnostics.push({
+        code: "CONFIG_CUSTOM_ENV_VALUE_INVALID",
+        severity: "fatal",
+        message: `customEnv.${key} must be a string.`,
+        path: `customEnv.${key}`,
+        recoverable: false,
+      });
+      continue;
+    }
+    result[key] = value;
+  }
+  return result;
 }
 
 function parseProxyConfig(

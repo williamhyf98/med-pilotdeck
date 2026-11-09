@@ -89,6 +89,7 @@ export function buildGatewayChildEnv({ env, userHome, port, configPath, multiUse
   const childEnv = {
     ...env,
     PILOT_HOME: userHome,
+    PILOTDECK_SYSTEM_HOME: path.dirname(configPath),
     PILOTDECK_DISABLE_LOCAL_AUTH: multiUser === true ? '0' : '1',
     PILOTDECK_GATEWAY_PORT: String(port),
     PILOTDECK_CONFIG_PATH: configPath,

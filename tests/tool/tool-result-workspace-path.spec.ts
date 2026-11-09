@@ -25,7 +25,7 @@ function context(cwd) {
         now: () => new Date("2026-07-09T00:00:00.000Z"),
     };
 }
-test("large tool results are persisted under workspace .pilotdeck and readable by read_file", async () => {
+test("large tool results are persisted under task scratch and readable by read_file", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "pilotdeck-readable-tool-result-"));
     const pilotHome = await mkdtemp(join(tmpdir(), "pilotdeck-home-"));
     const agentCwd = resolveAgentCwd(projectRoot, pilotHome);
@@ -36,7 +36,7 @@ test("large tool results are persisted under workspace .pilotdeck and readable b
             sessionId: "web:s_test",
             now: () => new Date("2026-07-09T00:00:00.000Z"),
         });
-        assert.match(relative(agentCwd, storage.toolResultsDir), /^\.pilotdeck[\/\\]tool-results[\/\\]/);
+        assert.match(relative(agentCwd, storage.toolResultsDir), /^scratch[\/\\]tool-results[\/\\]/);
         const budget = new ToolResultBudget({
             toolResultsDir: storage.toolResultsDir,
             maxResultSizeChars: 64,
@@ -53,8 +53,8 @@ test("large tool results are persisted under workspace .pilotdeck and readable b
         }, { turnId: "turn-1" });
         const ref = message.content.find((block) => block.type === "tool_result_reference");
         assert.ok(ref, "expected a persisted tool_result_reference");
-        assert.match(relative(agentCwd, ref.path), /^\.pilotdeck[\/\\]tool-results[\/\\]/);
-        assert.equal(ref.readFilePath, ".pilotdeck/tool-results/refs/result-0001.txt");
+        assert.match(relative(agentCwd, ref.path), /^scratch[\/\\]tool-results[\/\\]/);
+        assert.equal(ref.readFilePath, "scratch/tool-results/refs/result-0001.txt");
         assert.equal(await readFile(join(agentCwd, ref.readFilePath), "utf8"), `alpha\n${"x".repeat(200)}\nomega`);
         const read = await createReadFileTool().execute({ file_path: ref.readFilePath, offset: 1, limit: 2 }, context(agentCwd));
         const text = read.content[0]?.type === "text" ? read.content[0].text : "";
@@ -94,8 +94,8 @@ test("large tool result read_file aliases are short and sequential", async () =>
         const secondRef = second.content.find((block) => block.type === "tool_result_reference");
         assert.ok(firstRef);
         assert.ok(secondRef);
-        assert.equal(firstRef.readFilePath, ".pilotdeck/tool-results/refs/result-0001.txt");
-        assert.equal(secondRef.readFilePath, ".pilotdeck/tool-results/refs/result-0002.txt");
+        assert.equal(firstRef.readFilePath, "scratch/tool-results/refs/result-0001.txt");
+        assert.equal(secondRef.readFilePath, "scratch/tool-results/refs/result-0002.txt");
     }
     finally {
         await rm(projectRoot, { recursive: true, force: true });

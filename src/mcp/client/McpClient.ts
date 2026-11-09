@@ -36,16 +36,24 @@ import { recursivelySanitizeUnicode } from "../runtime/sanitize.js";
 import { truncateMcpToolDescription } from "../runtime/truncate.js";
 import { buildMcpToolWireName } from "../runtime/wireName.js";
 import { networkFetch } from "../../network/fetch.js";
+import type { NetworkAccessController } from "../../network/serviceRegistry.js";
+import {
+  acquireTaskProcess,
+  assertScratchWithinLimit,
+  DEFAULT_RESOURCE_LIMITS,
+  resolveResourceLimits,
+  type ResourceLimitOverrides,
+} from "../../security/policy/resourceLimits.js";
 import type {
   PilotDeckMcpServerSpec,
   PilotDeckMcpStatus,
   PilotDeckMcpToolSpec,
 } from "../protocol/types.js";
 
-const DEFAULT_CALL_TIMEOUT_MS = parseInt(
-  process.env.PILOTDECK_MCP_TOOL_TIMEOUT_MS ?? "60000",
-  10,
-);
+const configuredCallTimeoutMs = parseInt(process.env.PILOTDECK_MCP_TOOL_TIMEOUT_MS ?? "60000", 10);
+const DEFAULT_CALL_TIMEOUT_MS = Number.isSafeInteger(configuredCallTimeoutMs) && configuredCallTimeoutMs > 0
+  ? Math.min(configuredCallTimeoutMs, DEFAULT_RESOURCE_LIMITS.maxForegroundTimeoutMs)
+  : 60_000;
 const LIST_TOOLS_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export type McpClientOptions = {
@@ -56,6 +64,8 @@ export type McpClientOptions = {
   transportFactory?: (spec: PilotDeckMcpServerSpec) => Transport;
   /** Optional fetch override for testing streamable HTTP transports. */
   fetch?: typeof fetch;
+  networkAccess?: NetworkAccessController;
+  resourceLimits?: ResourceLimitOverrides;
 };
 
 export class McpClientError extends Error {
@@ -121,7 +131,7 @@ export class McpClient {
       { name: "pilotdeck", version: "0.1.0" },
       { capabilities: { elicitation: {} } },
     );
-    const handshakeMs = this.options.handshakeTimeoutMs ?? 10_000;
+    const handshakeMs = this.effectiveHandshakeTimeoutMs();
     try {
       await withTimeout(
         client.connect(transport),
@@ -184,11 +194,20 @@ export class McpClient {
         requestInit: { headers: this.spec.headers ?? {} },
         fetch: (input, init) => {
           const method = String(init?.method ?? "GET").toUpperCase();
-          const fetchImpl = this.options.fetch;
-          return (fetchImpl ?? networkFetch)(input as RequestInfo, init, {
-            timeoutMs: method === "POST"
-              ? this.options.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS
-              : this.options.handshakeTimeoutMs ?? 10_000,
+          const timeoutMs = method === "POST"
+            ? this.effectiveCallTimeoutMs()
+            : this.effectiveHandshakeTimeoutMs();
+          if (this.options.fetch && !this.options.networkAccess) {
+            return (this.options.fetch as unknown as (
+              input: RequestInfo,
+              init?: RequestInit,
+              options?: { timeoutMs: number },
+            ) => Promise<Response>)(input as RequestInfo, init, { timeoutMs });
+          }
+          return networkFetch(input as RequestInfo, init, {
+            timeoutMs,
+            fetchImpl: this.options.fetch,
+            networkAccess: this.options.networkAccess,
             retry: {
               maxRetries: 1,
               baseDelayMs: 500,
@@ -216,7 +235,7 @@ export class McpClient {
       throw new McpClientError("Client not connected", "mcp_handshake_failed", this.spec.id);
     }
     const sdkResult = await this.callWithReconnect(() =>
-      this.client!.listTools(undefined, { timeout: this.options.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS }),
+      this.client!.listTools(undefined, { timeout: this.effectiveCallTimeoutMs() }),
     );
 
     const tools = (sdkResult.tools ?? []).map((tool: unknown) => this.toToolSpec(tool));
@@ -234,6 +253,7 @@ export class McpClient {
     options: {
       signal?: AbortSignal;
       timeoutMs?: number;
+      taskRoot?: string;
       onProgress?: (progress: { progress: number; total?: number; message?: string }) => void;
     } = {},
   ): Promise<{ content: unknown; isError?: boolean }> {
@@ -241,22 +261,53 @@ export class McpClient {
     if (!this.client) {
       throw new McpClientError("Client not connected", "mcp_handshake_failed", this.spec.id);
     }
-    const timeoutMs = options.timeoutMs ?? this.options.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
-    const result = await this.callWithReconnect(() =>
-      this.client!.callTool(
-        { name: toolName, arguments: (args ?? {}) as Record<string, unknown> },
-        undefined,
-        {
-          timeout: timeoutMs,
-          signal: options.signal,
-          ...(options.onProgress ? { onprogress: options.onProgress } : {}),
-        },
-      ),
+    const limits = resolveResourceLimits(this.options.resourceLimits);
+    const timeoutMs = Math.min(
+      positiveTimeout(options.timeoutMs) ?? this.effectiveCallTimeoutMs(),
+      limits.maxForegroundTimeoutMs,
     );
-    return {
-      content: recursivelySanitizeUnicode(result.content),
-      isError: typeof result.isError === "boolean" ? result.isError : undefined,
-    };
+    const releaseProcess = options.taskRoot && this.spec.transport === "stdio"
+      ? (() => {
+          assertScratchWithinLimit(options.taskRoot!, limits);
+          return acquireTaskProcess(options.taskRoot!, limits);
+        })()
+      : undefined;
+    try {
+      const result = await this.callWithReconnect(() =>
+        this.client!.callTool(
+          { name: toolName, arguments: (args ?? {}) as Record<string, unknown> },
+          undefined,
+          {
+            timeout: timeoutMs,
+            signal: options.signal,
+            ...(options.onProgress ? { onprogress: options.onProgress } : {}),
+          },
+        ),
+      );
+      if (options.taskRoot) assertScratchWithinLimit(options.taskRoot, limits);
+      return {
+        content: recursivelySanitizeUnicode(result.content),
+        isError: typeof result.isError === "boolean" ? result.isError : undefined,
+      };
+    } finally {
+      releaseProcess?.();
+    }
+  }
+
+  private effectiveCallTimeoutMs(): number {
+    const limits = resolveResourceLimits(this.options.resourceLimits);
+    return Math.min(
+      positiveTimeout(this.options.callTimeoutMs) ?? DEFAULT_CALL_TIMEOUT_MS,
+      limits.maxForegroundTimeoutMs,
+    );
+  }
+
+  private effectiveHandshakeTimeoutMs(): number {
+    const limits = resolveResourceLimits(this.options.resourceLimits);
+    return Math.min(
+      positiveTimeout(this.options.handshakeTimeoutMs) ?? 10_000,
+      limits.maxForegroundTimeoutMs,
+    );
   }
 
   /** M5 + M15 wrapper. Triggers exactly one reconnect on session-expired errors. */
@@ -408,4 +459,10 @@ function withTimeout<T>(
       },
     );
   });
+}
+
+function positiveTimeout(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : undefined;
 }

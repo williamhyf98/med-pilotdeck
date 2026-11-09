@@ -18,9 +18,13 @@ export function getProjectMcpConfigFilePath(projectRoot: string): string {
   return resolve(projectRoot, ".pilotdeck", MCP_CONFIG_FILE_NAME);
 }
 
-export function loadMcpServerConfig(projectRoot: string, pilotHome: string): LoadMcpServerConfigResult {
+export function loadMcpServerConfig(
+  projectRoot: string,
+  pilotHome: string,
+  globalPilotHome = pilotHome,
+): LoadMcpServerConfigResult {
   const diagnostics: LoadMcpServerConfigResult["diagnostics"] = [];
-  const global = readMcpConfig(getGlobalMcpConfigFilePath(pilotHome), diagnostics);
+  const global = readMcpConfig(getGlobalMcpConfigFilePath(globalPilotHome), diagnostics);
   const project = readMcpConfig(getProjectMcpConfigFilePath(projectRoot), diagnostics);
 
   return {

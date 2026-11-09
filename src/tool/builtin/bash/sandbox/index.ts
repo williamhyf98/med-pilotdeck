@@ -11,11 +11,13 @@ import type { SandboxGrants } from "./grants.js";
 export interface CommandSandbox {
   readonly kind: "bwrap" | "sandbox-exec" | "none";
   /** 把原始命令包装成实际要 spawn 的 argv；不改变 cwd 与 stdio 语义 */
-  wrap(command: string, options: { cwd: string; userHome: string; env: NodeJS.ProcessEnv }): { file: string; args: string[] };
+  wrap(command: string, options: { cwd: string; userHome: string; taskRoot?: string; env: NodeJS.ProcessEnv }): { file: string; args: string[] };
+  /** Registered operations pass argv directly to the sandbox, never through sh -c. */
+  wrapArgv?(argv: { file: string; args: string[] }, options: { cwd: string; userHome: string; taskRoot?: string; env: NodeJS.ProcessEnv }): { file: string; args: string[] };
   /** 启动时自检：二进制存在、能执行 `true`，失败则返回原因 */
   probe(): Promise<{ ok: true } | { ok: false; reason: string }>;
   /** Effective filesystem grants for this user's command (including canonical symlink targets). */
-  grants(userHome: string): SandboxGrants;
+  grants(userHome: string, taskRoot?: string): SandboxGrants;
 }
 
 export interface SelectSandboxOptions {

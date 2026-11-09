@@ -210,6 +210,10 @@ package-lock.json
 # Test output
 test-results/
 tests/skill-e2e/work/
+# Local-only medical/media fixtures; public synthetic fixtures may still be added.
+/tests/skill-e2e/fixtures/medical-batch/admission-note.xml
+/tests/skill-e2e/fixtures/medical-batch/ultrasound.dcm
+/tests/skill-e2e/fixtures/wse_0820_00_injury.jpg
 
 # Accidental runtime dirs at repo root (data lives under PILOT_HOME/workspaces/)
 /exports/

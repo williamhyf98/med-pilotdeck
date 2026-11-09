@@ -93,7 +93,7 @@ export function createGlobTool(): PilotDeckToolDefinition<GlobInput> {
       const resolvedSearchPath = resolvePilotDeckWorkspacePath(
         searchPath,
         context,
-        { mustExist: true },
+        { mustExist: true, allowTaskRoot: true },
       );
       if (!resolvedSearchPath.ok) {
         throw new PilotDeckToolRuntimeError(
@@ -105,7 +105,9 @@ export function createGlobTool(): PilotDeckToolDefinition<GlobInput> {
 
       const result = await ripgrepFiles({
         cwd: resolvedSearchPath.absolutePath,
-        pattern: searchPattern,
+        pattern: context.taskRoot && resolvedSearchPath.relativePath === "."
+          ? scopeTaskGlobPattern(searchPattern)
+          : searchPattern,
         limit: input.limit,
         env: context.env,
         signal: context.abortSignal,
@@ -124,6 +126,14 @@ export function createGlobTool(): PilotDeckToolDefinition<GlobInput> {
       };
     },
   };
+}
+
+function scopeTaskGlobPattern(pattern: string): string {
+  const normalized = pattern.replace(/^\.\//u, "");
+  if (/^(?:inbox|scratch|exports)(?:\/|$)/u.test(normalized)) {
+    return normalized;
+  }
+  return `{inbox,scratch,exports}/${normalized}`;
 }
 
 function formatGlobResult(files: string[], totalCount: number, truncated: boolean, limit: number | undefined): string {

@@ -34,6 +34,7 @@ export type {
   PilotDeckToolAvailability,
   PilotDeckToolAvailabilityContext,
   PilotDeckToolDefinition,
+  PilotDeckToolArtifact,
   PilotDeckToolExecutionOutput,
   PilotDeckToolSupplementalMessage,
   PilotDeckFileUpdateNotification,
@@ -72,6 +73,24 @@ export {
   type OfficeToPdfInput,
   type OfficeToPdfOutput,
 } from "./builtin/officeToPdf.js";
+export {
+  createPdfMakeTool,
+  type CreatePdfMakeToolOptions,
+  type PdfMakeInput,
+  type PdfMakeOutput,
+} from "./builtin/pdfMake.js";
+export {
+  createDiagramMakeTool,
+  createDocxMakeTool,
+  createPptxMakeTool,
+  createSpreadsheetMakeTool,
+  type CreateDocumentMakeToolOptions,
+  type DiagramMakeInput,
+  type DocxMakeInput,
+  type PptxMakeInput,
+  type SpreadsheetMakeInput,
+  type DocumentMakeOutput,
+} from "./builtin/documentMakeTools.js";
 export { createGlobTool, extractGlobBaseDirectory, type GlobInput } from "./builtin/glob.js";
 export { createGrepTool, type GrepInput } from "./builtin/grep.js";
 export {

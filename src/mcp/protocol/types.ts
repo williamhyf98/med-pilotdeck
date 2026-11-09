@@ -43,6 +43,27 @@ export type PilotDeckMcpToolAnnotations = {
   idempotentHint?: boolean;
 };
 
+export type PilotDeckMcpArtifactPolicy =
+  | "none"
+  | "final"
+  | "intermediate"
+  | "managed_derived";
+
+/**
+ * Trusted, system-side capability profile for an MCP tool.
+ *
+ * This is deliberately separate from MCP server metadata: a plugin cannot
+ * grant itself a new task root, network service, or artifact class by
+ * advertising fields in `tools/list`.
+ */
+export type PilotDeckMcpToolCapabilities = Readonly<{
+  readOnly: boolean;
+  taskReadRoots: readonly ("inbox" | "scratch" | "exports")[];
+  taskWriteRoots: readonly ("scratch" | "exports")[];
+  networkServiceIds: readonly string[];
+  artifactPolicy: PilotDeckMcpArtifactPolicy;
+}>;
+
 /**
  * Runtime view of a tool advertised by an MCP server. Already sanitized
  * (M9), wire-named (M10), and description-truncated (M11).
@@ -54,6 +75,7 @@ export type PilotDeckMcpToolSpec = {
   description: string;
   inputSchema: unknown;
   annotations?: PilotDeckMcpToolAnnotations;
+  capabilities?: PilotDeckMcpToolCapabilities;
   meta?: Record<string, unknown>;
 };
 

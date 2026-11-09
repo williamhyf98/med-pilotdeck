@@ -16,6 +16,8 @@ export type SettingsMenuKey =
   | 'officePreview'
   | 'privacy'
   | 'advanced'
+  | 'securityServices'
+  | 'allowedCommands'
   | 'about';
 
 export type SettingsMenuItem = {

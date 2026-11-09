@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -73,6 +73,24 @@ test("profile grants writes only under userHome, system temp dirs and /dev/null"
   });
 });
 
+test("registered task profile reads inbox and writes only scratch/exports", () => {
+  withTempDir((home) => {
+    const task = join(home, "workspaces", "current");
+    for (const folder of ["inbox", "scratch", "exports"]) mkdirSync(join(task, folder), { recursive: true });
+    const profile = buildSandboxProfile(config, home, task);
+    const writeLine = profile.split("\n").find((line) => line.startsWith("(allow file* "));
+    assert.ok(writeLine);
+    assert.ok(profile.includes(`(subpath "${join(task, "inbox")}")`));
+    assert.ok(writeLine.includes(`(subpath "${join(task, "scratch")}")`));
+    assert.ok(writeLine.includes(`(subpath "${join(task, "exports")}")`));
+    assert.ok(!writeLine.includes(`(subpath "${home}")`));
+    assert.ok(!writeLine.includes(`(subpath "${join(task, "inbox")}")`));
+    const sandbox = new SandboxExecSandbox(config);
+    assert.deepEqual(sandbox.grants(home, task).writable.filter((p) => p.startsWith(home)),
+      [join(task, "scratch"), join(task, "exports")]);
+  });
+});
+
 test("a symlinked userHome is granted in both its raw and resolved forms", () => {
   withTempDir((dir) => {
     const real = join(dir, "real");
@@ -140,5 +158,30 @@ test("on macOS a wrapped command runs inside userHome and cannot write outside i
     } finally {
       rmSync(escapeTarget, { force: true });
     }
+  });
+});
+
+test("on macOS registered argv can use its task but cannot read a sibling task", {
+  skip: process.platform !== "darwin" && "sandbox-exec is macOS-only",
+}, () => {
+  withTempDir((home) => {
+    const task = join(home, "workspaces", "current");
+    const other = join(home, "workspaces", "other");
+    for (const root of ["inbox", "scratch", "exports"]) mkdirSync(join(task, root), { recursive: true });
+    mkdirSync(other, { recursive: true });
+    const input = join(task, "inbox", "input.txt");
+    const secret = join(other, "secret.txt");
+    const output = join(task, "scratch", "result.txt");
+    writeFileSync(input, "visible\n");
+    writeFileSync(secret, "hidden\n");
+    const sandbox = new SandboxExecSandbox({ appRoot: resolveAppRoot(), nodeBinDir: dirname(process.execPath) });
+    const launch = sandbox.wrapArgv({
+      file: "/bin/sh",
+      args: ["-c", 'cat "$1" > "$2"; cat "$3" 2>/dev/null || true', "task", input, output, secret],
+    }, { cwd: task, taskRoot: task, userHome: home, env: {} });
+    const run = spawnSync(launch.file, launch.args, { cwd: task, encoding: "utf8" });
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(readFileSync(output, "utf8"), "visible\n");
+    assert.ok(!run.stdout.includes("hidden"), run.stdout);
   });
 });

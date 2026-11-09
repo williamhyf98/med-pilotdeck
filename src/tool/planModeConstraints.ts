@@ -42,7 +42,7 @@ export function buildPlanModeViolationMessage(toolName: string): string {
     "",
     "现在应当：",
     "1. 用 read_file、grep、glob 或只读 bash 查看工作区材料",
-    "2. 只在 .pilotdeck/plans/ 下写 markdown 计划",
+    "2. 只在 scratch/plans/ 下写 markdown 计划",
     "3. 用 exit_plan_mode(plan_file_path) 提交计划供用户审核",
     "",
     "不要重试这个工具；在计划模式下仍会失败。",
@@ -54,7 +54,7 @@ export function buildPlanModeBashViolationMessage(command: string): string {
   return [
     `${PLAN_MODE_VIOLATION_HEADER} bash command "${truncated}" is BLOCKED — write/modify commands are not allowed in plan mode.`,
     "",
-    "计划模式只允许只读 bash 命令（例如 ls、git status、git log、git diff、pwd、wc）。",
+    "计划模式只允许已注册的工作区只读检查命令（例如 ls、stat、find、pwd）。",
     "",
     "请改成只读命令，或使用 read_file、grep、glob。",
   ].join("\n");

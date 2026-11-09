@@ -20,6 +20,8 @@ import AboutSections from "./about";
 import OfficePreviewSections from "./officePreview";
 import AccountSettings from "./account";
 import UsersSettings from "./users";
+import SecurityServicesSettings from "./securityServices";
+import AllowedCommandsSettings from "./allowedCommands";
 
 type SettingsContentProps = {
   selectedKey: SettingsMenuKey;
@@ -48,6 +50,8 @@ const MENU_TITLE_KEYS: Record<SettingsMenuKey, string> = {
   officePreview: "settingsPage.titles.officePreview",
   privacy: "settingsPage.titles.privacy",
   advanced: "settingsPage.titles.advanced",
+  securityServices: "settingsPage.titles.securityServices",
+  allowedCommands: "settingsPage.titles.allowedCommands",
   about: "settingsPage.titles.about",
 };
 
@@ -109,6 +113,10 @@ export default function SettingsContent({
           <PrivacySections title={title} />
         ) : selectedKey === "advanced" ? (
           <AdvancedSections title={title} />
+        ) : selectedKey === "securityServices" ? (
+          <SecurityServicesSettings title={title} />
+        ) : selectedKey === "allowedCommands" ? (
+          <AllowedCommandsSettings title={title} />
         ) : selectedKey === "about" ? (
           <AboutSections
             title={title}

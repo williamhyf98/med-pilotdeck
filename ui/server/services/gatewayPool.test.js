@@ -398,6 +398,7 @@ describe('gatewayPool always-on flag by mode', () => {
     const env = buildGatewayChildEnv({ ...base, multiUser: true });
     expect(env.PILOTDECK_DISABLE_ALWAYS_ON).toBe('1');
     expect(env.PILOT_HOME).toBe('/h/users/1');
+    expect(env.PILOTDECK_SYSTEM_HOME).toBe('/h');
     expect(env.PILOTDECK_DISABLE_LOCAL_AUTH).toBe('0');
     expect(env.PILOTDECK_GATEWAY_URL).toBeUndefined();
   });

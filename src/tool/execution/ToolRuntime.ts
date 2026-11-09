@@ -37,6 +37,7 @@ import {
 } from "../medToolsSkillGate.js";
 import { projectMetaTypeFromProjectPath } from "../../pilot/paths.js";
 import { isToolAvailableForProjectType } from "../../pilot/projectTypePolicy.js";
+import { normalizeToolArtifacts } from "../../session/artifacts/artifactContract.js";
 
 export class ToolRuntime {
   private readonly loadedSkills = new Set<string>();
@@ -65,6 +66,7 @@ export class ToolRuntime {
                 writeSnapshots: runtimeContext.writeSnapshots,
                 executeTool: runtimeContext.executeTool,
                 toolPolicy: runtimeContext.toolPolicy,
+                taskRoot: runtimeContext.taskRoot,
                 allowPlanModeTools: runtimeContext.allowPlanModeTools,
                 permissionMode: runtimeContext.permissionMode,
                 runMode: runtimeContext.runMode,
@@ -256,6 +258,19 @@ ${formatValidationError(tool.name, updatedValidation.issues, {
           { issues: updatedValidation.issues },
         );
       }
+      const updatedPlanViolation = getPlanModeViolation(tool.name, executeInput, runtimeContext);
+      if (updatedPlanViolation) {
+        return this.errorResult(call.id, tool.name, "plan_mode_violation", updatedPlanViolation, startedAt, context);
+      }
+      const updatedAskViolation = runtimeContext.runMode === "ask"
+        ? getAskModeViolation(tool, executeInput) : undefined;
+      if (updatedAskViolation) {
+        return this.errorResult(call.id, tool.name, "ask_mode_violation", updatedAskViolation, startedAt, context);
+      }
+      const updatedAutomationViolation = getAutomationPolicyViolation(tool.name, executeInput);
+      if (updatedAutomationViolation) {
+        return this.errorResult(call.id, tool.name, "automation_policy_violation", updatedAutomationViolation, startedAt, context);
+      }
     }
 
     const toolValidation = await tool.validateInput?.(executeInput, context);
@@ -351,6 +366,28 @@ ${formatValidationError(tool.name, updatedValidation.issues, {
     }
 
     executeInput = decision.updatedInput ?? executeInput;
+    if (decision.updatedInput !== undefined) {
+      executeInput = coerceJsonEncodedToolInput(executeInput, tool.inputSchema);
+      const finalValidation = validateToolInput(executeInput, tool.inputSchema);
+      if (!finalValidation.ok) {
+        return this.errorResult(call.id, tool.name, "invalid_tool_input",
+          formatValidationError(tool.name, finalValidation.issues), startedAt, context,
+          { issues: finalValidation.issues });
+      }
+      const finalPlanViolation = getPlanModeViolation(tool.name, executeInput, runtimeContext);
+      if (finalPlanViolation) {
+        return this.errorResult(call.id, tool.name, "plan_mode_violation", finalPlanViolation, startedAt, context);
+      }
+      const finalAskViolation = runtimeContext.runMode === "ask"
+        ? getAskModeViolation(tool, executeInput) : undefined;
+      if (finalAskViolation) {
+        return this.errorResult(call.id, tool.name, "ask_mode_violation", finalAskViolation, startedAt, context);
+      }
+      const finalAutomationViolation = getAutomationPolicyViolation(tool.name, executeInput);
+      if (finalAutomationViolation) {
+        return this.errorResult(call.id, tool.name, "automation_policy_violation", finalAutomationViolation, startedAt, context);
+      }
+    }
     const baseContext: PilotDeckToolRuntimeContext = {
       ...context,
       currentToolCallId: call.id,
@@ -369,6 +406,7 @@ ${formatValidationError(tool.name, updatedValidation.issues, {
       : baseContext;
     try {
       const output = await tool.execute(executeInput, executeContext);
+      const artifacts = await normalizeToolArtifacts(output.artifacts, executeContext);
       if (tool.name === "read_skill" && skillWasLoaded(output.content)) {
         const skillName = readSkillName(executeInput);
         if (skillName) {
@@ -392,6 +430,7 @@ ${formatValidationError(tool.name, updatedValidation.issues, {
         toolCallId: call.id,
         toolName: tool.name,
         content: output.content,
+        ...(artifacts.length > 0 ? { artifacts } : {}),
         supplementalMessages: output.supplementalMessages,
         data: output.data,
         metadata: mergeMetadata(

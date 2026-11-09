@@ -17,6 +17,9 @@ import pdfplumber
 from PIL import Image, ImageDraw
 from pypdf import PdfReader, PdfWriter
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "_shared"))
+from task_paths import resolve_task_resource
+
 
 SKILL_ROOT = Path(os.environ.get("PDF_SKILL_ROOT", Path(__file__).resolve().parents[1]))
 PDFINFO = os.environ.get("PDF_SKILL_PDFINFO", "pdfinfo")
@@ -144,12 +147,45 @@ def resolve_local_image(path_value: Any, *, base_dir: Path, label: str) -> Path:
             f"{label}: remote images are not allowed; use a local workspace path "
             "(prefer absolute $WS/inbox/... from the user attachment list)"
         )
-    raw_path = Path(raw_value).expanduser()
-    image_path = raw_path if raw_path.is_absolute() else (base_dir / raw_path)
-    image_path = image_path.resolve()
+    try:
+        image_path = resolve_task_resource(
+            raw_value,
+            base_dir=base_dir,
+            label=label,
+        )
+    except ValueError as exc:
+        raise PdfToolError(str(exc)) from exc
     if not image_path.is_file():
         raise PdfToolError(f"{label}: image not found: {image_path}")
     return image_path
+
+
+def command_capabilities(_args: argparse.Namespace) -> int:
+    emit(
+        {
+            "status": "ok",
+            "skill": "pdf",
+            "commands": [
+                "make",
+                "inspect",
+                "audit",
+                "render",
+                "merge",
+                "split",
+                "rotate",
+                "forms-inspect",
+                "forms-fill",
+            ],
+            "pathContract": {
+                "inputs": ["inbox", "scratch", "exports"],
+                "intermediateOutputs": ["scratch"],
+                "finalOutputs": ["exports"],
+                "remoteResources": False,
+            },
+            "imageFields": ["path", "width_mm", "width_inches", "caption"],
+        }
+    )
+    return 0
 
 
 def normalize_make_image(
@@ -828,7 +864,12 @@ def command_make(args: argparse.Namespace) -> int:
     audit = audit_document(out)
     if audit["hardFailures"]:
         raise PdfToolError("built PDF failed structural audit: " + "; ".join(audit["hardFailures"]))
-    preview_dir = out.parent / ".pdf-qa" / out.stem
+    work_dir = os.environ.get("PILOTDECK_WORK_DIR", "").strip()
+    preview_dir = (
+        Path(work_dir).expanduser().resolve() / "pdf" / "make" / out.stem
+        if work_dir
+        else out.parent / ".pdf-qa" / out.stem
+    )
     images = render_document(out, preview_dir, 144, None)
     audit_path = preview_dir / "audit.json"
     write_json(audit_path, audit)
@@ -1187,6 +1228,12 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("--text-out")
     inspect_parser.add_argument("--tables-out")
     inspect_parser.set_defaults(handler=command_inspect)
+
+    capabilities_parser = subparsers.add_parser(
+        "capabilities",
+        help="List the registered PDF capability surface",
+    )
+    capabilities_parser.set_defaults(handler=command_capabilities)
 
     audit_parser = subparsers.add_parser("audit", help="Run structural PDF checks")
     audit_parser.add_argument("--input", required=True)

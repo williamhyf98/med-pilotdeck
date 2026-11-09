@@ -1,754 +1,315 @@
-# 通用 Skill 优化任务书
+# 通用文档 Skill 优化任务书
 
-> 适用范围：`skills/` 下 6 个通用文档技能 —— `docx`、`pptx`、`spreadsheets`、`pdf`、`frontend-slides`、`diagram-maker`
+> 范围：`skills/` 内 `docx`、`pptx`、`spreadsheets`、`pdf`、`frontend-slides`、`diagram-maker` 六项通用技能。
 >
-> 本文是**执行与进度记录单**。每完成一项，勾选复选框并在「执行日志」追加一行；需求变更时加「变更记录」，不要直接删任务定义。
+> 版本：v2.3（2026-11-06，已进入结构化入口实施阶段）。这是后续编码的执行和进度记录；每项能力以实际测试结果为准。
 >
-> 创建日期：2026-11-04　｜　当前状态：**任务书已建立，尚未开始编码**
+> 执行规则：完成一个子项后才勾选，并在第 9 节写验收结果；需求变化在第 10 节追加记录。先保持原有功能可用，再逐步启用新能力。
 
----
+## 0.2 结构化 Skill 调用迁移（已开始）
 
-## 0. 怎么用这份文档
+这是文档 Skill 的运行入口改造，不替代后续 T0–T5 的内容、版式和视觉验收任务。
+目标是让普通 Agent 提交结构化参数，由后端完成已登记脚本的参数转译、策略复查、
+任务路径校验、受控执行和产物登记；Agent 不再拼接 Bash。
 
-1. 开工前先看第 1 节总览，确认依赖是否满足。
-2. 按 T1 → T5 顺序推进；T3 可与 T2 并行，但都必须在 T1 之后。
-3. 每个子任务有独立的**验收命令**，跑不过不算完成。
-4. 完成一项就把对应的 `- [ ]` 改成 `- [x]`，并在第 9 节记一行。
-5. 需求变更：在对应任务下加「变更记录」，不要直接删掉原任务。
+当前已完成：
 
----
+- `pdf_make`：新建 PDF 的结构化入口；
+- `docx_make`：新建 DOCX 的结构化入口；
+- `pptx_make`：新建 PPTX 的结构化入口；
+- `spreadsheets_make`：新建或受控修改 XLSX/CSV/TSV 的结构化入口；
+- `diagram_make`：新建 SVG/HTML 图示的结构化入口；
+- 四类新工具均复用命令策略、任务目录隔离、资源限制、可信 Skill 脚本和统一产物契约；
+- PDF 及四类新增工具均有结构化参数转换、路径拒绝、产物返回测试；PDF 另有 macOS 沙箱真实生成测试。
+- 两组 Skill 端到端用例已从“期待 Bash 命令字符串”改为“期待对应结构化工具成功且禁止 Bash”；基础 `*_make` 用例不再把 `read_skill` 预读作为硬门槛，复杂编辑/审计路径仍按 Skill 文档执行。
 
-## 1. 总览
+尚未完成：
 
-### 1.1 一句话目标
+- 高级编辑、审计、渲染等非 `make` 入口仍通过已登记 Bash 业务子命令兼容；
+- 四类工具的完整真实离线产物矩阵和 Office Renderer 可用/不可用场景仍需补充；
+- Agent 端到端回归尚未在当前环境实际运行；用户界面文件卡验收和 T0–T5 视觉任务仍按后续章节执行。
 
-把「模型每次现场手写 + 自己口头保证质量」，改成「统一设计令牌 + 模板化生成 + 可执行验收门 + 固定回归样本」。
+## 0. 给使用者看的任务概览
 
-### 1.2 任务清单
+| 阶段 | 做什么 | 解决什么问题 | 交付时能看到什么 | 当前状态 |
+| --- | --- | --- | --- | --- |
+| **T0 基线** | 用仅存本地的合成样本保存现有默认效果和运行方式 | 改造后无法判断旧功能是否受损 | 可以对比改前、改后的内容与版式 | 未开始 |
+| **T1 设计规范** | 定义共享主题、颜色、字体角色和组件规则，接入读取器 | 同一种风格在各技能里各写各的 | 六套中文主题可选；默认主题在基线和批准完成后再刷新 | 未开始 |
+| **T3 验收统一** | 扩展现有交付检查，记录要求是否满足、每页视觉检查结果 | 文件生成了，却不知道缺了什么、排版是否检查过 | 报告通过、待处理或未完成视觉检查的具体原因 | 未开始 |
+| **T2 HTML 生成** | 保留自由生成，补充主题令牌、静态审计和图片文件夹交付 | HTML 结构和资源引用不稳定，带图页面难以完整交付 | 可交付单 HTML 或带 `index.html`、图片的文件夹 | 未开始 |
+| **T2c 视觉反馈** | 不做服务端浏览器；生成后静态检查 + 用户截图回传 | 无法自动发现真实排版问题，但不增加部署负担 | 交付后可直接打开；用户截图回传可继续优化 | 已决策：不部署浏览器 |
+| **T4 主题与版式** | 分格式扩展版式组件、图表、图片、表格和排版能力 | 文件过于单调，只有换颜色没有设计感 | 同一主题下，各种格式都能产出更丰富、适用的内容 | 未开始 |
+| **T5 回归样本** | 用仅存本地的合成材料固定质量测试 | 技能升级后不知道是否退步 | 脚本和人工视觉对照可以复查 | 未开始 |
 
-| 编号 | 任务 | 解决的核心问题 | 工作量 | 依赖 | 状态 |
-|---|---|---|---|---|---|
-| **T1** | 共享设计令牌（单一真源） | 同一主题在 6 个技能里各定义一遍，改一处漏五处 | 小 | — | ⬜ 未开始 |
-| **T2** | HTML 生成器 | HTML 无生成器，每次手写 18KB、耗时 7.5 分钟、无法复现 | 大 | T1 | ⬜ 未开始 |
-| **T3** | 统一验收门 | PPT/Excel/PDF 有审计但不拦；HTML/图表完全无验收 | 中 | T1 | ⬜ 未开始 |
-| **T4** | 主题库扩展 | 只有 PPT 有 5 套主题，其余技能基本是「一件工作服」 | 中 | T1 | ⬜ 未开始 |
-| **T5** | 回归样本集 | 改完技能无法判断是否退步；只有 2 个 fixture | 中 | T1、T3 | ⬜ 未开始 |
-
-### 1.3 依赖关系
-
-```
-T1 共享令牌 ──┬──> T2 HTML 生成器 ──┐
-              ├──> T3 验收门 ───────┼──> T5 回归样本
-              └──> T4 主题库 ───────┘
-```
-
-**T1 不完成，后面四项都是空中楼阁。**
-
-### 1.4 里程碑
-
-| 里程碑 | 内容 | 可观测结果 |
-|---|---|---|
-| M1 | T1 完成 | `node skills/_shared/tokens.mjs --list` 能列出统一主题；6 个技能读到同一个 accent 值 |
-| M2 | T3 完成（PPT/Excel/PDF 先做） | 交付前出现 `qa-report.json`；不过关时 `deliver` 非零退出 |
-| M3 | T2 完成 | 同一份 `content.json` 两次生成 HTML **字节一致**；单页生成 ≤ 2 分钟 |
-| M4 | T4 完成 | 用户说「用创伤风格」，6 个技能都能识别并注明主题名 |
-| M5 | T5 完成 | `npm run test:skill-samples` 输出通过率基线 |
-
----
-
-## 2. 统一验收口径（所有任务共用）
-
-验收分三层，**只有第 1 层是必须全过的**：
-
-| 层 | 名称 | 判定者 | 失败处理 |
-|---|---|---|---|
-| L1 | **自动断言** | 脚本 | 硬失败，禁止交付 |
-| L2 | **视觉确认** | 人 / 多模态模型看截图 | 记录 `approved` / `waived` + 理由 |
-| L3 | **内容溯源** | 脚本 + 人工抽查 | 关键数值与源材料比对，不一致即失败 |
-
-**降级原则（全局）**：任何环境依赖（远程渲染器、浏览器）不可用时，**必须交付有效文件 + 明确写出「未完成视觉验收（原因）」**，不允许静默跳过，也不允许因此拒绝交付。
-
----
-
-## 3. T1 —— 共享设计令牌（单一真源）
-
-### 3.1 目标
-
-建立一份唯一的 `design-tokens.json`，定义颜色、字号阶、间距、主题名；6 个技能都从这里读，而不是各写各的。
-
-### 3.2 现状证据
-
-| 位置 | 现状 |
-|---|---|
-| `skills/pptx/assets/layout-library/design-tokens.json` | 已有 5 个主题（clinical / academic / trauma / vital / mono）+ 6 个字体 profile + 2 个密度 |
-| `skills/docx/scripts/docxlib/templates.py` | `_NEUTRAL_SHARED` 里 `title_color: "000000"`，只有 1 套 `neutral-document-v1` |
-| `skills/frontend-slides/references/med-visual.md` | `--accent: #2563eb`（与 pptx 不是同一套） |
-| `skills/diagram-maker/scripts/diagram_cli.py` | 主题硬编码在 `{"clean", "architecture"}` |
-| `skills/spreadsheets/references/formatting.md` | 只有文字规范，无具体色值 |
+**推荐顺序：** T0 → T1a（主题契约和读取器）→ T1b（先接 PPTX/DOCX）→ T3a（兼容式 QA 协议）→ T2（HTML 静态生成）→ T3b（逐技能验收）与 T4（逐格式版式）→ T5 完整回归。T5 的最小样本从 T0 就要建立；T2c 是人工回路，不占用服务器资源，可随 T2 一起落地。T3 不依赖 T1 的颜色令牌，不能因 T1 未完成而停工。
 
-### 3.3 实现思路
+### 0.1 主题决策记录（2026-11-06）
 
-1. **新建共享目录** `skills/_shared/`。目录名以下划线开头且不含 `SKILL.md`；技能发现逻辑只收录含 `SKILL.md` 的目录（见 `src/extension/skills/migrateLegacyBundledSkills.ts:142`），因此不会被误当成技能。
-2. **共享文件只放"跨技能通用"的部分**：语义色、字号阶、间距、圆角、字体栈名、主题清单、自动选主题规则。
-3. **各技能保留自己的专有扩展**（例如 pptx 的 `navy`/`paper`/`white` 被版面代码硬编码引用，见 `skills/pptx/scripts/lib/toolkit.mjs:35-40` 的注释），但**颜色值必须来自共享文件**。
-4. **加一个一致性检查脚本**，防止共享文件与技能投影漂移。
-5. **必须可降级**：共享文件缺失时，各技能退回内置默认值，只记 warning，不阻断交付（避免打包漏拷导致全线崩）。
+以下决定覆盖 v2.0 中“默认样式一律不变”“五套主题”的表述。令牌级细则见 `docs/design-theme-tokens.zh.md`。
 
-### 3.4 改动清单
+| 编号 | 决定 | 影响 |
+| --- | --- | --- |
+| D1 | **允许刷新默认主题** | 先完成旧基线、改版对照和批准，再让未指定主题的 PPTX / PDF / HTML 使用新版 `clinical`；旧色值保留为隐藏主题 `clinical-legacy` 供 A/B 与回退 |
+| D2 | **合并“月白影像”与“临床晨光”** | 影像深色底板改为 `clinical` 的签名组件，按内容自动启用；最终为 **5 套展示主题 + 1 套灰阶**，共 6 套 |
+| D3 | **字体预算获批** | PDF 新增衬线字体约 +24 MB；HTML 文件夹交付可携带 WOFF2 分片约 15–18 MB；单文件交付仍只用系统字体栈 |
+| D4 | **DOCX 默认保持中性** | `neutral-document-v1` 不动；只有用户显式指定主题才走新增的 `themed-v1` 彩色策略 |
+| D5 | **分档支持** | A 档（全量主题）：HTML、PDF、PPTX；B 档（仅令牌级）：DOCX、XLSX、diagram-maker。不承诺六种格式像素一致 |
+| D6 | **HTML 不做服务端渲染** | 取消自动截图与独立 HTML 渲染服务；改为生成后静态预算 + 用户截图回传；内部记 `not_performed`，不向用户输出固定免责声明 |
 
-| 动作 | 文件 | 说明 |
-|---|---|---|
-| 新建 | `skills/_shared/design-tokens.json` | 唯一真源。含 `version` / `defaultTheme` / `themes` / `typography` / `spacing` / `autoSelect` |
-| 新建 | `skills/_shared/tokens.mjs` | Node 读取器：`loadTokens()`、`resolveTheme(name)`、`listThemes()`、`autoPickTheme(taskKind)`；缺文件时返回内置默认 |
-| 新建 | `skills/_shared/tokens.py` | Python 同能力读取器（供 docx / pdf / html / diagram 使用） |
-| 新建 | `skills/_shared/themes.schema.json` | 主题文件结构定义，供 CI 校验 |
-| 修改 | `skills/pptx/scripts/lib/toolkit.mjs` | `tokens()` 改为「共享令牌 + 本地版面扩展」合并，保留 `cachedTokens` 缓存 |
-| 修改 | `skills/docx/scripts/docxlib/templates.py` | `_NEUTRAL_SHARED` 改为从共享令牌取色，保留 locale 排版变体 |
-| 新建 | `scripts/check-skill-tokens.mjs` | 校验：① 共享 JSON 符合 schema ② 各技能能解析出全部主题 ③ 同名主题 accent 一致 |
-
-### 3.5 令牌结构（初稿，实施时可微调）
-
-```jsonc
-{
-  "version": 1,
-  "defaultTheme": "clinical",
-  "themes": {
-    "clinical": {
-      "name": "临床通用",
-      "aliases": ["临床", "clinical"],
-      "description": "浅灰纸面 + 深墨蓝 + 橙色强调；门诊、病例报告默认",
-      "colors": {
-        "canvas": "#fafafa", "surface": "#ffffff",
-        "ink": "#171717", "muted": "#525252", "border": "#e5e5e5",
-        "accent": "#2563eb", "accentSoft": "#eff6ff",
-        "danger": "#b91c1c", "warning": "#b45309", "positive": "#15803d",
-        "onAccent": "#ffffff"
-      },
-      "canvasDark": "#0f2540"
-    }
-  },
-  "typography": {
-    "fontStacks": { "sans": "...", "mono": "..." },
-    "scale": { "title": "1.75rem", "h2": "1.25rem", "body": "1rem", "caption": "0.875rem" }
-  },
-  "spacing": { "xs": "0.25rem", "sm": "0.5rem", "md": "1.25rem", "lg": "2rem" },
-  "autoSelect": {
-    "case-report": "clinical",
-    "academic-review": "academic",
-    "trauma-plan": "trauma",
-    "lab-imaging": "vital",
-    "print-handout": "mono"
-  }
-}
-```
-
-说明：`canvasDark` 用于需要满版深色的版面；`fontStacks` 只存字体栈名字，**不存字体文件**。
-
-**主题命名规则（v1.1）**：用户看到、说出、在界面上选的**一律是中文名**（`name`）。JSON 里的 `clinical` 这类 ASCII key 只作为脚本内部 id 与命令行别名，不对外展示。命令行同时接受中文名与 ASCII 别名，例如 `--theme 临床通用` 和 `--theme clinical` 等价。
-
-理由：中文名进文件路径、shell 参数、缓存 key 时存在编码与转义风险；用 ASCII id 做内部键、中文做展示层，是唯一既满足"用户看到中文"又不引入转义问题的做法。
-
-### 3.6 验收
-
-```bash
-node skills/_shared/tokens.mjs --list          # 列出 5 个主题
-python3 skills/_shared/tokens.py --list        # 同上，Python 侧一致
-node scripts/check-skill-tokens.mjs            # 一致性检查通过
-node skills/pptx/scripts/pptx_cli.mjs themes   # pptx 主题列表不减少
-python3 skills/docx/scripts/docx_cli.py capabilities
-```
-
-额外断言：删除 `skills/_shared/design-tokens.json` 后，前两条应返回内置默认 + warning，**不报错退出**。
-
-### 3.7 风险与降级
-
-| 风险 | 缓解 |
-|---|---|
-| pptx 版面代码硬编码了 `navy`/`paper`/`white` 语义 | 共享令牌**必须**保留这三个语义位（可改名映射，不可删） |
-| 打包时漏拷 `_shared` | 读取器必须有内置 fallback；`check-skill-tokens.mjs` 加入打包前检查 |
-| 同名主题在两处漂移 | CI 检查 + 只允许共享文件为真源 |
-
-### 3.8 进度
-
-- [ ] 3.8.1 起草 `design-tokens.json`（从 pptx 现有 5 主题迁移）
-- [ ] 3.8.2 写 `tokens.mjs` / `tokens.py`（含 fallback）
-- [ ] 3.8.3 改造 pptx `toolkit.mjs` 读取
-- [ ] 3.8.4 改造 docx `templates.py` 读取
-- [ ] 3.8.5 写 `check-skill-tokens.mjs`
-- [ ] 3.8.6 跑通 3.6 全部验收
-
----
-
-## 4. T2 —— HTML 生成器
-
-### 4.1 目标
-
-把「模型一次手写整页 HTML」改成「模型写内容 JSON，程序套模板出 HTML」，使生成**更快、可复现、可测试**。
-
-交付形态支持两种：**单文件**（无图，或图片用 base64）+ **文件夹**（`index.html` + `assets/` 图片）。详见 4.10。
-
-### 4.2 现状证据
-
-| 证据 | 位置 |
-|---|---|
-| 无生成器，硬约束写死「用 `write_file` 写一个自包含 HTML，没有 `*.sh` 生成器」 | `skills/frontend-slides/SKILL.md` 第 8 行 |
-| 三个文件被 SKILL.md 明令禁用：`STYLE_PRESETS.md`（"不要再读"）、`animation-patterns.md`（"不要依赖"）、`scripts/export-pdf.sh`（"不要运行"） | 同上，Phase 2 / Phase 3 / Phase 4 |
-| 实际可用规范只剩 `references/med-visual.md`（111 行） | — |
-| 实测：单次 `write_file` 参数 18,231 字节，模型耗时 **448 秒** | 2026-11-02 会话 `web:s_f6781e82...` |
-
-### 4.3 实现思路
-
-```
-模型 ──写──> scratch/qa/content.json（约 3KB）
-                    │
-              html_cli.py make
-                    │
-                    ├─ 读 skills/_shared/design-tokens.json 取主题
-                    ├─ 读 assets/templates/base.html 套骨架
-                    ├─ 按 blocks[].type 渲染区块
-                    └─ 内联 CSS，输出单文件 → exports/xxx.html
-```
-
-**技术选型：Python 标准库（零依赖）**
-
-- 理由：`docx` / `pdf` 已是 Python 体系；`pptx` / `spreadsheets` 的 Node 运行时要靠 `runtime/` 带 node_modules，HTML 再引一套 Node 运行时是净负担。
-- 用 `html.escape` + `string.Template` 足够，不引入 Jinja2。
-
-**保留逃生通道**：用户要一次性自定义页面时，仍允许 `write_file` 直写，但**必须过 `html_cli.py audit`**。
-
-### 4.4 区块类型（首版范围）
-
-| block | 用途 |
-|---|---|
-| `hero` | 标题 + 副标题 + 来源说明 |
-| `kpi` | 2–4 个关键结论卡 |
-| `toc` | 锚点目录 |
-| `section` | 章节 + 正文段落 |
-| `table` | 表格（含对齐规则） |
-| `risk-banner` | 风险/警告条（语义色） |
-| `diagnosis-card` | 诊断方向卡（依据→评估→检查→处置） |
-| `timeline` | 时间线（病程、救治阶段） |
-| `checklist` | 待确认项 / 待办 |
-| `callout` | 通用提示框（重要说明、免责声明） |
-| `image` | 单张图 + 图注（影像、创面、流程图截图） |
-| `figure-grid` | 2–4 张图并排 + 各自图注（对比影像、多部位） |
-
-**首版不支持**：图表（chart）、翻页动画。缺省即「未提供」，避免为了塞版面造假数据。
-
-> 图片支持是 v1.1 追加需求，具体规则见 4.10。
-
-### 4.5 改动清单
-
-| 动作 | 文件 | 说明 |
-|---|---|---|
-| 新建 | `skills/frontend-slides/scripts/html.sh` | 运行入口，风格对齐 `docx.sh` / `pdf.sh` |
-| 新建 | `skills/frontend-slides/scripts/html_cli.py` | 子命令：`make` / `audit` / `themes` / `render` / `self-test`；`make` 支持 `--name`（生成时间戳目录）、`--update <dir>`（原地更新）、`--single-file` |
-| 新建 | `skills/frontend-slides/scripts/htmllib/__init__.py` | 包入口 |
-| 新建 | `skills/frontend-slides/scripts/htmllib/blocks.py` | 各区块渲染器 |
-| 新建 | `skills/frontend-slides/scripts/htmllib/audit.py` | L1 断言实现 |
-| 新建 | `skills/frontend-slides/scripts/htmllib/render.py` | 可选截图（走远程服务，失败降级） |
-| 新建 | `skills/frontend-slides/assets/templates/base.html` | 骨架模板 |
-| 新建 | `skills/frontend-slides/assets/templates/base.css` | 由 token 生成 CSS 变量的模板 |
-| 新建 | `skills/frontend-slides/assets/schema/content.schema.json` | `content.json` 结构定义 |
-| 新建 | `skills/frontend-slides/assets/examples/case-report.json` | 首个可运行样例（病例报告） |
-| 重写 | `skills/frontend-slides/SKILL.md` | 主路径改为 `html.sh make`；`write_file` 降为逃生通道；删除失效的三份文件引用 |
-| 归档 | `skills/frontend-slides/STYLE_PRESETS.md` → `docs/archive/` | 已被明令禁用，移出技能目录避免误读 |
-
-### 4.6 L1 断言清单（`html_cli.py audit`）
-
-| 码 | 检查 | 严重度 |
-|---|---|---|
-| `external-resource` | 出现 `http://` / `https://` / `<link href>` / `<script src>` | error |
-| `remote-font` | `@import` 或 `font-family` 引用非系统栈 | error |
-| `missing-section` | `content.json` 声明的章节未出现在 HTML | error |
-| `missing-theme` | 未使用任何已知主题 | error |
-| `silent-empty` | 空值未写成「未提供」 | error |
-| `broken-relative-asset` | 相对路径资源不存在（含图片丢失） | error |
-| `absolute-path-image` | `<img src>` 用了绝对路径或 `file://` | error |
-| `image-no-alt` | `<img>` 缺 `alt` | warning |
-| `image-oversize` | 单张图 > 5 MB 或长边 > 4000 px | warning |
-| `image-unused` | `assets/` 里有图片但页面未引用 | warning |
-| `tag-imbalance` | 标签未闭合（`html.parser`） | error |
-| `size-budget` | 单文件 > 300 KB | warning |
-| `a11y-basic` | 缺 `lang`、标题层级跳跃 | warning |
-
-**输出**：`scratch/qa/html-audit.json`，含 `status`、`errors[]`、`warnings[]`、`theme`、`bytes`、`sha256`。
-
-### 4.7 验收
-
-```bash
-# 1. 能生成
-bash skills/frontend-slides/scripts/html.sh make \
-  --content skills/frontend-slides/assets/examples/case-report.json \
-  --out "$PWD/exports/病例展示-样例.html"
-
-# 2. 能自查
-bash skills/frontend-slides/scripts/html.sh audit \
-  --input "$PWD/exports/病例展示-样例.html" \
-  --content skills/frontend-slides/assets/examples/case-report.json \
-  --out "$PWD/scratch/qa/html-audit.json"
-
-# 3. 确定性：同输入两次输出必须字节一致
-shasum -a 256 exports/病例展示-样例.html   # 跑两次对比
-
-# 4. 自测
-bash skills/frontend-slides/scripts/html.sh self-test
-```
-
-**性能指标（写入验收）**：首版样例在 Qwen3.8-27B 环境下的端到端耗时 ≤ 2 分钟（现状 9 分 53 秒）。
-
-### 4.8 风险与降级
-
-| 风险 | 缓解 |
-|---|---|
-| 模板化后页面"千篇一律"，失去设计感 | 保留 5–6 个命名主题 + 区块组合，不追求自由排版；一次性创作走 `write_file` 逃生通道 |
-| 模型不按约定产出 `content.json` | schema 校验 + 明确错误码 + SKILL.md 给出最小完整示例 |
-| 截图依赖浏览器，离线环境不可用 | **不作为硬依赖**：`render` 失败时 `audit` 仍返回 `passed`，但带 `visual_acceptance: "not_performed"` |
-| 旧 HTML 无法通过 audit | 无 `content.json` 时降级为纯静态检查 |
-
-### 4.9 进度
-
-- [ ] 4.9.1 定义 `content.schema.json` 与 `case-report.json` 样例
-- [ ] 4.9.2 实现 `blocks.py` 首版 6 个必需 block（hero / section / table / risk-banner / diagnosis-card / callout）
-- [ ] 4.9.3 实现 `base.html` + `base.css`（从 T1 令牌生成变量）
-- [ ] 4.9.4 实现 `audit.py`（4.6 全部 9 项）
-- [ ] 4.9.5 实现 `html.sh` 与 CLI 参数解析
-- [ ] 4.9.6 重写 `SKILL.md`，归档 `STYLE_PRESETS.md`
-- [ ] 4.9.7 补全剩余 4 个 block（kpi / toc / timeline / checklist）
-- [ ] 4.9.8 跑通 4.7 验收 + 性能实测
-- [ ] 4.9.9 实现 `image` / `figure-grid` 两个区块（见 4.10）
-- [ ] 4.9.10 实现文件夹交付（复制图片 + 重写相对路径）
-
-### 4.10 交付结构与图片处理（v1.1 补充）
-
-#### 4.10.1 两种交付形态
-
-| 形态 | 产出 | 何时用 |
-|---|---|---|
-| **单文件** | `exports/<名称>.html` | 无图，或只有 1–2 张小图（base64 内联，单文件 ≤ 300 KB） |
-| **文件夹** | `exports/<名称>_<YYYYMMDD-HHmm>/index.html` + `.../assets/*` | 有影像、创面照、多张图 |
-
-默认策略：`content.json` 里只要出现 `image` / `figure-grid` 且图片总大小 > 300 KB，就自动走文件夹；用户显式指定 `--single-file` 时强制 base64 内联（超限则 warning 不阻断）。
-
-#### 4.10.2 文件夹结构与命名（v1.2：带时间戳）
-
-**目录名 = `<页面短名>_<YYYYMMDD-HHmm>`，入口文件名固定为 `index.html`。**
-
-```
-exports/
-├── 病例展示_心脏磁共振_20261104-1530/
-│   ├── index.html          # 唯一入口，相对路径引用 assets/
-│   └── assets/
-│       ├── mri-01.png      # 原文件名清洗后重命名
-│       └── mri-02.png
-└── 病例展示_心脏磁共振_20261104-1712/    # 再次生成 → 新目录，不覆盖
-```
-
-命名规则：
-
-1. **时间戳精度到分钟**（`YYYYMMDD-HHmm`），不用只有日期。理由：同一天重做同一份病例很常见，只带日期仍会撞车。
-2. **撞名兜底**：同一分钟内再次生成同一页面，追加 `-2`、`-3`。
-3. **不提供覆盖**：已存在目录一律不覆盖、不删除。要改内容，在原目录内用 `make --update` 重新渲染同一个 `index.html`。
-4. **入口固定叫 `index.html`**：即使外层目录带时间戳，双击进入后入口名永远一致；后续更新、脚本引用、用户分享都不受目录名影响。
-5. **单文件形态不改**：`exports/病例展示.html` 仍用原名，沿用现有「覆盖已有 exports 文件须用户明确同意」的保护。
-6. **时间取本机本地时间**（`Asia/Shanghai`），不取 UTC，避免用户看到 8 小时偏差。
-
-> 这样每次生成都是一份独立留档，可直接对比"上一版"和"这一版"，也符合 L3 内容溯源要求。
-
-图片处理规则：
-
-1. **图片一律复制**进 `assets/`，不引用工作区外的原始路径（`../source/x.png` 这类跨目录相对路径禁止）。
-2. **文件名清洗**：非 `[A-Za-z0-9._-]` 的字符替换为 `-`，重名自动加序号；保留原扩展名。
-3. **路径重写**：`content.json` 里写源路径，渲染时统一改写成 `assets/<清洗后名>`。
-4. **缺失图不占位**：源图片不存在时，该块降级为 `callout`，文字写「图片未提供」，并记 `broken-relative-asset` warning。
-5. **不复制重复图**：相同 `sha256` 只复制一份，多块共用。
-
-#### 4.10.3 为什么不做 base64 默认
-
-- base64 会膨胀约 **33%**，一张 2 MB 的 CT 截图变 2.7 MB，页面打开变慢
-- 图片多时单文件轻松破 10 MB，浏览器首屏渲染明显卡顿
-- 医生通常还要单独取用某张影像，文件夹形态可以直接拿原图
-
-#### 4.10.4 已知副作用（必须写进 SKILL.md）
-
-`FileArtifactCollector` 会递归扫描 `exports/`（`src/session/artifacts/FileArtifactCollector.ts:303`，`walk()` 在 502 行递归子目录），`.png` / `.jpg` 都在 MIME 映射内，因此：
-
-> **文件夹交付时，`assets/` 里的每张图片也会作为独立文件卡片出现在对话里。**
-
-这不是 bug，但要在回复里说明，避免用户以为"多生成了一堆文件"。控制办法：只复制页面实际引用的图片（`image-unused` 审计项兜底）。
-
-#### 4.10.5 `content.json` 图片写法
-
-```jsonc
-{
-  "blocks": [
-    {
-      "type": "image",
-      "src": "scratch/qa/img/mri-01.png",
-      "caption": "心脏磁共振延迟强化序列（来源：上传影像）",
-      "alt": "心脏磁共振延迟强化图像"
-    },
-    {
-      "type": "figure-grid",
-      "columns": 2,
-      "items": [
-        { "src": "scratch/qa/img/mri-01.png", "caption": "延迟强化", "alt": "..." },
-        { "src": "scratch/qa/img/mri-02.png", "caption": "T2 加权", "alt": "..." }
-      ]
-    }
-  ]
-}
-```
-
-`caption` 必填（图注是医学展示的可追溯要求）；`alt` 缺省由 `caption` 兜底但仍记 warning。
-
-#### 4.10.6 验收
-
-```bash
-# 文件夹形态（目录名带时间戳）
-bash skills/frontend-slides/scripts/html.sh make \
-  --content skills/frontend-slides/assets/examples/case-with-images.json \
-  --name "病例展示_样例"
-# 产物：exports/病例展示_样例_20261104-1530/index.html
-
-DIR=$(ls -d exports/病例展示_样例_* | tail -1)
-test -f "$DIR/index.html"        # 入口存在且固定名
-test -d "$DIR/assets"            # 图片目录存在
-ls "$DIR/assets" | wc -l         # 只含被引用的图
-
-# 相对路径可解析：在任意目录下用 file:// 打开也不应 404
-grep -oE 'src="[^"]+"' "$DIR/index.html"
-
-# 撞名保护：连续生成两次，必须得到两个不同目录，旧目录内容不变
-bash skills/frontend-slides/scripts/html.sh make \
-  --content skills/frontend-slides/assets/examples/case-with-images.json \
-  --name "病例展示_样例"
-ls -d exports/病例展示_样例_* | wc -l    # 期望 2（同分钟则第二个带 -2）
-
-# 原地更新：只改原目录的 index.html，不新建目录
-bash skills/frontend-slides/scripts/html.sh make \
-  --content skills/frontend-slides/assets/examples/case-with-images.json \
-  --update "$DIR"
-ls -d exports/病例展示_样例_* | wc -l    # 期望不变
-
-# 单文件形态
-bash skills/frontend-slides/scripts/html.sh make \
-  --content skills/frontend-slides/assets/examples/case-report.json \
-  --out "$PWD/exports/病例展示-单文件.html" --single-file
-```
-
-**命名断言（写入自动化测试）**：
-
-```bash
-ls -d exports/*/ | grep -qE '_[0-9]{8}-[0-9]{4}(-[0-9]+)?/$' || echo "目录名未带时间戳"
-```
-
----
-
-## 5. T3 —— 统一验收门
-
-### 5.1 目标
-
-让每个技能在交付前必须"过闸"：自动断言全过 + 逐页视觉确认有记录；**不过关不放行**。
-
-### 5.2 现状证据
-
-| Skill | 已有 | 缺 |
-|---|---|---|
-| **docx** | `qa-init` / `qa-record` / `qa-finalize`（`scripts/docxlib/qa.py`），带 `artifact_sha256` + 逐页 `image_sha256` | 已完善，作为参照实现 |
-| **pptx** | `audit`（7 类错误码：`empty_deck` / `out_of_bounds` / `unresolved_placeholder` / `duplicate_unit` / `text_fit_risk` / `overlap` / `strict_overlap`）、`render`（默认 144 DPI） | 无强制逐页确认；渲染完可直接 `deliver` |
-| **spreadsheets** | `audit`、`render --per-sheet` | 同上 |
-| **pdf** | `audit`、`render --dpi 144`、`qa-checklist.md` | 只有文字清单，无程序化门 |
-| **frontend-slides** | 无 | 全部（由 T2 补） |
-| **diagram-maker** | 仅 XML/安全审计 | 无几何审计、无渲染、无视觉确认 |
-
-### 5.3 实现思路
-
-**统一产物 + 统一闸门语义**（各技能实现语言不同，但契约一致）：
-
-```
-scratch/qa/
-├── acceptance.json     # 开工前冻结：要做什么、必须满足什么
-├── review.json         # 逐页视觉确认记录（含 artifact / image sha256）
-└── qa-report.json      # 汇总：L1 结果 + L2 状态 + 是否可交付
-```
-
-**闸门规则**：
-
-- `status: passed` → 放行
-- `status: needs-attention` → 非零退出 + 列出待处理项（可用 `--dispositions` 显式豁免）
-- `status: not-performed`（环境缺失）→ **放行但必须带标记**，并在回复中写明「未完成视觉验收（原因）」
-
-### 5.4 改动清单
-
-| 动作 | 文件 | 说明 |
-|---|---|---|
-| 新建 | `skills/_shared/qa/PROTOCOL.md` | 统一契约：三个文件的结构与状态机 |
-| 新建 | `skills/_shared/qa/qa_common.py` | Python 侧公共：sha256、路径守卫、状态机 |
-| 新建 | `skills/_shared/qa/qa_common.mjs` | Node 侧同能力 |
-| 修改 | `skills/pptx/scripts/pptx_cli.mjs` | 新增 `qa-init` / `qa-record` / `qa-finalize`；`deliver` 加前置检查 |
-| 新建 | `skills/pptx/scripts/lib/qa.mjs` | pptx 侧实现（复用 `render` 输出的 PNG） |
-| 修改 | `skills/spreadsheets/scripts/spreadsheet_cli.mjs` | 同上，按 sheet 记页 |
-| 新建 | `skills/spreadsheets/scripts/lib/qa.mjs` | 同上 |
-| 修改 | `skills/pdf/scripts/pdf_cli.py` | 新增 `qa-init` / `qa-record` / `qa-finalize` |
-| 新建 | `skills/pdf/scripts/pdfqa.py` | 仿 `docxlib/qa.py` 的精简实现 |
-| 修改 | `skills/diagram-maker/scripts/diagram_cli.py` | 新增 `audit` 子命令（几何检查） |
-| 修改 | 5 个 `SKILL.md` | 把"可选自检"改为"交付前必须过闸" |
-
-### 5.5 diagram-maker 几何审计（纯计算，最便宜）
-
-| 码 | 检查 |
-|---|---|
-| `label-overflow` | 文本包围盒超出画布 / 节点矩形 |
-| `node-overlap` | 两个节点矩形相交 |
-| `edge-cross-node` | 连线穿过非端点节点 |
-| `orphan-node` | 无连线的孤立节点 |
-| `font-missing` | `font-family` 不在系统栈白名单 |
-
-### 5.6 验收
-
-```bash
-# 正向：满足要求的文件应放行
-bash skills/pptx/scripts/pptx.sh make ...
-bash skills/pptx/scripts/pptx.sh qa-init --input ...
-
-# 反向：故意缺一项必填，应被拦住
-# 期望 qa-finalize 非零退出，错误码 missing-required-section
-
-# 降级：断开 office renderer 后
-# 期望 qa-report.json 中 visual_acceptance = "not_performed"，deliver 仍成功
-```
-
-### 5.7 风险与降级
-
-| 风险 | 缓解 |
-|---|---|
-| 远程 renderer 排队导致 qa 超时（此前已发生过 30s Bash 超时） | 拆两段：`qa-init` 同步做 L1，渲染另起；Bash 超时提到 120s 并允许分步重试 |
-| 逐页确认显著拉长交互 | 页面数 > 8 时只强制"新增页 + 摘要页"，其余抽样 |
-| 两个语言实现漂移 | `PROTOCOL.md` 固定字段；`scripts/check-qa-protocol.mjs` 对比两实现输出字段 |
-
-### 5.8 进度
-
-- [ ] 5.8.1 写 `PROTOCOL.md`（三文件结构 + 状态机）
-- [ ] 5.8.2 实现 `qa_common.py` / `qa_common.mjs`
-- [ ] 5.8.3 pptx 接入 qa 三件套 + `deliver` 前置检查
-- [ ] 5.8.4 spreadsheets 接入
-- [ ] 5.8.5 pdf 接入
-- [ ] 5.8.6 diagram-maker 几何审计
-- [ ] 5.8.7 5 个 SKILL.md 改为强制过闸
-- [ ] 5.8.8 正 / 反 / 降级三类验收全部跑通
-
----
-
-## 6. T4 —— 主题库扩展
-
-### 6.1 目标
-
-让 6 个技能共享同一套**有名字**的主题，用户可选、可自动推荐、交付时注明用了哪一套。
-
-### 6.2 现状
-
-| Skill | 主题数 | 说明 |
-|---|---|---|
-| pptx | 5 | clinical / academic / trauma / vital / mono，带 label + description |
-| docx | 1 | 仅 `neutral-document-v1`（黑白公文风） |
-| spreadsheets | 0 | 只有文字规范 |
-| pdf | 0 | 无 |
-| frontend-slides | 0 | 现有 A / B / C 是**密度**不是主题 |
-| diagram-maker | 2 | `clean` / `architecture`，硬编码 |
-
-### 6.2.1 主题定名（v1.1：改用中文名）
-
-对用户一律使用中文名；ASCII id 只做内部键与命令行别名。
-
-| 中文名（用户可见） | 内部 id | 别名 |
-|---|---|---|
-| **临床通用**（默认） | `clinical` | 临床、通用、clinical |
-| **学术循证** | `academic` | 学术、汇报、academic |
-| **战创伤急救** | `trauma` | 战创伤、创伤、急救、trauma |
-| **影像检验** | `vital` | 影像、检验、化验、vital |
-| **灰阶打印** | `mono` | 打印、黑白、灰阶、mono |
-
-命名约束：
-
-1. 中文名 2–6 字，能单独说明用途，不带形容词（不用"优雅蓝""高级灰"这类营销词）。
-2. 一个中文名只对应一个 id，不允许两名一物或一名两物。
-3. 改名等于改契约：已交付文件里回显的是中文名，改名需走第 10 节变更记录。
-
-### 6.3 实现思路
-
-1. **主题集固定为 5 个**（不扩张），沿用 pptx 现有命名，避免"20 个主题 100 种组合"的维护爆炸。
-2. **密度是独立维度**，不混进主题：`theme`（配色）× `density`（信息密度）× `profile`（字体平台）。
-3. **自动选择**：按任务类型查 `autoSelect` 表；用户指定则优先用户。
-4. **必须回显**：生成结果里写明「本次使用主题：临床通用（clinical）」。
-5. **字体策略按格式区分**，不能一刀切：
-
-| 格式 | 字体策略 |
-|---|---|
-| PDF | 必须嵌入（已有 `skills/pdf/assets/fonts/NotoSansSC-VF.ttf`，**单个 17.7 MB**） |
-| DOCX / PPTX | 可嵌入，注意体积 |
-| HTML | **只用系统字体栈**，不打包 webfont（一个中文字体就 17.7 MB，页面背不动） |
-| XLSX | **不能嵌字体**（`formatting.md` 已明确），只写字体名 |
-
-### 6.4 改动清单
-
-| 动作 | 文件 | 说明 |
-|---|---|---|
-| 修改 | `skills/docx/scripts/docxlib/templates.py` | 增加 `themes` 覆盖层（title / heading / table_header / callout / accent） |
-| 修改 | `skills/docx/scripts/docx_cli.py` | 新增 `themes` 子命令 + `make --theme` |
-| 修改 | `skills/docx/references/design-and-layout.md` | 补主题说明与选择建议 |
-| 修改 | `skills/spreadsheets/scripts/spreadsheet_cli.mjs` | spec 支持 `theme`；新增 `themes` 命令 |
-| 修改 | `skills/spreadsheets/references/formatting.md` | 补主题落位规则（表头 / 章节行 / 强调） |
-| 修改 | `skills/pdf/scripts/pdf_cli.py` | `make --theme` |
-| 修改 | `skills/diagram-maker/scripts/diagram_cli.py` | 主题从 2 个扩到 5 个，值从共享令牌取 |
-| 修改 | `skills/frontend-slides/scripts/htmllib/blocks.py` | 由 T2 直接消费共享令牌 |
-| 修改 | 各 `SKILL.md` | 补「主题可选、默认自动、必须注明」 |
-
-### 6.5 验收
-
-```bash
-# 每个技能都能列出同样的 5 个主题
-node skills/pptx/scripts/pptx_cli.mjs themes
-bash   skills/docx/scripts/docx.sh themes
-bash   skills/spreadsheets/scripts/spreadsheet.sh themes
-bash   skills/pdf/scripts/pdf.sh themes
-bash   skills/diagram-maker/scripts/diagram.sh themes
-bash   skills/frontend-slides/scripts/html.sh themes
-
-# 输出里必须出现中文名（临床通用 / 学术循证 / 战创伤急救 / 影像检验 / 灰阶打印）
-node skills/pptx/scripts/pptx_cli.mjs themes | grep -c "临床通用"
-
-# 中文名与 ASCII 别名等价
-bash skills/docx/scripts/docx.sh make --theme 临床通用 ...
-bash skills/docx/scripts/docx.sh make --theme clinical  ...
-# 两次产物除时间戳外应一致
-
-# 同一主题、同一内容 → 抽出主色应一致
-node scripts/check-skill-tokens.mjs --strict
-```
-
-### 6.6 风险
-
-| 风险 | 缓解 |
-|---|---|
-| 加主题导致版面溢出（换字号/加粗后框不住） | 主题只改**颜色**，不改字号/间距；字号变化走 density 维度并有 `text_fit_risk` 审计 |
-| Excel 主题被误认为可换字体 | SKILL.md + `formatting.md` 明确禁止承诺字体 |
-| 用户选了不合适的主题 | 允许，但结果里注明主题名，便于用户纠正 |
-
-### 6.7 进度
-
-- [ ] 6.7.1 docx 主题支持 + `themes` 命令
-- [ ] 6.7.2 spreadsheets 主题支持
-- [ ] 6.7.3 pdf 主题支持
-- [ ] 6.7.4 diagram-maker 主题扩到 5 个
-- [ ] 6.7.5 各 SKILL.md 补「可选 / 默认 / 注明」规则
-- [ ] 6.7.6 跨技能一致性验收
-- [ ] 6.7.7 五个主题改为中文名 + ASCII 别名的双轨命名（6.2.1）
-
----
-
-## 7. T5 —— 回归样本集
-
-### 7.1 目标
-
-建立"真实医学材料 + 明确期望"的固定考卷，任何技能改动都能跑一遍看是否退步。
-
-### 7.2 现状
-
-- 已有 `tests/skill-e2e/cases.json`（11 个用例）与 `scripts/run-skill-e2e.ts`
-- `tests/skill-e2e/fixtures/` 只覆盖 3 个文件：`wse_0820_00_injury.jpg`、`medical-batch/admission-note.xml`、`medical-batch/ultrasound.dcm`
-- 现有断言偏"行为断言"（是否调了 `docx.sh make`、产物是否在 `exports/`），**缺"质量断言"**（排版、主题、必含章节、数据一致）
-
-### 7.3 实现思路
-
-1. **每个技能 3 个样本**：最小可运行 / 中等真实 / 边界（缺数据、超长、特殊字符）。
-2. **断言分两层**：
-   - 行为层：沿用现有 `expectBashNeedle` / `expectOutputGlob`
-   - 质量层：新增 `acceptance` 字段，直接喂给 T3 的 `qa-report.json` 做校验
-3. **确定性检查**：HTML 与 diagram 支持"跑两次字节一致"。
-4. **基线记录**：首次跑出通过率写进本文，后续只允许上升。
-
-### 7.4 改动清单
-
-| 动作 | 文件 | 说明 |
-|---|---|---|
-| 新建 | `tests/skill-e2e/fixtures/general/` | 通用样本：病例摘要、检验表、救治方案 |
-| 新建 | `tests/skill-e2e/fixtures/html/` | HTML 样本：`content.json` + 期望章节 |
-| 新建 | `tests/skill-e2e/expectations/` | 每案例的 `acceptance.json` |
-| 修改 | `tests/skill-e2e/cases.json` | 每个技能补 3 条；新增 `acceptancePath`、`deterministic` 字段 |
-| 修改 | `scripts/run-skill-e2e.ts` | 支持 `--case <id>`、`--only skill`，输出 summary |
-| 新建 | `scripts/run-skill-samples.mjs` | 只跑"确定性 + 质量断言"的快速回归（不调模型，测脚本层） |
-| 修改 | `package.json` | 新增 `test:skill-samples` |
-
-### 7.5 验收
-
-```bash
-npm run test:skill-samples                      # 脚本层回归，秒级
-npx tsx scripts/run-skill-e2e.ts --case docx    # 单案例端到端
-npx tsx scripts/run-skill-e2e.ts --only frontend-slides
-```
-
-**基线要求**：T5 完成时，脚本层回归通过率 = 100%（这是可控的）；端到端样本通过率记录为基线，不要求 100%。
-
-### 7.6 风险
-
-| 风险 | 缓解 |
-|---|---|
-| 端到端跑模型慢（单案例可达数分钟） | 拆两个套件：`test:skill-samples`（秒级，CI 必跑）/ 端到端（手动或夜间跑） |
-| 样本含敏感医疗数据 | 只用项目内可公开材料 + 合成病例 |
-| 样本与真实用法脱节 | 每条注明来源与场景；后续用真实失败案例替换 |
-
-### 7.7 进度
-
-- [ ] 7.7.1 收集并整理 6 技能 × 3 类样本
-- [ ] 7.7.2 为每条补 `acceptance.json`
-- [ ] 7.7.3 扩展 `cases.json` 与 runner
-- [ ] 7.7.4 实现 `run-skill-samples.mjs`
-- [ ] 7.7.5 记录首轮基线通过率
-
----
-
-## 8. 风险登记（跨任务）
-
-| 编号 | 风险 | 影响 | 触发条件 | 应对 |
-|---|---|---|---|---|
-| R1 | 上下文预算被撑爆 | 技能文档越长，模型生成质量下降 | SKILL.md 超 250 行 | 硬规则：SKILL.md ≤ 200 行，长内容进 `references/` 按需读 |
-| R2 | 远程 Office Renderer 不可用 | 视觉验收无法完成 | 内网 / 服务停机 | 交付有效文件 + 明示「未完成视觉验收（原因）」 |
-| R3 | 离线环境无浏览器 | HTML 截图不可用 | 部署环境无 Playwright | 截图永不作硬依赖；静态审计独立成立 |
-| R4 | 打包漏拷 `_shared` | 6 个技能同时异常 | 打包脚本未更新 | 读取器内置 fallback + 打包前跑 `check-skill-tokens.mjs` |
-| R5 | 模型一次生成过大导致超时 | `TOOL_ERROR[tool_timeout]` | 单次 `write_file` > 10KB | T2 拆分生成；`edit_file` 局部改；Bash 超时分级 |
-| R6 | 主题/令牌改动破坏既有版面 | 已交付文件风格突变 | 共享令牌默认值变更 | 默认主题值冻结；改值需走迁移记录 |
-
----
+**默认主题刷新不是“悄悄变样”**：改动时必须同时产出改版前后对照、记录批准人，并在变更说明中写明“默认观感升级”。
+
+### 全局验收和降级规则
+
+- **L1：可验证要求与结构。** 从用户这次的要求提取具体断言，例如必含标题、章节、页数范围、图片引用和有来源的数值。不同任务的断言不同，不强制用户填写固定表格；只有确实可自动验证的项才进入硬门槛。文件损坏、内容断言失败或明确的数值与来源冲突，不得声称完成，需修复或说明无法完成；不要用“视觉不可用”掩盖 L1 失败。
+- **L2：视觉检查。** 对具备可靠渲染后端的格式，检查最终候选文件的每页/每工作表渲染结果；HTML 当前不部署服务端浏览器，不能把静态检查当作浏览器视觉验收。记录检查人、结论和文件及截图的哈希，抽样规则必须明示。**内部 QA 报告必须如实记录状态**（`approved` / `not_performed` / `failed`），不能把没看过的页面写成通过；**面向用户的默认文案不写固定免责声明**，只在以下情况说明：用户明确要求视觉验收、用户追问、或已发现具体问题。若截图已经看到严重遮挡、裁切或空白，不按“环境缺失”放行。
+- **L3：内容溯源。** 保留关键数值、影像/检验结论对应的来源路径和可核对证据。可以核实且矛盾的内容必须修正；没有来源的内容不得被包装成已核实事实，标记“未提供/待核实”。不得擅自编造临床数据或图片。
+- **缺图：** 无论用户是否明确要求图片，都允许“带缺项交付”一个有效文件；在页面中标记“图片未提供”，在 QA 报告及回复中列出具体缺失项及影响。用户明确要求的图片缺失属于未满足的要求，须按独立的“缺项交付”状态记录，不能把相应 L1 断言伪装成通过，也不能悄悄省略或声称原要求全部完成。
+- **离线：** 运行时不从公网下载字体、依赖、模板或图片。Office 转换继续使用医院内网 HTTP Office Renderer；HTML 不依赖任何服务端浏览器（D6）。服务不可用时采用上述降级，不回退应用端 LibreOffice，也不在医院现场安装浏览器或缺失依赖。
+- **兼容：** 默认生成路径、用户覆盖规则、已有 `make`/`deliver` 参数与报告消费方不得突然失效；新增功能以兼容扩展和可回退方式上线。测试旧工作流通过后才能将新门禁设为强制。
+
+## 1. T0 —— 先留下现有功能的参照
+
+### 工作
+
+1. 用无个人信息的合成中文医学材料为六个技能各建至少一份仅存本地的固定输入；记录当前 CLI、默认主题/字号、文件名、页数或工作表数、可见内容、图片/图表和相关 QA 结果。不得使用真实会话中的患者文件；样本、预期输出、截图和测试生成产物都不进入 GitHub、Gitee 或离线部署包。
+2. 建立**两类**对照：程序断言（文本、XML/OOXML 结构、颜色/字体、哈希、页数）和少量人工确认的渲染截图。PDF/PPTX/XLSX 的二进制产物可能含时间戳或顺序变化，不要求整文件字节一致。
+3. 记录完整运行条件：运行时已安装情况、字体、Office Renderer 地址及版本、模型/服务版本、是否完成视觉验收。服务未就绪时，先保留纯静态基线并注明缺口，不声称视觉基线已完成。
+4. 明确区分三类检查：**旧行为兼容**（`make`/`deliver`/文件结构必须始终通过）、**默认观感升级**（D1 只允许发生一次，需改版前后对照与批准记录）、**新能力**（显式主题与版式，在对应阶段实现后启用）。T0 记录的是改版前的参照，不得因后续刷新默认而删除。
+
+### 验收
+
+- 现有 `make` 和 `deliver` 的代表性路径分别记录，先确认是否能够跑通；用 `check` 命令核实对应技能运行时，必要时在构建环境预装，不在医院现场 `pip/npm install`。
+- `git status` 不包含样本、截图、患者文件或当前工作区导出文件；通过忽略规则和打包检查核对本地测试材料不会被提交或带入离线包。样本说明在本地记录来源与许可。结果写入第 9 节。
+
+- [ ] T0.1 建立六技能的合成输入和预期内容清单
+- [ ] T0.2 记录已有默认样式、CLI、QA 路径与环境
+- [ ] T0.3 核实渲染可用时的视觉基线，记录不可测项
+
+## 2. T1 —— 共享主题与设计规范
+
+### 目标与边界
+
+建立 `skills/_shared/design-tokens.json` 作为**主题的单一真源**，提供六套中文命名主题的语义颜色、字体角色、组件规则、别名和自动推荐规则。颜色、字体、版式是三件不同的事：令牌只定义视觉意图与颜色，**不**把 PPT 的 pt/英寸、Word 的 pt、网页的 rem 强塞成同一个数值；各技能保留自己的尺寸表、字体 profile 和排版约束。
+
+六套对外主题（5 展示 + 1 灰阶）：**临床晨光** `clinical`、**青黛循证** `academic`、**松风急救** `trauma`、**宣纸病案** `archive`、**杏林宣教** `edu`、**灰阶印刷** `mono`；另有 1 套不对外展示的 `clinical-legacy`。中文名用于界面及交付说明，ASCII ID 用于内部键和已有 CLI；中文名、别名、ID 都应可解析。
+
+**旧 ID 兼容：** `vital` 保留为 `clinical` 的别名（解析时给出 deprecation 提示，不报错）；`clinical-legacy` 为隐藏主题，保存旧色值。用户指定优先，未指定按用途推荐；完成默认刷新批准后，PPTX/PDF/HTML 使用新版 `clinical`（D1），DOCX/XLSX/图示保持既有默认（D4/D5）；批准前各格式继续保持现有默认。
+
+令牌级规范以 `docs/design-theme-tokens.zh.md` 为准，包括逐主题色值、对比度实测、字体预算和验收用例。
+
+### 现状与兼容契约
+
+| 现有实现 | 必须保护的行为 |
+| --- | --- |
+| `pptx/assets/layout-library/design-tokens.json`：基础 `colors` + 主题增量覆盖，`toolkit.mjs` 合并 | `paper`/`surface` 必须为浅色、`primary` 必须为深色（`white` 历史上同时用作浅底和深底白字）。`clinical` 色值在完成基线、对照和批准后按 D1 切换，版面几何不变；旧值保留为 `clinical-legacy`。旧路径在迁移期可读，不维护两份人工修改的真源。 |
+| `pptx` 中文 typography：`cross-platform-zh` 现为 `Arial` | 这是缺陷而非契约：Arial 无中文字形，`<a:ea>` 也写成 Arial，导致 Windows/macOS/Renderer 各自回退。T1 必须改为真实中文字体并同时写 `latin` 与 `ea`。 |
+| `docx/scripts/docxlib/templates.py`：`neutral-document-v1` | 内置中性策略和预检对彩色样式的限制不变；**未指定主题不得上色**。彩色只走新增 `themed-v1`，且颜色必须来自当前主题令牌。 |
+| `frontend-slides/references/med-visual.md`：A/B/C 是阅读密度和距离方案 | A/B/C 继续表示密度，与颜色主题正交；原“只允许一种高饱和强调色”改为“只允许 `primary`/`accent`/`support` 三个装饰角色，语义色固定”。 |
+| `diagram-maker`：`clean`/`architecture` 还影响形状 | 保留它们作 `layoutVariant`，新增配色参数 `--design-theme`，不要把旧布局参数重命名为颜色。 |
+| `spreadsheets`：`table.style.theme` 是 Excel 表格样式名 | 新增设计主题字段用 `designTheme`；已有原生表格样式和未指定时的输出不变；字体只请求名称，不承诺一致。 |
+| `pdf`：ReportLab 固定颜色和内嵌字体 | 完成默认主题刷新批准后，未指定主题时使用新版 `clinical`（D1）；在此之前保留现有默认；`archive` 需新增衬线字体并验证嵌字。 |
+
+### 实施
+
+1. **T1a0：先修字体确定性。** 把 `cross-platform-zh` 的 `headFontFace`/`bodyFontFace` 换成 `fontRoles.sans` 对应的真实中文字体，并确保 PptxGenJS 写出的 `<a:ea>` 同步；加一条 XML 断言测试（禁止 `ea=Arial`）。再把 `core.mjs` 的 9 处浅蓝灰改为 `onDark`/`onDarkMuted`/`soft`/`rule`。这一步可能改变换行、分页或颜色观感，因此先只在显式主题/试验路径验证，不立即切换默认主题。
+2. **T1a：契约先行。** 新建 `skills/_shared/design-tokens.json`、schema、设计说明；共享颜色保留 PPTX 依赖的 `navy/paper/white` 旧键并通过映射表指向新角色（`navy→primary`、`white→surface`），避免直接改动布局代码。主题增加 `typography` 乘数、`surface` 组件规则、`layoutVariant`。提供 Python 和 Node 读取器，路径定位兼容内置技能与用户覆盖技能。
+3. **T1b：兼容接入。** 先接 PPTX，再接 DOCX。PPTX 在完成 T0 基线、改版前后对照和批准前，先通过显式主题或试验开关验证；批准后才按 D1 刷新默认输出。DOCX 默认输出保持中性。显式主题走各自可验证的分支。后续 PDF/HTML/XLSX/图示在 T2/T4 接入。不要在 T1 阶段宣称“六个生成器已经使用六套主题”。
+4. **失败策略。** 共享文件缺失时运行端可用内置默认颜色维持生成能力，必须在结果标明 `builtin-fallback` 和原因；文件损坏或版本不兼容要明确报错。构建/离线包检查发现共享文件缺失必须失败，不能靠 fallback 掩盖漏包。
+5. **加载路径。** 不假设每个技能根目录旁都有 `_shared`：用户复制覆盖内置技能时可能没有它。读取器优先定位应用包自带 `skills/_shared`，再按约定位置查找，找不到才降级；不从任意上级目录读取不受信任的同名文件。
+
+### 验收
+
+- `node skills/_shared/tokens.mjs --list` 与 `python3 skills/_shared/tokens.py --list` 对六套主题的中文名、ID、别名、颜色输出一致；纯读取器不加载 PPTX `sharp`/DOCX `python-docx` 等运行时。
+- `node scripts/check-skill-tokens.mjs` 通过 `docs/design-theme-tokens.zh.md` 第 12.1 节的全部门禁：schema、别名唯一、对比度、灰度、语义锁定、完整性。缺失文件 fallback 在临时副本中测，**不删除工作区原文件**。
+- PPTX 产物的 XML 中 `<a:ea>` 不得为 `Arial`；中文字体与 `fontRoles.sans` 一致。
+- 默认刷新有据可查：`clinical` 改版前后各一组样张、批准记录、以及用 `clinical-legacy` 复现旧观感的对照。
+- 经过 wrapper 验证而非直接调用 CLI：`bash skills/pptx/scripts/pptx.sh themes`、`bash skills/docx/scripts/docx.sh capabilities`；必须先确认 `check` 返回运行时可用。在本地尚未备齐依赖时，将集成验收转到构建好的离线环境，不能把未运行写成通过。
+- 旧主题 ID 与旧 CLI 参数保持可用；`vital` 解析为 `clinical` 并提示；中文别名与 ID 指向同一主题。
+
+- [ ] T1a0.1 修正中文 `ea` 字体并加 XML 断言
+- [ ] T1a0.2 令牌化 PPTX 9 处硬编码浅蓝灰
+- [ ] T1a.1 定义六套主题 schema、别名与设计意图（对齐令牌规范）
+- [ ] T1a.2 实现 Node/Python 读取器、定位策略与显式 fallback
+- [ ] T1a.3 数据门禁：对比度、灰度、别名、语义锁定、包完整性
+- [ ] T1b.1 接入 PPTX；产出默认刷新前后对照与 `clinical-legacy` 回退
+- [ ] T1b.2 DOCX 保留中性默认；实现显式主题的 `themed-v1` 策略
+- [ ] T1b.3 已具备运行时的环境下验证 CLI 与视觉基线
+
+## 3. T3 —— 统一验收语义，复用已有交付门
+
+### 现状
+
+DOCX 已有 `prepare` / `qa-init` / `qa-record` / `qa-finalize` / `deliver`；PPTX 的 `deliver` 已审计、渲染、核对哈希并封存；XLSX 的 `deliver` 已查结构、公式、需求覆盖与渲染空白页；PDF 有 `audit` 和 `render`，HTML 和图示的检查不足。`make` 等快捷命令不等于完整的最终 `deliver`；单改提示词无法保证每条产物都必经同一门。
+
+### 实施
+
+1. **T3a 协议与适配：** 在 `skills/_shared/qa/` 写版本化协议和 `acceptance` / `review` / `qa-report` 样例，编写各技能的报告适配器。通过向现有报告添加摘要或转换层实现统一，保留 DOCX 的旧记录、PPTX 的 `delivery.json`、XLSX 的报告和原有 CLI。不要用一个新通用脚本替换成熟的审计器。
+2. **任务隔离：** 中间数据以 `$PILOTDECK_WORK_DIR/<skill>/qa/` 为默认位置（实际在 `<工作区>/scratch/work/<会话>/<轮次>/`）。PPTX、XLSX 现有以候选文件或 `--qa-dir` 定位的方式继续兼容；不能用所有轮次共用的 `scratch/qa/` 覆盖历史任务。独立 CLI 手动运行时允许显式 `--qa-dir`，并检查路径边界和用户覆盖规则。
+3. **冻结实际用户要求：** 从用户话语和材料提取本次可验证的必含章节、页数/工作表、关键数字与图片清单；schema 只规定断言类型和记录方式，不让所有用户填写同一张表。未知事实标记待核实。每个断言记录来源和 `passed/failed/unverifiable`。
+4. **视觉矩阵：** 记录最终产物哈希、渲染图哈希、页码、检查状态、问题及依据。最终产物变化则旧截图证据失效。可声明抽样规则，但不能把未看的页写成“已通过”。截图工具只负责产图，**视觉批准必须确实由人或具备图像能力的模型查看**，不能由脚本自动填 `approved`。
+5. **主题与字体记录：** 报告中固定写入本次主题（ID + 中文名）、是否按用途推荐、字体角色与是否发生降级（如衬线缺失）。同一产物换了主题即视为不同基线，旧截图不得复用。
+6. **逐格式接入：** PPTX/XLSX/DOCX 先适配现有门；PDF 再补交付流程；图示补可实现的几何检查；HTML 结合 T2 的静态检查。先以提示及报告引导调用，再对新工作流做阶段性强制；保留旧命令以免现有 `make` 直接交付的使用方式突然失败。
+7. **状态：** L1 失败 → `failed`，修复后再交付；L1 通过但视觉未做 → `passed_with_warnings`，内部记为 `not_performed` 并附原因；缺图 → `delivered_with_missing_assets`（或等价独立字段）并列明用户要求未满足的项；视觉实际发现严重错误 → 先修复。内部报告必须准确；面向用户只在必要时说明，不输出统一模板句。
+
+### 验收
+
+- 正例：满足用户要求的合成文档，旧 `deliver` 能完成，新报告引用同一产物哈希。
+- 反例：缺章节、关键数值与来源不符、产物在 QA 后变化，各自触发可解释的错误；旧版报告仍能被读取。
+- 降级：Office Renderer 不可达时，结构有效的文件仍可交付；内部报告记 `not_performed` 并附原因，答复中不默认声明，用户要求过验收或追问时才说明；渲染成功但已确认遮挡不可放行。
+- 冷启动或排队不可盲目把 Bash 超时提高为 120 秒：先核对工具层/网关/服务层的实际超时，再分步调用与限时重试，避免同步调用反复超时。
+
+- [ ] T3a.1 固定 QA 协议、状态机、逐页矩阵和兼容策略
+- [ ] T3a.2 适配 DOCX、PPTX、XLSX 既有报告，保持旧路径可用
+- [ ] T3b.1 PDF 交付审计及降级
+- [ ] T3b.2 HTML/图示审计与视觉状态（结合 T2/T2c）
+- [ ] T3b.3 正例、反例、降级、旧流程四类回归
+
+## 4. T2 —— HTML 生成、静态审计与图片文件夹
+
+### 目标与范围
+
+当前 `frontend-slides` 由模型通过 `write_file` / `edit_file` 生成和修改 HTML，已有三种阅读密度预设、修改已有页面的规则与 PPT → HTML 的文字抽取。本任务**不把固定模板、统一内容 schema 或区块生成器设为默认路径**，保留模型根据内容自由组织页面的能力，避免为了通过模板而压缩内容或限制设计。
+
+新增能力集中在三件事：共享主题令牌的可选接入、写盘后的静态审计、带图片页面的文件夹交付。`designTheme`（六套之一）负责颜色、字体角色和签名组件建议，`density`（A/B/C）继续负责阅读密度；两者不互相替代。未指定主题时按用途推荐，但默认主题只有在对应基线和批准完成后才切换。
+
+可以在真实样本中逐步沉淀可复用的 CSS 片段、图表和页面结构，但它们是可选的实现资产，不构成所有 HTML 必须遵守的固定区块集合。复杂图表仍只能依据用户提供或已核实的数据生成；没有数据时使用说明或空态。
+
+### 实现与安全
+
+- 可新增独立的 `html.sh audit` / `html_audit.py` 静态审计入口，但不新增必须经过的 HTML 生成器、固定内容 schema 或统一模板。文本默认转义；需要受控富文本时列白名单。内部内容和报告放 `$PILOTDECK_WORK_DIR/frontend-slides/`，最终成品放当前工作区 `exports/`。
+- 静态检查覆盖：标题/章节、资源引用实际存在、相对路径边界、空态说明、`alt`/图注、基本可访问性、文件大小、潜在外链字体/脚本。不要仅凭正文含 `http://` 就判外部依赖；检查真正的 `src`/`href`/CSS URL，并限制 `file://`、目录穿越及脚本。`html.parser` 能做基础检查，不能冒充浏览器布局与完整语法验证。
+- **生成后静态预算（不依赖浏览器，写盘后跑一次）：** 分两类，互不影响。
+  - **事实类（必须准确）：** 资源存在且可解码、相对路径不越界、无 `http(s)` 外链、CSS 变量齐全、`id` 唯一、空章节、未闭合标签、文件大小、主题色对比度。
+  - **估算类（仅告警，不阻断）：** 仅当页面显式使用约定的 `data-pd-block` 标记时，对可识别的 `section` / `table` / `callout` / `figure-grid` 区块按字符宽度模型估算高度、列宽压力和文本密度；自由布局或手写 HTML 直接跳过。阈值放宽（估算值超过 150% 才提示），避免把启发式结果误当成浏览器排版结论。
+  - 估算类结果只进内部 QA 报告，**不写进用户可见文案，也不得阻断生成**；不为了通过检查而新增固定版式或限制设计自由度。
+- **两种交付：** 无图或小图可用单 HTML；有医学图片默认 `exports/<页面短名>_<YYYYMMDD-HHmm>/index.html` + `assets/`。时间以部署配置的本地时区（院内默认 `Asia/Shanghai`）计，同分钟撞名加 `-2`、`-3`；新目录不覆盖；`--update` 仅在明确更新旧目录时启用，需核对该目录范围。复制被实际引用的图片，按哈希去重、清理文件名，禁止引用工作区外的图片。大图优先文件夹，不默认 base64。
+- **缺图可交付：** 图片路径缺失时页面相应区域清楚写“图片未提供”，报告列出图片、原要求和影响；不得把缺图记为“全部通过”。资源文件存在但损坏、引用越界或图片复制失败，按实际故障与缺项分别处理。
+- **可下载性：** 当前产物收集器扫描文件，不会将目录本身变成一个可下载文件卡；`index.html` 与各图可能分别显示。实施时核实 UI 能打开目录中的入口页及相对资源、能让用户一次下载整个文件夹；必要时增加 `.zip` 打包或目录下载入口，并把这项作为文件夹交付的硬验收。不能只检查磁盘上存在 `index.html` 就声称用户可完整取走。
+- **确定性：** 固定输入、固定主题和固定资源内容，两次生成的 `index.html` 字节一致；时间戳只在外层目录名称，不写入页面正文或 CSS。`--update` 不得清理用户自行放进目录的文件。
+- **主题落地：** 令牌以 CSS 变量注入 `<html data-pd-theme="…">`；页面可以按 `surface` 令牌选择页眉、章节标记、提示块和影像底板，但不强制所有页面使用相同结构。文件夹交付时允许 `assets/fonts/`；单文件交付只用系统字体栈。不得出现主题外第四种高饱和色。
+
+### 验收
+
+- 合成样例覆盖无图、带图、缺图、同分钟撞名、跨目录引用、HTML 特殊字符与窄屏；自动检查输出文件、链接、图片哈希和完整下载包。
+- 六套主题各生成一份：CSS 变量与主题一致、无外部字体/脚本请求、`archive` 的字体角色正确。具备本地浏览器时可以做人工抽样，但截图不作为医院部署环境的自动门禁。
+- HTML 生成与静态检查分别计时；记录页面生成、资源复制和审计耗时，不记录不存在的 HTML 渲染服务排队时间。端到端耗时只在指定模型/设备下作为参考，不设置与硬件无关的硬门槛。
+- **HTML 不做服务端渲染**（见 T2c）：不装浏览器、不预留半成品接口。生成完成后执行上述静态预算，内部记 `visual_acceptance=not_performed`；不向用户输出免责声明，也不声称视觉审查通过。
+- 静态预算不得改变页面内容与样式：同一份输入，开启与关闭估算类检查应产出字节一致的 HTML。
+
+- [ ] T2.1 主题令牌接入约定、静态审计规则和样例
+- [ ] T2.2 `audit`、文件夹/单文件输出与缺图说明
+- [ ] T2.3 入口预览、相对资源和整包下载验收
+- [ ] T2.4 更新 SKILL.md，保留旧流程和现有内容约束
+- [ ] T2.5 确定性、安全、视觉降级与分段耗时验收
+- [ ] T2.6 生成后静态预算：事实类与估算类分开，零副作用
+
+## 5. T2c —— HTML 视觉反馈：不做服务端渲染（已决策）
+
+### 决策
+
+**不部署服务端浏览器，不做自动截图，不预留半成品接口。** 医院服务器为 Linux、且不由我们控制，预装 Chromium 意味着：
+
+- 镜像增加约 250–400 MB（含系统库，需实测）；
+- 容器要处理 `--no-sandbox`、`/dev/shm`、字体等额外依赖；
+- 浏览器版本、可调用性、与既有依赖包的兼容性都无法在部署前确认；
+- 收益只是一个**代理指标**——HTML 的最终读者本来就是用户自己的浏览器。
+
+同样的取舍也适用于“复用现有 Office Renderer 加端点”的方案：仍需在渲染节点装浏览器，成本不变。因此整条路线不采用。
+
+### 替代方案：静态预算 + 人工回路
+
+1. **生成后静态预算（T2）：** 写盘后跑一次检查，事实类准确、估算类仅告警，结果只进内部报告。
+2. **交付后自然引导：** 用一句正常的话邀请用户回看并回传截图，例如“生成好了，打开看看；哪里想调截图发我”。**不写“未完成视觉验收”这类固定免责声明**，避免让功能显得不可靠。
+3. **截图回传闭环：** 用户发来截图后，Agent 读图 → 指出问题（溢出、遮挡、字号、配色、留白）→ 定位到具体区块 → 修改 → 生成新目录。旧目录不覆盖。
+4. **不做追问：** 用户没有回传截图时不催促、不阻塞、不记为失败。
+
+### 边界
+
+- 静态预算**不得**改变设计自由度：不新增固定版式规则，不因估算超限而强制改写页面。
+- 内部 QA 报告记 `visual_acceptance=not_performed`；面向用户默认不提。
+- 用户明确要求“帮我检查排版”时，必须说明只能做结构检查、无法自动看渲染效果，并请其提供截图。
+- 用户回传截图即视为 L2 输入的起点：此时视觉结论以截图为准，不再引用旧基线。
+
+### 验收
+
+- 无浏览器环境下完整生成并交付，不出现“缺少渲染服务”类报错。
+- 静态预算关闭与开启，输出的 `index.html` 字节一致。
+- 模拟用户回传截图：Agent 能定位到区块并给出可执行的修改，重新生成到新目录。
+- 检查新增 HTML 交付路径不安装、不调用服务端浏览器，不新增浏览器端口或环境变量。仓库中已有的可选 `export-pdf.sh` 等历史脚本单独标记为非本任务路径，不得被 HTML 默认流程调用；是否删除它们另行评审。
+
+## 6. T4 —— 共享主题、格式专用版式与丰富内容
+
+### 用户体验
+
+用户可选中文主题；未指定时按用途推荐，完成默认刷新批准后 PPTX/PDF/HTML 使用新版 `clinical`（D1），DOCX/XLSX/图示保持既有默认（D4/D5），批准前继续保持现有默认。生成结果写明“本次使用主题：青黛循证（academic）”，推断得来时追加“（按用途推荐）”。六套主题共享语义色与气质，**不是**六份产物强行套一样的字重、边距、结构。
+
+三条轴分别处理：`designTheme`（配色与字体角色）、`layoutVariant`（组件和页面组织方式）、`density`/字体 profile（阅读距离、密度、目标平台）。`diagram-maker` 保留 `clean/architecture` 为布局参数，新增 `--design-theme` 作配色；Excel 的 `table.style.theme` 继续表示原生表格样式。DOCX 的中性 `builtin` 保留，显式彩色主题走新增 `themed-v1` 与预检规则。PDF 嵌入随包字体（无衬线 + `archive` 衬线）；Word/PPTX 指定字体名称须在目标 Office Renderer 上核验，不承诺 OOXML 嵌字；HTML 文件夹交付可带 WOFF2，单文件交付只用系统字体栈；XLSX 不承诺文件内嵌字体。
+
+**分档不做平均用力：**
+
+- **A 档（全量主题：颜色 + 字体角色 + 组件 + 签名版式）**：HTML、PDF、PPTX。
+- **B 档（仅令牌级：颜色 + 字体角色，不做签名版式）**：DOCX、XLSX、diagram-maker。
+
+六种格式允许“同一主题家族、各自适配”，**不允许**把像素一致写成验收标准。
+
+### 分格式增量工作
+
+| 技能 | 档位 | 先补什么 | 必须验证 |
+| --- | --- | --- | --- |
+| HTML | A | 六个主题的令牌块与签名组件（标线、通栏页眉、时间轴、印章、圆角卡、影像底板）；文件夹交付带字体 | 窄屏、长文本、离线资源、对比度、灰度 |
+| PDF | A | 主题化报告；`archive` 衬线；目录/图注/表格版式 | 嵌字、分页、跨页表格、提取文本不丢失 |
+| PPTX | A | 六个主题；病例、对比、证据、时间线、影像页；真实数据图表 | 文字不溢出、主结论醒目、`ea` 字体、目标 Renderer 差异 |
+| DOCX | B | 显式主题的 `themed-v1`：标题/表头/提示块着色 | 默认仍黑白、彩色仅限主题令牌、Word 预检与医院字体 |
+| XLSX | B | 表头/分组/数值格式/条件格式/原生图表配色 | 公式值、图表源范围、打印分页、原生表格样式兼容 |
+| diagram-maker | B | 配色令牌化、`--design-theme` 与 `clean/architecture` 解耦 | 旧输入仍生成旧结构、长标签不遮挡、连线标签无白边、SVG 无外部资源 |
+
+**功能目标优先于主题数量。** 图表只能依据输入数据产生；没有数据时提供说明或空态。每一格式先做一个真实场景的布局，再扩充其余场景；用户自带医院模板的优先级高于系统主题。每种新组件增加结构断言、目标软件/浏览器的视觉对照和用户指定主题的验收。
+
+- [ ] T4.1 六格式能力矩阵与已有默认回归
+- [ ] T4.2 DOCX/PDF 版式和主题适配
+- [ ] T4.3 PPTX/XLSX 图表和复杂页面样本
+- [ ] T4.4 HTML/图示布局与六套中文主题映射
+- [ ] T4.5 目标平台字体、溢出、跨页和图片场景复验
+
+## 7. T5 —— 安全、真实且可重复的回归集
+
+现有 `tests/skill-e2e/cases.json` 有 11 个用例，偏向“是否调用工具、是否有文件”。新增每技能至少三个合成场景（最小/常规/边界），覆盖内容断言、缺图、超长文本、中文字体、表格、图表和离线降级；脚本级、实际 Agent 端到端、截图人工/多模态复核分层运行，不把模型生成误记为完全确定性。
+
+**素材约束：** 所有新增回归材料（合成输入、图片、预期输出、截图及测试生成文件）仅留在本机，**不提交 GitHub/Gitee、不进入离线部署包**。测试脚本、无样本内容的断言逻辑及说明文档可随正常代码维护；对本地材料配置忽略规则与构建排除规则，提交/打包前核对。原来的 `tests/skill-e2e/fixtures/` 中 3 个文件目前已从 Git 索引移除、留在本地；尚未提交或推送这项变更。既有远端 Git 历史仍可能包含旧素材，删除最新版本不会抹掉历史。测试 runner 在本地素材缺失时显示跳过/不可测，不能冒充通过。上线前可单独评估历史清理流程及其对现有克隆的影响。
+
+- [ ] T5.1 六技能合成材料与来源/许可登记
+- [ ] T5.2 本地素材隔离和打包自检；公开素材隐私检查
+- [ ] T5.3 脚本级结构、主题、缺项、内容溯源回归
+- [ ] T5.4 Agent 端到端回归与视觉矩阵，记录可测比例和通过率
+
+## 8. 跨任务的落地检查
+
+1. **完整运行链路：** 技能 `check`、内置默认输出、已有 `make`/`deliver`、多用户工作目录隔离、Office Renderer 降级、UI 文件卡和下载路径都应纳入回归。尤其不能把“脚本返回成功”等同于“用户能看到并完整取走文件”。
+2. **构建包：** `skills/_shared`、字体和新脚本随离线包安装；字体包含 PDF 的无衬线/衬线 TTF 与 HTML 的 WOFF2 分片（预计 +24 MB 与 +15–18 MB，见令牌规范 6.2）。所有测试材料（包括新增合成样本）不在 Docker 上下文和交付目录。构建前用本地样本运行 `check-skill-tokens` 和最小离线回归，包内只检查必要的运行脚本及依赖；现场不自动安装浏览器/字体/依赖，也不依赖本地测试样本。
+3. **防止假阳性：** `SKIP/UNTESTABLE` 与 `PASS` 分开统计；没有截图则 L2 为 `not_performed`；缺图则写缺项；没有可核对来源则不宣称已溯源。
+4. **逐步启用：** 先纯脚本测试，再在隔离工作区跑完整技能，最后验证院内目标平台；不能凭 Node/Python 单元测试推断中文排版和视觉效果无误。
 
 ## 9. 执行日志
 
-> 每完成一个子任务追加一行。**不要删除历史行。**
+> 只有真正完成子任务并记录验收结果后，才更新状态；不要删历史行。
 
-| 日期 | 任务号 | 变更摘要 | 涉及文件 | 验收命令与结果 | 遗留问题 |
-|---|---|---|---|---|---|
-| 2026-11-04 | — | 建立任务书，未改代码 | `docs/skills-optimization-plan.zh.md` | — | — |
-
----
+| 日期 | 任务号 | 实际修改 | 验收命令及结果 | 未完成/风险 |
+| --- | --- | --- | --- | --- |
+| 2026-11-04 | — | 建立 v1.2 任务书 | 未进行编码验收 | 多处现状与代码不符 |
+| 2026-11-05 | 计划修订 | 结合当前仓库修订为 v2.0；未修改技能实现 | 任务书结构与现有路径静态核对 | T0–T5 均未开始编码 |
+| 2026-11-06 | 计划修订 | 修订为 v2.1：确认 6 套主题与默认刷新；新增令牌规范文档 | 仅静态核对色值、对比度与代码位置，未改技能实现 | 令牌规范中的字体/渲染结论待实现时实测 |
+| 2026-11-06 | 计划修订 | 修订为 v2.3：移除 HTML 固定模板/内容 schema 优先路径；明确 HTML 只做静态审计和用户截图回传；默认主题须在基线与批准后切换；补充历史浏览器脚本不属于默认交付路径 | `git diff --check` 通过；任务书与主题规范静态交叉核对 | T0–T5 均未开始编码；HTML 视觉验收仍依赖用户截图或本地人工检查 |
+| 2026-11-09 | 结构化 Skill 调用迁移 | 新增 `pdf_make`、`docx_make`、`pptx_make`、`spreadsheets_make`、`diagram_make`；统一后端参数转译、命令策略、任务隔离、资源限制和产物登记；同步更新四个 Skill 文档及创建参考文档 | `npm run build` 通过；专项测试 8/8（PDF 5 项 + 结构化文档 3 项）通过；命令策略与注册表测试通过；`git diff --check` 通过 | 高级非 `make` 入口仍为受控 Bash 兼容面；完整测试需继续运行，视觉与 Renderer 场景未全部验收 |
+| 2026-11-09 | 结构化调用验收标准收口 | 更新 `tests/skill-e2e/cases.json` 与 `cases-multiuser.json`：PDF/DOCX/PPTX/XLSX/图示必须成功调用对应 `*_make`，并禁止 `bash`；基础 `*_make` 不强制预读 `read_skill`；修正图示创建参考文档的旧 Bash 示例；同步中英文系统提示词 | `npm run build` 通过；结构化文档、PDF、命令策略、注册表、产物契约专项测试 46/46 通过；完整测试 864/867 通过、2 跳过、1 个既有 RouterRuntime watchdog 常量失败；多用户 PDF 实测 2/2、图示实测 1/1，均调用结构化工具、无 Bash、无用户路径泄露；`git diff --check` 通过 | 当前环境 DOCX/PPTX/XLSX 预安装运行时未就绪，无法做真实产物生成；完整 Agent/多用户文档矩阵仍需在依赖齐全的离线环境运行 |
 
 ## 10. 变更记录
 
-| 日期 | 变更 |
-|---|---|
-| 2026-11-04 | v1.2：文件夹交付目录名改为 `<页面短名>_<YYYYMMDD-HHmm>`，入口固定 `index.html`，不覆盖、支持 `--update` 原地更新（4.10.2 / 4.10.6） |
-| 2026-11-04 | v1.1：T2 增加文件夹交付与图片区块（4.10）；T4 主题改为中文名 + ASCII 别名双轨（6.2.1） |
-| 2026-11-04 | 初版：T1–T5 + 全局验收口径 + 风险登记 |
-
----
-
-## 附：一张图看懂全部工作
-
-```
-现在                               改后
-─────────────────────────────     ─────────────────────────────
-6 个技能各自定义颜色               1 份 design-tokens.json
-HTML 靠模型手写 18KB               content.json(3KB) → 模板 → HTML
-PPT/Excel/PDF 审计完照样交付       不过闸不交付
-只有 PPT 有主题                    6 个技能共用 5 个命名主题
-改完不知道有没有改坏              跑一遍样本集就有答案
-```
+| 日期 | 内容 |
+| --- | --- |
+| 2026-11-06 | v2.1：按 D1–D5 更新主题方案——默认主题允许一次性刷新并保留 `clinical-legacy`；月白影像并入临床晨光成为影像组件；最终 5 展示 + 1 灰阶共 6 套；DOCX 默认中性、显式才上色；HTML/PDF/PPTX 全量、DOCX/XLSX/图示令牌级；新增 `docs/design-theme-tokens.zh.md` 作为可实现规范；T1 增加“先修中文 ea 字体”前置项。 |
+| 2026-11-06 | v2.2：按 D6 取消 T2b 服务端 HTML 渲染（含 Playwright/Chromium 依赖），改为 T2c：生成后静态预算（事实类准确、估算类仅告警、不限制设计）+ 用户截图回传闭环；不新增模板硬约束；内部 QA 如实记录 `not_performed`，面向用户不输出固定免责声明（仅在用户要求验收、追问或发现具体问题时说明）。 |
+| 2026-11-06 | v2.3：进一步消除计划冲突：HTML 保留 `write_file` / `edit_file` 自由生成，不强制内容 schema、区块模板或生成器；静态检查不冒充浏览器视觉验收；单文件不强制写入系统字体说明；默认主题切换改为基线、对照和批准后的阶段动作；仓库已有浏览器导出脚本不纳入 HTML 默认链路。 |
+| 2026-11-05 | v2.0：增加 T0 和可选 T2b；T1 只统一主题意图与语义色，不改旧默认；T3 适配现有交付门；QA 用每轮工作目录；HTML 缺图可说明后交付；增加整包下载与全部测试材料本地隔离验收。旧版“所有技能同值”“无交付门”“缺图必须拦截”“现有远程 HTML 截图接口”等说法不再作为实施依据。 |
+| 2026-11-04 | v1.2：HTML 文件夹用 `<页面短名>_<YYYYMMDD-HHmm>`，入口 `index.html`，不覆盖、支持明确的原地更新。 |
+| 2026-11-04 | v1.1：HTML 支持带图文件夹；主题对外中文名、内部 ASCII ID。 |
+| 2026-11-04 | 初版：T1–T5 和进度记录。 |

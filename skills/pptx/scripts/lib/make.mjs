@@ -4,6 +4,7 @@ import { auditPptx } from './audit.mjs';
 import { inspectPptx } from './ooxml.mjs';
 import { renderPptx, renderingAvailability } from './render.mjs';
 import { buildToolkit } from './toolkit.mjs';
+import { assertTaskResource } from '../../../_shared/task-paths.mjs';
 
 const HEADING = /^(#{1,3})\s+(.+?)\s*$/u;
 const BULLET = /^\s*(?:[-*+]|\d+[.)])\s+(.+?)\s*$/u;
@@ -118,6 +119,9 @@ function assertLocalResources(value, parentKey = '') {
       && /^https?:\/\//iu.test(child.trim())
     ) {
       throw new Error(`Remote PPTX resources are not allowed (${key}); use a local workspace file`);
+    }
+    if (typeof child === 'string' && /^(?:path|src)$/iu.test(key)) {
+      assertTaskResource(child, `PPTX ${key}`);
     }
     assertLocalResources(child, key);
   }

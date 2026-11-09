@@ -29,6 +29,8 @@ describe('settings menu by role', () => {
       'agentMemory',
       'officePreview',
       'advanced',
+      'securityServices',
+      'allowedCommands',
       'users',
     ]);
   });

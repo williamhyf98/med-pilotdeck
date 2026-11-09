@@ -41,7 +41,8 @@ export function normalizePermissionSettings(value) {
     version: 1,
     allowedTools: normalizeStringArray(obj.allowedTools),
     disallowedTools: normalizeStringArray(obj.disallowedTools),
-    skipPermissions: Boolean(obj.skipPermissions),
+    skipPermissions: typeof obj.skipPermissions === 'boolean'
+      ? obj.skipPermissions : DEFAULT_SETTINGS.skipPermissions,
     lastUpdated: typeof obj.lastUpdated === 'string' ? obj.lastUpdated : undefined,
   };
 }

@@ -580,7 +580,7 @@ function renderToolResultRefReadMoreNotice(filePath: string, nextOffset: number,
 }
 
 function isManagedToolResultRefPath(filePath: string): boolean {
-  return /^\.pilotdeck[\\/]tool-results[\\/]refs[\\/]result-\d+\.(?:txt|json)$/.test(filePath);
+  return /^(?:scratch|\.pilotdeck)[\\/]tool-results[\\/]refs[\\/]result-\d+\.(?:txt|json)$/.test(filePath);
 }
 
 function renderOversizedLinePreview(text: string, filePath: string, offset: number): string {
@@ -865,6 +865,13 @@ function checkReadFilePermission(
   });
   if (workspaceResolved.ok) {
     return { type: "passthrough" };
+  }
+  if (context.taskRoot) {
+    return {
+      type: "deny",
+      reason: { type: "safety", message: workspaceResolved.error.message },
+      message: workspaceResolved.error.message,
+    };
   }
   if (workspaceResolved.error.code !== "path_not_allowed") {
     return {

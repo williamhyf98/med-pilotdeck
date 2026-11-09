@@ -2,9 +2,14 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { PermissionResult } from "../../permission/index.js";
-import type { PilotDeckToolDefinition, PilotDeckToolRuntimeContext } from "../protocol/types.js";
+import type {
+  PilotDeckToolDefinition,
+  PilotDeckToolExecutionOutput,
+  PilotDeckToolRuntimeContext,
+} from "../protocol/types.js";
 import { PilotDeckToolRuntimeError } from "../protocol/errors.js";
 import { resolvePilotDeckWorkspacePath } from "./filesystem/pathSafety.js";
+import { networkFetch } from "../../network/fetch.js";
 
 const DEFAULT_RENDERER_PORT = 19400;
 const DEFAULT_TIMEOUT_MS = 180_000;
@@ -293,13 +298,7 @@ function checkOfficeToPdfPermissions(
 async function executeOfficeToPdf(
   input: OfficeToPdfInput,
   context: PilotDeckToolRuntimeContext,
-): Promise<{
-  content: [
-    { type: "file"; path: string; mimeType: "application/pdf"; description: string },
-    { type: "json"; value: OfficeToPdfOutput },
-  ];
-  data: OfficeToPdfOutput;
-}> {
+): Promise<PilotDeckToolExecutionOutput<OfficeToPdfOutput>> {
   const source = resolveSourceOrThrow(input.input_file, context);
   const output = resolveOutputOrThrow(input.output_file, context);
   const format = getOfficePdfExtension(source.absolutePath);
@@ -351,15 +350,20 @@ async function executeOfficeToPdf(
   let pdf: Buffer;
   try {
     const token = String((context.env ?? process.env).PILOTDECK_OFFICE_RENDERER_TOKEN || "").trim();
-    const response = await fetch(`${renderer}/v1/convert/pdf`, {
+    const response = await networkFetch(`${renderer}/v1/convert/pdf`, {
       method: "POST",
       body,
       signal: controller.signal,
+      redirect: "error",
       headers: {
         "Content-Type": OFFICE_PDF_FORMATS[format].mimeType,
         "X-File-Name": fileName,
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
+    }, {
+      fetchImpl: fetch,
+      networkAccess: context.networkAccess,
+      retry: { maxRetries: 0, retryOnPost: true },
     });
     const responseBody = Buffer.from(await response.arrayBuffer());
     if (!response.ok) {
@@ -424,6 +428,12 @@ async function executeOfficeToPdf(
       },
       { type: "json", value: result },
     ],
+    artifacts: [{
+      path: output.relativePath,
+      role: "final",
+      mimeType: "application/pdf",
+      description: `Converted ${format.toUpperCase()} to PDF`,
+    }],
     data: result,
   };
 }

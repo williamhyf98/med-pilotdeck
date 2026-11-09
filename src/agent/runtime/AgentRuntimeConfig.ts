@@ -2,6 +2,7 @@ import type { CanonicalThinkingConfig, CanonicalToolChoice, MultimodalConstraint
 import type { PermissionContext, PermissionMode } from "../../permission/index.js";
 import type { AgentRunMode } from "../protocol/input.js";
 import type { AgentToolPolicy } from "../profile/types.js";
+import type { NetworkAccessController } from "../../network/serviceRegistry.js";
 
 export type AgentRuntimeConfig = {
   provider: string;
@@ -37,6 +38,8 @@ export type AgentRuntimeConfig = {
   permissionModeBeforePlan?: PermissionMode;
   permissionContext: PermissionContext;
   env?: NodeJS.ProcessEnv;
+  /** Validates outbound requests made by network-capable built-in tools. */
+  networkAccess?: NetworkAccessController;
   maxResultBytes?: number;
   metadata?: Record<string, unknown>;
   /** Marks the agent as a subagent. RouterRuntime uses this for sticky/scenario decisions. */

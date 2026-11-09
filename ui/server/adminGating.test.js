@@ -108,6 +108,12 @@ const ADMIN_ONLY = [
   ['GET', '/api/browse-filesystem'], ['POST', '/api/create-folder'], ['POST', '/api/projects/create'],
   ['GET', '/api/admin/users'],
   ['PUT', '/api/settings/permissions'],
+  ['GET', '/api/security-policy/services'],
+  ['PUT', '/api/security-policy/services/model.local'],
+  ['POST', '/api/security-policy/services/model.local/test'],
+  ['GET', '/api/security-policy/commands'],
+  ['PUT', '/api/security-policy/commands'],
+  ['POST', '/api/security-policy/reload'],
 ];
 
 const USER_OK = [

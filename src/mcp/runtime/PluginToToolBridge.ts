@@ -19,9 +19,11 @@
 
 import {
   existsSync,
+  lstatSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  statSync,
 } from "node:fs";
 import {
   basename,
@@ -29,21 +31,31 @@ import {
   join,
   relative,
   resolve as resolvePath,
+  sep,
 } from "node:path";
 
 import { PilotDeckToolRuntimeError } from "../../tool/protocol/errors.js";
+import type {
+  PilotDeckCapability,
+  PilotDeckToolArtifact,
+} from "../../security/policy/types.js";
 import type {
   PilotDeckToolDefinition,
   PilotDeckToolExecutionOutput,
   PilotDeckToolInputSchema,
   PilotDeckToolResultContent,
+  PilotDeckToolRuntimeContext,
 } from "../../tool/index.js";
+import type { PermissionResult } from "../../permission/index.js";
 import type { McpClient } from "../client/McpClient.js";
 import type { McpRuntime } from "./McpRuntime.js";
 import type {
+  PilotDeckMcpArtifactPolicy,
   PilotDeckMcpToolAnnotations,
+  PilotDeckMcpToolCapabilities,
   PilotDeckMcpToolSpec,
 } from "../protocol/types.js";
+import { getMcpToolCapabilities } from "./mcpCapabilities.js";
 
 export type CreateToolDefinitionsOptions = {
   /** Per-call timeout override (default falls through to McpClient default). */
@@ -64,7 +76,9 @@ function buildToolDefinition(
   options: CreateToolDefinitionsOptions,
 ): PilotDeckToolDefinition {
   const annotations: PilotDeckMcpToolAnnotations = spec.annotations ?? {};
-  const isReadOnly = annotations.readOnlyHint === true;
+  const capabilities = spec.capabilities
+    ?? getMcpToolCapabilities(spec.serverId, spec.toolName);
+  const isReadOnly = capabilities?.readOnly ?? annotations.readOnlyHint === true;
   const isDestructive = annotations.destructiveHint === true;
   const isOpenWorld = annotations.openWorldHint !== false;
 
@@ -80,10 +94,35 @@ function buildToolDefinition(
     inputSchema,
     maxResultBytes: 200_000,
     isReadOnly: () => isReadOnly,
-    isConcurrencySafe: () => isReadOnly,
+    isConcurrencySafe: () => isReadOnly && (capabilities?.taskWriteRoots.length ?? 0) === 0,
     isDestructive: () => isDestructive,
     isOpenWorld: () => isOpenWorld,
+    ...(capabilities ? {
+      capabilityPolicy: {
+        declared: declaredCapabilities(capabilities),
+        required: () => requiredCapabilities(capabilities),
+      },
+    } : {}),
+    checkPermissions: async (_input, context): Promise<PermissionResult> => {
+      if (!capabilities) {
+        return {
+          type: "deny",
+          reason: {
+            type: "safety",
+            message: `MCP tool ${spec.serverId}/${spec.toolName} has no registered capability profile.`,
+          },
+          message: `MCP tool ${spec.serverId}/${spec.toolName} has no registered capability profile.`,
+        };
+      }
+      return { type: "passthrough" };
+    },
     execute: async (input, context): Promise<PilotDeckToolExecutionOutput> => {
+      if (!capabilities) {
+        throw new PilotDeckToolRuntimeError(
+          "unsupported_tool",
+          `MCP tool ${spec.serverId}/${spec.toolName} has no registered capability profile.`,
+        );
+      }
       const client: McpClient | undefined = runtime.getClient(spec.serverId);
       if (!client) {
         throw new PilotDeckToolRuntimeError(
@@ -114,11 +153,12 @@ function buildToolDefinition(
         });
       };
       try {
-        const normalizedInput = normalizeMedicalToolInputPath(
+        const normalizedInput = normalizeMcpToolInputPaths(
           spec.serverId,
           spec.toolName,
           input,
-          context.cwd,
+          capabilities,
+          context,
         );
         const streamSpec = directStreamSpec(spec.serverId, spec.toolName);
         const medicalMaterial = (medicalParser || (spec.serverId === "med-tools" && spec.toolName === "med_deepchest_job"))
@@ -154,6 +194,7 @@ function buildToolDefinition(
         };
         const { content: rawContent, isError } = await client.callTool(spec.toolName, normalizedInput, {
           signal: context.abortSignal,
+          taskRoot: context.taskRoot,
           timeoutMs: options.callTimeoutMs,
           ...((directStream || medicalActivity) && context.progress
             ? {
@@ -220,14 +261,35 @@ function buildToolDefinition(
           normalizedInput,
           parsedPayload?.continuation_mode,
         );
+        const extractedArtifacts = await extractMcpArtifacts(
+          spec.serverId,
+          spec.toolName,
+          jsonPayload,
+          capabilities,
+          context,
+        );
         return {
           content: [
-            ...marshalMcpContent(content, client.spec.transport === "stdio" ? client.spec.cwd : undefined),
-            ...extractMedicalArtifactFiles(spec.serverId, spec.toolName, jsonPayload),
+            ...marshalMcpContent(
+              content,
+              client.spec.transport === "stdio" ? client.spec.cwd : undefined,
+              context.taskRoot,
+            ),
+            ...extractedArtifacts.content,
           ],
+          ...(extractedArtifacts.artifacts.length > 0
+            ? { artifacts: extractedArtifacts.artifacts }
+            : {}),
           data: parsedPayload ?? content,
           metadata: {
-            mcp: { serverId: spec.serverId, toolName: spec.toolName, wireName: spec.wireName },
+            mcp: {
+              serverId: spec.serverId,
+              toolName: spec.toolName,
+              wireName: spec.wireName,
+              ...(extractedArtifacts.managedDerivedArtifacts.length > 0
+                ? { managedDerivedArtifacts: extractedArtifacts.managedDerivedArtifacts }
+                : {}),
+            },
             ...(finalText
               ? {
                   generationOwner: "plugin-vlm",
@@ -331,6 +393,252 @@ function findUniqueInboxPath(projectRoot: string, requestedPath: string): string
   const matches = exactMatches.length > 0 ? exactMatches : prefixedMatches;
   if (matches.length !== 1) return undefined;
   return existingProjectPath(projectRoot, matches[0]);
+}
+
+const MCP_READ_PATH_KEYS = new Set([
+  "path",
+  "paths",
+  "file",
+  "files",
+  "file_path",
+  "file_paths",
+  "image_path",
+  "image_paths",
+  "input_path",
+  "input_paths",
+  "input_file",
+  "input_files",
+  "source_path",
+  "source_paths",
+  "pdf_path",
+  "pdf_paths",
+  "directory",
+  "directories",
+  "dir",
+  "dirs",
+  "input_dir",
+  "input_dirs",
+  "input_directory",
+  "input_directories",
+  "document",
+  "documents",
+  "pdf",
+  "pdfs",
+]);
+
+const MCP_WRITE_PATH_KEYS = new Set([
+  "output_path",
+  "output_paths",
+  "output_file",
+  "output_files",
+  "output_dir",
+  "output_directory",
+  "render_dir",
+  "out",
+  "out_dir",
+]);
+
+function normalizeMcpToolInputPaths(
+  serverId: string,
+  toolName: string,
+  input: unknown,
+  capabilities: PilotDeckMcpToolCapabilities,
+  context: PilotDeckToolRuntimeContext,
+): unknown {
+  // Stand-alone bridge callers historically supplied host paths and do not
+  // carry an Agent task root. Agent calls always carry taskRoot and take the
+  // strict path branch below.
+  if (!context.taskRoot) {
+    return normalizeMedicalToolInputPath(serverId, toolName, input, context.cwd);
+  }
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return input;
+  }
+
+  return normalizeMcpInputValue(input, undefined, capabilities, context);
+}
+
+function normalizeMcpInputValue(
+  value: unknown,
+  key: string | undefined,
+  capabilities: PilotDeckMcpToolCapabilities,
+  context: PilotDeckToolRuntimeContext,
+): unknown {
+  const access = key && MCP_WRITE_PATH_KEYS.has(key) ? "write"
+    : key && MCP_READ_PATH_KEYS.has(key) ? "read"
+      : undefined;
+
+  if (access) {
+    return normalizeMcpPathValue(value, access, capabilities, context);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeMcpInputValue(item, undefined, capabilities, context));
+  }
+  if (!value || typeof value !== "object") return value;
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([entryKey, entryValue]) => [
+      entryKey,
+      normalizeMcpInputValue(entryValue, entryKey, capabilities, context),
+    ]),
+  );
+}
+
+function normalizeMcpPathValue(
+  value: unknown,
+  access: "read" | "write",
+  capabilities: PilotDeckMcpToolCapabilities,
+  context: PilotDeckToolRuntimeContext,
+): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeMcpPathValue(item, access, capabilities, context));
+  }
+  if (value && typeof value === "object") {
+    return normalizeMcpInputValue(value, undefined, capabilities, context);
+  }
+  if (typeof value !== "string") {
+    throw invalidMcpInputPath(access, "path fields must contain strings.");
+  }
+  if (!value.trim()) return value;
+
+  const roots = access === "read" ? capabilities.taskReadRoots : capabilities.taskWriteRoots;
+  if (roots.length === 0) {
+    throw invalidMcpInputPath(
+      access,
+      `MCP tool does not declare a task ${access === "read" ? "input" : "output"} capability.`,
+    );
+  }
+
+  return resolveMcpTaskPath(value, roots, access, context);
+}
+
+function resolveMcpTaskPath(
+  requestedPath: string,
+  allowedRoots: readonly ("inbox" | "scratch" | "exports")[],
+  access: "read" | "write",
+  context: PilotDeckToolRuntimeContext,
+): string {
+  const taskRoot = realpathOrThrow(context.taskRoot!, "current task");
+  const cwd = safeRealpath(context.cwd);
+  if (!cwd || !isPathInside(taskRoot, cwd) || hasSymlinkComponent(cwd, taskRoot)) {
+    throw invalidMcpInputPath(access, "current working directory is outside the task.");
+  }
+
+  const absolute = isAbsolute(requestedPath);
+  if (!absolute && (requestedPath.includes("\\") || requestedPath.split("/").includes(".."))) {
+    throw invalidMcpInputPath(access, "path traversal is not allowed.");
+  }
+
+  const candidates = absolute
+    ? [resolvePath(requestedPath)]
+    : [
+        resolvePath(cwd, requestedPath),
+        resolvePath(taskRoot, requestedPath),
+        resolvePath(taskRoot, "inbox", requestedPath),
+      ];
+  let resolved: string | undefined;
+  for (const candidate of candidates) {
+    const real = safeRealpath(candidate);
+    if (!real || !isPathInside(taskRoot, real) || hasSymlinkComponent(real, taskRoot)) continue;
+    const relativePath = relative(taskRoot, real).replace(/\\/g, "/");
+    const root = relativePath.split("/")[0];
+    if (!root || !allowedRoots.includes(root as "inbox" | "scratch" | "exports")) continue;
+    if (access === "read" && !isRegularFileOrDirectory(real)) continue;
+    resolved = real;
+    break;
+  }
+  if (!resolved && !absolute && !requestedPath.includes("/")) {
+    resolved = findUniqueAllowedTaskPath(taskRoot, requestedPath, allowedRoots);
+  }
+  if (!resolved) {
+    throw invalidMcpInputPath(access, "path is outside the current task or does not exist.");
+  }
+  return resolved;
+}
+
+function findUniqueAllowedTaskPath(
+  taskRoot: string,
+  requestedName: string,
+  allowedRoots: readonly ("inbox" | "scratch" | "exports")[],
+): string | undefined {
+  const matches: string[] = [];
+  for (const root of allowedRoots) {
+    const rootPath = join(taskRoot, root);
+    if (!existsSync(rootPath)) continue;
+    const pending: string[] = [rootPath];
+    let visited = 0;
+    while (pending.length > 0 && visited < 4096) {
+      const current = pending.shift()!;
+      let entries;
+      try {
+        entries = readdirSync(current, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        visited += 1;
+        if (visited > 4096) break;
+        const entryPath = join(current, entry.name);
+        if (entry.isSymbolicLink()) continue;
+        if (entry.isDirectory()) {
+          pending.push(entryPath);
+        } else if (entry.isFile() && entry.name === requestedName) {
+          matches.push(entryPath);
+        }
+      }
+    }
+  }
+  if (matches.length !== 1) return undefined;
+  return safeRealpath(matches[0]);
+}
+
+function safeRealpath(value: string): string | undefined {
+  try {
+    return realpathSync(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function realpathOrThrow(value: string, label: string): string {
+  const resolved = safeRealpath(value);
+  if (!resolved) throw invalidMcpInputPath("read", `${label} is unavailable.`);
+  return resolved;
+}
+
+function isRegularFileOrDirectory(value: string): boolean {
+  try {
+    const info = statSync(value);
+    return info.isFile() || info.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function hasSymlinkComponent(target: string, root: string): boolean {
+  const relativePath = relative(root, target);
+  if (relativePath === "") return false;
+  if (relativePath.startsWith("..") || isAbsolute(relativePath)) return true;
+  let current = root;
+  for (const part of relativePath.split(sep)) {
+    current = join(current, part);
+    try {
+      if (lstatSync(current).isSymbolicLink()) return true;
+    } catch {
+      return true;
+    }
+  }
+  return false;
+}
+
+function invalidMcpInputPath(
+  access: "read" | "write",
+  detail: string,
+): PilotDeckToolRuntimeError {
+  return new PilotDeckToolRuntimeError(
+    "invalid_tool_input",
+    `Invalid MCP ${access} path: ${detail}`,
+  );
 }
 
 function normalizeMedicalToolInputPath(
@@ -606,35 +914,313 @@ function extractJsonTextPayload(raw: unknown): Record<string, unknown> | undefin
 
 type McpContentBlock = { type: string; [key: string]: unknown };
 
-function extractMedicalArtifactFiles(
+function declaredCapabilities(
+  capabilities: PilotDeckMcpToolCapabilities,
+): readonly PilotDeckCapability[] {
+  const declared: PilotDeckCapability[] = [];
+  for (const root of capabilities.taskReadRoots) {
+    declared.push({ kind: "task.read", root });
+  }
+  for (const root of capabilities.taskWriteRoots) {
+    declared.push({ kind: "task.write", root });
+  }
+  for (const id of capabilities.networkServiceIds) {
+    declared.push({ kind: "network", id });
+  }
+  return declared;
+}
+
+function requiredCapabilities(
+  capabilities: PilotDeckMcpToolCapabilities,
+): readonly PilotDeckCapability[] {
+  const required: PilotDeckCapability[] = [];
+  for (const root of capabilities.taskReadRoots) {
+    required.push({ kind: "task.read", root });
+  }
+  for (const root of capabilities.taskWriteRoots) {
+    required.push({ kind: "task.write", root });
+  }
+  for (const id of capabilities.networkServiceIds) {
+    required.push({ kind: "network", id });
+  }
+  return required;
+}
+
+type McpArtifactCandidate = {
+  path: string;
+  role?: "final" | "intermediate";
+  mimeType?: string;
+  description?: string;
+};
+
+type ManagedDerivedArtifact = {
+  name: string;
+  mimeType?: string;
+  description?: string;
+};
+
+type ExtractedMcpArtifacts = {
+  content: PilotDeckToolResultContent[];
+  artifacts: PilotDeckToolArtifact[];
+  managedDerivedArtifacts: ManagedDerivedArtifact[];
+};
+
+async function extractMcpArtifacts(
   serverId: string,
   toolName: string,
   payload: Record<string, unknown> | undefined,
-): PilotDeckToolResultContent[] {
-  if (serverId === "med-tools" && toolName === "med_deepchest_job" && payload?.status === "succeeded" && Array.isArray(payload.artifacts)) {
-    return payload.artifacts.flatMap((item: unknown) => {
-      if (!item || typeof item !== "object") return [];
-      const artifact = item as Record<string, unknown>;
-      if (typeof artifact.path !== "string" || !isAbsolute(artifact.path)) return [];
-      return [{ type: "file" as const, path: artifact.path,
-        mimeType: artifact.path.endsWith(".json") ? "application/json" : "text/markdown",
-        description: typeof artifact.label === "string" ? artifact.label : "DeepChest 分析产物" }];
+  capabilities: PilotDeckMcpToolCapabilities | undefined,
+  context: PilotDeckToolRuntimeContext,
+): Promise<ExtractedMcpArtifacts> {
+  const empty: ExtractedMcpArtifacts = {
+    content: [],
+    artifacts: [],
+    managedDerivedArtifacts: [],
+  };
+  if (!payload) return empty;
+
+  const candidates = collectMcpArtifactCandidates(serverId, toolName, payload, capabilities);
+  if (candidates.length === 0) return empty;
+  if (!capabilities || capabilities.artifactPolicy === "none") {
+    throw new PilotDeckToolRuntimeError(
+      "tool_execution_failed",
+      `MCP tool ${serverId}/${toolName} returned files without a registered artifact capability.`,
+    );
+  }
+
+  const extracted: ExtractedMcpArtifacts = { ...empty };
+  for (const candidate of candidates) {
+    const pathValue = candidate.path.trim();
+    if (!pathValue || pathValue.includes("\0")) {
+      throw invalidMcpArtifact(serverId, toolName, "invalid file path.");
+    }
+
+    const expectedRole = artifactRoleForPolicy(capabilities.artifactPolicy);
+    if (capabilities.artifactPolicy !== "managed_derived"
+      && candidate.role !== undefined
+      && candidate.role !== expectedRole) {
+      throw invalidMcpArtifact(
+        serverId,
+        toolName,
+        `artifact role must be ${expectedRole}.`,
+      );
+    }
+
+    // Stand-alone bridge callers do not carry the Agent task root. Preserve
+    // the legacy file content in that narrow compatibility path; Agent calls
+    // always have taskRoot and use the structured contract below.
+    if (!context.taskRoot) {
+      if (capabilities.artifactPolicy === "managed_derived") {
+        extracted.content.push({
+          type: "file",
+          path: pathValue,
+          ...(candidate.mimeType ? { mimeType: candidate.mimeType } : {}),
+          ...(candidate.description ? { description: candidate.description } : {}),
+        });
+      } else {
+        extracted.content.push({
+          type: "file",
+          path: pathValue,
+          ...(candidate.mimeType ? { mimeType: candidate.mimeType } : {}),
+          ...(candidate.description ? { description: candidate.description } : {}),
+        });
+      }
+      continue;
+    }
+
+    const resolved = resolveExistingMcpPath(pathValue, context);
+    if (!resolved) {
+      if (
+        capabilities.artifactPolicy === "managed_derived"
+        && isManagedDerivedPath(pathValue, context)
+      ) {
+        extracted.managedDerivedArtifacts.push({
+          name: basename(pathValue),
+          ...(candidate.mimeType ? { mimeType: candidate.mimeType } : {}),
+          ...(candidate.description ? { description: candidate.description } : {}),
+        });
+        continue;
+      }
+      throw invalidMcpArtifact(serverId, toolName, "output path is outside the current task.");
+    }
+
+    if (
+      capabilities.artifactPolicy === "managed_derived"
+      && isManagedDerivedPath(resolved, context)
+    ) {
+      extracted.managedDerivedArtifacts.push({
+        name: basename(resolved),
+        ...(candidate.mimeType ? { mimeType: candidate.mimeType } : {}),
+        ...(candidate.description ? { description: candidate.description } : {}),
+      });
+      continue;
+    }
+
+    const relativePath = relative(realpathSync(context.taskRoot), resolved).replace(/\\/g, "/");
+    if (!isTaskArtifactRolePath(relativePath, expectedRole)) {
+      throw invalidMcpArtifact(
+        serverId,
+        toolName,
+        `output path must be under ${expectedRole === "final" ? "exports/" : "scratch/"}.`,
+      );
+    }
+    extracted.artifacts.push({
+      path: relativePath,
+      role: expectedRole,
+      ...(candidate.mimeType ? { mimeType: candidate.mimeType } : {}),
+      ...(candidate.description ? { description: candidate.description } : {}),
     });
   }
-  if (serverId !== "med-tools" || toolName !== "med_radar_analyze_ct" || !payload) return [];
-  const artifacts = payload.artifacts;
-  if (!artifacts || typeof artifacts !== "object" || Array.isArray(artifacts)) return [];
-  const record = artifacts as Record<string, unknown>;
-  const definitions = [
-    ["scores_csv", "text/csv", "RADAR 评分 CSV"],
-    ["summary_json", "application/json", "RADAR 摘要 JSON"],
-  ] as const;
-  return definitions.flatMap(([key, mimeType, description]) => {
-    const filePath = record[key];
-    return typeof filePath === "string" && filePath.trim()
-      ? [{ type: "file" as const, path: filePath, mimeType, description }]
-      : [];
+  return extracted;
+}
+
+function collectMcpArtifactCandidates(
+  serverId: string,
+  toolName: string,
+  payload: Record<string, unknown>,
+  capabilities: PilotDeckMcpToolCapabilities | undefined,
+): McpArtifactCandidate[] {
+  const rawArtifacts = payload.artifacts;
+  if (Array.isArray(rawArtifacts)) {
+    return rawArtifacts.flatMap((item): McpArtifactCandidate[] => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+      const record = item as Record<string, unknown>;
+      if (typeof record.path !== "string") return [];
+      return [{
+        path: record.path,
+        ...(record.role === "final" || record.role === "intermediate" ? { role: record.role } : {}),
+        ...(typeof record.mimeType === "string" ? { mimeType: record.mimeType } : {}),
+        ...(typeof record.label === "string"
+          ? { description: record.label }
+          : typeof record.description === "string" ? { description: record.description } : {}),
+      }];
+    });
+  }
+
+  if (serverId === "med-tools" && toolName === "med_radar_analyze_ct"
+    && rawArtifacts && typeof rawArtifacts === "object" && !Array.isArray(rawArtifacts)) {
+    const record = rawArtifacts as Record<string, unknown>;
+    const candidates: McpArtifactCandidate[] = [];
+    if (typeof record.scores_csv === "string") {
+      candidates.push({
+        path: record.scores_csv,
+        mimeType: "text/csv",
+        description: "RADAR 评分 CSV",
+      });
+    }
+    if (typeof record.summary_json === "string") {
+      candidates.push({
+        path: record.summary_json,
+        mimeType: "application/json",
+        description: "RADAR 摘要 JSON",
+      });
+    }
+    return candidates;
+  }
+
+  if (serverId === "med-tools" && toolName === "med_deepchest_job"
+    && payload.status === "succeeded" && Array.isArray(rawArtifacts)) {
+    return rawArtifacts.flatMap((item): McpArtifactCandidate[] => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+      const record = item as Record<string, unknown>;
+      return typeof record.path === "string"
+        ? [{
+            path: record.path,
+            ...(record.path.endsWith(".json")
+              ? { mimeType: "application/json" }
+              : { mimeType: "text/markdown" }),
+            description: typeof record.label === "string" ? record.label : "DeepChest 分析产物",
+          }]
+        : [];
+    });
+  }
+
+  // A profile with no artifact capability must not infer files from arbitrary
+  // payload fields. The explicit `artifacts` contract above is the only
+  // accepted MCP output surface.
+  void capabilities;
+  return [];
+}
+
+function artifactRoleForPolicy(
+  policy: PilotDeckMcpArtifactPolicy,
+): "final" | "intermediate" {
+  return policy === "intermediate" ? "intermediate" : "final";
+}
+
+function resolveExistingMcpPath(
+  value: string,
+  context: PilotDeckToolRuntimeContext,
+): string | undefined {
+  if (!context.taskRoot) return undefined;
+  const candidate = isAbsolute(value)
+    ? resolvePath(value)
+    : resolvePath(context.cwd, value);
+  try {
+    const real = realpathSync(candidate);
+    const taskRoot = realpathSync(context.taskRoot);
+    if (!isPathInside(taskRoot, real) || !statSync(real).isFile()) return undefined;
+    return real;
+  } catch {
+    return undefined;
+  }
+}
+
+function isTaskArtifactRolePath(
+  relativePath: string,
+  role: "final" | "intermediate",
+): boolean {
+  const normalized = relativePath.replace(/\\/g, "/");
+  return role === "final"
+    ? normalized.startsWith("exports/") && normalized.length > "exports/".length
+    : normalized.startsWith("scratch/") && normalized.length > "scratch/".length;
+}
+
+function isManagedDerivedPath(
+  value: string,
+  context: PilotDeckToolRuntimeContext,
+): boolean {
+  const candidate = isAbsolute(value)
+    ? resolvePath(value)
+    : resolvePath(context.cwd, value);
+  const env = context.env ?? process.env;
+  const roots = [
+    env.MED_DICOM_DERIVED_DIR,
+    env.MED_DERIVED_DIR,
+    env.MED_DEEPCHEST_OUTPUT_DIR,
+    env.MED_RAG_MINERU_INGEST_ROOT,
+    env.PILOT_HOME ? resolvePath(env.PILOT_HOME, "artifacts", "deepchest") : undefined,
+    env.PILOT_HOME ? resolvePath(env.PILOT_HOME, "med-tools", "mineru-ingest") : undefined,
+    context.taskRoot ? resolvePath(context.taskRoot, "derived") : undefined,
+  ].filter((root): root is string => typeof root === "string" && root.length > 0);
+  return roots.some((root) => {
+    const normalizedRoot = (() => {
+      try {
+        return realpathSync(root);
+      } catch {
+        return resolvePath(root);
+      }
+    })();
+    const normalizedCandidate = (() => {
+      try {
+        return realpathSync(candidate);
+      } catch {
+        return candidate;
+      }
+    })();
+    return isPathInside(normalizedRoot, normalizedCandidate);
   });
+}
+
+function invalidMcpArtifact(
+  serverId: string,
+  toolName: string,
+  detail: string,
+): PilotDeckToolRuntimeError {
+  return new PilotDeckToolRuntimeError(
+    "tool_execution_failed",
+    `Invalid MCP artifact from ${serverId}/${toolName}: ${detail}`,
+  );
 }
 
 /**
@@ -650,7 +1236,11 @@ function extractMedicalArtifactFiles(
  * user-specified `filename` (which `@playwright/mcp` saves without returning
  * base64 data) still render inline in the chat UI.
  */
-function marshalMcpContent(raw: unknown, cwd?: string): PilotDeckToolResultContent[] {
+function marshalMcpContent(
+  raw: unknown,
+  cwd?: string,
+  taskRoot?: string,
+): PilotDeckToolResultContent[] {
   if (!Array.isArray(raw)) return [{ type: "json", value: raw }];
 
   const result: PilotDeckToolResultContent[] = [];
@@ -679,7 +1269,7 @@ function marshalMcpContent(raw: unknown, cwd?: string): PilotDeckToolResultConte
   if (!hasImageBlock && cwd) {
     for (const block of raw as McpContentBlock[]) {
       if (block?.type === "text" && typeof block.text === "string") {
-        const images = extractFileImages(block.text as string, cwd);
+        const images = extractFileImages(block.text as string, cwd, taskRoot);
         for (const img of images) result.push(img);
       }
     }
@@ -700,12 +1290,21 @@ const IMAGE_LINK_RE = /\[.*?\]\((\.[^)]*\.(?:png|jpe?g|gif|webp))\)/gi;
  * Extract image file references from Markdown text, read the files from disk,
  * and return them as base64 image blocks.
  */
-function extractFileImages(text: string, cwd: string): PilotDeckToolResultContent[] {
+function extractFileImages(
+  text: string,
+  cwd: string,
+  taskRoot?: string,
+): PilotDeckToolResultContent[] {
   const results: PilotDeckToolResultContent[] = [];
   for (const match of text.matchAll(IMAGE_LINK_RE)) {
     const relPath = match[1];
     try {
       const absPath = resolvePath(cwd, relPath);
+      if (taskRoot) {
+        const realPath = realpathSync(absPath);
+        const realTaskRoot = realpathSync(taskRoot);
+        if (!isPathInside(realTaskRoot, realPath) || !statSync(realPath).isFile()) continue;
+      }
       const data = readFileSync(absPath);
       const ext = relPath.split(".").pop()?.toLowerCase() ?? "png";
       const mimeType = ext === "jpg" || ext === "jpeg" ? "image/jpeg"

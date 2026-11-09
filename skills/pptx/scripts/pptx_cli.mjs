@@ -86,6 +86,33 @@ async function themesCommand() {
   return { status: 'ok', themes: await listThemes() };
 }
 
+async function capabilitiesCommand() {
+  return {
+    status: 'ok',
+    skill: 'pptx',
+    commands: [
+      'make',
+      'themes',
+      'convert',
+      'inspect',
+      'audit',
+      'render',
+      'validate-map',
+      'prepare-starter',
+      'apply-template',
+      'fidelity',
+      'deliver',
+    ],
+    pathContract: {
+      inputs: ['inbox', 'scratch', 'exports'],
+      intermediateOutputs: ['scratch'],
+      finalOutputs: ['exports'],
+      remoteResources: false,
+    },
+    imageFields: ['image.path'],
+  };
+}
+
 async function buildCommand(args) {
   const result = await buildDeck(required(args, 'builder'), required(args, 'out'), {
     theme: themeArg(args),
@@ -640,6 +667,7 @@ try {
   else if (command === 'apply-template') result = await prepareStarterCommand(args, true);
   else if (command === 'fidelity') result = await fidelityCommand(args);
   else if (command === 'themes') result = await themesCommand();
+  else if (command === 'capabilities') result = await capabilitiesCommand();
   else if (command === 'self-test') result = await selfTest(args);
   else if (['help', '-h', '--help'].includes(command)) result = help();
   else throw new Error(`Unknown command: ${command}`);

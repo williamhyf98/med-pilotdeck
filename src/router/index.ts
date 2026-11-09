@@ -1,5 +1,9 @@
 export {
   createRouterRuntime,
+  MODEL_CONNECTION_TIMEOUT_MS,
+  MODEL_FIRST_PROGRESS_TIMEOUT_MS,
+  MODEL_PROGRESS_IDLE_TIMEOUT_MS,
+  MODEL_STREAM_HARD_TIMEOUT_MS,
   type InvalidateStickyResult,
   type RouterRuntime,
   type RouterRuntimeDeps,

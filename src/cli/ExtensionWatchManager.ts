@@ -13,6 +13,8 @@ export type ExtensionWatchEvent = {
 
 export type ExtensionWatchManagerOptions = {
   pilotHome: string;
+  /** System-level global MCP config in multi-user gateway mode. */
+  globalMcpHome?: string;
   builtinSkillsRoot?: string;
   debounceMs?: number;
   onChange(event: ExtensionWatchEvent): void;
@@ -96,7 +98,7 @@ export class ExtensionWatchManager {
   private getWatchedPaths(scope: ExtensionWatchScope): string[] {
     if (scope.kind === "global") {
       return [
-        resolve(this.options.pilotHome, "mcp.json"),
+        resolve(this.options.globalMcpHome ?? this.options.pilotHome, "mcp.json"),
         resolve(this.options.pilotHome, "plugins"),
         resolve(this.options.pilotHome, "skills"),
         ...(this.options.builtinSkillsRoot ? [resolve(this.options.builtinSkillsRoot)] : []),

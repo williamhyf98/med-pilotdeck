@@ -1,15 +1,11 @@
 ---
 name: pptx
-description: 创建、读取、审计和安全修改 Microsoft PowerPoint .pptx 演示文稿。输入或交付物是 .pptx 时使用本技能。已有 PPTX 转 PDF 时使用注册工具 office_to_pdf；其余转换只通过捆绑的 pptx.sh 完成。
+description: 创建、读取、审计和安全修改 Microsoft PowerPoint .pptx 演示文稿。输入或交付物是 .pptx 时使用本技能。新建 PPTX 使用结构化工具 pptx_make；已有 PPTX 转 PDF 时使用注册工具 office_to_pdf；其余转换只通过捆绑的 pptx.sh 完成。
 ---
 
 # PowerPoint PPTX
 
-只用 `read_skill` 返回的 `<path>` 所在目录：
-
-```bash
-PPTX_SKILL_ROOT="$(dirname "<path>")"
-```
+新建 PPTX 时调用结构化工具 `pptx_make`，不要拼接 Bash 或自行查找脚本。已有演示文稿的检查、模板修改和高级 QA 才使用系统登记的 PPTX Skill 业务入口。
 
 `pptx.sh` 会定位完整的隔离运行时和内置布局库。运行时未就绪时会返回
 「交付包不完整」；此时停止并报告，不要改走其它实现。
@@ -22,20 +18,25 @@ Renderer 执行。
 
 ## Agent 可用表面
 
-- 只调用本技能的 `pptx.sh`
+- 创建新 PPTX：只调用 `pptx_make`
+- `pptx_make` 的输入使用 `title`、`body`、`body_file_path`、`markdown_path`、
+  `spec_path`、`locale`、`footer`、`theme`、`output_path`、`force` 和 `timeout_ms`
+- 需要创建声明式内容时，用 `write_file` 写入 `scratch/` 下的 `.md` / `.json`，
+  再把相对任务路径传给 `pptx_make`
+
+- 需要查看能力时可调用 `pptx.sh capabilities`
 - 只用 `.md` / `.json` 暂存声明式内容
 - 不搜索运行时、缓存、系统字体或替代工具
 - 命令返回 `unsupported`、`blocked` 或「交付包不完整」时立即停止并报告
 
+`capabilities` 只用于查看已登记的业务入口和路径契约；不要调用
+`pptx.sh --help`、`scaffold`、`build` 或自行编写 `.mjs` 构建器。
+
 ## 输出位置
 
-用户给了路径就使用该路径；否则写到当前工作目录的 `exports/`：
+交付文件写入本任务 `exports/`；中间文件写入 `scratch/`。需要目录时使用文件工具或由技能创建，不调用 `mkdir`。
 
-```bash
-mkdir -p "$PWD/exports"
-```
-
-中间 Markdown/JSON 放在 `scratch/qa/` 或 `PILOTDECK_WORK_DIR`，不要交付。
+中间 Markdown/JSON 放在 `$PILOTDECK_WORK_DIR/pptx/`，不要交付。
 
 ## 新建 PPTX
 
@@ -43,24 +44,22 @@ mkdir -p "$PWD/exports"
 
 短演示可以直接传正文：
 
-```bash
-bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" make \
-  --title "战创伤四级救治" \
-  --body "现场处置。
-
-紧急救治。
-
-专科救治。" \
-  --out "$PWD/exports/战创伤四级救治.pptx"
+```json
+{
+  "title": "战创伤四级救治",
+  "body": "现场处置。\n\n紧急救治。\n\n专科救治。",
+  "output_path": "exports/战创伤四级救治.pptx"
+}
 ```
 
 长演示先把完整内容写成 Markdown，再传路径：
 
-```bash
-bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" make \
-  --title "战创伤四级救治" \
-  --markdown "$PWD/scratch/qa/slides.md" \
-  --out "$PWD/exports/战创伤四级救治.pptx"
+```json
+{
+  "title": "战创伤四级救治",
+  "markdown_path": "scratch/pptx/slides.md",
+  "output_path": "exports/战创伤四级救治.pptx"
+}
 ```
 
 可用参数：
@@ -98,12 +97,13 @@ bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" themes
 | `vital` | 影像与检验数据对比 |
 | `mono` | 灰阶，黑白打印或低色准投影 |
 
-```bash
-bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" make \
-  --title "战创伤四级救治" \
-  --markdown "$PWD/scratch/qa/slides.md" \
-  --theme trauma \
-  --out "$PWD/exports/战创伤四级救治.pptx"
+```json
+{
+  "title": "战创伤四级救治",
+  "markdown_path": "scratch/pptx/slides.md",
+  "theme": "trauma",
+  "output_path": "exports/战创伤四级救治.pptx"
+}
 ```
 
 `--spec` 里也可以写 `"theme": "trauma"`；命令行 `--theme` 优先。用户没提
@@ -154,7 +154,7 @@ layout-library。
 
 规则：
 
-1. **直接使用清单里的绝对路径**（常见 `$WS/inbox/...`）。不要 `find /`，不要下载 URL，不要手写 Python/JS 去读图，不要翻 `pptx` 脚本源码猜字段。
+1. **直接使用当前任务附件清单里的绝对路径**（位于当前任务 `inbox/`）。不要 `find /`，不要下载 URL，不要手写 Python/JS 去读图，不要翻 `pptx` 脚本源码猜字段。
 2. `inbox/` 算作允许的本地路径；不必先 `cp` 到 `exports/`（复制可选，不是必需）。
 3. 本轮消息没有清单时：在**同一会话更早的用户消息**里找同一标记；G9/`med_trauma_stage_plan` 返回的 `image_paths_used` 也可复用。
 4. 禁止 HTTP/HTTPS。禁止打开或修改 `assets/layout-library/`。
@@ -174,8 +174,8 @@ Markdown `![](...)` 不能可靠插图；需要图时改用 `--spec`，不要新
 ## 读取与审计
 
 ```bash
-bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" inspect --input "$INPUT_PPTX" --out "$PWD/scratch/qa/manifest.json"
-bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" audit --input "$INPUT_PPTX" --out "$PWD/scratch/qa/audit.json"
+bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" inspect --input "inbox/source.pptx" --out "$PILOTDECK_WORK_DIR/pptx/manifest.json"
+bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" audit --input "inbox/source.pptx" --out "$PILOTDECK_WORK_DIR/pptx/audit.json"
 ```
 
 只读请求不要生成新 PPTX。

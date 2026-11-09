@@ -15,6 +15,12 @@ import type { AgentRunMode } from "../../agent/protocol/input.js";
 import type { PilotDeckToolAuditRecorder } from "../audit/ToolAuditRecorder.js";
 import type { PilotDeckElicitationChannel } from "../elicitation/PilotDeckElicitationChannel.js";
 import type { PilotDeckToolInputSchema, PilotDeckToolValidationResult } from "./schema.js";
+import type {
+  PilotDeckCapability,
+  PilotDeckToolArtifact,
+} from "../../security/policy/types.js";
+import type { NetworkAccessController } from "../../network/serviceRegistry.js";
+export type { PilotDeckToolArtifact } from "../../security/policy/types.js";
 
 /**
  * File-history sink used by `edit_file` / `write_file` to backup files
@@ -128,6 +134,8 @@ export type PilotDeckToolSupplementalMessage = {
 
 export type PilotDeckToolExecutionOutput<Output = unknown> = {
   content: PilotDeckToolResultContent[];
+  /** Structured artifact handling and path enforcement are added in task 7. */
+  artifacts?: PilotDeckToolArtifact[];
   supplementalMessages?: PilotDeckToolSupplementalMessage[];
   data?: Output;
   metadata?: Record<string, unknown>;
@@ -140,6 +148,8 @@ export type PilotDeckToolAvailability =
 export type PilotDeckToolAvailabilityContext = {
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  /** Validates outbound requests made by network-capable built-in tools. */
+  networkAccess?: NetworkAccessController;
 };
 
 /**
@@ -234,6 +244,13 @@ export type PilotDeckToolRuntimeContext = {
   sessionId: string;
   turnId: string;
   cwd: string;
+  /**
+   * Agent-visible task root. When present, filesystem tools may only access
+   * inbox (read-only), scratch, and exports under this directory.
+   * System-owned tool calls may omit it and retain their service-specific
+   * storage boundary.
+   */
+  taskRoot?: string;
   abortSignal?: AbortSignal;
   subagentTimeoutMs?: number;
   /** The tool call ID assigned by the model for the current invocation. */
@@ -259,6 +276,8 @@ export type PilotDeckToolRuntimeContext = {
   currentPermissionDecision?: Extract<PermissionDecision, { type: "allow" }>;
   now?: () => Date;
   env?: NodeJS.ProcessEnv;
+  /** Validates outbound requests made by network-capable built-in tools. */
+  networkAccess?: NetworkAccessController;
   maxResultBytes?: number;
   runMode?: AgentRunMode;
   /** User-authorized plan submission capability, never permission to enter plan mode. */
@@ -393,6 +412,11 @@ export type PilotDeckToolDefinition<Input = unknown, Output = unknown> = {
   title?: string;
   description: string;
   kind: PilotDeckToolKind;
+  /** Opt-in hard boundary; legacy tools retain their existing permissions until migrated. */
+  capabilityPolicy?: {
+    declared: readonly PilotDeckCapability[];
+    required(input: Input, context: PilotDeckToolRuntimeContext): readonly PilotDeckCapability[];
+  };
   inputSchema: PilotDeckToolInputSchema;
   outputSchema?: Record<string, unknown>;
   maxResultBytes?: number;

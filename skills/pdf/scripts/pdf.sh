@@ -90,6 +90,10 @@ poppler_missing_json() {
   printf '{"status":"error","error":"交付包不完整：缺少 Poppler（pdfinfo / pdftoppm）。请使用完整交付包。"}\n'
 }
 
+cmd_capabilities() {
+  printf '%s\n' '{"status":"ok","skill":"pdf","commands":["make","capabilities","inspect","audit","render","merge","split","rotate","forms-inspect","forms-fill"],"pathContract":{"inputs":["inbox","scratch","exports"],"intermediateOutputs":["scratch"],"finalOutputs":["exports"],"remoteResources":false},"imageFields":["path","width_mm","width_inches","caption"]}'
+}
+
 cmd_check() {
   local python_path="" runtime_python="" pdfinfo_path="" pdftoppm_path=""
   local python_ok=false deps_ok=false pdfinfo_ok=false pdftoppm_ok=false
@@ -144,6 +148,10 @@ cmd_bootstrap_runtime() {
 }
 
 case "${1:-}" in
+  capabilities)
+    shift
+    cmd_capabilities "$@"
+    ;;
   check)
     shift
     cmd_check "$@"
@@ -157,7 +165,7 @@ case "${1:-}" in
     exit 2
     ;;
   ""|-h|--help|help)
-    printf 'Usage: pdf.sh <check|make|inspect|audit|render|merge|split|rotate|forms-inspect|forms-fill|self-test> [options]\n'
+    printf 'Usage: pdf.sh <check|capabilities|make|inspect|audit|render|merge|split|rotate|forms-inspect|forms-fill|self-test> [options]\n'
     ;;
   *)
     if ! runtime_ready; then

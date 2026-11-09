@@ -16,6 +16,7 @@ import type {
   PilotDeckMcpServerSpec,
   PilotDeckMcpToolSpec,
 } from "../protocol/types.js";
+import { getMcpToolCapabilities } from "./mcpCapabilities.js";
 
 export type McpRuntimeOptions = {
   /** Max parallel `connect()` calls during `start()`. M4. Default 5. */
@@ -96,7 +97,13 @@ export class McpRuntime {
       if (client.getStatus() !== "ready") continue;
       try {
         const tools = await client.listTools();
-        out.push(...tools.filter((tool) => !isMedToolDisabled(tool.wireName)));
+        out.push(...tools
+          .filter((tool) => !isMedToolDisabled(tool.wireName))
+          .map((tool) => {
+            const capabilities = tool.capabilities
+              ?? getMcpToolCapabilities(tool.serverId, tool.toolName);
+            return capabilities ? { ...tool, capabilities } : tool;
+          }));
       } catch {
         // skip — `start()` already recorded the error
       }

@@ -2,6 +2,20 @@ import type { PilotDeckToolDefinition } from "../protocol/types.js";
 import { PilotDeckToolRuntimeError } from "../protocol/errors.js";
 import { NodeShellCommandRunner, type PilotDeckCommandRunner } from "./bash/commandRunner.js";
 import { classifyBashPermission, isReadOnlyShellCommand } from "./bash/permissions.js";
+import { createSecurityPolicyStore } from "../../security/policy/PolicyStore.js";
+import { resolveAppRoot } from "./bash/sandbox/bwrap.js";
+import { evaluateBashCommand } from "./bash/registeredCommands.js";
+import { inspectWorkspace } from "./bash/workspaceInspection.js";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { lstatSync, mkdirSync } from "node:fs";
+import { skillCacheEnv } from "./bash/sandbox/grants.js";
+import {
+  acquireTaskProcess,
+  assertScratchWithinLimit,
+  resolveResourceLimits,
+  type ResourceLimitOverrides,
+} from "../../security/policy/resourceLimits.js";
+import { extractRegisteredArtifacts, normalizeRegisteredOutput } from "./bash/registeredArtifacts.js";
 
 export type BashInput = {
   command: string;
@@ -13,6 +27,7 @@ export type CreateBashToolOptions = {
   runner?: PilotDeckCommandRunner;
   defaultTimeoutMs?: number;
   maxTimeoutMs?: number;
+  resourceLimits?: ResourceLimitOverrides;
 };
 
 export type BashOutputState = "stdout_data" | "stderr_only" | "empty_stdout";
@@ -37,20 +52,20 @@ export type BashOutput = {
   assertions: BashOutputAssertions;
 };
 
-const BASH_TOOL_DESCRIPTION = `在 PilotDeck 工作区内执行 shell 命令。
+const BASH_TOOL_DESCRIPTION = `执行系统已注册的工作区检查和文档 Skill 子命令。
 
 用法：
-- \`command\` 参数会传给系统 shell（Windows 上是 \`cmd.exe\`，macOS/Linux 上是 \`/bin/sh\`）。
-- shell 在当前工作区目录下运行，并继承工具运行时的环境变量。
+- \`command\` 只接受单条注册命令：\`pwd\`、\`ls\`、\`stat\`、\`find\` 的受限工作区检查，或指定的文档 Skill 业务入口。
+- 不调用通用 shell，不支持管道、重定向、命令拼接、环境变量赋值、任意解释器和未登记脚本。
+- 文件输入只在当前任务的 inbox/scratch/exports，输出只在 scratch/exports；管理员配置可以进一步收紧。
+- Skill 的内部 spec、检查和 QA 文件使用 \`$PILOTDECK_WORK_DIR\`，它只能指向当前任务的 \`scratch/work/\`。
 - 用 \`timeout\` 覆盖命令超时时间，单位毫秒。不传时默认 30000ms，超过 600000ms 的取值会被拒绝。
 - 用 \`description\` 给出简短清晰的中文说明，供日志与审计使用，用一句话说明这条命令做什么。
-- 本工具用于本地的短小查看/文件管理命令，以及运行随附技能的入口脚本（例如 pdf.sh / docx.sh）。
 - 所有转换类操作都必须走已注册工具或随附技能入口。若没有随附命令支持某项操作，请说明限制，不要自行另造实现。
-- 只读命令（例如 \`pwd\`、\`ls\`、\`git status\`、\`git diff\`、\`git log\`）按只读处理；有副作用的命令需要授权；已知的危险命令会被直接拒绝。
-- 离线部署：不要使用 curl、wget、pip install、npm install、npx 等对外联网或包管理器安装命令。缺少依赖时如实说明，不要尝试下载。
+- 离线部署：缺少依赖时如实说明，不要尝试下载或安装。
 - 本工具返回 stdout、stderr、退出码和耗时。非零退出会抛出工具错误，超时会抛出 \`tool_timeout\`。
 - 成功结果以 \`BASH_RESULT[success][...]\` 开头，并附带 Assertions。在把 \`exit_code: 0\` 当作任务进展之前，先看 \`retrieved_data_available\`：退出码 0 只说明进程执行成功，并不代表拿到了有用的数据。
-- 若任务需要具体内容，但结果是 \`empty_stdout\` 或 \`stderr_only\`，应再执行一条命令把所需数据打印或校验出来，不要想当然地认为已有进展。
+- 若任务需要具体内容，但结果是 \`empty_stdout\` 或 \`stderr_only\`，应使用 read_file、glob 或 grep 读取或校验，不要想当然地认为已有进展。
 - 如果没有需要执行的命令，直接用文字回复，不要调用 bash。`;
 
 const LONG_TASK_HINT =
@@ -71,8 +86,12 @@ const LONG_LIVED_COMMAND_PATTERNS = [
 
 export function createBashTool(options?: CreateBashToolOptions): PilotDeckToolDefinition<BashInput, BashOutput> {
   const runner = options?.runner ?? new NodeShellCommandRunner();
+  const resourceLimits = resolveResourceLimits(options?.resourceLimits);
   const defaultTimeoutMs = options?.defaultTimeoutMs ?? 30_000;
-  const maxTimeoutMs = options?.maxTimeoutMs ?? 600_000;
+  const maxTimeoutMs = Math.min(
+    options?.maxTimeoutMs ?? resourceLimits.maxForegroundTimeoutMs,
+    resourceLimits.maxForegroundTimeoutMs,
+  );
 
   return {
     name: "bash",
@@ -86,7 +105,7 @@ export function createBashTool(options?: CreateBashToolOptions): PilotDeckToolDe
       properties: {
         command: {
           type: "string",
-          description: "要执行的 shell 命令（会传给系统 shell）。",
+          description: "单条已注册的工作区检查命令或文档 Skill 业务子命令；不会传给通用 shell。",
         },
         timeout: {
           type: "integer",
@@ -98,13 +117,31 @@ export function createBashTool(options?: CreateBashToolOptions): PilotDeckToolDe
         },
       },
     },
-    maxResultBytes: 200_000,
+    maxResultBytes: resourceLimits.maxToolOutputBytes,
     isReadOnly: (input) => !input.command || isReadOnlyShellCommand(input.command),
     isConcurrencySafe: (input) => !input.command || isReadOnlyShellCommand(input.command),
     isOpenWorld: () => true,
-    checkPermissions: async (input) => input.command ? classifyBashPermission(input.command) : ({ type: "allow" as const, reason: { type: "runtime" as const, message: "Empty command is safe" } }),
+    checkPermissions: async (input, context) => {
+      try {
+        if (classifyBashPermission(input.command).type === "deny") {
+          throw new Error("Dangerous shell command denied.");
+        }
+        resolveCommand(input.command, context.cwd, context.env);
+        return { type: "allow" as const, reason: { type: "safety" as const, message: "Registered command is enabled." } };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { type: "deny" as const, reason: { type: "safety" as const, message }, message };
+      }
+    },
     execute: async (input, context) => {
       const command = input.command.trim();
+      let registered;
+      try {
+        registered = resolveCommand(command, context.cwd, context.env);
+      } catch (error) {
+        throw new PilotDeckToolRuntimeError("automation_policy_violation",
+          error instanceof Error ? error.message : String(error));
+      }
       if (input.timeout !== undefined && input.timeout > maxTimeoutMs) {
         throw new PilotDeckToolRuntimeError(
           "invalid_tool_input",
@@ -115,7 +152,11 @@ export function createBashTool(options?: CreateBashToolOptions): PilotDeckToolDe
       if (backgroundGuidance) {
         throw new PilotDeckToolRuntimeError("invalid_tool_input", `${backgroundGuidance} ${LONG_TASK_HINT}`);
       }
-      const timeoutMs = Math.max(1, input.timeout ?? defaultTimeoutMs);
+      const timeoutMs = Math.max(1, input.timeout ?? Math.min(defaultTimeoutMs, registered.timeoutMs));
+      if (timeoutMs > registered.timeoutMs) {
+        throw new PilotDeckToolRuntimeError("invalid_tool_input",
+          `Capability ${registered.id} permits at most ${registered.timeoutMs}ms.`);
+      }
       const progress = context.progress;
       const toolCallId = context.currentToolCallId ?? "";
       const isDeepChestCommand = /(?:^|[/\\])run_deepchest_agent_qwen\.sh(?:\s|$)/u.test(command);
@@ -177,36 +218,95 @@ export function createBashTool(options?: CreateBashToolOptions): PilotDeckToolDe
             }
           }
         : undefined;
-      const result = await runner.run(command, {
-        cwd: context.cwd,
-        env: context.env,
-        timeoutMs,
-        signal: context.abortSignal,
-        onStdout: emitProgress?.("stdout"),
-        onStderr: emitProgress?.("stderr"),
-      });
+      const result = registered.kind === "workspace"
+        ? inspectWorkspace(registered, context.cwd)
+        : await (async () => {
+            if (!runner.runRegistered) {
+              throw new PilotDeckToolRuntimeError("automation_policy_violation", "Registered argv execution is unavailable.");
+            }
+            const home = context.env?.PILOT_HOME ?? context.cwd;
+            const temporary = join(context.cwd, "scratch", ".tmp");
+            const candidateWorkDir = context.env?.PILOTDECK_WORK_DIR;
+            const workDir = candidateWorkDir && (() => {
+              const rel = relative(join(context.cwd, "scratch", "work"), resolve(candidateWorkDir));
+              return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !rel.startsWith(sep)
+                ? resolve(candidateWorkDir)
+                : undefined;
+            })();
+            assertScratchWithinLimit(context.cwd, resourceLimits);
+            const releaseProcess = acquireTaskProcess(context.cwd, resourceLimits);
+            try {
+              mkdirSync(temporary, { recursive: true });
+              if (lstatSync(temporary).isSymbolicLink()) {
+                throw new PilotDeckToolRuntimeError("automation_policy_violation", "Task temporary directory cannot be a symlink.");
+              }
+              return await runner.runRegistered(registered.file, registered.args, {
+                cwd: context.cwd,
+                taskRoot: context.cwd,
+                env: {
+                  PATH: [join(resolveAppRoot(), ".runtime", "python", "bin"),
+                    dirname(process.execPath), "/usr/bin", "/bin", "/usr/local/bin", "/opt/homebrew/bin"].join(":"),
+                  LANG: context.env?.LANG ?? "C.UTF-8",
+                  HOME: context.cwd, PILOT_HOME: context.cwd,
+                  TMPDIR: temporary,
+                  XDG_CACHE_HOME: join(context.cwd, "scratch", ".cache"),
+                  PILOTDECK_WORKSPACE_DIR: context.cwd,
+                  PILOTDECK_WORKSPACE_CWD: context.cwd,
+                  ...(workDir ? { PILOTDECK_WORK_DIR: workDir } : {}),
+                  ...skillCacheEnv(resolveAppRoot()),
+                },
+                userHome: home,
+                timeoutMs,
+                maxOutputBytes: resourceLimits.maxToolOutputBytes,
+                signal: context.abortSignal,
+                onStdout: emitProgress?.("stdout"),
+                onStderr: emitProgress?.("stderr"),
+              });
+            } finally {
+              releaseProcess();
+            }
+          })();
+      const visibleResult = registered.kind === "script"
+        ? {
+            ...result,
+            stdout: normalizeRegisteredOutput(result.stdout, context.cwd),
+            stderr: normalizeRegisteredOutput(result.stderr, context.cwd),
+          }
+        : result;
 
-      if (result.timedOut) {
+      assertScratchWithinLimit(context.cwd, resourceLimits);
+      if (visibleResult.outputLimitExceeded) {
+        throw new PilotDeckToolRuntimeError(
+          "result_too_large",
+          `Command output exceeded the ${resourceLimits.maxToolOutputBytes}-byte limit and was terminated.`,
+          { maxOutputBytes: resourceLimits.maxToolOutputBytes },
+        );
+      }
+      if (visibleResult.timedOut) {
         emitDeepChestActivity("DeepChest 流程超时", "流程未完成，请检查最终错误提示", "failed");
         throw new PilotDeckToolRuntimeError("tool_timeout", `Command timed out after ${timeoutMs}ms.`);
       }
 
-      if (result.exitCode !== 0) {
+      if (visibleResult.exitCode !== 0) {
         emitDeepChestActivity("DeepChest 流程失败", "流程未完成，请检查最终错误提示", "failed");
-        const summary = formatShellFailure(command, result);
-        const diagnostic = formatShellFailureDiagnostic(result);
+        const summary = formatShellFailure(command, visibleResult);
+        const diagnostic = formatShellFailureDiagnostic(visibleResult);
         throw new PilotDeckToolRuntimeError("tool_execution_failed", summary, {
           command,
-          exitCode: result.exitCode,
+          exitCode: visibleResult.exitCode,
           diagnostic,
-          stdout: result.stdout,
-          stderr: result.stderr,
-          timedOut: result.timedOut,
-          durationMs: result.durationMs,
+          stdout: visibleResult.stdout,
+          stderr: visibleResult.stderr,
+          timedOut: visibleResult.timedOut,
+          durationMs: visibleResult.durationMs,
         });
       }
 
-      const assertions = buildBashOutputAssertions(result.stdout, result.stderr, result.exitCode);
+      const assertions = buildBashOutputAssertions(
+        visibleResult.stdout,
+        visibleResult.stderr,
+        visibleResult.exitCode,
+      );
       const outputState = classifyBashOutput(assertions);
       emitDeepChestActivity(
         command.includes("--dry-run") ? "DeepChest 预检完成" : "DeepChest 分析完成",
@@ -218,22 +318,44 @@ export function createBashTool(options?: CreateBashToolOptions): PilotDeckToolDe
         content: [
           {
             type: "text",
-            text: formatShellResult(result.stdout, result.stderr, result.exitCode, outputState, assertions),
+            text: formatShellResult(
+              visibleResult.stdout,
+              visibleResult.stderr,
+              visibleResult.exitCode,
+              outputState,
+              assertions,
+            ),
           },
         ],
+        ...(registered.kind === "script"
+          ? (() => {
+              const artifacts = extractRegisteredArtifacts(result.stdout, context.cwd);
+              return artifacts.length > 0 ? { artifacts } : {};
+            })()
+          : {}),
         data: {
           command,
-          exitCode: result.exitCode,
-          stdout: result.stdout,
-          stderr: result.stderr,
-          timedOut: result.timedOut,
-          durationMs: result.durationMs,
+          exitCode: visibleResult.exitCode,
+          stdout: visibleResult.stdout,
+          stderr: visibleResult.stderr,
+          timedOut: visibleResult.timedOut,
+          durationMs: visibleResult.durationMs,
           outputState,
           assertions,
         },
       };
     },
   };
+}
+
+function resolveCommand(command: string, cwd: string, env?: NodeJS.ProcessEnv) {
+  const policy = createSecurityPolicyStore({ env }).getSnapshot().commands;
+  return evaluateBashCommand(command, {
+    cwd,
+    appRoot: resolveAppRoot(),
+    policy,
+    workDir: env?.PILOTDECK_WORK_DIR,
+  });
 }
 
 function buildBashOutputAssertions(

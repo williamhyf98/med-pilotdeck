@@ -121,7 +121,10 @@ export function createGrepTool(): PilotDeckToolDefinition<GrepInput> {
     isReadOnly: () => true,
     isConcurrencySafe: () => true,
     execute: async (input, context) => {
-      const resolved = resolvePilotDeckWorkspacePath(input.path ?? ".", context, { mustExist: true });
+      const resolved = resolvePilotDeckWorkspacePath(input.path ?? ".", context, {
+        mustExist: true,
+        allowTaskRoot: true,
+      });
       if (!resolved.ok) {
         throw new PilotDeckToolRuntimeError(resolved.error.code, resolved.error.message, resolved.error.details);
       }
@@ -130,7 +133,8 @@ export function createGrepTool(): PilotDeckToolDefinition<GrepInput> {
       const target = await resolveSearchTarget(resolved.absolutePath, resolved.relativePath);
       const stdout = await runRipgrep({
         cwd: target.cwd,
-        args: buildRipgrepArgs(input, mode, target.target),
+        args: buildRipgrepArgs(input, mode, target.target,
+          Boolean(context.taskRoot && target.taskScoped)),
         env: context.env,
         signal: context.abortSignal,
         toolName: "grep",
@@ -230,6 +234,7 @@ async function resolveSearchTarget(absolutePath: string, relativePath: string): 
   cwd: string;
   target: string;
   workspaceBaseDir: string;
+  taskScoped: boolean;
 }> {
   const fileStat = await stat(absolutePath);
   const normalizedRelativePath = normalizeRelativePath(relativePath);
@@ -238,6 +243,7 @@ async function resolveSearchTarget(absolutePath: string, relativePath: string): 
       cwd: absolutePath,
       target: ".",
       workspaceBaseDir: normalizedRelativePath === "." ? "" : normalizedRelativePath,
+      taskScoped: normalizedRelativePath === ".",
     };
   }
   const directory = path.posix.dirname(normalizedRelativePath);
@@ -245,6 +251,7 @@ async function resolveSearchTarget(absolutePath: string, relativePath: string): 
     cwd: path.dirname(absolutePath),
     target: path.basename(absolutePath),
     workspaceBaseDir: directory === "." ? "" : directory,
+    taskScoped: false,
   };
 }
 
@@ -252,6 +259,7 @@ function buildRipgrepArgs(
   input: GrepInput,
   mode: NonNullable<GrepInput["output_mode"]>,
   target: string,
+  taskScoped = false,
 ): string[] {
   const args = ["--hidden", "--max-columns", String(MAX_COLUMNS)];
   for (const excluded of EXCLUDED_DIRECTORY_GLOBS) {
@@ -285,7 +293,7 @@ function buildRipgrepArgs(
   } else {
     args.push(input.pattern);
   }
-  args.push(target);
+  args.push(...(taskScoped ? ["inbox", "scratch", "exports"] : [target]));
   return args;
 }
 

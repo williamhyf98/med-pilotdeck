@@ -5,4 +5,5 @@ export type {
   FileArtifactSource,
   FileArtifactStatus,
 } from "./FileArtifact.js";
+export { normalizeToolArtifacts } from "./artifactContract.js";
 

@@ -1033,8 +1033,11 @@ def schema_for(command: str) -> dict[str, Any]:
 def _reject_unknown(mapping: dict[str, Any], allowed: Iterable[str], context: str) -> None:
     unknown = sorted(set(mapping) - set(allowed))
     if unknown:
+        hint = ""
+        if context == "image block" and "width_cm" in unknown:
+            hint = " Use width_inches (inches) instead of width_cm."
         raise DocxSkillError(
-            f"Unknown {context} field(s): {', '.join(unknown)}",
+            f"Unknown {context} field(s): {', '.join(unknown)}.{hint}",
             code="unknown-spec-fields",
             details={"context": context, "unknown": unknown},
         )
