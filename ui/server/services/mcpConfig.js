@@ -1,5 +1,6 @@
 import fsPromises from 'fs/promises';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import { resolvePilotRoot } from '../utils/pilotPaths.js';
 
 const DEFAULT_MCP_CONFIG = {
@@ -76,8 +77,15 @@ export async function readMcpConfigFile(scope, projectPath) {
 export async function writeMcpConfigFile(scope, raw, projectPath) {
   const parsed = normalizeMcpConfig(JSON.parse(raw));
   const filePath = scope === 'project' ? getProjectMcpConfigPath(projectPath) : getGlobalMcpConfigPath();
-  await fsPromises.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
-  await fsPromises.writeFile(filePath, JSON.stringify(parsed, null, 2) + '\n', { mode: 0o600 });
+  const directory = path.dirname(filePath);
+  await fsPromises.mkdir(directory, { recursive: true, mode: 0o700 });
+  const temporary = path.join(directory, `.${path.basename(filePath)}.${randomUUID()}.tmp`);
+  try {
+    await fsPromises.writeFile(temporary, JSON.stringify(parsed, null, 2) + '\n', { mode: 0o600 });
+    await fsPromises.rename(temporary, filePath);
+  } finally {
+    await fsPromises.rm(temporary, { force: true }).catch(() => {});
+  }
   return readMcpConfigFile(scope, projectPath);
 }
 

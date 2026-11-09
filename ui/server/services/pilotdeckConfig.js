@@ -2,6 +2,7 @@ import fs from 'fs';
 import fsPromises from 'fs/promises';
 import os from 'os';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { parseGatewayConfig } from '../../../src/pilot/config/parseGatewayConfig.js';
 import { resolvePilotRoot } from '../utils/pilotPaths.js';
@@ -746,8 +747,20 @@ export async function writePilotDeckConfig(config) {
     }
   }
   const raw = stringifyYaml(yamlObj, { lineWidth: 0 });
-  await fsPromises.writeFile(configPath, raw, 'utf8');
+  await writeAtomicConfigFile(configPath, raw);
   return { configPath, raw, validation, config: yamlObj };
+}
+
+async function writeAtomicConfigFile(filePath, content) {
+  const directory = path.dirname(filePath);
+  await fsPromises.mkdir(directory, { recursive: true });
+  const temporary = path.join(directory, `.${path.basename(filePath)}.${randomUUID()}.tmp`);
+  try {
+    await fsPromises.writeFile(temporary, content, { encoding: 'utf8', mode: 0o600 });
+    await fsPromises.rename(temporary, filePath);
+  } finally {
+    await fsPromises.rm(temporary, { force: true }).catch(() => {});
+  }
 }
 
 // Kept as a thin alias for callers that supply an already-parsed YAML

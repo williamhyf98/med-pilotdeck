@@ -85,7 +85,8 @@ export function normalizePermissionSettings(value: unknown): PermissionSettings 
     version: 1,
     allowedTools: normalizeStringArray(record.allowedTools),
     disallowedTools: normalizeStringArray(record.disallowedTools),
-    skipPermissions: Boolean(record.skipPermissions),
+    skipPermissions: typeof record.skipPermissions === "boolean"
+      ? record.skipPermissions : DEFAULT_PERMISSION_SETTINGS.skipPermissions,
     lastUpdated: typeof record.lastUpdated === "string" ? record.lastUpdated : undefined,
   };
 }
