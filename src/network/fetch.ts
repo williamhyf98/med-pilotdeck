@@ -1,6 +1,7 @@
 import { fetch as undiciFetch } from "undici";
 
 export type NetworkErrorCode =
+  | "network_policy_denied"
   | "network_timeout"
   | "network_dns_error"
   | "network_connection_reset"
@@ -37,6 +38,7 @@ export type NetworkFetchOptions = {
   signal?: AbortSignal;
   retry?: NetworkRetryOptions;
   fetchImpl?: typeof fetch;
+  networkAccess?: import("./serviceRegistry.js").NetworkAccessController;
 };
 
 export type NetworkJsonOptions = NetworkFetchOptions & {
@@ -69,10 +71,10 @@ export async function networkFetch(
     // Keep pending requests alive until their timeout or retry settles.
 
     try {
-      const response = await performFetch(input, {
+      const response = await fetchWithRedirectChecks(input, {
         ...init,
         signal: controller.signal,
-      }, options.fetchImpl);
+      }, options);
 
       if (
         canRetryMethod &&
@@ -99,6 +101,39 @@ export async function networkFetch(
   }
 
   throw normalizeNetworkError(lastError);
+}
+
+async function fetchWithRedirectChecks(
+  input: string | URL | Request,
+  init: RequestInit,
+  options: NetworkFetchOptions,
+): Promise<Response> {
+  let currentInput = input;
+  let currentInit = { ...init };
+  const maxRedirects = 5;
+  for (let redirect = 0; ; redirect += 1) {
+    await options.networkAccess?.assertAllowed(currentInput);
+    const response = await performFetch(currentInput, {
+      ...currentInit,
+      ...(options.networkAccess ? { redirect: "manual" as const } : {}),
+    }, options.fetchImpl);
+    const location = options.networkAccess && isRedirectStatus(response.status)
+      ? response.headers.get("location")
+      : null;
+    if (!location) return response;
+    if (redirect >= maxRedirects) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new NetworkFetchError("network_policy_denied", "Network redirect limit exceeded.");
+    }
+    const next = new URL(location, currentInput instanceof Request ? currentInput.url : currentInput);
+    const method = resolveMethod(currentInput, currentInit);
+    if (response.status === 303 || ((response.status === 301 || response.status === 302) && method === "POST")) {
+      currentInit = { ...currentInit, method: "GET" };
+      delete currentInit.body;
+    }
+    await response.body?.cancel().catch(() => undefined);
+    currentInput = next;
+  }
 }
 
 export async function networkFetchJson<T = unknown>(
@@ -185,7 +220,9 @@ export function normalizeNetworkError(
 }
 
 export function isRetryableNetworkCode(code: NetworkErrorCode): boolean {
-  return code !== "network_abort" && code !== "network_tls_error";
+  return code !== "network_abort"
+    && code !== "network_tls_error"
+    && code !== "network_policy_denied";
 }
 
 export function jitteredBackoff(attempt: number, retry: NetworkRetryOptions = {}, retryAfterHeader?: string | null): number {
@@ -261,6 +298,10 @@ function forwardAbort(source: AbortSignal, target: AbortController): () => void 
 function resolveMethod(input: string | URL | Request, init: RequestInit): string {
   const method = init.method ?? (typeof Request !== "undefined" && input instanceof Request ? input.method : undefined) ?? "GET";
   return method.toUpperCase();
+}
+
+function isRedirectStatus(status: number): boolean {
+  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
 }
 
 function readErrorCode(error: unknown): string | undefined {
