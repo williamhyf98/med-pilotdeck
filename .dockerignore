@@ -5,6 +5,7 @@ node_modules/
 plugins/**/.venv/
 .runtime/
 .pilotdeck-home/
+tests/skill-e2e/local-fixtures/
 **/.DS_Store
 .git/
 Auto-Research-Skills/

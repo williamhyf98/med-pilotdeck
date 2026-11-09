@@ -23,6 +23,8 @@
     "scripts/**/*.tsx"
   ],
   "exclude": [
-    "src/context/memory/edgeclaw-memory-core/test"
+    "src/context/memory/edgeclaw-memory-core/test",
+    "tests/skill-e2e/local-fixtures",
+    "tests/skill-e2e/work"
   ]
 }

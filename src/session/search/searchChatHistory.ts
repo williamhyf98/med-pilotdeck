@@ -260,6 +260,8 @@ async function listJsonlFiles(
   const files: SessionFileTarget[] = [];
   for (const name of names) {
     if (!name.endsWith(".jsonl")) continue;
+    // Rewind recovery copies are not sessions; searching them duplicates hits.
+    if (name.includes(".pre-rewind.jsonl")) continue;
     const sessionId = name.slice(0, -".jsonl".length);
     if (!includeInternal && isInternalSession(sessionId)) continue;
     files.push({

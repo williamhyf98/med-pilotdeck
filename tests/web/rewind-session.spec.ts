@@ -1,8 +1,8 @@
 // @ts-nocheck
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, access } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdtemp, rm, readdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createAgentProjectSessionStorage } from "../../src/session/storage/ProjectSessionStorage.js";
 import { readTranscript } from "../../src/session/transcript/TranscriptReader.js";
@@ -69,11 +69,84 @@ test("rewind removes the last user turn in place and writes a backup", async () 
         assert.equal(findAcceptedInput(after.entries, "turn-2"), undefined);
         assert.ok(findAcceptedInput(after.entries, "turn-1"));
 
-        // The pre-rewind safety copy preserves the full original transcript.
-        const backupPath = storage.transcriptPath.replace(/\.jsonl$/, ".pre-rewind.jsonl");
-        await access(backupPath);
-        const backup = await readTranscript(backupPath);
+        // The safety copy preserves the full original transcript and lives in
+        // a dedicated directory, so it can never be listed as a session.
+        const backupDir = join(dirname(storage.transcriptPath), ".rewind-backups");
+        const backupNames = await readdir(backupDir);
+        assert.equal(backupNames.length, 1);
+        const backup = await readTranscript(join(backupDir, backupNames[0]));
         assert.equal(backup.entries.length, before.entries.length);
+        assert.deepEqual(await readdir(dirname(storage.transcriptPath)).then((names) =>
+            names.filter((name) => !name.startsWith("."))), [join(storage.transcriptPath).split("/").pop()]);
+    }
+    finally {
+        await rm(projectRoot, { recursive: true, force: true });
+        await rm(pilotHome, { recursive: true, force: true });
+    }
+});
+
+test("a second rewind keeps the first backup instead of overwriting it", async () => {
+    const { projectRoot, pilotHome } = await makeFixture("pilotdeck-rewind-twice");
+    try {
+        const sessionKey = "web:s_rewind_twice";
+        const storage = createAgentProjectSessionStorage({
+            projectRoot,
+            pilotHome,
+            sessionId: sessionKey,
+            now: FIXED_NOW,
+        });
+        await writeTwoTurns(storage, sessionKey);
+
+        const first = await readTranscript(storage.transcriptPath);
+        const turn2 = findAcceptedInput(first.entries, "turn-2");
+        assert.ok(turn2);
+        await rewindWebSession(
+            { sessionKey, fromEntryId: turn2.entryId },
+            { projectRoot, pilotHome, now: FIXED_NOW },
+        );
+
+        const second = await readTranscript(storage.transcriptPath);
+        const turn1 = findAcceptedInput(second.entries, "turn-1");
+        assert.ok(turn1);
+        await rewindWebSession(
+            { sessionKey, fromEntryId: turn1.entryId },
+            { projectRoot, pilotHome, now: FIXED_NOW },
+        );
+
+        const backupDir = join(dirname(storage.transcriptPath), ".rewind-backups");
+        const backupNames = await readdir(backupDir);
+        assert.equal(backupNames.length, 2);
+
+        const sizes = await Promise.all(backupNames.map(async (name) => {
+            const parsed = await readTranscript(join(backupDir, name));
+            return parsed.entries.length;
+        }));
+        assert.deepEqual(sizes.sort(), [first.entries.length, second.entries.length].sort());
+    }
+    finally {
+        await rm(projectRoot, { recursive: true, force: true });
+        await rm(pilotHome, { recursive: true, force: true });
+    }
+});
+
+test("rewind refuses to operate on a recovery snapshot", async () => {
+    const { projectRoot, pilotHome } = await makeFixture("pilotdeck-rewind-snapshot");
+    try {
+        const storage = createAgentProjectSessionStorage({
+            projectRoot,
+            pilotHome,
+            sessionId: "web:s_rewind_snapshot",
+            now: FIXED_NOW,
+        });
+        await writeTwoTurns(storage, "web:s_rewind_snapshot");
+
+        await assert.rejects(
+            rewindWebSession(
+                { sessionKey: "web:s_rewind_snapshot.pre-rewind", fromEntryId: "whatever" },
+                { projectRoot, pilotHome, now: FIXED_NOW },
+            ),
+            (error) => error instanceof RewindSessionError && error.code === "rewind_unsupported_target",
+        );
     }
     finally {
         await rm(projectRoot, { recursive: true, force: true });

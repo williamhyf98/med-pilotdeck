@@ -8,7 +8,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { copyFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { CanonicalContentBlock } from "../../model/index.js";
 import { getPilotProjectChatDir, resolveGatewayProjectKey } from "../../pilot/index.js";
@@ -37,6 +37,22 @@ export class RewindSessionError extends Error {
     super(message);
     this.name = "RewindSessionError";
   }
+}
+
+/**
+ * Rewind safety copies live in a sub-directory of the chat dir. Keeping them
+ * beside the live transcript made every copy end in `.jsonl`, so the session
+ * list advertised `<session>.pre-rewind` as a *phantom session*; rewinding
+ * that phantom then produced `<session>.pre-rewind.pre-rewind.jsonl` while
+ * truncating the real transcript. The stray directory is never scanned as a
+ * session and each copy keeps its own timestamp, so repeated rewinds no longer
+ * overwrite the only good backup.
+ */
+const REWIND_BACKUP_DIR = ".rewind-backups";
+
+/** Session keys that are recovery artifacts rather than live transcripts. */
+function isRecoveryArtifactSessionKey(sessionKey: string): boolean {
+  return sessionKey.includes(".pre-rewind") || sessionKey.includes(REWIND_BACKUP_DIR);
 }
 
 function extractAcceptedInputText(entry: AgentAcceptedInputTranscriptEntry): string {
@@ -78,6 +94,14 @@ export async function rewindWebSession(
     options.pilotHome,
   );
   const chatDir = getPilotProjectChatDir(effectiveProjectRoot, options.pilotHome);
+
+  if (isRecoveryArtifactSessionKey(String(input.sessionKey))) {
+    throw new RewindSessionError(
+      "rewind_unsupported_target",
+      "Rewind recovery copies are read-only snapshots and cannot be rewound.",
+    );
+  }
+
   const safeId = sanitizeSessionIdForPath(input.sessionKey);
   const transcriptPath = resolve(chatDir, `${safeId}.jsonl`);
 
@@ -148,8 +172,16 @@ export async function rewindWebSession(
     finalEntries.push(carriedMetadata);
   }
 
-  // Safety copy so a mistaken rewind is recoverable by hand.
-  await copyFile(transcriptPath, resolve(chatDir, `${safeId}.pre-rewind.jsonl`));
+  // Safety copy so a mistaken rewind is recoverable by hand. It is written
+  // before the truncation below, so a crash mid-write still leaves the full
+  // transcript on disk.
+  const backupDir = resolve(chatDir, REWIND_BACKUP_DIR);
+  await mkdir(backupDir, { recursive: true });
+  const backupStamp = nowIso.replace(/[:.]/g, "-");
+  await copyFile(
+    transcriptPath,
+    resolve(backupDir, `${safeId}.${backupStamp}-${randomUUID().slice(0, 8)}.jsonl`),
+  );
 
   const body = finalEntries.map((entry) => `${JSON.stringify(entry)}\n`).join("");
   await writeFile(transcriptPath, body, { encoding: "utf8", mode: 0o600 });

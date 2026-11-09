@@ -9,6 +9,17 @@ function isInternalSession(sessionId: string): boolean {
   return ALWAYS_ON_AUXILIARY_PATTERN.test(sessionId);
 }
 
+/**
+ * `rewindSession` keeps `<session>.pre-rewind.jsonl` next to the live
+ * transcript as a manual recovery copy. It is not a session: listing it
+ * surfaces a phantom conversation, and rewinding that phantom produces
+ * `<session>.pre-rewind.pre-rewind.jsonl` while the real transcript is
+ * truncated. Skip every name that carries the backup marker.
+ */
+function isTranscriptBackupFileName(name: string): boolean {
+  return name.includes(".pre-rewind.jsonl");
+}
+
 export type SessionInfo = {
   sessionId: string;
   summary: string;
@@ -44,6 +55,9 @@ export async function listProjectSessions(options: ListProjectSessionsOptions): 
   const sessions: SessionInfo[] = [];
   for (const name of names) {
     if (!name.endsWith(".jsonl")) {
+      continue;
+    }
+    if (isTranscriptBackupFileName(name)) {
       continue;
     }
     const lite = await readSessionLite(join(chatDir, name));
@@ -220,6 +234,7 @@ export async function listAllSessions(options: ListAllSessionsOptions): Promise<
 
     for (const name of names) {
       if (!name.endsWith(".jsonl")) continue;
+      if (isTranscriptBackupFileName(name)) continue;
       const sessionId = name.slice(0, -".jsonl".length);
       if (!options.includeInternal && isInternalSession(sessionId)) continue;
       const lite = await readSessionLite(join(chatDir, name));
@@ -265,6 +280,7 @@ export async function searchSessionsByTitle(options: SearchSessionsByTitleOption
   const results: SessionInfo[] = [];
   for (const name of names) {
     if (!name.endsWith(".jsonl")) continue;
+    if (isTranscriptBackupFileName(name)) continue;
     const sessionId = name.slice(0, -".jsonl".length);
     if (!options.includeInternal && isInternalSession(sessionId)) continue;
     const lite = await readSessionLite(join(chatDir, name));

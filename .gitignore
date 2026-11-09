@@ -210,6 +210,8 @@ package-lock.json
 # Test output
 test-results/
 tests/skill-e2e/work/
+# Private, local-only skill quality baselines and generated outputs.
+/tests/skill-e2e/local-fixtures/
 
 # Accidental runtime dirs at repo root (data lives under PILOT_HOME/workspaces/)
 /exports/
