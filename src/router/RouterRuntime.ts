@@ -8,6 +8,7 @@ import { cloneMessages, downgradeUnsupportedContent, ModelRequestError } from ".
 import type { InputModality } from "../model/index.js";
 import {
   LITELLM_DEFAULT_MAX_RETRIES,
+  LITELLM_DEFAULT_REQUEST_TIMEOUT_MS,
   LITELLM_INITIAL_RETRY_DELAY_MS,
   LITELLM_MAX_RETRY_DELAY_MS,
   LITELLM_RETRY_JITTER,
@@ -99,6 +100,11 @@ export type RouterRuntime = {
   stats: TokenStatsCollector;
   shutdown(): Promise<void>;
 };
+
+export const MODEL_CONNECTION_TIMEOUT_MS = 30_000;
+export const MODEL_FIRST_PROGRESS_TIMEOUT_MS = 30_000;
+export const MODEL_PROGRESS_IDLE_TIMEOUT_MS = 30_000;
+export const MODEL_STREAM_HARD_TIMEOUT_MS = LITELLM_DEFAULT_REQUEST_TIMEOUT_MS;
 
 export function createRouterRuntime(
   config: RouterConfig,
@@ -636,6 +642,45 @@ export function createRouterRuntime(
     let lastAttempt: RouterModelRef | undefined;
     let lastDecision: RouterDecision = decision;
     let lastHasYieldedContent = false;
+    let nextAttemptRequestOverride: CanonicalModelRequest | undefined;
+
+    const announceFallback = (
+      from: RouterModelRef,
+      to: RouterModelRef,
+      error: import("../model/index.js").CanonicalModelError,
+      attemptNumber: number,
+    ): void => {
+      events.emit({
+        type: "pilotdeck_router_fallback",
+        sessionId: ctx.sessionId,
+        turnId: ctx.turnId,
+        scenarioType: decision.scenarioType,
+        attempt: attemptNumber,
+        fromProvider: from.provider,
+        fromModel: from.model,
+        toProvider: to.provider,
+        toModel: to.model,
+        error,
+      });
+      telemetry?.trackFeatureLoopStage({
+        module: "router",
+        ownerModule: "router",
+        phase: "fallback",
+        loopStage: "module_event",
+        outcome: "success",
+        sessionId: ctx.sessionId,
+        metadata: {
+          event: "fallback_attempt",
+          scenarioType: decision.scenarioType,
+          attempt: attemptNumber,
+          fromProvider: from.provider,
+          fromModel: from.model,
+          toProvider: to.provider,
+          toModel: to.model,
+          errorCode: error.code,
+        },
+      });
+    };
 
     if (attemptPlans.length === 0) {
       const missing = missingForModel(requestedAttempt, requiredModalities);
@@ -677,7 +722,9 @@ export function createRouterRuntime(
         model: attempt.model,
         resolvedFrom: attemptIndex === 0 ? decision.resolvedFrom : "fallback",
       };
-      let attemptRequest = applyDecisionToRequest(attemptDecision, request);
+      let attemptRequest = nextAttemptRequestOverride
+        ?? applyDecisionToRequest(attemptDecision, request);
+      nextAttemptRequestOverride = undefined;
       if (attemptPlan.downgradeUnsupportedMedia) {
         attemptRequest = downgradeRequestForAttempt(attemptRequest, attempt, deps.modelRuntime);
       }
@@ -758,42 +805,14 @@ export function createRouterRuntime(
           if (!hasYieldedContent && isFallbackEligible(outcome.error)) {
             if (attemptIndex < attemptPlans.length - 1) {
               const next = attemptPlans[attemptIndex + 1].attempt;
-              events.emit({
-                type: "pilotdeck_router_fallback",
-                sessionId: ctx.sessionId,
-                turnId: ctx.turnId,
-                scenarioType: attemptDecision.scenarioType,
-                attempt: attemptIndex + 1,
-                fromProvider: attempt.provider,
-                fromModel: attempt.model,
-                toProvider: next.provider,
-                toModel: next.model,
-                error: outcome.error,
-              });
-              telemetry?.trackFeatureLoopStage({
-                module: "router",
-                ownerModule: "router",
-                phase: "fallback",
-                loopStage: "module_event",
-                outcome: "success",
-                sessionId: ctx.sessionId,
-                metadata: {
-                  event: "fallback_attempt",
-                  scenarioType: attemptDecision.scenarioType,
-                  attempt: attemptIndex + 1,
-                  fromProvider: attempt.provider,
-                  fromModel: attempt.model,
-                  toProvider: next.provider,
-                  toModel: next.model,
-                  errorCode: outcome.error.code,
-                },
-              });
+              announceFallback(attempt, next, outcome.error, attemptIndex + 1);
               continue outer;
             }
           }
           if (
             !hasYieldedContent &&
             isFallbackEligible(outcome.error) &&
+            !isModelProgressTimeout(outcome.error) &&
             transientRetryEnabled &&
             transientRetryCount < transientRetryMax
           ) {
@@ -843,6 +862,24 @@ export function createRouterRuntime(
             await abortableDelay(delay, ctx.abortSignal);
             transientRetryCount++;
             continue;
+          }
+          if (
+            hasYieldedContent &&
+            isModelProgressTimeout(outcome.error) &&
+            attemptIndex < attemptPlans.length - 1
+          ) {
+            const next = attemptPlans[attemptIndex + 1].attempt;
+            const partialText = extractPartialText(outcome.buffered);
+            const continuationRequest = partialText.length > 0
+              ? buildLiteLLMContinuationRequest(attemptRequest, partialText)
+              : attemptRequest;
+            nextAttemptRequestOverride = {
+              ...continuationRequest,
+              provider: next.provider,
+              model: next.model,
+            };
+            announceFallback(attempt, next, outcome.error, attemptIndex + 1);
+            continue outer;
           }
           if (
             hasYieldedContent &&
@@ -1093,13 +1130,20 @@ type AttemptOutcome = {
  * retry would produce duplicates, so we lock in the current attempt.
  */
 function isContentEvent(event: CanonicalModelEvent): boolean {
-  return (
-    event.type === "text_delta" ||
-    event.type === "thinking_delta" ||
-    event.type === "tool_call_start" ||
-    event.type === "tool_call_delta" ||
-    event.type === "tool_call_end"
-  );
+  switch (event.type) {
+    case "text_delta":
+      return event.text.length > 0;
+    case "thinking_delta":
+      return event.text.length > 0;
+    case "tool_call_start":
+      return event.id.length > 0 || event.name.length > 0;
+    case "tool_call_delta":
+      return event.delta.length > 0;
+    case "tool_call_end":
+      return true;
+    default:
+      return false;
+  }
 }
 
 function clampMaxOutputTokensToModelCap(
@@ -1164,10 +1208,53 @@ async function* streamAttempt(
   const state = createZeroUsageState();
   let providerError: import("../model/index.js").CanonicalModelError | undefined;
   const abortSignal = ctx.abortSignal;
+  const attemptController = new AbortController();
+  const detachParentAbort = forwardAbortSignal(abortSignal, attemptController);
+  let connectionEstablished = false;
+  let progressTimeout: NodeJS.Timeout | undefined;
+  let hardTimeout: NodeJS.Timeout | undefined;
+
+  const clearProgressTimeout = (): void => {
+    if (progressTimeout) {
+      clearTimeout(progressTimeout);
+      progressTimeout = undefined;
+    }
+  };
+  const armProgressTimeout = (
+    phase: "first_progress" | "progress_idle",
+    timeoutMs: number,
+  ): void => {
+    clearProgressTimeout();
+    progressTimeout = setTimeout(() => {
+      attemptController.abort(new ModelProgressTimeoutError(phase, timeoutMs));
+    }, timeoutMs);
+    progressTimeout.unref?.();
+  };
+  const markConnectionEstablished = (): void => {
+    if (connectionEstablished) return;
+    connectionEstablished = true;
+    armProgressTimeout("first_progress", MODEL_FIRST_PROGRESS_TIMEOUT_MS);
+  };
+  const observeProgress = (event: CanonicalModelEvent): void => {
+    if (!isContentEvent(event)) return;
+    markConnectionEstablished();
+    armProgressTimeout("progress_idle", MODEL_PROGRESS_IDLE_TIMEOUT_MS);
+  };
+
+  progressTimeout = setTimeout(() => {
+    attemptController.abort(new ModelProgressTimeoutError("connection", MODEL_CONNECTION_TIMEOUT_MS));
+  }, MODEL_CONNECTION_TIMEOUT_MS);
+  progressTimeout.unref?.();
+  hardTimeout = setTimeout(() => {
+    attemptController.abort(new ModelProgressTimeoutError("stream", MODEL_STREAM_HARD_TIMEOUT_MS));
+  }, MODEL_STREAM_HARD_TIMEOUT_MS);
+  hardTimeout.unref?.();
 
   try {
     for await (const event of modelRuntime.stream(request, {
-      signal: abortSignal,
+      signal: attemptController.signal,
+      streamTimeoutMs: MODEL_STREAM_HARD_TIMEOUT_MS,
+      onConnectionEstablished: markConnectionEstablished,
       onRetryProgress(progress) {
         events.emit({
           type: "pilotdeck_router_retry_progress",
@@ -1185,6 +1272,10 @@ async function* streamAttempt(
       if (abortSignal?.aborted) {
         throwAbortError(abortSignal.reason);
       }
+      if (event.type !== "request_started") {
+        markConnectionEstablished();
+      }
+      observeProgress(event);
       observeEventForZeroUsage(state, event);
       buffered.push(event);
       if (event.type === "error") {
@@ -1196,15 +1287,27 @@ async function* streamAttempt(
     if (abortSignal?.aborted) {
       throw error;
     }
-    const fromError = (error as { error?: import("../model/index.js").CanonicalModelError })?.error;
-    const protocol = protocolForProvider(modelRuntime, request.provider);
-    providerError = fromError ?? canonicalizeModelRequestError(error, request, protocol) ?? {
-      provider: request.provider,
-      protocol,
-      code: classifyNetworkErrorCode(error),
-      message: error instanceof Error ? error.message : String(error),
-      retryable: isNetworkTransient(error),
-    };
+    const timeoutReason = attemptController.signal.reason;
+    if (timeoutReason instanceof ModelProgressTimeoutError) {
+      providerError = timeoutReason.toModelError(request, modelRuntime);
+    } else {
+      const fromError = (error as { error?: import("../model/index.js").CanonicalModelError })?.error;
+      const protocol = protocolForProvider(modelRuntime, request.provider);
+      providerError = fromError ?? canonicalizeModelRequestError(error, request, protocol) ?? {
+        provider: request.provider,
+        protocol,
+        code: classifyNetworkErrorCode(error),
+        message: error instanceof Error ? error.message : String(error),
+        retryable: isNetworkTransient(error),
+      };
+    }
+  } finally {
+    clearProgressTimeout();
+    if (hardTimeout) {
+      clearTimeout(hardTimeout);
+      hardTimeout = undefined;
+    }
+    detachParentAbort();
   }
 
   yield {
@@ -1216,6 +1319,52 @@ async function* streamAttempt(
       shouldRetryZeroUsage: shouldRetryZeroUsage(state),
     },
   };
+}
+
+class ModelProgressTimeoutError extends Error {
+  constructor(
+    readonly phase: "connection" | "first_progress" | "progress_idle" | "stream",
+    readonly timeoutMs: number,
+  ) {
+    super(
+      phase === "connection"
+        ? `Model connection timed out after ${timeoutMs}ms.`
+        : phase === "first_progress"
+          ? `Model produced no valid output within ${timeoutMs}ms.`
+          : phase === "progress_idle"
+            ? `Model output was idle for ${timeoutMs}ms.`
+            : `Model stream exceeded its hard limit of ${timeoutMs}ms.`,
+    );
+    this.name = "ModelProgressTimeoutError";
+  }
+
+  toModelError(
+    request: CanonicalModelRequest,
+    modelRuntime: ModelRuntime,
+  ): import("../model/index.js").CanonicalModelError {
+    return {
+      provider: request.provider,
+      model: request.model,
+      protocol: protocolForProvider(modelRuntime, request.provider),
+      code: "timeout",
+      message: this.message,
+      retryable: true,
+    };
+  }
+}
+
+function forwardAbortSignal(
+  source: AbortSignal | undefined,
+  target: AbortController,
+): () => void {
+  if (!source) return () => {};
+  if (source.aborted) {
+    target.abort(source.reason);
+    return () => {};
+  }
+  const onAbort = () => target.abort(source.reason);
+  source.addEventListener("abort", onAbort, { once: true });
+  return () => source.removeEventListener("abort", onAbort);
 }
 
 function canonicalizeModelRequestError(
@@ -1287,6 +1436,8 @@ function isNetworkTransient(error: unknown): boolean {
     msg.includes("network") ||
     msg.includes("dns") ||
     msg.includes("fetch failed") ||
+    msg.includes("max streaming duration") ||
+    msg.includes("hard limit") ||
     msg.includes("abort") ||
     error.name === "TimeoutError" ||
     error.name === "AbortError"
@@ -1296,13 +1447,24 @@ function isNetworkTransient(error: unknown): boolean {
 function classifyNetworkErrorCode(error: unknown): string {
   if (!(error instanceof Error)) return "unknown";
   const msg = error.message.toLowerCase();
-  if (msg.includes("timeout") || error.name === "TimeoutError") return "timeout";
+  if (
+    msg.includes("timeout")
+    || msg.includes("max streaming duration")
+    || msg.includes("hard limit")
+    || error.name === "TimeoutError"
+  ) {
+    return "timeout";
+  }
   if (msg.includes("abort") || error.name === "AbortError") return "aborted";
   return "network_error";
 }
 
 function isMidStreamRateLimitError(error: import("../model/index.js").CanonicalModelError): boolean {
   return error.code === "rate_limit_error" || error.code === "overloaded_error";
+}
+
+function isModelProgressTimeout(error: import("../model/index.js").CanonicalModelError): boolean {
+  return error.code === "timeout";
 }
 
 function classifyRetryReason(errorCode: string): "rate_limit" | "server_error" | "network_error" | "zero_usage" | "overloaded" {

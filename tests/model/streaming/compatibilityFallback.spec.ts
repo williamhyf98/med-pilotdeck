@@ -1,7 +1,35 @@
 // @ts-nocheck
 import assert from "node:assert/strict";
 import test from "node:test";
-import { streamModel, } from "../../../src/model/index.js";
+import {
+    LITELLM_DEFAULT_REQUEST_TIMEOUT_MS,
+    LITELLM_DEFAULT_STREAM_MAX_DURATION_MS,
+    streamModel,
+} from "../../../src/model/index.js";
+test("streaming defaults use a ten-minute request and hard duration limit", () => {
+    assert.equal(LITELLM_DEFAULT_REQUEST_TIMEOUT_MS, 600000);
+    assert.equal(LITELLM_DEFAULT_STREAM_MAX_DURATION_MS, 600000);
+});
+test("streamModel reports connection establishment after provider response", async () => {
+    let connectionEstablished = 0;
+    await collect(streamModel(baseRequest(), modelConfig(), {
+        fetch: async () => new Response(JSON.stringify({
+            id: "response-connection",
+            choices: [{
+                    index: 0,
+                    message: { role: "assistant", content: "connected" },
+                    finish_reason: "stop",
+                }],
+        }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+        }),
+        onConnectionEstablished: () => {
+            connectionEstablished += 1;
+        },
+    }));
+    assert.equal(connectionEstablished, 1);
+});
 test("streamModel accepts a non-streaming JSON response from an OpenAI-compatible endpoint", async () => {
     const events = await collect(streamModel(baseRequest(), modelConfig(), {
         fetch: async () => new Response(JSON.stringify({
