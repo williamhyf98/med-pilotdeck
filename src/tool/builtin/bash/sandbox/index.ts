@@ -8,10 +8,21 @@ import type { SandboxGrants } from "./grants.js";
  * bash 工具的操作系统级沙箱适配层（spec §16.3）。
  * `commandRunner.ts` 通过 `wrap()` 得到实际要 spawn 的 argv，cwd 与 stdio 语义不变。
  */
+export type SandboxWrapOptions = {
+  cwd: string;
+  userHome: string;
+  env: NodeJS.ProcessEnv;
+  /**
+   * 本次调用的网络出口覆盖：`false` = 断网，`true` = 放行。
+   * 不传时使用沙箱创建时的配置。用于「按技能区分出口」（spec §10.5）。
+   */
+  network?: boolean;
+};
+
 export interface CommandSandbox {
   readonly kind: "bwrap" | "sandbox-exec" | "none";
   /** 把原始命令包装成实际要 spawn 的 argv；不改变 cwd 与 stdio 语义 */
-  wrap(command: string, options: { cwd: string; userHome: string; env: NodeJS.ProcessEnv }): { file: string; args: string[] };
+  wrap(command: string, options: SandboxWrapOptions): { file: string; args: string[] };
   /** 启动时自检：二进制存在、能执行 `true`，失败则返回原因 */
   probe(): Promise<{ ok: true } | { ok: false; reason: string }>;
   /** Effective filesystem grants for this user's command (including canonical symlink targets). */

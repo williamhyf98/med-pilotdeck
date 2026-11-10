@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { CommandSandbox } from "./index.js";
+import type { CommandSandbox, SandboxWrapOptions } from "./index.js";
 import { appReadOnlyGrants, grantForms, skillCacheEnv, type SandboxGrants } from "./grants.js";
 
 export type BwrapSandboxConfig = {
@@ -44,8 +44,10 @@ export class BwrapSandbox implements CommandSandbox {
     };
   }
 
-  wrap(command: string, options: { cwd: string; userHome: string; env: NodeJS.ProcessEnv }): { file: string; args: string[] } {
-    const { appRoot, nodeBinDir, network, extraBinds } = this.config;
+  wrap(command: string, options: SandboxWrapOptions): { file: string; args: string[] } {
+    const { appRoot, nodeBinDir, extraBinds } = this.config;
+    // 本次调用的网络出口可覆盖沙箱默认值（按技能区分，spec §10.5）
+    const network = options.network ?? this.config.network;
     const cwd = resolve(options.cwd);
     const userHome = resolve(options.userHome);
     if (existsSync(userHome)) mkdirSync(join(userHome, ".tmp"), { recursive: true });

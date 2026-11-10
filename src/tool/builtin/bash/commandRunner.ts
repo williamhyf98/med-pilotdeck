@@ -5,8 +5,15 @@ import { resolvePilotHome } from "../../../pilot/paths.js";
 import { selectSandbox, type CommandSandbox } from "./sandbox/index.js";
 import { grantForms, skillCacheEnv } from "./sandbox/grants.js";
 import { resolveAppRoot } from "./sandbox/bwrap.js";
+import {
+  assertNetworkPolicySupported,
+  resolveCommandNetworkPolicy,
+  type CommandNetworkDecision,
+} from "./sandbox/networkPolicy.js";
+import { networkIsolationLeaks, probeNetworkIsolation } from "./sandbox/netProbe.js";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import type { SandboxNetworkMode } from "../../../pilot/config/types.js";
 
 export type PilotDeckCommandOptions = {
   cwd: string;
@@ -38,12 +45,33 @@ type SpawnShell = typeof spawn;
 /** 模块级沙箱实例：为 null 时 bash 直接交给 shell 执行（与引入沙箱前一致）。 */
 let _sandbox: CommandSandbox | null = null;
 
+/** 网络出口策略（spec §10.5）：全局默认值 + 允许 `open` 的技能白名单。 */
+type NetworkPolicyState = {
+  policy: SandboxNetworkMode;
+  openSkills: readonly string[];
+};
+let _networkPolicy: NetworkPolicyState | null = null;
+
 export function getCommandSandbox(): CommandSandbox | null {
   return _sandbox;
 }
 
 export function setCommandSandbox(sandbox: CommandSandbox | null): void {
   _sandbox = sandbox;
+}
+
+export function setNetworkPolicy(policy: NetworkPolicyState | null): void {
+  _networkPolicy = policy;
+}
+
+export function getNetworkPolicy(): NetworkPolicyState | null {
+  return _networkPolicy;
+}
+
+/** 按命令判定本次调用是否放行网络；没有策略时返回 null（保持旧行为）。 */
+export function decideCommandNetwork(command: string): CommandNetworkDecision | null {
+  if (!_networkPolicy) return null;
+  return resolveCommandNetworkPolicy(command, _networkPolicy.policy, _networkPolicy.openSkills);
 }
 
 /**
@@ -53,12 +81,14 @@ export function setCommandSandbox(sandbox: CommandSandbox | null): void {
 export async function initializeSandbox(config: MultiUserConfig, env: NodeJS.ProcessEnv): Promise<CommandSandbox> {
   const multiUserEnabled = isMultiUserLoginEnabled(env);
   const sandboxConfig = config.sandbox ?? {};
+  const networkPolicy = sandboxConfig.network ?? "open";
+  assertNetworkPolicySupported(networkPolicy, process.platform);
   const sandbox = await selectSandbox({
     configuredKind: sandboxConfig.kind,
     multiUserEnabled,
     allowUnsandboxed: sandboxConfig.allowUnsandboxed,
     platform: process.platform,
-    network: sandboxConfig.network,
+    network: networkPolicy !== "none",
     extraReadOnlyBinds: sandboxConfig.extraReadOnlyBinds,
   });
   if (multiUserEnabled && sandbox.kind !== "none") {
@@ -81,7 +111,53 @@ export async function initializeSandbox(config: MultiUserConfig, env: NodeJS.Pro
   }
   setCommandSandbox(sandbox);
   console.log(`[sandbox] ${sandbox.kind} (${probe.ok ? "ok" : probe.reason})`);
+
+  const openSkills = sandboxConfig.networkOpenSkills ?? [];
+  setNetworkPolicy({ policy: networkPolicy, openSkills });
+  const openNote = openSkills.length > 0 ? `, openSkills=${openSkills.join("|")}` : "";
+  console.log(`[sandbox] network=${networkPolicy}${openNote}`);
+
+  if (networkPolicy === "none") {
+    await assertNetworkIsolationOnStartup(sandbox, env);
+  }
   return sandbox;
+}
+
+/**
+ * `network: none` 的启动自检（spec §10.5.4 / §10.5.5）。
+ * 只要有一条出口真的通着，就拒绝启动 —— 避免"配了但没生效"的静默失效。
+ */
+async function assertNetworkIsolationOnStartup(
+  sandbox: CommandSandbox,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  const userHome = resolvePilotHome(env);
+  try {
+    mkdirSync(userHome, { recursive: true });
+  } catch {
+    // 目录建不出来时交给下面的自检去暴露问题
+  }
+  const observation = await probeNetworkIsolation(sandbox, {
+    userHome,
+    cwd: existsSync(userHome) ? userHome : process.cwd(),
+    env,
+    log: (message) => console.log(message),
+  });
+  const leaks = networkIsolationLeaks(observation);
+  if (leaks.length > 0) {
+    throw new Error(
+      `[sandbox] 网络隔离自检失败（sandbox=${sandbox.kind}）：${leaks.join("；")}。` +
+        "multiUser.sandbox.network=none 要求完全断网，拒绝启动以免形成" +
+        "「配了但没生效」的静默失效。详见 docs/permission-arch-v2-design.zh.md §10.5。",
+    );
+  }
+  if (!observation.loopbackSelf) {
+    console.warn(
+      `[sandbox] 网络自检警告：沙箱内 127.0.0.1 不可用（${observation.error ?? "回环探测失败"}）。` +
+        "依赖本机回环的 skill（如 frontend-slides 导出 PDF）可能失败。",
+    );
+  }
+  console.log(`[sandbox] 网络自检通过（${observation.durationMs} ms）：内网/公网/DNS 均不可达`);
 }
 
 /** Verify the actual OS grants, not the assumed layout of the application. */
@@ -152,11 +228,14 @@ export class NodeShellCommandRunner implements PilotDeckCommandRunner {
       // setsid() 会以 EPERM 失败。因此 bwrap 不使用独立进程组，改为对 bwrap 进程本身发信号；
       // --unshare-pid + --die-with-parent 保证沙箱内的进程随之结束。
       const detached = !isWindows && sandbox?.kind !== "bwrap";
+      // 按命令判定本次调用是否放行网络（spec §10.5）：白名单只做加法，其余落回全局策略。
+      const networkDecision = decideCommandNetwork(command);
       const launch = sandbox
         ? sandbox.wrap(command, {
             cwd: options.cwd,
             userHome: options.userHome ?? resolvePilotHome(options.env ?? process.env),
             env: options.env ?? process.env,
+            ...(networkDecision ? { network: networkDecision.allowNetwork } : {}),
           })
         : undefined;
       const spawnEnv = sandbox?.kind === "sandbox-exec"

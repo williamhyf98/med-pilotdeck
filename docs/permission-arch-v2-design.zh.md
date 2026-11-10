@@ -744,6 +744,39 @@ macOS 的 SBPL profile 同步调整（`writeDirs` 换成 `scope.root` + 必要�
    → `frontend-slides/export-pdf.sh` 自起自连的模式**不受断网影响**，可直接归 `none`。
 2. Linux 侧的断网效果与预期一致：内网、公网、DNS 全部不可达。**B 方案可以直接落地。**
 
+#### 10.5.8 配置写法与实现状态（2026-11-10，第 1 步已完成）
+
+```yaml
+multiUser:
+  sandbox:
+    network: none           # none | open（allowlist 尚未实现，配了会启动报错）
+    networkOpenSkills:      # 这些 skill 允许出网，其余一律按 network 处理
+      - docx
+      - pptx
+      - spreadsheets
+    networkAllow: []        # 预留给 allowlist（第 3 步）
+```
+
+| 项 | 状态 | 位置 |
+|---|---|---|
+| `network` 三态解析（兼容 `true`/`false`） | ✅ 已实现 | `parseMultiUserConfig.ts` |
+| 按命令里的 `…/skills/<name>/` 判定技能 | ✅ 已实现 | `sandbox/networkPolicy.ts` |
+| 命中多个技能时**要求全部在白名单内**，否则落回全局 | ✅ 已实现（fail-closed） | 同上 |
+| bwrap 每次调用可覆盖网络 | ✅ 已实现（`wrap()` 新增 `network`） | `sandbox/bwrap.ts` |
+| 启动自检 + fail-closed | ✅ 已实现 | `sandbox/netProbe.ts`、`commandRunner.ts` |
+| `allowlist` 显式报错（不静默降级） | ✅ 已实现 | `sandbox/networkPolicy.ts` |
+| macOS 三态真正生效 | ⬜ 第 2 步 | `sandbox/sandboxExec.ts` |
+| 端口级 allowlist | ⬜ 第 3 步 | — |
+
+**node12 验证记录（2026-11-10，bwrap 0.6.1）**：
+
+| 场景 | 结果 |
+|---|---|
+| `network: none` + bwrap | ✅ 自检通过（86 ms），内网/公网/DNS 均不可达 |
+| `network: none` + `kind: none`（沙箱被关） | ✅ **拒绝启动**：`宿主回环端口可达；DNS 可解析` |
+
+第二条是关键：沙箱失效时不会「假装断网」，而是启动即失败。
+
 ---
 
 ## 11. 审计日志

@@ -8,12 +8,29 @@ import type { RouterConfig } from "../../router/config/schema.js";
  * `multiUser.sandbox`：bash 工具的操作系统级沙箱配置（spec §16.3）。
  * `kind` 未设置时由 `selectSandbox()` 自动探测。
  */
+export type SandboxNetworkMode = "none" | "allowlist" | "open";
+
+export type SandboxNetworkAllowEntry = {
+  host: string;
+  port: number;
+};
+
 export interface SandboxConfig {
   kind?: "bwrap" | "sandbox-exec" | "none";
   /** 多用户模式下允许落到 none（无沙箱）。默认 false。 */
   allowUnsandboxed?: boolean;
-  /** false = 网络隔离（bwrap --unshare-net）。默认 true（不隔离）。 */
-  network?: boolean;
+  /**
+   * bash 子进程的网络出口策略：
+   * - `none`：断网（bwrap `--unshare-net`）
+   * - `open`：不隔离（默认，兼容旧行为）
+   * - `allowlist`：仅放行 `networkAllow`（仅 macOS 已实现；Linux 上配置即启动报错）
+   * 兼容旧写法：`false` → `none`，`true` → `open`。
+   */
+  network?: SandboxNetworkMode;
+  /** `network: allowlist` 时允许的目的地。 */
+  networkAllow?: SandboxNetworkAllowEntry[];
+  /** 网络出口例外：这些 skill（目录名）允许使用 `open`，其余按 `network` 处理。 */
+  networkOpenSkills?: string[];
   /** 额外只读挂载的绝对路径（系统程序）。默认 []。 */
   extraReadOnlyBinds?: string[];
 }

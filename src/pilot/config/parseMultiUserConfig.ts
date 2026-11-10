@@ -1,4 +1,9 @@
-import type { PilotConfigDiagnostic, SandboxConfig } from "./types.js";
+import type {
+  PilotConfigDiagnostic,
+  SandboxConfig,
+  SandboxNetworkAllowEntry,
+  SandboxNetworkMode,
+} from "./types.js";
 
 export type { SandboxConfig };
 
@@ -54,7 +59,7 @@ function sandboxDiagnostic(key: keyof SandboxConfig, message: string, diagnostic
 
 function sandboxBool(
   raw: Record<string, unknown>,
-  key: "allowUnsandboxed" | "network",
+  key: "allowUnsandboxed",
   fallback: boolean,
   diagnostics: PilotConfigDiagnostic[],
 ): boolean {
@@ -63,6 +68,68 @@ function sandboxBool(
   if (typeof v === "boolean") return v;
   sandboxDiagnostic(key, `must be a boolean; using ${fallback}`, diagnostics);
   return fallback;
+}
+
+function sandboxNetwork(
+  raw: Record<string, unknown>,
+  diagnostics: PilotConfigDiagnostic[],
+): SandboxNetworkMode {
+  const v = raw.network;
+  if (v === undefined) return "open";
+  if (v === true) return "open";
+  if (v === false) return "none";
+  if (v === "none" || v === "allowlist" || v === "open") return v;
+  sandboxDiagnostic(
+    "network",
+    "must be one of none, allowlist, open (or true/false); using open",
+    diagnostics,
+  );
+  return "open";
+}
+
+function sandboxNetworkAllow(
+  raw: Record<string, unknown>,
+  diagnostics: PilotConfigDiagnostic[],
+): SandboxNetworkAllowEntry[] {
+  const v = raw.networkAllow;
+  if (v === undefined) return [];
+  if (!Array.isArray(v)) {
+    sandboxDiagnostic("networkAllow", "must be an array of {host, port}; ignoring it", diagnostics);
+    return [];
+  }
+  const entries: SandboxNetworkAllowEntry[] = [];
+  for (const item of v) {
+    const record = item && typeof item === "object" ? (item as Record<string, unknown>) : null;
+    const host = typeof record?.host === "string" ? record.host.trim() : "";
+    const port = typeof record?.port === "number" ? record.port : Number.NaN;
+    if (!host || !Number.isSafeInteger(port) || port < 1 || port > 65535) {
+      sandboxDiagnostic(
+        "networkAllow",
+        "entries need a non-empty host and a port in 1-65535; dropping the invalid entry",
+        diagnostics,
+      );
+      continue;
+    }
+    entries.push({ host, port });
+  }
+  return entries;
+}
+
+function sandboxNetworkOpenSkills(
+  raw: Record<string, unknown>,
+  diagnostics: PilotConfigDiagnostic[],
+): string[] {
+  const v = raw.networkOpenSkills;
+  if (v === undefined) return [];
+  if (Array.isArray(v) && v.every((name) => typeof name === "string" && /^[A-Za-z0-9._-]+$/.test(name))) {
+    return [...(v as string[])];
+  }
+  sandboxDiagnostic(
+    "networkOpenSkills",
+    "must be an array of skill directory names; ignoring it",
+    diagnostics,
+  );
+  return [];
 }
 
 function sandboxKind(raw: Record<string, unknown>, diagnostics: PilotConfigDiagnostic[]): SandboxConfig["kind"] {
@@ -86,7 +153,9 @@ function parseSandbox(raw: unknown, diagnostics: PilotConfigDiagnostic[]): Sandb
   return {
     kind: sandboxKind(section, diagnostics),
     allowUnsandboxed: sandboxBool(section, "allowUnsandboxed", false, diagnostics),
-    network: sandboxBool(section, "network", true, diagnostics),
+    network: sandboxNetwork(section, diagnostics),
+    networkAllow: sandboxNetworkAllow(section, diagnostics),
+    networkOpenSkills: sandboxNetworkOpenSkills(section, diagnostics),
     extraReadOnlyBinds: sandboxBinds(section, diagnostics),
   };
 }

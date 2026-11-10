@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { accessSync, constants as fsConstants, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import type { CommandSandbox } from "./index.js";
+import type { CommandSandbox, SandboxWrapOptions } from "./index.js";
 import { appReadOnlyGrants, grantForms, type SandboxGrants } from "./grants.js";
 
 export type SandboxExecConfig = {
@@ -96,7 +96,9 @@ export class SandboxExecSandbox implements CommandSandbox {
     };
   }
 
-  wrap(command: string, options: { cwd: string; userHome: string; env: NodeJS.ProcessEnv }): { file: string; args: string[] } {
+  wrap(command: string, options: SandboxWrapOptions): { file: string; args: string[] } {
+    // TODO(spec §10.5): macOS 尚未实现 none / allowlist 三态，网络由 profile 里的
+    // `(allow network*)` 全量放行；`none` 档的缺口由启动网络自检（netProbe）兜住。
     mkdirSync(join(options.userHome, ".tmp"), { recursive: true });
     // Inline the profile: a command with write access to userHome must never be
     // able to replace the policy file between wrap() and sandbox-exec startup.
