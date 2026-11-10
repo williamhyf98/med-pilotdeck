@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PilotDeck shared design themes",
+  "type": "object",
+  "required": ["schemaVersion", "defaultTheme", "semantic", "fontRoles", "themes", "recommend"],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "defaultTheme": { "type": "string", "minLength": 1 },
+    "semantic": {
+      "type": "object",
+      "required": ["danger", "warning", "success", "info"],
+      "properties": {
+        "danger": { "$ref": "#/$defs/semanticColor" },
+        "warning": { "$ref": "#/$defs/semanticColor" },
+        "success": { "$ref": "#/$defs/semanticColor" },
+        "info": { "$ref": "#/$defs/semanticColor" }
+      }
+    },
+    "fontRoles": {
+      "type": "object",
+      "required": ["sans", "serif", "mono"],
+      "properties": {
+        "sans": { "$ref": "#/$defs/fontRole" },
+        "serif": { "$ref": "#/$defs/fontRole" },
+        "mono": { "$ref": "#/$defs/fontRole" }
+      }
+    },
+    "themes": {
+      "type": "object",
+      "minProperties": 6,
+      "patternProperties": {
+        "^[a-z][a-z0-9-]*$": { "$ref": "#/$defs/theme" }
+      },
+      "additionalProperties": false
+    },
+    "recommend": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["match", "theme"],
+        "properties": {
+          "match": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+          "theme": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "hex": { "type": "string", "pattern": "^[0-9A-F]{6}$" },
+    "semanticColor": {
+      "type": "object",
+      "required": ["fg", "bg", "onFg"],
+      "properties": {
+        "fg": { "$ref": "#/$defs/hex" },
+        "bg": { "$ref": "#/$defs/hex" },
+        "onFg": { "$ref": "#/$defs/hex" }
+      }
+    },
+    "fontRole": {
+      "type": "object",
+      "required": ["officeWindows", "officeMac", "libreOffice", "pdfFile", "htmlStack", "htmlBundle"],
+      "properties": {
+        "officeWindows": { "type": "string", "minLength": 1 },
+        "officeMac": { "type": "string", "minLength": 1 },
+        "libreOffice": { "type": "string", "minLength": 1 },
+        "pdfFile": { "type": ["string", "null"] },
+        "htmlStack": { "type": "string", "minLength": 1 },
+        "htmlBundle": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "theme": {
+      "type": "object",
+      "required": [
+        "label", "aliases", "status", "bestFor", "avoidFor", "textUnsafe",
+        "colors", "chart", "typography", "surface", "layoutVariant"
+      ],
+      "properties": {
+        "label": { "type": "string", "minLength": 1 },
+        "aliases": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "status": { "enum": ["stable", "deprecated", "hidden"] },
+        "bestFor": { "type": "array", "items": { "type": "string" } },
+        "avoidFor": { "type": "array", "items": { "type": "string" } },
+        "textUnsafe": {
+          "type": "array",
+          "items": { "enum": ["accent", "support"] },
+          "uniqueItems": true
+        },
+        "colors": {
+          "type": "object",
+          "required": [
+            "paper", "surface", "ink", "muted", "primary", "accent", "support",
+            "rule", "soft", "onPrimary", "onDark", "onDarkMuted"
+          ],
+          "properties": {
+            "paper": { "$ref": "#/$defs/hex" },
+            "surface": { "$ref": "#/$defs/hex" },
+            "ink": { "$ref": "#/$defs/hex" },
+            "muted": { "$ref": "#/$defs/hex" },
+            "primary": { "$ref": "#/$defs/hex" },
+            "accent": { "$ref": "#/$defs/hex" },
+            "support": { "$ref": "#/$defs/hex" },
+            "rule": { "$ref": "#/$defs/hex" },
+            "soft": { "$ref": "#/$defs/hex" },
+            "onPrimary": { "$ref": "#/$defs/hex" },
+            "onDark": { "$ref": "#/$defs/hex" },
+            "onDarkMuted": { "$ref": "#/$defs/hex" }
+          }
+        },
+        "chart": {
+          "type": "object",
+          "required": ["series", "grid", "axis"],
+          "properties": {
+            "series": {
+              "type": "array", "minItems": 1, "maxItems": 3,
+              "items": { "$ref": "#/$defs/hex" }
+            },
+            "grid": { "$ref": "#/$defs/hex" },
+            "axis": { "$ref": "#/$defs/hex" }
+          }
+        },
+        "typography": {
+          "type": "object",
+          "required": [
+            "headingRole", "bodyRole", "numericRole", "headingWeight",
+            "bodyScale", "lineHeightScale", "letterSpacing"
+          ],
+          "properties": {
+            "headingRole": { "enum": ["sans", "serif", "mono"] },
+            "bodyRole": { "enum": ["sans", "serif", "mono"] },
+            "numericRole": { "enum": ["sans", "serif", "mono"] },
+            "headingWeight": { "type": "integer", "minimum": 400, "maximum": 900 },
+            "bodyScale": { "type": "number", "minimum": 0.8, "maximum": 1.2 },
+            "lineHeightScale": { "type": "number", "minimum": 0.8, "maximum": 1.2 },
+            "letterSpacing": { "type": "number", "minimum": 0, "maximum": 0.1 }
+          }
+        },
+        "surface": {
+          "type": "object",
+          "required": ["masthead", "sectionMarker", "tableHeader", "callout", "imagingPanel", "footer"],
+          "properties": {
+            "masthead": { "enum": ["rule-line", "rule-grid", "solid-band", "hairline", "none"] },
+            "sectionMarker": { "enum": ["number-accent", "number-sidebar", "phase-chip", "cn-number", "dot", "plain"] },
+            "tableHeader": { "enum": ["primary-fill", "soft-fill", "ink-rule", "ink-fill"] },
+            "callout": { "enum": ["left-rule-soft", "hairline-box", "rounded-card"] },
+            "imagingPanel": { "enum": ["dark-panel", "none"] },
+            "footer": { "enum": ["hairline", "none"] }
+          }
+        },
+        "layoutVariant": { "enum": ["report", "deck", "page", "timeline", "archive", "cards", "sheet", "diagram"] }
+      }
+    }
+  }
+}

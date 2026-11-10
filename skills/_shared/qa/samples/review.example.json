@@ -1,0 +1,22 @@
+{
+  "schema": "pilotdeck-qa-review/v1",
+  "artifactSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "pageCount": 2,
+  "reviewer": "human",
+  "pages": [
+    {
+      "page": 1,
+      "status": "passed",
+      "image": "qa/render/page-1.png",
+      "imageSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "notes": "标题、表头、提示块对比正常"
+    },
+    {
+      "page": 2,
+      "status": "passed",
+      "image": "qa/render/page-2.png",
+      "imageSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "notes": "表格跨页无遮挡"
+    }
+  ]
+}

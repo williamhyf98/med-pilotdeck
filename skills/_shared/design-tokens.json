@@ -1,0 +1,245 @@
+{
+  "schemaVersion": 2,
+  "defaultTheme": "clinical",
+  "semantic": {
+    "danger": { "fg": "B42318", "bg": "FDECEC", "onFg": "FFFFFF" },
+    "warning": { "fg": "B45309", "bg": "FDF3E3", "onFg": "FFFFFF" },
+    "success": { "fg": "157F3D", "bg": "E9F5EE", "onFg": "FFFFFF" },
+    "info": { "fg": "1F5FA9", "bg": "EAF1FA", "onFg": "FFFFFF" }
+  },
+  "fontRoles": {
+    "sans": {
+      "officeWindows": "Microsoft YaHei",
+      "officeMac": "PingFang SC",
+      "libreOffice": "Noto Sans CJK SC",
+      "pdfFile": "NotoSansSC-VF.ttf",
+      "htmlStack": "\"Noto Sans SC\",\"Source Han Sans SC\",\"PingFang SC\",\"Microsoft YaHei\",\"Noto Sans CJK SC\",system-ui,sans-serif",
+      "htmlBundle": []
+    },
+    "serif": {
+      "officeWindows": "SimSun",
+      "officeMac": "Songti SC",
+      "libreOffice": "Noto Serif CJK SC",
+      "pdfFile": "NotoSerifSC-Regular.ttf",
+      "htmlStack": "\"Noto Serif SC\",\"Source Han Serif SC\",\"Songti SC\",\"SimSun\",\"Noto Serif CJK SC\",serif",
+      "htmlBundle": []
+    },
+    "mono": {
+      "officeWindows": "Consolas",
+      "officeMac": "Menlo",
+      "libreOffice": "DejaVu Sans Mono",
+      "pdfFile": null,
+      "htmlStack": "ui-monospace,\"SFMono-Regular\",Menlo,Consolas,monospace",
+      "htmlBundle": []
+    }
+  },
+  "themes": {
+    "clinical": {
+      "label": "临床晨光",
+      "aliases": ["临床", "晨光", "clinic-dawn", "vital"],
+      "status": "stable",
+      "bestFor": ["outpatient", "discharge", "general-report", "imaging-report"],
+      "avoidFor": ["meta-analysis"],
+      "textUnsafe": [],
+      "colors": {
+        "paper": "FBF9F6", "surface": "FFFFFF", "ink": "1C2B33",
+        "muted": "5C6B72", "primary": "12404F", "accent": "B4552D",
+        "support": "2F7183", "rule": "E3DED7", "soft": "F3EAE3",
+        "onPrimary": "FFFFFF", "onDark": "F2EDE7", "onDarkMuted": "BFD2D6"
+      },
+      "chart": { "series": ["12404F", "B4552D", "7C8B93"], "grid": "E3DED7", "axis": "5C6B72" },
+      "typography": {
+        "headingRole": "sans", "bodyRole": "sans", "numericRole": "mono",
+        "headingWeight": 700, "bodyScale": 1.0, "lineHeightScale": 1.0, "letterSpacing": 0.0
+      },
+      "surface": {
+        "masthead": "rule-line", "sectionMarker": "number-accent",
+        "tableHeader": "primary-fill", "callout": "left-rule-soft",
+        "imagingPanel": "dark-panel", "footer": "hairline"
+      },
+      "layoutVariant": "report"
+    },
+    "academic": {
+      "label": "青黛循证",
+      "aliases": ["循证", "学术", "research"],
+      "status": "stable",
+      "bestFor": ["meta-analysis", "literature-review", "grant"],
+      "avoidFor": ["patient-education"],
+      "textUnsafe": ["support"],
+      "colors": {
+        "paper": "F7F8FA", "surface": "FFFFFF", "ink": "16202A",
+        "muted": "5A6472", "primary": "1A3A5F", "accent": "0F6E62",
+        "support": "A87B2A", "rule": "DCE1E8", "soft": "E8F0EF",
+        "onPrimary": "FFFFFF", "onDark": "E9EEF4", "onDarkMuted": "B9C7D6"
+      },
+      "chart": { "series": ["1A3A5F", "0F6E62", "6E8CB4"], "grid": "DCE1E8", "axis": "5A6472" },
+      "typography": {
+        "headingRole": "sans", "bodyRole": "sans", "numericRole": "mono",
+        "headingWeight": 700, "bodyScale": 1.0, "lineHeightScale": 1.0, "letterSpacing": 0.0
+      },
+      "surface": {
+        "masthead": "solid-band", "sectionMarker": "number-sidebar",
+        "tableHeader": "primary-fill", "callout": "left-rule-soft",
+        "imagingPanel": "none", "footer": "hairline"
+      },
+      "layoutVariant": "report"
+    },
+    "trauma": {
+      "label": "松风急救",
+      "aliases": ["急救", "战创伤", "emergency"],
+      "status": "stable",
+      "bestFor": ["trauma", "emergency", "triage", "protocol"],
+      "avoidFor": ["literature-review"],
+      "textUnsafe": [],
+      "colors": {
+        "paper": "F5F6F2", "surface": "FFFFFF", "ink": "1A211C",
+        "muted": "5B665E", "primary": "1D3B2A", "accent": "A55C11",
+        "support": "2F6B57", "rule": "D8DED4", "soft": "EDF0E6",
+        "onPrimary": "FFFFFF", "onDark": "E7EDE6", "onDarkMuted": "BCCBBE"
+      },
+      "chart": { "series": ["1D3B2A", "A55C11", "549478"], "grid": "D8DED4", "axis": "5B665E" },
+      "typography": {
+        "headingRole": "sans", "bodyRole": "sans", "numericRole": "mono",
+        "headingWeight": 700, "bodyScale": 1.03, "lineHeightScale": 1.0, "letterSpacing": 0.0
+      },
+      "surface": {
+        "masthead": "rule-line", "sectionMarker": "phase-chip",
+        "tableHeader": "primary-fill", "callout": "left-rule-soft",
+        "imagingPanel": "none", "footer": "hairline"
+      },
+      "layoutVariant": "timeline"
+    },
+    "archive": {
+      "label": "宣纸病案",
+      "aliases": ["宣纸", "病案", "case-archive"],
+      "status": "stable",
+      "bestFor": ["long-case", "archive", "history"],
+      "avoidFor": ["emergency", "projection"],
+      "textUnsafe": [],
+      "colors": {
+        "paper": "FAF6EC", "surface": "FFFDF7", "ink": "22201C",
+        "muted": "5F5A50", "primary": "2B2A26", "accent": "9C3B2E",
+        "support": "6B5A3E", "rule": "E6DFD0", "soft": "F2EBDD",
+        "onPrimary": "FBF7EE", "onDark": "EFE8D8", "onDarkMuted": "C6BBA0"
+      },
+      "chart": { "series": ["2B2A26", "9C3B2E", "9A8053"], "grid": "E6DFD0", "axis": "5F5A50" },
+      "typography": {
+        "headingRole": "serif", "bodyRole": "serif", "numericRole": "mono",
+        "headingWeight": 700, "bodyScale": 1.0, "lineHeightScale": 1.04, "letterSpacing": 0.02
+      },
+      "surface": {
+        "masthead": "hairline", "sectionMarker": "cn-number",
+        "tableHeader": "ink-rule", "callout": "hairline-box",
+        "imagingPanel": "none", "footer": "hairline"
+      },
+      "layoutVariant": "archive"
+    },
+    "edu": {
+      "label": "杏林宣教",
+      "aliases": ["宣教", "健康教育", "patient-education"],
+      "status": "stable",
+      "bestFor": ["patient-education", "public-health"],
+      "avoidFor": ["emergency", "legal-report"],
+      "textUnsafe": [],
+      "colors": {
+        "paper": "FBF9F4", "surface": "FFFFFF", "ink": "22302A",
+        "muted": "56655D", "primary": "2E5643", "accent": "A85C22",
+        "support": "657747", "rule": "E2E4D9", "soft": "F1F3E7",
+        "onPrimary": "FFFFFF", "onDark": "EDF2EC", "onDarkMuted": "C3D0C2"
+      },
+      "chart": { "series": ["2E5643", "A85C22", "7C8F5E"], "grid": "E2E4D9", "axis": "56655D" },
+      "typography": {
+        "headingRole": "sans", "bodyRole": "sans", "numericRole": "mono",
+        "headingWeight": 700, "bodyScale": 1.08, "lineHeightScale": 1.0, "letterSpacing": 0.0
+      },
+      "surface": {
+        "masthead": "none", "sectionMarker": "dot",
+        "tableHeader": "soft-fill", "callout": "rounded-card",
+        "imagingPanel": "none", "footer": "none"
+      },
+      "layoutVariant": "cards"
+    },
+    "mono": {
+      "label": "灰阶印刷",
+      "aliases": ["灰阶", "黑白", "grayscale"],
+      "status": "stable",
+      "bestFor": ["print-only", "grayscale"],
+      "avoidFor": ["color-projection"],
+      "textUnsafe": ["support"],
+      "colors": {
+        "paper": "F5F6F7", "surface": "FFFFFF", "ink": "1A1D21",
+        "muted": "5B636B", "primary": "22282E", "accent": "5A646E",
+        "support": "7F888F", "rule": "D5D9DD", "soft": "ECEEF0",
+        "onPrimary": "FFFFFF", "onDark": "F2F4F5", "onDarkMuted": "C2C8CD"
+      },
+      "chart": { "series": ["22282E", "5A646E", "7F888F"], "grid": "D5D9DD", "axis": "5B636B" },
+      "typography": {
+        "headingRole": "sans", "bodyRole": "sans", "numericRole": "mono",
+        "headingWeight": 700, "bodyScale": 1.0, "lineHeightScale": 1.0, "letterSpacing": 0.0
+      },
+      "surface": {
+        "masthead": "rule-grid", "sectionMarker": "plain",
+        "tableHeader": "ink-fill", "callout": "left-rule-soft",
+        "imagingPanel": "dark-panel", "footer": "hairline"
+      },
+      "layoutVariant": "report"
+    },
+    "clinical-legacy": {
+      "label": "临床通用（旧版）",
+      "aliases": ["旧版临床"],
+      "status": "hidden",
+      "bestFor": [],
+      "avoidFor": [],
+      "textUnsafe": ["accent", "support"],
+      "colors": {
+        "paper": "F7F8FA", "surface": "FFFFFF", "ink": "16202A",
+        "muted": "667085", "primary": "102A43", "accent": "F26B38",
+        "support": "1C9AB7", "rule": "D7DDE5", "soft": "F2F5F8",
+        "onPrimary": "FFFFFF", "onDark": "C7D8E5", "onDarkMuted": "A9BECC"
+      },
+      "chart": { "series": ["102A43", "F26B38", "1C9AB7"], "grid": "D7DDE5", "axis": "667085" },
+      "typography": {
+        "headingRole": "sans", "bodyRole": "sans", "numericRole": "mono",
+        "headingWeight": 700, "bodyScale": 1.0, "lineHeightScale": 1.0, "letterSpacing": 0.0
+      },
+      "surface": {
+        "masthead": "rule-line", "sectionMarker": "number-accent",
+        "tableHeader": "primary-fill", "callout": "left-rule-soft",
+        "imagingPanel": "none", "footer": "hairline"
+      },
+      "layoutVariant": "deck"
+    },
+    "vital-legacy": {
+      "label": "影像检验（旧版）",
+      "aliases": ["旧版影像检验"],
+      "status": "hidden",
+      "bestFor": [],
+      "avoidFor": [],
+      "textUnsafe": ["support"],
+      "colors": {
+        "paper": "F4F9F9", "surface": "FFFFFF", "ink": "10242B",
+        "muted": "566C73", "primary": "08333D", "accent": "C2255C",
+        "support": "12A3A3", "rule": "CBDCDE", "soft": "EDF3F3",
+        "onPrimary": "FFFFFF", "onDark": "C7D8E5", "onDarkMuted": "A9BECC"
+      },
+      "chart": { "series": ["08333D", "C2255C", "12A3A3"], "grid": "CBDCDE", "axis": "566C73" },
+      "typography": {
+        "headingRole": "sans", "bodyRole": "sans", "numericRole": "mono",
+        "headingWeight": 700, "bodyScale": 1.0, "lineHeightScale": 1.0, "letterSpacing": 0.0
+      },
+      "surface": {
+        "masthead": "rule-line", "sectionMarker": "number-accent",
+        "tableHeader": "primary-fill", "callout": "left-rule-soft",
+        "imagingPanel": "none", "footer": "hairline"
+      },
+      "layoutVariant": "deck"
+    }
+  },
+  "recommend": [
+    { "match": ["meta-analysis", "literature-review", "grant"], "theme": "academic" },
+    { "match": ["trauma", "emergency", "triage", "protocol"], "theme": "trauma" },
+    { "match": ["long-case", "archive", "history"], "theme": "archive" },
+    { "match": ["patient-education", "public-health"], "theme": "edu" },
+    { "match": ["print-only", "grayscale"], "theme": "mono" }
+  ]
+}

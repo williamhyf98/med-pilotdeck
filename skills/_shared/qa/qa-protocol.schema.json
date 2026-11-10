@@ -1,0 +1,418 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pilotdeck-qa-protocol/v1",
+  "title": "PilotDeck QA protocol v1",
+  "$defs": {
+    "acceptance": {
+      "type": "object",
+      "required": [
+        "schema",
+        "skill",
+        "requirements"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "schema": {
+          "const": "pilotdeck-qa-acceptance/v1"
+        },
+        "skill": {
+          "enum": [
+            "docx",
+            "pptx",
+            "xlsx",
+            "pdf",
+            "html",
+            "diagram"
+          ]
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "requirements": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "text": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "headings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "text"
+                ],
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "level": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9
+                  }
+                }
+              }
+            },
+            "pages": {
+              "type": "object",
+              "properties": {
+                "min": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "images": {
+              "type": "object",
+              "properties": {
+                "min": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "tables": {
+              "type": "object",
+              "properties": {
+                "min": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        },
+        "style": {
+          "type": "object",
+          "properties": {
+            "themeId": {
+              "type": "string"
+            },
+            "themeLabel": {
+              "type": "string"
+            },
+            "template": {
+              "type": "string"
+            }
+          }
+        },
+        "delivery": {
+          "type": "object",
+          "properties": {
+            "scope": {
+              "enum": [
+                "workspace",
+                "exact-external",
+                "folder"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "required": [
+        "schema",
+        "artifactSha256",
+        "pageCount",
+        "pages"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "schema": {
+          "const": "pilotdeck-qa-review/v1"
+        },
+        "artifactSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "pageCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reviewer": {
+          "enum": [
+            "human",
+            "model",
+            "unknown"
+          ]
+        },
+        "pages": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "page",
+              "status"
+            ],
+            "additionalProperties": true,
+            "properties": {
+              "page": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "status": {
+                "enum": [
+                  "passed",
+                  "failed",
+                  "not_performed"
+                ]
+              },
+              "image": {
+                "type": "string"
+              },
+              "imageSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "notes": {
+                "type": "string"
+              },
+              "issues": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "report": {
+      "type": "object",
+      "required": [
+        "schema",
+        "protocol",
+        "skill",
+        "status",
+        "artifact",
+        "acceptance",
+        "checks"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "schema": {
+          "const": "pilotdeck-qa-report/v1"
+        },
+        "protocol": {
+          "const": "pilotdeck-qa/v1"
+        },
+        "skill": {
+          "enum": [
+            "docx",
+            "pptx",
+            "xlsx",
+            "pdf",
+            "html",
+            "diagram"
+          ]
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "passed_with_warnings",
+            "failed",
+            "delivered_with_missing_assets"
+          ]
+        },
+        "artifact": {
+          "type": "object",
+          "required": [
+            "path",
+            "sha256"
+          ],
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "acceptance": {
+          "type": "object",
+          "required": [
+            "path",
+            "sha256"
+          ],
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "review": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "pageMatrix": {
+              "type": "object",
+              "properties": {
+                "pages": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "passed": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "failed": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "not_performed": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        },
+        "checks": {
+          "type": "object",
+          "required": [
+            "structural",
+            "content",
+            "visual",
+            "assets"
+          ],
+          "properties": {
+            "structural": {
+              "enum": [
+                "passed",
+                "failed",
+                "not_checked",
+                "not_performed"
+              ]
+            },
+            "content": {
+              "enum": [
+                "passed",
+                "failed",
+                "not_checked",
+                "not_performed"
+              ]
+            },
+            "visual": {
+              "enum": [
+                "passed",
+                "failed",
+                "not_performed"
+              ]
+            },
+            "assets": {
+              "enum": [
+                "complete",
+                "missing",
+                "not_applicable"
+              ]
+            }
+          }
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "missingAssets": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "timingsMs": {
+          "type": "object"
+        },
+        "generatedAt": {
+          "type": "string"
+        },
+        "visualEvidence": {
+          "type": "object",
+          "description": "Per-page review recorded by a skill's own gate and carried over by an adapter",
+          "required": [
+            "source",
+            "pagesReviewed"
+          ],
+          "properties": {
+            "source": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "report": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pagesReviewed": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "artifactSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/acceptance"
+    },
+    {
+      "$ref": "#/$defs/review"
+    },
+    {
+      "$ref": "#/$defs/report"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "schema": "pilotdeck-qa-report/v1",
+  "protocol": "pilotdeck-qa/v1",
+  "skill": "docx",
+  "status": "passed",
+  "artifact": {
+    "path": "/workspace/exports/病例报告.docx",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "bytes": 48213
+  },
+  "acceptance": {
+    "path": "/workspace/scratch/work/session/turn/docx/qa/acceptance.json",
+    "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "review": {
+    "path": "/workspace/scratch/work/session/turn/docx/qa/review.json",
+    "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "pageMatrix": { "pages": 2, "passed": 2, "failed": 0, "not_performed": 0 }
+  },
+  "checks": {
+    "structural": "passed",
+    "content": "passed",
+    "visual": "passed",
+    "assets": "complete"
+  },
+  "issues": [],
+  "missingAssets": [],
+  "timingsMs": { "structural": 820, "visual": 3500, "total": 4320 },
+  "generatedAt": "2026-11-09T10:05:00+00:00"
+}
