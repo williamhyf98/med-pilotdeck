@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="0; url=https://example.com/next">
+<title>不安全示例</title>
+</head>
+<body onload="steal()">
+<h1>不安全示例</h1>
+<p><a href="javascript:alert(1)">可执行链接</a></p>
+<img src="data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==" alt="危险载荷">
+<form action="https://example.com/collect"><button>提交</button></form>
+</body>
+</html>

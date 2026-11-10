@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN" data-pd-theme="academic">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>示例报告</title>
+<style>
+/*__PD_THEMES__*/
+body { margin: 0; background: var(--pd-paper); color: var(--pd-ink);
+  font-family: var(--pd-font-body); }
+main { max-width: 960px; margin: 0 auto; padding: 32px 24px; }
+h1, h2 { font-family: var(--pd-font-heading); color: var(--pd-primary); }
+.card { background: var(--pd-surface); border: 1px solid var(--pd-rule);
+  border-radius: 12px; padding: 20px; }
+table { width: 100%; border-collapse: collapse; }
+th { background: var(--pd-primary); color: var(--pd-on-primary); text-align: left; }
+th, td { padding: 8px 10px; border: 1px solid var(--pd-rule); }
+.note { background: var(--pd-soft); border-left: 4px solid var(--pd-accent);
+  padding: 10px 14px; }
+.flag { color: var(--pd-danger); background: var(--pd-danger-bg); }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="top">示例报告</h1>
+  <section id="summary" class="card">
+    <h2>摘要</h2>
+    <p>这是一份用于静态审计的示例文本，不含真实病例数据。</p>
+  </section>
+  <section id="detail" class="card">
+    <h2>明细</h2>
+    <table>
+      <thead><tr><th>项目</th><th>结果</th></tr></thead>
+      <tbody>
+        <tr><td>甲</td><td>正常</td></tr>
+        <tr><td>乙</td><td class="flag">待复核</td></tr>
+      </tbody>
+    </table>
+    <p class="note">提示块使用 soft 底与 accent 左边线。</p>
+  </section>
+  <section id="figure" class="card">
+    <h2>图示</h2>
+    <img src="assets/photo.png" alt="示例图片">
+  </section>
+  <p><a href="#top">回到顶部</a></p>
+</main>
+</body>
+</html>
