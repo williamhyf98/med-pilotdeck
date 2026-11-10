@@ -14,25 +14,47 @@ test("overrides are applied and invalid values fall back with a diagnostic", () 
   assert.ok(diags.some((d) => /logKeep/.test(d.message)));
   assert.ok(diags.some((d) => d.code === "multi-user.retention.invalid" && d.severity === "warning" && d.path === "multiUser.retention.logKeep"));
 });
-test("sandbox defaults when the section is absent: auto kind, no unsandboxed, network on, no extra binds", () => {
+test("sandbox defaults when the section is absent: auto kind, no unsandboxed, network open, no extra binds", () => {
   const diags = [];
   const r = parseMultiUserConfig(undefined, diags);
-  assert.deepEqual(r.sandbox, { kind: undefined, allowUnsandboxed: false, network: true, extraReadOnlyBinds: [] });
+  assert.deepEqual(r.sandbox, {
+    kind: undefined,
+    allowUnsandboxed: false,
+    network: "open",
+    networkAllow: [],
+    networkOpenSkills: [],
+    extraReadOnlyBinds: [],
+  });
   assert.deepEqual(diags, []);
 });
 test("sandbox overrides are applied without diagnostics", () => {
   const diags = [];
   const r = parseMultiUserConfig(
-    { sandbox: { kind: "none", allowUnsandboxed: true, network: false, extraReadOnlyBinds: ["/usr/local/bin"] } },
+    {
+      sandbox: {
+        kind: "none",
+        allowUnsandboxed: true,
+        network: "none",
+        networkAllow: [{ host: "10.31.112.13", port: 19400 }],
+        networkOpenSkills: ["docx", "pptx"],
+        extraReadOnlyBinds: ["/usr/local/bin"],
+      },
+    },
     diags,
   );
   assert.deepEqual(r.sandbox, {
     kind: "none",
     allowUnsandboxed: true,
-    network: false,
+    network: "none",
+    networkAllow: [{ host: "10.31.112.13", port: 19400 }],
+    networkOpenSkills: ["docx", "pptx"],
     extraReadOnlyBinds: ["/usr/local/bin"],
   });
   assert.deepEqual(diags, []);
+});
+test("legacy boolean network values still map onto the three-state enum", () => {
+  assert.equal(parseMultiUserConfig({ sandbox: { network: false } }, []).sandbox?.network, "none");
+  assert.equal(parseMultiUserConfig({ sandbox: { network: true } }, []).sandbox?.network, "open");
 });
 test("invalid sandbox values fall back to defaults with one diagnostic per key", () => {
   const diags = [];
@@ -40,7 +62,14 @@ test("invalid sandbox values fall back to defaults with one diagnostic per key",
     { sandbox: { kind: "docker", allowUnsandboxed: "yes", network: 0, extraReadOnlyBinds: ["relative/path"] } },
     diags,
   );
-  assert.deepEqual(r.sandbox, { kind: undefined, allowUnsandboxed: false, network: true, extraReadOnlyBinds: [] });
+  assert.deepEqual(r.sandbox, {
+    kind: undefined,
+    allowUnsandboxed: false,
+    network: "open",
+    networkAllow: [],
+    networkOpenSkills: [],
+    extraReadOnlyBinds: [],
+  });
   const paths = diags.map((d) => d.path).sort();
   assert.deepEqual(paths, [
     "multiUser.sandbox.allowUnsandboxed",
