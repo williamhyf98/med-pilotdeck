@@ -57,7 +57,7 @@ DOCX。
 
 ## 字体与校验
 
-- 内置模板统一声明捆绑 Noto Sans SC，不搜索系统字体。
+- 内置模板统一声明 `Microsoft YaHei`（`archive` 主题用 `SimSun`）。这两个名字 Windows 系统自带、Office for Mac 也在 app 内自带；DOCX 只写名字不嵌字体，换机后不会变样。
 - DOCX 包完整性检查和结构审计由 `make` 内部完成。
 - 页面 PNG 渲染不是离线现场的硬依赖。没有渲染后端时，`make` 仍应成功写出
   DOCX，并带 warning；不要安装 LibreOffice 或其它软件来补这一步。

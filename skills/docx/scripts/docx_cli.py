@@ -126,6 +126,13 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     prepare_parser.add_argument(
+        "--design-theme",
+        help=(
+            "Built-in design theme id, Chinese label, or alias "
+            "(e.g. 临床晨光 / clinical). Requires --style-mode builtin."
+        ),
+    )
+    prepare_parser.add_argument(
         "--style-source",
         choices=(
             "explicit-requirements",
@@ -167,6 +174,13 @@ def _parser() -> argparse.ArgumentParser:
     make_parser.add_argument("--spec")
     make_parser.add_argument("--out", required=True)
     make_parser.add_argument("--force", action="store_true")
+    make_parser.add_argument(
+        "--design-theme",
+        help=(
+            "Built-in design theme id, Chinese label, or alias "
+            "(e.g. 临床晨光 / clinical). Implies the themed-v1 template."
+        ),
+    )
 
     create_parser = sub.add_parser("create", help="Create a DOCX from a JSON specification")
     create_parser.add_argument("--spec", required=True)
@@ -480,6 +494,7 @@ def _execute(args: argparse.Namespace) -> dict[str, Any]:
             document_structure=args.document_structure,
             protected_sources=args.protect_source,
             style_mode=args.style_mode,
+            design_theme=args.design_theme,
             style_source=args.style_source,
             style_requirements=args.style_requirement,
             existing_document=args.existing_document,
@@ -515,6 +530,7 @@ def _execute(args: argparse.Namespace) -> dict[str, Any]:
             body_file=args.body_file,
             markdown_file=args.markdown,
             spec_file=args.spec,
+            design_theme=args.design_theme,
             force=args.force,
         )
     if args.command == "create":

@@ -76,6 +76,34 @@ flowchart LR
 边可选 `"style": "dashed"`。节点和分组 `id` 只能使用英文字母、数字、
 下划线和连字符，且不能以数字开头。
 
+### 两条独立的轴
+
+| 字段 / 参数 | 控制什么 | 取值 |
+| --- | --- | --- |
+| `theme` / `--theme` | 布局与节点形状 | `clean`、`architecture` |
+
+`direction` 三档：不写时默认 `LR`；**单链**横向超过 1200px（报告正文宽度）会自动转成
+`TB`，返回 JSON 里带 `directionNote` 说明原因。显式写了 `direction` / `--direction` /
+Mermaid 表头就不会被改写，有分支的图也不自动转排。要固定横排就显式写 `"direction": "LR"`。
+| `designTheme` / `--design-theme` | 颜色与字体角色 | 六套设计主题的 ID / 中文名 / 别名 |
+
+两者互不推导：`theme=architecture` 只决定数据库画成圆柱、外部系统画虚线框；
+配色默认仍是灰蓝。写了 `designTheme` 才套用调色板。命令行的 `--design-theme`
+覆盖 spec 里的 `designTheme`。
+
+```json
+{
+  "designTheme": "松风急救",
+  "theme": "architecture",
+  "nodes": [{ "id": "app", "label": "应用", "kind": "service" }],
+  "edges": []
+}
+```
+
+配色只落在这些位置：背景 `paper`、标题 `primary`、连线/边框/次级文字 `muted`、
+分组虚线框 `rule`、风险节点 `semantic.danger.bg`、节点填充按 `kind` 取主题色的浅色调。
+字体角色来自 `typography.headingRole` / `bodyRole`（`archive` 是衬线）。
+
 ## 输出格式
 
 - `--format svg`：默认，也是聊天预览和下载的主路径。

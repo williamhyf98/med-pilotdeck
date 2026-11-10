@@ -224,10 +224,18 @@ function seriesXml(workbook, spec, series, index) {
   if (values.some((value) => !Number.isFinite(value))) {
     throw new Error(`Chart '${spec.title ?? spec.sheet}' series '${series.name ?? index + 1}' contains non-numeric values`);
   }
-  const color = String(series.color ?? ["4472C4", "ED7D31", "A5A5A5", "FFC000", "5B9BD5", "70AD47"][index % 6]).replace(/^#/, "").toUpperCase();
+  const palette = Array.isArray(spec.palette) && spec.palette.length > 0
+    ? spec.palette
+    : ["4472C4", "ED7D31", "A5A5A5", "FFC000", "5B9BD5", "70AD47"];
+  const color = String(series.color ?? palette[index % palette.length]).replace(/^#/, "").toUpperCase();
   const marker = spec.type === "line" ? '<c:marker><c:symbol val="circle"/><c:size val="5"/></c:marker>' : "";
-  const line = spec.type === "line" ? `<c:spPr><a:ln w="28575"><a:solidFill><a:srgbClr val="${color}"/></a:solidFill></a:ln></c:spPr><c:smooth val="0"/>` : `<c:spPr><a:solidFill><a:srgbClr val="${color}"/></a:solidFill><a:ln><a:noFill/></a:ln></c:spPr>`;
-  return `<c:ser><c:idx val="${index}"/><c:order val="${index}"/><c:tx><c:v>${escapeXml(series.name ?? `Series ${index + 1}`)}</c:v></c:tx>${line}${marker}<c:cat><c:strRef><c:f>${escapeXml(categoriesFormula)}</c:f><c:strCache>${cacheXml(categories, false)}</c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>${escapeXml(valuesFormula)}</c:f><c:numCache>${cacheXml(values, true)}</c:numCache></c:numRef></c:val></c:ser>`;
+  // CT_LineSer orders `smooth` after `val`; putting it before `marker` makes
+  // Excel ask to repair the workbook and makes LibreOffice drop the series.
+  const line = spec.type === "line"
+    ? `<c:spPr><a:ln w="28575"><a:solidFill><a:srgbClr val="${color}"/></a:solidFill></a:ln></c:spPr>`
+    : `<c:spPr><a:solidFill><a:srgbClr val="${color}"/></a:solidFill><a:ln><a:noFill/></a:ln></c:spPr>`;
+  const smooth = spec.type === "line" ? '<c:smooth val="0"/>' : "";
+  return `<c:ser><c:idx val="${index}"/><c:order val="${index}"/><c:tx><c:v>${escapeXml(series.name ?? `Series ${index + 1}`)}</c:v></c:tx>${line}${marker}<c:cat><c:strRef><c:f>${escapeXml(categoriesFormula)}</c:f><c:strCache>${cacheXml(categories, false)}</c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>${escapeXml(valuesFormula)}</c:f><c:numCache>${cacheXml(values, true)}</c:numCache></c:numRef></c:val>${smooth}</c:ser>`;
 }
 
 function titleXml(title) {
@@ -245,11 +253,15 @@ function chartXml(workbook, spec, chartIndex) {
   const axisA = 100000 + chartIndex * 2;
   const axisB = axisA + 1;
   const series = spec.series.map((item, index) => seriesXml(workbook, spec, item, index)).join("");
+  const gridColor = String(spec.gridColor ?? "").replace(/^#/, "").toUpperCase();
+  const grid = /^[0-9A-F]{6}$/.test(gridColor)
+    ? `<c:majorGridlines><c:spPr><a:ln w="6350"><a:solidFill><a:srgbClr val="${gridColor}"/></a:solidFill></a:ln></c:spPr></c:majorGridlines>`
+    : "<c:majorGridlines/>";
   const plot = spec.type === "line"
     ? `<c:lineChart><c:grouping val="standard"/><c:varyColors val="0"/>${series}<c:marker val="1"/><c:smooth val="0"/><c:axId val="${axisA}"/><c:axId val="${axisB}"/></c:lineChart>`
     : `<c:barChart><c:barDir val="${spec.type === "bar" ? "bar" : "col"}"/><c:grouping val="clustered"/><c:varyColors val="0"/>${series}<c:gapWidth val="120"/><c:axId val="${axisA}"/><c:axId val="${axisB}"/></c:barChart>`;
   const legend = spec.legend === "none" ? "" : `<c:legend><c:legendPos val="${spec.legend ?? "b"}"/><c:layout/><c:overlay val="0"/></c:legend>`;
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><c:date1904 val="0"/><c:lang val="zh-CN"/><c:roundedCorners val="0"/><c:chart>${titleXml(spec.title)}<c:autoTitleDeleted val="0"/><c:plotArea><c:layout/>${plot}<c:catAx><c:axId val="${axisA}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:tickLblPos val="nextTo"/><c:crossAx val="${axisB}"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/></c:catAx><c:valAx><c:axId val="${axisB}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:numFmt formatCode="${escapeXml(spec.valueFormat ?? "General")}" sourceLinked="0"/><c:majorGridlines/><c:tickLblPos val="nextTo"/><c:crossAx val="${axisA}"/><c:crosses val="autoZero"/><c:crossBetween val="between"/></c:valAx></c:plotArea>${legend}<c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/><c:showDLblsOverMax val="0"/></c:chart><c:printSettings><c:headerFooter/><c:pageMargins b="0.75" l="0.7" r="0.7" t="0.75" header="0.3" footer="0.3"/><c:pageSetup/></c:printSettings></c:chartSpace>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><c:date1904 val="0"/><c:lang val="zh-CN"/><c:roundedCorners val="0"/><c:chart>${titleXml(spec.title)}<c:autoTitleDeleted val="0"/><c:plotArea><c:layout/>${plot}<c:catAx><c:axId val="${axisA}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:tickLblPos val="nextTo"/><c:crossAx val="${axisB}"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/></c:catAx><c:valAx><c:axId val="${axisB}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:numFmt formatCode="${escapeXml(spec.valueFormat ?? "General")}" sourceLinked="0"/>${grid}<c:tickLblPos val="nextTo"/><c:crossAx val="${axisA}"/><c:crosses val="autoZero"/><c:crossBetween val="between"/></c:valAx></c:plotArea>${legend}<c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/><c:showDLblsOverMax val="0"/></c:chart><c:printSettings><c:headerFooter/><c:pageMargins b="0.75" l="0.7" r="0.7" t="0.75" header="0.3" footer="0.3"/><c:pageSetup/></c:printSettings></c:chartSpace>`;
 }
 
 function cellAnchor(reference) {

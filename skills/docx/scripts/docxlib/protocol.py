@@ -16,6 +16,8 @@ RICH_RUN_FIELDS = {"text", "bold", "italic", "underline", "color", "size_pt"}
 ALIGNMENTS = ("left", "center", "right")
 SUPPORTED_FIELD_KEYWORDS = ("TOC", "PAGE", "NUMPAGES", "DATE", "TIME")
 BUILTIN_TEMPLATE_ID = "neutral-document-v1"
+THEMED_TEMPLATE_ID = "themed-v1"
+BUILTIN_TEMPLATES = (BUILTIN_TEMPLATE_ID, THEMED_TEMPLATE_ID)
 STYLE_POLICY_MODES = ("builtin", "user")
 USER_STYLE_SOURCES = (
     "explicit-requirements",
@@ -292,7 +294,8 @@ CREATE_SCHEMA: dict[str, Any] = {
             "additionalProperties": False,
             "properties": {
                 "mode": {"enum": list(STYLE_POLICY_MODES)},
-                "template": {"const": BUILTIN_TEMPLATE_ID},
+                "template": {"enum": list(BUILTIN_TEMPLATES)},
+                "theme": {"type": "string", "minLength": 1},
                 "source": {"enum": list(USER_STYLE_SOURCES)},
                 "requirements": {
                     "type": "array",
@@ -1090,7 +1093,7 @@ def normalize_style_policy(
         )
     _reject_unknown(
         value,
-        {"mode", "template", "source", "requirements"},
+        {"mode", "template", "source", "requirements", "theme"},
         "style_policy",
     )
     mode = value.get("mode")
@@ -1118,11 +1121,33 @@ def normalize_style_policy(
                 code="invalid-style-policy",
             )
         template = value.get("template", BUILTIN_TEMPLATE_ID)
-        if template != BUILTIN_TEMPLATE_ID:
+        theme = value.get("theme")
+        if template not in BUILTIN_TEMPLATES:
             raise DocxSkillError(
                 f"Unsupported builtin template: {template!r}",
                 code="invalid-style-policy",
-                details={"supported": [BUILTIN_TEMPLATE_ID]},
+                details={"supported": list(BUILTIN_TEMPLATES)},
+            )
+        if template == THEMED_TEMPLATE_ID:
+            if not isinstance(theme, str) or not theme.strip():
+                raise DocxSkillError(
+                    "themed-v1 requires style_policy.theme",
+                    code="invalid-style-policy",
+                )
+            # Canonicalize ids/labels/aliases so a frozen acceptance manifest
+            # and a later spec compare equal regardless of the spelling used.
+            from .design_theme import resolve_design_theme
+
+            resolved = resolve_design_theme(theme.strip())
+            return {
+                "mode": "builtin",
+                "template": THEMED_TEMPLATE_ID,
+                "theme": resolved["id"],
+            }
+        if theme is not None:
+            raise DocxSkillError(
+                "The neutral template does not accept a design theme",
+                code="invalid-style-policy",
             )
         return {
             "mode": "builtin",
@@ -1132,6 +1157,11 @@ def normalize_style_policy(
     if value.get("template") is not None:
         raise DocxSkillError(
             "User style_policy cannot select a builtin template",
+            code="invalid-style-policy",
+        )
+    if value.get("theme") is not None:
+        raise DocxSkillError(
+            "User style_policy cannot select a design theme; use builtin themed-v1",
             code="invalid-style-policy",
         )
     source = value.get("source")

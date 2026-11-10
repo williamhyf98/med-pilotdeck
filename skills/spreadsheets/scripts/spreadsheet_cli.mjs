@@ -41,6 +41,152 @@ class SpreadsheetStageError extends Error {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Design themes (T4.3). XLSX is a B-tier format: colours and the chart palette
+// follow the theme, layout and type geometry do not.
+// ---------------------------------------------------------------------------
+
+let cachedThemeReader;
+
+async function sharedThemeReader() {
+  if (cachedThemeReader !== undefined) return cachedThemeReader;
+  const roots = [
+    process.env.PILOTDECK_BUNDLED_SKILLS_DIR,
+    path.resolve(skillRoot, ".."),
+  ].filter(Boolean);
+  for (const root of new Set(roots.map((value) => path.resolve(value)))) {
+    const modulePath = path.join(root, "_shared", "tokens.mjs");
+    try {
+      await fs.access(modulePath);
+    } catch (error) {
+      if (error.code === "ENOENT") continue;
+      throw error;
+    }
+    const module = await import(pathToFileURL(modulePath).href);
+    const loaded = await module.loadTokens({ bundledSkillsRoot: root, skillRoot });
+    cachedThemeReader = { root, module, tokens: loaded.tokens };
+    return cachedThemeReader;
+  }
+  cachedThemeReader = null;
+  return null;
+}
+
+async function resolveSpreadsheetTheme(name) {
+  const reader = await sharedThemeReader();
+  if (!reader) {
+    throw new Error("共享主题数据不可用：缺少随包 skills/_shared/design-tokens.json");
+  }
+  let selected;
+  try {
+    selected = await reader.module.resolveTheme(name, {
+      bundledSkillsRoot: reader.root,
+      skillRoot,
+    });
+  } catch (error) {
+    throw new Error(`未知主题：${error instanceof Error ? error.message : String(error)}`);
+  }
+  const theme = selected.theme;
+  return {
+    id: selected.id,
+    label: theme.label,
+    colors: theme.colors,
+    chart: theme.chart ?? {},
+    typography: theme.typography ?? {},
+    fontRoles: reader.tokens?.fontRoles ?? {},
+    warning: selected.warning ?? null,
+  };
+}
+
+function argb(hex) {
+  return `FF${String(hex ?? "").replace(/^#/, "").toUpperCase()}`;
+}
+
+const DEFAULT_HEADER_FILL = "FF0F766E";
+
+/**
+ * ExcelJS writes a solid pattern fill with `fgColor` only. Excel infers the
+ * background from `fgColor`, but LibreOffice (our acceptance baseline via the
+ * Office Renderer) drops the fill entirely and renders a blank cell, so both
+ * colours have to be written for the fill to survive a round trip.
+ */
+function solidFill(hexArgb) {
+  const color = { argb: hexArgb };
+  return { type: "pattern", pattern: "solid", fgColor: color, bgColor: color };
+}
+
+function cellFillArgb(cell) {
+  const fill = cell.fill;
+  if (!fill || fill.type !== "pattern" || fill.pattern !== "solid") return null;
+  return fill.fgColor?.argb ?? fill.bgColor?.argb ?? null;
+}
+
+/**
+ * Apply a theme to an already-built workbook: sheet tab colour, title colour
+ * and body text colour. Header rows are covered twice: rows that belong to a
+ * native Excel table (their style cannot express our palette) and rows styled
+ * by `styleHeader`, which uses a fixed default fill.
+ */
+function applyWorkbookTheme(workbook, theme) {
+  const primary = argb(theme.colors.primary);
+  const onPrimary = argb(theme.colors.onPrimary);
+  const ink = argb(theme.colors.ink);
+  const accent = argb(theme.colors.accent);
+  // Only serif themes override the font family; the sans default stays as is.
+  const bodyRole = theme.typography?.bodyRole ?? "sans";
+  const serifName = bodyRole !== "sans"
+    ? theme.fontRoles?.[bodyRole]?.officeWindows ?? null
+    : null;
+  for (const worksheet of workbook.worksheets) {
+    worksheet.properties = { ...(worksheet.properties ?? {}), tabColor: { argb: accent } };
+    worksheet.eachRow({ includeEmpty: false }, (row) => {
+      row.eachCell({ includeEmpty: false }, (cell) => {
+        const font = { ...(cell.font ?? {}) };
+        if (serifName) font.name = serifName;
+        cell.font = font;
+      });
+    });
+    // Header rows written by `styleHeader` carry a fixed default fill; rewrite
+    // them so a themed workbook never shows an off-palette teal band.
+    worksheet.eachRow({ includeEmpty: false }, (row) => {
+      row.eachCell({ includeEmpty: false }, (cell) => {
+        if (cellFillArgb(cell) !== DEFAULT_HEADER_FILL) return;
+        cell.fill = solidFill(primary);
+        cell.font = { ...(cell.font ?? {}), bold: true, color: { argb: onPrimary } };
+      });
+    });
+    // Native table styles cannot express our palette, but direct cell fill
+    // wins over the table style, so theme the header row explicitly.
+    for (const entry of Object.values(worksheet.tables ?? {})) {
+      const model = entry?.table;
+      if (!model || model.headerRow === false) continue;
+      const bounds = parseRangeReference(model.tableRef ?? model.ref);
+      for (let column = bounds.startCol; column <= bounds.endCol; column += 1) {
+        const cell = worksheet.getCell(bounds.startRow, column);
+        cell.fill = solidFill(primary);
+        cell.font = { ...(cell.font ?? {}), bold: true, color: { argb: onPrimary } };
+      }
+    }
+    // Body text: themed ink, but never repaint the header band or the title.
+    worksheet.eachRow({ includeEmpty: false }, (row) => {
+      row.eachCell({ includeEmpty: false }, (cell) => {
+        if (cellFillArgb(cell) === primary) return;
+        if (cell.address === "A1") return;
+        if (!cell.font?.color) cell.font = { ...(cell.font ?? {}), color: { argb: ink } };
+      });
+    });
+    const titleCell = worksheet.getCell("A1");
+    if (titleCell.value !== null && titleCell.value !== undefined && titleCell.value !== "") {
+      const isHeader = cellFillArgb(titleCell) === primary;
+      titleCell.font = {
+        ...(titleCell.font ?? {}),
+        bold: true,
+        color: { argb: isHeader ? onPrimary : primary },
+      };
+      if (isHeader) titleCell.fill = solidFill(primary);
+    }
+  }
+}
+
 async function runStage(stage, operation) {
   try {
     return await operation();
@@ -567,12 +713,12 @@ function addConditionalFormatting(worksheet, { range, rules }) {
 }
 
 function styleHeader(worksheet, rangeRef, options = {}) {
-  const fill = options.fill ?? "FF0F766E";
+  const fill = options.fill ?? DEFAULT_HEADER_FILL;
   const color = options.color ?? "FFFFFFFF";
   forEachCellInRange(worksheet, rangeRef, (cell) => {
     cell.style = cloneCellStyle({
       ...(cell.style ?? {}),
-      fill: { type: "pattern", pattern: "solid", fgColor: { argb: fill } },
+      fill: solidFill(fill),
       font: { ...(cell.font ?? {}), bold: true, color: { argb: color } },
       alignment: { ...(cell.alignment ?? {}), vertical: "middle" },
     });
@@ -648,7 +794,10 @@ function fontProfile(platform = "cross-platform") {
   if (["windows", "win"].includes(normalized)) return { platform: "windows", body: "Microsoft YaHei", title: "Microsoft YaHei" };
   if (["mac", "macos", "darwin"].includes(normalized)) return { platform: "macos", body: "PingFang SC", title: "PingFang SC" };
   if (["linux", "libreoffice", "server"].includes(normalized)) return { platform: "linux", body: "Noto Sans SC", title: "Noto Sans SC" };
-  if (["cross-platform", "crossplatform", "auto"].includes(normalized)) return { platform: "cross-platform", body: "Noto Sans SC", title: "Noto Sans SC" };
+  // cross-platform means "must display on the reader's machine": Windows ships
+  // Microsoft YaHei and Office for Mac bundles the same file. Noto is only
+  // guaranteed on the Linux renderer, so it stays in the explicit linux profile.
+  if (["cross-platform", "crossplatform", "auto"].includes(normalized)) return { platform: "cross-platform", body: "Microsoft YaHei", title: "Microsoft YaHei" };
   throw new Error(`Unsupported font platform '${platform}'`);
 }
 
@@ -2323,6 +2472,7 @@ async function commandMake(options) {
     throw new Error(`Output already exists; pass --force to replace: ${outputPath}`);
   }
   let product;
+  let specThemeName = null;
   if (options.spec) {
     let existingWorkbook = null;
     if (options.input) {
@@ -2341,8 +2491,10 @@ async function commandMake(options) {
       existingWorkbook = await loadXlsx(inputPath);
     }
     const specPath = path.resolve(String(options.spec));
+    const specDocument = JSON.parse(await fs.readFile(specPath, "utf8"));
+    specThemeName = specDocument?.designTheme ?? specDocument?.design_theme ?? null;
     product = buildWorkbookFromSpec(
-      JSON.parse(await fs.readFile(specPath, "utf8")),
+      specDocument,
       existingWorkbook,
       { baseDir: path.dirname(specPath) },
     );
@@ -2351,6 +2503,19 @@ async function commandMake(options) {
     product = await buildSimpleMakeWorkbook(options);
   }
   const { workbook, nativeCharts, requirements, imageCount = 0 } = product;
+  const themeName = options["design-theme"] ?? options.designTheme ?? specThemeName;
+  let appliedTheme = null;
+  if (themeName !== undefined && themeName !== null && String(themeName).trim() !== "") {
+    appliedTheme = await resolveSpreadsheetTheme(String(themeName).trim());
+    applyWorkbookTheme(workbook, appliedTheme);
+    const palette = Array.isArray(appliedTheme.chart?.series) ? appliedTheme.chart.series : [];
+    if (palette.length > 0) {
+      for (const chart of nativeCharts) {
+        chart.palette = palette;
+        if (!chart.gridColor && appliedTheme.chart?.grid) chart.gridColor = appliedTheme.chart.grid;
+      }
+    }
+  }
   workbook.calcProperties.fullCalcOnLoad = true;
   workbook.calcProperties.forceFullCalc = true;
   validateWorkbookForSerialization(workbook, nativeCharts);
@@ -2458,6 +2623,8 @@ async function commandMake(options) {
         formulaCount: audit.formulas.count,
         nativeChartCount: chartResult.chartCount,
       },
+      ...(appliedTheme ? { theme: { id: appliedTheme.id, label: appliedTheme.label } } : {}),
+      ...(appliedTheme?.warning ? { themeWarning: appliedTheme.warning } : {}),
       ...(warning ? { warning } : {}),
     });
   } finally {
@@ -3460,6 +3627,14 @@ function printHelp() {
 
 async function main() {
   const { command, options } = parseArgs(process.argv.slice(2));
+  // This parser keeps unknown --flags instead of rejecting them, so a caller
+  // asking for a design theme would otherwise get a silent no-op workbook.
+  if (options.theme !== undefined) {
+    throw new Error(
+      "--theme is ambiguous for XLSX: use --design-theme for the PilotDeck design theme, "
+      + "or set a sheet's table.style.theme for a native Excel table style.",
+    );
+  }
   switch (command) {
     case "make": await commandMake(options); break;
     case "scaffold": await commandScaffold(options); break;

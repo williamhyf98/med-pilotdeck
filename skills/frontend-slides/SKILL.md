@@ -5,7 +5,9 @@ description: 在当前工作区生成医学风格的单文件 HTML 展示页（�
 
 # 医学 HTML 展示
 
-用 `write_file` / `edit_file` 在工作区写出**一个**自包含 HTML。没有 `*.sh` 生成器。先 `read_skill` 本文件，再读 [references/med-visual.md](references/med-visual.md)。
+用 `write_file` / `edit_file` 在工作区写出 HTML。**没有 HTML 生成器**：脚本只做静态审计
+（`html.sh audit`）和文件夹打包（`html.sh package / verify`），页面内容与布局仍由你写。
+先 `read_skill` 本文件，再读 [references/med-visual.md](references/med-visual.md)。
 
 ## 何时使用 / 何时不用
 
@@ -32,6 +34,85 @@ description: 在当前工作区生成医学风格的单文件 HTML 展示页（�
 - 覆盖已有 `exports/` 文件须用户明确同意，否则换文件名。
 
 生成前先 `glob` / `read_file` 看工作区。材料不够就提问或先走医学解析，不要空手上 HTML。
+
+## 主题（默认 `clinical` 临床晨光，不改变布局）
+
+本文件所在目录记为 `$FRONTEND_SLIDES_ROOT`。**默认就用 `clinical`（临床晨光）**，
+不需要用户点名；只有用户指定了别的主题、或内容用途明显更适合另一套主题时才换，
+换了要在回复里说明原因。选定主题后：
+
+1. 读 [references/themes.md](references/themes.md) 选主题；
+2. 把 `$FRONTEND_SLIDES_ROOT/assets/themes/pd-themes.css` **全文内联**进 `<style>`
+   （禁止 `<link>`）；
+3. 在 `<html>` 上写 `data-pd-theme="<英文 ID>"`；
+4. 页面颜色一律用 `var(--pd-*)`，不要手写主题外的十六进制色。
+
+六套主题的中文名、适用场景与令牌表见 references/themes.md。主题只管
+颜色与字体角色；A/B/C 阅读密度仍由你按内容组织。用户没提主题时**直接写
+`data-pd-theme="clinical"`**，不要空着、也不要自己另选一套。
+
+不确定主题 ID 或想给用户列一遍可选风格时：
+
+```bash
+bash "$FRONTEND_SLIDES_ROOT/scripts/html.sh" themes
+```
+
+返回六套主题（ID / 中文名 / 别名）以及各自的 `surface` 组件处理。生成文件末尾
+还带一组可选的签名组件类（`.pd-masthead`、`.pd-section-marker`、`.pd-callout`、
+`.pd-imaging`、`.pd-footer`、`.pd-stamp`），同一类名在六套主题下外观不同；
+需要"有设计感"的页面时优先用它们，纯文字页面不用也不影响。清单见
+references/themes.md 的「签名组件」一节。
+
+写盘后跑一次静态审计（只要 Python，不启动浏览器）：
+
+```bash
+bash "$FRONTEND_SLIDES_ROOT/scripts/html.sh" audit "$PWD/exports/<短中文名>.html"
+```
+
+有问题先修 `error` 再交付；`warning` 可解释后保留。审计结果只用于自检，
+不要把 JSON 贴给用户。交付后自然邀请一句「打开看看，哪里想调截图发我」，
+不要写"未完成视觉验收"之类的免责声明。
+
+用户点名了必须出现的内容或章节（例如"结论里要写复诊时间""要有影像所见"）时，
+把这些原话直接作为要求送入审计，别只靠肉眼确认：
+
+```bash
+bash "$FRONTEND_SLIDES_ROOT/scripts/html.sh" audit "$PWD/exports/<短中文名>.html" \
+  --require-text "建议两周后复诊" \
+  --require-heading "影像所见"
+```
+
+匹配忽略空白与行内标签（`<b>` 等不会把一句话拆开）。出现
+`requirement-not-met:text` / `requirement-not-met:heading` 就是用户要求没落地：
+补齐内容，或先跟用户确认后再交付，别悄悄跳过。
+
+静态审计只证明「内容在、资源在、路径可搬」，**不证明排版好看**；用户问排版时
+请其提供截图，按截图改，不要用审计结果冒充视觉验收。
+
+如果页面用了 `data-pd-block="section|table|callout|figure-grid"`（可选，不要求），
+审计会额外给出高度/列宽的粗估，**只作内部提醒、不阻断交付**；不加这些标记就跳过。
+估算不会改动页面内容，也不需要浏览器。
+
+### 交付形态
+
+- **无图或只有很小的图：** 单文件 `.html`，直接放 `exports/`。
+- **有医学图片、影像或图表文件：** 用文件夹交付，交给脚本做，不手工拼目录：
+
+```bash
+bash "$FRONTEND_SLIDES_ROOT/scripts/html.sh" package \
+  --html "$PWD/exports/<短中文名>.html"
+```
+
+  输出为 `exports/<页面短名>_<YYYYMMDD-HHmm>/index.html` + `assets/`，图片按哈希
+  去重改名，并在旁边生成同名 `.zip`（用户可一次打包带走）。同一分钟重复生成自动加 `-2`、`-3`，**不覆盖旧目录**。只有用户明确
+  说"更新刚才那个目录"时才加 `--out-dir <旧目录> --update`；它只替换 `index.html`
+  和新增资源，绝不删除用户自己放进去的文件。
+- 图片文件找不到时，脚本会把对应位置写成「图片未提供（原文件：…）」，并在结果里
+  记 `delivered_with_missing_assets`。照实告诉用户缺了哪张、影响哪一段，不要说
+  "全部完成"。
+- 外链、`file://`、绝对路径、目录穿越会直接拒绝打包；先让页面只用工作区内的相对路径。
+- 交付前可跑一次验收：`bash "$FRONTEND_SLIDES_ROOT/scripts/html.sh" verify <目录>`，
+  检查入口页、资源完整性和 zip 与磁盘一致性。失败就修，不要手工改 zip。
 
 ---
 
@@ -104,6 +185,8 @@ $PWD/exports/<短中文名>.html
 禁止无条件纳入 viewport-base。未要求投屏时允许长页滚动。动效克制，只用内联 CSS；不要依赖 [animation-patterns.md](animation-patterns.md) 里的花哨预设。
 
 写出后对照 [references/med-visual.md](references/med-visual.md) 的「定稿前审查」，不通过就改同一文件。不要为此再读其它设计 skill。
+
+定稿前运行上面的 `html_audit.py`；外链资源、缺图、重复 id、未闭合标签必须清零。
 
 **改动用 `edit_file`。** 用户提局部意见（换色、调字号、加一节）时只改相应片段，不要整页重写——整页重写在本机模型上很慢，且容易把已确认的内容改坏。
 

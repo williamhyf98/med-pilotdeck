@@ -100,8 +100,8 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
 `space_after`。不要把这些决策分散到内容块中。创建器会将缺失的 CJK 字体映射到已安装的平台回退。
 
 使用实际内容区域设置，例如 `zh-CN` 或 `en-US`；与区域相关的默认值
-包括中文目录和标注标签。内置模式固定使用捆绑 Noto Sans SC，不搜索系统
-字体。页眉和页脚值可以是字符串，
+包括中文目录和标注标签。内置模式固定写 `Microsoft YaHei`（`archive` 主题为 `SimSun`），
+不搜索系统字体。页眉和页脚值可以是字符串，
 也可以是带有 `text` 和 `alignment`（`left`、`center` 或 `right`）的对象。`{PAGE}`
 和 `{NUMPAGES}` 会创建真正的域。
 
@@ -183,6 +183,11 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
 ```
 
 输出是可见的检查清单，而不是交互式 Word 内容控件。
+
+勾选框用 Word 原生符号（`<w:sym w:font="Wingdings">`）绘制：`checked: true` 是打了勾的方框，
+`false` 是空方框。不要改回 `☐`/`☒`（U+2610/U+2612）——微软雅黑、宋体和随包 Noto Sans SC
+都没有这两个字形，Word 会退化成两个一模一样的空框。Pages / LibreOffice 不渲染 `w:sym`，
+在这两个软件里勾选框会缺失（正文按缩进仍可读），交付前用 Word 打开核对。
 
 ### 定义列表
 

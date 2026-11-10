@@ -92,11 +92,30 @@ bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make \
 - `--sheet`
 - `--encoding`
 - `--infer-types`（CSV/TSV 默认不猜类型）
+- `--design-theme`（六套共享主题，见下节；`--theme` 会报错，不要用）
 - `--out`
 - `--force`（用户明确要求替换时）
 
 这些内容源互斥。详细 spec 见
 [creation.md](references/creation.md)。
+
+### 主题配色（可选）
+
+```bash
+bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make   --spec "$PWD/scratch/qa/workbook.json"   --design-theme 宣纸病案   --out "$PWD/exports/统计工作簿.xlsx"
+```
+
+- 可用 ID / 中文名 / 别名：`clinical` 临床晨光、`academic` 青黛循证、`trauma` 松风急救、
+  `archive` 宣纸病案、`edu` 杏林宣教、`mono` 灰阶印刷；也可以在 spec 里写
+  `"designTheme": "academic"`。不写主题时保持原来的默认观感。
+- 主题只改**颜色与字体角色**：标题与表头用主色、正文用墨色、工作表页签用强调色、
+  图表序列与网格用主题图表色板；`archive` 会把正文字体换成衬线体。
+- 不改：版式、列宽、数字格式、条件格式规则、公式。原生 Excel 表格样式本身仍保留，
+  表头颜色由单元格直接格式覆盖，所以在 Excel 里看到的就是主题色。
+- 成功 JSON 会返回 `theme.id` / `theme.label`，交付说明里写明「本次使用主题：<中文名>」。
+- 图表是浮动对象，导出 PDF/预览时按页边**裁切**、不缩放：`anchor` 默认的 `G2:N18`
+  在 A4 纵向里会有一半落到页外，看上去像"图表只有一半"。请把锚点收进页内
+  （如 `{"from":"A7","to":"H24"}`），或把该页设为横向。
 
 ### 浮动插图（用户上传照片）
 

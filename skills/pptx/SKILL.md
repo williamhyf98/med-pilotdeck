@@ -75,28 +75,94 @@ bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" make \
 - `--out`
 - `--force`（只有用户明确要求替换已有输出时）
 
-`make` 使用内置 16:9 布局库、PptxGenJS 和 Noto Sans SC 字体声明，运行
+### `--markdown` 的映射规则
+
+| Markdown | 生成的页 |
+| --- | --- |
+| 第一个 `# 标题`（还没有 `--title` 时） | 封面标题 |
+| 后续 `# 标题`，下面**没有正文** | 分节页（只有标题） |
+| 后续 `# 标题`，下面**有正文或列表** | 内容页（标题 + 正文），不会丢内容 |
+| `## 标题` 及更深 | 内容页 |
+| `- 列表项` | 当前页的条目 |
+| 普通段落 | 当前页的正文；同一段的多行会合并 |
+| 管道表格（表头 + `| --- |` 分隔行） | 表格页；表格正上方的 `##` 标题直接成为该页标题 |
+| 表格后面的正文 | 另起一页，不会和表格挤在一起 |
+
+需要图表页、时间线、对比页、指标页、病例页、证据页或影像页时，用 `--spec` 的
+`slides[].type`；这些版式没有 Markdown 简写。
+
+`make` 使用内置 16:9 布局库、PptxGenJS 和 `Microsoft YaHei` 字体声明，运行
 OOXML 检查和结构审计。成功 JSON 的 `output` 是用户交付文件。
 
 页面 PNG 不是离线现场硬依赖。Office Renderer 不可用时 `preview` 为空并带
 warning，但 PPTX 仍可交付；不要为此安装任何软件。
 
+## spec 版式速查
+
+`slides[].type` 决定版式，共 16 种：
+
+| type | 用途 | 关键字段 |
+| --- | --- | --- |
+| `title` / `section` / `closing` | 封面 / 分节 / 结尾 | `title`、`subtitle`、`meta` |
+| `content` / `statement` / `split` / `two-column` | 正文、单句主张、图文左右、双栏 | `items`、`body`、`left`/`right` |
+| `metric`（别名 `metrics`） | 2–4 个大数字 | `metrics[]`：`{value, label, detail}` |
+| `comparison` | 左右对照 | `left`/`right`：`{heading, items}`、`takeaway` |
+| `timeline` | 3–5 步时间线 | `steps[]`：`{label, detail}` |
+| `chart` | 原生图表 | `chartType`、`series[]`：`{name, labels, values}`、`takeaway` |
+| `table` | 原生表格 | `rows`（含表头行） |
+| `quote` | 引文 | `quote`、`attribution` |
+| `case` | 病例页 | `profile[]`：`{label, value}`；`left`/`right`：`{heading, items}` |
+| `evidence` | 证据与推荐页 | `verdict`、`items[]`：`{level, label, detail}` |
+| `imaging` | 影像页 | `image`：`{path, caption}`、`findings[]`、`impression` |
+
+**图表种类写 `chartType`，不要写 `type`**（`type` 是版式名）。取值
+`bar`、`column`（`bar` + 竖直方向的别名）、`horizontal-bar`、`line`、`area`、`pie`、
+`doughnut`、`radar`、`scatter`、`bubble`。写错会直接报错，不会生成空图表；
+`series` 为空同样报错。
+
+`imaging` 的图片必须是工作区里的本地文件（禁止 http），缺失时画虚线占位并标注
+「影像未提供」，其余文字照常输出。
+
 ## 配色主题
 
-`--theme` 只换配色，版式、字体、密度都不变，因此任何主题都能安全套到已有
-内容上。可选值先用 `themes` 查，不要凭印象猜：
+六套共享主题已接入 `make` 与构建器，ID、中文名和别名都可用；指定主题会
+同时应用配色、深底语义色、字体角色和少量字号/行距乘数，版式结构暂不变。
+**未指定 `--theme` 时就是 `clinical`（临床晨光）**，与显式写 `--theme clinical`
+逐页输出一致；要复现改造前的旧观感用隐藏主题 `--theme clinical-legacy`。
+`make` 的默认字体为 `Microsoft YaHei`；`archive`（衬线主题）用 `SimSun`。
+两者都是"Windows 自带、Office for Mac 也自带"的名字，因此医生本机打开无需装字体。
+字体变化可能影响换行，交付前应检查渲染图。可选值先用 `themes` 查：
 
 ```bash
 bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" themes
 ```
 
-| 主题 | 适用 |
-|------|------|
-| `clinical` | 默认。浅灰纸面 + 深墨蓝 + 橙色强调，与历史产出完全一致 |
-| `academic` | 学术汇报、文献与 meta 分析 |
-| `trauma` | 战创伤救治方案与阶段处置 |
-| `vital` | 影像与检验数据对比 |
-| `mono` | 灰阶，黑白打印或低色准投影 |
+| 主题（ID） | 中文名 / 别名 | 适用 |
+|------|------|------|
+| `clinical` | 临床晨光（临床、晨光） | **默认主题**；门诊、出院、影像报告 |
+| `academic` | 青黛循证（循证、学术） | 学术汇报、文献与 meta 分析 |
+| `trauma` | 松风急救（急救、战创伤） | 战创伤救治方案、分诊与流程 |
+| `archive` | 宣纸病案（宣纸、病案） | 长病例、病史整理、回顾性材料；衬线字体 |
+| `edu` | 杏林宣教（宣教、健康教育） | 患者教育与公众材料 |
+| `mono` | 灰阶印刷（灰阶、黑白） | 黑白打印或低色准投影 |
+
+旧参数兼容：`--theme vital` 现解析为 `clinical`（新版配色）并在返回 JSON
+给出 `themeWarning`；要复现旧影像检验配色用隐藏主题 `vital-legacy`，复现
+旧默认配色用 `clinical-legacy`。两个旧色板的输出与改造前逐页一致。
+
+### 页面纹理（默认开启）
+
+每页背景在纯色之上叠一层极淡的纸纹（`assets/textures/grain.png`，随包分发，
+浅底出现细微斑驳与纤维感，深底出现轻微提亮）。它只影响背景，不动版式、文字和
+对比度，`audit` 仍按原阈值判定。
+
+- 默认：`grain`，无需任何参数。
+- 关闭：`--texture none`（或 spec 里写 `"texture": "none"`），输出回到纯色平涂。
+- 换纹理：`--texture <name>` 读取 `assets/textures/<name>.png`；文件不存在直接
+  报错，不回退。
+
+PDF 渲染与 PowerPoint 导出的 PDF 已逐页目视核对（2026-11-09）。纹理是位图，
+每页各嵌一份，12 页约增加 300 KB；需要控制体积时用 `--texture none`。
 
 ```bash
 bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" make \
@@ -110,9 +176,9 @@ bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" make \
 配色时不要自作主张换主题，保持默认 `clinical`。返回 JSON 的 `theme` 字段
 是本次实际生效的主题。
 
-新增主题只改 `assets/layout-library/design-tokens.json` 的 `themes` 段，
-不要改 `layouts/`。受布局库约束，`white` / `paper` 必须保持浅色、`navy`
-必须保持深色，否则封面标题会看不见。
+受布局库约束，`white` / `paper` 必须保持浅色、`navy` 必须保持深色，
+否则封面标题会看不见。返回 JSON 额外给出 `themeLabel`（中文名）；由用途
+推荐主题时要注明“（按用途推荐）”。图表系列色与签名版式仍属 T4 范围。
 
 ## Markdown 约定
 

@@ -20,6 +20,7 @@ from .common import (
 from .preflight import _visual_review_result, preflight_docx
 from .protocol import (
     BUILTIN_TEMPLATE_ID,
+    THEMED_TEMPLATE_ID,
     normalize_delivery_policy,
     normalize_document_policy,
     normalize_document_structure,
@@ -97,6 +98,7 @@ def prepare_docx_task(
     document_structure: str = "simple",
     protected_sources: list[str] | None = None,
     style_mode: str = "builtin",
+    design_theme: str | None = None,
     style_source: str | None = None,
     style_requirements: list[str] | None = None,
     existing_document: bool = False,
@@ -148,8 +150,17 @@ def prepare_docx_task(
 
     raw_style_policy: dict[str, Any] = {"mode": style_mode}
     if style_mode == "builtin":
-        raw_style_policy["template"] = BUILTIN_TEMPLATE_ID
+        if design_theme is not None:
+            raw_style_policy["template"] = THEMED_TEMPLATE_ID
+            raw_style_policy["theme"] = design_theme
+        else:
+            raw_style_policy["template"] = BUILTIN_TEMPLATE_ID
     else:
+        if design_theme is not None:
+            raise DocxSkillError(
+                "--design-theme requires --style-mode builtin",
+                code="invalid-style-policy",
+            )
         if style_source is not None:
             raw_style_policy["source"] = style_source
         requirements = [

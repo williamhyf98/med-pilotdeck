@@ -17,7 +17,7 @@ helpers.applyChineseTypography(sheet, {
 
 支持的配置：
 
-- `cross-platform`：让字族由主题驱动；默认使用此项。
+- `cross-platform`：默认项。写 `Microsoft YaHei`（`archive` 主题 `SimSun`），Windows 自带、Office for Mac 也自带，医生本机无需装字体。
 - `windows`：Microsoft YaHei。
 - `macos`：PingFang SC。
 - `linux`：Noto Sans CJK SC；仅当部署提供该字体时使用。

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -23,10 +24,30 @@ PDFINFO = os.environ.get("PDF_SKILL_PDFINFO", "pdfinfo")
 PDFTOPPM = os.environ.get("PDF_SKILL_PDFTOPPM", "pdftoppm")
 BUNDLED_FONT_NAME = "PilotDeckCJK"
 _BUNDLED_FONT_REGISTERED = False
+BUNDLED_SERIF_FONT_NAME = "PilotDeckCJKSerif"
+_BUNDLED_SERIF_REGISTERED = False
 
 
 class PdfToolError(RuntimeError):
     pass
+
+
+def _command_available(value: str) -> bool:
+    """Poppler helpers are optional: without them we lose rendering, not creation."""
+    if not value:
+        return False
+    candidate = Path(value).expanduser()
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return True
+    return shutil.which(value) is not None
+
+
+def pdfinfo_available() -> bool:
+    return _command_available(PDFINFO)
+
+
+def rendering_available() -> bool:
+    return _command_available(PDFTOPPM)
 
 
 def resolved_file(value: str, label: str = "input") -> Path:
@@ -98,6 +119,27 @@ def bundled_font_name() -> str:
     if found and last_error is not None:
         raise PdfToolError(f"交付包不完整：捆绑字体无法加载：{last_error}")
     raise PdfToolError("交付包不完整：缺少捆绑中文字体（assets/fonts）。")
+
+
+def bundled_serif_font_name() -> str:
+    """Register and return the bundled CJK serif face (used by serif themes)."""
+    global _BUNDLED_SERIF_REGISTERED
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    if _BUNDLED_SERIF_REGISTERED:
+        return BUNDLED_SERIF_FONT_NAME
+    path = SKILL_ROOT / "assets" / "fonts" / "NotoSerifSC-Regular.ttf"
+    if not path.is_file():
+        raise PdfToolError(
+            "交付包不完整：缺少随包衬线中文字体 assets/fonts/NotoSerifSC-Regular.ttf"
+        )
+    try:
+        pdfmetrics.registerFont(TTFont(BUNDLED_SERIF_FONT_NAME, str(path)))
+    except Exception as exc:  # noqa: BLE001 - surface the loader error verbatim
+        raise PdfToolError(f"交付包不完整：衬线字体无法加载：{exc}") from exc
+    _BUNDLED_SERIF_REGISTERED = True
+    return BUNDLED_SERIF_FONT_NAME
 
 
 def xml_escape(text: str) -> str:
@@ -214,12 +256,16 @@ def prepare_image_flowables(
     images: list[dict[str, Any]],
     *,
     caption_style: Any,
+    background: str = "FFFFFF",
 ) -> list[Any]:
     from io import BytesIO
 
     from reportlab.lib.units import mm
     from reportlab.platypus import Image as RLImage, Spacer
 
+    # Transparent PNGs are flattened onto the page colour, otherwise a
+    # transparent logo would show a white rectangle on a tinted theme paper.
+    backdrop = tuple(int(background[index:index + 2], 16) for index in (0, 2, 4))
     flowables: list[Any] = []
     for image in images:
         path = Path(image["path"])
@@ -232,8 +278,8 @@ def prepare_image_flowables(
                 if width_px * height_px > MAX_IMAGE_PIXELS:
                     raise PdfToolError(f"image is too large to embed safely: {path}")
                 rgba = source.convert("RGBA")
-                white = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
-                flattened = Image.alpha_composite(white, rgba).convert("RGB")
+                canvas = Image.new("RGBA", rgba.size, (*backdrop, 255))
+                flattened = Image.alpha_composite(canvas, rgba).convert("RGB")
                 stream = BytesIO()
                 flattened.save(stream, format="PNG", optimize=True)
                 stream.seek(0)
@@ -257,6 +303,15 @@ def prepare_image_flowables(
 
 
 HEADING_LINE = re.compile(r"^(#{1,6})\s+(.*)$")
+
+#: Paragraph style name -> depth in the table of contents.
+#: ``##`` is listed at depth 0, ``###`` at depth 1, ``####`` and deeper stay
+#: out of the TOC (they use the same visual style as ``###``).
+TOC_LEVELS = {"MakeH2": 0, "MakeH3": 1}
+
+#: ``--design-theme`` values that keep the pre-D1 neutral (black-on-white)
+#: report. Everything else, including "no theme given", resolves a theme.
+NEUTRAL_THEME_NAMES = {"none", "neutral", "off", "无", "中性"}
 
 
 def parse_markdown_source(text: str) -> dict[str, Any]:
@@ -297,7 +352,110 @@ def parse_markdown_source(text: str) -> dict[str, Any]:
     return {"title": title, "body": "\n".join(preamble).strip(), "sections": sections}
 
 
+def _shared_tokens_module() -> Any:
+    """Load skills/_shared/tokens.py without adding it to sys.path."""
+    import importlib.util
+
+    roots = []
+    configured = os.environ.get("PILOTDECK_BUNDLED_SKILLS_DIR", "").strip()
+    if configured:
+        roots.append(Path(configured).expanduser())
+    roots.append(SKILL_ROOT.parent)
+    for root in roots:
+        file = root / "_shared" / "tokens.py"
+        if not file.is_file():
+            continue
+        spec = importlib.util.spec_from_file_location("pilotdeck_shared_tokens", file)
+        if spec is None or spec.loader is None:
+            continue
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    return None
+
+
+def resolve_pdf_theme(name: str) -> dict[str, Any]:
+    """Resolve a design theme into the palette ReportLab needs."""
+    module = _shared_tokens_module()
+    if module is None:
+        raise PdfToolError(
+            "共享主题数据不可用：缺少随包 skills/_shared/design-tokens.json"
+        )
+    try:
+        selected = module.resolve_theme(
+            name,
+            bundled_skills_root=os.environ.get("PILOTDECK_BUNDLED_SKILLS_DIR") or str(SKILL_ROOT.parent),
+            skill_root=str(SKILL_ROOT),
+        )
+    except ValueError as exc:
+        raise PdfToolError(f"未知主题：{exc}") from exc
+    theme = selected["theme"]
+    return {
+        "id": selected["id"],
+        "label": theme["label"],
+        "colors": theme["colors"],
+        "typography": theme.get("typography") or {},
+        "warning": selected.get("warning"),
+        "source": selected.get("source"),
+    }
+
+
+def list_pdf_theme_names() -> str:
+    module = _shared_tokens_module()
+    if module is None:
+        return ""
+    listed = module.list_themes(
+        bundled_skills_root=os.environ.get("PILOTDECK_BUNDLED_SKILLS_DIR") or str(SKILL_ROOT.parent),
+        skill_root=str(SKILL_ROOT),
+    )
+    return "、".join(f"{item['label']}（{item['id']}）" for item in listed["themes"])
+
+
+TABLE_SEPARATOR = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?\s*$")
+TABLE_NUMERIC = re.compile(r"^[-+−]?\d[\d,，.。\s%‰]*$")
+
+
+def split_table_cells(line: str) -> list[str]:
+    text = line.strip()
+    if text.startswith("|"):
+        text = text[1:]
+    if text.endswith("|"):
+        text = text[:-1]
+    return [cell.strip() for cell in text.split("|")]
+
+
+def parse_table_block(block: str) -> list[list[str]] | None:
+    """Return table rows when the block is a pipe table, else None."""
+    lines = [line for line in block.split("\n") if line.strip()]
+    if len(lines) < 2 or "|" not in lines[0] or "|" not in lines[1]:
+        return None
+    if not TABLE_SEPARATOR.match(lines[1]):
+        return None
+    header = split_table_cells(lines[0])
+    delimiter = split_table_cells(lines[1])
+    if len(header) != len(delimiter) or len(header) < 2:
+        return None
+    rows = [header]
+    for line in lines[2:]:
+        if "|" not in line:
+            return None
+        cells = split_table_cells(line)
+        if len(cells) != len(header):
+            return None
+        rows.append(cells)
+    return rows if len(rows) >= 2 else None
+
+
+def display_width(text: str) -> int:
+    return sum(2 if ord(char) > 0x2E80 else 1 for char in text)
+
+
 def pdfinfo_data(path: Path) -> dict[str, Any]:
+    if not pdfinfo_available():
+        return {
+            "available": False,
+            "reason": "pdfinfo (Poppler) is not installed; page-size labels are unavailable",
+        }
     result = subprocess.run(
         [PDFINFO, str(path)],
         check=False,
@@ -312,7 +470,7 @@ def pdfinfo_data(path: Path) -> dict[str, Any]:
             continue
         key, value = line.split(":", 1)
         parsed[key.strip()] = value.strip()
-    return {"raw": parsed, "command": PDFINFO}
+    return {"available": True, "raw": parsed, "command": PDFINFO}
 
 
 def safe_pdf_value(value: Any) -> Any:
@@ -362,6 +520,49 @@ def form_summary(reader: PdfReader) -> dict[str, Any]:
     return {"count": len(rows), "fields": rows}
 
 
+def font_summary(reader: PdfReader) -> list[dict[str, Any]]:
+    """List the fonts a document references, and whether each one is embedded."""
+    seen: dict[str, dict[str, Any]] = {}
+    for page in reader.pages:
+        try:
+            resources = (page.get("/Resources") or {}).get_object()
+            fonts = resources.get("/Font")
+            if fonts is None:
+                continue
+            entries = list(fonts.get_object().items())
+        except (AttributeError, KeyError):
+            continue
+        for key, reference in entries:
+            try:
+                font = reference.get_object()
+            except AttributeError:
+                continue
+            base = str(font.get("/BaseFont") or key)
+            embedded = False
+            descriptor = font.get("/FontDescriptor")
+            if descriptor is None:
+                try:
+                    descendants = font.get("/DescendantFonts") or []
+                    if descendants:
+                        descriptor = descendants[0].get_object().get("/FontDescriptor")
+                except (AttributeError, IndexError, KeyError):
+                    descriptor = None
+            if descriptor is not None:
+                try:
+                    described = descriptor.get_object()
+                    embedded = any(
+                        key in described for key in ("/FontFile", "/FontFile2", "/FontFile3")
+                    )
+                except AttributeError:
+                    embedded = False
+            seen[base] = {
+                "name": base,
+                "subtype": str(font.get("/Subtype")),
+                "embedded": embedded,
+            }
+    return [seen[name] for name in sorted(seen)]
+
+
 def inspect_document(
     input_path: Path,
     *,
@@ -406,6 +607,7 @@ def inspect_document(
         "pageCount": len(reader.pages),
         "metadata": metadata,
         "forms": form_summary(reader),
+        "fonts": font_summary(reader),
         "pages": pages,
     }
     return summary, text_pages, table_pages
@@ -435,12 +637,19 @@ def audit_document(input_path: Path) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
     encrypted = False
     forms: dict[str, Any] = {"count": 0, "fields": []}
+    capabilities = {"pdfinfo": pdfinfo_available(), "rendering": rendering_available()}
 
     try:
         info = pdfinfo_data(input_path)
+        if info.get("available") is False:
+            warnings.append(
+                "pdfinfo (Poppler) is not installed; page-size labels and producer "
+                "metadata are omitted"
+            )
     except Exception as exc:
-        info = {"error": str(exc)}
-        hard_failures.append(str(exc))
+        # pypdf and pdfplumber remain the structural authority; pdfinfo is advisory.
+        info = {"available": False, "error": str(exc)}
+        warnings.append(f"pdfinfo failed: {exc}")
 
     try:
         reader = PdfReader(str(input_path))
@@ -485,6 +694,7 @@ def audit_document(input_path: Path) -> dict[str, Any]:
         "input": str(input_path),
         "sizeBytes": input_path.stat().st_size,
         "pdfinfo": info,
+        "capabilities": capabilities,
         "encrypted": encrypted,
         "metadata": metadata,
         "forms": forms,
@@ -547,6 +757,11 @@ def create_montage(images: list[Path], destination: Path) -> None:
 
 
 def render_document(input_path: Path, out_dir_path: Path, dpi: int, montage: Path | None) -> list[Path]:
+    if not rendering_available():
+        raise PdfToolError(
+            "render-unavailable: pdftoppm (Poppler) is not installed; "
+            "PDF creation and structural audit still work"
+        )
     if dpi < 72 or dpi > 600:
         raise PdfToolError("dpi must be between 72 and 600")
     out_dir_path.mkdir(parents=True, exist_ok=True)
@@ -585,6 +800,310 @@ def command_render(args: argparse.Namespace) -> int:
         }
     )
     return 0
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def default_qa_dir(input_path: Path) -> Path:
+    """Keep delivery records in the per-turn work directory when one is set."""
+    work_dir = os.environ.get("PILOTDECK_WORK_DIR", "").strip()
+    if work_dir:
+        return Path(work_dir).expanduser().resolve() / "pdf" / "qa"
+    return input_path.parent / ".pdf-qa" / input_path.stem
+
+
+def normalize_acceptance(args: argparse.Namespace) -> dict[str, Any] | None:
+    """Accept a protocol acceptance record and/or direct CLI requirements."""
+    requirements: dict[str, Any] = {"text": [], "pages": {}, "source": None}
+    if args.acceptance:
+        path = resolved_file(args.acceptance, "acceptance")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise PdfToolError("acceptance must be a JSON object")
+        if payload.get("skill") not in (None, "pdf"):
+            raise PdfToolError(
+                f"acceptance belongs to skill {payload.get('skill')!r}, not 'pdf'"
+            )
+        raw = payload.get("requirements") or {}
+        if not isinstance(raw, dict):
+            raise PdfToolError("acceptance.requirements must be an object")
+        requirements["text"] = [
+            item for item in raw.get("text") or [] if isinstance(item, str) and item.strip()
+        ]
+        pages = raw.get("pages") or {}
+        if not isinstance(pages, dict):
+            raise PdfToolError("acceptance.requirements.pages must be an object")
+        requirements["pages"] = dict(pages)
+        requirements["source"] = str(path)
+    if args.require_text:
+        requirements["text"].extend(
+            item for item in args.require_text if isinstance(item, str) and item.strip()
+        )
+    if args.min_pages is not None:
+        requirements["pages"]["min"] = args.min_pages
+    if args.max_pages is not None:
+        requirements["pages"]["max"] = args.max_pages
+    if not requirements["text"] and not requirements["pages"]:
+        return None
+    if requirements["source"] is None:
+        requirements["source"] = "cli"
+    return requirements
+
+
+def extract_page_texts(path: Path) -> list[str]:
+    with pdfplumber.open(str(path)) as document:
+        return [(page.extract_text() or "") for page in document.pages]
+
+
+def compact_text(value: str) -> str:
+    return "".join(value.split()).casefold()
+
+
+def evaluate_pdf_requirements(
+    text_pages: list[str],
+    page_count: int,
+    requirements: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if requirements is None:
+        return {"status": "not_requested", "source": None, "checks": [], "failures": []}
+
+    checks: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    haystack = compact_text("\n".join(text_pages))
+    for value in requirements["text"]:
+        needle = compact_text(value)
+        passed = bool(needle) and needle in haystack
+        checks.append({"type": "required_text", "value": value, "passed": passed})
+        if not passed:
+            failures.append({"type": "required_text", "value": value})
+
+    pages = requirements["pages"]
+    for key, comparison in (("min", lambda actual, minimum: actual >= minimum),
+                            ("max", lambda actual, maximum: actual <= maximum)):
+        expected = pages.get(key)
+        if not isinstance(expected, int) or isinstance(expected, bool):
+            continue
+        passed = comparison(page_count, expected)
+        checks.append({
+            "type": f"page_count_{key}",
+            "expected": expected,
+            "actual": page_count,
+            "passed": passed,
+        })
+        if not passed:
+            failures.append({
+                "type": f"page_count_{key}",
+                "expected": expected,
+                "actual": page_count,
+            })
+
+    return {
+        "status": "failed" if failures else "passed",
+        "source": requirements["source"],
+        "checks": checks,
+        "failures": failures,
+    }
+
+
+def load_visual_review(
+    path: Path,
+    *,
+    artifact_sha256: str,
+    page_count: int,
+    rendered_images: list[Path],
+) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise PdfToolError("visual review must be a JSON object")
+    errors: list[str] = []
+    schema = payload.get("schema")
+    if schema not in (None, "pilotdeck-qa-review/v1"):
+        errors.append(f"unsupported review schema: {schema}")
+    if payload.get("artifactSha256") != artifact_sha256:
+        errors.append(
+            "review-artifact-mismatch: the PDF changed after the review was recorded"
+        )
+    if payload.get("pageCount") != page_count:
+        errors.append(
+            "review-page-count-mismatch: "
+            f"expected {page_count}, got {payload.get('pageCount')}"
+        )
+
+    seen: list[int] = []
+    statuses: list[str] = []
+    for item in payload.get("pages") or []:
+        if not isinstance(item, dict):
+            errors.append("every review page entry must be an object")
+            continue
+        number = item.get("page")
+        if not isinstance(number, int) or isinstance(number, bool) or not 1 <= number <= page_count:
+            errors.append(f"page number out of range: {number}")
+            continue
+        if number in seen:
+            errors.append(f"duplicate page in review: {number}")
+            continue
+        seen.append(number)
+        status = item.get("status")
+        if status not in {"passed", "failed", "not_performed"}:
+            errors.append(f"page {number} has an invalid status: {status}")
+            continue
+        statuses.append(status)
+        recorded_image = item.get("imageSha256")
+        if isinstance(recorded_image, str) and recorded_image and number <= len(rendered_images):
+            actual = sha256_file(rendered_images[number - 1])
+            if actual.casefold() != recorded_image.casefold():
+                errors.append(
+                    f"page {number} review is bound to a different rendered image"
+                )
+
+    missing = [number for number in range(1, page_count + 1) if number not in seen]
+    if missing:
+        errors.append(f"review-incomplete: missing pages {missing}")
+
+    if errors or "failed" in statuses:
+        status = "failed"
+    elif "not_performed" in statuses:
+        status = "not_performed"
+    else:
+        status = "passed"
+    return {
+        "status": status,
+        "report": str(path),
+        "pagesReviewed": sorted(seen),
+        "pendingPages": sorted(missing),
+        "errors": errors,
+    }
+
+
+def command_deliver(args: argparse.Namespace) -> int:
+    input_path = resolved_file(args.input)
+    artifact_sha = sha256_file(input_path)
+    audit = audit_document(input_path)
+    page_count = int(audit["pageCount"])
+    requirements = normalize_acceptance(args)
+    text_pages = extract_page_texts(input_path) if requirements and requirements["text"] else []
+    coverage = evaluate_pdf_requirements(text_pages, page_count, requirements)
+
+    render_dir = Path(
+        args.render_dir if args.render_dir else default_qa_dir(input_path) / "render"
+    ).expanduser().resolve()
+    rendered: list[Path] = []
+    if rendering_available():
+        try:
+            rendered = render_document(
+                input_path,
+                output_dir(str(render_dir)),
+                args.dpi,
+                output_file(args.montage) if args.montage else None,
+            )
+            render = {
+                "status": "passed",
+                "dpi": args.dpi,
+                "pages": [str(path) for path in rendered],
+                "reason": None,
+            }
+        except PdfToolError as exc:
+            render = {"status": "failed", "dpi": args.dpi, "pages": [], "reason": str(exc)}
+    else:
+        render = {
+            "status": "skipped",
+            "dpi": args.dpi,
+            "pages": [],
+            "reason": "未完成视觉验收：pdftoppm (Poppler) 不可用，未生成页面预览",
+        }
+
+    gate_errors: list[dict[str, Any]] = []
+    if args.require_render and render["status"] == "skipped":
+        gate_errors.append({
+            "code": "render_required",
+            "message": "交付要求渲染，但 pdftoppm (Poppler) 不可用",
+        })
+
+    visual: dict[str, Any] = {
+        "status": "not-reviewed",
+        "artifactSha256": artifact_sha,
+        "report": None,
+        "pagesReviewed": [],
+        "pendingPages": [],
+        "errors": [],
+    }
+    if args.visual_review:
+        review_path = resolved_file(args.visual_review, "visual review")
+        visual = load_visual_review(
+            review_path,
+            artifact_sha256=artifact_sha,
+            page_count=page_count,
+            rendered_images=rendered,
+        )
+        visual["artifactSha256"] = artifact_sha
+
+    warnings = list(audit["warnings"])
+    if render["status"] == "skipped" and render["reason"]:
+        warnings.append(render["reason"])
+
+    failed = (
+        bool(audit["hardFailures"])
+        or coverage["status"] == "failed"
+        or visual["status"] == "failed"
+        or render["status"] == "failed"
+        or bool(gate_errors)
+    )
+    if failed:
+        status = "failed"
+    elif (
+        visual["status"] == "passed"
+        and coverage["status"] == "passed"
+        and not warnings
+    ):
+        status = "passed"
+    else:
+        status = "passed_with_warnings"
+
+    report = {
+        "schemaVersion": 1,
+        "status": status,
+        "artifact": {
+            "file": str(input_path),
+            "sha256": artifact_sha,
+            "bytes": input_path.stat().st_size,
+            "pageCount": page_count,
+        },
+        "audit": {
+            "status": audit["status"],
+            "hardFailures": audit["hardFailures"],
+            "warnings": audit["warnings"],
+            "capabilities": audit["capabilities"],
+        },
+        "coverage": coverage,
+        "render": render,
+        "visualReview": visual,
+        "gates": {"requireRender": bool(args.require_render), "errors": gate_errors},
+        "warnings": warnings,
+    }
+    report_path = (
+        output_file(args.report)
+        if args.report
+        else default_qa_dir(input_path) / "delivery.json"
+    )
+    write_json(report_path, report)
+    emit(
+        {
+            "status": status,
+            "report": str(report_path),
+            "artifact": artifact_sha,
+            "pageCount": page_count,
+            "coverage": coverage["status"],
+            "render": render["status"],
+            "visualReview": visual["status"],
+        }
+    )
+    return 3 if status == "failed" else 0
 
 
 def command_scaffold(args: argparse.Namespace) -> int:
@@ -700,42 +1219,330 @@ def load_make_spec(args: argparse.Namespace) -> dict[str, Any]:
         )
     if markdown and not normalized and markdown["body"] and not body.strip():
         body = markdown["body"]
+    raw_theme = (
+        getattr(args, "design_theme", None)
+        or spec.get("designTheme")
+        or spec.get("design_theme")
+    )
+    theme_name = str(raw_theme).strip() if raw_theme is not None else ""
+    if theme_name.lower() in NEUTRAL_THEME_NAMES:
+        # Escape hatch for the pre-D1 neutral report.
+        palette = None
+    elif theme_name:
+        palette = resolve_pdf_theme(theme_name)
+    elif _shared_tokens_module() is not None:
+        # D1: no --design-theme means the shared default theme, not "none".
+        palette = resolve_pdf_theme("")
+    else:
+        # No shared tokens (user copied the skill without _shared/): stay neutral
+        # rather than failing to build.
+        palette = None
+    toc = bool(getattr(args, "toc", False) or spec.get("toc") is True)
     return {
         "title": title.strip(),
         "body": body,
         "author": author.strip(),
         "sections": normalized,
         "images": top_images,
+        "palette": palette,
+        "toc": toc,
     }
 
 
-def write_made_pdf(output: Path, spec: dict[str, Any]) -> None:
+def palette_colors(palette: dict[str, Any] | None) -> dict[str, str]:
+    """Resolve the colors a PDF report needs, defaulting to the neutral baseline."""
+    resolved = {
+        "paper": "FFFFFF",
+        "surface": "FFFFFF",
+        "ink": "172033",
+        "muted": "5F6B7A",
+        "primary": "12404F",
+        "accent": "B4552D",
+        "support": "2F7183",
+        "rule": "D8E0EA",
+        "soft": "F3F4F6",
+        "onPrimary": "FFFFFF",
+    }
+    if palette:
+        for key in resolved:
+            value = (palette.get("colors") or {}).get(key)
+            if isinstance(value, str) and re.fullmatch(r"[0-9A-Fa-f]{6}", value):
+                resolved[key] = value
+    return resolved
+
+
+def theme_fonts(palette: dict[str, Any] | None) -> tuple[str, str, float, float]:
+    """Return (heading font, body font, body scale, line-height scale)."""
+    if not palette:
+        return bundled_font_name(), bundled_font_name(), 1.0, 1.0
+    typography = palette.get("typography") or {}
+    heading_role = str(typography.get("headingRole") or "sans")
+    body_role = str(typography.get("bodyRole") or "sans")
+    heading_font = (
+        bundled_serif_font_name() if heading_role == "serif" else bundled_font_name()
+    )
+    body_font = bundled_serif_font_name() if body_role == "serif" else bundled_font_name()
+    try:
+        body_scale = float(typography.get("bodyScale") or 1.0)
+    except (TypeError, ValueError):
+        body_scale = 1.0
+    try:
+        line_scale = float(typography.get("lineHeightScale") or 1.0)
+    except (TypeError, ValueError):
+        line_scale = 1.0
+    # Guard against a bad theme shrinking type into unreadable output.
+    body_scale = min(max(body_scale, 0.85), 1.25)
+    line_scale = min(max(line_scale, 0.9), 1.35)
+    return heading_font, body_font, body_scale, line_scale
+
+
+def build_table_flowable(
+    rows: list[list[str]],
+    *,
+    cell_style: Any,
+    header_style: Any,
+    colors_map: dict[str, str],
+    available_width: float,
+    themed: bool,
+) -> Any:
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from reportlab.platypus import LongTable, Paragraph, TableStyle
+
+    columns = len(rows[0])
+    weights: list[int] = []
+    for index in range(columns):
+        weights.append(
+            max(display_width(row[index]) if index < len(row) else 0 for row in rows) or 4
+        )
+    total = float(sum(weights))
+    col_widths = [max(available_width * weight / total, 14 * mm) for weight in weights]
+    scale = available_width / sum(col_widths)
+    col_widths = [width * scale for width in col_widths]
+
+    numeric_columns = {
+        index
+        for index in range(columns)
+        if (values := [row[index] for row in rows[1:] if index < len(row) and row[index].strip()])
+        and all(TABLE_NUMERIC.match(value) for value in values)
+    }
+
+    data = [[Paragraph(format_make_text(cell), header_style) for cell in rows[0]]]
+    for row in rows[1:]:
+        data.append([Paragraph(format_make_text(cell), cell_style) for cell in row])
+
+    header_bg = colors_map["primary"] if themed else "F3F4F6"
+    header_rule = colors_map["primary"] if themed else colors_map["rule"]
+    commands: list[tuple[Any, ...]] = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#" + header_bg)),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#" + colors_map["rule"])),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.9, colors.HexColor("#" + header_rule)),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+    ]
+    for index in range(2 if themed else 1, len(data), 2):
+        commands.append(
+            ("BACKGROUND", (0, index), (-1, index), colors.HexColor("#" + colors_map["surface"]))
+        )
+    for index in sorted(numeric_columns):
+        commands.append(("ALIGN", (index, 1), (index, -1), "RIGHT"))
+    table = LongTable(data, colWidths=col_widths, repeatRows=1, hAlign="LEFT")
+    table.setStyle(TableStyle(commands))
+    return table
+
+
+def write_made_pdf(output: Path, spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """Render the report. Returns the table-of-contents rows that were drawn."""
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER, TA_LEFT
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
-    from reportlab.platypus import SimpleDocTemplate, Spacer
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    from reportlab.platypus import (
+        Flowable,
+        HRFlowable,
+        PageBreak,
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+    )
 
-    font_name = bundled_font_name()
+    palette = spec.get("palette")
+    colors_map = palette_colors(palette)
+    heading_font, body_font, body_scale, line_scale = theme_fonts(palette)
     output.parent.mkdir(parents=True, exist_ok=True)
-    ink = colors.HexColor("#172033")
-    muted = colors.HexColor("#5F6B7A")
-    rule = colors.HexColor("#D8E0EA")
+    ink = colors.HexColor("#" + colors_map["ink"])
+    muted = colors.HexColor("#" + colors_map["muted"])
+    rule = colors.HexColor("#" + colors_map["rule"])
+    primary = colors.HexColor("#" + colors_map["primary"])
+    accent = colors.HexColor("#" + colors_map["accent"])
+    paper = colors.HexColor("#" + colors_map["paper"])
     title_text = spec["title"]
+    themed = palette is not None
 
     def header_footer(canvas, doc) -> None:
         canvas.saveState()
+        if themed and colors_map["paper"] != "FFFFFF":
+            canvas.setFillColor(paper)
+            canvas.rect(0, 0, A4[0], A4[1], stroke=0, fill=1)
+        if themed:
+            canvas.setStrokeColor(primary)
+            canvas.setLineWidth(0.6)
+            canvas.line(doc.leftMargin, A4[1] - 14 * mm, A4[0] - doc.rightMargin, A4[1] - 14 * mm)
+            canvas.setFillColor(accent)
+            canvas.rect(doc.leftMargin, A4[1] - 16 * mm, 3 * mm, 2 * mm, stroke=0, fill=1)
         canvas.setStrokeColor(rule)
         canvas.setLineWidth(0.5)
         canvas.line(doc.leftMargin, 18 * mm, A4[0] - doc.rightMargin, 18 * mm)
         canvas.setFillColor(muted)
-        canvas.setFont(font_name, 8)
+        canvas.setFont(body_font, 8)
         canvas.drawString(doc.leftMargin, 11 * mm, title_text[:48])
         canvas.drawRightString(A4[0] - doc.rightMargin, 11 * mm, f"{doc.page}")
         canvas.restoreState()
 
-    doc = SimpleDocTemplate(
+    class _ReportTemplate(SimpleDocTemplate):
+        """Adds TOC entries when --toc is used."""
+
+        def afterFlowable(self, flowable) -> None:  # noqa: D401 - reportlab hook
+            if not isinstance(flowable, Paragraph):
+                return
+            level = TOC_LEVELS.get(flowable.style.name)
+            if level is None:
+                return
+            text = " ".join(flowable.getPlainText().split())
+            if not text:
+                return
+            self.notify("TOCEntry", (level, text, self.page))
+
+    def _fit_text(text: str, font: str, size: float, room: float) -> str:
+        """Shorten an entry to one line with an ellipsis."""
+        if room <= 0:
+            return ""
+        if stringWidth(text, font, size) <= room:
+            return text
+        ellipsis = "…"
+        ellipsis_width = stringWidth(ellipsis, font, size)
+        trimmed = text
+        while trimmed and stringWidth(trimmed, font, size) + ellipsis_width > room:
+            trimmed = trimmed[:-1]
+        return f"{trimmed}{ellipsis}" if trimmed else ""
+
+    class _TocFlowable(Flowable):
+        """Two-pass table of contents drawn straight onto the canvas.
+
+        ReportLab's ``TableOfContents`` renders every row as a Paragraph
+        carrying an ``<onDraw>`` leader callback. With the bundled variable
+        CJK face those rows survive in the text layer but are dropped by the
+        renderer (poppler and Quartz agree), which is why the shipped TOC came
+        out as bare dot leaders. Drawing the rows ourselves keeps the leader,
+        the indent and the page numbers predictable.
+        """
+
+        def __init__(
+            self,
+            levels: list[dict[str, Any]],
+            rows: list[tuple[int, str, int]] | None = None,
+        ) -> None:
+            Flowable.__init__(self)
+            self._levels = levels
+            self._entries: list[tuple[int, str, int]] = []
+            self._last: list[tuple[int, str, int]] = []
+            self._rows = rows
+            self._width = 0.0
+            self._height = 0.0
+
+        # -- indexing protocol used by BaseDocTemplate.multiBuild ----------
+        def isIndexing(self) -> int:
+            return 0 if self._rows is not None else 1
+
+        def isSatisfied(self) -> bool:
+            return self._entries == self._last
+
+        def beforeBuild(self) -> None:
+            # The rows drawn during this pass are the ones collected in the
+            # previous pass; a fresh collection starts now.
+            self._last = list(self._entries)
+            self._entries = []
+
+        def afterBuild(self) -> None:
+            """Nothing to do: ``beforeBuild`` already published ``_last``."""
+
+        def clearEntries(self) -> None:
+            self._entries = []
+            self._last = []
+
+        def notify(self, kind: str, stuff: Any) -> None:
+            if kind == "TOCEntry":
+                self._entries.append(stuff)
+
+        # -- layout --------------------------------------------------------
+        def _rows_for_draw(self) -> list[tuple[int, str, int]]:
+            return self._rows if self._rows is not None else self._last
+
+        def rows(self) -> list[tuple[int, str, int]]:
+            """The entries that were actually drawn."""
+            return list(self._rows_for_draw())
+
+        def _lead(self, level: int) -> float:
+            return self._levels[min(int(level), len(self._levels) - 1)]["leading"]
+
+        def wrap(self, avail_width: float, avail_height: float) -> tuple[float, float]:
+            self._width = avail_width
+            self._height = sum(self._lead(level) for level, _, _ in self._rows_for_draw())
+            return avail_width, self._height
+
+        def split(self, avail_width: float, avail_height: float) -> list[Any]:
+            rows = self._rows_for_draw()
+            used = 0.0
+            cut = 0
+            for index, (level, _, _) in enumerate(rows):
+                lead = self._lead(level)
+                if used + lead > avail_height:
+                    break
+                used += lead
+                cut = index + 1
+            if cut == 0 or cut >= len(rows):
+                return []
+            return [
+                _TocFlowable(self._levels, rows[:cut]),
+                _TocFlowable(self._levels, rows[cut:]),
+            ]
+
+        def draw(self) -> None:
+            canvas = self.canv
+            width = self._width
+            top = self._height
+            for level, text, page_number in self._rows_for_draw():
+                spec_row = self._levels[min(int(level), len(self._levels) - 1)]
+                font = spec_row["font"]
+                size = spec_row["size"]
+                leading = spec_row["leading"]
+                top -= leading
+                baseline = top + (leading - size) * 0.5 + size * 0.2
+                indent = spec_row["indent"]
+                page_text = str(page_number)
+                page_width = stringWidth(page_text, font, size)
+                room = width - indent - page_width - 4 * mm
+                label = _fit_text(text, font, size, room)
+                canvas.setFont(font, size)
+                canvas.setFillColor(spec_row["color"])
+                canvas.drawString(indent, baseline, label)
+                canvas.drawRightString(width, baseline, page_text)
+                gap_start = indent + stringWidth(label, font, size) + 2 * mm
+                gap_end = width - page_width - 2 * mm
+                if gap_end - gap_start > 6 * mm:
+                    unit = " . "
+                    unit_width = stringWidth(unit, font, size)
+                    count = int((gap_end - gap_start) / unit_width)
+                    if count > 0:
+                        canvas.setFillColor(spec_row["color"])
+                        canvas.drawString(gap_start, baseline, unit * count)
+
+    doc = _ReportTemplate(
         str(output),
         pagesize=A4,
         rightMargin=20 * mm,
@@ -749,72 +1556,170 @@ def write_made_pdf(output: Path, spec: dict[str, Any]) -> None:
     title_style = ParagraphStyle(
         "MakeTitle",
         parent=base["Title"],
-        fontName=font_name,
-        fontSize=22,
-        leading=28,
-        textColor=ink,
+        fontName=heading_font,
+        fontSize=22 * body_scale,
+        leading=28 * body_scale * line_scale,
+        textColor=primary if themed else ink,
         alignment=TA_LEFT,
         spaceAfter=8 * mm,
     )
     heading_style = ParagraphStyle(
-        "MakeHeading",
+        "MakeH2",
         parent=base["Heading2"],
-        fontName=font_name,
-        fontSize=13,
-        leading=18,
-        textColor=ink,
+        fontName=heading_font,
+        fontSize=13 * body_scale,
+        leading=18 * body_scale * line_scale,
+        textColor=primary if themed else ink,
         spaceBefore=4 * mm,
         spaceAfter=2.5 * mm,
+        keepWithNext=1,
     )
     subheading_style = ParagraphStyle(
-        "MakeSubheading",
+        "MakeH3",
         parent=heading_style,
-        fontSize=11,
-        leading=15,
+        fontSize=11 * body_scale,
+        leading=15 * body_scale * line_scale,
         spaceBefore=3 * mm,
         spaceAfter=2 * mm,
+        keepWithNext=1,
     )
+    # ``####`` and deeper keep the H3 look but stay out of the table of
+    # contents, which is driven by the style name (see TOC_LEVELS).
+    deep_heading_style = ParagraphStyle("MakeH4", parent=subheading_style)
     body_style = ParagraphStyle(
         "MakeBody",
         parent=base["BodyText"],
-        fontName=font_name,
-        fontSize=11,
-        leading=16,
+        fontName=body_font,
+        fontSize=11 * body_scale,
+        leading=16 * body_scale * line_scale,
         textColor=ink,
         spaceAfter=3 * mm,
     )
     caption_style = ParagraphStyle(
         "MakeCaption",
         parent=body_style,
-        fontSize=9,
-        leading=12,
+        fontSize=9 * body_scale,
+        leading=12 * body_scale * line_scale,
         textColor=muted,
         alignment=TA_CENTER,
         spaceAfter=1 * mm,
     )
+    cell_style = ParagraphStyle(
+        "MakeCell",
+        parent=body_style,
+        fontSize=9.5 * body_scale,
+        leading=13 * body_scale * line_scale,
+        spaceAfter=0,
+    )
+    header_cell_style = ParagraphStyle(
+        "MakeCellHeader",
+        parent=cell_style,
+        fontName=heading_font,
+        textColor=colors.HexColor(
+            "#" + (colors_map["onPrimary"] if themed else colors_map["ink"])
+        ),
+    )
+    available_width = A4[0] - doc.leftMargin - doc.rightMargin
+
+    def add_body(text: str) -> None:
+        for block in paragraph_blocks(text):
+            rows = parse_table_block(block)
+            if rows is None:
+                story.append(flowable_paragraph(block, body_style))
+                continue
+            story.append(Spacer(1, 1.5 * mm))
+            story.append(
+                build_table_flowable(
+                    rows,
+                    cell_style=cell_style,
+                    header_style=header_cell_style,
+                    colors_map=colors_map,
+                    available_width=available_width,
+                    themed=themed,
+                )
+            )
+            story.append(Spacer(1, 3 * mm))
 
     story: list[Any] = [flowable_paragraph(title_text, title_style)]
-    for block in paragraph_blocks(spec["body"]):
-        story.append(flowable_paragraph(block, body_style))
+
+    def append_heading(text: str, style: Any) -> None:
+        if themed:
+            story.append(Spacer(1, 1 * mm))
+            story.append(
+                HRFlowable(
+                    width=14 * mm,
+                    thickness=1.1,
+                    color=accent,
+                    spaceBefore=0,
+                    spaceAfter=1.5 * mm,
+                    hAlign="LEFT",
+                )
+            )
+        story.append(flowable_paragraph(text, style))
+
+    toc_flow: Any = None
+    if spec.get("toc"):
+        append_heading("目录", ParagraphStyle("MakeTocTitle", parent=heading_style))
+        story.append(Spacer(1, 1.5 * mm))
+        toc_flow = _TocFlowable(
+            [
+                {
+                    "font": heading_font,
+                    "size": 11 * body_scale,
+                    "leading": 16 * body_scale,
+                    "color": ink,
+                    "indent": 0.0,
+                },
+                {
+                    "font": body_font,
+                    "size": 9.5 * body_scale,
+                    "leading": 14 * body_scale,
+                    "color": muted,
+                    "indent": 6 * mm,
+                },
+            ]
+        )
+        story.append(toc_flow)
+        story.append(PageBreak())
+    add_body(spec["body"])
     story.extend(
-        prepare_image_flowables(spec.get("images") or [], caption_style=caption_style)
+        prepare_image_flowables(
+            spec.get("images") or [], caption_style=caption_style,
+            background=colors_map["paper"],
+        )
     )
     for section in spec["sections"]:
         heading = section["heading"]
-        style = subheading_style if int(section.get("level", 2) or 2) >= 4 else heading_style
+        level = int(section.get("level", 2) or 2)
+        if level >= 4:
+            style = deep_heading_style
+        elif level == 3:
+            style = subheading_style
+        else:
+            style = heading_style
         if heading:
-            story.append(flowable_paragraph(heading, style))
-        for block in paragraph_blocks(section["body"]):
-            story.append(flowable_paragraph(block, body_style))
+            append_heading(heading, style)
+        add_body(section["body"])
         story.extend(
-            prepare_image_flowables(section.get("images") or [], caption_style=caption_style)
+            prepare_image_flowables(
+                section.get("images") or [], caption_style=caption_style,
+                background=colors_map["paper"],
+            )
         )
         if heading and not paragraph_blocks(section["body"]) and not (section.get("images") or []):
             story.append(Spacer(1, 1 * mm))
     if not story:
         raise PdfToolError("make produced no content")
-    doc.build(story, onFirstPage=header_footer, onLaterPages=header_footer)
-
+    if spec.get("toc"):
+        doc.multiBuild(story, onFirstPage=header_footer, onLaterPages=header_footer)
+    else:
+        doc.build(story, onFirstPage=header_footer, onLaterPages=header_footer)
+    if toc_flow is None:
+        return []
+    return [
+        {"level": level, "text": text, "page": page}
+        for level, text, page in toc_flow.rows()
+    ]
 
 def command_make(args: argparse.Namespace) -> int:
     spec = load_make_spec(args)
@@ -822,26 +1727,41 @@ def command_make(args: argparse.Namespace) -> int:
     if out.exists() and not args.force:
         raise PdfToolError(f"output already exists; pass --force to replace: {out}")
     out.parent.mkdir(parents=True, exist_ok=True)
-    write_made_pdf(out, spec)
+    toc_entries = write_made_pdf(out, spec)
     if not out.is_file():
         raise PdfToolError(f"make did not create the requested output: {out}")
     audit = audit_document(out)
     if audit["hardFailures"]:
         raise PdfToolError("built PDF failed structural audit: " + "; ".join(audit["hardFailures"]))
     preview_dir = out.parent / ".pdf-qa" / out.stem
-    images = render_document(out, preview_dir, 144, None)
     audit_path = preview_dir / "audit.json"
     write_json(audit_path, audit)
-    emit(
-        {
-            "status": "ok",
-            "output": str(out),
-            "pages": audit["pageCount"],
-            "preview": [str(path) for path in images],
-            "audit": str(audit_path),
-            "warnings": audit["warnings"],
-        }
-    )
+    warnings = list(audit["warnings"])
+    images: list[Path] = []
+    if rendering_available():
+        images = render_document(out, preview_dir, 144, None)
+    else:
+        warnings.append(
+            "未完成视觉验收：pdftoppm (Poppler) 不可用，未生成页面预览；"
+            "结构检查仍已完成"
+        )
+    payload: dict[str, Any] = {
+        "status": "ok",
+        "output": str(out),
+        "pages": audit["pageCount"],
+        "preview": [str(path) for path in images],
+        "visualAcceptance": "performed" if images else "not_performed",
+        "audit": str(audit_path),
+        "warnings": warnings,
+    }
+    if toc_entries:
+        payload["tocEntries"] = toc_entries
+    palette = spec.get("palette")
+    if palette:
+        payload["theme"] = {"id": palette["id"], "label": palette["label"]}
+        if palette.get("warning"):
+            payload["themeWarning"] = palette["warning"]
+    emit(payload)
     return 0
 
 
@@ -1200,6 +2120,37 @@ def build_parser() -> argparse.ArgumentParser:
     render_parser.add_argument("--montage")
     render_parser.set_defaults(handler=command_render)
 
+    deliver_parser = subparsers.add_parser(
+        "deliver",
+        help="Audit a PDF, check requirement coverage, and record delivery state",
+    )
+    deliver_parser.add_argument("--input", required=True)
+    deliver_parser.add_argument("--report")
+    deliver_parser.add_argument(
+        "--acceptance",
+        help="Protocol acceptance record (pilotdeck-qa-acceptance/v1)",
+    )
+    deliver_parser.add_argument(
+        "--require-text",
+        action="append",
+        help="Text that must appear in the extracted PDF text; may be repeated",
+    )
+    deliver_parser.add_argument("--min-pages", type=int)
+    deliver_parser.add_argument("--max-pages", type=int)
+    deliver_parser.add_argument(
+        "--visual-review",
+        help="Protocol review record (pilotdeck-qa-review/v1) bound to this file",
+    )
+    deliver_parser.add_argument("--render-dir")
+    deliver_parser.add_argument("--montage")
+    deliver_parser.add_argument("--dpi", type=int, default=144)
+    deliver_parser.add_argument(
+        "--require-render",
+        action="store_true",
+        help="Fail delivery when rendering is unavailable",
+    )
+    deliver_parser.set_defaults(handler=command_deliver)
+
     make_parser = subparsers.add_parser("make", help="Create a PDF from title/body/spec using bundled fonts")
     make_parser.add_argument("--title")
     make_parser.add_argument("--body")
@@ -1207,6 +2158,16 @@ def build_parser() -> argparse.ArgumentParser:
     make_parser.add_argument("--markdown")
     make_parser.add_argument("--author")
     make_parser.add_argument("--spec")
+    make_parser.add_argument(
+        "--design-theme",
+        dest="design_theme",
+        help="Design theme ID, Chinese name or alias (see `tokens.py --list`)",
+    )
+    make_parser.add_argument(
+        "--toc",
+        action="store_true",
+        help="Insert a table of contents built from level-1/2 headings",
+    )
     make_parser.add_argument("--out", required=True)
     make_parser.add_argument("--force", action="store_true")
     make_parser.set_defaults(handler=command_make)

@@ -159,8 +159,8 @@
         "textHeightReserve": 0.12
       },
       "libreoffice-zh": {
-        "headFontFace": "Noto Sans CJK SC",
-        "bodyFontFace": "Noto Sans CJK SC",
+        "headFontFace": "Microsoft YaHei",
+        "bodyFontFace": "Microsoft YaHei",
         "lang": "zh-CN",
         "deckTitle": 44,
         "slideTitle": 30,

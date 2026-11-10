@@ -10,6 +10,7 @@ const BULLET = /^\s*(?:[-*+]|\d+[.)])\s+(.+?)\s*$/u;
 const LAYOUTS = new Set([
   'title', 'section', 'statement', 'content', 'split', 'two-column',
   'metric', 'metrics', 'comparison', 'timeline', 'chart', 'table', 'quote', 'closing',
+  'case', 'evidence', 'imaging',
 ]);
 
 function nonEmpty(value) {
@@ -25,11 +26,19 @@ function paragraphs(text) {
   return String(text ?? '').split(/\n\s*\n/u).map((item) => item.trim()).filter(Boolean);
 }
 
+const TABLE_SEPARATOR = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$/u;
+
+function splitTableRow(line) {
+  const text = String(line).trim().replace(/^\|/u, '').replace(/\|$/u, '');
+  return text.split('|').map((cell) => cell.trim());
+}
+
 function parseMarkdown(markdown, explicitTitle) {
   let title = nonEmpty(explicitTitle);
   const slides = [];
   let current = null;
   let paragraph = [];
+  const lines = String(markdown ?? '').split(/\r?\n/u);
 
   const ensureSlide = () => {
     if (!current) current = { type: 'content', title: title || '内容', items: [] };
@@ -44,12 +53,18 @@ function parseMarkdown(markdown, explicitTitle) {
     flushParagraph();
     if (!current) return;
     current.items = current.items.filter(Boolean);
+    if (current.type === 'section' && current.items.length) {
+      // A section divider only draws its heading, so body text under a level-1
+      // heading used to disappear without a trace. Keep the heading as the
+      // content slide title instead of dropping what the user wrote.
+      current.type = 'content';
+    }
     slides.push(current);
     current = null;
   };
 
-  for (const raw of String(markdown ?? '').split(/\r?\n/u)) {
-    const line = raw.trim();
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].trim();
     if (!line) {
       flushParagraph();
       continue;
@@ -69,6 +84,37 @@ function parseMarkdown(markdown, explicitTitle) {
         };
       }
       continue;
+    }
+    // GitHub-style pipe table → a real table slide.
+    if (line.includes('|') && index + 1 < lines.length && TABLE_SEPARATOR.test(lines[index + 1].trim())) {
+      const header = splitTableRow(line);
+      const delimiter = splitTableRow(lines[index + 1]);
+      if (header.length >= 2 && header.length === delimiter.length) {
+        const rows = [header];
+        let cursor = index + 2;
+        while (cursor < lines.length && lines[cursor].trim() && lines[cursor].includes('|')) {
+          const cells = splitTableRow(lines[cursor]);
+          if (cells.length !== header.length) break;
+          rows.push(cells);
+          cursor += 1;
+        }
+        if (rows.length >= 2) {
+          flushParagraph();
+          const tableTitle = current?.title || title || '表格';
+          if (current && (current.items ?? []).filter(Boolean).length === 0) {
+            // The heading directly above the table becomes the table slide.
+            current.type = 'table';
+            current.rows = rows;
+            slides.push(current);
+            current = null;
+          } else {
+            flushSlide();
+            slides.push({ type: 'table', title: tableTitle, rows });
+          }
+          index = cursor - 1;
+          continue;
+        }
+      }
     }
     const bullet = line.match(BULLET);
     if (bullet) {
@@ -101,6 +147,7 @@ function normalizeSpec(value, titleOverride, themeOverride) {
     author: nonEmpty(value.author) || 'PilotDeck',
     // null → resolveDesignTokens falls back to the default theme in design-tokens.json.
     theme: nonEmpty(themeOverride) || nonEmpty(value.theme) || undefined,
+    texture: nonEmpty(value.texture) || undefined,
     slides,
   };
 }
@@ -189,6 +236,9 @@ function addSlide(layouts, pptx, tokens, slide, page, footer) {
     table: layouts.tableSlide,
     quote: layouts.quoteSlide,
     closing: layouts.closingSlide,
+    case: layouts.caseSlide,
+    evidence: layouts.evidenceSlide,
+    imaging: layouts.imagingSlide,
   };
   handlers[slide.type](pptx, tokens, content);
 }
@@ -243,6 +293,7 @@ export async function makePptx(options = {}) {
     });
   }
   assertLocalResources(spec);
+  if (!spec.texture && options.texture) spec.texture = options.texture;
   const slides = normalizeSlides(spec);
 
   const qaRoot = qaRootFor(output);
@@ -257,13 +308,21 @@ export async function makePptx(options = {}) {
     profile: /^zh(?:-|$)/iu.test(spec.locale) ? 'cross-platform-zh' : 'cross-platform-en',
     density: 'presentation',
     theme: spec.theme,
+    texture: spec.texture,
   });
+  // Themed decks already carry the target-machine font name (theme role ->
+  // officeWindows). The unthemed path still resolves to Arial from the
+  // cross-platform-zh profile, which has no Chinese glyphs, so it keeps an
+  // explicit Chinese face — now Microsoft YaHei instead of the Noto name that
+  // neither Windows nor Office for Mac ships. The legacy `build` path is left
+  // untouched so old decks stay byte-identical.
+  const serifTheme = baseTokens.themeFontRole === 'serif';
   const tokens = {
     ...baseTokens,
     typography: {
       ...baseTokens.typography,
-      headFontFace: 'Noto Sans SC',
-      bodyFontFace: 'Noto Sans SC',
+      headFontFace: serifTheme ? baseTokens.typography.headFontFace : 'Microsoft YaHei',
+      bodyFontFace: serifTheme ? baseTokens.typography.bodyFontFace : 'Microsoft YaHei',
     },
   };
   const pptx = await toolkit.createDeck({
@@ -321,6 +380,11 @@ export async function makePptx(options = {}) {
     output,
     slides: manifest.slideCount,
     theme: tokens.theme,
+    ...(tokens.themeLabel ? { themeLabel: tokens.themeLabel } : {}),
+    ...(tokens.themeWarning ? { themeWarning: tokens.themeWarning } : {}),
+    ...(tokens.fontFallback ? { fontFallback: tokens.fontFallback } : {}),
+    ...(tokens.texture?.name ? { texture: tokens.texture.name } : {}),
+    ...(tokens.textureFallback ? { textureFallback: tokens.textureFallback } : {}),
     preview,
     audit: {
       status: audit.status,

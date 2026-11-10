@@ -75,7 +75,13 @@ async function buildDeck(builderPath, outputPath, options = {}) {
   await pptx.writeFile({ fileName: output });
   const exists = await fs.stat(output).then(() => true).catch(() => false);
   if (!exists) throw new Error(`Builder did not produce ${output}`);
-  return { builder: absolute, output, theme: toolkit.theme };
+  const tokens = toolkit.tokens ?? {};
+  return {
+    builder: absolute, output, theme: toolkit.theme,
+    ...(tokens.themeLabel ? { themeLabel: tokens.themeLabel } : {}),
+    ...(tokens.themeWarning ? { themeWarning: tokens.themeWarning } : {}),
+    ...(toolkit.fontFallbacks.length ? { fontFallbacks: toolkit.fontFallbacks } : {}),
+  };
 }
 
 function themeArg(args) {
@@ -83,7 +89,7 @@ function themeArg(args) {
 }
 
 async function themesCommand() {
-  return { status: 'ok', themes: await listThemes() };
+  return { status: 'ok', themes: await listThemes(), defaultRefresh: 'approved-2026-11-10' };
 }
 
 async function buildCommand(args) {
@@ -127,6 +133,7 @@ async function makeCommand(args) {
     locale: args.locale === true ? null : args.locale,
     footer: args.footer === true ? null : args.footer,
     theme: themeArg(args),
+    texture: args.texture === true ? null : args.texture,
     force: Boolean(args.force),
   });
 }
@@ -604,7 +611,7 @@ function help() {
   return {
     usage: 'pptx.sh <command> [options]',
     commands: {
-      make: '--title TEXT [--body TEXT|--body-file FILE|--markdown FILE|--spec FILE] --out deck.pptx [--locale zh-CN --footer TEXT --theme NAME --force]',
+      make: '--title TEXT [--body TEXT|--body-file FILE|--markdown FILE|--spec FILE] --out deck.pptx [--locale zh-CN --footer TEXT --theme NAME --texture NAME --force]',
       scaffold: '--out deck.mjs [--force]',
       convert: '--input legacy.ppt --out converted.pptx --qa-dir DIR [--fidelity-threshold 0.01 --force]',
       build: '--builder deck.mjs --out deck.pptx [--theme NAME --verify --qa-dir DIR --strict-overlap]',

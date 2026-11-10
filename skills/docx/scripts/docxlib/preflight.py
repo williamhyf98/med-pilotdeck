@@ -32,6 +32,16 @@ from .render import render_docx
 from .toc import toc_status
 
 
+# Renderer failures that mean "no page images today", not "this document is bad".
+RENDER_UNAVAILABLE_CODES = frozenset({
+    "office-renderer-not-configured",
+    "office-renderer-unreachable",
+    "office-renderer-http-error",
+    "render-runtime-unavailable",
+    "render-backend-unavailable",
+})
+
+
 def _normalize_text(value: str) -> str:
     return re.sub(r"\s+", "", value).casefold()
 
@@ -374,6 +384,10 @@ def _builtin_style_gate_issues(
 ) -> list[dict[str, Any]]:
     policy = acceptance.get("style_policy")
     if not isinstance(policy, dict) or policy.get("mode") != "builtin":
+        return []
+    if policy.get("template", "neutral-document-v1") != "neutral-document-v1":
+        # Themed builtin templates intentionally use the design palette; the
+        # neutral-only chromatic gates do not apply to them.
         return []
     summary = audit.get("summary", {})
     checks = (
@@ -778,14 +792,33 @@ def preflight_docx(
             item["resolved"] = False
         audit_issues.append(item)
 
-    render_result = render_docx(
-        input_path,
-        output_dir,
-        dpi=150,
-        emit_pdf=True,
-        include_text=True,
-        timeout_seconds=timeout_seconds,
-    )
+    # Rendering is a capability, not a precondition: when the Office Renderer is
+    # down the structural/audit gate still runs and the report says so, instead
+    # of the whole preflight crashing without evidence.
+    render_unavailable: str | None = None
+    try:
+        render_result = render_docx(
+            input_path,
+            output_dir,
+            dpi=150,
+            emit_pdf=True,
+            include_text=True,
+            timeout_seconds=timeout_seconds,
+        )
+    except (DocxSkillError, OSError) as exc:
+        render_code = str(getattr(exc, "code", "") or "")
+        if render_code not in RENDER_UNAVAILABLE_CODES and not isinstance(exc, OSError):
+            raise
+        render_unavailable = str(exc)
+        render_result = {
+            "status": "skipped",
+            "code": render_code or "render-unavailable",
+            "reason": render_unavailable,
+            "images": [],
+            "page_text": [],
+            "pages": 0,
+        }
+    render_available = render_unavailable is None
     rendered_text = "\n".join(
         str(item.get("text", "")) for item in render_result.get("page_text", [])
     )
@@ -802,7 +835,7 @@ def preflight_docx(
         item.pop("text", None)
     coverage_checks = []
     for value in required_text or []:
-        present = _normalize_text(value) in normalized_rendered
+        present = (_normalize_text(value) in normalized_rendered) if render_available else None
         coverage_checks.append({"text": value, "present": present})
 
     gate_issues: list[dict[str, Any]] = _builtin_style_gate_issues(
@@ -840,7 +873,7 @@ def preflight_docx(
         artifact_sha256=artifact_sha256,
         legacy_status=visual_review_status,
     )
-    if min_pages is not None and pages < min_pages:
+    if render_available and min_pages is not None and pages < min_pages:
         gate_issues.append(
             {
                 "severity": "error",
@@ -848,7 +881,7 @@ def preflight_docx(
                 "message": f"Rendered {pages} page(s), below the required minimum {min_pages}.",
             }
         )
-    if max_pages is not None and pages > max_pages:
+    if render_available and max_pages is not None and pages > max_pages:
         gate_issues.append(
             {
                 "severity": "error",
@@ -856,7 +889,7 @@ def preflight_docx(
                 "message": f"Rendered {pages} page(s), above the allowed maximum {max_pages}.",
             }
         )
-    missing_text = [item["text"] for item in coverage_checks if not item["present"]]
+    missing_text = [item["text"] for item in coverage_checks if item["present"] is False]
     if missing_text:
         gate_issues.append(
             {
@@ -960,7 +993,11 @@ def preflight_docx(
                     "path": str(path),
                 }
             )
-    if int(render_result.get("text_characters", 0)) == 0 and inspection["paragraph_count"]:
+    if (
+        render_available
+        and int(render_result.get("text_characters", 0)) == 0
+        and inspection["paragraph_count"]
+    ):
         gate_issues.append(
             {
                 "severity": "error",
@@ -1002,6 +1039,15 @@ def preflight_docx(
                 }
             )
     gate_issues.extend(visual_issues)
+    if not render_available:
+        gate_issues.append(
+            {
+                "severity": "warning",
+                "code": "render-unavailable",
+                "message": f"未完成视觉验收：{render_unavailable}",
+                "reason": render_unavailable,
+            }
+        )
     for item in gate_issues:
         code = str(item.get("code", ""))
         if code in warning_dispositions and item.get("severity") != "error":
@@ -1061,8 +1107,11 @@ def preflight_docx(
         "checks": {
             "package_validation": "passed",
             "audit": "passed" if not unresolved_audit else "needs-attention",
-            "render": "passed",
-            "text_coverage": "passed" if not missing_text else "failed",
+            "render": "passed" if render_available else "skipped",
+            "text_coverage": (
+                "not_checked" if not render_available
+                else ("passed" if not missing_text else "failed")
+            ),
             "visual_review": visual_review["status"],
             "layout": (
                 "passed"
@@ -1074,7 +1123,10 @@ def preflight_docx(
             ),
         },
         "coverage": {
-            "status": "passed" if coverage_passed else "failed",
+            "status": (
+                "failed" if not coverage_passed
+                else ("not_checked" if not render_available else "passed")
+            ),
             "required_text": coverage_checks,
             "required_headings": {
                 "required": acceptance["required_headings"],

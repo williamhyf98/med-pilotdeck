@@ -67,12 +67,48 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" make \
 - `--body` 或 `--body-file`
 - `--markdown`
 - `--spec`
+- `--design-theme`（可选，见下）
 - `--out`
 - `--force`（仅在明确需要替换已有输出时）
 
-`make` 会使用内置 A4 模板和捆绑 Noto Sans SC，创建并校验 DOCX。成功 JSON
+`make` 会使用内置 A4 模板和 `Microsoft YaHei` 字体声明（`archive` 主题为 `SimSun`）创建并校验 DOCX；只写字体名、不嵌字体。成功 JSON
 中的 `output` 是用户交付文件。页面 PNG 不是离线现场的必需能力；没有预览也
 不要安装渲染后端。`preview`、`audit` 和内部候选只用于检查，不要交付。
+
+### 渲染不可用时的 preflight
+
+`preflight` 依靠 Office Renderer 出页面截图，但它不会因为 Renderer 掉线就拒绝
+给出结论：报告照样写出，`checks.render=skipped`、`text_coverage` 与
+`coverage.status=not_checked`，并附一条 `render-unavailable` 警告；包结构、
+审计、必含标题/目录等不依赖渲染的检查继续给出真实结果。
+
+- 这种状态下只能得到「结构通过、视觉未做」，不要对用户说已经验收过页面效果。
+- `deliver` 仍要求 preflight 完整通过（含逐页视觉评审）。Renderer 不可用时用
+  `make` 交付文件，如实说明页面效果无法自动核对，等环境恢复再补验收。
+- 不要为了过 preflight 去装本机 LibreOffice，也不要伪造视觉评审记录。
+
+### 文档主题
+
+默认是 `neutral-document-v1`：黑白中性，不上色。只有用户明确指定主题，或
+按用途自动推荐并已告知用户时，才加 `--design-theme`。可选六套：
+
+| 主题 ID | 中文名 | 常见别名 | 适合 |
+| --- | --- | --- | --- |
+| `clinical` | 临床晨光 | 临床、晨光 | 日常临床记录 |
+| `academic` | 青黛循证 | 循证、学术 | 文献综述、科研报告 |
+| `trauma` | 松风急救 | 急救、战创伤 | 急救流程、创伤记录 |
+| `archive` | 宣纸病案 | 宣纸、病案 | 归档病案、长病程 |
+| `edu` | 杏林宣教 | 宣教、健康教育 | 患者教育材料 |
+| `mono` | 灰阶印刷 | 灰阶、黑白 | 打印、复印 |
+
+主题只改变配色：标题 / 各级标题用 `primary`，正文用 `ink`，表头用
+`primary` 底 + `onPrimary` 字，表格边框用 `rule`，提示块用 `soft` 底 +
+`accent` 左边线。**不要**自行填写任意十六进制颜色，也不要为凑效果添加色块。
+未知主题会直接报 `invalid-design-theme`，不要猜测近似主题。
+
+`prepare` 同样支持 `--design-theme`（需 `--style-mode builtin`），会把
+规范化后的主题 ID 冻结进验收清单；之后 `create` 的 `style_policy` 必须
+使用同一个主题。
 
 如果需要目视核对页面，必须把**同一次 `make` 返回 JSON 中 `preview` 数组的完整路径原样**
 传给 `read_file`，不要根据 `output`、工作目录或哈希片段自行拼接路径。一次生成多个 DOCX

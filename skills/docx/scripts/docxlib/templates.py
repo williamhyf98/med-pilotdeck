@@ -4,7 +4,12 @@ from copy import deepcopy
 from typing import Any
 
 from .common import DocxSkillError
-from .protocol import BUILTIN_TEMPLATE_ID, normalize_style_policy
+from .design_theme import resolve_design_theme
+from .protocol import (
+    BUILTIN_TEMPLATE_ID,
+    THEMED_TEMPLATE_ID,
+    normalize_style_policy,
+)
 
 
 _NEUTRAL_SHARED: dict[str, Any] = {
@@ -21,8 +26,8 @@ _NEUTRAL_SHARED: dict[str, Any] = {
 
 _NEUTRAL_LOCALE_VARIANTS: dict[str, dict[str, Any]] = {
     "zh": {
-        "body_font": "Noto Sans SC",
-        "east_asia_font": "Noto Sans SC",
+        "body_font": "Microsoft YaHei",
+        "east_asia_font": "Microsoft YaHei",
         "cjk_family": "sans",
         "body_size": 10.5,
         "title_size": 24,
@@ -32,8 +37,8 @@ _NEUTRAL_LOCALE_VARIANTS: dict[str, dict[str, Any]] = {
         "normal_line_spacing_points": 18,
     },
     "default": {
-        "body_font": "Noto Sans SC",
-        "east_asia_font": "Noto Sans SC",
+        "body_font": "Microsoft YaHei",
+        "east_asia_font": "Microsoft YaHei",
         "cjk_family": "sans",
         "body_size": 11,
         "title_size": 22,
@@ -69,6 +74,15 @@ def resolve_document_style(
         if isinstance(style_overrides_value, dict)
         else {}
     )
+    if policy.get("template") == THEMED_TEMPLATE_ID:
+        themed = resolve_design_theme(policy["theme"])
+        style.update(themed["style"])
+        style["template"] = THEMED_TEMPLATE_ID
+        style["design_theme"] = {
+            "id": themed["id"],
+            "label": themed["label"],
+            **({"warning": themed["warning"]} if themed.get("warning") else {}),
+        }
     if policy["mode"] == "builtin" and overrides:
         raise DocxSkillError(
             "Builtin style_policy does not allow style_overrides",

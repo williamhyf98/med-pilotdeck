@@ -106,6 +106,7 @@ def _load_make_spec(
     body_file: str | Path | None,
     markdown_file: str | Path | None,
     spec_file: str | Path | None,
+    design_theme: str | None = None,
 ) -> dict[str, Any]:
     sources = sum(
         value is not None
@@ -146,14 +147,35 @@ def _load_make_spec(
             metadata = dict(spec.get("metadata") or {})
             metadata["title"] = title
             spec["metadata"] = metadata
-        return spec
+        return _apply_design_theme(spec, design_theme)
     spec = _default_spec(title, body, markdown)
     if not spec["content"]:
         raise DocxSkillError(
             "DOCX make requires a title or document content",
             code="empty-document",
         )
-    return spec
+    return _apply_design_theme(spec, design_theme)
+
+
+def _apply_design_theme(
+    spec: dict[str, Any],
+    design_theme: str | None,
+) -> dict[str, Any]:
+    if design_theme is None:
+        return spec
+    policy = spec.get("style_policy")
+    if isinstance(policy, dict) and policy.get("mode") == "user":
+        raise DocxSkillError(
+            "--design-theme cannot be combined with a user style_policy",
+            code="invalid-style-policy",
+        )
+    updated = dict(spec)
+    updated["style_policy"] = {
+        "mode": "builtin",
+        "template": "themed-v1",
+        "theme": design_theme,
+    }
+    return updated
 
 
 def _internal_work_root(output: Path) -> Path:
@@ -180,6 +202,7 @@ def make_docx(
     body_file: str | Path | None = None,
     markdown_file: str | Path | None = None,
     spec_file: str | Path | None = None,
+    design_theme: str | None = None,
     force: bool = False,
 ) -> dict[str, Any]:
     output = Path(output_path).expanduser().resolve()
@@ -199,6 +222,7 @@ def make_docx(
         body_file=body_file,
         markdown_file=markdown_file,
         spec_file=spec_file,
+        design_theme=design_theme,
     )
     work_root = _internal_work_root(output)
     spec_path = work_root / "spec.json"

@@ -28,14 +28,14 @@ const pptx = await createDeck({ lang: 'zh-CN', tokens });
 
 - `cross-platform-en`：Arial，用于广泛的 macOS 和 Windows 兼容性。
 - `office-en`：Aptos，用于已知的现代 Microsoft Office 受众。
-- `cross-platform-zh`：Arial 作为逻辑拉丁字体，并为中文预留保守的回退空间。
+- `cross-platform-zh`：显式选择主题时读共享 `fontRoles.*.officeWindows`（`Microsoft YaHei`；`archive` 等衬线主题为 `SimSun`），写入幻灯片的 `<a:latin>` / `<a:ea>`。快捷 `make` 的无主题路径同样写 `Microsoft YaHei`；未指定主题的 `build --builder` 路径仍保留 Arial，以保证历史文件逐字节不变。旧 `vital` 仍保留原字体和配色。
 - `windows-zh`：Microsoft YaHei，用于仅 Windows 目标。
 - `macos-zh`：PingFang SC，用于仅 macOS 目标。
-- `libreoffice-zh`：仅当渲染环境已安装该字体时使用 Noto Sans CJK SC。
+- `libreoffice-zh`：渲染机上的名字（`Microsoft YaHei` / `Noto Sans CJK SC`），只用于服务器侧渲染与 fontconfig 别名，不决定写进文件的字体名。
 
 PowerPoint 不接受 CSS 风格的字体栈。配置是 Harness 解析策略，而不是写入 PPTX 的逗号分隔字体名。
 
-不存在可以假定在每台 macOS 和 Windows 系统上都已安装的中文字体。跨平台默认值追求可读、稳定的替换，而不是像素级一致输出。当必须使用相同排版时，要求共享的授权或可嵌入字体。
+不存在可以假定在每台 macOS 和 Windows 系统上都已安装的中文字体——唯一例外是 **`Microsoft YaHei` 与 `SimSun`**：Windows 系统自带，Office for Mac 在 app 内自带同名文件（`msyh.ttc` / `Simsun.ttc`），因此"用 Office 打开"这一场景下可以做到观感一致。PPTX 不嵌字体（`pptxgenjs` 不写 `embeddedFontLst`），所以这是"选对名字"而不是"带上字体"。只用 Keynote / 快速预览打开、且未装 Office 的 Mac 仍会替换；这类场景请交付 PDF。
 
 ## 16:9 演示文稿的默认字号
 

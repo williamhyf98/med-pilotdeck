@@ -4,6 +4,14 @@ const WINDOWS_CJK = /microsoft yahei|dengxian|simhei|simsun|fangsong|kaiti/i;
 const MACOS_CJK = /pingfang|hiragino|stheiti|heiti sc|songti sc|kaiti sc/i;
 const RENDER_CJK = /noto sans cjk|source han sans|noto serif cjk|source han serif/i;
 const LATIN_ONLY_DEFAULT = /^(?:arial|aptos(?: display)?|calibri|helvetica)$/i;
+/**
+ * Faces that ship with Office on *both* platforms: Windows has them in the OS,
+ * and Office for Mac bundles the identical files (msyh.ttc / Simsun.ttc /
+ * SimHei.ttf / Kaiti.ttf / Fangsong.ttf / Deng.ttf). Writing these names is the
+ * only way to get the same Chinese glyphs without asking the reader to install
+ * anything, so they must not be reported as a platform-specific risk.
+ */
+const OFFICE_PORTABLE_CJK = /^(?:microsoft yahei|simsun|simhei|kaiti|fangsong|dengxian)$/i;
 
 export function containsCjk(text) {
   return CJK_PATTERN.test(String(text ?? ''));
@@ -50,7 +58,8 @@ export function analyzeTypography(manifest, options = {}) {
         ));
       }
 
-      if (targetPlatform === 'cross-platform' && (WINDOWS_CJK.test(fontFace) || MACOS_CJK.test(fontFace))) {
+      if (targetPlatform === 'cross-platform' && !OFFICE_PORTABLE_CJK.test(fontFace)
+        && (WINDOWS_CJK.test(fontFace) || MACOS_CJK.test(fontFace))) {
         warnings.push(warning(
           'platform_specific_font',
           fontFace,

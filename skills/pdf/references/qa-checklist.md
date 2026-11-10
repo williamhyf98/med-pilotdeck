@@ -29,7 +29,13 @@
 
 ## 交付门禁
 
+- 用 `pdf.sh deliver` 生成交付报告：`status` 为 `failed` 时不得交付。
+- `coverage` 必须覆盖用户明确提出的必含文本与页数要求；未提要求时状态是
+  `not_requested`，报告最多 `passed_with_warnings`。
+- 没有 Poppler 时 `render` 为 `skipped`，报告最多 `passed_with_warnings`；
+  用户要求过视觉验收时改用 `--require-render`，让交付如实失败。
 - 解决每一项硬性审计失败。
 - 理解并记录任何剩余警告。
 - 在最后一次修改之后重新渲染；切勿依赖更早的渲染结果。
+- 报告绑定的产物 SHA-256 必须与最终文件一致；改过文件就重新 `deliver`。
 - 仅交付所要求的 PDF，除非用户要求提取文件或质量报告。不要交付 Python 构建脚本。

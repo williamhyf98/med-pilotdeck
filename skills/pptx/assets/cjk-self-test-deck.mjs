@@ -50,7 +50,7 @@ export default async function build({ createDeck, layouts, resolveDesignTokens }
   layouts.chartSlide(pptx, tokens, {
     kicker: '图表',
     title: '三个阶段的完成率持续提升',
-    type: pptx.ChartType.bar,
+    chartType: 'bar',
     series: [{ name: '完成率', labels: ['规划', '生成', '验证'], values: [72, 86, 100] }],
     showValue: true,
     takeaway: '最终交付必须绑定同一个文件哈希。',

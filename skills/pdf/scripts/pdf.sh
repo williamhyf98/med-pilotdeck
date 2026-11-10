@@ -86,10 +86,6 @@ runtime_missing_json() {
   printf '{"status":"error","error":"交付包不完整：PDF 本地运行时未就绪。请使用完整交付包，不要在现场安装依赖或自行编写 Python。"}\n'
 }
 
-poppler_missing_json() {
-  printf '{"status":"error","error":"交付包不完整：缺少 Poppler（pdfinfo / pdftoppm）。请使用完整交付包。"}\n'
-}
-
 cmd_check() {
   local python_path="" runtime_python="" pdfinfo_path="" pdftoppm_path=""
   local python_ok=false deps_ok=false pdfinfo_ok=false pdftoppm_ok=false
@@ -100,19 +96,25 @@ cmd_check() {
     deps_ok=true
     runtime_python="$(venv_python)"
   fi
-  if pdfinfo_path="$(find_pdfinfo)"; then
-    pdfinfo_ok=true
+  pdfinfo_path="${PDF_SKILL_PDFINFO-$(find_pdfinfo || true)}"
+  [[ -n "$pdfinfo_path" ]] && pdfinfo_ok=true
+  pdftoppm_path="${PDF_SKILL_PDFTOPPM-$(find_pdftoppm || true)}"
+  [[ -n "$pdftoppm_path" ]] && pdftoppm_ok=true
+  local status="missing_dependencies" usable=false render_available=false
+  if [[ "$python_ok" == true && "$deps_ok" == true ]]; then
+    usable=true
+    if [[ "$pdfinfo_ok" == true && "$pdftoppm_ok" == true ]]; then
+      status="ok"
+      render_available=true
+    else
+      status="degraded"
+    fi
   fi
-  if pdftoppm_path="$(find_pdftoppm)"; then
-    pdftoppm_ok=true
-  fi
-  local status="missing_dependencies"
-  if [[ "$python_ok" == true && "$deps_ok" == true && "$pdfinfo_ok" == true && "$pdftoppm_ok" == true ]]; then
-    status="ok"
-  fi
-  printf '{"status":"%s","python":%s,"python_path":"%s","dependencies":%s,"runtime_python":"%s","runtime":"%s","pdfinfo":%s,"pdfinfo_path":"%s","pdftoppm":%s,"pdftoppm_path":"%s"}\n' \
-    "$status" "$python_ok" "$python_path" "$deps_ok" "$runtime_python" "$RUNTIME_CACHE" \
-    "$pdfinfo_ok" "$pdfinfo_path" "$pdftoppm_ok" "$pdftoppm_path"
+  printf '{"status":"%s","usable":%s,"render_available":%s,"python":%s,"python_path":"%s","dependencies":%s,"runtime_python":"%s","runtime":"%s","pdfinfo":%s,"pdfinfo_path":"%s","pdftoppm":%s,"pdftoppm_path":"%s","degradation":"%s"}\n' \
+    "$status" "$usable" "$render_available" \
+    "$python_ok" "$python_path" "$deps_ok" "$runtime_python" "$RUNTIME_CACHE" \
+    "$pdfinfo_ok" "$pdfinfo_path" "$pdftoppm_ok" "$pdftoppm_path" \
+    "$([[ "$status" == "degraded" ]] && printf 'Poppler 缺失：新建、读取、审计、合并等仍可用，页面渲染与视觉验收不可用' || printf '')"
   [[ "$status" == "ok" ]]
 }
 
@@ -157,19 +159,15 @@ case "${1:-}" in
     exit 2
     ;;
   ""|-h|--help|help)
-    printf 'Usage: pdf.sh <check|make|inspect|audit|render|merge|split|rotate|forms-inspect|forms-fill|self-test> [options]\n'
+    printf 'Usage: pdf.sh <check|make|inspect|audit|deliver|render|merge|split|rotate|forms-inspect|forms-fill|self-test> [options]\n'
     ;;
   *)
     if ! runtime_ready; then
       runtime_missing_json >&2
       exit 2
     fi
-    pdfinfo_path="$(find_pdfinfo || true)"
-    pdftoppm_path="$(find_pdftoppm || true)"
-    if [[ -z "$pdfinfo_path" || -z "$pdftoppm_path" ]]; then
-      poppler_missing_json >&2
-      exit 2
-    fi
+    pdfinfo_path="${PDF_SKILL_PDFINFO-$(find_pdfinfo || true)}"
+    pdftoppm_path="${PDF_SKILL_PDFTOPPM-$(find_pdftoppm || true)}"
     export PDF_SKILL_ROOT="$SKILL_DIR"
     export PDF_SKILL_PDFINFO="$pdfinfo_path"
     export PDF_SKILL_PDFTOPPM="$pdftoppm_path"

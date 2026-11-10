@@ -11,8 +11,16 @@ description: 读取、创建、编辑、合并、拆分、旋转、填写、渲�
 PDF_SKILL_ROOT="$(dirname "<path>")"
 ```
 
-`pdf.sh` 会自己定位完整的隔离运行时、捆绑字体和渲染组件。缺任何一项都会
-返回 JSON 错误「交付包不完整」；此时停止并报告，不要改走其它实现。
+`pdf.sh` 会自己定位隔离运行时和捆绑字体。Python 运行时缺失会返回「交付包不完整」，
+此时停止并报告，不要改走其它实现。
+
+Poppler（`pdfinfo` / `pdftoppm`）是**可选**的渲染组件：
+
+- 缺 Poppler 时，`make`、`inspect`、`audit`、`deliver`、`merge`、`split`、
+  `rotate`、`forms-*` 仍然可用，只是 `render` 不可用、无法做视觉验收。
+- `check` 会返回 `"status":"degraded"`、`"usable":true`、`"render_available":false`。
+  这时照常完成工作，并在交付说明里注明「未做视觉验收」；用户要求必须做过视觉验收时，
+  用 `deliver --require-render` 让交付明确失败，而不是悄悄跳过。
 
 ## Office 转 PDF 的边界
 
@@ -60,6 +68,37 @@ bash "$PDF_SKILL_ROOT/scripts/pdf.sh" make \
   ]
 }
 ```
+
+### 主题、表格与目录
+
+**主题**（默认 `clinical` 临床晨光；用户点名别套主题、或需要纯黑白打印时才关）：
+
+```bash
+bash "$PDF_SKILL_ROOT/scripts/pdf.sh" make --title "病例报告" --markdown body.md \
+  --design-theme 临床晨光 --out "$PWD/exports/病例报告.pdf"
+```
+
+可用 ID、中文名或别名：`clinical` 临床晨光、`academic` 青黛循证、`trauma` 松风急救、
+`archive` 宣纸病案（衬线）、`edu` 杏林宣教、`mono` 灰阶印刷。`spec` 里也可以写
+`"designTheme": "academic"`。**不写主题参数时就是 `clinical`**；要回到改造前的纯黑白
+报告用 `--design-theme none`（`neutral` / `off` / `无` 同义），此时 JSON 不返回 `theme`。
+成功 JSON 会返回 `theme.id` / `theme.label`，交付说明中要写明「本次使用主题：<中文名>」。
+
+**表格**：`--markdown` / `--body` / `--spec` 的段落里，标准管道表格会自动变成
+原生 PDF 表格（表头着色、跨页重复表头、数值列右对齐）。表格块前后各留一个空行：
+
+```markdown
+| 指标 | 数值 | 参考区间 |
+| --- | --- | --- |
+| 肌钙蛋白 | 升高 | 0-0.04 |
+```
+
+第二行必须是 `| --- |` 分隔行；没有分隔行的 `收缩压 | 舒张压` 仍按普通段落输出。
+
+**目录**：加 `--toc`（或 spec 里 `"toc": true`）。目录单独占一页（正文从第 2 页开始），
+`##` 进一级条目、`###` 进二级条目（缩进），`####` 及更深不列入；条目超出一页会自动续页。
+`make` 成功时会返回 `tocEntries: [{level, text, page}]`，可直接拿来做交付说明。
+节数少于 3 时不要加，目录比正文还长没有意义。
 
 ### 正文插图（用户上传照片）
 
@@ -139,14 +178,34 @@ bash "$PDF_SKILL_ROOT/scripts/pdf.sh" forms-fill --input form.pdf --data "$PWD/s
 
 ## 校验
 
-`make` 已包含审计和渲染。对已有 PDF 或编辑结果：
+`make` 已包含审计和渲染。交付前对最终文件跑一次 `deliver`，它把结构审计、
+要求覆盖（必含文本、页数）和视觉验收状态写进一份报告：
+
+```bash
+bash "$PDF_SKILL_ROOT/scripts/pdf.sh" deliver \
+  --input "$FINAL_PDF" \
+  --require-text "肌钙蛋白" \
+  --min-pages 1 --max-pages 4 \
+  --report "$PWD/scratch/qa/pdf/delivery.json"
+```
+
+参数：`--acceptance` 可直接传统一验收记录；`--require-text`、`--min-pages`、
+`--max-pages` 用于直接声明要求；`--visual-review` 传入绑定产物哈希的逐页评审；
+`--require-render` 表示没有渲染结果就不允许交付。
+
+默认把报告和渲染图写到 `$PILOTDECK_WORK_DIR/pdf/qa/`；没有设置该变量时写到
+`<PDF 所在目录>/.pdf-qa/<文件名>/`。按全尺寸查看每一张 `page-*.png`，硬失败必须消除。
+清单见 [qa-checklist.md](references/qa-checklist.md)。
+
+`inspect` 的 `fonts` 字段列出每个字体名和 `embedded` 标记：打印或投稿场景里
+中文字体必须是 `embedded: true`；`--tables-out` 则用来核对表格是否真的成了表格。
+
+单独排查时仍可分别调用：
 
 ```bash
 bash "$PDF_SKILL_ROOT/scripts/pdf.sh" audit --input "$FINAL_PDF" --out "$PWD/scratch/qa/audit.json"
 bash "$PDF_SKILL_ROOT/scripts/pdf.sh" render --input "$FINAL_PDF" --out-dir "$PWD/scratch/qa/render" --dpi 144
 ```
-
-按全尺寸查看每一张 `page-*.png`。硬失败必须消除。清单见 [qa-checklist.md](references/qa-checklist.md)。
 
 ## 交付
 

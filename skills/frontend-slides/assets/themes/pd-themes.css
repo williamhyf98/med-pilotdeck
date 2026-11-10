@@ -1,0 +1,221 @@
+/* GENERATED from skills/_shared/design-tokens.json — do not edit by hand.
+   Regenerate with: node skills/frontend-slides/scripts/build-theme-css.mjs
+   Use: <html data-pd-theme="clinical"> and inline this file into <style>.
+   Single-file delivery: system font stacks only, no external requests. */
+
+html[data-pd-theme="clinical"] {
+  --pd-paper: #FBF9F6;
+  --pd-surface: #FFFFFF;
+  --pd-ink: #1C2B33;
+  --pd-muted: #5C6B72;
+  --pd-primary: #12404F;
+  --pd-accent: #B4552D;
+  --pd-support: #2F7183;
+  --pd-rule: #E3DED7;
+  --pd-soft: #F3EAE3;
+  --pd-on-primary: #FFFFFF;
+  --pd-on-dark: #F2EDE7;
+  --pd-on-dark-muted: #BFD2D6;
+  --pd-danger: #B42318;
+  --pd-danger-bg: #FDECEC;
+  --pd-warning: #B45309;
+  --pd-warning-bg: #FDF3E3;
+  --pd-success: #157F3D;
+  --pd-success-bg: #E9F5EE;
+  --pd-info: #1F5FA9;
+  --pd-info-bg: #EAF1FA;
+  --pd-font-body: "Noto Sans SC","Source Han Sans SC","PingFang SC","Microsoft YaHei","Noto Sans CJK SC",system-ui,sans-serif;
+  --pd-font-heading: "Noto Sans SC","Source Han Sans SC","PingFang SC","Microsoft YaHei","Noto Sans CJK SC",system-ui,sans-serif;
+  --pd-font-mono: ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  --pd-heading-weight: 700;
+  --pd-line-height-scale: 1;
+}
+
+html[data-pd-theme="academic"] {
+  --pd-paper: #F7F8FA;
+  --pd-surface: #FFFFFF;
+  --pd-ink: #16202A;
+  --pd-muted: #5A6472;
+  --pd-primary: #1A3A5F;
+  --pd-accent: #0F6E62;
+  --pd-support: #A87B2A;
+  --pd-rule: #DCE1E8;
+  --pd-soft: #E8F0EF;
+  --pd-on-primary: #FFFFFF;
+  --pd-on-dark: #E9EEF4;
+  --pd-on-dark-muted: #B9C7D6;
+  --pd-danger: #B42318;
+  --pd-danger-bg: #FDECEC;
+  --pd-warning: #B45309;
+  --pd-warning-bg: #FDF3E3;
+  --pd-success: #157F3D;
+  --pd-success-bg: #E9F5EE;
+  --pd-info: #1F5FA9;
+  --pd-info-bg: #EAF1FA;
+  --pd-font-body: "Noto Sans SC","Source Han Sans SC","PingFang SC","Microsoft YaHei","Noto Sans CJK SC",system-ui,sans-serif;
+  --pd-font-heading: "Noto Sans SC","Source Han Sans SC","PingFang SC","Microsoft YaHei","Noto Sans CJK SC",system-ui,sans-serif;
+  --pd-font-mono: ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  --pd-heading-weight: 700;
+  --pd-line-height-scale: 1;
+}
+
+html[data-pd-theme="trauma"] {
+  --pd-paper: #F5F6F2;
+  --pd-surface: #FFFFFF;
+  --pd-ink: #1A211C;
+  --pd-muted: #5B665E;
+  --pd-primary: #1D3B2A;
+  --pd-accent: #A55C11;
+  --pd-support: #2F6B57;
+  --pd-rule: #D8DED4;
+  --pd-soft: #EDF0E6;
+  --pd-on-primary: #FFFFFF;
+  --pd-on-dark: #E7EDE6;
+  --pd-on-dark-muted: #BCCBBE;
+  --pd-danger: #B42318;
+  --pd-danger-bg: #FDECEC;
+  --pd-warning: #B45309;
+  --pd-warning-bg: #FDF3E3;
+  --pd-success: #157F3D;
+  --pd-success-bg: #E9F5EE;
+  --pd-info: #1F5FA9;
+  --pd-info-bg: #EAF1FA;
+  --pd-font-body: "Noto Sans SC","Source Han Sans SC","PingFang SC","Microsoft YaHei","Noto Sans CJK SC",system-ui,sans-serif;
+  --pd-font-heading: "Noto Sans SC","Source Han Sans SC","PingFang SC","Microsoft YaHei","Noto Sans CJK SC",system-ui,sans-serif;
+  --pd-font-mono: ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  --pd-heading-weight: 700;
+  --pd-line-height-scale: 1;
+}
+
+html[data-pd-theme="archive"] {
+  --pd-paper: #FAF6EC;
+  --pd-surface: #FFFDF7;
+  --pd-ink: #22201C;
+  --pd-muted: #5F5A50;
+  --pd-primary: #2B2A26;
+  --pd-accent: #9C3B2E;
+  --pd-support: #6B5A3E;
+  --pd-rule: #E6DFD0;
+  --pd-soft: #F2EBDD;
+  --pd-on-primary: #FBF7EE;
+  --pd-on-dark: #EFE8D8;
+  --pd-on-dark-muted: #C6BBA0;
+  --pd-danger: #B42318;
+  --pd-danger-bg: #FDECEC;
+  --pd-warning: #B45309;
+  --pd-warning-bg: #FDF3E3;
+  --pd-success: #157F3D;
+  --pd-success-bg: #E9F5EE;
+  --pd-info: #1F5FA9;
+  --pd-info-bg: #EAF1FA;
+  --pd-font-body: "Noto Serif SC","Source Han Serif SC","Songti SC","SimSun","Noto Serif CJK SC",serif;
+  --pd-font-heading: "Noto Serif SC","Source Han Serif SC","Songti SC","SimSun","Noto Serif CJK SC",serif;
+  --pd-font-mono: ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  --pd-heading-weight: 700;
+  --pd-letter-spacing: 0.02em;
+  --pd-line-height-scale: 1.04;
+}
+
+html[data-pd-theme="edu"] {
+  --pd-paper: #FBF9F4;
+  --pd-surface: #FFFFFF;
+  --pd-ink: #22302A;
+  --pd-muted: #56655D;
+  --pd-primary: #2E5643;
+  --pd-accent: #A85C22;
+  --pd-support: #657747;
+  --pd-rule: #E2E4D9;
+  --pd-soft: #F1F3E7;
+  --pd-on-primary: #FFFFFF;
+  --pd-on-dark: #EDF2EC;
+  --pd-on-dark-muted: #C3D0C2;
+  --pd-danger: #B42318;
+  --pd-danger-bg: #FDECEC;
+  --pd-warning: #B45309;
+  --pd-warning-bg: #FDF3E3;
+  --pd-success: #157F3D;
+  --pd-success-bg: #E9F5EE;
+  --pd-info: #1F5FA9;
+  --pd-info-bg: #EAF1FA;
+  --pd-font-body: "Noto Sans SC","Source Han Sans SC","PingFang SC","Microsoft YaHei","Noto Sans CJK SC",system-ui,sans-serif;
+  --pd-font-heading: "Noto Sans SC","Source Han Sans SC","PingFang SC","Microsoft YaHei","Noto Sans CJK SC",system-ui,sans-serif;
+  --pd-font-mono: ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  --pd-heading-weight: 700;
+  --pd-line-height-scale: 1;
+}
+
+html[data-pd-theme="mono"] {
+  --pd-paper: #F5F6F7;
+  --pd-surface: #FFFFFF;
+  --pd-ink: #1A1D21;
+  --pd-muted: #5B636B;
+  --pd-primary: #22282E;
+  --pd-accent: #5A646E;
+  --pd-support: #7F888F;
+  --pd-rule: #D5D9DD;
+  --pd-soft: #ECEEF0;
+  --pd-on-primary: #FFFFFF;
+  --pd-on-dark: #F2F4F5;
+  --pd-on-dark-muted: #C2C8CD;
+  --pd-danger: #B42318;
+  --pd-danger-bg: #FDECEC;
+  --pd-warning: #B45309;
+  --pd-warning-bg: #FDF3E3;
+  --pd-success: #157F3D;
+  --pd-success-bg: #E9F5EE;
+  --pd-info: #1F5FA9;
+  --pd-info-bg: #EAF1FA;
+  --pd-font-body: "Noto Sans SC","Source Han Sans SC","PingFang SC","Microsoft YaHei","Noto Sans CJK SC",system-ui,sans-serif;
+  --pd-font-heading: "Noto Sans SC","Source Han Sans SC","PingFang SC","Microsoft YaHei","Noto Sans CJK SC",system-ui,sans-serif;
+  --pd-font-mono: ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  --pd-heading-weight: 700;
+  --pd-line-height-scale: 1;
+}
+
+/* Optional bridge: makes pages that already use the A/B/C density
+   variables pick up the chosen theme. Keep the theme block first; later
+   page-level overrides still win. */
+html[data-pd-theme] {
+  --bg: var(--pd-paper);
+  --surface: var(--pd-surface);
+  --text: var(--pd-ink);
+  --muted: var(--pd-muted);
+  --border: var(--pd-rule);
+  --accent: var(--pd-primary);
+  --accent-soft: var(--pd-soft);
+  --danger: var(--pd-danger);
+  --warning: var(--pd-warning);
+}
+
+/* Signature components (opt-in classes, driven by the surface tokens). */
+.pd-stamp{display:inline-block;border:2px solid var(--pd-accent);color:var(--pd-accent);border-radius:4px;padding:4px 8px;font-family:var(--pd-font-heading);letter-spacing:.12em;}
+html[data-pd-theme="clinical"] .pd-masthead { border-top: 3px solid var(--pd-primary); padding-top: 10px; }
+html[data-pd-theme="clinical"] .pd-section-marker { border-left: 4px solid var(--pd-accent); padding-left: 10px; }
+html[data-pd-theme="clinical"] .pd-table thead th { background: var(--pd-primary); color: var(--pd-on-primary); }
+html[data-pd-theme="clinical"] .pd-callout { background: var(--pd-soft); border-left: 4px solid var(--pd-accent); padding: 12px 14px; }
+html[data-pd-theme="clinical"] .pd-imaging { background: var(--pd-primary); color: var(--pd-on-dark); padding: 10px; border-radius: 6px; }
+html[data-pd-theme="clinical"] .pd-footer { border-top: 1px solid var(--pd-rule); padding-top: 8px; color: var(--pd-muted); }
+html[data-pd-theme="academic"] .pd-masthead { background: var(--pd-primary); color: var(--pd-on-primary); padding: 10px 14px; }
+html[data-pd-theme="academic"] .pd-section-marker { border-left: 2px solid var(--pd-primary); padding-left: 12px; }
+html[data-pd-theme="academic"] .pd-table thead th { background: var(--pd-primary); color: var(--pd-on-primary); }
+html[data-pd-theme="academic"] .pd-callout { background: var(--pd-soft); border-left: 4px solid var(--pd-accent); padding: 12px 14px; }
+html[data-pd-theme="academic"] .pd-footer { border-top: 1px solid var(--pd-rule); padding-top: 8px; color: var(--pd-muted); }
+html[data-pd-theme="trauma"] .pd-masthead { border-top: 3px solid var(--pd-primary); padding-top: 10px; }
+html[data-pd-theme="trauma"] .pd-section-marker { display: inline-block; background: var(--pd-soft); border-radius: 999px; padding: 2px 10px; }
+html[data-pd-theme="trauma"] .pd-table thead th { background: var(--pd-primary); color: var(--pd-on-primary); }
+html[data-pd-theme="trauma"] .pd-callout { background: var(--pd-soft); border-left: 4px solid var(--pd-accent); padding: 12px 14px; }
+html[data-pd-theme="trauma"] .pd-footer { border-top: 1px solid var(--pd-rule); padding-top: 8px; color: var(--pd-muted); }
+html[data-pd-theme="archive"] .pd-masthead { border-top: 1px solid var(--pd-rule); padding-top: 8px; }
+html[data-pd-theme="archive"] .pd-section-marker { font-family: var(--pd-font-heading); letter-spacing: .08em; }
+html[data-pd-theme="archive"] .pd-table thead th { border-bottom: 2px solid var(--pd-ink); }
+html[data-pd-theme="archive"] .pd-callout { border: 1px solid var(--pd-rule); padding: 12px 14px; }
+html[data-pd-theme="archive"] .pd-footer { border-top: 1px solid var(--pd-rule); padding-top: 8px; color: var(--pd-muted); }
+html[data-pd-theme="edu"] .pd-section-marker { display: flex; align-items: baseline; gap: 8px; }
+html[data-pd-theme="edu"] .pd-table thead th { background: var(--pd-soft); }
+html[data-pd-theme="edu"] .pd-callout { background: var(--pd-soft); border-radius: 12px; padding: 14px 16px; }
+html[data-pd-theme] .pd-section-marker.pd-dot::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--pd-accent);flex:0 0 auto;}
+html[data-pd-theme="mono"] .pd-masthead { border-top: 1px solid var(--pd-rule); border-bottom: 1px solid var(--pd-rule); padding: 8px 0; }
+html[data-pd-theme="mono"] .pd-table thead th { background: var(--pd-ink); color: var(--pd-on-dark); }
+html[data-pd-theme="mono"] .pd-callout { background: var(--pd-soft); border-left: 4px solid var(--pd-accent); padding: 12px 14px; }
+html[data-pd-theme="mono"] .pd-imaging { background: var(--pd-primary); color: var(--pd-on-dark); padding: 10px; border-radius: 6px; }
+html[data-pd-theme="mono"] .pd-footer { border-top: 1px solid var(--pd-rule); padding-top: 8px; color: var(--pd-muted); }

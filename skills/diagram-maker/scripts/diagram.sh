@@ -33,7 +33,11 @@ case "${1:-}" in
     exit 2
     ;;
   ""|-h|--help|help)
-    printf 'Usage: diagram.sh <check|make|self-test> [options]\n'
+    printf 'Usage: diagram.sh <check|make|audit|self-test> [options]\n\n'
+    printf '  check      Report whether the bundled stdlib runtime is ready\n'
+    printf '  make       Render a declarative diagram to SVG/HTML\n'
+    printf '  audit      Deterministic geometry check (viewBox, overflow, label truncation)\n'
+    printf '  self-test  Dependency-free smoke test\n'
     ;;
   *)
     python_path="$(find_python || true)"

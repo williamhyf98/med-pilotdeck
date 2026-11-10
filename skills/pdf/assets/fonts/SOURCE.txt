@@ -1,5 +1,16 @@
 Noto Sans SC (variable TrueType subset)
 Source: https://github.com/notofonts/noto-cjk/raw/main/Sans/Variable/TTF/Subset/NotoSansSC-VF.ttf
+
+Noto Serif SC Regular (static TrueType, generated from the upstream variable font)
+Upstream: https://github.com/notofonts/noto-cjk/raw/main/Serif/Variable/TTF/Subset/NotoSerifSC-VF.ttf
+Fetched: 2026-11-09
+Generated: fontTools varLib.instancer, wght=400, updateFontNames=True
+Why static: ReportLab embeds the variable font's default instance (ExtraLight),
+which is too thin for clinical body text and cannot be weight-selected.
+
+NotoSerifSC-Regular.ttf sha256:
+2696b17c7faa26e5d66e96c7559988d0db26c5fe6171497aa6de5e5499367359
+
 License: SIL Open Font License 1.1 (see OFL.txt)
 
 The PDF skill loads fonts only from this directory. Do not substitute system fonts.

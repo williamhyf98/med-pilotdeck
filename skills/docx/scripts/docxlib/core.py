@@ -124,31 +124,39 @@ def _fontconfig_match(font_name: str) -> str | None:
 
 
 def resolve_fonts(style: dict[str, Any]) -> dict[str, str]:
-    bundled_font_dir = os.environ.get("DOCX_SKILL_FONT_DIR", "").strip()
-    if bundled_font_dir and (
-        Path(bundled_font_dir).expanduser().resolve() / "NotoSansSC-VF.ttf"
-    ).is_file():
-        return {"latin": "Noto Sans SC", "east_asia": "Noto Sans SC"}
-    latin = str(style["body_font"])
-    system = platform.system()
-    candidate_map = (
-        CJK_SERIF_FONT_CANDIDATES
-        if style.get("cjk_family") == "serif"
-        else CJK_FONT_CANDIDATES
-    )
-    candidates = candidate_map.get(system, candidate_map["Linux"])
-    style_candidate = str(style["east_asia_font"])
-    ordered = list(candidates)
-    if style_candidate not in ordered:
-        ordered.append(style_candidate)
-    east_asia = ordered[0]
-    if system == "Linux":
-        for candidate in ordered:
-            matched = _fontconfig_match(candidate)
-            if matched and matched.casefold() == candidate.casefold():
-                east_asia = candidate
-                break
-    return {"latin": latin, "east_asia": east_asia}
+    """Pick the font *names* written into the OOXML, not fonts for this host.
+
+    A .docx carries names only — the reader's machine resolves them. Writing the
+    generating host's font (PingFang SC on a Mac, Noto on the Linux server) makes
+    the file look right where it was built and wrong everywhere else. Microsoft
+    YaHei and SimSun ship with Windows and are bundled inside Office for Mac
+    (msyh.ttc / Simsun.ttc), so the same file opens correctly on both.
+
+    The per-platform candidate tables below stay as documentation of the
+    fallback chain PowerPoint applies when a name is missing.
+    """
+    face = "SimSun" if style.get("cjk_family") == "serif" else "Microsoft YaHei"
+    return {"latin": face, "east_asia": face}
+
+
+#: Ballot boxes are drawn by a symbol font: none of the CJK faces Word ships
+#: (Microsoft YaHei, SimSun, Noto Sans SC) carry U+2610/U+2611/U+2612, so a
+#: literal ``\u2610`` silently degrades to an empty glyph. Wingdings ships with
+#: Windows and with Word/PowerPoint for Mac and has real box glyphs.
+CHECKBOX_FONT = "Wingdings"
+#: Wingdings glyph codes, expressed as the private-use value Word writes in
+#: ``<w:sym w:char="..."/>`` (F000 + the font's code point).
+CHECKBOX_GLYPHS = {"unchecked": "F0A8", "checked": "F0FE"}
+
+
+def _add_checkbox_marker(paragraph: Any, is_checked: bool) -> None:
+    """Insert a boxed check / empty box that Word can actually render."""
+    run = paragraph.add_run()
+    symbol = OxmlElement("w:sym")
+    symbol.set(qn("w:font"), CHECKBOX_FONT)
+    symbol.set(qn("w:char"), CHECKBOX_GLYPHS["checked" if is_checked else "unchecked"])
+    run._r.append(symbol)
+    return run
 
 
 def _set_run_fonts(run: Any, ascii_font: str, east_asia_font: str) -> None:
@@ -670,6 +678,9 @@ def _configure_document(doc: DocumentObject, spec: dict[str, Any], style_tokens:
     styles = doc.styles
     normal = styles["Normal"]
     _set_style_fonts(normal, style_tokens["body_font"], style_tokens["east_asia_font"], style_tokens["body_size"])
+    body_color = style_tokens.get("body_color")
+    if isinstance(body_color, str) and body_color.strip():
+        normal.font.color.rgb = RGBColor.from_string(body_color.strip().lstrip("#"))
     normal.paragraph_format.space_after = Pt(style_tokens["space_after"])
     line_spacing_points = style_tokens.get("normal_line_spacing_points")
     normal.paragraph_format.line_spacing = (
@@ -1153,10 +1164,8 @@ def _add_content_block(doc: DocumentObject, block: dict[str, Any], style_tokens:
             paragraph.paragraph_format.left_indent = Inches(0.28)
             paragraph.paragraph_format.first_line_indent = Inches(-0.24)
             is_checked = index < len(checked_values) and bool(checked_values[index])
-            marker = paragraph.add_run("\u2612 " if is_checked else "\u2610 ")
-            marker.bold = True
-            _set_run_fonts(marker, style_tokens["body_font"], style_tokens["east_asia_font"])
-            run = paragraph.add_run(str(item))
+            _add_checkbox_marker(paragraph, is_checked)
+            run = paragraph.add_run(f" {item}")
             _set_run_fonts(run, style_tokens["body_font"], style_tokens["east_asia_font"])
     elif block_type == "definition_list":
         items = block.get("items")
