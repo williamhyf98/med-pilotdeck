@@ -1,11 +1,13 @@
 import type { SandboxNetworkMode } from "../../../../pilot/config/types.js";
+import { tokenizeSimpleShell } from "../permissions.js";
 
 /**
  * 按命令判定网络出口（spec §10.5）。
  *
  * 判定顺序：
- * 1. 命令里出现的 `…/skills/<name>/` 全部在 `networkOpenSkills` 白名单内 → `open`
- * 2. 其它一切（含没有 skill、只部分命中、不认识的新 skill）→ 全局 `network` 值
+ * 1. 命令必须是**单条简单命令**（不含 `| ; & < > \`` `$(`），否则一律落回全局策略
+ * 2. 命令里出现的 `…/skills/<name>/` 全部在 `networkOpenSkills` 白名单内 → `open`
+ * 3. 其它一切（含没有 skill、只部分命中、不认识的新 skill）→ 全局 `network` 值
  *
  * 默认方向永远是「收紧」：白名单只做加法，任何不确定都落回全局策略。
  */
@@ -31,6 +33,28 @@ export function extractSkillNames(command: string): string[] {
   return [...names];
 }
 
+/** 允许的前缀：`cd <path> &&`（最多 3 层），模型经常这样进目录。 */
+const CD_PREFIX_RE = /^cd\s+(?:"[^"]*"|'[^']*'|[^\s;&|<>]+)\s*&&\s*(?=\S)/u;
+
+/**
+ * 是否是一条「不带 shell 组合」的简单命令。
+ *
+ * 为什么必须卡这一条：`bash skills/docx/docx.sh make && python3 evil.py` 里
+ * 只有 docx 一个技能名，若只按技能名判定就会把整条复合命令都放行 —— 等于给
+ * 任意代码开了出口。
+ */
+export function isSingleSimpleInvocation(command: string): boolean {
+  let rest = String(command ?? "").trim();
+  for (let index = 0; index < 3; index += 1) {
+    const prefix = rest.match(CD_PREFIX_RE);
+    if (!prefix) break;
+    rest = rest.slice(prefix[0].length).trim();
+  }
+  if (!rest) return false;
+  const tokens = tokenizeSimpleShell(rest);
+  return tokens !== undefined && tokens.length > 0;
+}
+
 export function resolveCommandNetworkPolicy(
   command: string,
   defaultPolicy: SandboxNetworkMode,
@@ -48,6 +72,14 @@ export function resolveCommandNetworkPolicy(
   const allowed = new Set(openSkills);
   const blocked = skills.filter((name) => !allowed.has(name));
   if (blocked.length === 0) {
+    if (!isSingleSimpleInvocation(command)) {
+      return {
+        allowNetwork: defaultPolicy !== "none",
+        policy: defaultPolicy,
+        skills,
+        reason: "命令不是单条简单命令（含管道/串联/重定向），不放行网络",
+      };
+    }
     return {
       allowNetwork: true,
       policy: "open",

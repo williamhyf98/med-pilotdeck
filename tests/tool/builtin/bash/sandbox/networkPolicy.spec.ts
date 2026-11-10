@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   assertNetworkPolicySupported,
   extractSkillNames,
+  isSingleSimpleInvocation,
   resolveCommandNetworkPolicy,
 } from "../../../../../src/tool/builtin/bash/sandbox/networkPolicy.js";
 
@@ -55,6 +56,36 @@ test("mixing a whitelisted and a non-whitelisted skill stays isolated (fail-clos
     ["docx"],
   );
   assert.equal(decision.allowNetwork, false);
+});
+
+test("a whitelisted skill cannot smuggle arbitrary code via shell chaining", () => {
+  const cases = [
+    "bash /app/skills/docx/scripts/docx.sh make && python3 evil.py",
+    "bash /app/skills/docx/scripts/docx.sh make | tee log.txt",
+    "bash /app/skills/docx/scripts/docx.sh make > out.json",
+    "bash /app/skills/docx/scripts/docx.sh make; python3 evil.py",
+    "bash /app/skills/docx/scripts/docx.sh make $(python3 evil.py)",
+  ];
+  for (const command of cases) {
+    const decision = resolveCommandNetworkPolicy(command, "none", ["docx"]);
+    assert.equal(decision.allowNetwork, false, `should stay isolated: ${command}`);
+  }
+});
+
+test("a leading `cd <dir> &&` prefix is tolerated for whitelisted skills", () => {
+  const decision = resolveCommandNetworkPolicy(
+    'cd "/data/my work" && bash /app/skills/docx/scripts/docx.sh make',
+    "none",
+    ["docx"],
+  );
+  assert.equal(decision.allowNetwork, true);
+});
+
+test("isSingleSimpleInvocation rejects compound commands", () => {
+  assert.equal(isSingleSimpleInvocation("bash /app/skills/docx/scripts/docx.sh make"), true);
+  assert.equal(isSingleSimpleInvocation("cd /app && bash x.sh"), true);
+  assert.equal(isSingleSimpleInvocation("cd /app && bash x.sh && rm -rf y"), false);
+  assert.equal(isSingleSimpleInvocation(""), false);
 });
 
 test("allowlist is rejected until it is implemented instead of degrading to open", () => {

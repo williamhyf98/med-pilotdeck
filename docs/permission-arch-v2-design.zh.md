@@ -762,6 +762,7 @@ multiUser:
 | `network` 三态解析（兼容 `true`/`false`） | ✅ 已实现 | `parseMultiUserConfig.ts` |
 | 按命令里的 `…/skills/<name>/` 判定技能 | ✅ 已实现 | `sandbox/networkPolicy.ts` |
 | 命中多个技能时**要求全部在白名单内**，否则落回全局 | ✅ 已实现（fail-closed） | 同上 |
+| 白名单只对**单条简单命令**生效（允许 `cd <dir> &&` 前缀；含 `| ; & >` 或 `$(` 一律不放行） | ✅ 已实现 | 同上 |
 | bwrap 每次调用可覆盖网络 | ✅ 已实现（`wrap()` 新增 `network`） | `sandbox/bwrap.ts` |
 | 启动自检 + fail-closed | ✅ 已实现 | `sandbox/netProbe.ts`、`commandRunner.ts` |
 | `allowlist` 显式报错（不静默降级） | ✅ 已实现 | `sandbox/networkPolicy.ts` |
@@ -776,6 +777,10 @@ multiUser:
 | `network: none` + `kind: none`（沙箱被关） | ✅ **拒绝启动**：`宿主回环端口可达；DNS 可解析` |
 
 第二条是关键：沙箱失效时不会「假装断网」，而是启动即失败。
+
+**为什么必须卡「单条简单命令」**：`bash skills/docx/scripts/docx.sh make && python3 evil.py`
+里只出现 `docx` 一个技能名，若只看技能名就会把整条复合命令都放行 —— 等于给任意代码开了出口。
+这条规则是 2026-11-10 在 node12 实测时发现的真实漏洞。
 
 ---
 

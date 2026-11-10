@@ -301,7 +301,11 @@ function isReadOnlyFindTokens(args: string[]): boolean {
   return !args.some((token) => FIND_MUTATING_OR_EXEC_ACTIONS.has(token));
 }
 
-function tokenizeSimpleShell(command: string): string[] | undefined {
+/**
+ * 把命令拆成简单 token；遇到 `| ; & < > \`` 或 `$(` 等 shell 元字符时返回 `undefined`。
+ * 导出给 `sandbox/networkPolicy.ts` 复用：只有「单条简单命令」才允许获得网络出口。
+ */
+export function tokenizeSimpleShell(command: string): string[] | undefined {
   const tokens: string[] = [];
   let current = "";
   let quote: "'" | '"' | undefined;
