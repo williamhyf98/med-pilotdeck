@@ -675,7 +675,7 @@ macOS 的 SBPL profile 同步调整（`writeDirs` 换成 `scope.root` + 必要�
 | 类别 | 位置 | 需要网络 |
 |---|---|---|
 | 文档渲染 | 6 个文件 / 12 处调用（`office-renderer-client.mjs`、`docxlib/{render,convert}.py`、`pptx/lib/{render,convert}.mjs`、`spreadsheet_cli.mjs`） | 是，目的地唯一：`10.31.112.13:19400` |
-| 本机回环 | `skills/frontend-slides/scripts/export-pdf.sh:199` | 是，但只连本机 `127.0.0.1:<临时端口>` |
+| 本机回环 | `skills/frontend-slides/scripts/export-pdf.sh:199` | 连本机 `127.0.0.1:<临时端口>`，**`--unshare-net` 下仍可用**（已实测，见 10.5.7） |
 | `pdf` / `diagram-maker` / 其余 skill | — | 否（`pdf_cli.py:184` 甚至主动拒绝远程图片） |
 | 网关进程内（模型、med-tools MCP、`office_to_pdf`、UI 预览、IM 渠道） | `src/**`、`ui/server/**` | 是，但**不经 bash 沙箱**，不受本策略约束 |
 
@@ -685,7 +685,7 @@ macOS 的 SBPL profile 同步调整（`writeDirs` 换成 `scope.root` + 必要�
 |---|---|---|
 | `data-analysis`（待实现） | `none` | `none` |
 | `docx` / `pptx` / `spreadsheets` | `open`（过渡） | `allowlist 10.31.112.13:19400` |
-| `frontend-slides` | `open`（过渡） | `open`（过渡） |
+| `frontend-slides` | `none` | `none` |
 | `pdf` / `diagram-maker` / 未匹配命令 | `none` | `none` |
 
 **明确不做**：Unix socket 转接口、netns + veth、Linux 端口级白名单、渲染链路网关化重构。
@@ -694,33 +694,55 @@ macOS 的 SBPL profile 同步调整（`writeDirs` 换成 `scope.root` + 必要�
 两者都是 2–3 天量级，且会引入新的出口面。B 方案先用「按技能分组」把风险收敛到
 `data-analysis` 这个真正需要硬保证的技能上。
 
-#### 10.5.4 必须补的三件事
+#### 10.5.4 必须补的两件事
 
 | # | 事项 | 说明 |
 |---|---|---|
 | 1 | macOS 让 `network` 真正生效 | 三态 `none` / `allowlist` / `open`；参数真正传入 `SandboxExecConfig` 与 `buildSandboxProfile` |
 | 2 | 启动网络自检 | 在沙箱内实跑 4 条探针；`none` 档下任一可达 → **拒绝启动**（fail-closed） |
-| 3 | `frontend-slides` 回环 | 过渡期归 `open`；后续改成 `file://` 或 `page.setContent()`，再收紧到 `none` |
 
 `allowlist` 在无实现平台上必须**启动报错**，不得静默降级为 `open` —— 这正是 N2 的教训。
+
+~~第 3 条：`frontend-slides` 回环兜底~~ —— 10.5.7 实测证明不需要，已删除。
 
 #### 10.5.5 启动自检的探针定义
 
 | # | 探针 | `none` 期望 | `allowlist` 期望 |
 |---|---|---|---|
-| N1 | `connect 127.0.0.1:<临时端口>` | 失败 | 失败 |
-| N2 | `connect 10.31.112.13:19400` | 失败 | **成功**（反向断言，防「过严把功能弄坏」） |
-| N3 | `gethostbyname('example.com')` | 失败 | 失败 |
-| N4 | `urlopen('http://1.1.1.1')` | 失败 | 失败 |
+| N1 | 沙箱内自起监听后**自连** `127.0.0.1` | **成功**（保证 skill 内自起服务可用，见 10.5.7） | 成功 |
+| N2 | 连**宿主**已在监听的 `127.0.0.1:<端口>` | 失败（宿主回环隔离） | 失败 |
+| N3 | 连 `10.31.112.13:19400` | 失败 | **成功**（反向断言，防「过严把功能弄坏」） |
+| N4 | 连 `1.1.1.1:443` | 失败 | 失败 |
+| N5 | `gethostbyname('example.com')` | 失败 | 失败 |
+
+⚠️ N1 必须**期望成功**：若写成「连 127.0.0.1 必须失败」，在 `--unshare-net` 下会因为
+「端口没人监听」返回 `ECONNREFUSED` 而假通过，实际上什么都没验证。
 
 #### 10.5.6 已知残余风险
 
 | 风险 | 说明 |
 |---|---|
 | AF_UNIX 不受 `--unshare-net` 限制 | 任何 bind 进沙箱的 socket 都是一条出口；未来若上 UDS 代理，必须按技能排除 |
-| `lo` 在新 netns 里默认 DOWN | `--unshare-net` 后连 `127.0.0.1` 也不可达（Linux 标准行为，需在 node12 实测确认） |
 | 网关侧能出网 | 模型、med-tools、`office_to_pdf` 都在沙箱外，本策略管不到，只能靠审计 |
 | 断网 ≠ 本地安全 | S1–S3、S5–S8、S10–S12 与网络无关，仍依赖 §4 路径校验与单一入口 |
+
+#### 10.5.7 node12 实测记录（2026-11-10）
+
+环境：node12，bubblewrap **0.6.1**，`bwrap --unshare-net`，宿主 `lo` flags = `0x9`（UP）。
+
+| 探针 | 宿主机 | 沙箱内 | 结论 |
+|---|---|---|---|
+| 宿主已起的 `127.0.0.1:45999` | `exit=0` | `exit=111`（ECONNREFUSED） | 沙箱有自己的回环，看不到宿主端口 |
+| 沙箱内自起的 `127.0.0.1:45998` | — | **`exit=0`** | **回环可用** |
+| `10.31.112.13:19400` | — | `exit=101`（ENETUNREACH） | 内网被断 |
+| `1.1.1.1:443` | — | `exit=101` | 公网被断 |
+| `gethostbyname('example.com')` | 可解析 | 失败（`gaierror`） | DNS 被断 |
+
+**两条修正**：
+
+1. `--unshare-net` 之后 `127.0.0.1` **仍然可用**（此前担心的「lo 默认 DOWN」在 bwrap 0.6.1 上不成立）。
+   → `frontend-slides/export-pdf.sh` 自起自连的模式**不受断网影响**，可直接归 `none`。
+2. Linux 侧的断网效果与预期一致：内网、公网、DNS 全部不可达。**B 方案可以直接落地。**
 
 ---
 
@@ -850,15 +872,16 @@ JSONL，只追加，按天分片：`<PILOT_HOME>/system/audit/<YYYY-MM-DD>.jsonl
 
 若把二、三批一并做完，总量仍是 **14–18 个工作日**；其中第一批 9 天是"不受 skills 影响、可立刻推进"的部分。
 
-### 15.5 网络出口策略：2.5 天（2026-11-10 确认，可与第一批并行）
+### 15.5 网络出口策略：2 天（2026-11-10 确认，可与第一批并行）
 
 | # | 步骤 | 工期 | 验收 |
 |---|---|---|---|
-| 1 | Linux 侧按技能分组落策略（`data-analysis` → `none`） | 0.5d | 4 条探针全绿 |
+| 1 | Linux 侧按技能分组落策略（`data-analysis` → `none`） | 0.5d | 5 条探针全绿 |
 | 2 | macOS 三态 `network` 真正生效 + `allowlist` | 1d | 连 `19400` 通、连 `8.8.8.8` 不通 |
 | 3 | 启动自检（4 探针 + fail-closed） | 0.5d | 故意配错时不启动 |
-| 4 | `frontend-slides` 回环兜底（过渡归 `open`） | 0.5d | `export-pdf` 正常 |
-| | **合计** | **2.5d** | |
+| | **合计** | **2d** | |
+
+原第 4 步「`frontend-slides` 回环兜底」已在 10.5.7 实测中排除，不再需要。
 
 与 skills 优化的交集为零：本项只改 `src/tool/builtin/bash/sandbox/**` 的网络分支与配置解析，
 不触碰 `skills/**`。**唯一注意**：Linux 侧把 office 类技能留作 `open`，
@@ -878,7 +901,6 @@ JSONL，只追加，按天分片：`<PILOT_HOME>/system/audit/<YYYY-MM-DD>.jsonl
 | 把告警写成阻断 | 医生当场无法保存工作，比磁盘满更严重 | 8.0 已明令禁止；代码不得预留 `assert`/拒绝分支；代码评审时专门检查 |
 | **「配了但没生效」**（网络开关静默失效） | 以为已断网，实际全开；macOS 现状即如此 | 启动自检 + `allowlist` 无实现时启动报错（10.5.4） |
 | Linux 上 office 类技能仍可出全网 | 数据面留了口子 | 已知并接受（B 方案）；需要收口时再做 UDS / netns |
-| `frontend-slides` 依赖本机回环 | 断网后 `export-pdf` 失败 | 过渡期归 `open`；后续改 `file://`（10.5.4 第 3 条） |
 
 ---
 
