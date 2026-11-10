@@ -6,12 +6,19 @@
  * Usage:
  *   npm run test:skills
  *   npx tsx scripts/run-skill-e2e.ts --only pdf,docx
+ *   npx tsx scripts/run-skill-e2e.ts --probe    # prerequisites only, no turns
+ *
+ * Exit codes: 0 all cases passed, 1 at least one case failed,
+ * 78 (EX_CONFIG) prerequisites missing — reported as UNTESTABLE, never as a pass.
  */
 import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { connect } from "node:net";
+import { readFileSync } from "node:fs";
 import { cp, mkdir, readFile, readdir } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { connectRemoteGatewayIfAvailable } from "../src/gateway/index.js";
+import { connectRemoteGatewayIfAvailable, probeGatewayServer } from "../src/gateway/index.js";
 import type { ChannelAttachment, Gateway, GatewayEvent } from "../src/gateway/protocol/types.js";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -76,6 +83,72 @@ function parseOnlyFlag(argv: string[]): Set<string> | undefined {
       .map((s) => s.trim())
       .filter(Boolean),
   );
+}
+
+/**
+ * Prerequisite probing. An agent-level run is only meaningful when a gateway
+ * answers and the configured model endpoint actually replies to HTTP; a TCP
+ * socket that accepts but never answers is a common failure mode of a wedged
+ * vLLM, and must not be reported as "ready".
+ */
+type EndpointState = "ok" | "unreachable" | "listening-but-silent" | "http-error";
+
+async function tcpOpen(url: string, timeoutMs = 3000): Promise<boolean> {
+  let host: string;
+  let port: number;
+  try {
+    const parsed = new URL(url);
+    host = parsed.hostname;
+    port = Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80));
+  } catch {
+    return false;
+  }
+  return await new Promise<boolean>((resolve) => {
+    const socket = connect({ host, port });
+    const done = (value: boolean) => {
+      socket.destroy();
+      resolve(value);
+    };
+    socket.setTimeout(timeoutMs, () => done(false));
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+  });
+}
+
+async function httpProbe(url: string, timeoutMs = 5000): Promise<EndpointState> {
+  const opened = await tcpOpen(url, Math.min(timeoutMs, 3000));
+  if (!opened) return "unreachable";
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    return response.ok ? "ok" : "http-error";
+  } catch {
+    // The socket accepted the connection, so this is a hang, not a closed port.
+    return "listening-but-silent";
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * The local stack takes its gateway port from scripts/config.env (via
+ * PILOTDECK_GATEWAY_PORT), so a fresh shell would otherwise probe the legacy
+ * 18789 default and report a false "nothing running".
+ */
+function resolveGatewayUrl(): string {
+  if (process.env.PILOTDECK_GATEWAY_URL) return process.env.PILOTDECK_GATEWAY_URL;
+  if (process.env.PILOTDECK_GATEWAY_PORT) {
+    return `http://127.0.0.1:${process.env.PILOTDECK_GATEWAY_PORT}`;
+  }
+  try {
+    const text = readFileSync(join(REPO_ROOT, "scripts/config.env"), "utf8");
+    const port = text.match(/^\s*PILOTDECK_GATEWAY_PORT\s*=\s*(\d+)\s*$/m)?.[1];
+    if (port) return `http://127.0.0.1:${port}`;
+  } catch {
+    // fall through to the historical default
+  }
+  return "http://127.0.0.1:18789";
 }
 
 async function walkFiles(dir: string): Promise<string[]> {
@@ -398,6 +471,113 @@ async function runCase(gateway: Gateway, c: CaseDef): Promise<CaseResult> {
   };
 }
 
+type ProbeReport = {
+  status: "ready" | "untestable";
+  gateway: { url: string; reachable: boolean };
+  models: Array<{ provider: string; url: string; state: EndpointState }>;
+  runtimes: Record<string, boolean>;
+  fixtures: { required: number; missing: string[] };
+  cases: { total: number; bySkill: Record<string, number>; testable: number; ratio: number };
+  blockers: string[];
+};
+
+const RUNTIME_SKILLS = [
+  ["pdf", "skills/pdf/scripts/pdf.sh"],
+  ["docx", "skills/docx/scripts/docx.sh"],
+  ["pptx", "skills/pptx/scripts/pptx.sh"],
+  ["spreadsheets", "skills/spreadsheets/scripts/spreadsheet.sh"],
+  ["frontend-slides", "skills/frontend-slides/scripts/html.sh"],
+  ["diagram-maker", "skills/diagram-maker/scripts/diagram.sh"],
+] as const;
+
+function skillRuntimeReady(relative: string): boolean {
+  const run = spawnSync("bash", [join(REPO_ROOT, relative), "check"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    timeout: 60_000,
+  });
+  return run.status === 0;
+}
+
+async function probeModelEndpoints(): Promise<ProbeReport["models"]> {
+  const { loadPilotConfig } = await import("../src/pilot/config/loadPilotConfig.js");
+  let providers: Array<{ provider: string; url: string }> = [];
+  try {
+    const snapshot = loadPilotConfig();
+    const raw = (snapshot.config as { model?: { providers?: Record<string, { url?: string }> } })
+      .model?.providers ?? {};
+    providers = Object.entries(raw)
+      .filter(([, value]) => typeof value?.url === "string")
+      .map(([provider, value]) => ({ provider, url: String(value.url) }));
+  } catch (error) {
+    process.stderr.write(`warning: cannot read model providers: ${(error as Error).message}\n`);
+    return [];
+  }
+  const results: ProbeReport["models"] = [];
+  for (const { provider, url } of providers) {
+    results.push({ provider, url, state: await httpProbe(`${url.replace(/\/$/, "")}/models`, 5000) });
+  }
+  return results;
+}
+
+async function probePrerequisites(cases: CaseDef[]): Promise<ProbeReport> {
+  const gatewayUrl = resolveGatewayUrl();
+  const gateway = await probeGatewayServer({ url: gatewayUrl, timeoutMs: 2000 });
+  const models = await probeModelEndpoints();
+  const runtimes: Record<string, boolean> = {};
+  for (const [name, relative] of RUNTIME_SKILLS) {
+    runtimes[name] = skillRuntimeReady(relative);
+  }
+
+  const required = new Set<string>();
+  for (const c of cases) {
+    for (const attachment of c.attachments ?? []) {
+      required.add(attachment.from);
+    }
+  }
+  const missing: string[] = [];
+  for (const relative of required) {
+    try {
+      await readFile(join(FIXTURE_ROOT, relative));
+    } catch {
+      missing.push(relative);
+    }
+  }
+
+  const bySkill: Record<string, number> = {};
+  for (const c of cases) {
+    bySkill[c.skill] = (bySkill[c.skill] ?? 0) + 1;
+  }
+
+  const blockers: string[] = [];
+  if (!gateway.ok) blockers.push(`gateway not reachable at ${gatewayUrl} (token=${gateway.token ? "present" : "missing"})`);
+  const workingModel = models.find((item) => item.state === "ok");
+  if (models.length === 0) {
+    blockers.push("no model provider configured");
+  } else if (!workingModel) {
+    blockers.push(
+      `no model endpoint answers: ${models.map((item) => `${item.provider}=${item.state}`).join(", ")}`,
+    );
+  }
+  if (missing.length) blockers.push(`fixtures missing: ${missing.join(", ")}`);
+
+  const testable = blockers.length === 0 ? cases.length : 0;
+  return {
+    status: blockers.length === 0 ? "ready" : "untestable",
+    gateway: { url: gatewayUrl, reachable: gateway.ok },
+    models,
+    runtimes,
+    fixtures: { required: required.size, missing },
+    cases: {
+      total: cases.length,
+      bySkill,
+      testable,
+      ratio: cases.length ? Number((testable / cases.length).toFixed(2)) : 0,
+    },
+    blockers,
+  };
+}
+
 function printSummary(results: CaseResult[]): number {
   const pad = Math.max(...results.map((r) => r.id.length), 8);
   process.stdout.write("\n=== skill e2e ===\n");
@@ -435,13 +615,31 @@ async function main(): Promise<void> {
     return;
   }
 
-  const gatewayUrl = process.env.PILOTDECK_GATEWAY_URL ?? "http://127.0.0.1:18789";
+  if (process.argv.includes("--probe")) {
+    const report = await probePrerequisites(cases);
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    process.stdout.write(
+      report.status === "ready"
+        ? `PROBE READY (${report.cases.testable}/${report.cases.total} cases testable)\n`
+        : `PROBE UNTESTABLE (0/${report.cases.total} cases): ${report.blockers.join("; ")}\n`,
+    );
+    process.exitCode = report.status === "ready" ? 0 : 78;
+    return;
+  }
+
+  const gatewayUrl = resolveGatewayUrl();
   const gateway = await connectRemoteGatewayIfAvailable({ url: gatewayUrl, timeoutMs: 2000 });
   if (!gateway) {
+    // No gateway means no case could run. Reporting this as a failure would
+    // hide the difference between "the skill is broken" and "nothing to test
+    // against", so use the reserved EX_CONFIG code.
+    const report = await probePrerequisites(cases);
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     console.error(
-      `Gateway not reachable at ${gatewayUrl}. Start the local stack first: bash scripts/start-local.sh`,
+      `UNTESTABLE (0/${cases.length} cases): ${report.blockers.join("; ")}\n`
+      + "Start the local stack first: bash scripts/start-local.sh",
     );
-    process.exitCode = 1;
+    process.exitCode = 78;
     return;
   }
 

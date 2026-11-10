@@ -16,6 +16,14 @@ docker buildx version >/dev/null 2>&1 || {
   exit 1
 }
 
+# Local-only test material must never reach the build context or the package.
+if command -v node >/dev/null 2>&1; then
+  node "$ROOT/scripts/check-test-assets.mjs" || {
+    echo "error: test-asset isolation check failed" >&2
+    exit 1
+  }
+fi
+
 mkdir -p "$OUTPUT_DIR"
 stage_dir="$(mktemp -d "${TMPDIR:-/tmp}/med-pilotdeck-offline.XXXXXX")"
 trap 'rm -rf "$stage_dir"' EXIT
