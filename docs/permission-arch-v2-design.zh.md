@@ -636,8 +636,8 @@ macOS 的 SBPL profile 同步调整（`writeDirs` 换成 `scope.root` + 必要�
 - 这两个目录登记为可写，并纳入 `scratch` 配额
 - `HOME` 仍指向 userHome（只读），避免脚本读到不存在的家目录
 
-另外：`selectSandbox()` 的 `network` 默认是 `true`。离线部署建议显式配
-`sandbox.network: false`；这不影响远程服务（走 Gateway 进程），只限制 bash 子进程。
+网络出口不在本节处理：`selectSandbox()` 的 `network` 默认是 `true`，但
+**在 macOS 上该配置完全不生效**（见 10.5）。离线断网必须先修 10.5，再谈可写范围。
 
 ### 10.4 为什么暂不做类型化工具（A+）
 
@@ -653,6 +653,74 @@ macOS 的 SBPL profile 同步调整（`writeDirs` 换成 `scope.root` + 必要�
 1. 命令被拒率 > 10%
 2. 单任务平均重试次数 > 2
 3. 出现实际越界写入事故
+
+### 10.5 网络出口策略（B 方案，2026-11-10 确认）
+
+**目标**：macOS（开发）与 Linux（交付）两端都真正断网，同时不破坏现有 skill 与工具调用。
+
+#### 10.5.1 三个已核实的事实
+
+| # | 事实 | 证据 |
+|---|---|---|
+| N1 | Linux 上 `network: false` **真生效** | `bwrap.ts:78` 加 `--unshare-net`；回归 `bwrap.spec.ts:76` |
+| N2 | macOS 上 `network: false` **完全不生效**（配置根本没传进去，profile 写死） | `sandboxExec.ts:14-19` 无 `network` 字段；`sandboxExec.ts:63` 写死 `(allow network*)`；`sandboxExec.spec.ts:46` 还断言它必须存在 |
+| N3 | `network` 默认值 = `true`（**不隔离**） | `parseMultiUserConfig.ts:89`，且 `.pilotdeck.yaml` 未显式配置 |
+
+2026-11-10 在 macOS 上用仓库生成的真实 profile 实测：`sandbox-exec` 内
+`connect 127.0.0.1` 返回 `0`（成功）；把规则换成 `(deny network*)` 后返回 `1`（EPERM）。
+这证明 N2 —— 当前 macOS 侧的网络限制处于「配了但没生效」状态。
+
+#### 10.5.2 全仓扫描：谁真的需要出网
+
+| 类别 | 位置 | 需要网络 |
+|---|---|---|
+| 文档渲染 | 6 个文件 / 12 处调用（`office-renderer-client.mjs`、`docxlib/{render,convert}.py`、`pptx/lib/{render,convert}.mjs`、`spreadsheet_cli.mjs`） | 是，目的地唯一：`10.31.112.13:19400` |
+| 本机回环 | `skills/frontend-slides/scripts/export-pdf.sh:199` | 是，但只连本机 `127.0.0.1:<临时端口>` |
+| `pdf` / `diagram-maker` / 其余 skill | — | 否（`pdf_cli.py:184` 甚至主动拒绝远程图片） |
+| 网关进程内（模型、med-tools MCP、`office_to_pdf`、UI 预览、IM 渠道） | `src/**`、`ui/server/**` | 是，但**不经 bash 沙箱**，不受本策略约束 |
+
+#### 10.5.3 B 方案（已确认，不做 A）
+
+| 技能分组 | Linux（交付 / node12） | macOS（开发） |
+|---|---|---|
+| `data-analysis`（待实现） | `none` | `none` |
+| `docx` / `pptx` / `spreadsheets` | `open`（过渡） | `allowlist 10.31.112.13:19400` |
+| `frontend-slides` | `open`（过渡） | `open`（过渡） |
+| `pdf` / `diagram-maker` / 未匹配命令 | `none` | `none` |
+
+**明确不做**：Unix socket 转接口、netns + veth、Linux 端口级白名单、渲染链路网关化重构。
+
+原因：Linux 的 `--unshare-net` 是二元的，做不到「只放一个端口」；要做只能上 UDS 或 netns，
+两者都是 2–3 天量级，且会引入新的出口面。B 方案先用「按技能分组」把风险收敛到
+`data-analysis` 这个真正需要硬保证的技能上。
+
+#### 10.5.4 必须补的三件事
+
+| # | 事项 | 说明 |
+|---|---|---|
+| 1 | macOS 让 `network` 真正生效 | 三态 `none` / `allowlist` / `open`；参数真正传入 `SandboxExecConfig` 与 `buildSandboxProfile` |
+| 2 | 启动网络自检 | 在沙箱内实跑 4 条探针；`none` 档下任一可达 → **拒绝启动**（fail-closed） |
+| 3 | `frontend-slides` 回环 | 过渡期归 `open`；后续改成 `file://` 或 `page.setContent()`，再收紧到 `none` |
+
+`allowlist` 在无实现平台上必须**启动报错**，不得静默降级为 `open` —— 这正是 N2 的教训。
+
+#### 10.5.5 启动自检的探针定义
+
+| # | 探针 | `none` 期望 | `allowlist` 期望 |
+|---|---|---|---|
+| N1 | `connect 127.0.0.1:<临时端口>` | 失败 | 失败 |
+| N2 | `connect 10.31.112.13:19400` | 失败 | **成功**（反向断言，防「过严把功能弄坏」） |
+| N3 | `gethostbyname('example.com')` | 失败 | 失败 |
+| N4 | `urlopen('http://1.1.1.1')` | 失败 | 失败 |
+
+#### 10.5.6 已知残余风险
+
+| 风险 | 说明 |
+|---|---|
+| AF_UNIX 不受 `--unshare-net` 限制 | 任何 bind 进沙箱的 socket 都是一条出口；未来若上 UDS 代理，必须按技能排除 |
+| `lo` 在新 netns 里默认 DOWN | `--unshare-net` 后连 `127.0.0.1` 也不可达（Linux 标准行为，需在 node12 实测确认） |
+| 网关侧能出网 | 模型、med-tools、`office_to_pdf` 都在沙箱外，本策略管不到，只能靠审计 |
+| 断网 ≠ 本地安全 | S1–S3、S5–S8、S10–S12 与网络无关，仍依赖 §4 路径校验与单一入口 |
 
 ---
 
@@ -704,6 +772,8 @@ JSONL，只追加，按天分片：`<PILOT_HOME>/system/audit/<YYYY-MM-DD>.jsonl
 | 可复现导出（记录 skill 版本+参数哈希） | 牵涉全部 skill | 出现"两次生成结果不一致"的实际问题 |
 | 只读 / 紧急模式 | 贯穿文件、bash、前端、API | 医院审计期间要求全系统只读时 |
 | 文件内容级密级/水印 | 与权限架构正交 | 单独立项 |
+| Linux 端口级网络白名单（UDS 转接口 / netns） | `--unshare-net` 是二元的；UDS 要重写两套 HTTP 客户端 | 需要「office 类技能也零出网」时（见 10.5.3） |
+| 渲染链路网关化（新增 render/convert 工具） | 9 处调用点 + 3 个 skill 的 CLI 契约重写 | 需要彻底移除 skill 的出网依赖时（见 10.5.3） |
 
 ---
 
@@ -734,6 +804,10 @@ JSONL，只追加，按天分片：`<PILOT_HOME>/system/audit/<YYYY-MM-DD>.jsonl
 | 21 | 管理员打开设置 →「用户」 | 看到每个用户目录占用、可按大小排序、显示占比与全用户合计 |
 | 22 | 普通用户请求 `/api/admin/users` | 403 |
 | 23 | 任意一次超阈值写入 | 写入成功，仅页面提示 + 审计留痕（**不得出现拒绝**） |
+| 24 | `data-analysis` 脚本里 `socket.connect('127.0.0.1', x)` | 失败（`none` 档） |
+| 25 | `data-analysis` 脚本里 `socket.connect('10.31.112.13', 19400)` | 失败（`none` 档） |
+| 26 | 文档类 skill 向 `10.31.112.13:19400` 取渲染结果 | 成功（Mac `allowlist`；Linux `open`） |
+| 27 | 故意把策略配成 `none` 但沙箱未断网 | **Gateway 拒绝启动**并给出明确原因 |
 
 ---
 
@@ -776,6 +850,20 @@ JSONL，只追加，按天分片：`<PILOT_HOME>/system/audit/<YYYY-MM-DD>.jsonl
 
 若把二、三批一并做完，总量仍是 **14–18 个工作日**；其中第一批 9 天是"不受 skills 影响、可立刻推进"的部分。
 
+### 15.5 网络出口策略：2.5 天（2026-11-10 确认，可与第一批并行）
+
+| # | 步骤 | 工期 | 验收 |
+|---|---|---|---|
+| 1 | Linux 侧按技能分组落策略（`data-analysis` → `none`） | 0.5d | 4 条探针全绿 |
+| 2 | macOS 三态 `network` 真正生效 + `allowlist` | 1d | 连 `19400` 通、连 `8.8.8.8` 不通 |
+| 3 | 启动自检（4 探针 + fail-closed） | 0.5d | 故意配错时不启动 |
+| 4 | `frontend-slides` 回环兜底（过渡归 `open`） | 0.5d | `export-pdf` 正常 |
+| | **合计** | **2.5d** | |
+
+与 skills 优化的交集为零：本项只改 `src/tool/builtin/bash/sandbox/**` 的网络分支与配置解析，
+不触碰 `skills/**`。**唯一注意**：Linux 侧把 office 类技能留作 `open`，
+因此 `.doc/.xls/.ppt` 转换与视觉验收都不受影响。
+
 ---
 
 ## 16. 风险
@@ -788,6 +876,9 @@ JSONL，只追加，按天分片：`<PILOT_HOME>/system/audit/<YYYY-MM-DD>.jsonl
 | 多用户 gateway 未重载配额 | 管理员改了但用户看不到 | 9.4 的 `reloadAll()` 为必做项 |
 | 记账漂移 | 实际占用与显示不符 | 每 6 小时全量校准 |
 | 把告警写成阻断 | 医生当场无法保存工作，比磁盘满更严重 | 8.0 已明令禁止；代码不得预留 `assert`/拒绝分支；代码评审时专门检查 |
+| **「配了但没生效」**（网络开关静默失效） | 以为已断网，实际全开；macOS 现状即如此 | 启动自检 + `allowlist` 无实现时启动报错（10.5.4） |
+| Linux 上 office 类技能仍可出全网 | 数据面留了口子 | 已知并接受（B 方案）；需要收口时再做 UDS / netns |
+| `frontend-slides` 依赖本机回环 | 断网后 `export-pdf` 失败 | 过渡期归 `open`；后续改 `file://`（10.5.4 第 3 条） |
 
 ---
 
@@ -802,6 +893,15 @@ JSONL，只追加，按天分片：`<PILOT_HOME>/system/audit/<YYYY-MM-DD>.jsonl
 | D-P3 | **管理员必须能看到各用户个人目录占用**（排序、占比、合计） | §9.2.1（后端链路已有，本轮补管理视图） |
 | D-P4 | **第一批前端只做"最小可见版"**：能力卡片 + 两条用量条 + 树 + 预览；上传/删除/新建/恢复**一律不显示** | §5.3.1 |
 | D-P5 | **第一批不含任何 `skills/**` 改动**，沙箱收窄与可见性白名单延后到 skills 冻结之后 | §§15.2、15.3、18 |
+
+### 2026-11-10
+
+| 编号 | 决策 | 影响范围 |
+|---|---|---|
+| D-P6 | **网络出口采用 B 方案**：Linux 上 office 类技能归 `open`、`data-analysis` 归 `none`；macOS 上 office 类走 `allowlist 10.31.112.13:19400` | §10.5.3 |
+| D-P7 | **必须补启动网络自检**：`none` 档下 4 条探针任一可达即拒绝启动（fail-closed） | §§10.5.4、10.5.5、14（24–27） |
+| D-P8 | **明确不做** UDS 转接口 / netns / 渲染链路网关化，全部进 §13 | §§10.5.3、13 |
+| D-P9 | macOS 的 `network` 配置目前**完全不生效**，属既有缺陷，必须与断网一起修 | §§10.5.1、16 |
 
 ---
 
@@ -821,6 +921,9 @@ JSONL，只追加，按天分片：`<PILOT_HOME>/system/audit/<YYYY-MM-DD>.jsonl
 | `src/tool/builtin/bash/sandbox/**`（可写范围收窄） | 直接决定 skill 脚本能否写 `TMPDIR` / `XDG_CACHE_HOME` | 排最后，等 skills T5 回归完成 |
 | 可见性白名单（§7，会过滤 `skills/` 的展示） | skills 正在新增 `_shared/`、`assets/`、`references/` | 等目录结构冻结 |
 | 产物落位（§4.1） | skill CLI 默认输出到 cwd | 只做推荐与提示，不强制 |
+
+网络出口策略（§10.5）**不在交集内**：只改 `src/tool/builtin/bash/sandbox/**` 的网络分支与
+配置解析，不碰 `skills/**`，可与 skills 线并行推进。
 
 **提交前自检**（有输出说明混进了 skills 文件）：
 
