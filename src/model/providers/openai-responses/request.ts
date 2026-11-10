@@ -98,6 +98,14 @@ export function buildOpenAIResponsesRequest(
 
   if (thinkingPlan.useOpenAIReasoning && thinkingPlan.effort) {
     body.reasoning = { effort: thinkingPlan.effort };
+  } else if (
+    thinkingPlan.useOpenAICompatibleThinking
+    && thinkingPlan.thinkingType === "enabled"
+  ) {
+    // DeepSeek / GLM-style reasoning models exposed through an
+    // OpenAI-compatible proxy use the native Responses `reasoning.effort`
+    // field rather than the Chat Completions `thinking` object.
+    body.reasoning = { effort: thinkingPlan.effort ?? "high" };
   } else if (thinkingPlan.bodyPatch) {
     Object.assign(body, thinkingPlan.bodyPatch);
   }
