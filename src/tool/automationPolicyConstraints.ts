@@ -135,7 +135,10 @@ export function getAutomationPolicyViolation(toolName: string, input: unknown): 
 
   return [
     `Automation policy blocks ${reason}.`,
-    "Use a registered tool or call the bundled pdf.sh, docx.sh, pptx.sh, spreadsheet.sh, or diagram.sh entrypoint directly.",
+    "Use a registered tool or call the bundled entrypoint directly: skills/data-analysis/scripts/analysis.sh, "
+      + "or pdf.sh / docx.sh / pptx.sh / spreadsheet.sh / diagram.sh for document tasks. "
+      + "data analysis (pandas/stats/plots over csv, xlsx, DICOM, ECG) has its own Python sandbox — "
+      + "write the script to scratch/ and run it through analysis.sh instead of calling an interpreter.",
     "Do not retry by wrapping the operation in another command.",
   ].join(" ");
 }

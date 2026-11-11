@@ -430,7 +430,7 @@ function defaultAvoidRetryReason(code: PilotDeckToolErrorCode): string | undefin
     case "ask_mode_violation":
       return "Ask mode blocks this class of tool until execution mode is restored.";
     case "automation_policy_violation":
-      return "This deployment permanently blocks generated executable source and interpreter execution.";
+      return "This deployment blocks ad-hoc interpreter execution; data analysis must go through skills/data-analysis/scripts/analysis.sh, which runs Python inside its own sandbox.";
     default:
       return undefined;
   }
