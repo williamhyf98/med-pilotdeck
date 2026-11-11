@@ -525,3 +525,21 @@
 
 命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **860 tests / 858 pass / 0 fail / 2 skipped** ｜
 两个 dev 实例（3001/3020）的网关子进程重启后 `GET /api/projects` 均 `200`
+
+### 2026-11-11 · 技能 references 读不到：read_file 只认工作区
+
+- 现象：agent 按 `SKILL.md` 的指引读 `docx/references/specifications.md`，
+  两次 `ENOENT`（被解析成 `<workspace>/skills/docx/...`），白费两轮后改用 `bash sed` 才读到
+- 根因：`read_skill` 返回的是**技能根相对路径**（`docx/SKILL.md`），而 `read_file`
+  只解析"工作区相对/绝对且在工作区内"，技能目录在仓库根，两者对不上
+- 修法（`filesystem/pathSafety.ts`，只作用于读）：
+  1. 命中 `<appRoot>/skills/**` 或 `<appRoot>/plugins/**` 的读取直接放行，
+     `root` 记为共享技能根，**不再走"是否在工作区"的弹窗判定**
+  2. 相对路径若在工作区里不存在，再按"技能根相对"解析一次
+     （`docx/references/x.md` → `<appRoot>/skills/docx/references/x.md`，
+     插件技能按 `<appRoot>/plugins/*/skills/<name>` 找），工作区同名路径优先
+  3. 仍拒绝：`..` 跳出、技能树写入、realpath 逃逸
+- 测试：`path-safety-multiuser.spec.ts` +2（三种模式放行 + 五条拒绝）
+
+命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **862 tests / 860 pass / 0 fail / 2 skipped** ｜
+dist 实测：`docx/references/specifications.md` → OK；`docx/../src/cli/pilotdeck.ts` → DENY

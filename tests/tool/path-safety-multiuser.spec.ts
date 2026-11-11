@@ -160,3 +160,58 @@ test("multi-user whitelist does not open the rest of the app root or ../ escapes
     }
   });
 });
+
+test("skill references are readable without a prompt (default permission mode)", async () => {
+  await withHome(async ({ pilotHome, workspace }) => {
+    const ctx = context({ cwd: workspace, pilotHome, permissionMode: "default" });
+
+    // 绝对路径：<appRoot>/skills/**
+    const absolute = resolvePilotDeckWorkspacePath(
+      join(REPO_ROOT, "skills", "docx", "references", "specifications.md"),
+      ctx,
+      { mustExist: true },
+    );
+    assert.equal(absolute.ok, true);
+    assert.equal(absolute.root, join(REPO_ROOT, "skills"));
+
+    // read_skill 返回的是技能根相对路径（如 "docx/SKILL.md"），模型会照着写
+    const relative = resolvePilotDeckWorkspacePath("docx/references/specifications.md", ctx, { mustExist: true });
+    assert.equal(relative.ok, true);
+    assert.equal(relative.absolutePath, join(REPO_ROOT, "skills", "docx", "references", "specifications.md"));
+
+    // 同一套规则对单机（非多用户）模式成立：开发者本机不弹窗
+    const single = resolvePilotDeckWorkspacePath(
+      "docx/references/specifications.md",
+      context({ cwd: workspace, pilotHome, permissionMode: "default", multiUser: false }),
+      { mustExist: true },
+    );
+    assert.equal(single.ok, true);
+  });
+});
+
+test("skill reference resolution stays read-only and inside the skill directory", async () => {
+  await withHome(async ({ pilotHome, workspace }) => {
+    const ctx = context({ cwd: workspace, pilotHome, permissionMode: "default" });
+
+    // 写入共享技能树仍然拒绝
+    const write = resolvePilotDeckWorkspacePath(
+      join(REPO_ROOT, "skills", "docx", "SKILL.md"),
+      ctx,
+      { forWrite: true },
+    );
+    assert.equal(write.ok, false);
+
+    // 用 .. 跳出技能目录不成立（回落到工作区相对解析后不存在）
+    for (const escape of [
+      "docx/../src/cli/pilotdeck.ts",
+      "docx/references/../../../package.json",
+    ]) {
+      const result = resolvePilotDeckWorkspacePath(escape, ctx, { mustExist: true });
+      assert.equal(result.ok, false, `expected rejection for ${escape}`);
+    }
+
+    // 不存在的工作区同名路径不会被"猜"成技能文件
+    const missing = resolvePilotDeckWorkspacePath("no-such-skill/references/x.md", ctx, { mustExist: true });
+    assert.equal(missing.ok, false);
+  });
+});

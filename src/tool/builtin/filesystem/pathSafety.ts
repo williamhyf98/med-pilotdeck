@@ -1,5 +1,5 @@
 import path from "node:path";
-import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { PilotDeckToolRuntimeContext } from "../../protocol/types.js";
@@ -45,7 +45,9 @@ export function resolvePilotDeckWorkspacePath(
     };
   }
 
-  const absolutePath = path.resolve(path.isAbsolute(inputPath) ? inputPath : path.join(context.cwd, inputPath));
+  const absolutePath = path.resolve(
+    resolveSkillRelativeReference(inputPath, context, options) ?? (path.isAbsolute(inputPath) ? inputPath : path.join(context.cwd, inputPath)),
+  );
 
   // Multi-user hard boundary: applies in every permission mode, including
   // bypassPermissions, so a per-user Gateway can never touch paths outside its home.
@@ -61,6 +63,34 @@ export function resolvePilotDeckWorkspacePath(
       if (denial) return denyWorkspaceWrite(relativePath, denial, context);
     }
     return { ok: true, absolutePath, relativePath, root: context.cwd };
+  }
+
+  // 技能/插件的随附文件是**产品自带的只读资料**：read_skill 返回的
+  // `<path>` 就是相对技能根的路径，模型据此读 references/、assets/。
+  // 这类读取不该弹窗（用户明确要求"技能根目录只读"），也不可能造成越权写。
+  if (!options?.forWrite) {
+    const sharedRoot = sharedReadOnlyRootFor(absolutePath);
+    if (sharedRoot) {
+      if (options?.mustExist) {
+        const real = safeRealpath(absolutePath);
+        if (!real) {
+          return { ok: false, error: toolError("file_not_found", `File ${inputPath} does not exist.`) };
+        }
+        const realRoot = safeRealpath(sharedRoot) ?? sharedRoot;
+        if (!isPathWithinRoot(real, realRoot)) {
+          return {
+            ok: false,
+            error: toolError("path_not_allowed", `Path ${inputPath} resolves outside the shared skill tree.`),
+          };
+        }
+      }
+      return {
+        ok: true,
+        absolutePath,
+        relativePath: path.relative(sharedRoot, absolutePath) || ".",
+        root: sharedRoot,
+      };
+    }
   }
 
   const roots = [context.cwd, ...context.permissionContext.additionalWorkingDirectories].map((root) =>
@@ -194,6 +224,64 @@ function isUnderSharedReadOnlyRoot(target: string): boolean {
     const root = path.join(appRoot, name);
     return isPathWithinRoot(target, safeRealpath(root) ?? root);
   });
+}
+
+/** 命中的共享只读根（`<appRoot>/skills` 或 `<appRoot>/plugins`），否则 undefined。 */
+function sharedReadOnlyRootFor(target: string): string | undefined {
+  const appRoot = resolveAppRootForWhitelist();
+  if (!appRoot) return undefined;
+  const real = safeRealpath(target) ?? target;
+  for (const name of ["skills", "plugins"]) {
+    const root = path.join(appRoot, name);
+    const realRoot = safeRealpath(root) ?? root;
+    if (isPathWithinRoot(real, realRoot)) return realRoot;
+  }
+  return undefined;
+}
+
+/**
+ * SKILL.md 里写的是"相对该 SKILL.md 所在目录解析"，而 `read_skill` 返回的
+ * `<path>` 形如 `docx/SKILL.md`。所以模型自然会写 `docx/references/x.md`，
+ * 这不是工作区里的路径。这里把这种写法解析到真正的技能目录：
+ * - 只对**相对路径**生效，且工作区里同名路径优先（不改变既有语义）
+ * - 禁止 `..`，解析结果必须落在该技能目录内
+ * - 只读操作才会走到这里（写操作不重写路径）
+ */
+function resolveSkillRelativeReference(
+  inputPath: string,
+  context: PilotDeckToolRuntimeContext,
+  options?: { forWrite?: boolean },
+): string | undefined {
+  if (options?.forWrite || path.isAbsolute(inputPath)) return undefined;
+  const segments = inputPath.split(/[\\/]/).filter((segment) => segment !== "");
+  if (segments.length < 2) return undefined;
+  const [first, ...rest] = segments;
+  if (first === "." || first === ".." || rest.includes("..")) return undefined;
+  // 工作区里真的存在这个相对路径时，保持原有行为。
+  if (existsSync(path.join(context.cwd, ...segments))) return undefined;
+
+  const appRoot = resolveAppRootForWhitelist();
+  if (!appRoot) return undefined;
+  const candidates = [
+    path.join(appRoot, "skills", first),
+    ...safeReaddir(path.join(appRoot, "plugins")).map((plugin) => path.join(appRoot, "plugins", plugin, "skills", first)),
+  ];
+  for (const skillDir of candidates) {
+    const target = path.join(skillDir, ...rest);
+    if (!existsSync(target)) continue;
+    const realSkillDir = safeRealpath(skillDir) ?? skillDir;
+    const realTarget = safeRealpath(target) ?? target;
+    if (isPathWithinRoot(realTarget, realSkillDir)) return target;
+  }
+  return undefined;
+}
+
+function safeReaddir(directory: string): string[] {
+  try {
+    return readdirSync(directory, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+  } catch {
+    return [];
+  }
 }
 
 /** Nearest ancestor of this module that contains package.json (works for src/ and dist/ layouts). */
