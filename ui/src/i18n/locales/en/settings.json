@@ -113,7 +113,8 @@
       "privacy": "Security & Privacy",
       "advanced": "Advanced",
       "about": "About",
-      "users": "User management"
+      "users": "User management",
+      "skills": "Skill dependencies"
     },
     "titles": {
       "account": "Account",
@@ -133,7 +134,8 @@
       "privacy": "Security & Privacy",
       "advanced": "Advanced",
       "about": "About",
-      "users": "User management"
+      "users": "User management",
+      "skills": "Extensions / Skill dependencies"
     },
     "contentComingSoon": {
       "title": "Right panel content is not connected yet",
@@ -167,6 +169,33 @@
       "integrations": "The config file is not valid YAML, so the Integrations form is unavailable.",
       "officePreview": "The config file is not valid YAML, so the Office Preview form is unavailable.",
       "modelPool": "The config file is not valid YAML, so the Model Pool form is unavailable."
+    },
+    "skills": {
+      "description": "Python dependencies used by the data-analysis skill. Offline installs are not supported here, so this page only reports; if the status is not ready, ask an operator to run analysis.sh bootstrap-runtime.",
+      "refresh": "Refresh",
+      "loadFailed": "Failed to load: {{message}}",
+      "installedCount": "Installed {{installed}} / {{total}}",
+      "bootstrappedAt": "Last bootstrap",
+      "pythonOverride": "Using system Python",
+      "runtimePath": "Runtime directory",
+      "packagesTitle": "Dependencies",
+      "readOnlyNotice": "Read-only. The list ships with the package; nothing can be installed from this page.",
+      "empty": "No dependency list available.",
+      "columns": {
+        "name": "Package",
+        "specifier": "Requirement",
+        "tier": "Tier",
+        "installed": "Installed"
+      },
+      "tierBase": "Base",
+      "tierStats": "Stats",
+      "tierMedical": "Medical",
+      "tierOther": "Other",
+      "status": {
+        "ready": "Ready",
+        "missing": "Missing dependencies",
+        "notBootstrapped": "Not bootstrapped"
+      }
     }
   },
   "quickSettings": {
@@ -677,64 +706,64 @@
       "form": "Form",
       "rawYaml": "Raw YAML"
     },
-	    "actions": {
-	      "opening": "Opening...",
-	      "revealFile": "Reveal in Finder",
-	      "revealFileMac": "Reveal in Finder",
-	      "revealFileWindows": "Reveal in Explorer",
-	      "revealFileGeneric": "Reveal in file manager",
-	      "refresh": "Refresh",
-	      "reloadCurrent": "Reload current config",
-	      "saving": "Saving...",
-	      "saveAndReload": "Save and reload current config",
-	      "saveAndReloadShort": "Save & reload",
-	      "remove": "Remove",
-	      "removeModel": "Remove model",
-	      "add": "Add",
-	      "dismiss": "Dismiss",
-	      "showDetails": "Show config details",
-	      "hideDetails": "Hide config details"
-	    },
-	    "status": {
-	      "unsavedChanges": "Unsaved changes",
-	      "noUnsavedChanges": "No unsaved changes",
-	      "fixYamlInFilesystem": "Fix the config file in the filesystem, then refresh.",
-	      "fixYamlInRawEditor": "Fix the Raw YAML below, then save to re-enable form settings.",
-	      "subsystems": {
-	        "pending": "Waiting for config parsing.",
-	        "processEnv": {
-	          "label": "Process Env",
-	          "applied": "Native settings have been applied to this process."
-	        },
-	        "memory": {
-	          "label": "Memory",
-	          "enabled": "Memory service is enabled.",
-	          "disabled": "memory.enabled is false."
-	        },
-	        "router": {
-	          "label": "Router (CCR)",
-	          "enabled": "Router dashboard uses native records.",
-	          "disabled": "router.enabled is false."
-	        },
-	        "gateway": {
-	          "label": "Gateway",
-	          "enabled": "Gateway is enabled.",
-	          "disabled": "gateway.enabled is false."
-	        }
-	      }
-	    },
-	    "rawYaml": {
-	      "configValid": "Config is valid",
-	      "unsaved": "(unsaved)",
-	      "configInvalid": "Config has validation errors",
-	      "configInvalidSeeBelow": "Config has validation errors — see below",
-	      "errors": "Errors",
-	      "warnings": "Warnings",
-	      "yamlParseError": "The config file YAML failed to parse. Fix the Raw YAML below, then save.",
-	      "yamlParseErrorWithDetail": "The config file YAML failed to parse: {{error}}",
-	      "cannotParse": "Could not parse the config file YAML. Fix the Raw YAML above, then save to restore form settings.",
-	      "rawYaml": "Raw YAML"
-	    },
+    "actions": {
+      "opening": "Opening...",
+      "revealFile": "Reveal in Finder",
+      "revealFileMac": "Reveal in Finder",
+      "revealFileWindows": "Reveal in Explorer",
+      "revealFileGeneric": "Reveal in file manager",
+      "refresh": "Refresh",
+      "reloadCurrent": "Reload current config",
+      "saving": "Saving...",
+      "saveAndReload": "Save and reload current config",
+      "saveAndReloadShort": "Save & reload",
+      "remove": "Remove",
+      "removeModel": "Remove model",
+      "add": "Add",
+      "dismiss": "Dismiss",
+      "showDetails": "Show config details",
+      "hideDetails": "Hide config details"
+    },
+    "status": {
+      "unsavedChanges": "Unsaved changes",
+      "noUnsavedChanges": "No unsaved changes",
+      "fixYamlInFilesystem": "Fix the config file in the filesystem, then refresh.",
+      "fixYamlInRawEditor": "Fix the Raw YAML below, then save to re-enable form settings.",
+      "subsystems": {
+        "pending": "Waiting for config parsing.",
+        "processEnv": {
+          "label": "Process Env",
+          "applied": "Native settings have been applied to this process."
+        },
+        "memory": {
+          "label": "Memory",
+          "enabled": "Memory service is enabled.",
+          "disabled": "memory.enabled is false."
+        },
+        "router": {
+          "label": "Router (CCR)",
+          "enabled": "Router dashboard uses native records.",
+          "disabled": "router.enabled is false."
+        },
+        "gateway": {
+          "label": "Gateway",
+          "enabled": "Gateway is enabled.",
+          "disabled": "gateway.enabled is false."
+        }
+      }
+    },
+    "rawYaml": {
+      "configValid": "Config is valid",
+      "unsaved": "(unsaved)",
+      "configInvalid": "Config has validation errors",
+      "configInvalidSeeBelow": "Config has validation errors — see below",
+      "errors": "Errors",
+      "warnings": "Warnings",
+      "yamlParseError": "The config file YAML failed to parse. Fix the Raw YAML below, then save.",
+      "yamlParseErrorWithDetail": "The config file YAML failed to parse: {{error}}",
+      "cannotParse": "Could not parse the config file YAML. Fix the Raw YAML above, then save to restore form settings.",
+      "rawYaml": "Raw YAML"
+    },
     "sectionGroups": {
       "basic": "Basic",
       "basicDescription": "Configure model services before running this service.",
@@ -795,14 +824,38 @@
         "description": "Configure service ports, data paths, and network proxy. Changes to ports or paths usually require restarting the service.",
         "advancedToggle": "Advanced settings",
         "fields": {
-          "host": { "label": "Host", "description": "Bind interface for the HTTP/WebSocket server." },
-          "serverPort": { "label": "Server port", "description": "Express + WebSocket port." },
-          "vitePort": { "label": "Vite port", "description": "Frontend dev server (only used when running `npm run dev`)." },
-          "apiTimeout": { "label": "API timeout (ms)", "description": "Per-request upstream timeout." },
-          "databasePath": { "label": "Database path", "description": "SQLite auth/projects database (~ expands to home)." },
-          "workspacesRoot": { "label": "Workspaces root", "description": "Directory under which projects are scanned." },
-          "proxyUrl": { "label": "HTTPS proxy", "description": "Outbound HTTPS proxy URL. Applies to both Gateway and UI Server (proxy.url in pilotdeck.yaml)." },
-          "proxyNoProxy": { "label": "No-proxy list", "description": "Comma-separated hostnames/IPs that bypass the proxy (proxy.noProxy in pilotdeck.yaml). 127.0.0.1 and localhost are always excluded." }
+          "host": {
+            "label": "Host",
+            "description": "Bind interface for the HTTP/WebSocket server."
+          },
+          "serverPort": {
+            "label": "Server port",
+            "description": "Express + WebSocket port."
+          },
+          "vitePort": {
+            "label": "Vite port",
+            "description": "Frontend dev server (only used when running `npm run dev`)."
+          },
+          "apiTimeout": {
+            "label": "API timeout (ms)",
+            "description": "Per-request upstream timeout."
+          },
+          "databasePath": {
+            "label": "Database path",
+            "description": "SQLite auth/projects database (~ expands to home)."
+          },
+          "workspacesRoot": {
+            "label": "Workspaces root",
+            "description": "Directory under which projects are scanned."
+          },
+          "proxyUrl": {
+            "label": "HTTPS proxy",
+            "description": "Outbound HTTPS proxy URL. Applies to both Gateway and UI Server (proxy.url in pilotdeck.yaml)."
+          },
+          "proxyNoProxy": {
+            "label": "No-proxy list",
+            "description": "Comma-separated hostnames/IPs that bypass the proxy (proxy.noProxy in pilotdeck.yaml). 127.0.0.1 and localhost are always excluded."
+          }
         }
       },
       "officePreview": {
@@ -887,11 +940,26 @@
         "customModelPlaceholder": "Custom model ID",
         "providerAdvancedToggle": "Advanced retry settings",
         "providerRetry": {
-          "requestMaxRetries": { "label": "Request max retries", "description": "Maximum retries for non-streaming requests." },
-          "streamMaxRetries": { "label": "Stream max retries", "description": "Maximum retries for streaming requests." },
-          "streamIdleTimeoutMs": { "label": "Stream idle timeout (ms)", "description": "Abort a stream if no data is received for this duration." },
-          "baseDelayMs": { "label": "Base delay (ms)", "description": "Initial delay before the first retry." },
-          "maxDelayMs": { "label": "Max delay (ms)", "description": "Maximum delay between retries." }
+          "requestMaxRetries": {
+            "label": "Request max retries",
+            "description": "Maximum retries for non-streaming requests."
+          },
+          "streamMaxRetries": {
+            "label": "Stream max retries",
+            "description": "Maximum retries for streaming requests."
+          },
+          "streamIdleTimeoutMs": {
+            "label": "Stream idle timeout (ms)",
+            "description": "Abort a stream if no data is received for this duration."
+          },
+          "baseDelayMs": {
+            "label": "Base delay (ms)",
+            "description": "Initial delay before the first retry."
+          },
+          "maxDelayMs": {
+            "label": "Max delay (ms)",
+            "description": "Maximum delay between retries."
+          }
         }
       },
       "agents": {
@@ -937,40 +1005,97 @@
       "alwaysOn": {
         "title": "Always-On",
         "description": "Configure automatic discovery globally and opt individual workspaces in.",
-        "enabled": { "label": "Enabled", "description": "Master switch for Always-On background agent." },
+        "enabled": {
+          "label": "Enabled",
+          "description": "Master switch for Always-On background agent."
+        },
         "trigger": {
           "title": "Trigger",
           "description": "Controls when and how often discovery runs fire.",
-          "autoDiscovery": { "label": "Auto discovery", "description": "When enabled, Always-On periodically inspects opted-in workspaces and proposes follow-up plans." },
-          "tickInterval": { "label": "Tick interval (minutes)", "description": "How often the daemon checks opted-in workspaces." },
-          "cooldown": { "label": "Cooldown (minutes)", "description": "Minimum time between discovery runs per workspace." },
-          "dailyBudget": { "label": "Daily budget", "description": "Maximum automatic discovery runs per workspace per day." },
-          "heartbeatStale": { "label": "Heartbeat stale (seconds)", "description": "Heartbeats older than this are considered stale." },
-          "recentUserMsg": { "label": "Recent user msg (minutes)", "description": "Only fire if the user sent a message within this window." },
-          "preferChannel": { "label": "Preferred channel", "description": "Channel the discovery agent prefers to interact through." }
+          "autoDiscovery": {
+            "label": "Auto discovery",
+            "description": "When enabled, Always-On periodically inspects opted-in workspaces and proposes follow-up plans."
+          },
+          "tickInterval": {
+            "label": "Tick interval (minutes)",
+            "description": "How often the daemon checks opted-in workspaces."
+          },
+          "cooldown": {
+            "label": "Cooldown (minutes)",
+            "description": "Minimum time between discovery runs per workspace."
+          },
+          "dailyBudget": {
+            "label": "Daily budget",
+            "description": "Maximum automatic discovery runs per workspace per day."
+          },
+          "heartbeatStale": {
+            "label": "Heartbeat stale (seconds)",
+            "description": "Heartbeats older than this are considered stale."
+          },
+          "recentUserMsg": {
+            "label": "Recent user msg (minutes)",
+            "description": "Only fire if the user sent a message within this window."
+          },
+          "preferChannel": {
+            "label": "Preferred channel",
+            "description": "Channel the discovery agent prefers to interact through."
+          }
         },
         "dormancy": {
           "title": "Dormancy",
           "description": "File-system watcher that pauses discovery while the user is actively editing.",
-          "enabled": { "label": "Enabled", "description": "Suppress discovery fires while the workspace has recent file changes." },
-          "debounce": { "label": "Debounce (ms)", "description": "Wait this long after the last file change before resuming." },
-          "ignoreGlobs": { "label": "Ignore globs", "description": "File patterns excluded from dormancy detection, one per line." }
+          "enabled": {
+            "label": "Enabled",
+            "description": "Suppress discovery fires while the workspace has recent file changes."
+          },
+          "debounce": {
+            "label": "Debounce (ms)",
+            "description": "Wait this long after the last file change before resuming."
+          },
+          "ignoreGlobs": {
+            "label": "Ignore globs",
+            "description": "File patterns excluded from dormancy detection, one per line."
+          }
         },
         "workspace": {
           "title": "Workspace",
           "description": "Isolated workspace strategy for Always-On runs.",
-          "gitWorktree": { "label": "Git worktree base dir", "description": "Root directory for git worktree-based isolation." },
-          "snapshotDir": { "label": "Snapshot base dir", "description": "Root directory for snapshot-based isolation." },
-          "snapshotMaxBytes": { "label": "Snapshot max bytes", "description": "Maximum size of a workspace snapshot." },
-          "maxPlansPerCycle": { "label": "Max plans per cycle", "description": "Maximum number of plans that can be accumulated in a single isolation environment cycle." },
-          "gitLfs": { "label": "Git LFS", "description": "Include Git LFS objects in workspace snapshots." }
+          "gitWorktree": {
+            "label": "Git worktree base dir",
+            "description": "Root directory for git worktree-based isolation."
+          },
+          "snapshotDir": {
+            "label": "Snapshot base dir",
+            "description": "Root directory for snapshot-based isolation."
+          },
+          "snapshotMaxBytes": {
+            "label": "Snapshot max bytes",
+            "description": "Maximum size of a workspace snapshot."
+          },
+          "maxPlansPerCycle": {
+            "label": "Max plans per cycle",
+            "description": "Maximum number of plans that can be accumulated in a single isolation environment cycle."
+          },
+          "gitLfs": {
+            "label": "Git LFS",
+            "description": "Include Git LFS objects in workspace snapshots."
+          }
         },
         "execution": {
           "title": "Execution",
           "description": "Safety limits for each Always-On run.",
-          "maxTurns": { "label": "Max turns", "description": "Maximum number of agent turns per run." },
-          "maxToolCalls": { "label": "Max tool calls", "description": "Maximum total tool calls per run." },
-          "timeout": { "label": "Timeout (minutes)", "description": "Hard timeout for each run." }
+          "maxTurns": {
+            "label": "Max turns",
+            "description": "Maximum number of agent turns per run."
+          },
+          "maxToolCalls": {
+            "label": "Max tool calls",
+            "description": "Maximum total tool calls per run."
+          },
+          "timeout": {
+            "label": "Timeout (minutes)",
+            "description": "Hard timeout for each run."
+          }
         },
         "workspaceOptIn": {
           "title": "Workspace opt-in",
@@ -1139,7 +1264,10 @@
       "router": {
         "title": "PilotDeck Router",
         "description": "Embedded router for fan-out across providers (tier-based routing, token saver, auto-orchestrate).",
-        "enabled": { "label": "Enabled", "description": "When on, agents use the router instead of the configured provider directly." },
+        "enabled": {
+          "label": "Enabled",
+          "description": "When on, agents use the router instead of the configured provider directly."
+        },
         "advancedToggle": "Advanced settings",
         "levels": {
           "modelPlaceholder": "Select a configured model",
@@ -1171,30 +1299,54 @@
         "zeroUsageRetry": {
           "label": "Zero-usage retry",
           "description": "Automatically retry when the upstream returns a response with zero tokens used.",
-          "maxAttempts": { "label": "Max attempts", "description": "Maximum retry attempts before giving up." }
+          "maxAttempts": {
+            "label": "Max attempts",
+            "description": "Maximum retry attempts before giving up."
+          }
         },
         "transientRetry": {
           "label": "Transient error retry",
           "description": "Automatically retry on transient errors (rate limits, server errors, overloaded) with exponential backoff.",
-          "maxAttempts": { "label": "Max attempts", "description": "Maximum retry attempts before giving up." },
-          "baseDelayMs": { "label": "Base delay (ms)", "description": "Initial delay before the first retry, in milliseconds." },
-          "maxDelayMs": { "label": "Max delay (ms)", "description": "Maximum delay between retries, in milliseconds." }
+          "maxAttempts": {
+            "label": "Max attempts",
+            "description": "Maximum retry attempts before giving up."
+          },
+          "baseDelayMs": {
+            "label": "Base delay (ms)",
+            "description": "Initial delay before the first retry, in milliseconds."
+          },
+          "maxDelayMs": {
+            "label": "Max delay (ms)",
+            "description": "Maximum delay between retries, in milliseconds."
+          }
         },
         "tokenSaver": {
           "title": "Token Saver",
           "description": "A lightweight judge classifies each turn into a tier and routes it to a cost-appropriate model.",
           "judgeModel": "Judge model",
           "defaultTier": "Default tier",
-          "judgeTimeout": { "label": "Judge timeout (ms)", "description": "Maximum time to wait for the judge decision." },
-          "subagentPolicy": { "label": "Sub-agent policy", "description": "How sub-agents are routed: 'judge' re-evaluates each sub-agent turn, 'skip' keeps the direct sub-agent route." }
+          "judgeTimeout": {
+            "label": "Judge timeout (ms)",
+            "description": "Maximum time to wait for the judge decision."
+          },
+          "subagentPolicy": {
+            "label": "Sub-agent policy",
+            "description": "How sub-agents are routed: 'judge' re-evaluates each sub-agent turn, 'skip' keeps the direct sub-agent route."
+          }
         },
         "autoOrchestrate": {
           "title": "Auto Orchestrate",
           "description": "Automatically fan out complex turns into parallel sub-agents when the judge assigns certain tiers.",
           "triggerTiers": "Trigger tiers",
-          "slimPrompt": { "label": "Slim system prompt", "description": "Use a shorter system prompt for orchestrated sub-agents to save tokens." }
+          "slimPrompt": {
+            "label": "Slim system prompt",
+            "description": "Use a shorter system prompt for orchestrated sub-agents to save tokens."
+          }
         },
-        "stats": { "label": "Stats collection", "description": "Track token usage and cost per session. Powers the Dashboard tab." },
+        "stats": {
+          "label": "Stats collection",
+          "description": "Track token usage and cost per session. Powers the Dashboard tab."
+        },
         "pricing": {
           "title": "Model Pricing",
           "description": "Custom pricing per model ($/million tokens). Used when the API doesn't report cost.",
@@ -1235,8 +1387,14 @@
       "gateway": {
         "title": "Gateway",
         "description": "Messaging gateway (Feishu / Telegram / Discord / Slack) — channel-level secrets are best edited via Raw YAML.",
-        "enabled": { "label": "Enabled", "description": "When on, the gateway home is generated and channels with credentials come online." },
-        "home": { "label": "Gateway home", "description": "Working directory for gateway state and per-channel configs." }
+        "enabled": {
+          "label": "Enabled",
+          "description": "When on, the gateway home is generated and channels with credentials come online."
+        },
+        "home": {
+          "label": "Gateway home",
+          "description": "Working directory for gateway state and per-channel configs."
+        }
       },
       "subsystemReload": {
         "title": "Subsystem reload status",

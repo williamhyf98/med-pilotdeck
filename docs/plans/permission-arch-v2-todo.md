@@ -187,7 +187,7 @@
 | D4 | 唯一入口 `analysis.sh run` | 1d | D3 | ✅ |
 | D5 | 执行期安全（AST 黑名单 + 运行期护栏 + 资源上限） | 1d | D4 | ✅ |
 | D6 | 产物落位 `exports/analysis/<slug>-<ts>/` | 0.3d | D4 | ✅ |
-| D7 | 管理员「数据分析依赖」页 | 1d | D3 | 🟡 只读接口 `GET /api/admin/skills/data-analysis/deps` 完成；前端页面未做 |
+| D7 | 管理员「数据分析依赖」页 | 1d | D3 | ✅ 设置页「扩展 / 技能依赖」+ 只读接口 |
 | D8 | 正确性 + 安全测试 | 1d | D5、D6 | 🟡 S1–S12 + C1/C12/R1 已覆盖；C2–C11、R2/R3 待补 |
 
 **门 3 通过条件**：设计书 §14 第 24、25 条必须失败且留审计；
@@ -312,7 +312,7 @@
 - 新增测试：`tests/skills/data-analysis-runner.spec.ts`（6 条：S1–S12 逐条、运行期护栏 6 类、
   C1 数值与 BOM、C12 两次一致、R1 超时、参数越界）
 - 命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **833 tests / 831 pass / 0 fail / 2 skipped**
-- 未做：D8 的 C2–C11 与 R2/R3、D7 前端页面
+- 未做：D8 的 C2–C11 与 R2/R3
 
 ### 2026-11-11 · B1 离线运行时接线 + 随包中文字体（D3 代码部分）
 
@@ -374,3 +374,14 @@
 并把 data-analysis 加进"所有文档技能入口示例都过自动化策略"那条）。
 
 命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **844 tests / 842 pass / 0 fail / 2 skipped**
+
+### 2026-11-11 · D7 前端页（设置 → 扩展 → 技能依赖）
+
+- 新增 `ui/src/components/settings/view/skills/index.tsx`：状态徽章（就绪/依赖缺失/未初始化）、
+  已装/总数、最近初始化时间、运行时目录，以及依赖表（包名 / 版本要求 / 档位 / 实际版本）；
+  只读，不给安装按钮
+- 接线：`SettingsMenuKey` 加 `skills`、侧栏挂在「扩展」下、`SettingsContent` 分发、
+  zh-CN/en 文案补齐
+- 测试：`SkillsDeps.test.tsx`（3 条：渲染、接口失败提示、刷新重取）＋ 侧栏顺序断言同步
+- 命令：`cd ui && npx tsc --noEmit` ✅ ｜ `npx vitest run` → **169 files / 1230 passed** ｜
+  `npx vite build` ✅

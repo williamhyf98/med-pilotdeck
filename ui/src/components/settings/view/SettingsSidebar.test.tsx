@@ -15,7 +15,7 @@ describe('settings menu by role', () => {
 
   it('admins see operator settings and users', () => {
     expect(flatKeys(true)).toEqual(
-      expect.arrayContaining(['account', 'users', 'modelPool', 'advanced', 'officePreview']),
+      expect.arrayContaining(['account', 'users', 'modelPool', 'advanced', 'officePreview', 'skills']),
     );
   });
 
@@ -28,6 +28,7 @@ describe('settings menu by role', () => {
       'agentRoute',
       'agentMemory',
       'officePreview',
+      'skills',
       'advanced',
       'users',
     ]);

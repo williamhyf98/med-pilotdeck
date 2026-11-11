@@ -29,6 +29,7 @@ const MENU_ITEMS_ADMIN: SettingsMenuItemI18n[] = [
     labelKey: "settingsPage.menu.extensions",
     children: [
       { key: "officePreview", labelKey: "settingsPage.menu.officePreview" },
+      { key: "skills", labelKey: "settingsPage.menu.skills" },
     ],
   },
   { key: "advanced", labelKey: "settingsPage.menu.advanced" },
