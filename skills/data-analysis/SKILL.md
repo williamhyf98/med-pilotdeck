@@ -25,6 +25,10 @@ ANALYSIS_SKILL_ROOT="$(dirname "<path>")"
 - 只用 `.py` / `.csv` / `.json` / `.md` 暂存在 `scratch/` 下
 - 命令返回 `rejected` / `not ready` / `blocked` 时**立即停止并报告**，不要换别的实现硬闯
 
+写脚本用 `write_file` 直接写到 `scratch/work/<turnId>/analysis.py`；
+**不要**用 `bash` 的重定向或 heredoc 造 `.py`（会被自动化策略拦，白费一轮）。
+策略只对"`scratch/` 下的 `.py`"开口子，别的位置、别的后缀仍然拒绝。
+
 ## 执行契约
 
 ```bash
