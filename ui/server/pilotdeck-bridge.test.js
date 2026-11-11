@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+    buildTurnAttachments,
     createTrustedGatewayTurnOptions,
     gatewayEventToFrames,
     getGatewayTurnSafetyOverrides,
@@ -12,6 +13,42 @@ import {
     sanitizeTraumaAttachments,
     sanitizeTraumaFormInput,
 } from './pilotdeck-bridge.js';
+
+describe('buildTurnAttachments', () => {
+    let home;
+    beforeEach(() => {
+        home = fs.mkdtempSync(path.join(os.tmpdir(), 'pilotdeck-attach-'));
+    });
+    afterEach(() => {
+        fs.rmSync(home, { recursive: true, force: true });
+    });
+
+    it('按项目目录解析上传附件的相对路径，而不是按 projectKey 拼', () => {
+        const projectKey = 'general_med-mtest-000001';
+        const projectRoot = path.join(home, 'workspaces', 'general_med', projectKey);
+        fs.mkdirSync(path.join(projectRoot, 'inbox', 'batch1'), { recursive: true });
+
+        const { attachments, projectRoot: resolvedRoot } = buildTurnAttachments({
+            attachments: [{ name: 'a.csv', path: 'inbox/batch1/a.csv', size: 3 }],
+            projectKey,
+            pilotHome: home,
+        });
+
+        expect(resolvedRoot).toBe(projectRoot);
+        expect(attachments).toHaveLength(1);
+        // 关键：绝对路径落在真实项目目录内，而不是 <cwd>/<projectKey>/inbox/...
+        expect(attachments[0].path).toBe(path.join(projectRoot, 'inbox', 'batch1', 'a.csv'));
+    });
+
+    it('丢弃解析不到项目内路径的附件', () => {
+        const { attachments } = buildTurnAttachments({
+            attachments: [{ name: 'x', path: '../../etc/passwd' }],
+            projectKey: 'general_med-mtest-000001',
+            pilotHome: home,
+        });
+        expect(attachments).toEqual([]);
+    });
+});
 
 describe('resolveProjectAttachmentPath', () => {
     it('resolves project-relative paths for the gateway', () => {

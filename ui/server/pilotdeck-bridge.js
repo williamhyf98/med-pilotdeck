@@ -438,6 +438,25 @@ function uiFilesToAttachments(files, projectRoot) {
     return out.length > 0 ? out : undefined;
 }
 
+/**
+ * 把 UI 形状的图片/文件附件转成 Gateway 形状，并统一按**项目目录**解析相对路径。
+ *
+ * 这里必须传真实的项目目录，不能传 projectKey：
+ * `resolveProjectAttachmentPath()` 拿它当根做 `path.resolve`，传 key 会解析成
+ * `<server cwd>/<projectKey>/inbox/...` —— 路径"看起来合法"但文件不存在，
+ * 于是每个附件都报 `Attachment not found`，图片/PDF 的内容根本进不了模型。
+ */
+export function buildTurnAttachments({ images, attachments, projectKey, pilotHome } = {}) {
+    const projectRoot = resolveAgentCwd(projectKey, pilotHome || resolveScopedHome());
+    return {
+        projectRoot,
+        attachments: [
+            ...(uiImagesToAttachments(images, projectRoot) || []),
+            ...(uiFilesToAttachments(attachments, projectRoot) || []),
+        ],
+    };
+}
+
 function normalizeRunMode(value) {
     if (value === undefined || value === null || value === '') return undefined;
     if (value === 'agent' || value === 'plan' || value === 'ask') return value;
@@ -1458,10 +1477,12 @@ export async function runChatViaGateway(
     state.active = true;
     state.hasVisibleFailureStatus = false;
 
-    const attachments = [
-        ...(uiImagesToAttachments(options?.images, projectKey) || []),
-        ...(uiFilesToAttachments(options?.attachments, projectKey) || []),
-    ];
+    const turnAttachments = buildTurnAttachments({
+        images: options?.images,
+        attachments: options?.attachments,
+        projectKey,
+    });
+    const attachments = turnAttachments.attachments;
     const resolvedMode = resolvePermissionMode(options);
     const basePermissionMode = resolvedMode === 'plan' ? getWebPermissionMode() : undefined;
     const runMode = normalizeRunMode(options?.runMode) || (resolvedMode === 'plan' ? 'plan' : 'agent');
@@ -1470,7 +1491,7 @@ export async function runChatViaGateway(
     const traumaExtract = options?.traumaExtract === true;
     const traumaAttachments = sanitizeTraumaAttachments(
         options?.traumaAttachments,
-        resolveAgentCwd(projectKey, resolveScopedHome()),
+        turnAttachments.projectRoot,
     );
     console.log(`[pilotdeck-bridge] submitTurn runMode=${runMode} mode=${resolvedMode} (options.permissionMode=${options?.permissionMode}, options.mode=${options?.mode})`);
 
