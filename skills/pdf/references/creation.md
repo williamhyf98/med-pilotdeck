@@ -52,6 +52,37 @@
 `body` 与小节 `body` 里的标准管道表格（表头行 + `| --- |` 分隔行 + 数据行，
 前后各留一个空行）会排成原生表格；不是表格的 `a | b` 文本按普通段落输出。
 
+## 局部样式：角色色、提示框、表格
+
+pdf 的颜色同样用角色名，别写死 hex：语义色四端统一，主题色跟随 `designTheme`。
+
+```json
+{
+  "title": "术后观察记录",
+  "body": "| 项目 | 数值 |\n| --- | --- |\n| 心率 | 88 |",
+  "tableStyle": {"variant": "three-line"},
+  "callout": {"role": "info", "title": "表格说明", "body": "默认使用三线表。"},
+  "sections": [
+    {
+      "heading": "风险提示",
+      "accent": "danger",
+      "body": "患者出现一过性低血压。",
+      "callout": {"role": "danger", "title": "立即处理", "body": "补液 500 mL。"},
+      "tableStyle": {"variant": "grid", "zebra": false, "headerRole": "accent"}
+    }
+  ]
+}
+```
+
+- `accent`：小节标题的色条与标题文字颜色；顶层写则对所有小节生效。
+- `callout`：`{role, title, body}`，浅底 + 左侧色条；顶层写会排在正文之后。
+- `tableStyle`：`variant`（`grid` / `three-line`，三线表无竖线、表头不上底色）、
+  `zebra`（布尔，隔行浅底）、`headerRole`（表头底色角色）。小节里的设置覆盖顶层。
+- 角色：`success` / `warning` / `danger` / `info` 固定不随主题变；
+  `primary` / `accent` / `support` / `ink` / `muted` / `rule` 跟随主题；
+  `soft` / `paper` 当底色用。语义色在 `designTheme: none` 下依然可用。
+- 角色写错、或在 `none` 主题下用主题角色，`make` 直接报错，不会静默变黑。
+
 ## 插入用户上传的图片
 
 - 只支持**本地文件路径**。优先用附件列表里的 **`$WS/inbox/...` 绝对路径**。

@@ -100,6 +100,39 @@ bash "$PDF_SKILL_ROOT/scripts/pdf.sh" make --title "病例报告" --markdown bod
 `make` 成功时会返回 `tocEntries: [{level, text, page}]`，可直接拿来做交付说明。
 节数少于 3 时不要加，目录比正文还长没有意义。
 
+### 局部样式（强调色 / 提示框 / 三线表）
+
+用户说"这一节标红""加个提示框""表格用三线表"时，用 `--spec` 的角色名，
+不要写死 hex：
+
+```json
+{
+  "title": "术后观察记录",
+  "body": "| 项目 | 数值 |\n| --- | --- |\n| 心率 | 88 |",
+  "tableStyle": {"variant": "three-line"},
+  "callout": {"role": "info", "title": "表格说明", "body": "默认使用三线表。"},
+  "sections": [
+    {
+      "heading": "风险提示",
+      "accent": "danger",
+      "body": "患者出现一过性低血压。",
+      "callout": {"role": "danger", "title": "立即处理", "body": "补液 500 mL，15 分钟后复测血压。"},
+      "tableStyle": {"variant": "grid", "zebra": false, "headerRole": "accent"}
+    }
+  ]
+}
+```
+
+- `accent`（顶层或小节）：这一节的小标题色条和标题文字换成该角色色。
+- `callout`（顶层或小节）：浅色底 + 左侧色条的提示框，按 `title` / `body` 排。
+- `tableStyle`（顶层或小节，小节覆盖顶层）：
+  `variant: grid|three-line`（三线表无竖线、表头不上底色）、
+  `zebra`（隔行浅底，三线表自动关掉）、`headerRole`（表头底色角色）。
+- 角色：语义色 `success` / `warning` / `danger` / `info` 固定，不随主题变，
+  和 Word/PPT/Excel 同一个红/黄/绿/蓝，**不选主题也能用**；
+  `primary` / `accent` / `support` / `ink` / `muted` / `rule` 跟随当前主题，
+  `soft` / `paper` 当底色用。没选主题却写主题角色会直接报错，不会静默变黑。
+
 ### 正文插图（用户上传照片）
 
 需要把 inbox 里的图片嵌进 PDF 正文时，用 `--spec` 的 `images`（顶层或小节内），**不要**去读 `pdf_cli.py` / `starter_pdf.py` 源码：

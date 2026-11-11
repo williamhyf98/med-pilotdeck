@@ -685,3 +685,29 @@ dist 实测：`docx/references/specifications.md` → OK；`docx/../src/cli/pilo
 - 测试：`self-test` 离线分支新增角色色断言；`npm test` → **864 tests / 862 pass / 0 fail / 2 skipped**
 - 补：`soft` / `white` 按"底色角色"解析（配墨色字），用于分组行/隔断行；
   远端 Renderer 目视：`soft` 分组行是米色底 + 深墨字，`primary` 合计行是浅青底 + 主色字
+
+### 2026-11-11 · pdf：局部强调色 / 提示框 / 三线表
+
+- 问题：`make --spec` 只有全局主题，页面内没法表达"这一节标红""加个提示框""表格换三线表"，
+  agent 只能改主题或放弃；且 PDF 的语义色没有和 Word/PPT/Excel 打通。
+- 实现（`skills/pdf/scripts/pdf_cli.py`）：
+  - `resolve_pdf_role()`：角色 → `fg`（字色）/ `bg`（浅底）/ `bar`（色条）/ `fill`（实底）/ `onFill`；
+    语义色取 `_shared/design-tokens.json` 的 `semantic.fg/bg`，`designTheme: none` 也可用；
+    主题角色未选主题时报错（不静默变黑）；`resolve_pdf_theme()` 现在回传 `semantic`
+  - `sections[].accent` / 顶层 `accent`：小标题色条 + 标题文字换成该角色色
+  - `callout`（顶层/小节）：`{role,title,body}` 浅底 + 左侧色条，语义色默认 `info`
+  - `tableStyle`（顶层/小节，小节覆盖顶层）：`variant: grid|three-line`、`zebra`、`headerRole`
+  - `build_table_flowable()` 支持三线表（无竖线、表头不上底色）、关斑马纹、表头换角色底色
+- 验证（远端/本地 poppler 100dpi 逐项目视）：
+  - clinical + `accent: danger`：风险提示标题与色条为 `B42318`，其余小节仍是主题主色
+  - `callout.role=info`：底 `EAF1FA`、左条 `1F5FA9`；`danger`：底 `FDECEC`、左条 `B42318`
+  - `tableStyle.variant=three-line`：只有上/表头下/下三条线，无竖线；`headerRole: accent`
+    的网格表表头为 `B4552D` + 白字；`zebra:false` 生效
+  - `designTheme: none` + `callout.role=warning`：底 `FDF3E3`、左条 `B45309`（语义色独立于主题）
+  - 默认路径零回归：同一 spec 与 HEAD 版本输出逐像素 `diff bbox=None`
+- 文档：`SKILL.md` 新增「局部样式」小节；`references/creation.md` 补字段与示例
+- 测试：`pdf.sh self-test` 新增角色色断言（`B42318` / `B4552D`、主题角色必须选主题）
+  与"提示框 + 三线表 + 网格表"构建/取文/取表校验；`npm test` → **864 / 862 pass / 0 fail / 2 skipped**
+- 已知限制：`inspect --tables-out` 用 pdfplumber 的线条策略，三线表没有竖线时数不出表格
+  （内容仍在文本层，可正常取文与目视）；
+- 未做：正文内联强调（`==高亮==`）、表格单元格级角色色、多栏版式

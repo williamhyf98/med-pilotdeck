@@ -390,10 +390,19 @@ def resolve_pdf_theme(name: str) -> dict[str, Any]:
     except ValueError as exc:
         raise PdfToolError(f"未知主题：{exc}") from exc
     theme = selected["theme"]
+    try:
+        loaded = module.load_tokens(
+            bundled_skills_root=os.environ.get("PILOTDECK_BUNDLED_SKILLS_DIR") or str(SKILL_ROOT.parent),
+            skill_root=str(SKILL_ROOT),
+        )
+        semantic = loaded["tokens"].get("semantic") or {}
+    except Exception:  # noqa: BLE001 - theme still works without semantic tokens
+        semantic = {}
     return {
         "id": selected["id"],
         "label": theme["label"],
         "colors": theme["colors"],
+        "semantic": semantic,
         "typography": theme.get("typography") or {},
         "warning": selected.get("warning"),
         "source": selected.get("source"),
@@ -411,8 +420,102 @@ def list_pdf_theme_names() -> str:
     return "、".join(f"{item['label']}（{item['id']}）" for item in listed["themes"])
 
 
+# ---------------------------------------------------------------------------
+# 语义角色色：与 docx / pptx / xlsx 共用同一套角色名。
+# ---------------------------------------------------------------------------
+
+PDF_ROLE_KEYS = {
+    "success": "success",
+    "warning": "warning",
+    "danger": "danger",
+    "info": "info",
+    "primary": "primary",
+    "accent": "accent",
+    "support": "support",
+    "ink": "ink",
+    "muted": "muted",
+    "rule": "rule",
+    "soft": "soft",
+    "surface": "surface",
+    "paper": "paper",
+    "white": "paper",
+}
+PDF_SURFACE_ROLES = {"soft", "surface", "paper"}
+PDF_ROLE_NAMES = "、".join(k for k in PDF_ROLE_KEYS if k != "white")
+SEMANTIC_ROLES = {"success", "warning", "danger", "info"}
+
+_SEMANTIC_CACHE: dict[str, Any] | None = None
+
+
+def shared_semantic_tokens() -> dict[str, Any]:
+    """The four semantic colours, usable even with `--design-theme none`."""
+    global _SEMANTIC_CACHE
+    if _SEMANTIC_CACHE is not None:
+        return _SEMANTIC_CACHE
+    module = _shared_tokens_module()
+    semantic: dict[str, Any] = {}
+    if module is not None:
+        try:
+            loaded = module.load_tokens(
+                bundled_skills_root=os.environ.get("PILOTDECK_BUNDLED_SKILLS_DIR") or str(SKILL_ROOT.parent),
+                skill_root=str(SKILL_ROOT),
+            )
+            semantic = loaded["tokens"].get("semantic") or {}
+        except Exception:  # noqa: BLE001 - fall through to the neutral defaults
+            semantic = {}
+    _SEMANTIC_CACHE = semantic
+    return semantic
+
+
+def _mix_hex(hex_value: str, toward: str = "FFFFFF", weight: float = 0.12) -> str:
+    """Mix `hex_value` with `toward`; weight is how much of the original survives."""
+    try:
+        front = [int(hex_value[index:index + 2], 16) for index in (0, 2, 4)]
+        back = [int(toward[index:index + 2], 16) for index in (0, 2, 4)]
+    except (TypeError, ValueError):
+        return hex_value
+    return "".join(
+        f"{round(value * weight + target * (1 - weight)):02X}"
+        for value, target in zip(front, back)
+    )
+
+
+def resolve_pdf_role(palette: dict[str, Any] | None, role: Any, location: str) -> dict[str, str]:
+    """角色名 → 6 位 hex 色值。
+
+    fg 字色 / bg 浅底 / bar 左侧色条 / fill 实底 / onFill 实底上的字。
+    """
+    key = PDF_ROLE_KEYS.get(str(role or "").strip().lower())
+    if not key:
+        raise PdfToolError(f"{location} must be one of {PDF_ROLE_NAMES}")
+    colors_map = palette_colors(palette)
+    ink = colors_map["ink"]
+    if key in PDF_SURFACE_ROLES:
+        fill = colors_map["paper"] if key == "paper" else colors_map[key]
+        return {"fg": ink, "bg": fill, "bar": fill, "fill": fill, "onFill": ink}
+    semantic = (palette or {}).get("semantic") or shared_semantic_tokens()
+    entry = semantic.get(key) if key in SEMANTIC_ROLES else None
+    if isinstance(entry, dict) and isinstance(entry.get("fg"), str):
+        fg = entry["fg"].lstrip("#").upper()
+        bg = str(entry.get("bg") or _mix_hex(fg)).lstrip("#").upper()
+        on_fill = str(entry.get("onFg") or "FFFFFF").lstrip("#").upper()
+        return {"fg": fg, "bg": bg, "bar": fg, "fill": fg, "onFill": on_fill}
+    themed_colors = (palette or {}).get("colors") or {}
+    color = themed_colors.get(key)
+    if not isinstance(color, str) or not re.fullmatch(r"[0-9A-Fa-f]{6}", color):
+        raise PdfToolError(
+            f"{location} '{role}' is unavailable for the active theme; "
+            "semantic roles (success/warning/danger/info) work without one, "
+            "theme roles need --design-theme"
+        )
+    color = color.upper()
+    on_fill = str(themed_colors.get("onPrimary") or "FFFFFF").upper()
+    return {"fg": color, "bg": _mix_hex(color), "bar": color, "fill": color, "onFill": on_fill}
+
+
 TABLE_SEPARATOR = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?\s*$")
 TABLE_NUMERIC = re.compile(r"^[-+−]?\d[\d,，.。\s%‰]*$")
+TABLE_VARIANTS = {"grid", "three-line"}
 
 
 def split_table_cells(line: str) -> list[str]:
@@ -1191,6 +1294,52 @@ def load_make_spec(args: argparse.Namespace) -> dict[str, Any]:
         label="spec.images",
         base_dir=base_dir,
     )
+    def role_name(value: Any, location: str) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise PdfToolError(f"{location} must be a colour role name")
+        return value.strip().lower()
+
+    def callout_spec(value: Any, location: str) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise PdfToolError(f"{location} must be an object")
+        title = value.get("title") or ""
+        body_text = value.get("body") or ""
+        if not isinstance(title, str) or not isinstance(body_text, str):
+            raise PdfToolError(f"{location}.title/body must be strings")
+        if not title.strip() and not body_text.strip():
+            raise PdfToolError(f"{location} requires a title or a body")
+        role = role_name(value.get("role", value.get("tone", "info")), f"{location}.role")
+        return {"title": title.strip(), "body": body_text, "role": role}
+
+    def table_style_spec(value: Any, location: str) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise PdfToolError(f"{location} must be an object")
+        resolved: dict[str, Any] = {}
+        variant = value.get("variant")
+        if variant is not None:
+            variant_text = str(variant).strip()
+            if variant_text not in TABLE_VARIANTS:
+                raise PdfToolError(f"{location}.variant must be one of {', '.join(sorted(TABLE_VARIANTS))}")
+            resolved["variant"] = variant_text
+        zebra = value.get("zebra")
+        if zebra is not None:
+            if not isinstance(zebra, bool):
+                raise PdfToolError(f"{location}.zebra must be a boolean")
+            resolved["zebra"] = zebra
+        header_role = role_name(
+            value.get("headerRole", value.get("header_role")),
+            f"{location}.headerRole",
+        )
+        if header_role:
+            resolved["headerRole"] = header_role
+        return resolved
+
     normalized: list[dict[str, Any]] = []
     for index, section in enumerate(sections, start=1):
         if not isinstance(section, dict):
@@ -1215,6 +1364,12 @@ def load_make_spec(args: argparse.Namespace) -> dict[str, Any]:
                 "body": section_body,
                 "level": level,
                 "images": section_images,
+                "accent": role_name(section.get("accent"), f"spec.sections[{index}].accent"),
+                "callout": callout_spec(section.get("callout"), f"spec.sections[{index}].callout"),
+                "tableStyle": table_style_spec(
+                    section.get("tableStyle") or section.get("table_style"),
+                    f"spec.sections[{index}].tableStyle",
+                ),
             }
         )
     if markdown and not normalized and markdown["body"] and not body.strip():
@@ -1246,6 +1401,12 @@ def load_make_spec(args: argparse.Namespace) -> dict[str, Any]:
         "images": top_images,
         "palette": palette,
         "toc": toc,
+        "accent": role_name(spec.get("accent"), "spec.accent"),
+        "callout": callout_spec(spec.get("callout"), "spec.callout"),
+        "tableStyle": table_style_spec(
+            spec.get("tableStyle") or spec.get("table_style"),
+            "spec.tableStyle",
+        ),
     }
 
 
@@ -1304,9 +1465,14 @@ def build_table_flowable(
     colors_map: dict[str, str],
     available_width: float,
     themed: bool,
+    variant: str = "grid",
+    zebra: bool | None = None,
+    header_role: str | None = None,
+    palette: dict[str, Any] | None = None,
 ) -> Any:
     from reportlab.lib import colors
     from reportlab.lib.units import mm
+    from reportlab.lib.styles import ParagraphStyle
     from reportlab.platypus import LongTable, Paragraph, TableStyle
 
     columns = len(rows[0])
@@ -1327,30 +1493,126 @@ def build_table_flowable(
         and all(TABLE_NUMERIC.match(value) for value in values)
     }
 
-    data = [[Paragraph(format_make_text(cell), header_style) for cell in rows[0]]]
+    header_fill = colors_map["primary"] if themed else "F3F4F6"
+    header_fg = colors_map["onPrimary"] if themed else colors_map["ink"]
+    if header_role:
+        role_colors = resolve_pdf_role(palette, header_role, "tableStyle.headerRole")
+        header_fill = role_colors["fill"]
+        header_fg = role_colors["onFill"]
+    if variant == "three-line":
+        # 三线表按学术规范：表头不上底色，靠上/中/下三条线分隔；
+        # 指定 headerRole 时只借用它的字色，不铺底。
+        header_fill = None
+        if not header_role:
+            header_fg = colors_map["ink"]
+    effective_header_style = ParagraphStyle(
+        "MakeCellHeaderRole",
+        parent=header_style,
+        textColor=colors.HexColor("#" + header_fg),
+    )
+    data = [[Paragraph(format_make_text(cell), effective_header_style) for cell in rows[0]]]
     for row in rows[1:]:
         data.append([Paragraph(format_make_text(cell), cell_style) for cell in row])
 
-    header_bg = colors_map["primary"] if themed else "F3F4F6"
-    header_rule = colors_map["primary"] if themed else colors_map["rule"]
-    commands: list[tuple[Any, ...]] = [
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#" + header_bg)),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#" + colors_map["rule"])),
-        ("LINEBELOW", (0, 0), (-1, 0), 0.9, colors.HexColor("#" + header_rule)),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-    ]
-    for index in range(2 if themed else 1, len(data), 2):
-        commands.append(
-            ("BACKGROUND", (0, index), (-1, index), colors.HexColor("#" + colors_map["surface"]))
-        )
+    header_rule = header_fill or colors_map["rule"]
+    if variant == "three-line":
+        ink_line = colors.HexColor("#" + colors_map["ink"])
+        commands: list[tuple[Any, ...]] = [
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LINEABOVE", (0, 0), (-1, 0), 1.1, ink_line),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.7, ink_line),
+            ("LINEBELOW", (0, -1), (-1, -1), 1.1, ink_line),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ]
+    else:
+        commands = [
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#" + colors_map["rule"])),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.9, colors.HexColor("#" + header_rule)),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ]
+        if header_fill:
+            commands.insert(0, ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#" + header_fill)))
+    striped = themed if zebra is None else bool(zebra)
+    if variant != "three-line" and striped:
+        for index in range(2 if themed else 1, len(data), 2):
+            commands.append(
+                ("BACKGROUND", (0, index), (-1, index), colors.HexColor("#" + colors_map["surface"]))
+            )
     for index in sorted(numeric_columns):
         commands.append(("ALIGN", (index, 1), (index, -1), "RIGHT"))
     table = LongTable(data, colWidths=col_widths, repeatRows=1, hAlign="LEFT")
     table.setStyle(TableStyle(commands))
+    return table
+
+
+def build_callout_flowable(
+    callout: dict[str, Any],
+    *,
+    palette: dict[str, Any] | None,
+    colors_map: dict[str, str],
+    available_width: float,
+    body_font: str,
+    heading_font: str,
+    body_scale: float,
+    line_scale: float,
+) -> Any:
+    """提示框：左侧色条 + 浅色底，颜色来自角色名（与 docx/pptx/xlsx 同一套）。"""
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import Paragraph, Table, TableStyle
+
+    role_colors = resolve_pdf_role(palette, callout.get("role") or "info", "callout.role")
+    title = callout.get("title") or ""
+    body_text = callout.get("body") or ""
+    cells: list[list[Any]] = []
+    if title:
+        cells.append([
+            Paragraph(
+                xml_escape(title),
+                ParagraphStyle(
+                    "MakeCalloutTitle",
+                    fontName=heading_font,
+                    fontSize=10.5 * body_scale,
+                    leading=14 * body_scale * line_scale,
+                    textColor=colors.HexColor("#" + role_colors["fg"]),
+                    spaceAfter=1.2 * mm,
+                ),
+            )
+        ])
+    if body_text:
+        cells.append([
+            Paragraph(
+                format_make_text(body_text),
+                ParagraphStyle(
+                    "MakeCalloutBody",
+                    fontName=body_font,
+                    fontSize=10 * body_scale,
+                    leading=14 * body_scale * line_scale,
+                    textColor=colors.HexColor("#" + colors_map["ink"]),
+                ),
+            )
+        ])
+    table = Table(cells, colWidths=[available_width], hAlign="LEFT")
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#" + role_colors["bg"])),
+                ("LINEBEFORE", (0, 0), (0, -1), 2.4, colors.HexColor("#" + role_colors["bar"])),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
     return table
 
 
@@ -1383,6 +1645,8 @@ def write_made_pdf(output: Path, spec: dict[str, Any]) -> list[dict[str, Any]]:
     paper = colors.HexColor("#" + colors_map["paper"])
     title_text = spec["title"]
     themed = palette is not None
+    global_accent = spec.get("accent")
+    global_table_style = spec.get("tableStyle") or {}
 
     def header_footer(canvas, doc) -> None:
         canvas.saveState()
@@ -1621,7 +1885,18 @@ def write_made_pdf(output: Path, spec: dict[str, Any]) -> list[dict[str, Any]]:
     )
     available_width = A4[0] - doc.leftMargin - doc.rightMargin
 
-    def add_body(text: str) -> None:
+    def resolved_accent(role: str | None) -> tuple[Any, Any]:
+        """Return (rule colour, heading text colour) for an accent role."""
+        if not role:
+            return accent, None
+        role_colors = resolve_pdf_role(palette, role, "accent")
+        return (
+            colors.HexColor("#" + role_colors["fill"]),
+            colors.HexColor("#" + role_colors["fg"]),
+        )
+
+    def add_body(text: str, table_style: dict[str, Any] | None = None) -> None:
+        style = {**global_table_style, **(table_style or {})}
         for block in paragraph_blocks(text):
             rows = parse_table_block(block)
             if rows is None:
@@ -1636,30 +1911,60 @@ def write_made_pdf(output: Path, spec: dict[str, Any]) -> list[dict[str, Any]]:
                     colors_map=colors_map,
                     available_width=available_width,
                     themed=themed,
+                    variant=style.get("variant", "grid"),
+                    zebra=style.get("zebra"),
+                    header_role=style.get("headerRole"),
+                    palette=palette,
                 )
             )
             story.append(Spacer(1, 3 * mm))
 
+    def add_callout(callout: dict[str, Any] | None) -> None:
+        if not callout:
+            return
+        story.append(Spacer(1, 2 * mm))
+        story.append(
+            build_callout_flowable(
+                callout,
+                palette=palette,
+                colors_map=colors_map,
+                available_width=available_width,
+                body_font=body_font,
+                heading_font=heading_font,
+                body_scale=body_scale,
+                line_scale=line_scale,
+            )
+        )
+        story.append(Spacer(1, 3 * mm))
+
     story: list[Any] = [flowable_paragraph(title_text, title_style)]
 
-    def append_heading(text: str, style: Any) -> None:
+    def append_heading(
+        text: str,
+        style: Any,
+        accent_role: str | None = None,
+        use_global: bool = True,
+    ) -> None:
+        rule_color, text_color = resolved_accent(accent_role or (global_accent if use_global else None))
         if themed:
             story.append(Spacer(1, 1 * mm))
             story.append(
                 HRFlowable(
                     width=14 * mm,
                     thickness=1.1,
-                    color=accent,
+                    color=rule_color,
                     spaceBefore=0,
                     spaceAfter=1.5 * mm,
                     hAlign="LEFT",
                 )
             )
+        if text_color is not None:
+            style = ParagraphStyle(style.name, parent=style, textColor=text_color)
         story.append(flowable_paragraph(text, style))
 
     toc_flow: Any = None
     if spec.get("toc"):
-        append_heading("目录", ParagraphStyle("MakeTocTitle", parent=heading_style))
+        append_heading("目录", ParagraphStyle("MakeTocTitle", parent=heading_style), use_global=False)
         story.append(Spacer(1, 1.5 * mm))
         toc_flow = _TocFlowable(
             [
@@ -1682,6 +1987,7 @@ def write_made_pdf(output: Path, spec: dict[str, Any]) -> list[dict[str, Any]]:
         story.append(toc_flow)
         story.append(PageBreak())
     add_body(spec["body"])
+    add_callout(spec.get("callout"))
     story.extend(
         prepare_image_flowables(
             spec.get("images") or [], caption_style=caption_style,
@@ -1698,8 +2004,9 @@ def write_made_pdf(output: Path, spec: dict[str, Any]) -> list[dict[str, Any]]:
         else:
             style = heading_style
         if heading:
-            append_heading(heading, style)
-        add_body(section["body"])
+            append_heading(heading, style, section.get("accent"))
+        add_body(section["body"], section.get("tableStyle"))
+        add_callout(section.get("callout"))
         story.extend(
             prepare_image_flowables(
                 section.get("images") or [], caption_style=caption_style,
@@ -2038,6 +2345,71 @@ def command_self_test(args: argparse.Namespace) -> int:
             f"self-test expected at least 2 embedded images, found {embedded_images}"
         )
 
+    # 角色色：语义色不依赖主题，主题角色跟随色板；提示框/三线表要能真的落盘。
+    neutral_danger = resolve_pdf_role(None, "danger", "self-test.role")
+    if (
+        neutral_danger["fg"] != "B42318"
+        or neutral_danger["bg"] != "FDECEC"
+        or neutral_danger["bar"] != "B42318"
+    ):
+        raise PdfToolError(f"self-test semantic role drifted: {neutral_danger}")
+    themed_accent = resolve_pdf_role(resolve_pdf_theme("clinical"), "accent", "self-test.role")
+    if themed_accent["fill"] != "B4552D" or themed_accent["bg"] == themed_accent["fill"]:
+        raise PdfToolError(f"self-test theme role drifted: {themed_accent}")
+    try:
+        resolve_pdf_role(None, "accent", "self-test.role")
+    except PdfToolError:
+        pass
+    else:
+        raise PdfToolError("self-test expected theme roles to require a design theme")
+
+    styled_spec = root / "styled.json"
+    styled_pdf = root / "styled.pdf"
+    styled_text = root / "styled-text.json"
+    styled_tables = root / "styled-tables.json"
+    write_json(
+        styled_spec,
+        {
+            "title": "样式自检",
+            "body": "| 指标 | 数值 |\n| --- | --- |\n| 心率 | 88 |",
+            "tableStyle": {"variant": "three-line"},
+            "callout": {"role": "warning", "title": "注意", "body": "语义色提示框。"},
+            "sections": [
+                {"heading": "风险提示", "accent": "danger", "body": "低血压处置。"},
+                {
+                    "heading": "生命体征",
+                    "body": "| 时间 | 心率 |\n| --- | --- |\n| 08:00 | 88 |",
+                    "tableStyle": {"variant": "grid"},
+                },
+            ],
+        },
+    )
+    run_self_test_command(
+        ["make", "--spec", str(styled_spec), "--out", str(styled_pdf), "--force"]
+    )
+    run_self_test_command(
+        [
+            "inspect",
+            "--input",
+            str(styled_pdf),
+            "--out",
+            str(root / "styled-inspection.json"),
+            "--text-out",
+            str(styled_text),
+            "--tables-out",
+            str(styled_tables),
+        ]
+    )
+    styled_pages = json.loads(styled_text.read_text(encoding="utf-8")).get("pages") or []
+    styled_body = "".join(str(page.get("text") or "") for page in styled_pages)
+    for expected in ("注意", "语义色提示框", "风险提示", "心率", "88"):
+        if expected not in styled_body:
+            raise PdfToolError(f"self-test styled PDF lost '{expected}'")
+    styled_table_pages = json.loads(styled_tables.read_text(encoding="utf-8")).get("pages") or []
+    styled_table_count = sum(len(page.get("tables") or []) for page in styled_table_pages)
+    if styled_table_count < 1:
+        raise PdfToolError("self-test styled PDF lost its grid table")
+
     run_self_test_command(
         [
             "inspect",
@@ -2089,6 +2461,10 @@ def command_self_test(args: argparse.Namespace) -> int:
             "sample": str(pdf),
             "withImage": str(image_pdf),
             "embeddedImages": embedded_images,
+            "styledPdf": str(styled_pdf),
+            "semanticRole": neutral_danger["fg"],
+            "themeRole": themed_accent["fill"],
+            "styledTables": styled_table_count,
             "renderedPages": [str(path) for path in sorted(render_dir.glob("page-*.png"))],
             "filledForm": str(filled_form),
             "filledFormPages": [str(path) for path in sorted(form_render_dir.glob("page-*.png"))],
