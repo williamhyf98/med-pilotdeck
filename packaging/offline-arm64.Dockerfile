@@ -47,6 +47,7 @@ RUN mkdir -p /staging/med-pilotdeck-kylin-v10-arm64/offline/python-wheels \
 -r /src/plugins/med-tools/requirements.txt
 -r /src/skills/pdf/runtime/requirements.txt
 -r /src/skills/docx/requirements.txt
+-r /src/skills/data-analysis/runtime/requirements.txt
 EOF
 RUN /staging/med-pilotdeck-kylin-v10-arm64/.runtime/python/bin/python3 \
     -m pip wheel --disable-pip-version-check \

@@ -15,8 +15,8 @@ ANALYSIS_SKILL_ROOT="$(dirname "<path>")"
 也不要 `pip install`（离线环境，且属硬拒绝）。
 
 常用写法（读 csv/xlsx、缺失值、t 检验、生存分析、绘图、DICOM、ECG）在
-`references/cheatsheet.md`。图里要中文标签时，先按那里面的方法挑一个**这台机器真的装了**的
-字体，挑不到就用英文标签——硬写中文会变成方框。
+`references/cheatsheet.md`。画图先 `import analysis_plot; analysis_plot.apply()`——
+这个技能自带模块会注册随包的中文字体并统一 rcParams，省得中文标签变方框。
 
 ## Agent 可用表面
 
@@ -52,6 +52,7 @@ bash "$ANALYSIS_SKILL_ROOT/scripts/analysis.sh" run \
 - 脚本里一律用环境变量：输入目录 `PILOTDECK_ANALYSIS_INPUT`、输出目录 `PILOTDECK_ANALYSIS_OUT`
   （都是绝对路径）。不要在脚本里写死 `..` 或绝对路径字面量——静态体检会直接拒
 - 图存 `figures/`、表存 `tables/`（执行器已建好这两个子目录）
+- 画图先 `import analysis_plot; analysis_plot.apply()`，再 `import matplotlib.pyplot`
 - CSV 输出用 `utf-8-sig`（Excel 双击不乱码）
 - 只允许写 `exports/` 与 `scratch/`：写别的目录（含 `inbox/`）会被运行期护栏当场拦下，
   结果是 `blocked`。读文件不设限，但同样不要读工作区以外的东西

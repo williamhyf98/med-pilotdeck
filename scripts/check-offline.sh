@@ -23,6 +23,7 @@ fail() {
 [[ -f "$DEPLOY_ENV_FILE" ]] || fail "deployment config is missing: $DEPLOY_ENV_FILE"
 [[ -d "$PYTHON_WHEELS_DIR" ]] || fail "offline Python wheels are missing"
 [[ -f "$PILOTDECK_ROOT/plugins/med-tools/plugin.json" ]] || fail "med-tools plugin is missing"
+[[ -x "$PILOTDECK_ROOT/skills/data-analysis/scripts/analysis.sh" ]] || fail "data-analysis skill entry is missing"
 
 if [[ -x "$RUNTIME_NODE_DIR/bin/node" ]]; then
   "$RUNTIME_NODE_DIR/bin/node" -e '

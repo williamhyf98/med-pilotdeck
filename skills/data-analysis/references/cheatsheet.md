@@ -85,6 +85,8 @@ cox.fit(df[["time", "event", "age", "sex"]], duration_col="time", event_col="eve
 ```python
 import matplotlib
 matplotlib.use("Agg")
+import analysis_plot
+analysis_plot.apply()          # 注册随包中文字体 + 统一样式（推荐每次都加）
 import matplotlib.pyplot as plt
 
 fig, ax = plt.subplots(figsize=(6, 4), dpi=160)
@@ -96,7 +98,17 @@ fig.tight_layout()
 fig.savefig(OUT / "figures" / "group-means.png")
 ```
 
-中文标签要先挑一个**这台机器真的装了**的字体，否则整张图变成方框。别写死一个名字：
+`analysis_plot` 是技能自带的模块（执行器已把它所在目录放进 `sys.path`）：
+它注册随包的 Noto Sans SC，再挑第一个可用的中文字族，返回选了哪个：
+
+```python
+import analysis_plot
+
+family = analysis_plot.apply()
+print("字体:", family)          # 返回 "DejaVu Sans" 说明这台机器没有中文字体
+```
+
+没有 `analysis_plot` 时的退路——自己挑一个**这台机器真的装了**的字体，别写死名字：
 
 ```python
 from matplotlib import font_manager

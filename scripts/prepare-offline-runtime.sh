@@ -40,7 +40,11 @@ create_venv "$PILOTDECK_ROOT/plugins/med-tools/.venv" \
 # are packager-only in normal deployments, so this call is safe offline.
 export PDF_SKILL_CACHE="$XDG_CACHE_HOME/pilotdeck-pdf"
 export DOCX_SKILL_CACHE="$XDG_CACHE_HOME/pilotdeck-docx"
+# data-analysis 与文档技能共用一个 wheels 目录，只打一份进离线包
+export PILOTDECK_ANALYSIS_CACHE="$XDG_CACHE_HOME/pilotdeck-analysis"
+export PILOTDECK_ANALYSIS_WHEELS="$PYTHON_WHEELS_DIR"
 bash "$PILOTDECK_ROOT/skills/pdf/scripts/pdf.sh" bootstrap-runtime >/dev/null
 bash "$PILOTDECK_ROOT/skills/docx/scripts/docx.sh" bootstrap-runtime >/dev/null
+bash "$PILOTDECK_ROOT/skills/data-analysis/scripts/analysis.sh" bootstrap-runtime >/dev/null
 
 echo "offline Python runtimes are ready under $PILOT_HOME and $XDG_CACHE_HOME"

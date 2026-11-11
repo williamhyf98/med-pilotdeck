@@ -13,12 +13,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUNTIME_SOURCE="$SKILL_DIR/runtime"
-WHEEL_DIR="$RUNTIME_SOURCE/wheels"
+# wheels 优先用部署包统一的那份（离线包只用 offline/python-wheels，不重复打一份）
+WHEEL_DIR="${PILOTDECK_ANALYSIS_WHEELS:-$RUNTIME_SOURCE/wheels}"
 CACHE_ROOT="${PILOTDECK_ANALYSIS_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/pilotdeck-analysis}"
 RUNTIME_CACHE="$CACHE_ROOT/runtime"
 # 字体缓存与运行时同层共享：bootstrap 时预热一次，之后每次 run 都直接读缓存，
 # 不再触发 matplotlib 的字体扫描子进程（冷缓存会跑 fc-list / system_profiler）。
 export MPLCONFIGDIR="${MPLCONFIGDIR:-$CACHE_ROOT/mpl}"
+# 随包中文字体（与 pdf 技能共用一份，不打第二份进镜像）
+export PILOTDECK_ANALYSIS_FONTS="${PILOTDECK_ANALYSIS_FONTS:-$SKILL_DIR/../pdf/assets/fonts}"
 STAMP_FILE="$RUNTIME_CACHE/.pilotdeck-requirements-hash"
 RUNNER="$SCRIPT_DIR/run_analysis.py"
 
@@ -107,7 +110,7 @@ cmd_bootstrap_runtime() {
   local venv=""
   venv="$(venv_python)"
 
-  if compgen -G "$WHEEL_DIR/*.whl" >/dev/null 2>&1; then
+  if [[ -d "$WHEEL_DIR" ]] && compgen -G "$WHEEL_DIR/*.whl" >/dev/null 2>&1; then
     # 离线交付：只用随包 wheels，绝不访问网络
     "$venv" -m pip install --disable-pip-version-check --no-input --no-index \
       --find-links "$WHEEL_DIR" -r "$RUNTIME_SOURCE/requirements.txt"
@@ -116,9 +119,10 @@ cmd_bootstrap_runtime() {
       -r "$RUNTIME_SOURCE/requirements.txt"
   fi
 
-  # 预热字体缓存：失败不影响运行时可用性，只是首次绘图会自己扫一遍
+  # 预热字体缓存（含随包中文字体）：失败不影响运行时可用性，只是首次绘图会自己扫一遍
   mkdir -p "$MPLCONFIGDIR"
-  "$venv" -c 'import matplotlib; matplotlib.use("Agg"); from matplotlib import font_manager; font_manager.fontManager' \
+  PYTHONPATH="$SCRIPT_DIR" "$venv" -c \
+    'import matplotlib; matplotlib.use("Agg"); import analysis_plot; analysis_plot.apply()' \
     >/dev/null 2>&1 || true
 
   requirements_hash > "$STAMP_FILE"

@@ -322,6 +322,7 @@ def run(args: argparse.Namespace) -> int:
         "PILOTDECK_ANALYSIS_ROOT": str(root),
         "PILOTDECK_ANALYSIS_INPUT": str(input_dir) if input_dir else "",
         "PILOTDECK_ANALYSIS_OUT": str(out_dir),
+        "PILOTDECK_ANALYSIS_FONTS": os.environ.get("PILOTDECK_ANALYSIS_FONTS", ""),
     }
     timed_out = False
     try:
