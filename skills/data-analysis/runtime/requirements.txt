@@ -1,0 +1,25 @@
+# data-analysis 运行时（三档全量，spec §3；U1 已定：不拆镜像变体）
+# 与 plugins/med-tools/requirements.txt 重叠的包沿用同一版本区间，避免离线 wheels 冲突。
+#
+# ---- 基础档 ----
+pandas>=2.2,<3
+numpy>=1.24
+scipy>=1.11,<2
+openpyxl>=3.1
+XlsxWriter>=3.1
+pyarrow>=15,<22
+matplotlib>=3.8,<4
+seaborn>=0.13,<0.14
+tabulate>=0.9
+Pillow>=10.0.0
+#
+# ---- 统计档 ----
+statsmodels>=0.14,<0.15
+scikit-learn>=1.4,<1.6
+lifelines>=0.29,<0.30
+pingouin>=0.5,<0.6
+#
+# ---- 医学档 ----
+pydicom>=2.4.0
+nibabel>=5.2.0
+wfdb>=4.1.0

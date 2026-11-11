@@ -116,6 +116,34 @@ bash "$SKILL_ROOT/scripts/analysis.sh" run \
 | R2 | 一次性分配 32 GB | 到 `--mem-mb` 被 OOM-kill，审计记 `analysis.oom` |
 | R3 | 往 `scratch` 写 50 GB | 写到配额告警（**不阻断**，设计书 §8.0），审计记 `analysis.disk_warn` |
 
+### 4.1 两层判定：静态 + 运行期
+
+静态 AST 只看得到**字面量**。`open('inbox/x.csv','w')` 换个写法
+（`open('../'*3 + 'inbox/x.csv','w')`）或 `getattr(os,'sys'+'tem')('curl …')`
+就能绕过扫描。所以执行器在起子进程时再装一层 `sys.addaudithook`
+（`skills/data-analysis/scripts/analysis_guard.py`）：
+
+| 层 | 管什么 | 结果 |
+|---|---|---|
+| 静态（`run_analysis.py:scan_source`） | 字面量能看出来的：阻断 import / 调用、绝对路径、`..` | `status: rejected`，退出码 3，**不产生任何产物** |
+| 运行期（`analysis_guard.py`） | 算出来的路径、`getattr` 拼出来的函数、动态导入的模块 | `status: blocked`，退出码 8，`violations[].rule = runtime-guard` |
+
+运行期护栏的四条线：
+
+1. 出网：`socket.*` / `urllib.Request` / `http.client.*` / `ftplib` / `smtplib` → 拒
+2. 起进程：`os.system` / `os.exec*` / `os.spawn*` / `os.fork` / `pty.*` → 拒；`subprocess.Popen`
+   只放行 `fc-list` / `fc-match` / `system_profiler` / `uname` / `sw_vers` 这几个**只读枚举工具**
+   （matplotlib 字体缓存没见过时会用它们扫系统字体，一刀切会把首次绘图误判成"起进程"、
+   中文标签还会悄悄退化成方框）。字体缓存在 `bootstrap-runtime` 里预热到
+   `$CACHE_ROOT/mpl`，之后 run 直接读缓存，正常不会再触发
+3. 原生代码：`ctypes.dlopen` 只放行解释器/系统库（numpy、scipy 在 import 期就要 dlopen，
+   一刀切会让 pandas 起不来）；`import ctypes` 本身已被静态层拒掉
+4. 写盘：只允许 `exports/`、`scratch/`、进程私有 `TMPDIR`（外加班加点用的 `MPLCONFIGDIR`），
+   其余一律拒 → 这条覆盖 S9 的动态写法
+
+**读盘不设限是有意的**：pandas / matplotlib 要读 site-packages 和系统字体，拦读会把正常分析搞死；
+越界读由静态层（S7/S8）和外层沙箱兜底（§1 四层约束）。
+
 ## 5. 正确性验收清单
 
 每次改依赖或执行器后跑一遍，全部通过与手算/参照值对齐才算过。

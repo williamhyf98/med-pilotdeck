@@ -179,16 +179,16 @@
 
 细节全部在 [data-analysis-skill-design.zh.md](../data-analysis-skill-design.zh.md)。
 
-| # | 步骤 | 工期 | 前置 |
-|---|---|---|---|
-| D1 | 设计文档定稿（依赖清单 / 12 条安全用例 / 正确性清单） | 0.5d | B0 |
-| D2 | 技能骨架 `skills/data-analysis/**` | 0.5d | D1 |
-| D3 | 离线运行时（venv + wheels + Dockerfile 两处） | 0.5d | D2 |
-| D4 | 唯一入口 `analysis.sh run` | 1d | D3 |
-| D5 | 执行期安全（AST 黑名单 + 资源上限 + 审计） | 1d | D4 |
-| D6 | 产物落位 `exports/analysis/<slug>-<ts>/` | 0.3d | D4 |
-| D7 | 管理员「数据分析依赖」页 | 1d | D3 |
-| D8 | 正确性 + 安全测试 | 1d | D5、D6 |
+| # | 步骤 | 工期 | 前置 | 状态 |
+|---|---|---|---|---|
+| D1 | 设计文档定稿（依赖清单 / 12 条安全用例 / 正确性清单） | 0.5d | B0 | ✅ |
+| D2 | 技能骨架 `skills/data-analysis/**` | 0.5d | D1 | ✅ |
+| D3 | 离线运行时（venv + wheels + Dockerfile 两处） | 0.5d | D2 | 🟡 `requirements.txt` + `bootstrap-runtime` 已写；Dockerfile 与 wheels 未接 |
+| D4 | 唯一入口 `analysis.sh run` | 1d | D3 | ✅ |
+| D5 | 执行期安全（AST 黑名单 + 运行期护栏 + 资源上限） | 1d | D4 | ✅ |
+| D6 | 产物落位 `exports/analysis/<slug>-<ts>/` | 0.3d | D4 | ✅ |
+| D7 | 管理员「数据分析依赖」页 | 1d | D3 | ⬜ |
+| D8 | 正确性 + 安全测试 | 1d | D5、D6 | 🟡 S1–S12 + C1/C12/R1 已覆盖；C2–C11、R2/R3 待补 |
 
 **门 3 通过条件**：设计书 §14 第 24、25 条必须失败且留审计；
 真实 CSV 能产出统计结果与图文件。
@@ -291,3 +291,25 @@
   不想放行的子命令在 YAML 里 `enabled: false` 即可
 - 命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **827 tests / 825 pass / 0 fail / 2 skipped**
 - 下一步：D1 设计定稿 → D2 技能骨架（B 轨），或转 A1 软删除
+
+### 2026-11-11 · B1 技能骨架 + 双层安全（D2/D4/D5/D6）
+
+- 新增：`skills/data-analysis/{SKILL.md,references/cheatsheet.md,scripts/analysis.sh,scripts/run_analysis.py,scripts/analysis_guard.py,runtime/requirements.txt}`
+- 入口：`analysis.sh {check [--json] | run --script … --input … --out … | bootstrap-runtime}`，
+  子命令与参数名和 `skillCommandSpecs.ts` 逐字一致（只认 `--flag value`）
+- 安全两层：静态 AST（S1–S12 字面量）+ 运行期 `sys.addaudithook`（动态路径、`getattr` 拼函数、
+  动态导入的模块）。运行期拒绝不再混在 `failed` 里，单独 `status: blocked` / 退出码 8
+- 修掉一个坑：macOS 不支持 `RLIMIT_AS`，`preexec_fn` 里抛异常会让**所有**脚本起不来；
+  现在逐项 `try` 设置，macOS 退化成 `RLIMIT_DATA`，Linux 上 `RLIMIT_AS` 照旧生效
+- 另修两个真问题（都是实测才暴露的）：
+  ① 冷字体缓存下 matplotlib 会 `subprocess` 跑 `fc-list` / `system_profiler` 扫字体 →
+  护栏对这几个只读枚举工具放行，并把字体缓存在 `bootstrap-runtime` 预热到 `$CACHE_ROOT/mpl`；
+  ② 系统 python 的 pydicom 装在 user-site，被 `-I` 隔离后不可见 —— 生产用 venv，不受影响，
+  开发机自测 DICOM 片段需直接在 venv 里跑
+- 冒烟（临时工作区，系统 python3）：C1 样本 → `tables/summary.csv` + `figures/*.png`（960×640）
+  + `run.json`（依赖版本、输入指纹、limits）；动态越界写 / `getattr(os,'system')` /
+  动态 socket / `chdir /` / `os.remove` 工作区外 → 全部 `blocked`
+- 新增测试：`tests/skills/data-analysis-runner.spec.ts`（6 条：S1–S12 逐条、运行期护栏 6 类、
+  C1 数值与 BOM、C12 两次一致、R1 超时、参数越界）
+- 命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **833 tests / 831 pass / 0 fail / 2 skipped**
+- 未做：D3 的 Dockerfile/wheels、D7 管理员依赖页、D8 的 C2–C11 与 R2/R3
