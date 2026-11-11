@@ -120,6 +120,9 @@ const ROLE_KEYS = {
 
 const ROLE_NAMES = Object.keys(ROLE_KEYS);
 
+/** 这几个角色的意思是"底色"，不是"字色"：给它们配墨色字，而不是把浅色当字色。 */
+const SURFACE_ROLES = new Set(["soft", "white"]);
+
 function mixHex(hex, towardHex, weight) {
   const parse = (value) => [0, 2, 4].map((index) => parseInt(String(value).replace(/^#/, "").slice(index, index + 2), 16));
   const front = parse(hex);
@@ -142,6 +145,13 @@ function themeRoleColors(theme, role, location) {
   }
   if (!theme) {
     throw new Error(`${location}.role '${role}' requires a design theme; pass --design-theme or set sheets[].designTheme`);
+  }
+  if (SURFACE_ROLES.has(key)) {
+    const surface = theme?.colors?.[key];
+    if (!surface) {
+      throw new Error(`${location}.role '${role}' is unavailable for the active theme`);
+    }
+    return { fg: argb(theme.colors.ink ?? surface), bg: argb(surface) };
   }
   const semantic = theme?.semantic?.[key];
   if (semantic?.fg) {

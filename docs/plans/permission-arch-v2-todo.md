@@ -683,3 +683,5 @@ dist 实测：`docx/references/specifications.md` → OK；`docx/../src/cli/pilo
   - `make --input` 编辑既有文件同样生效（academic 主题，`fill:false` 只改字色）
 - 文档：`SKILL.md` 新增「重点标注（角色色）」；`references/creation.md` 补字段 + 示例
 - 测试：`self-test` 离线分支新增角色色断言；`npm test` → **864 tests / 862 pass / 0 fail / 2 skipped**
+- 补：`soft` / `white` 按"底色角色"解析（配墨色字），用于分组行/隔断行；
+  远端 Renderer 目视：`soft` 分组行是米色底 + 深墨字，`primary` 合计行是浅青底 + 主色字

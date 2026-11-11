@@ -109,7 +109,8 @@ Markdown 只适合一张简单表。公式、图表和多个工作表使用 JSON
 ```
 
 - `role` 取值：`success` / `warning` / `danger` / `info`（语义色，不随主题变）；
-  `primary` / `accent` / `support` / `ink` / `muted` / `rule` / `soft` / `white`（跟随主题）。
+  `primary` / `accent` / `support` / `ink` / `muted` / `rule`（跟随主题，字色 + 12% 浅底）；
+  `soft` / `white`（当底色用，自动配墨色字，适合分组行）。
 - 规则里可选 `bold: true` 加粗、`fill: false` 只改字色不改底色。
 - 语义色不需要主题；`primary` 等主题角色必须选 `--design-theme` 或写 `"designTheme"`。
 - `highlights[]` 是静态上色，不走条件判断；每项需要 `range` 和 `role`。

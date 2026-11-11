@@ -144,7 +144,8 @@ bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make   --spec "$PWD/scratc
 - `highlights[]`：不按条件、直接给一段区域上角色色，适合"重点行/结论行"。
 - 角色：语义色 `success` / `warning` / `danger` / `info` 固定不随主题变，
   和 Word/PPT/PDF 是同一个红/黄/绿/蓝；`primary` / `accent` / `support` /
-  `ink` / `muted` / `rule` / `soft` / `white` 跟随当前主题。
+  `ink` / `muted` / `rule` 跟随当前主题，按"字色 + 12% 浅底"上色；
+  `soft` / `white` 是"底色"角色，自动配墨色字，适合分组行 / 隔断行。
 - 语义色没选主题时也能用；主题专属角色（`primary` 等）必须先选
   `--design-theme` 或在 spec 写 `"designTheme"`，否则直接报错，不会静默变黑。
 
