@@ -132,12 +132,21 @@ bash "$SKILL_ROOT/scripts/analysis.sh" run \
 
 运行期护栏的四条线：
 
-1. 出网：`socket.*` / `urllib.Request` / `http.client.*` / `ftplib` / `smtplib` → 拒
+1. 出网：只拦**真的会出网**的事件 —— `socket.connect` / `sendto` / `sendmsg` / `getaddrinfo` /
+   `gethostbyname` / `gethostbyaddr` / `getnameinfo` / `sethostname`。两条特意放行：
+   - `socket.__new__`：urllib3（pydicom 的依赖）在 **import 期**就会 `socket(AF_INET6)` 探一下 IPv6，
+     一刀切会把所有用到 requests 的库判成 `blocked`；
+   - `socket.bind` 只许回环（`""` / `localhost` / `127.0.0.1` / `::1`，**不含 `0.0.0.0` / `::`**）——
+     自检式 bind 放行，对外监听照样拒。
+
+   `urllib.Request` / `http.client.*` / `ftplib` / `smtplib` 仍走静态层拒；真封网最终靠外层
+   `network: none` 沙箱兜底。
 2. 起进程：`os.system` / `os.exec*` / `os.spawn*` / `os.fork` / `pty.*` → 拒；`subprocess.Popen`
-   只放行 `fc-list` / `fc-match` / `system_profiler` / `uname` / `sw_vers` 这几个**只读枚举工具**
-   （matplotlib 字体缓存没见过时会用它们扫系统字体，一刀切会把首次绘图误判成"起进程"、
-   中文标签还会悄悄退化成方框）。字体缓存在 `bootstrap-runtime` 里预热到
-   `$CACHE_ROOT/mpl`，之后 run 直接读缓存，正常不会再触发
+   只放行**只读探针**：`fc-list` / `fc-match` / `system_profiler`（matplotlib 扫字体）、
+   `lscpu`（numpy.testing 探 ARM SVE，statsmodels 会带进来）、`uname` / `sw_vers` / `nproc` /
+   `sysctl`（平台信息，`sysctl` 额外禁 `-w` / `-p` / 含 `=` 的写入型参数）。argv 里出现
+   `-c` / `-e` / `--exec` 一律拒。字体缓存在 `bootstrap-runtime` 里预热到 `$CACHE_ROOT/mpl`，
+   之后 run 直接读缓存，正常不会再触发
 3. 原生代码：`ctypes.dlopen` 只放行解释器/系统库（numpy、scipy 在 import 期就要 dlopen，
    一刀切会让 pandas 起不来）；`import ctypes` 本身已被静态层拒掉
 4. 写盘：只允许 `exports/`、`scratch/`、进程私有 `TMPDIR`（外加班加点用的 `MPLCONFIGDIR`），

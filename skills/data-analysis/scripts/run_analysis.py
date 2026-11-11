@@ -352,8 +352,16 @@ def run(args: argparse.Namespace) -> int:
 
     out_of_memory = (not timed_out) and (exit_code in (-9, 137) or "MemoryError" in stderr)
     denials = _guard_denials(stderr)
+    if timed_out:
+        status = "timeout"
+    elif denials:
+        status = "blocked"
+    elif out_of_memory:
+        status = "oom"
+    else:
+        status = "ok" if exit_code == 0 else "failed"
     record = {
-        "status": "timeout" if timed_out else ("blocked" if denials else ("ok" if exit_code == 0 else "failed")),
+        "status": status,
         "runnerVersion": VERSION,
         "python": sys.version.split()[0],
         "script": str(script.relative_to(root)),

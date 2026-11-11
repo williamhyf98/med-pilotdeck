@@ -26,9 +26,8 @@ import os
 import runpy
 import sys
 
-# 事件名前缀 → 直接拒绝（subprocess 单独判定，见 SAFE_SUBPROCESS_HELPERS）
+# 事件名前缀 → 直接拒绝（socket / subprocess 单独判定，见下面两个白名单）
 DENIED_EVENT_PREFIXES = (
-    "socket.",
     "os.system",
     "os.exec",
     "os.spawn",
@@ -46,10 +45,39 @@ DENIED_EVENT_PREFIXES = (
     "os.add_dll_directory",
 )
 
-# matplotlib 字体缓存没建好时会用这些**只读枚举工具**扫系统字体（Linux: fc-list，
-# macOS: system_profiler）。允许它们，否则第一次绘图会被误判成"起进程"而打断，
-# 中文标签还会悄悄退化成方框。除此之外任何 Popen 都拒。
-SAFE_SUBPROCESS_HELPERS = {"fc-list", "fc-match", "system_profiler", "uname", "sw_vers"}
+# 只拦**真的会出网**的 socket 事件。创建 socket 对象本身不算：
+# urllib3 在 import 期就 `socket.socket(AF_INET6)` + bind('::1') 探测 IPv6，
+# 一刀切会把所有用到 requests/urllib3 的库（wfdb 就依赖 requests）判成 blocked。
+DENIED_SOCKET_EVENTS = {
+    "socket.connect",
+    "socket.sendto",
+    "socket.sendmsg",
+    "socket.getaddrinfo",
+    "socket.gethostbyname",
+    "socket.gethostbyaddr",
+    "socket.getnameinfo",
+    "socket.sethostname",
+}
+
+# 注意不含 0.0.0.0 / ::：那是对外监听，不是自检
+LOOPBACK_HOSTS = {"", "localhost", "127.0.0.1", "::1"}
+
+# 这些**只读探针**是第三方库自己会跑的，不是用户脚本在"起进程"：
+#   matplotlib 扫字体（fc-list / fc-match / system_profiler）
+#   numpy.testing 探测 ARM SVE（lscpu，statsmodels 会带进 numpy.testing）
+#   平台信息（uname / sw_vers / sysctl 查询）
+# 不放行它们，正常脚本会被误判成 blocked —— 这比"少一层防护"更糟，
+# 因为 agent 会把正常分析当成被拦截而停手。除此之外任何 Popen 都拒。
+SAFE_SUBPROCESS_HELPERS = {
+    "fc-list", "fc-match", "system_profiler", "lscpu",
+    "uname", "sw_vers", "nproc", "sysctl",
+}
+
+# argv[1] 命中这些就当"不是单纯枚举"
+FORBIDDEN_HELPER_ARGS = {"-c", "-e", "--exec"}
+
+# sysctl 还能写内核参数，查询才放行
+FORBIDDEN_SYSCTL_ARGS = {"-w", "--write", "-p", "--load"}
 
 # 事件名 → 需要做"可写目录"校验的路径参数下标（0-based）
 WRITE_EVENT_PATHS = {
@@ -166,11 +194,18 @@ def _popen_allowed(executable: object, argv: object) -> bool:
     name = _as_text(executable)
     if not name:
         return False
-    if os.path.basename(name) not in SAFE_SUBPROCESS_HELPERS:
+    helper = os.path.basename(name)
+    if helper not in SAFE_SUBPROCESS_HELPERS:
         return False
-    if isinstance(argv, (list, tuple)) and len(argv) > 1:
-        # 只允许纯枚举：不许 -c 之类的"执行任意代码"参数
-        return str(argv[1]) not in {"-c", "-e", "--exec"}
+    if not isinstance(argv, (list, tuple)) or len(argv) <= 1:
+        return True
+    for argument in argv[1:]:
+        text = str(argument)
+        if text in FORBIDDEN_HELPER_ARGS:
+            return False
+        if helper == "sysctl":
+            if text in FORBIDDEN_SYSCTL_ARGS or "=" in text:
+                return False
     return True
 
 
@@ -178,6 +213,18 @@ def _inspect(event: str, args: tuple[object, ...]) -> None:
     if event == "subprocess.Popen":
         if not _popen_allowed(args[0] if args else None, args[1] if len(args) > 1 else None):
             _deny(f"starting a process is not available in data-analysis: {args[0]!r}", event)
+        return
+
+    if event in DENIED_SOCKET_EVENTS:
+        _deny(f"{event}() is not available in data-analysis", event)
+
+    if event == "socket.bind":
+        address = args[1] if len(args) > 1 else None
+        host = ""
+        if isinstance(address, (tuple, list)) and address:
+            host = _as_text(address[0]) or ""
+        if host not in LOOPBACK_HOSTS:
+            _deny(f"binding a socket outside loopback is not allowed: {address!r}", event)
         return
 
     for prefix in DENIED_EVENT_PREFIXES:
