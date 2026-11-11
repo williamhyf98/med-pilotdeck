@@ -14,6 +14,7 @@ import { networkIsolationLeaks, probeNetworkIsolation } from "./sandbox/netProbe
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import type { SandboxNetworkMode } from "../../../pilot/config/types.js";
+import { appendAudit } from "../../../security/audit/auditLog.js";
 
 export type PilotDeckCommandOptions = {
   cwd: string;
@@ -107,6 +108,13 @@ export async function initializeSandbox(config: MultiUserConfig, env: NodeJS.Pro
     probe = { ok: false, reason: err instanceof Error ? err.message : String(err) };
   }
   if (!probe.ok && sandbox.kind !== "none") {
+    appendAudit({
+      action: "sandbox.denied",
+      decision: "error",
+      tool: "sandbox",
+      reason: "startup-probe-failed",
+      meta: { kind: sandbox.kind },
+    }, { env });
     throw new Error(`sandbox ${sandbox.kind} failed its startup probe: ${probe.reason}`);
   }
   if (sandbox.kind === "none" && multiUserEnabled) {
@@ -155,6 +163,13 @@ async function assertNetworkIsolationOnStartup(
     allowHostLoopback: process.platform === "darwin",
   });
   if (leaks.length > 0) {
+    appendAudit({
+      action: "sandbox.denied",
+      decision: "error",
+      tool: "sandbox",
+      reason: "network-isolation-leaks",
+      meta: { kind: sandbox.kind, leaks: String(leaks.length) },
+    }, { env });
     throw new Error(
       `[sandbox] 网络隔离自检失败（sandbox=${sandbox.kind}）：${leaks.join("；")}。` +
         "multiUser.sandbox.network=none 要求完全断网，拒绝启动以免形成" +

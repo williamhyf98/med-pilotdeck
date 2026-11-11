@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { PilotDeckToolRuntimeContext } from "../../protocol/types.js";
 import type { PilotDeckToolError } from "../../protocol/errors.js";
 import { toolError } from "../../protocol/errors.js";
+import { appendAudit } from "../../../security/audit/auditLog.js";
 
 export type PilotDeckPathSafetyResult =
   | { ok: true; absolutePath: string; relativePath: string; root: string }
@@ -57,7 +58,7 @@ export function resolvePilotDeckWorkspacePath(
     const relativePath = path.relative(context.cwd, absolutePath) || ".";
     if (options?.forWrite) {
       const denial = writeDenialMessage(relativePath);
-      if (denial) return { ok: false, error: toolError("path_not_allowed", denial) };
+      if (denial) return denyWorkspaceWrite(relativePath, denial, context);
     }
     return { ok: true, absolutePath, relativePath, root: context.cwd };
   }
@@ -90,7 +91,7 @@ export function resolvePilotDeckWorkspacePath(
       const relativePath = path.relative(context.cwd, absolutePath) || ".";
       if (options?.forWrite) {
         const denial = writeDenialMessage(relativePath);
-        if (denial) return { ok: false, error: toolError("path_not_allowed", denial) };
+        if (denial) return denyWorkspaceWrite(relativePath, denial, context);
       }
       return { ok: true, absolutePath, relativePath, root: context.cwd };
     }
@@ -104,7 +105,7 @@ export function resolvePilotDeckWorkspacePath(
   const relativePath = path.relative(root, absolutePath) || ".";
   if (options?.forWrite) {
     const denial = writeDenialMessage(relativePath);
-    if (denial) return { ok: false, error: toolError("path_not_allowed", denial) };
+    if (denial) return denyWorkspaceWrite(relativePath, denial, context);
   }
 
   if (options?.mustExist) {
@@ -166,6 +167,16 @@ function userHomeViolation(
         return undefined; // Allow read access to shared resources
       }
     }
+    appendAudit(
+      {
+        action: "file.denied",
+        decision: "deny",
+        target: "(outside-workspace)",
+        reason: "cross-user access denied",
+        meta: { mode: context.permissionMode },
+      },
+      { env },
+    );
     return toolError("path_not_allowed", CROSS_USER_ACCESS_DENIED);
   }
   return undefined;
@@ -246,6 +257,25 @@ function writeDenialMessage(relativePath: string): string | undefined {
     return `Writing to ${relativePath} is not allowed by default.`;
   }
   return undefined;
+}
+
+/** 拒绝写入：先留审计（相对路径），再返回统一的 path_not_allowed。 */
+function denyWorkspaceWrite(
+  relativePath: string,
+  message: string,
+  context: PilotDeckToolRuntimeContext,
+): PilotDeckPathSafetyResult {
+  appendAudit(
+    {
+      action: "file.denied",
+      decision: "deny",
+      target: relativePath,
+      reason: message,
+      meta: { mode: context.permissionMode },
+    },
+    { env: context.env ?? process.env },
+  );
+  return { ok: false, error: toolError("path_not_allowed", message) };
 }
 
 /** Kept for callers that only need the boolean. */

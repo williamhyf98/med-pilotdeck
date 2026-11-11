@@ -1,4 +1,5 @@
 import type { PermissionResult } from "../../../permission/index.js";
+import { appendAudit } from "../../../security/audit/auditLog.js";
 
 const COMMAND_POSITION = String.raw`(?:^|[;&|]\s*)`;
 const SHELL_SEGMENT = String.raw`[^;&|\n]*`;
@@ -110,6 +111,13 @@ export function classifyBashPermission(command: string): PermissionResult {
       || /\b(?:pip3?|python3?\s+-m\s+pip)\s+install\b/i.test(command)
       || /\b(?:npm|pnpm|yarn|bun)\s+(?:install|add|update|upgrade)\b/i.test(command)
       || /\bnpx\b/i.test(command);
+    appendAudit({
+      action: "bash.denied",
+      decision: "deny",
+      tool: "bash",
+      reason: isNetworkBlock ? "network-blocked" : "dangerous-command",
+      meta: { snippet: scrubCommandForAudit(command) },
+    });
     return {
       type: "deny",
       reason: {
@@ -151,6 +159,13 @@ function askForShellPermission(command: string): PermissionResult {
       ],
     },
   };
+}
+
+/** 审计里的命令片段：把绝对路径与类路径 token 抹成 `(path)`，避免泄漏目录结构。 */
+function scrubCommandForAudit(command: string): string {
+  return String(command ?? "")
+    .replace(/[A-Za-z]:[\\/][^\s"']*|\/[^\s"']+/g, "(path)")
+    .slice(0, 200);
 }
 
 function commandPattern(pattern: string, flags = "i"): RegExp {
