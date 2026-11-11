@@ -3,6 +3,7 @@ import path from 'node:path';
 import { auditPptx } from './audit.mjs';
 import { inspectPptx } from './ooxml.mjs';
 import { renderPptx, renderingAvailability } from './render.mjs';
+import { SLIDE_ACCENT_ROLES, tokensForSlide } from './slide-style.mjs';
 import { buildToolkit } from './toolkit.mjs';
 
 const HEADING = /^(#{1,3})\s+(.+?)\s*$/u;
@@ -209,6 +210,15 @@ function normalizeSlides(spec) {
     if (!LAYOUTS.has(type)) {
       throw new Error(`Unsupported slide type ${JSON.stringify(type)} at slides[${index}]`);
     }
+    if (raw.accent !== undefined && raw.accent !== null) {
+      const role = String(raw.accent).trim().toLowerCase();
+      if (!SLIDE_ACCENT_ROLES.includes(role)) {
+        throw new Error(
+          `Unsupported slides[${index}].accent ${JSON.stringify(raw.accent)}; `
+          + `use ${SLIDE_ACCENT_ROLES.join(', ')}`,
+        );
+      }
+    }
     if (type === 'title' && spec.title && index === 0) {
       slides[0] = { ...slides[0], ...raw, type };
       continue;
@@ -240,7 +250,8 @@ function addSlide(layouts, pptx, tokens, slide, page, footer) {
     evidence: layouts.evidenceSlide,
     imaging: layouts.imagingSlide,
   };
-  handlers[slide.type](pptx, tokens, content);
+  // 单页强调色：只替换该页的 accent，其它颜色与版式继承主题。
+  handlers[slide.type](pptx, tokensForSlide(tokens, content), content);
 }
 
 async function outputExists(file) {

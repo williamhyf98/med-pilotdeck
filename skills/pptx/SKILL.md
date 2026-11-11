@@ -150,6 +150,27 @@ bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" themes
 给出 `themeWarning`；要复现旧影像检验配色用隐藏主题 `vital-legacy`，复现
 旧默认配色用 `clinical-legacy`。两个旧色板的输出与改造前逐页一致。
 
+### 单页强调色（`slides[].accent`）
+
+整篇主题之外，可以给**某一页**换强调色，用来标记"这页是风险 / 这页是结论"。
+只影响该页强调元素（大数字、色条、图表首序列），版式、字体、背景都不变：
+
+```json
+{"type": "metric", "title": "危急值", "accent": "danger",
+ "metrics": [{"value": "13", "label": "危急值", "detail": "需 30 分钟内处置"}]}
+```
+
+| 取值 | 含义 |
+| --- | --- |
+| `accent` | 主题强调色（默认） |
+| `support` | 主题辅助色 |
+| `primary` | 主题主色 |
+| `success` | 成功绿（与 Word/PDF/Excel 同色） |
+| `danger` | 风险红（同上） |
+
+只在确实要"这一页不同"时用；整篇每页都换色等于没有强调。写错取值会直接报错，
+不会静默回退。
+
 ### 页面纹理（默认开启）
 
 每页背景在纯色之上叠一层极淡的纸纹（`assets/textures/grain.png`，随包分发，

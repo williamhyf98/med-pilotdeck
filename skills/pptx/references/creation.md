@@ -61,6 +61,9 @@ bash "$PPTX_TOOL" make \
 `theme` 可省略（默认 `clinical`）；`pptx.sh themes` 列出全部可选值，命令行
 `--theme` 覆盖 spec 里的值。
 
+`slides[].accent` 可选，用于单页强调色：`accent`（默认）/ `support` / `primary` /
+`success` / `danger`。只改该页的强调元素，背景、字体、版式不变；其它取值直接报错。
+
 支持的 `slides[].type`：
 
 

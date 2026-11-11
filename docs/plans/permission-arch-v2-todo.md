@@ -624,3 +624,20 @@ dist 实测：`docx/references/specifications.md` → OK；`docx/../src/cli/pilo
 - 测试：`self-test` 新增 `themed-palette-resolves` / `preflight-palette-gate` / `themed-off-palette-blocked`；
   `npm test` → **864 tests / 862 pass / 0 fail / 2 skipped**
 - 未做：pptx / pdf / xlsx 的同类开口（按计划排后面）
+
+### 2026-11-11 · pptx 方案 A 第一步：单页强调色
+
+- 决策：用户选 A（把 layout-library 当自家资产升级），但第一步不动版式库——
+  版式库所有颜色都读 `tokens.colors`，所以"单页强调色"用派生 token 实现，零改版式。
+- 实现：新增 `skills/pptx/scripts/lib/slide-style.mjs`（`SLIDE_ACCENT_ROLES` /
+  `resolveSlideAccent` / `tokensForSlide`）；`make.mjs` 的 `normalizeSlides` 校验
+  `slides[].accent`，`addSlide` 用 `tokensForSlide()` 传入该页 token
+- 取值：`accent`（默认）/ `support` / `primary` / `success` / `danger`，映射到
+  版式库实际读的 `accent` / `cyan` / `navy` / `positive` / `negative`；写错直接报错
+- 验证（clinical 主题，3 页 metric）：默认页 `B4552D`、`danger` 页 `B42318`、
+  `success` 页 `157F3D`；三页的 paper/ink/muted 完全一致（`FBF9F6`/`1C2B33`/`5C6B72`）；
+  远端 Renderer 目视：只有大数字颜色变化，版式与背景不动
+- 文档：`SKILL.md` 新增「单页强调色」小节，`references/creation.md` 补字段说明
+- 测试：`pptx.sh self-test` 通过；`npm test` → 864 / 862 pass / 0 fail / 2 skipped
+- 未做：`slide.tone`（深底页）——需要在 4–5 个版式上做对比度白名单 + 逐页目视验收，
+  下一轮单独做
