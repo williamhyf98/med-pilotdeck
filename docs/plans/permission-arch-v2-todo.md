@@ -14,7 +14,7 @@
 
 | 门 | 含义 | 谁卡在这 | 状态 |
 |---|---|---|---|
-| **门 0** | 审计骨架 + 路径校验三条跑通 | **所有人**（含 B 轨） | 未开始 |
+| **门 0** | 审计骨架 + 路径校验三条跑通 | **所有人**（含 B 轨） | ✅ **已通过（2026-11-11）** |
 | 门 1 | 删除能进 `.trash`、可恢复 | A 轨前端删除按钮 | 未开始 |
 | 门 2 | 前端工作区页 + 管理员总览可交付 | 只有 A 轨 | 未开始 |
 | 门 3 | 数据分析技能可交付（含安全用例全绿） | 只有 B 轨 | 未开始 |
@@ -74,7 +74,7 @@
 
 ---
 
-## 1. 门 0：地基（2d）
+## 1. 门 0：地基（2d）✅ 已通过 2026-11-11
 
 ### 1.1 审计骨架（1d）
 
@@ -99,7 +99,10 @@
 
 - [x] ① `reserved`：顶层 `.trash` / `.usage.json` / `.pinned` / `.tmp` 写入 → deny（2026-11-11 完成）
 - [x] ② `inbox`：**写操作**目标落在 `inbox/**` → deny（读不变）（2026-11-11 完成）
-- [ ] ③ 覆盖确认：目标已存在且内容不同 → 返回 `ask`，旧内容存 `scratch/tool-results/snapshots/<turnId>/`
+- [x] ③ 覆盖确认：`office_to_pdf` 输出已存在 → `ask`（含 allow_session）+ 审计 `file.overwrite_ask`（2026-11-11 完成）
+      **口径修正**：`write_file` / `edit_file` 已有更强的一道门 —— `validateWriteSnapshotFresh()` 要求
+      "写前必读 + 读后内容哈希不变"，未读过的文件直接报错、内容变过要求重读；在这两条工具上再加"覆盖 ask"
+      只会变成每次改稿都弹窗的噪音，因此**不叠加**。真正裸写落盘的只有 `office_to_pdf`，覆盖确认补在这里。
 - [x] 测试：`tests/tool/path-safety-write-roots.spec.ts` **9 条全过**（覆盖确认用例待 ③ 完成后追加）
 - [x] `npm test` 全绿（2026-11-11：806 tests / 804 pass / 0 fail / 2 skipped）
 
@@ -259,3 +262,13 @@
 - 实测结论：测试全程未在真实的 `~/.pilotdeck` 下产生 `system/audit`（所有用例都注入临时 `PILOT_HOME`），
   说明审计目录跟随注入的 home，不会污染开发机
 - 未做：③ 覆盖确认（下一步）
+
+### 2026-11-11 · 门 0 / 1.2 ③ 覆盖确认（门 0 收口）
+
+- 改动：`src/tool/builtin/officeToPdf.ts` 的 `checkOfficeToPdfPermissions()` —— 输出文件已存在时返回 `ask`
+  （`allow_session` 作用域为该目录），并写审计 `file.overwrite_ask`
+- 口径修正：`write_file` / `edit_file` 不叠加覆盖 ask，理由见 §1.2 ③
+- 新增测试：`tests/tool/office-pdf-overwrite-ask.spec.ts`（3 条：已有输出 → ask + 审计；
+  新输出 → passthrough；写 inbox → deny）
+- 命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **816 tests / 814 pass / 0 fail / 2 skipped**
+- 结论：**门 0 通过**，可以并行开 A1（软删除）与 B0（白名单接线）

@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { PermissionResult } from "../../permission/index.js";
 import type { PilotDeckToolDefinition, PilotDeckToolRuntimeContext } from "../protocol/types.js";
 import { PilotDeckToolRuntimeError } from "../protocol/errors.js";
 import { resolvePilotDeckWorkspacePath } from "./filesystem/pathSafety.js";
+import { appendAudit } from "../../security/audit/auditLog.js";
 
 const DEFAULT_RENDERER_PORT = 19400;
 const DEFAULT_TIMEOUT_MS = 180_000;
@@ -284,6 +286,51 @@ function checkOfficeToPdfPermissions(
       type: "deny",
       reason: { type: "safety", message: output.error.message },
       message: output.error.message,
+    };
+  }
+
+  // spec §4.2 #6 / §6.1：覆盖已存在的产物要先确认。
+  // `write_file` / `edit_file` 由"写前必读 + 内容哈希"的新鲜度校验拦住（见 writeSnapshots.ts），
+  // 只有 office_to_pdf 直接落盘，所以覆盖确认只在这里补。
+  if (existsSync(output.absolutePath)) {
+    const message = `输出文件已存在，本次转换会覆盖它：${output.relativePath}`;
+    const reason = { type: "tool" as const, toolName: "office_to_pdf", message };
+    appendAudit(
+      {
+        action: "file.overwrite_ask",
+        decision: "ask",
+        tool: "office_to_pdf",
+        target: output.relativePath,
+        reason: "output-exists",
+        meta: { mode: context.permissionMode },
+      },
+      { env: context.env ?? process.env },
+    );
+    return {
+      type: "ask",
+      reason,
+      request: {
+        toolCallId: "",
+        toolName: "office_to_pdf",
+        inputSummary: JSON.stringify({ input_file: input.input_file, output_file: output.relativePath }),
+        reason,
+        options: [
+          {
+            id: "allow_session",
+            label: "Allow this folder for this session",
+            rules: [{
+              source: "session" as const,
+              behavior: "allow" as const,
+              toolName: "office_to_pdf" as const,
+              pattern: path.join(path.dirname(output.absolutePath), "*"),
+            }],
+          },
+          { id: "allow_once", label: "Allow once" },
+          { id: "deny", label: "Deny" },
+          { id: "cancel", label: "Cancel" },
+        ],
+        metadata: { overwriteTarget: output.relativePath },
+      },
     };
   }
 
