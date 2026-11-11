@@ -14,8 +14,10 @@
 | 使用者 | agent（通过技能入口调用）。用户不直接跑脚本 |
 | 交付形态 | 一个 shell 入口 + 一个 Python 执行器 + 一个离线 venv + 一份依赖清单 |
 
-**核心约束：代码只能从一个口子跑。** 这个口子同时受四层约束：
-① `bash` 命令策略白名单（设计书 §10.4.1）② 沙箱 `network: none` ③ 执行器内 AST 黑名单 ④ 路径校验。
+**核心约束：代码只能从一个口子跑。** 这个口子同时受五层约束：
+① `bash` 命令策略白名单（设计书 §10.4.1）② 自动化策略（`automationPolicyConstraints` 认这个入口，
+否则整条命令会被当成"非受信 shell 执行"硬拦）③ 沙箱 `network: none`
+④ 执行器内 AST 黑名单（静态）⑤ 运行期护栏 `analysis_guard.py`（动态路径 / 动态导入）。
 
 ## 2. 唯一入口契约
 
@@ -30,7 +32,7 @@ bash "$SKILL_ROOT/scripts/analysis.sh" run \
 |---|---|---|
 | `--script` | 是 | 只允许 `scratch/**` 下的 `.py`；执行前先做 AST 扫描 |
 | `--input` | 否 | 只允许 `inbox/**` 或 `scratch/**`（含 `scratch/tool-results/**`，U2 已定）；**只读**挂入 |
-| `--out` | 否 | 只允许 `exports/**`；不存在则创建 |
+| `--out` | **是** | 只允许 `exports/**`；不存在则创建（不给 `--out` 就不知道该把产物写哪） |
 | `--timeout` | 否 | 默认 600s，上限 1800s |
 | `--mem-mb` | 否 | 默认 4096，上限 8192 |
 
