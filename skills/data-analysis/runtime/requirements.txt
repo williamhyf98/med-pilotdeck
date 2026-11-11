@@ -3,7 +3,9 @@
 #
 # ---- 基础档 ----
 pandas>=2.2,<3
-numpy>=1.24
+# numpy 必须有上界：不写上界会解析到 2.5.x，pip 就在 statsmodels / lifelines / wfdb
+# 之间来回回溯（实测下载 58 个候选仍未收敛，还把 numpy 升到 2.5.4 顶掉 lifelines）
+numpy>=1.24,<2.4
 scipy>=1.11,<2
 openpyxl>=3.1
 XlsxWriter>=3.1
@@ -16,7 +18,9 @@ Pillow>=10.0.0
 # ---- 统计档 ----
 statsmodels>=0.14,<0.15
 scikit-learn>=1.4,<1.6
-lifelines>=0.29,<0.30
+# 0.29.0 的元数据写死 numpy<2.0，在 Python 3.13 上根本无解（1.26 不支持 3.13）；
+# 0.30.x 才放开 numpy 2。离线镜像是 Python 3.12，两边都能装 0.30.x
+lifelines>=0.30,<0.31
 pingouin>=0.5,<0.6
 #
 # ---- 医学档 ----

@@ -61,7 +61,7 @@ bash "$SKILL_ROOT/scripts/analysis.sh" run \
 | 包 | 版本 | 用途 |
 |---|---|---|
 | pandas | `>=2.2,<3` | 表格 |
-| numpy | `>=1.24`（沿用 med-tools） | 数值 |
+| numpy | `>=1.24,<2.4`（下界沿用 med-tools，**上界是本技能加的**） | 数值 |
 | scipy | `>=1.11,<2` | 统计检验 |
 | openpyxl / xlsxwriter | `>=3.1` | xlsx 读写 |
 | pyarrow | `>=15,<22` | parquet / 大文件 |
@@ -76,7 +76,7 @@ bash "$SKILL_ROOT/scripts/analysis.sh" run \
 |---|---|---|
 | statsmodels | `>=0.14,<0.15` | 回归 / GLM / 多重比较 |
 | scikit-learn | `>=1.4,<1.6` | 聚类 / 降维 / 模型评估 |
-| lifelines | `>=0.29,<0.30` | 生存分析（KM / Cox） |
+| lifelines | `>=0.30,<0.31` | 生存分析（KM / Cox）。**0.29 的元数据写死 `numpy<2`，在 Python 3.13 上无解** |
 | pingouin | `>=0.5,<0.6` | 常用医学统计（t/ANOVA/相关/效应量） |
 
 ### 3.3 医学档（medical）
@@ -89,6 +89,15 @@ bash "$SKILL_ROOT/scripts/analysis.sh" run \
 
 **明确不装**：`SimpleITK`（体积大、与 nibabel 重叠）、`torch`（属模型推理，不进分析技能）、
 `requests/httpx`（出网用，故意不装）、`jupyter`（交互式不需要）。
+
+**两条实测踩过的坑（2026-11-11，macOS + Python 3.13 bootstrap）**：
+
+1. `numpy` 不写上界时解析到 2.5.x，pip 会在 statsmodels / lifelines / wfdb 之间反复回溯
+   （实测下了 58 个候选仍未收敛，还顺手把 numpy 升到 2.5.4 顶掉 lifelines 的依赖）；
+2. `lifelines 0.29.0` 元数据是 `numpy<2.0`，而 Python 3.13 上 numpy 最低只能到 2.0 —— 该组合**无解**，
+   必须用 0.30.x（离线镜像的 Python 3.12 两边都能装 0.30.x，版本不分裂）。
+
+离线镜像构建若也出现长时间回溯，先怀疑这两条，而不是网络。
 
 ## 4. 执行期安全（12 条必须拒绝 + 3 条资源限制）
 

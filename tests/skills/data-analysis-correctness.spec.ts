@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { closeSync, openSync, writeSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -18,6 +18,8 @@ const analysisSh = join(repo, "skills", "data-analysis", "scripts", "analysis.sh
 
 const PYTHON_CANDIDATES = [
   process.env.PILOTDECK_ANALYSIS_PYTHON,
+  // 本机跑过 `analysis.sh bootstrap-runtime` 时优先用它：依赖最齐，C6/C11 不会 skip
+  join(homedir(), ".cache", "pilotdeck-analysis", "runtime", "bin", "python"),
   "python3",
   "/opt/anaconda3/bin/python3",
   "python",
@@ -561,9 +563,11 @@ import wfdb
 
 root = Path(os.environ["PILOTDECK_ANALYSIS_INPUT"])
 root.mkdir(parents=True, exist_ok=True)
-signal = (np.sin(np.linspace(0, 6.28, 250 * 10)) * 200).astype(np.int16)
-wfdb.wrsamp("100", fs=250, units=["mV"], sig_name=["MLII"], p_signal=signal.reshape(-1, 1),
-            fmt=["16"], write_dir=str(root))
+# p_signal 必须是 float64 且二维：wfdb 4.x 的 wrsamp 用 adc_gain/baseline 自己量化，
+# 直接传 int16 会被 check_np_array 拒（TypeError: must subclass numpy.floating）
+signal = np.sin(np.linspace(0, 6.28, 250 * 10)).astype("float64").reshape(-1, 1)
+wfdb.wrsamp("100", fs=250, units=["mV"], sig_name=["MLII"], p_signal=signal,
+            fmt=["16"], adc_gain=[200.0], baseline=[0], write_dir=str(root))
 print("built")
 `,
     );

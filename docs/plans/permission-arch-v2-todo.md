@@ -183,7 +183,7 @@
 |---|---|---|---|---|
 | D1 | 设计文档定稿（依赖清单 / 12 条安全用例 / 正确性清单） | 0.5d | B0 | ✅ |
 | D2 | 技能骨架 `skills/data-analysis/**` | 0.5d | D1 | ✅ |
-| D3 | 离线运行时（venv + wheels + Dockerfile 两处） | 0.5d | D2 | 🟡 代码已接（Dockerfile 加 `-r`、`prepare-offline-runtime.sh` 调 bootstrap）；未在 arm64 容器实测 |
+| D3 | 离线运行时（venv + wheels + Dockerfile 两处） | 0.5d | D2 | 🟡 代码已接；**macOS 本机 bootstrap 实测已通过（status: ready）**；arm64 容器未实测 |
 | D4 | 唯一入口 `analysis.sh run` | 1d | D3 | ✅ |
 | D5 | 执行期安全（AST 黑名单 + 运行期护栏 + 资源上限） | 1d | D4 | ✅ |
 | D6 | 产物落位 `exports/analysis/<slug>-<ts>/` | 0.3d | D4 | ✅ |
@@ -407,3 +407,23 @@
 - 命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **857 tests / 852 pass / 0 fail / 5 skipped**
   （5 = 原有 2 条 + D8 的 C6/C10/C11；C10 装 pydicom 后可跑通）
 - 遗留（不阻塞门 3 结论）：C6/C11 未在本机真跑，需在 node12 / 交付镜像（依赖齐全）上跑一次留档
+
+### 2026-11-11 · macOS 本机把运行时真装起来（D3 开发机侧 + D8 补全）
+
+- 目标：不只是"测试绿"，而是让开发机 `analysis.sh check --json` 真的 `status: ready`，用户能手动试
+- 命令：`PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn bash skills/data-analysis/scripts/analysis.sh bootstrap-runtime`
+  （默认 pypi.org 被公司 SSL 中间证书挡住；tuna 镜像可达）→ **`status: ready`**，17 包全装齐
+- 过程中查出来的**不是网络问题**，是 requirements 的两处真缺陷：
+  ① `numpy>=1.24` 缺上界 → 解析到 2.5.x，pip 在 statsmodels / lifelines / wfdb 间回溯几十轮
+     （实测下载 58 个候选仍未收敛，还把 numpy 升到 2.5.4 顶掉 lifelines）→ 改成 `numpy>=1.24,<2.4`
+  ② `lifelines 0.29.0` 元数据是 `numpy<2.0`，而 Python 3.13 上 numpy 最低 2.0 —— **该组合无解**
+     → 改成 `lifelines>=0.30,<0.31`（0.30.x 才放开 numpy 2；离线镜像是 Python 3.12，两边同版本）
+- 修一条测试 fixture 的真错：C11 的 `wfdb.wrsamp(p_signal=int16)` 在 wfdb 4.3 被
+  `check_np_array` 拒（要 float64 且二维），改成 float64 + `adc_gain`/`baseline`
+- `data-analysis-correctness.spec.ts` 的解释器候选加上 `~/.cache/pilotdeck-analysis/runtime/bin/python`：
+  本机 bootstrap 过就不再依赖 `PILOTDECK_ANALYSIS_PYTHON`，C6/C11 自动从 skip 变真跑
+- 结果：**C2–C11 + R2/R2b/R3 共 13 条全绿、0 skip**；`npm test` → **857 tests / 855 pass / 0 fail / 2 skipped**
+  （剩下的 2 条是门 0 阶段就有的无关 skip）
+- 端到端手工样例（临时工作区，中文列名 + 中文图题）：120 行 CSV → `by-group.csv` / `ttest.csv`
+  （t=-4.2461，p=4.4e-05，与手算一致）/ `sbp-by-group.png`（960×640，中文零方框）/ `run.json`（含输入 sha256）
+- 仍未验证：arm64 **容器**里的 bootstrap（本机无 docker）；node12 上的同一步
