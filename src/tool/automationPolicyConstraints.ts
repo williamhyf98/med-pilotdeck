@@ -91,12 +91,34 @@ export function isExecutableSourcePath(filePath: string): boolean {
   return EXECUTABLE_SOURCE_EXTENSIONS.has(extname(name)) || EXECUTABLE_SOURCE_FILENAMES.has(name);
 }
 
+/**
+ * data-analysis 的唯一入口要求 agent **先写脚本再交给 analysis.sh**：
+ * `run --script` 只接受工作区 `scratch/**` 下的 `.py`，执行前由
+ * `analysis_guard.scan_source()` 扫描危险调用，并在 analysis 自己的沙箱里跑。
+ * 所以这里是"声明式输入文件"，不是可执行程序，写它不应该被
+ * "blocks writing executable source" 挡住——否则技能自相矛盾、根本用不了。
+ *
+ * 放行条件刻意收得很窄：
+ * - 只放行 `.py`（`.sh`/`.js`/`.mjs` 等能绕过 guard 的形式一律不放行）
+ * - 路径里必须真的含 `scratch` 这一段，且不允许任何 `..`（防止借 scratch/ 写到别处）
+ */
+export function isAnalysisScratchScriptPath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/gu, "/");
+  if (extname(normalized).toLowerCase() !== ".py") return false;
+  const segments = normalized.split("/").filter((segment) => segment !== "" && segment !== ".");
+  if (segments.some((segment) => segment === "..")) return false;
+  return segments.includes("scratch");
+}
+
 export function getAutomationPolicyViolation(toolName: string, input: unknown): string | undefined {
   if (toolName === "write_file" || toolName === "edit_file") {
     const filePath = readStringField(input, "file_path") ?? readStringField(input, "path");
     if (!filePath || !isExecutableSourcePath(filePath)) return undefined;
+    if (isAnalysisScratchScriptPath(filePath)) return undefined;
     return [
       `Automation policy blocks writing executable source '${filePath}'.`,
+      "Exception: data-analysis scripts are written to the workspace scratch/ (scratch/**.py) "
+        + "and executed only through analysis.sh, which sandboxes them.",
       "Use registered tools and bundled skill entrypoints with declarative Markdown, JSON, CSV, TSV, or text inputs.",
       "If no bundled tool supports the operation, stop and explain the limitation.",
     ].join(" ");

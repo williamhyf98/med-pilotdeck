@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { PermissionRuntime } from "../../src/permission/index.js";
 import {
   getAutomationPolicyViolation,
+  isAnalysisScratchScriptPath,
   isExecutableSourcePath,
 } from "../../src/tool/automationPolicyConstraints.js";
 import { ToolRuntime } from "../../src/tool/execution/ToolRuntime.js";
@@ -32,6 +33,31 @@ test("automation policy blocks source writes but permits declarative inputs", ()
     getAutomationPolicyViolation("write_file", { file_path: "scratch/qa/workbook.json" }),
     undefined,
   );
+});
+
+test("data-analysis scripts under scratch/ are writable (the skill's only sanctioned input)", () => {
+  // analysis.sh run --script 只接受 scratch/**.py，写不进去技能就无法使用。
+  for (const path of [
+    "scratch/work/p0/analysis.py",
+    "scratch/analysis.py",
+    "/Users/william/Downloads/med-pilotdeck/.pilotdeck-home/users/1/workspaces/x/scratch/work/t1/analysis.py",
+  ]) {
+    assert.equal(isAnalysisScratchScriptPath(path), true, path);
+    assert.equal(getAutomationPolicyViolation("write_file", { file_path: path }), undefined, path);
+    assert.equal(getAutomationPolicyViolation("edit_file", { file_path: path }), undefined, path);
+  }
+
+  // 仍然拒绝：非 scratch 位置、scratch 下的非 .py、以及用 .. 绕出去的路径。
+  for (const path of [
+    "exports/extract.py",
+    "scratch/work/p0/run.sh",
+    "scratch/work/p0/helper.mjs",
+    "scratch/../exports/extract.py",
+    "scratch/../skills/data-analysis/scripts/analysis.sh",
+  ]) {
+    assert.equal(isAnalysisScratchScriptPath(path), false, path);
+    assert.match(getAutomationPolicyViolation("write_file", { file_path: path }) ?? "", /blocks writing executable source/u, path);
+  }
 });
 
 test("automation policy blocks interpreter and shell bypasses", () => {

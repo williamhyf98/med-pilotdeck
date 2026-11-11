@@ -505,3 +505,23 @@
 
 命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **859 tests / 857 pass / 0 fail / 2 skipped** ｜
 重启后 `GET /api/projects` → `200`，日志 `[gateway-pool] gateway ready for user 1`
+
+### 2026-11-11 · data-analysis 用不了：策略禁止写 .py，而技能唯一入口就要 .py
+
+- 现象：runtime `ready` 之后 agent 仍然做不了分析。`write_file scratch/work/p0/analysis.py` →
+  `automation_policy_violation: blocks writing executable source`；
+  改走 `bash` 用 `printf > …/probe.py` 也 → `blocks creating or moving executable source through the shell`
+- 根因：`src/tool/automationPolicyConstraints.ts` 把 `.py` 一律算作"可执行源码"，
+  **不分位置**地拒绝写入；而 `analysis.sh run --script` 只接受 `scratch/**.py`，
+  即技能文档要求的输入就是 `.py`。两条规则直接互斥 → 技能在部署里等于不可用
+- 为什么这不算放宽安全边界：
+  1. 写文件本身不执行；执行只有 `analysis.sh run` 一条路，且它先跑
+     `analysis_guard.scan_source()` 扫 `subprocess`/`socket`/`os.system` 等，再在自己的沙箱里跑
+  2. 只放行 `.py`（`.sh`/`.js`/`.mjs` 这些能绕开 guard 的形式仍然拒绝）
+  3. 路径必须含 `scratch` 段且不含任何 `..`，防止借 scratch 写到别处
+- 修法：新增 `isAnalysisScratchScriptPath()`，`write_file`/`edit_file` 命中该规则即放行；
+  被拒时的提示语补上"例外：scratch/**.py 交给 analysis.sh"
+- 测试：`automation-policy-constraints.spec.ts` +1（正例 3 条、反例 5 条）
+
+命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **860 tests / 858 pass / 0 fail / 2 skipped** ｜
+两个 dev 实例（3001/3020）的网关子进程重启后 `GET /api/projects` 均 `200`
