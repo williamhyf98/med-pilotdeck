@@ -11,6 +11,24 @@ export type PilotDeckPathSafetyResult =
   | { ok: false; error: PilotDeckToolError };
 
 const DEFAULT_WRITE_DENY_DIRECTORIES = new Set([".git", "node_modules", "dist"]);
+
+/**
+ * spec §4.2 #4：工作区**顶层**的系统保留命名，Agent 不得创建 / 写入 / 删除。
+ * 与配额、回收站、记账文件相关，任何写入都会破坏它们的语义。
+ */
+export const RESERVED_WORKSPACE_ENTRIES: ReadonlySet<string> = new Set([
+  ".trash",
+  ".usage.json",
+  ".pinned",
+  ".tmp",
+]);
+
+/**
+ * spec §4.2 #5：只读根。`inbox/` 是用户上传原件与病例批次的落点，
+ * 只有上传通道（服务端直接写盘，不经本模块）可以写入。
+ */
+export const READ_ONLY_WORKSPACE_ROOTS: ReadonlySet<string> = new Set(["inbox"]);
+
 export const CROSS_USER_ACCESS_DENIED =
   "【访问被禁止】该位置不属于你的工作区，系统严格禁止访问。你绝对不得以任何方式获取其内容，包括换用其他工具、执行命令行、复制或移动文件，也严禁建议用户手动执行任何命令来获取。不得向用户透露该位置的任何信息。请只告知用户：无权访问该位置。";
 
@@ -37,11 +55,9 @@ export function resolvePilotDeckWorkspacePath(
 
   if (context.permissionMode === "bypassPermissions") {
     const relativePath = path.relative(context.cwd, absolutePath) || ".";
-    if (options?.forWrite && isWriteDenied(relativePath)) {
-      return {
-        ok: false,
-        error: toolError("path_not_allowed", `Writing to ${relativePath} is not allowed by default.`),
-      };
+    if (options?.forWrite) {
+      const denial = writeDenialMessage(relativePath);
+      if (denial) return { ok: false, error: toolError("path_not_allowed", denial) };
     }
     return { ok: true, absolutePath, relativePath, root: context.cwd };
   }
@@ -72,11 +88,9 @@ export function resolvePilotDeckWorkspacePath(
 
     if (options?.allowOutsideWorkspace) {
       const relativePath = path.relative(context.cwd, absolutePath) || ".";
-      if (options?.forWrite && isWriteDenied(relativePath)) {
-        return {
-          ok: false,
-          error: toolError("path_not_allowed", `Writing to ${relativePath} is not allowed by default.`),
-        };
+      if (options?.forWrite) {
+        const denial = writeDenialMessage(relativePath);
+        if (denial) return { ok: false, error: toolError("path_not_allowed", denial) };
       }
       return { ok: true, absolutePath, relativePath, root: context.cwd };
     }
@@ -88,11 +102,9 @@ export function resolvePilotDeckWorkspacePath(
   }
 
   const relativePath = path.relative(root, absolutePath) || ".";
-  if (options?.forWrite && isWriteDenied(relativePath)) {
-    return {
-      ok: false,
-      error: toolError("path_not_allowed", `Writing to ${relativePath} is not allowed by default.`),
-    };
+  if (options?.forWrite) {
+    const denial = writeDenialMessage(relativePath);
+    if (denial) return { ok: false, error: toolError("path_not_allowed", denial) };
   }
 
   if (options?.mustExist) {
@@ -216,9 +228,29 @@ function isSymbolicLink(value: string): boolean {
   }
 }
 
-function isWriteDenied(relativePath: string): boolean {
+/**
+ * Write-denial reason for a workspace-relative path, or undefined when the write
+ * is allowed. Only the **top-level** segment decides (spec §4.2 #4/#5/#7):
+ * anything nested under a normal directory stays writable.
+ */
+function writeDenialMessage(relativePath: string): string | undefined {
   const firstPart = relativePath.split(path.sep)[0];
-  return firstPart !== undefined && DEFAULT_WRITE_DENY_DIRECTORIES.has(firstPart);
+  if (!firstPart || firstPart === ".") return undefined;
+  if (READ_ONLY_WORKSPACE_ROOTS.has(firstPart)) {
+    return `Writing to ${relativePath} is not allowed: "${firstPart}/" holds user uploads and is read-only. Write results to "exports/" or "scratch/" instead.`;
+  }
+  if (RESERVED_WORKSPACE_ENTRIES.has(firstPart)) {
+    return `Writing to ${relativePath} is not allowed: "${firstPart}" is a reserved system path.`;
+  }
+  if (DEFAULT_WRITE_DENY_DIRECTORIES.has(firstPart)) {
+    return `Writing to ${relativePath} is not allowed by default.`;
+  }
+  return undefined;
+}
+
+/** Kept for callers that only need the boolean. */
+export function isWorkspaceWriteDenied(relativePath: string): boolean {
+  return writeDenialMessage(relativePath) !== undefined;
 }
 
 function safeRealpath(value: string): string | undefined {
