@@ -44,12 +44,15 @@ bash "$ANALYSIS_SKILL_ROOT/scripts/analysis.sh" run \
 |---|---|
 | `--script` | **必填**，只接受 `scratch/**` 下的 `.py`；执行前先做静态体检 |
 | `--input` | 可选，只接受 `inbox/**` 或 `scratch/**`（含 `scratch/tool-results/**`），**只读** |
-| `--out` | 必填，只接受 `exports/**`，不存在会自动创建 |
+| `--out` | 必填，只接受 `exports/**`，不存在会自动创建。**每次运行都要新目录**，命名 `<主题>-<YYYYMMDD-HHMMSS>`（如 `exports/analysis/qc-20261111-162430`）；已有成功结果的目录会被拒绝，避免两次运行的同名产物混在一起 |
 | `--timeout` | 可选，秒，默认 600，上限 1800 |
 | `--mem-mb` | 可选，默认 4096，上限 8192 |
 
 参数一律用**空格分隔**（`--out exports/x`）。`--out=exports/x` 这种等号写法不会被命令白名单识别，
 会退回人工确认 —— 不要用。
+
+时间戳用运行当下的真实时间（`date +%Y%m%d-%H%M%S`），不要沿用上一轮的目录名：
+两次运行落进同一个目录会让新旧 `tables/`、`figures/` 混在一起，事后无法判断哪张表来自哪次运行。
 
 ## 写分析脚本的规矩
 

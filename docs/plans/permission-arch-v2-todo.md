@@ -543,3 +543,23 @@
 
 命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **862 tests / 860 pass / 0 fail / 2 skipped** ｜
 dist 实测：`docx/references/specifications.md` → OK；`docx/../src/cli/pilotdeck.ts` → DENY
+
+### 2026-11-11 · 报告表格长字段名断词 + 分析产物目录混放
+
+- 现象 1：报告第 3 页「数据集清点」第一列把 `S1_REPORT_PERFORM_RELATIONS` 断成
+  `…RELAT` / `IONS`——不是拼写错误，是列宽 2.3in 放不下 26 字符的英文长词，
+  LibreOffice 从单词中间硬断
+- 现象 2：agent 三次运行都用了不带时间戳的 `s1-profile/s1-detail/s1-more`，
+  重跑会覆盖 `code.py` / `run.json`，而 `tables/` 不清空 → 新旧结果混放
+- 修法：
+  1. `docxlib/core.py` 的自动列宽上限从 4.0 提到 6.0、分母 12→10，
+     长字段名能拿到更宽的列；`specifications.md` + `SKILL.md` 明确
+     "表格默认不写 `column_widths`，省略即自动分配"
+  2. `run_analysis.py` 拒绝复用已有成功结果的 `--out`（提示改用
+     `exports/analysis/<主题>-<YYYYMMDD-HHMMSS>`），失败运行仍可就地重试；
+     `SKILL.md` 与设计文档同步该约定
+- 验证：把报告 spec 的 `column_widths` 全部去掉后用远端 Renderer 重渲染，
+  第 3 页表名完整单行显示，中文含义列自然换行
+- 测试：`data-analysis-runner.spec.ts` +2（复用被拒 / 失败可重试）
+
+命令：`npm test` → **864 tests / 862 pass / 0 fail / 2 skipped**

@@ -853,7 +853,9 @@ def _column_widths_twips(
         weights = []
         for column in range(column_count):
             longest = max((len(str(row[column])) for row in values if len(row) > column), default=8)
-            weights.append(min(4.0, max(1.0, longest / 12.0)))
+            # 按最长内容分配权重：英文表名/代码式字段名（如 S1_REPORT_PERFORM_RELATIONS）
+            # 不能只给 4.0 上限，否则列宽不够、LibreOffice 会在单词中间硬断。
+            weights.append(min(6.0, max(1.0, longest / 10.0)))
     weight_sum = sum(weights)
     widths = [max(240, round(total * weight / weight_sum)) for weight in weights]
     widths[-1] += total - sum(widths)

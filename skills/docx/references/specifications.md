@@ -302,7 +302,12 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
 规则：
 
 - 每一行必须包含与表头相同数量的单元格。
-- `column_widths` 包含正的相对权重，每列一个。
+- `column_widths` 包含正的相对权重，每列一个。**默认不要传**：省略时创建器按每列
+  最长内容自动分配（1.0–6.0 权重），比手写英寸/权重更不容易出错。
+  只有两种情况才显式指定：列数 ≥6，或明显需要牺牲某一列（如"表名很长、其余都是短词"）。
+  英文表名、代码式字段名（`S1_REPORT_PERFORM_RELATIONS`）属于长单词，列给窄了
+  LibreOffice 会在单词中间硬断成 `…RELAT` / `IONS`；这种情况下让自动分配接管，
+  或把该列权重调到其它列的 2–3 倍。
 - `alignments` 包含 `left`、`center` 或 `right`，每列一个。
 - 创建器以 DXA 写入显式的表格、网格和单元格宽度。
 - 行会自动扩展；不要用空行模拟固定高度。

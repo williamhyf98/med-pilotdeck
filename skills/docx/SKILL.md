@@ -159,6 +159,10 @@ Word 插图只能用磁盘路径，不能用聊天气泡里的图。创面照等
 文档改走未声明的替代路径。新建细则见
 [creation.md](references/creation.md)。
 
+表格留白交给创建器：`--spec` 里的表格**默认不写 `column_widths`**（省略即按每列
+最长内容自动分配）。手写英寸/权重要猜，列给窄了会把 `S1_REPORT_PERFORM_RELATIONS`
+这类长字段名从中间硬断。
+
 ## 检查或读取
 
 ```bash

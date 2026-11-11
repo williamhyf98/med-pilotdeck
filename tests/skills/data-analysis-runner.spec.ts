@@ -218,6 +218,33 @@ test("正确性 C12：同一输入跑两次，输入指纹与表格字节一致"
   });
 });
 
+test("同一 --out 目录不允许被第二次成功运行覆盖（避免新旧产物混放）", { skip: SKIP }, async () => {
+  await withWorkspace(async ({ workspace }) => {
+    await writeSample(workspace, Array.from({ length: 10 }, (_, i) => i + 1));
+    const script = await putScript(workspace, "reuse", C1_SCRIPT);
+    const out = "exports/analysis/reuse";
+    const first = runAnalysis(workspace, ["--script", script, "--input", "inbox/batch1", "--out", out]);
+    assert.equal(first.status, 0, first.text);
+    const before = await readFile(join(workspace, out, "run.json"), "utf8");
+
+    const second = runAnalysis(workspace, ["--script", script, "--input", "inbox/batch1", "--out", out]);
+    assert.equal(second.status, 2, `第二次应被拒：${second.text}`);
+    assert.match(second.json?.error ?? "", /already holds a successful run/u);
+    assert.match(second.json?.error ?? "", /timestamped directory/u);
+    assert.equal(await readFile(join(workspace, out, "run.json"), "utf8"), before, "已有结果不能被改写");
+  });
+});
+
+test("失败的运行可以就地重试（只有成功结果被锁定）", { skip: SKIP }, async () => {
+  await withWorkspace(async ({ workspace }) => {
+    const broken = await putScript(workspace, "broken", "raise SystemExit(9)\n");
+    const out = "exports/analysis/retry";
+    assert.equal(runAnalysis(workspace, ["--script", broken, "--out", out]).status, 4);
+    const fixed = await putScript(workspace, "fixed", "print('ok')\n");
+    assert.equal(runAnalysis(workspace, ["--script", fixed, "--out", out]).status, 0);
+  });
+});
+
 test("R1：死循环到 --timeout 被杀，状态记为 timeout", { skip: SKIP }, async () => {
   await withWorkspace(async ({ workspace }) => {
     const script = await putScript(workspace, "spin", "while True:\n    pass\n");

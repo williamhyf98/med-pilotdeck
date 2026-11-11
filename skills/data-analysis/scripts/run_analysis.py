@@ -295,6 +295,22 @@ def run(args: argparse.Namespace) -> int:
     out_dir = _resolve_inside(root, args.out, ("exports",), "--out")
     input_dir = _resolve_inside(root, args.input, ("inbox", "scratch"), "--input") if args.input else None
 
+    # 一次运行一个目录：已成功的产物不允许被下一次运行覆盖（否则新旧 tables/figures
+    # 会混在同一个目录里，事后分不清哪张表来自哪次）。失败的运行可以就地重试。
+    existing = out_dir / "run.json"
+    if existing.is_file():
+        try:
+            previous = json.loads(existing.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            previous = {}
+        if previous.get("status") == "ok":
+            return _fail(
+                "--out already holds a successful run: "
+                f"{args.out}. Run again into a new timestamped directory "
+                f"(e.g. exports/analysis/<topic>-{time.strftime('%Y%m%d-%H%M%S')}) "
+                "so earlier outputs stay intact and never mix with this run."
+            )
+
     if not GUARD_MODULE.is_file():
         return _fail(f"runtime guard is missing: {GUARD_MODULE}", code=EXIT_RUNTIME_ERROR)
 
