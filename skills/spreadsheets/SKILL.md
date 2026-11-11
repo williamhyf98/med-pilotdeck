@@ -148,6 +148,8 @@ bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make   --spec "$PWD/scratc
   `soft` / `white` 是"底色"角色，自动配墨色字，适合分组行 / 隔断行。
 - 语义色没选主题时也能用；主题专属角色（`primary` 等）必须先选
   `--design-theme` 或在 spec 写 `"designTheme"`，否则直接报错，不会静默变黑。
+- 也可以直接写六位 hex（`"role": "#1F5FA9"`）当自定义强调色：不需要主题，
+  但它会当字色压在白纸/浅底上，所以要求 ≥ 4.5:1，不达标报错并给出可用的近似色。
 
 ### 浮动插图（用户上传照片）
 

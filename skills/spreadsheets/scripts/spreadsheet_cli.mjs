@@ -134,14 +134,54 @@ function mixHex(hex, towardHex, weight) {
     .toUpperCase();
 }
 
+const HEX6 = /^#?([0-9A-Fa-f]{6})$/;
+
+/**
+ * 设计档 A：角色名之外也允许 6 位 hex 自定义强调色。
+ * 语义四色（success/warning/danger/info）仍然只能靠角色名，避免"红=风险"被改掉。
+ */
+function parseHex6(value) {
+  const match = HEX6.exec(String(value ?? "").trim());
+  return match ? match[1].toUpperCase() : null;
+}
+
+function relativeLuminance(hex) {
+  const channels = [0, 2, 4].map((index) => parseInt(hex.slice(index, index + 2), 16) / 255);
+  const [r, g, b] = channels.map((channel) =>
+    (channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrastRatio(a, b) {
+  const first = relativeLuminance(a);
+  const second = relativeLuminance(b);
+  const [light, dark] = first >= second ? [first, second] : [second, first];
+  return (light + 0.05) / (dark + 0.05);
+}
+
 /**
  * 角色 → 前景/浅底两个 argb。success/warning/danger/info 取共享 semantic，
  * 其余取主题色板；浅底用该颜色 12% 混白，保证"标红"是一个可打印的浅红底。
  */
 function themeRoleColors(theme, role, location) {
-  const key = ROLE_KEYS[String(role ?? "").trim().toLowerCase()];
+  const text = String(role ?? "").trim();
+  const custom = parseHex6(text);
+  if (custom) {
+    // 自定义强调色当字色用：必须压得住白纸（4.5:1），浅底仍是它自己 12% 的混白。
+    const ratio = contrastRatio(custom, "FFFFFF");
+    if (ratio + 1e-9 < 4.5) {
+      throw new Error(
+        `${location}.role #${custom} only reaches ${ratio.toFixed(2)}:1 against white; `
+          + "use an accent with at least 4.5:1 contrast",
+      );
+    }
+    return { fg: argb(custom), bg: argb(mixHex(custom, "FFFFFF", 0.12)) };
+  }
+  const key = ROLE_KEYS[text.toLowerCase()];
   if (!key) {
-    throw new Error(`${location}.role must be one of ${ROLE_NAMES.join(", ")}`);
+    throw new Error(
+      `${location}.role must be one of ${ROLE_NAMES.join(", ")}, or a 6-digit hex such as #1F5FA9`,
+    );
   }
   if (!theme) {
     throw new Error(`${location}.role '${role}' requires a design theme; pass --design-theme or set sheets[].designTheme`);
