@@ -463,3 +463,25 @@
 
 命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **857 tests / 855 pass / 0 fail / 2 skipped** ｜
 `cd ui && npx vitest run` → **169 files / 1233 passed**
+
+### 2026-11-11 · 会话里"静默全 0"的真根因：沙箱里 chdir 全线失败
+
+- 现象：agent 写 `cd "$D"` 后用相对路径 `tail S1_*.csv`，54 条 `No such file or directory`，
+  所有计数变成 0；`exit_code` 仍是 0，看着像"数据很干净"
+- 现场证据：`<PILOT_HOME>/users/1/workspaces/scratch/qc` 这个**多出来两级**的目录，
+  说明 `cd` 没生效、cwd 一直是工作区根（`../../scratch` 从工作区往上跳了两层）
+- 真正的原因（已复现）：`buildSandboxProfile()` 的 `(allow file-read-metadata ...)` 只算了
+  app 授权项的祖先链，**没算 userHome 的祖先**。macOS 的 `chdir` 要逐级解析路径，
+  任一层拿不到 metadata 就返回 **ENOTDIR**；而 `ls` / `test -d` 走叶子节点的 `file*` 授权，照常成功
+  → "ls 能看见、cd 说不是目录"
+- 影响面：所有技能/脚本里的 `cd` 与 Python `os.chdir`（`analysis.sh` 也在沙箱里跑），
+  不只是这一次会话；相对路径一旦写错，错误只落在 stderr，很容易被当成正常结果
+- 修法：`metadataAncestors()` 收进 userHome 并展开整条祖先链；`grants().metadataOnly` 同步
+  （启动守卫会校验两者一致）
+- 验证：真实工作区里 `sandbox-exec -f <新 profile>` → `cd inbox/<batch>` 成功、`tail` 得到 4 行；
+  `python -c "os.chdir(...)"` 同样成功
+- 测试：`sandboxExec.spec.ts` +2（祖先链必须出现在 metadata 行；macOS 上真跑 `cd` 进子目录）
+- 附带：`SKILL.md` 明确"禁止 cd / 只看 status / 全 0 先怀疑路径"，
+  并用 analysis.sh 复跑同类错误写法 → `status: failed`、退出 4、`stderrTail` 带 `FileNotFoundError`
+
+命令：`npx tsc --noEmit` ✅ ｜ `node --test dist/tests/tool/builtin/bash/sandbox/sandboxExec.spec.js` → 18/18

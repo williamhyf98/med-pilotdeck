@@ -51,6 +51,8 @@ bash "$ANALYSIS_SKILL_ROOT/scripts/analysis.sh" run \
 
 - 脚本里一律用环境变量：输入目录 `PILOTDECK_ANALYSIS_INPUT`、输出目录 `PILOTDECK_ANALYSIS_OUT`
   （都是绝对路径）。不要在脚本里写死 `..` 或绝对路径字面量——静态体检会直接拒
+- **不要在脚本里 `cd` / `os.chdir`**：工作目录不是数据目录，切过去以后所有相对路径都会解析错，
+  而且 `tail`/`ls` 这类命令失败时只往 stderr 写一句话，很容易产出一份"全 0 但看起来正常"的结果
 - 图存 `figures/`、表存 `tables/`（执行器已建好这两个子目录）
 - 画图先 `import analysis_plot; analysis_plot.apply()`，再 `import matplotlib.pyplot`
 - CSV 输出用 `utf-8-sig`（Excel 双击不乱码）
@@ -59,6 +61,9 @@ bash "$ANALYSIS_SKILL_ROOT/scripts/analysis.sh" run \
 - 被禁止的东西（静态体检会在执行前拒绝）：`subprocess` / `socket` / `ctypes` /
   `urllib` / `requests` / `multiprocessing` / `pickle`、`os.system` / `os.popen` / `exec*`、
   `eval` / `exec` / `compile` / `__import__`，以及指向绝对路径的 `open()` 字面量
+
+**判断成败只看执行器返回的 `status`，不要只看退出码**：`failed` / `blocked` / `rejected` 一律停下报告。
+如果表里出现"全 0 / 0 行"，先怀疑文件没读到（路径、编码、分隔符），不要把 0 直接写成结论。
 
 ## 退出码
 
