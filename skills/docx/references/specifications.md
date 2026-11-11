@@ -64,14 +64,41 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
 
 - 内置模式为
   `{"mode":"builtin","template":"neutral-document-v1"}`。当用户未提供视觉说明时，它是默认值。
-  它不允许
-  `style_overrides` 或块级颜色/样式。
+  它锁的是**模板本身**：不允许 `style_overrides`，也不允许表格块上的 `style`
+  （网格/边框样式属于模板）。但**块级配色可以改**——标注块的
+  `fill`/`accent`、表格的 `header_fill`/`header_text_color`/`border_color`
+  都允许，前提是只用内置调色板里的颜色（见 1.1）。
 - 用户模式为
   `{"mode":"user","source":"explicit-requirements|reference-template|existing-document"}`。
   `explicit-requirements` 来源还要求非空的 `requirements`
   数组，其中包含用户的具体说明。
 - 诸如 “formal report” 或 “professional document” 这样的笼统目标
   不构成明确的视觉要求。
+
+### 1.1 内置调色板（builtin 模式的块级配色）
+
+内置模式下改块级颜色，只能从下面 11 个颜色里挑；写**名字**或写**等价 hex** 都行，
+大小写不敏感，`#` 可省略。调色板之外的颜色（例如 `FF00FF`）会被拒绝，
+错误码 `builtin-style-override`。
+
+| 名字 | hex | 用途 |
+| --- | --- | --- |
+| `ink` | `000000` | 正文墨色 |
+| `muted` | `595959` | 次要文字 |
+| `rule` | `D9D9D9` | 分隔线、表格边框 |
+| `soft` | `F2F2F2` | 浅底、标注填充 |
+| `white` | `FFFFFF` | 反白文字、白色底 |
+| `primary` | `1F4E79` | 主色：表头底、标题 |
+| `accent` | `8C6D1F` | 强调色 |
+| `success` | `2E7D32` | 通过、完成 |
+| `warning` | `B26B00` | 提醒、待办 |
+| `danger` | `B3261E` | 风险、错误 |
+| `info` | `1565C0` | 提示、说明 |
+
+典型搭配：`{"accent":"warning","fill":"soft"}` 的提醒框；
+`{"header_fill":"primary","header_text_color":"white","border_color":"rule"}` 的表格。
+调色板**不**放开字体、字号、行距、页边距、表格 `style`、run 的 `color`，
+这些仍然属于模板，内置模式下照旧报错。用户模式不受此限制，可写任意六位 hex。
 
 支持的页面值：`a4` 和 `letter`。支持的方向：`portrait` 和 `landscape`。
 
@@ -165,12 +192,13 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
   "type": "callout",
   "label": "Decision",
   "text": "Proceed after the final readiness review.",
-  "accent": "595959"
+  "accent": "muted"
 }
 ```
 
-颜色是六位 RGB 十六进制值。`fill` 是可选的；中性标注可省略它。
-保持标注简短。
+`accent` 是左边线颜色，`fill` 是底色且可选；中性标注可省略 `fill`。
+用户模式下两者是六位 RGB 十六进制值；内置模式下必须用内置调色板的名字或等价 hex
+（例如 `{"accent":"warning","fill":"soft"}`）。保持标注简短。
 
 ### 检查清单
 
@@ -312,9 +340,11 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
 - 创建器以 DXA 写入显式的表格、网格和单元格宽度。
 - 行会自动扩展；不要用空行模拟固定高度。
 - 对跨页数据表将 `repeat_header` 设为 `true`。
-- 内置模式始终使用中性模板：白色单元格、加粗黑色
-  表头和中性边框。它会拒绝表格块上的 `style`、`header_fill`、
-  `header_text_color` 和 `border_color`。
+- 内置模式的模板固定为中性表格样式：它拒绝表格块上的 `style`。但表头底色、
+  表头字色和边框颜色属于"这份文档的配色"，允许改，前提是取自内置调色板：
+  例如 `{"header_fill":"primary","header_text_color":"white","border_color":"rule"}`。
+  调色板之外的颜色会被拒绝（`builtin-style-override`）。省略这些字段则沿用
+  模板默认（白色单元格、加粗黑色表头、中性边框）。
 - 用户模式在这些字段实现所提供样式时可以使用它们。
   支持的表格样式为 `Table Grid`、`Light Grid`、`Light Shading`、
   `Light Shading Accent 1`、`Light Grid Accent 1` 和

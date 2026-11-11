@@ -103,8 +103,28 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" make \
 
 主题只改变配色：标题 / 各级标题用 `primary`，正文用 `ink`，表头用
 `primary` 底 + `onPrimary` 字，表格边框用 `rule`，提示块用 `soft` 底 +
-`accent` 左边线。**不要**自行填写任意十六进制颜色，也不要为凑效果添加色块。
+`accent` 左边线。不要自行编造十六进制颜色，也不要为凑效果满篇添加色块。
 未知主题会直接报 `invalid-design-theme`，不要猜测近似主题。
+
+#### 内置调色板：模板不动，块级配色可调
+
+不指定主题（`neutral-document-v1`）时，模板锁的是字体、字号、行距、页边距和
+表格网格样式，但**单个块的配色可以改**，只能从这 11 个颜色里挑（名字或等价 hex 都行）：
+
+| 名字 | hex | 名字 | hex |
+| --- | --- | --- | --- |
+| `ink` | `000000` | `primary` | `1F4E79` |
+| `muted` | `595959` | `accent` | `8C6D1F` |
+| `rule` | `D9D9D9` | `success` | `2E7D32` |
+| `soft` | `F2F2F2` | `warning` | `B26B00` |
+| `white` | `FFFFFF` | `danger` | `B3261E` |
+| `info` | `1565C0` | | |
+
+可改的字段只有：标注块的 `fill`/`accent`，表格的
+`header_fill`/`header_text_color`/`border_color`。调色板之外的颜色会被拒绝
+（`builtin-style-override`）；`style_overrides`、表格 `style`、run 的
+`color`/`size_pt` 仍属模板，照旧不允许。细则见
+`references/specifications.md` 的「1.1 内置调色板」。
 
 `prepare` 同样支持 `--design-theme`（需 `--style-mode builtin`），会把
 规范化后的主题 ID 冻结进验收清单；之后 `create` 的 `style_policy` 必须

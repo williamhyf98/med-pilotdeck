@@ -87,7 +87,7 @@ def run_smoke_test() -> dict[str, Any]:
         root = Path(temp_dir)
 
         capability_result = capabilities()
-        assert capability_result["protocol_version"] == 8
+        assert capability_result["protocol_version"] == 9
         assert len(capability_result["capability_states"]) == len(
             set(capability_result["capability_states"])
         )
@@ -487,6 +487,65 @@ def run_smoke_test() -> dict[str, Any]:
                 root / f"builtin-{label}.docx",
             )
             negative_checks.append(f"builtin-style-{label}-blocked")
+
+        # 内置模板锁的是模板本身；块级配色可以改，但只能从内置调色板里挑。
+        palette_spec = root / "builtin-palette.json"
+        _dump(
+            palette_spec,
+            {
+                "style_policy": {
+                    "mode": "builtin",
+                    "template": "neutral-document-v1",
+                },
+                "locale": "zh-CN",
+                "content": [
+                    {"type": "title", "text": "内置调色板"},
+                    {
+                        "type": "callout",
+                        "label": "关键提醒",
+                        "text": "块级配色可改",
+                        "accent": "warning",
+                        "fill": "soft",
+                    },
+                    {
+                        "type": "table",
+                        "headers": ["A", "B"],
+                        "rows": [["1", "2"]],
+                        "header_fill": "primary",
+                        "header_text_color": "white",
+                        "border_color": "rule",
+                    },
+                ],
+            },
+        )
+        palette_docx = root / "builtin-palette.docx"
+        create_docx(palette_spec, palette_docx)
+        palette_audit = audit_docx(palette_docx, profile="final")
+        assert palette_audit["summary"]["tables"] == 1
+        steps.append("builtin-palette-colors")
+
+        off_palette_spec = root / "builtin-off-palette.json"
+        _dump(
+            off_palette_spec,
+            {
+                "content": [
+                    {
+                        "type": "callout",
+                        "label": "越界",
+                        "text": "调色板之外的颜色",
+                        "accent": "FF00FF",
+                    }
+                ]
+            },
+        )
+        _expect_error(
+            create_docx,
+            "error",
+            "builtin-style-override",
+            off_palette_spec,
+            root / "builtin-off-palette.docx",
+        )
+        negative_checks.append("builtin-off-palette-blocked")
 
         builtin_acceptance = root / "builtin-acceptance.json"
         _dump(

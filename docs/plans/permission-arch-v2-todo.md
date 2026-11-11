@@ -563,3 +563,35 @@ dist 实测：`docx/references/specifications.md` → OK；`docx/../src/cli/pilo
 - 测试：`data-analysis-runner.spec.ts` +2（复用被拒 / 失败可重试）
 
 命令：`npm test` → **864 tests / 862 pass / 0 fail / 2 skipped**
+
+### 2026-11-11 · docx 内置模板：模板锁死，块级配色放开（受内置调色板约束）
+
+- 需求：builtin 模式原来一刀切"不许上色"，结果想给标注加个风险色条、给表头加深底
+  都被拒。改为**模板原生设置不动、生成后文件里的块级配色可改**。
+- 边界（别再扩）：
+
+  | 项 | builtin 模式 | 说明 |
+  | --- | --- | --- |
+  | `style_overrides`（字体/字号/行距/页边距/标题色等） | ❌ 拒绝 | 模板原生设置 |
+  | 表格 `style` | ❌ 拒绝 | 网格/边框样式属于模板 |
+  | `callout.accent` / `callout.fill` | ✅ 仅调色板 | 原来两者都拒 |
+  | 表格 `header_fill` / `header_text_color` / `border_color` | ✅ 仅调色板 | 原来三者都拒 |
+  | run 的 `color` / `size_pt` | ❌ 拒绝 | 本轮未动 |
+
+- 调色板（`protocol.py:BUILTIN_PALETTE`，名字或等价 hex 均可，大小写不敏感、`#` 可省）：
+  `ink 000000` / `muted 595959` / `rule D9D9D9` / `soft F2F2F2` / `white FFFFFF` /
+  `primary 1F4E79` / `accent 8C6D1F` / `success 2E7D32` / `warning B26B00` /
+  `danger B3261E` / `info 1565C0`；越界颜色报 `builtin-style-override`
+- 修法：`protocol.py` 新增 `palette_color()` / `_require_builtin_color()`，`callout` 与
+  `table` 两处校验分支改为按模式选择"调色板 / 任意 hex"（含后段 `_require_hex_color` 段，
+  否则名字型颜色会在第二道校验里被拒）；`core.py` 新增 `resolve_color()` 统一把名字落成 hex；
+  `CREATE_BLOCK_PROPERTY_SCHEMAS` 的 `pattern` 放宽为 `COLOR_TOKEN_PATTERN` 并在 `description`
+  里列调色板，`PROTOCOL_VERSION` 8→9
+- 审计提示语微调：`excessive-chromatic-table-fill` 现在会说明"调色板表头底色是正常的"
+- 文档：`references/specifications.md` 新增「1.1 内置调色板」，改 builtin 段、callout 示例
+  （`595959`→`muted`）与表格规则；`references/design-and-layout.md`、`SKILL.md` 同步
+- 验证：`self-test` ✅（新增 `builtin-palette-colors` / `builtin-off-palette-blocked`）；
+  四条反例仍被拒（`style_overrides` / 表格 `style` / run `color` / `FF00FF`）；
+  XML 落盘 `1F4E79`×2、`B3261E`、`F2F2F2`、`D9D9D9`×6；远端 Renderer 目视：深蓝表头白字、
+  浅灰底 + 红色色条提示框，均正常
+- 命令：`npm test` → **864 tests / 862 pass / 0 fail / 2 skipped**

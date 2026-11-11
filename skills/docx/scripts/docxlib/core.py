@@ -50,10 +50,22 @@ from .protocol import (
     normalize_document_policy,
     normalize_document_structure,
     normalize_style_policy,
+    palette_color,
     validate_create_spec,
     validate_edit_patch,
 )
 from .templates import resolve_document_style
+
+
+def resolve_color(value: Any) -> str | None:
+    """调色板名字（如 ``primary``）归一成 hex；其它值原样去 ``#``；空值返回 None。"""
+    if value is None:
+        return None
+    token = palette_color(value)
+    if token:
+        return token
+    text = str(value).strip().lstrip("#")
+    return text or None
 
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -1145,13 +1157,11 @@ def _add_content_block(doc: DocumentObject, block: dict[str, Any], style_tokens:
             run = paragraph.add_run(text)
             _set_run_fonts(run, style_tokens["body_font"], style_tokens["east_asia_font"])
         raw_fill = block.get("fill", style_tokens["callout_fill"])
-        fill = str(raw_fill).lstrip("#") if raw_fill else None
+        fill = resolve_color(raw_fill) if raw_fill else None
         _set_paragraph_callout(
             paragraph,
             fill,
-            str(
-                block.get("accent", style_tokens["callout_border_color"])
-            ).lstrip("#"),
+            resolve_color(block.get("accent", style_tokens["callout_border_color"])) or "595959",
         )
     elif block_type == "checklist":
         items = block.get("items")
@@ -1211,26 +1221,23 @@ def _add_content_block(doc: DocumentObject, block: dict[str, Any], style_tokens:
         table = doc.add_table(rows=1 if headers else 0, cols=column_count)
         table.style = str(block.get("style", style_tokens["table_style"]))
         table.alignment = WD_TABLE_ALIGNMENT.LEFT
-        border_color = str(
-            block.get("border_color", style_tokens["table_border_color"])
-        ).lstrip("#")
+        border_color = (
+            resolve_color(block.get("border_color", style_tokens["table_border_color"]))
+            or "595959"
+        )
         _set_table_borders(table, border_color)
         if headers:
             raw_header_fill = block.get(
                 "header_fill",
                 style_tokens["table_header_fill"],
             )
-            header_fill = (
-                str(raw_header_fill).lstrip("#") if raw_header_fill else None
-            )
+            header_fill = resolve_color(raw_header_fill) if raw_header_fill else None
             raw_header_text_color = block.get(
                 "header_text_color",
                 style_tokens["table_header_text_color"],
             )
             header_text_color = (
-                str(raw_header_text_color).lstrip("#")
-                if raw_header_text_color
-                else None
+                resolve_color(raw_header_text_color) if raw_header_text_color else None
             )
             for index, value in enumerate(headers):
                 cell = table.rows[0].cells[index]

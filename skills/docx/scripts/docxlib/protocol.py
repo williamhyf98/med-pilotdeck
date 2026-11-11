@@ -10,12 +10,65 @@ from typing import Any, Iterable
 from .common import DocxSkillError, assert_internal_control_path
 
 
-PROTOCOL_VERSION = 8
+PROTOCOL_VERSION = 9
 RESULT_STATUSES = ("ok", "partial", "unsupported", "blocked", "error")
 RICH_RUN_FIELDS = {"text", "bold", "italic", "underline", "color", "size_pt"}
 ALIGNMENTS = ("left", "center", "right")
 SUPPORTED_FIELD_KEYWORDS = ("TOC", "PAGE", "NUMPAGES", "DATE", "TIME")
 BUILTIN_TEMPLATE_ID = "neutral-document-v1"
+
+# 内置模板锁的是**模板本身**（字体、字号、行距、页边距、表格网格样式），
+# 不锁"这一份文档里某个块用哪种颜色"。块级配色允许改，但只能从这份调色板里挑：
+# 名字或等价 hex 都行，杜绝模型随手写 #FF00FF 把文档弄花。
+BUILTIN_PALETTE: dict[str, str] = {
+    "ink": "000000",
+    "muted": "595959",
+    "rule": "D9D9D9",
+    "soft": "F2F2F2",
+    "white": "FFFFFF",
+    "primary": "1F4E79",
+    "accent": "8C6D1F",
+    "success": "2E7D32",
+    "warning": "B26B00",
+    "danger": "B3261E",
+    "info": "1565C0",
+}
+
+
+def palette_color(value: Any) -> str | None:
+    """把调色板名字或调色板里的 hex 归一成 6 位大写 hex；不是调色板颜色则返回 None。"""
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lstrip("#").lower()
+    if not text:
+        return None
+    if text in BUILTIN_PALETTE:
+        return BUILTIN_PALETTE[text]
+    for hex_value in BUILTIN_PALETTE.values():
+        if text == hex_value.lower():
+            return hex_value
+    return None
+
+
+def _require_builtin_color(value: Any, field: str) -> None:
+    _require_string(value, field, allow_empty=False)
+    if palette_color(value) is None:
+        raise DocxSkillError(
+            f"{field} must use the builtin palette: "
+            + ", ".join(f"{name} ({hex_value})" for name, hex_value in BUILTIN_PALETTE.items()),
+            code="builtin-style-override",
+            details={"field": field, "palette": BUILTIN_PALETTE},
+        )
+
+
+PALETTE_HINT = (
+    "六位 hex（如 1F4E79），或内置调色板名："
+    + " / ".join(BUILTIN_PALETTE)
+    + "。builtin 模式下只能是调色板里的颜色。"
+)
+COLOR_TOKEN_PATTERN = r"^#?(?:[0-9A-Fa-f]{6}|[A-Za-z]{3,9})$"
+
+
 THEMED_TEMPLATE_ID = "themed-v1"
 BUILTIN_TEMPLATES = (BUILTIN_TEMPLATE_ID, THEMED_TEMPLATE_ID)
 STYLE_POLICY_MODES = ("builtin", "user")
@@ -141,8 +194,16 @@ CREATE_BLOCK_PROPERTY_SCHEMAS: dict[str, dict[str, Any]] = {
     "callout": {
         **_rich_text_properties("callout"),
         "label": {"type": "string"},
-        "fill": {"type": "string", "pattern": HEX_COLOR_PATTERN},
-        "accent": {"type": "string", "pattern": HEX_COLOR_PATTERN},
+        "fill": {
+            "type": "string",
+            "pattern": COLOR_TOKEN_PATTERN,
+            "description": PALETTE_HINT,
+        },
+        "accent": {
+            "type": "string",
+            "pattern": COLOR_TOKEN_PATTERN,
+            "description": PALETTE_HINT,
+        },
     },
     "checklist": {
         "type": {"const": "checklist"},
@@ -206,17 +267,29 @@ CREATE_BLOCK_PROPERTY_SCHEMAS: dict[str, dict[str, Any]] = {
         "caption": {"type": "string"},
         "header_fill": {
             "oneOf": [
-                {"type": "string", "pattern": HEX_COLOR_PATTERN},
+                {
+                    "type": "string",
+                    "pattern": COLOR_TOKEN_PATTERN,
+                    "description": PALETTE_HINT,
+                },
                 {"type": "null"},
             ]
         },
         "header_text_color": {
             "oneOf": [
-                {"type": "string", "pattern": HEX_COLOR_PATTERN},
+                {
+                    "type": "string",
+                    "pattern": COLOR_TOKEN_PATTERN,
+                    "description": PALETTE_HINT,
+                },
                 {"type": "null"},
             ]
         },
-        "border_color": {"type": "string", "pattern": HEX_COLOR_PATTERN},
+        "border_color": {
+            "type": "string",
+            "pattern": COLOR_TOKEN_PATTERN,
+            "description": PALETTE_HINT,
+        },
     },
     "image": {
         "type": {"const": "image"},
@@ -1639,12 +1712,10 @@ def validate_create_spec(spec: dict[str, Any]) -> None:
                         _require_string(block[field], "callout.label")
                     else:
                         if style_policy["mode"] == "builtin":
-                            raise DocxSkillError(
-                                f"Builtin style_policy does not allow callout.{field}",
-                                code="builtin-style-override",
-                                details={"index": index},
-                            )
-                        _require_hex_color(block[field], f"callout.{field}")
+                            # 模板本身不改，但这块提示框用什么颜色可以改——受调色板约束。
+                            _require_builtin_color(block[field], f"callout.{field}")
+                        else:
+                            _require_hex_color(block[field], f"callout.{field}")
         if block_type in {"checklist", "source_list"}:
             items = block.get("items")
             if not isinstance(items, list) or not items:
@@ -1693,11 +1764,10 @@ def validate_create_spec(spec: dict[str, Any]) -> None:
                         code="invalid-spec",
                     )
         if block_type == "table":
+            # 表样式属于模板（网格/边框样式），仍然锁定；
+            # 表头底色、表头字色与边框颜色属于"这份文档的配色"，可改但受调色板约束。
             forbidden_builtin_table_fields = {
                 "style",
-                "header_fill",
-                "header_text_color",
-                "border_color",
             } & set(block)
             if (
                 style_policy["mode"] == "builtin"
@@ -1711,6 +1781,13 @@ def validate_create_spec(spec: dict[str, Any]) -> None:
                         "fields": sorted(forbidden_builtin_table_fields),
                     },
                 )
+            for field in ("header_fill", "header_text_color", "border_color"):
+                if field not in block:
+                    continue
+                if style_policy["mode"] == "builtin":
+                    _require_builtin_color(block[field], f"table.{field}")
+                else:
+                    _require_hex_color(block[field], f"table.{field}")
             headers = block.get("headers", [])
             rows = block.get("rows", [])
             if not isinstance(headers, list) or not isinstance(rows, list):
@@ -1770,7 +1847,10 @@ def validate_create_spec(spec: dict[str, Any]) -> None:
                 "border_color",
             ):
                 if field in block and block[field] is not None:
-                    _require_hex_color(block[field], f"table.{field}")
+                    if style_policy["mode"] == "builtin":
+                        _require_builtin_color(block[field], f"table.{field}")
+                    else:
+                        _require_hex_color(block[field], f"table.{field}")
             if (
                 "style" in block
                 and block["style"] not in SUPPORTED_TABLE_STYLES

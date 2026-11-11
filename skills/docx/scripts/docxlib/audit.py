@@ -536,8 +536,9 @@ def audit_docx(
             "excessive-chromatic-table-fill",
             (
                 f"{chromatic_filled_cells} of {table_cell_count} table cells "
-                "use explicit non-neutral fills. Confirm that a colored theme "
-                "was requested; otherwise use white body cells and neutral headers."
+                "use explicit non-neutral fills. Confirm the color was requested "
+                "(a builtin-palette header fill is fine); otherwise use white body "
+                "cells and neutral headers."
             ),
         )
     if accent_table_styles >= 2:
