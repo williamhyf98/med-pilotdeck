@@ -41,6 +41,7 @@ describe('storage management', () => {
             totalBytes: 18,
             workspaceBytes: 13,
             archiveBytes: 5,
+            trashBytes: 0,
         });
         expect(result.workspaces[0]).toMatchObject({
             projectId,

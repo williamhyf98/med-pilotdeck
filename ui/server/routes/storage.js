@@ -7,6 +7,13 @@ import {
     PROJECT_TYPE_KEYS,
     resolveScopedHome,
 } from '../utils/pilotPaths.js';
+import {
+    TRASH_DIR_NAME,
+    isReservedRelativePath,
+    listTrash,
+    moveFileToTrash,
+    restoreFromTrash,
+} from '../services/trash.js';
 
 const router = express.Router();
 const TYPE_KEYS = new Set(Object.values(PROJECT_TYPE_KEYS));
@@ -73,6 +80,8 @@ async function scanFiles(root) {
         for (const entry of entries) {
             const absolutePath = path.join(directory, entry.name);
             if (entry.isSymbolicLink()) continue;
+            // 软删除的文件仍在磁盘上，但不算"当前文件"：树和预览都不该看到它。
+            if (directory === root && entry.name === TRASH_DIR_NAME) continue;
             if (entry.isDirectory()) {
                 await visit(absolutePath);
                 continue;
@@ -115,9 +124,10 @@ async function scanWorkspaceGroups(pilotHome) {
         for (const projectEntry of await readDirectoryNames(typeRoot)) {
             if (!projectEntry.isDirectory() || !isSafeSegment(projectEntry.name)) continue;
             const groupRoot = path.join(typeRoot, projectEntry.name);
-            const [files, meta] = await Promise.all([
+            const [files, meta, trashEntries] = await Promise.all([
                 scanFiles(groupRoot),
                 readProjectMeta(pilotHome, typeEntry.name, projectEntry.name),
+                listTrash(groupRoot),
             ]);
             groups.push({
                 id: projectEntry.name,
@@ -131,6 +141,8 @@ async function scanWorkspaceGroups(pilotHome) {
                         : 'general_medicine'),
                 typeKey: typeEntry.name,
                 sizeBytes: files.reduce((sum, file) => sum + file.sizeBytes, 0),
+                trashBytes: trashEntries.reduce((sum, entry) => sum + entry.sizeBytes, 0),
+                trashCount: trashEntries.length,
                 files,
             });
         }
@@ -163,11 +175,15 @@ export async function scanStorage(pilotHome = resolveScopedHome()) {
     ]);
     const workspaceBytes = workspaces.reduce((sum, group) => sum + group.sizeBytes, 0);
     const archiveBytes = archives.reduce((sum, group) => sum + group.sizeBytes, 0);
+    const trashBytes = workspaces.reduce((sum, group) => sum + (group.trashBytes ?? 0), 0);
     return {
         totals: {
-            totalBytes: workspaceBytes + archiveBytes,
+            // 回收站里的文件仍占磁盘，所以计入 totalBytes；但不计入 workspaceBytes，
+            // 那是"当前文件"的口径。
+            totalBytes: workspaceBytes + archiveBytes + trashBytes,
             workspaceBytes,
             archiveBytes,
+            trashBytes,
         },
         workspaces,
         archives,
@@ -228,6 +244,11 @@ function normalizeDeleteTargets(pilotHome, targets) {
         const absolutePath = path.resolve(groupRoot, target.path);
         assertInside(groupRoot, absolutePath);
         assertWithinUserHome(absolutePath, pilotHome);
+        if (isReservedRelativePath(target.path)) {
+            throw invalidInput(
+                `"${target.path.split(/[\\/]/)[0]}" is a reserved system path and cannot be deleted`,
+            );
+        }
         return { ...target };
     });
 }
@@ -246,7 +267,11 @@ async function deleteTarget(pilotHome, target) {
         return;
     }
     const resolved = await resolveManagedFile(pilotHome, target);
-    await fs.rm(resolved.target);
+    // A1：文件不真删，rename 进 `.trash`；失败由 moveFileToTrash 抛错，绝不退化 rm。
+    await moveFileToTrash(
+        resolved.groupRoot,
+        path.relative(resolved.groupRoot, resolved.target).split(path.sep).join('/'),
+    );
 }
 
 export async function deleteStorageTargets(targets, pilotHome = resolveScopedHome()) {
@@ -321,7 +346,66 @@ router.post('/delete', async (req, res) => {
         res.status(result.failed.length > 0 ? 207 : 200).json({ ...result, snapshot });
     } catch (error) {
         const status = error?.code === 'invalid_input' ? 400 : 500;
-        res.status(status).json({ error: error instanceof Error ? error.message : String(error) });
+        res.status(status).json({
+            error: error instanceof Error ? error.message : String(error),
+            code: error?.code ?? 'storage_error',
+        });
+    }
+});
+
+function statusForTrashError(error) {
+    switch (error?.code) {
+        case 'invalid_input': return 400;
+        case 'trash_not_found': return 404;
+        case 'target_exists': return 409;
+        default: return 500;
+    }
+}
+
+/** 回收站列表：`.trash` 里还有哪些文件、什么时候删的、多大。 */
+router.get('/trash', async (req, res) => {
+    try {
+        const pilotHome = resolveScopedHome();
+        const groupRoot = resolveGroupRoot(
+            pilotHome,
+            req.query.scope ?? 'workspace',
+            req.query.groupId,
+            req.query.typeKey,
+        );
+        const entries = await listTrash(groupRoot);
+        res.json({
+            entries,
+            totals: {
+                count: entries.length,
+                bytes: entries.reduce((sum, entry) => sum + entry.sizeBytes, 0),
+            },
+        });
+    } catch (error) {
+        res.status(statusForTrashError(error)).json({
+            error: error instanceof Error ? error.message : String(error),
+            code: error?.code ?? 'storage_error',
+        });
+    }
+});
+
+/** 恢复：`path` 是回收站里的相对路径（`GET /trash` 返回的 `path`）。 */
+router.post('/trash/restore', async (req, res) => {
+    try {
+        const pilotHome = resolveScopedHome();
+        const groupRoot = resolveGroupRoot(
+            pilotHome,
+            req.body?.scope ?? 'workspace',
+            req.body?.groupId,
+            req.body?.typeKey,
+        );
+        const restored = await restoreFromTrash(groupRoot, req.body?.path);
+        const snapshot = await scanStorage();
+        res.json({ restored, snapshot });
+    } catch (error) {
+        res.status(statusForTrashError(error)).json({
+            error: error instanceof Error ? error.message : String(error),
+            code: error?.code ?? 'storage_error',
+        });
     }
 });
 

@@ -97,6 +97,7 @@ import {
 // Route-error → HTTP mapping (gateway 503s included) lives in its own module so
 // it is unit-testable; index.js boots a server at import time.
 import { sendRouteError } from './utils/routeErrors.js';
+import { startTrashRetention } from './services/trashRetention.js';
 import { shapeOfficePreviewStatus } from './utils/officePreviewStatus.js';
 import { bindConnectionScope, runMessageInScope, closeUserSockets, sendToAdminSockets, SOCKET_ROLE, SOCKET_USER_ID } from './services/wsScope.js';
 import sessionManager from './sessionManager.js';
@@ -4185,6 +4186,9 @@ async function startServer() {
 
                     // One-time cleanup of stale chat-attachment uploads in the OS temp dir.
                     cleanupStaleChatUploads().catch(() => {});
+
+                    // 回收站 7 天过期清理（启动跑一次，之后每天一次）。
+                    startTrashRetention();
 
                     // Start background memory scheduler for auto index/dream.
                     startMemoryScheduler();
