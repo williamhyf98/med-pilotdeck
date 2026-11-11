@@ -64,7 +64,15 @@ type OpenAIResponsesTool = {
   name: string;
   description?: string;
   parameters: Record<string, unknown>;
-  strict: true;
+  /**
+   * Always false: OpenAI-style strict mode requires every object property to
+   * appear in `required` (plus `additionalProperties: false`), which builtin
+   * and MCP tool schemas intentionally violate in order to expose optional
+   * arguments. Strict definitions are rejected by OpenAI-compatible gateways
+   * (e.g. llmpro/DeepSeek: "Required properties must match all properties in
+   * the object"). Codex sends non-strict tools as well.
+   */
+  strict: false;
 };
 
 export function buildOpenAIResponsesRequest(
@@ -225,7 +233,7 @@ function toResponsesTool(tool: CanonicalToolSchema): OpenAIResponsesTool {
     name: tool.name,
     description: tool.description,
     parameters: normalizeOpenAISchema(tool.inputSchema),
-    strict: true,
+    strict: false,
   };
 }
 

@@ -58,11 +58,20 @@ test("unknown medical model is a configuration error", () => {
   });
 });
 
-test("medical model must advertise image input and use OpenAI chat protocol", () => {
+test("medical model must advertise image input and use an OpenAI-compatible protocol", () => {
   withConfig(yaml.replace("input: [text, image]", "input: [text]"), (pilotHome) => {
     assert.throws(() => loadPilotConfig({ env: { PILOT_HOME: pilotHome } }), /image input/);
   });
   withConfig(yaml.replace("visual:\n      protocol: openai", "visual:\n      protocol: anthropic"), (pilotHome) => {
     assert.throws(() => loadPilotConfig({ env: { PILOT_HOME: pilotHome } }), /OpenAI-compatible/);
+  });
+});
+
+test("medical model accepts the OpenAI Responses protocol", () => {
+  withConfig(yaml.replace("visual:\n      protocol: openai", "visual:\n      protocol: openai-responses"), (pilotHome) => {
+    const { config } = loadPilotConfig({ env: { PILOT_HOME: pilotHome } });
+    assert.deepEqual(config.medical?.interpretationModel, {
+      id: "visual/image-model", provider: "visual", model: "image-model",
+    });
   });
 });

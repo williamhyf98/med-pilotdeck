@@ -359,11 +359,13 @@ function parseMedical(
     raw.interpretationModel, "medical.interpretationModel", modelConfig, diagnostics,
   );
   const provider = modelConfig.providers[interpretationModel.provider];
-  if (provider.protocol !== "openai") {
+  if (provider.protocol !== "openai" && provider.protocol !== "openai-responses") {
     diagnostics.push({
       code: "CONFIG_MEDICAL_PROTOCOL_UNSUPPORTED",
       severity: "fatal",
-      message: "medical.interpretationModel requires an OpenAI-compatible provider.",
+      message:
+        "medical.interpretationModel requires an OpenAI-compatible provider "
+        + "(openai or openai-responses).",
       path: "medical.interpretationModel",
       recoverable: false,
     });
