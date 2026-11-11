@@ -95,14 +95,28 @@ export function resolveCommandNetworkPolicy(
   };
 }
 
-/** `allowlist` 目前尚未实现，配了就启动报错，绝不静默降级为 `open`。 */
+/**
+ * `allowlist` 只有 macOS（sandbox-exec）实现，且只支持端口级（SBPL 的 `remote ip`
+ * 不接受数字 IP，2026-11-11 实测）。其它平台或不给端口一律启动报错，
+ * 绝不静默降级为 `open`。
+ */
 export function assertNetworkPolicySupported(
   policy: SandboxNetworkMode,
   platform: NodeJS.Platform,
+  allow: readonly { host: string; port: number }[] = [],
 ): void {
   if (policy !== "allowlist") return;
+  if (platform === "darwin") {
+    if (allow.length === 0) {
+      throw new Error(
+        "multiUser.sandbox.network=allowlist 需要 networkAllow 至少一项（macOS 只支持端口级白名单）。" +
+          "缺少端口会让 office 类技能直接不可用。",
+      );
+    }
+    return;
+  }
   throw new Error(
-    `multiUser.sandbox.network=allowlist 尚未实现（平台 ${platform}）。` +
-      "请改用 none 或 open；端口级白名单见 docs/permission-arch-v2-design.zh.md §10.5。",
+    `multiUser.sandbox.network=allowlist 仅 macOS 支持（当前平台 ${platform}）。` +
+      "Linux 的 --unshare-net 是二元的，请改用 none 或 open；见 docs/permission-arch-v2-design.zh.md §10.5。",
   );
 }

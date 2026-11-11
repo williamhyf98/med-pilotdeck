@@ -4,12 +4,22 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { CommandSandbox, SandboxWrapOptions } from "./index.js";
 import { appReadOnlyGrants, grantForms, type SandboxGrants } from "./grants.js";
+import type { SandboxNetworkAllowEntry, SandboxNetworkMode } from "../../../../pilot/config/types.js";
 
 export type SandboxExecConfig = {
   /** 代码根目录，只读。 */
   appRoot: string;
   /** Node 可执行文件所在目录，只读。 */
   nodeBinDir: string;
+  /** 网络出口档位（spec §10.5）。默认 `open`，即历史行为。 */
+  network?: SandboxNetworkMode;
+  /**
+   * `allowlist` 档允许的端口。
+   *
+   * 注意：SBPL 的 `remote ip` 只接受 `*` 或 `localhost`（2026-11-11 实测），
+   * 所以这里**只取 port**，host 字段在 macOS 上不生效。
+   */
+  networkAllow?: SandboxNetworkAllowEntry[];
 };
 
 export const SANDBOX_EXEC_BIN = "/usr/bin/sandbox-exec";
@@ -33,6 +43,31 @@ const pathForms = grantForms;
 
 function subpaths(paths: string[]): string {
   return [...new Set(paths)].map((p) => `(subpath "${escapeSbpl(p)}")`).join(" ");
+}
+
+/**
+ * 回环规则（spec §10.5.3「甲方案」）。
+ *
+ * macOS 的 `(deny network*)` 连 127.0.0.1 一起断（Linux 的 `--unshare-net` 不会），
+ * 而 skill 里存在「沙箱内自起服务再自连」的用法，因此必须同时放行出站与入站：
+ * 只给出站时 `listen` 仍然 EPERM（2026-11-11 实测）。
+ */
+const LOOPBACK_RULES = [
+  '(allow network-outbound (remote ip "localhost:*"))',
+  '(allow network-inbound (local ip "localhost:*"))',
+];
+
+/** 生成 profile 里的网络段（spec §10.5.8）。 */
+export function buildNetworkRules(mode: SandboxNetworkMode, allow: readonly SandboxNetworkAllowEntry[] = []): string[] {
+  if (mode === "open") return ["(allow network*)"];
+  const rules = ["(deny network*)", ...LOOPBACK_RULES];
+  if (mode === "allowlist") {
+    const ports = [...new Set(allow.map((entry) => entry.port))]
+      .filter((port) => Number.isInteger(port) && port > 0 && port < 65536)
+      .sort((a, b) => a - b);
+    for (const port of ports) rules.push(`(allow network-outbound (remote ip "*:${port}"))`);
+  }
+  return rules;
 }
 
 /** Framework Python calls realpath on each ancestor of a shared venv. */
@@ -60,7 +95,7 @@ export function buildSandboxProfile(config: SandboxExecConfig, userHome: string)
     "(deny default)",
     "(allow process-exec process-fork signal)",
     "(allow sysctl-read mach-lookup)",
-    "(allow network*)",
+    ...buildNetworkRules(config.network ?? "open", config.networkAllow),
     // Read metadata only for each ancestor. Subpath /Users would also reveal
     // the names of every user account through stat() calls.
     `(allow file-read-metadata ${[...new Set(metadataAncestors(config))].map((p) => `(literal "${escapeSbpl(p)}")`).join(" ")})`,
@@ -97,12 +132,23 @@ export class SandboxExecSandbox implements CommandSandbox {
   }
 
   wrap(command: string, options: SandboxWrapOptions): { file: string; args: string[] } {
-    // TODO(spec §10.5): macOS 尚未实现 none / allowlist 三态，网络由 profile 里的
-    // `(allow network*)` 全量放行；`none` 档的缺口由启动网络自检（netProbe）兜住。
     mkdirSync(join(options.userHome, ".tmp"), { recursive: true });
+    // 单条命令的网络覆盖（spec §10.5）：false=断网；true=允许出网。
+    // 全局配了 networkAllow 时，放行的技能走端口级 allowlist，而不是全开。
+    const mode: SandboxNetworkMode =
+      options.network === undefined
+        ? (this.config.network ?? "open")
+        : options.network === false
+          ? "none"
+          : (this.config.networkAllow?.length ?? 0) > 0
+            ? "allowlist"
+            : "open";
     // Inline the profile: a command with write access to userHome must never be
     // able to replace the policy file between wrap() and sandbox-exec startup.
-    return { file: SANDBOX_EXEC_BIN, args: ["-p", buildSandboxProfile(this.config, options.userHome), "/bin/sh", "-c", command] };
+    return {
+      file: SANDBOX_EXEC_BIN,
+      args: ["-p", buildSandboxProfile({ ...this.config, network: mode }, options.userHome), "/bin/sh", "-c", command],
+    };
   }
 
   async probe(): Promise<{ ok: true } | { ok: false; reason: string }> {

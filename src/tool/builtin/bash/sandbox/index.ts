@@ -3,6 +3,7 @@ import { BwrapSandbox, resolveAppRoot } from "./bwrap.js";
 import { NoneSandbox } from "./none.js";
 import { SandboxExecSandbox } from "./sandboxExec.js";
 import type { SandboxGrants } from "./grants.js";
+import type { SandboxNetworkAllowEntry, SandboxNetworkMode } from "../../../../pilot/config/types.js";
 
 /**
  * bash 工具的操作系统级沙箱适配层（spec §16.3）。
@@ -38,6 +39,10 @@ export interface SelectSandboxOptions {
   network?: boolean;
   /** 额外只读挂载的绝对路径（仅 bwrap 使用）。默认 []。 */
   extraReadOnlyBinds?: string[];
+  /** 全局网络档位（spec §10.5）。优先于 `network`。 */
+  networkMode?: SandboxNetworkMode;
+  /** `allowlist` 档的端口白名单（macOS 只按 port 生成规则）。 */
+  networkAllow?: SandboxNetworkAllowEntry[];
 }
 
 export type BwrapFactoryOptions = {
@@ -45,10 +50,15 @@ export type BwrapFactoryOptions = {
   extraReadOnlyBinds: string[];
 };
 
+export type SandboxExecFactoryOptions = {
+  network: SandboxNetworkMode;
+  networkAllow: SandboxNetworkAllowEntry[];
+};
+
 /** 可替换的实现工厂，便于测试注入探测结果；生产代码使用默认工厂。 */
 export interface SandboxFactories {
   bwrap(options: BwrapFactoryOptions): CommandSandbox;
-  "sandbox-exec"(): CommandSandbox;
+  "sandbox-exec"(options: SandboxExecFactoryOptions): CommandSandbox;
 }
 
 const DEFAULT_FACTORIES: SandboxFactories = {
@@ -59,10 +69,12 @@ const DEFAULT_FACTORIES: SandboxFactories = {
       network: options.network,
       extraBinds: options.extraReadOnlyBinds,
     }),
-  "sandbox-exec": () =>
+  "sandbox-exec": (options) =>
     new SandboxExecSandbox({
       appRoot: resolveAppRoot(),
       nodeBinDir: dirname(process.execPath),
+      network: options.network,
+      networkAllow: options.networkAllow,
     }),
 };
 
@@ -78,12 +90,13 @@ function instantiate(
   kind: "bwrap" | "sandbox-exec" | "none",
   factories: SandboxFactories,
   bwrapOptions: BwrapFactoryOptions,
+  execOptions: SandboxExecFactoryOptions,
 ): CommandSandbox {
   switch (kind) {
     case "bwrap":
       return factories.bwrap(bwrapOptions);
     case "sandbox-exec":
-      return factories["sandbox-exec"]();
+      return factories["sandbox-exec"](execOptions);
     case "none":
       return new NoneSandbox();
   }
@@ -107,14 +120,18 @@ async function resolveSandbox(
     network: options.network ?? true,
     extraReadOnlyBinds: options.extraReadOnlyBinds ?? [],
   };
+  const execOptions: SandboxExecFactoryOptions = {
+    network: options.networkMode ?? (options.network === false ? "none" : "open"),
+    networkAllow: options.networkAllow ?? [],
+  };
   if (options.configuredKind) {
-    return { sandbox: instantiate(options.configuredKind, factories, bwrapOptions) };
+    return { sandbox: instantiate(options.configuredKind, factories, bwrapOptions, execOptions) };
   }
   const native = nativeKindFor(options.platform);
   if (!native) {
     return { sandbox: new NoneSandbox(), fallbackReason: `no OS sandbox available on ${options.platform}` };
   }
-  const candidate = instantiate(native, factories, bwrapOptions);
+  const candidate = instantiate(native, factories, bwrapOptions, execOptions);
   const failure = await probeFailureReason(candidate);
   if (failure === undefined) return { sandbox: candidate };
   return { sandbox: new NoneSandbox(), fallbackReason: `${native} unavailable: ${failure}` };

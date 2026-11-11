@@ -179,10 +179,20 @@ export async function probeNetworkIsolation(
   }
 }
 
-/** 把观测结果转成"哪些出口漏了"。空数组 = 隔离生效。 */
-export function networkIsolationLeaks(observation: NetworkProbeObservation): string[] {
+/**
+ * 把观测结果转成"哪些出口漏了"。空数组 = 隔离生效。
+ *
+ * `allowHostLoopback`：macOS 的 sandbox-exec 没有 network namespace，无法把沙箱回环
+ * 与宿主回环分开（Linux 的 `--unshare-net` 可以）。甲方案选择放行回环以保证
+ * 「skill 自起服务再自连」可用，代价就是宿主回环不再隔离，因此这一条在 macOS 上
+ * 不计为泄漏（spec §10.5，2026-11-11 实测）。
+ */
+export function networkIsolationLeaks(
+  observation: NetworkProbeObservation,
+  options: { allowHostLoopback?: boolean } = {},
+): string[] {
   const leaks: string[] = [];
-  if (observation.hostLoopback) leaks.push("宿主回环端口可达");
+  if (observation.hostLoopback && options.allowHostLoopback !== true) leaks.push("宿主回环端口可达");
   if (observation.external) leaks.push("外部地址可达");
   if (observation.dns) leaks.push("DNS 可解析");
   return leaks;

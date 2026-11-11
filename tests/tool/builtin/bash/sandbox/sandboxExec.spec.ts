@@ -142,3 +142,108 @@ test("on macOS a wrapped command runs inside userHome and cannot write outside i
     }
   });
 });
+
+// ── 网络三态（spec §10.5，2026-11-11 macOS 实测） ─────────────────────────────
+
+test("network: none 关闭全部网络，但保留回环的出入两条规则", () => {
+  const profile = buildSandboxProfile({ ...config, network: "none" }, "/data/users/1");
+  assert.ok(profile.includes("(deny network*)"));
+  assert.ok(profile.includes('(allow network-outbound (remote ip "localhost:*"))'), "skill 自起服务要能自连");
+  assert.ok(profile.includes('(allow network-inbound (local ip "localhost:*"))'), "只有出站时 listen 仍会 EPERM");
+  assert.ok(!profile.includes("(allow network*)"));
+  assert.ok(!profile.includes('"*:'), "none 档不得出现端口白名单");
+});
+
+test("network: allowlist 只放行端口：SBPL 的 remote ip 不接受数字 IP", () => {
+  const profile = buildSandboxProfile(
+    { ...config, network: "allowlist", networkAllow: [{ host: "10.31.112.13", port: 19400 }] },
+    "/data/users/1",
+  );
+  assert.ok(profile.includes("(deny network*)"));
+  assert.ok(profile.includes('(allow network-outbound (remote ip "*:19400"))'));
+  assert.ok(!profile.includes("10.31.112.13"), "SBPL 写数字 IP 会直接报错，host 字段只能忽略");
+  assert.ok(!profile.includes("(allow network*)"));
+});
+
+test("network: allowlist 的端口去重后排序，非法端口被丢弃", () => {
+  const profile = buildSandboxProfile(
+    {
+      ...config,
+      network: "allowlist",
+      networkAllow: [
+        { host: "a", port: 19400 },
+        { host: "b", port: 19400 },
+        { host: "c", port: 8080 },
+        { host: "d", port: 0 },
+      ],
+    },
+    "/data/users/1",
+  );
+  const rules = profile.split("\n").filter((line) => line.includes('remote ip "*:'));
+  assert.deepEqual(rules, [
+    '(allow network-outbound (remote ip "*:8080"))',
+    '(allow network-outbound (remote ip "*:19400"))',
+  ]);
+});
+
+test("wrap() 的单命令覆盖：false 走 none，true 且配了白名单走 allowlist", () => {
+  withTempDir((tmpHome) => {
+    const sandbox = new SandboxExecSandbox({
+      ...config,
+      network: "none",
+      networkAllow: [{ host: "10.31.112.13", port: 19400 }],
+    });
+    const off = sandbox.wrap("echo a", { cwd: tmpHome, userHome: tmpHome, env: {}, network: false });
+    const on = sandbox.wrap("echo b", { cwd: tmpHome, userHome: tmpHome, env: {}, network: true });
+    const offProfile = off.args[1];
+    const onProfile = on.args[1];
+    assert.ok(offProfile.includes("(deny network*)"));
+    assert.ok(!offProfile.includes('"*:19400"'));
+    assert.ok(onProfile.includes('(allow network-outbound (remote ip "*:19400"))'), "放行的技能只开端口，不全开");
+    assert.ok(!onProfile.includes("(allow network*)"));
+  });
+});
+
+test("macOS 实测：none 档断外网与 DNS，回环按甲方案保留；allowlist 档端口放行", {
+  skip: process.platform !== "darwin" && "sandbox-exec is macOS-only",
+}, async () => {
+  const net = await import("node:net");
+  const server = net.createServer((socket) => socket.destroy());
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as { port: number }).port;
+  const connectScript = (host: string, target: number) =>
+    `require('node:net').connect({host:${JSON.stringify(host)},port:${target}}).on('connect',()=>{console.log('CONNECTED');process.exit(0)}).on('error',(e)=>{console.log('BLOCKED:'+e.code);process.exit(0)})`;
+  const runIn = (networkConfig: { network: "none" | "allowlist" | "open"; networkAllow?: { host: string; port: number }[] }) => {
+    const sandbox = new SandboxExecSandbox({ appRoot: resolveAppRoot(), nodeBinDir: dirname(process.execPath), ...networkConfig });
+    return (script: string) => {
+      const tmpHome = mkdtempSync(join(tmpdir(), "sb-net-"));
+      try {
+        const launch = sandbox.wrap(`${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`, {
+          cwd: tmpHome,
+          userHome: tmpHome,
+          env: {},
+        });
+        const run = spawnSync(launch.file, launch.args, { cwd: tmpHome, encoding: "utf8", timeout: 20000 });
+        return run.stdout.trim();
+      } finally {
+        rmSync(tmpHome, { recursive: true, force: true });
+      }
+    };
+  };
+  try {
+    const none = runIn({ network: "none" });
+    assert.equal(none(connectScript("1.1.1.1", 443)), "BLOCKED:EPERM", "外网必须被断");
+    assert.equal(none(connectScript("127.0.0.1", port)), "CONNECTED", "甲方案保留回环（换来 skill 自起自连可用）");
+    assert.equal(
+      none(`require('node:dns').lookup('example.com',(e)=>{console.log(e?'BLOCKED':'RESOLVED');process.exit(0)})`),
+      "BLOCKED",
+      "DNS 必须被断",
+    );
+    const allow = runIn({ network: "allowlist", networkAllow: [{ host: "127.0.0.1", port }] });
+    assert.equal(allow(connectScript("127.0.0.1", port)), "CONNECTED");
+    assert.equal(allow(connectScript("1.1.1.1", 443)), "BLOCKED:EPERM");
+    assert.equal(runIn({ network: "open" })(connectScript("127.0.0.1", port)), "CONNECTED");
+  } finally {
+    server.close();
+  }
+});

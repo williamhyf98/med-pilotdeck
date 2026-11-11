@@ -82,7 +82,8 @@ export async function initializeSandbox(config: MultiUserConfig, env: NodeJS.Pro
   const multiUserEnabled = isMultiUserLoginEnabled(env);
   const sandboxConfig = config.sandbox ?? {};
   const networkPolicy = sandboxConfig.network ?? "open";
-  assertNetworkPolicySupported(networkPolicy, process.platform);
+  const networkAllow = sandboxConfig.networkAllow ?? [];
+  assertNetworkPolicySupported(networkPolicy, process.platform, networkAllow);
   const sandbox = await selectSandbox({
     configuredKind: sandboxConfig.kind,
     multiUserEnabled,
@@ -90,6 +91,8 @@ export async function initializeSandbox(config: MultiUserConfig, env: NodeJS.Pro
     platform: process.platform,
     network: networkPolicy !== "none",
     extraReadOnlyBinds: sandboxConfig.extraReadOnlyBinds,
+    networkMode: networkPolicy,
+    networkAllow,
   });
   if (multiUserEnabled && sandbox.kind !== "none") {
     if (!env.PILOT_HOME || !isAbsolute(env.PILOT_HOME)) {
@@ -115,7 +118,11 @@ export async function initializeSandbox(config: MultiUserConfig, env: NodeJS.Pro
   const openSkills = sandboxConfig.networkOpenSkills ?? [];
   setNetworkPolicy({ policy: networkPolicy, openSkills });
   const openNote = openSkills.length > 0 ? `, openSkills=${openSkills.join("|")}` : "";
-  console.log(`[sandbox] network=${networkPolicy}${openNote}`);
+  const allowNote =
+    networkPolicy === "allowlist" || networkAllow.length > 0
+      ? `, allowPorts=${[...new Set(networkAllow.map((entry) => entry.port))].join("|")}`
+      : "";
+  console.log(`[sandbox] network=${networkPolicy}${openNote}${allowNote}`);
 
   if (networkPolicy === "none") {
     await assertNetworkIsolationOnStartup(sandbox, env);
@@ -143,7 +150,10 @@ async function assertNetworkIsolationOnStartup(
     env,
     log: (message) => console.log(message),
   });
-  const leaks = networkIsolationLeaks(observation);
+  // macOS 没有 network namespace，放行回环后宿主回环必然可达（甲方案，spec §10.5）。
+  const leaks = networkIsolationLeaks(observation, {
+    allowHostLoopback: process.platform === "darwin",
+  });
   if (leaks.length > 0) {
     throw new Error(
       `[sandbox] 网络隔离自检失败（sandbox=${sandbox.kind}）：${leaks.join("；")}。` +

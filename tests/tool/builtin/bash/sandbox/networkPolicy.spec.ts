@@ -88,9 +88,11 @@ test("isSingleSimpleInvocation rejects compound commands", () => {
   assert.equal(isSingleSimpleInvocation(""), false);
 });
 
-test("allowlist is rejected until it is implemented instead of degrading to open", () => {
-  assert.throws(() => assertNetworkPolicySupported("allowlist", "linux"), /allowlist 尚未实现/u);
-  assert.throws(() => assertNetworkPolicySupported("allowlist", "darwin"), /allowlist 尚未实现/u);
+test("allowlist 只在 macOS 且给了端口时可用，其它情况都不静默降级", () => {
+  const allow = [{ host: "10.31.112.13", port: 19400 }];
+  assert.throws(() => assertNetworkPolicySupported("allowlist", "linux", allow), /仅 macOS 支持/u);
+  assert.throws(() => assertNetworkPolicySupported("allowlist", "darwin", []), /需要 networkAllow 至少一项/u);
+  assert.doesNotThrow(() => assertNetworkPolicySupported("allowlist", "darwin", allow));
   assert.doesNotThrow(() => assertNetworkPolicySupported("none", "linux"));
   assert.doesNotThrow(() => assertNetworkPolicySupported("open", "darwin"));
 });
