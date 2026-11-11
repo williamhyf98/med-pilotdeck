@@ -90,6 +90,7 @@ async function resolveSpreadsheetTheme(name) {
     id: selected.id,
     label: theme.label,
     colors: theme.colors,
+    semantic: reader.tokens?.semantic ?? {},
     chart: theme.chart ?? {},
     typography: theme.typography ?? {},
     fontRoles: reader.tokens?.fontRoles ?? {},
@@ -99,6 +100,79 @@ async function resolveSpreadsheetTheme(name) {
 
 function argb(hex) {
   return `FF${String(hex ?? "").replace(/^#/, "").toUpperCase()}`;
+}
+
+/** 语义角色 → 主题里的颜色键。与 Word/PPT 共用同一套角色名。 */
+const ROLE_KEYS = {
+  success: "success",
+  warning: "warning",
+  danger: "danger",
+  info: "info",
+  primary: "primary",
+  accent: "accent",
+  support: "support",
+  ink: "ink",
+  muted: "muted",
+  rule: "rule",
+  soft: "soft",
+  white: "paper",
+};
+
+const ROLE_NAMES = Object.keys(ROLE_KEYS);
+
+function mixHex(hex, towardHex, weight) {
+  const parse = (value) => [0, 2, 4].map((index) => parseInt(String(value).replace(/^#/, "").slice(index, index + 2), 16));
+  const front = parse(hex);
+  const back = parse(towardHex);
+  if (front.some(Number.isNaN) || back.some(Number.isNaN)) return String(hex);
+  return front
+    .map((value, index) => Math.round(value * weight + back[index] * (1 - weight)).toString(16).padStart(2, "0"))
+    .join("")
+    .toUpperCase();
+}
+
+/**
+ * 角色 → 前景/浅底两个 argb。success/warning/danger/info 取共享 semantic，
+ * 其余取主题色板；浅底用该颜色 12% 混白，保证"标红"是一个可打印的浅红底。
+ */
+function themeRoleColors(theme, role, location) {
+  const key = ROLE_KEYS[String(role ?? "").trim().toLowerCase()];
+  if (!key) {
+    throw new Error(`${location}.role must be one of ${ROLE_NAMES.join(", ")}`);
+  }
+  if (!theme) {
+    throw new Error(`${location}.role '${role}' requires a design theme; pass --design-theme or set sheets[].designTheme`);
+  }
+  const semantic = theme?.semantic?.[key];
+  if (semantic?.fg) {
+    return {
+      fg: argb(semantic.fg),
+      bg: argb(semantic.bg ?? mixHex(semantic.fg, "FFFFFF", 0.12)),
+    };
+  }
+  const color = theme?.colors?.[key];
+  if (!color) {
+    throw new Error(`${location}.role '${role}' is unavailable for the active theme`);
+  }
+  return { fg: argb(color), bg: argb(mixHex(color, "FFFFFF", 0.12)) };
+}
+
+/**
+ * `{"role": "danger"}` 这种简写 → ExcelJS 规则样式。
+ * 保留 style 里已有的其它设置；`fill: false` 只要字色，`bold: true` 加粗。
+ */
+function normalizeConditionalRule(rule, theme, location) {
+  if (!rule || typeof rule !== "object") {
+    throw new Error(`${location} must be an object`);
+  }
+  if (rule.role === undefined) return rule;
+  const colors = themeRoleColors(theme, rule.role, location);
+  const style = structuredClone(rule.style ?? {});
+  style.font = { ...(style.font ?? {}), color: { argb: colors.fg } };
+  if (rule.bold === true) style.font.bold = true;
+  if (rule.fill !== false) style.fill = solidFill(colors.bg);
+  const { role, fill, bold, ...rest } = rule;
+  return { ...rest, style };
 }
 
 const DEFAULT_HEADER_FILL = "FF0F766E";
@@ -627,6 +701,25 @@ function applyStyle(worksheet, rangeRef, style) {
   });
 }
 
+/**
+ * 静态"重点行/重点单元格"：直接上角色色，不进条件格式。
+ * `fill: false` 只改字色，`bold: true` 加粗，与条件格式的简写保持一致。
+ */
+function applyRoleHighlight(worksheet, item, theme, location) {
+  if (!item || typeof item.range !== "string") {
+    throw new Error(`${location} requires range`);
+  }
+  const colors = themeRoleColors(theme, item.role, location);
+  forEachCellInRange(worksheet, item.range, (cell) => {
+    cell.font = {
+      ...(cell.font ?? {}),
+      color: { argb: colors.fg },
+      ...(item.bold === true ? { bold: true } : {}),
+    };
+    if (item.fill !== false) cell.fill = solidFill(colors.bg);
+  });
+}
+
 function setNumberFormat(worksheet, rangeRef, numberFormat) {
   forEachCellInRange(worksheet, rangeRef, (cell) => {
     cell.numFmt = String(numberFormat);
@@ -687,6 +780,9 @@ function addListValidation(worksheet, rangeRef, values, options = {}) {
 function validateConditionalFormattingRule(rule, location) {
   if (!rule || typeof rule !== "object" || Array.isArray(rule)) {
     throw new Error(`${location} must be an object`);
+  }
+  if (Object.hasOwn(rule, "role")) {
+    throw new Error(`${location}.role is a spec shorthand; resolve it to an explicit style before calling addConditionalFormatting`);
   }
   if (Object.hasOwn(rule, "formula") && !Object.hasOwn(rule, "formulae")) {
     throw new Error(`${location}.formula is invalid; use ${location}.formulae as an array`);
@@ -2146,6 +2242,7 @@ function buildWorkbookFromSpec(spec, existingWorkbook = null, context = {}) {
     throw new Error("Spreadsheet make spec requires a non-empty sheets array");
   }
   const baseDir = context.baseDir ? path.resolve(String(context.baseDir)) : process.cwd();
+  const theme = context.theme ?? null;
   const workbook = existingWorkbook ?? createWorkbook();
   const editingExisting = Boolean(existingWorkbook);
   if (!editingExisting || spec.title !== undefined) workbook.title = String(spec.title ?? "");
@@ -2247,8 +2344,22 @@ function buildWorkbookFromSpec(spec, existingWorkbook = null, context = {}) {
       if (!item || typeof item.range !== "string" || !Array.isArray(item.rules)) {
         throw new Error(`sheets[${sheetIndex}].conditionalFormatting[${conditionalIndex}] requires range and rules`);
       }
-      addConditionalFormatting(worksheet, item);
+      // `{"role": "danger", "bold": true}` 简写在这里解析成当前主题的 ExcelJS 样式。
+      const rules = item.rules.map((rule, ruleIndex) => normalizeConditionalRule(
+        rule,
+        theme,
+        `sheets[${sheetIndex}].conditionalFormatting[${conditionalIndex}].rules[${ruleIndex}]`,
+      ));
+      addConditionalFormatting(worksheet, { ...item, rules });
       requirements.requiredConditionalFormatting.push({ sheet: name, range: item.range });
+    }
+    for (const [highlightIndex, item] of (sheetSpec.highlights ?? []).entries()) {
+      applyRoleHighlight(
+        worksheet,
+        item ?? {},
+        theme,
+        `sheets[${sheetIndex}].highlights[${highlightIndex}]`,
+      );
     }
     const tableSpecs = sheetSpec.table
       ? [sheetSpec.table === true ? {} : sheetSpec.table]
@@ -2473,6 +2584,7 @@ async function commandMake(options) {
   }
   let product;
   let specThemeName = null;
+  let appliedTheme = null;
   if (options.spec) {
     let existingWorkbook = null;
     if (options.input) {
@@ -2493,10 +2605,18 @@ async function commandMake(options) {
     const specPath = path.resolve(String(options.spec));
     const specDocument = JSON.parse(await fs.readFile(specPath, "utf8"));
     specThemeName = specDocument?.designTheme ?? specDocument?.design_theme ?? null;
+    // 主题必须在写单元格之前解析：条件格式 / 重点行要把角色色落到当前主题。
+    const requestedTheme = options["design-theme"] ?? options.designTheme ?? specThemeName;
+    if (requestedTheme !== undefined && requestedTheme !== null && String(requestedTheme).trim() !== "") {
+      appliedTheme = await resolveSpreadsheetTheme(String(requestedTheme).trim());
+    }
+    // 没选主题时，四个语义色仍按共享 semantic 解析（与 Word/PPT 一致）；
+    // primary/accent 这类主题专属角色必须选主题才有值。
+    const roleTheme = appliedTheme ?? { semantic: (await sharedThemeReader())?.tokens?.semantic ?? {} };
     product = buildWorkbookFromSpec(
       specDocument,
       existingWorkbook,
-      { baseDir: path.dirname(specPath) },
+      { baseDir: path.dirname(specPath), theme: roleTheme },
     );
   } else {
     if (options.input) throw new Error("make --input requires --spec with controlled cell edits");
@@ -2504,9 +2624,10 @@ async function commandMake(options) {
   }
   const { workbook, nativeCharts, requirements, imageCount = 0 } = product;
   const themeName = options["design-theme"] ?? options.designTheme ?? specThemeName;
-  let appliedTheme = null;
-  if (themeName !== undefined && themeName !== null && String(themeName).trim() !== "") {
+  if (!appliedTheme && themeName !== undefined && themeName !== null && String(themeName).trim() !== "") {
     appliedTheme = await resolveSpreadsheetTheme(String(themeName).trim());
+  }
+  if (appliedTheme) {
     applyWorkbookTheme(workbook, appliedTheme);
     const palette = Array.isArray(appliedTheme.chart?.series) ? appliedTheme.chart.series : [];
     if (palette.length > 0) {
@@ -3108,6 +3229,41 @@ async function commandSelfTest(options) {
     }, null, { baseDir: outputDir });
     if ((product.imageCount ?? 0) < 1) {
       throw new Error("Offline spreadsheet self-test failed to embed floating image");
+    }
+    // 角色色：条件格式与重点行都要落到当前主题 / 共享语义色，不能写死 hex。
+    const roleTheme = await resolveSpreadsheetTheme("clinical");
+    const roleProduct = buildWorkbookFromSpec({
+      title: "Role colours",
+      sheets: [{
+        name: "汇总",
+        headers: ["项目", "完成率"],
+        rows: [["A", 0.35]],
+        conditionalFormatting: [{
+          range: "B2:B2",
+          rules: [{ type: "cellIs", operator: "lessThan", formulae: [0.6], role: "danger", bold: true }],
+        }],
+        highlights: [{ range: "A2", role: "warning" }],
+      }],
+    }, null, { baseDir: outputDir, theme: roleTheme });
+    const roleSheet = roleProduct.workbook.getWorksheet("汇总");
+    const roleRule = roleSheet.conditionalFormattings?.[0]?.rules?.[0] ?? {};
+    const roleFill = roleRule.style?.fill;
+    if (
+      roleRule.style?.font?.color?.argb !== "FFB42318"
+      || roleRule.style?.font?.bold !== true
+      || !(roleFill?.bgColor?.argb === "FFFDECEC" || roleFill?.fgColor?.argb === "FFFDECEC")
+    ) {
+      throw new Error(`Role shorthand did not resolve to semantic danger: ${JSON.stringify(roleRule.style ?? null)}`);
+    }
+    const highlightCell = roleSheet.getCell("A2");
+    if (
+      highlightCell.font?.color?.argb !== "FFB45309"
+      || !(highlightCell.fill?.fgColor?.argb === "FFFDF3E3" || highlightCell.fill?.bgColor?.argb === "FFFDF3E3")
+    ) {
+      throw new Error(`highlights[] did not apply the warning role: ${JSON.stringify({
+        font: highlightCell.font?.color ?? null,
+        fill: highlightCell.fill ?? null,
+      })}`);
     }
     await product.workbook.xlsx.writeFile(output);
     const charts = await injectNativeCharts(output, product.nativeCharts, { JSZip, loadXlsx });

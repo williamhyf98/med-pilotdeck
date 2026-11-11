@@ -110,12 +110,43 @@ bash "$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh" make   --spec "$PWD/scratc
   `"designTheme": "academic"`。不写主题时保持原来的默认观感。
 - 主题只改**颜色与字体角色**：标题与表头用主色、正文用墨色、工作表页签用强调色、
   图表序列与网格用主题图表色板；`archive` 会把正文字体换成衬线体。
-- 不改：版式、列宽、数字格式、条件格式规则、公式。原生 Excel 表格样式本身仍保留，
-  表头颜色由单元格直接格式覆盖，所以在 Excel 里看到的就是主题色。
+- 不改：版式、列宽、数字格式、条件格式规则本身（但规则里的 `role` 颜色会按当前主题解析）、公式。
+  原生 Excel 表格样式本身仍保留，表头颜色由单元格直接格式覆盖，所以在 Excel 里看到的就是主题色。
 - 成功 JSON 会返回 `theme.id` / `theme.label`，交付说明里写明「本次使用主题：<中文名>」。
 - 图表是浮动对象，导出 PDF/预览时按页边**裁切**、不缩放：`anchor` 默认的 `G2:N18`
   在 A4 纵向里会有一半落到页外，看上去像"图表只有一半"。请把锚点收进页内
   （如 `{"from":"A7","to":"H24"}`），或把该页设为横向。
+
+### 重点标注（角色色）
+
+需要"标红/标黄/整行高亮"时，不要写死 hex，用角色名：
+
+```json
+{
+  "sheets": [{
+    "name": "汇总",
+    "headers": ["项目", "完成率", "状态"],
+    "rows": [["A", 0.92, "正常"], ["B", 0.61, "关注"], ["C", 0.35, "风险"]],
+    "conditionalFormatting": [
+      {"range": "B2:B4", "rules": [
+        {"type": "cellIs", "operator": "lessThan", "formulae": [0.6], "role": "danger", "bold": true}
+      ]}
+    ],
+    "highlights": [
+      {"range": "A4:C4", "role": "danger", "bold": true}
+    ]
+  }]
+}
+```
+
+- `conditionalFormatting[].rules[].role`：条件格式命中时套用角色色（字色 + 约 12% 的浅底）。
+  `bold: true` 加粗，`fill: false` 只要字色不要底色；原有 `style` 仍可保留。
+- `highlights[]`：不按条件、直接给一段区域上角色色，适合"重点行/结论行"。
+- 角色：语义色 `success` / `warning` / `danger` / `info` 固定不随主题变，
+  和 Word/PPT/PDF 是同一个红/黄/绿/蓝；`primary` / `accent` / `support` /
+  `ink` / `muted` / `rule` / `soft` / `white` 跟随当前主题。
+- 语义色没选主题时也能用；主题专属角色（`primary` 等）必须先选
+  `--design-theme` 或在 spec 写 `"designTheme"`，否则直接报错，不会静默变黑。
 
 ### 浮动插图（用户上传照片）
 

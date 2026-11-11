@@ -43,10 +43,14 @@ Markdown 只适合一张简单表。公式、图表和多个工作表使用 JSON
               "type": "cellIs",
               "operator": "lessThan",
               "formulae": [0.8],
-              "style": {"font": {"color": {"argb": "FFB91C1C"}}}
+              "role": "danger",
+              "bold": true
             }
           ]
         }
+      ],
+      "highlights": [
+        {"range": "E2:E2", "role": "warning"}
       ],
       "charts": [
         {
@@ -73,11 +77,43 @@ Markdown 只适合一张简单表。公式、图表和多个工作表使用 JSON
 - `numberFormats`：`{"range":"B2:B20","format":"#,##0"}`。
 - `table` 或 `tables`：原生 Excel 表格对象。
 - `validations`：列表验证。
-- `conditionalFormatting`：使用已文档化的 ExcelJS 规则。
+- `conditionalFormatting`：ExcelJS 规则；颜色推荐用 `role` 简写（见下）。
+- `highlights`：不设条件、直接给区域上角色色，适合重点行/结论行。
 - `charts`：原生 `line`、`column`、`bar` 图表。
 - `images`：浮动图片（类似 Excel「插入 → 图片」），仅新建工作簿。
 - `columns`：`{"column":"A","width":20}`。
 - `freeze`：`{"rows":1,"columns":0}`。
+
+## 角色色（条件格式 / 重点行）
+
+别写死 hex：`role` 会按当前主题解析，保证表里所有"风险红"和 Word/PPT/PDF 一致。
+
+```json
+{
+  "designTheme": "clinical",
+  "sheets": [{
+    "name": "汇总",
+    "headers": ["项目", "完成率", "状态"],
+    "rows": [["A", 0.92, "正常"], ["B", 0.61, "关注"], ["C", 0.35, "风险"]],
+    "conditionalFormatting": [
+      {"range": "B2:B4", "rules": [
+        {"type": "cellIs", "operator": "lessThan", "formulae": [0.6], "role": "danger", "bold": true},
+        {"type": "cellIs", "operator": "between", "formulae": [0.6, 0.8], "role": "warning"}
+      ]}
+    ],
+    "highlights": [
+      {"range": "C4", "role": "danger", "bold": true}
+    ]
+  }]
+}
+```
+
+- `role` 取值：`success` / `warning` / `danger` / `info`（语义色，不随主题变）；
+  `primary` / `accent` / `support` / `ink` / `muted` / `rule` / `soft` / `white`（跟随主题）。
+- 规则里可选 `bold: true` 加粗、`fill: false` 只改字色不改底色。
+- 语义色不需要主题；`primary` 等主题角色必须选 `--design-theme` 或写 `"designTheme"`。
+- `highlights[]` 是静态上色，不走条件判断；每项需要 `range` 和 `role`。
+- 也可以继续用原来的 `style: {...}` 写 ExcelJS 原生样式，不会被改写。
 
 ## 插入用户上传的图片
 

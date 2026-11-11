@@ -658,3 +658,28 @@ dist 实测：`docx/references/specifications.md` → OK；`docx/../src/cli/pilo
 - 文档：`SKILL.md` 新增「单页深底」小节，`references/creation.md` 补字段
 - 测试：`pptx.sh self-test` 通过；`npm test` → 864 / 862 pass / 0 fail / 2 skipped
 - 未做：`split` 版式（需要真实图片才能验，逻辑与 imaging 同源）
+
+### 2026-11-11 · xlsx：条件格式 / 重点行角色色
+
+- 问题：`--spec` 生成时主题在 `buildWorkbookFromSpec` 之后才解析，条件格式只能写死 hex，
+  换个主题"风险红"就跟 Word/PPT 不是同一个红。
+- 实现：`commandMake` 把主题解析提前到写单元格之前，作为 `context.theme` 传入；
+  `spreadsheet_cli.mjs` 新增 `ROLE_KEYS` / `mixHex` / `themeRoleColors` /
+  `normalizeConditionalRule` / `applyRoleHighlight`
+- spec 新写法（不写 hex，写角色）：
+  `{"range":"B2:B4","rules":[{"type":"cellIs","operator":"lessThan","formulae":[0.6],"role":"danger","bold":true}]}`；
+  另加 `highlights: [{"range":"A4:C4","role":"danger"}]` 给重点行/结论行静态上色
+- 角色：`success/warning/danger/info` 取 `_shared/design-tokens.json` 的 `semantic.fg/bg`
+  （四端同色，且**不选主题也能用**）；`primary/accent/support/ink/muted/rule/soft/white`
+  取当前主题色板，未选主题时报错而不是静默变黑
+- 底色：角色色字色 + 约 12% 混白的浅底；`fill: false` 只要字色，`bold: true` 加粗；
+  原有 `style` 继续可用
+- 安全：`validateConditionalFormattingRule` 拒绝在 builder API 里直接传 `role`（只有 spec 简写支持）
+- 验证：
+  - clinical：`danger` → `FFB42318` 字 + `FFFDECEC` 底；`warning` → `FFB45309` 字 + `FFFDF3E3` 底；
+    `highlights` 落 `C4` 红色加粗（解包 `styles.xml` dxf + 远端 Renderer 目视）
+  - mono：dxf 里四个语义色不变（`B42318` / `B45309`），页面主色随主题变灰
+  - 不选主题：语义色可用；`primary` 报 `role 'primary' is unavailable for the active theme`
+  - `make --input` 编辑既有文件同样生效（academic 主题，`fill:false` 只改字色）
+- 文档：`SKILL.md` 新增「重点标注（角色色）」；`references/creation.md` 补字段 + 示例
+- 测试：`self-test` 离线分支新增角色色断言；`npm test` → **864 tests / 862 pass / 0 fail / 2 skipped**
