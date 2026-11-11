@@ -407,10 +407,24 @@ function resolveThroughExistingAncestor(filePath) {
     current = parent;
   }
 
-  const canonicalBase = existsSync(current)
-    ? realpathSync.native(current)
-    : current;
+  const canonicalBase = existsSync(current) ? canonicalize(current) : current;
   return path.resolve(canonicalBase, ...suffix);
+}
+
+/**
+ * `realpathSync.native` needs stat on every ancestor. Inside a restrictive
+ * sandbox those ancestors may be unreadable (EPERM/EACCES), which would abort
+ * an otherwise valid write. Fall back to the lexical path in that case only:
+ * missing paths are already handled by the ancestor walk above, and other
+ * errors still surface.
+ */
+function canonicalize(target) {
+  try {
+    return realpathSync.native(target);
+  } catch (error) {
+    if (error?.code === "EPERM" || error?.code === "EACCES") return path.resolve(target);
+    throw error;
+  }
 }
 
 function pathsReferToSameLocation(left, right) {
