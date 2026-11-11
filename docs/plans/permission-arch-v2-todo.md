@@ -78,15 +78,17 @@
 
 ### 1.1 审计骨架（1d）
 
-- [ ] 新建 `src/security/audit/auditLog.ts`：`appendAudit(event)` 追加一行 JSON 到
-      `<PILOT_HOME>/system/audit/<YYYY-MM-DD>.jsonl`
-      字段：`ts / actor / tool / action / target(相对路径) / decision / reason`
-- [ ] **写失败只打日志、绝不阻断业务**（try/catch 包死）
-- [ ] 接入 3 个点：`pathSafety.ts` 的 deny 分支（`file.denied`）、
-      `bash/permissions.ts` 的 `HARD_DENY_PATTERNS` 命中（`bash.denied`）、
-      沙箱初始化失败（`sandbox.denied`）
-- [ ] 测试 `tests/security/auditLog.spec.ts`：同日追加 / 跨天分文件 / 目录不可写不抛 / 绝对路径转相对
-- [ ] `npm test` 全绿
+- [x] 新建 `src/security/audit/auditLog.ts`：`appendAudit(event)` 追加一行 JSON 到
+      `<systemHome>/system/audit/<YYYY-MM-DD>.jsonl`（2026-11-11 完成）
+      字段：`ts / action / decision / tool / target(相对路径) / reason / actor / meta`
+      `systemHome` 取 `PILOTDECK_SYSTEM_HOME ?? PILOT_HOME`，与 `security/policy/paths.ts` 同约定
+- [x] **写失败只打日志、绝不阻断业务**（整段 try/catch，返回 `{ok:false,error}` 供测试断言）
+- [x] 接入 3 个点：`pathSafety.ts` 的 `file.denied`（写入拒绝 + 跨用户拒绝）、
+      `bash/permissions.ts` 的 `bash.denied`（含命令片段脱敏）、
+      沙箱启动探测/网络自检失败 `sandbox.denied`
+- [x] 测试 `tests/security/audit-log.spec.ts`（7 条）：同日追加 / 跨天分文件 / SYSTEM_HOME 优先 /
+      绝对路径退化 / 目录不可写不抛 / 超长字段截断 / 端到端一次写入拒绝留痕
+- [x] `npm test` 全绿（2026-11-11：813 tests / 811 pass / 0 fail / 2 skipped）
 
 **验收**：手动触发一次 deny，`system/audit/2026-11-11.jsonl` 出现一行；把该目录 `chmod 500` 后业务仍正常返回 deny。
 
@@ -244,4 +246,16 @@
 - 实测结论：写 `inbox/**`、`.trash|.usage.json|.pinned|.tmp` 均 `path_not_allowed` 且消息含原因；
   `exports/`、`scratch/`、用户自建目录（含 `我的资料/`）不受影响；**只有顶层段生效**
   （`my/inbox/x` 与 `data/.trash/a` 允许），避免把用户自己的同名子目录误杀
+- 未做：③ 覆盖确认（下一步）
+
+### 2026-11-11 · 门 0 / 1.1 审计骨架
+
+- 新增 `src/security/audit/auditLog.ts`（`appendAudit` / `resolveAuditDir` / `auditFilePath` / `sanitizeTarget`）
+- 接入点：`pathSafety.ts`（`file.denied`，含跨用户拒绝占位 `(outside-workspace)`）、
+  `bash/permissions.ts`（`bash.denied`，命令片段先把路径抹成 `(path)`）、
+  `commandRunner.ts`（`sandbox.denied`，探测失败与网络自检失败两处）
+- 防泄漏：绝对路径一律退化为 `(absolute)/<basename>`；单字段 500 字符、单行 4 KB 上限
+- 命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **813 tests / 811 pass / 0 fail / 2 skipped**
+- 实测结论：测试全程未在真实的 `~/.pilotdeck` 下产生 `system/audit`（所有用例都注入临时 `PILOT_HOME`），
+  说明审计目录跟随注入的 home，不会污染开发机
 - 未做：③ 覆盖确认（下一步）
