@@ -102,7 +102,9 @@ export function createBashTool(options?: CreateBashToolOptions): PilotDeckToolDe
     isReadOnly: (input) => !input.command || isReadOnlyShellCommand(input.command),
     isConcurrencySafe: (input) => !input.command || isReadOnlyShellCommand(input.command),
     isOpenWorld: () => true,
-    checkPermissions: async (input) => input.command ? classifyBashPermission(input.command) : ({ type: "allow" as const, reason: { type: "runtime" as const, message: "Empty command is safe" } }),
+    checkPermissions: async (input, context) => input.command
+      ? classifyBashPermission(input.command, { cwd: context?.cwd, env: context?.env })
+      : ({ type: "allow" as const, reason: { type: "runtime" as const, message: "Empty command is safe" } }),
     execute: async (input, context) => {
       const command = input.command.trim();
       if (input.timeout !== undefined && input.timeout > maxTimeoutMs) {

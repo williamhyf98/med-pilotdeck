@@ -1,5 +1,9 @@
 import type { PermissionResult } from "../../../permission/index.js";
 import { appendAudit } from "../../../security/audit/auditLog.js";
+import { evaluateRegisteredCommand } from "../../../security/policy/registeredCommands.js";
+import { currentCommandPolicy } from "../../../security/policy/commandPolicyRuntime.js";
+import { simpleInvocationTokens } from "./sandbox/networkPolicy.js";
+import type { PilotPathEnv } from "../../../pilot/paths.js";
 
 const COMMAND_POSITION = String.raw`(?:^|[;&|]\s*)`;
 const SHELL_SEGMENT = String.raw`[^;&|\n]*`;
@@ -105,7 +109,13 @@ const WINDOWS_READ_COMMANDS = new Set([
 
 const READ_ONLY_GIT_SUBCOMMANDS = new Set(["diff", "log", "show", "status"]);
 
-export function classifyBashPermission(command: string): PermissionResult {
+export type BashPermissionContext = {
+  /** 命令的工作目录（工作区根），用于解析注册命令里的相对路径 */
+  cwd?: string;
+  env?: PilotPathEnv;
+};
+
+export function classifyBashPermission(command: string, context?: BashPermissionContext): PermissionResult {
   if (HARD_DENY_PATTERNS.some((pattern) => pattern.test(command))) {
     const isNetworkBlock = /\b(curl|wget)\b/i.test(command)
       || /\b(?:pip3?|python3?\s+-m\s+pip)\s+install\b/i.test(command)
@@ -132,6 +142,9 @@ export function classifyBashPermission(command: string): PermissionResult {
     };
   }
 
+  const registered = classifyRegisteredCommand(command, context);
+  if (registered) return registered;
+
   if (DANGEROUS_ASK_PATTERNS.some((pattern) => pattern.test(command))) {
     return askForShellPermission(command);
   }
@@ -141,6 +154,71 @@ export function classifyBashPermission(command: string): PermissionResult {
   }
 
   return askForShellPermission(command);
+}
+
+/**
+ * 注册命令白名单（spec §10.4.1）：
+ * - 命中且完全合规 → `allow`，命令零弹窗；
+ * - 命中了已登记的 id 但**路径越根**（例如把 `--out` 指向 `inbox/`）→ `deny`（安全违规，不允许点通过）；
+ * - 其余情况（未登记 id、选项未登记、命令形状不认识、策略文件坏了）→ `undefined`，
+ *   交给后面的只读判定/`ask`，**绝不因为这一层而放宽**。
+ */
+function classifyRegisteredCommand(
+  command: string,
+  context?: BashPermissionContext,
+): PermissionResult | undefined {
+  const tokens = simpleInvocationTokens(command);
+  if (!tokens) return undefined;
+
+  const resolvedEnv = context?.env ?? process.env;
+  const loaded = currentCommandPolicy(resolvedEnv);
+  if ("error" in loaded) {
+    appendAudit({
+      action: "policy.invalid",
+      decision: "error",
+      tool: "bash",
+      reason: "command-policy-unreadable",
+      meta: { error: loaded.error },
+    }, { env: resolvedEnv });
+    return undefined;
+  }
+
+  const cwd = context?.cwd ?? process.cwd();
+  const result = evaluateRegisteredCommand(tokens, { policy: loaded.policy, cwd });
+  if (result.kind === "allow") {
+    appendAudit({
+      action: "bash.registered_allowed",
+      decision: "allow",
+      tool: "bash",
+      reason: `registered:${result.rule.id}`,
+    }, { env: resolvedEnv });
+    return {
+      type: "allow",
+      reason: {
+        type: "rule",
+        behavior: "allow",
+        rule: { source: "policy", behavior: "allow", toolName: "bash" },
+        message: `Registered command allowed by policy: ${result.rule.id}`,
+      },
+    };
+  }
+
+  if (result.kind === "violation" && result.security) {
+    appendAudit({
+      action: "bash.denied",
+      decision: "deny",
+      tool: "bash",
+      reason: `registered-violation:${result.rule.id}`,
+      meta: { detail: result.reason },
+    }, { env: resolvedEnv });
+    return {
+      type: "deny",
+      reason: { type: "safety", message: result.reason },
+      message: result.reason,
+    };
+  }
+
+  return undefined;
 }
 
 function askForShellPermission(command: string): PermissionResult {

@@ -1,5 +1,6 @@
 import { policyIds, policyList, policyRecord, policyRoots } from "./schema.js";
 import { DOCUMENT_COMMAND_SPECS } from "./documentCommandSpecs.js";
+import { SKILL_COMMAND_SPECS } from "./skillCommandSpecs.js";
 
 export type TaskReadRoot = "inbox" | "scratch" | "exports";
 export type TaskWriteRoot = "scratch" | "exports";
@@ -57,6 +58,19 @@ export const REGISTERED_COMMANDS: Readonly<Record<string, CommandCeiling>> = fre
     outputRoots: Object.values(options).includes("output") ? WRITE_ROOTS : [],
     maxTimeoutMs: 600_000,
   }])),
+  // 数据分析：读 inbox/scratch、写 exports、单次最长 30 分钟（spec §15.6 D4）
+  "data-analysis.run": {
+    options: Object.keys(SKILL_COMMAND_SPECS["data-analysis.run"]!),
+    inputRoots: ["inbox", "scratch"],
+    outputRoots: ["exports"],
+    maxTimeoutMs: 1_800_000,
+  },
+  "data-analysis.check": {
+    options: Object.keys(SKILL_COMMAND_SPECS["data-analysis.check"]!),
+    inputRoots: ["inbox", "scratch"],
+    outputRoots: [],
+    maxTimeoutMs: 60_000,
+  },
 });
 
 export function parseCommandPolicy(value: unknown): CommandPolicy {

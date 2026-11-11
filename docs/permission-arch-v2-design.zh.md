@@ -692,6 +692,29 @@ macOS 的 SBPL profile 同步调整（`writeDirs` 换成 `scope.root` + 必要�
 **验收**：`data-analysis` 单条命令**零弹窗**通过；把命令改成 `python3 /tmp/x.py` 仍然 `ask`；
 策略 YAML 写坏后 Gateway 不放行且审计有记录。
 
+#### 10.4.2 实现落点与实测（2026-11-11 完成）
+
+| 文件 | 作用 |
+|---|---|
+| `src/security/policy/skillCommandSpecs.ts`（新） | 非文档类技能的命令表面，id 形如 `data-analysis.run`；只登记运行入口，**不登记 `bootstrap-runtime`** |
+| `src/security/policy/parseCommandPolicy.ts` | 注册表新增 `data-analysis.run`（读 `inbox,scratch` / 写 `exports` / 上限 30 min）与 `data-analysis.check` |
+| `src/security/policy/registeredCommands.ts`（新） | 匹配器：只认 `skills/<skill>/scripts/*.sh <subcommand>`；选项逐字命中、**不支持 `--flag=value`**；路径型选项做根校验（拒绝 `..` 与绝对路径逃逸） |
+| `src/security/policy/commandPolicyRuntime.ts`（新） | 按策略文件 **mtime** 缓存快照：管理员改 YAML 后自动生效，无需重启；解析失败**不缓存成允许** |
+| `bash/sandbox/networkPolicy.ts` | 抽出 `simpleInvocationTokens()`，让"能不能出网"与"能不能免弹窗"共用同一分词口径 |
+| `bash/permissions.ts` + `bash.ts` | `classifyBashPermission(command, {cwd, env})`：`HARD_DENY` → **注册命令合规 → allow** → 只读 → `ask` |
+
+**三档结果（已实测）**
+
+| 情况 | 结果 |
+|---|---|
+| 已登记 id + 选项/路径全合规 | `allow`，零弹窗，审计 `bash.registered_allowed` |
+| 已登记 id + **路径越根**（如 `--out inbox/x`） | `deny`，不可点通过，审计 `bash.denied`（`registered-violation:*`） |
+| 未登记 id / 选项未登记 / `--flag=value` / 命令形状不认识 / 策略文件坏 | **回落** `ask` 或只读判定，审计 `policy.invalid`（仅策略坏时） |
+
+> **行为变化（需要知道）**：`DOCUMENT_COMMAND_SPECS` 里已登记的 `pdf/docx/pptx/spreadsheets/diagram` 子命令，
+> 只要选项合规、输出落在 `scratch|exports`，现在也**不再弹窗**。这是 §10.4.1 的直接结果；
+> 若某个子命令不想自动放行，在 `system/security/command-policy.yaml` 里把它的 `enabled` 设为 `false` 即可（无需改代码）。
+
 ### 10.5 网络出口策略（B 方案，2026-11-10 确认）
 
 **目标**：macOS（开发）与 Linux（交付）两端都真正断网，同时不破坏现有 skill 与工具调用。

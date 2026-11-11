@@ -163,13 +163,17 @@
 
 **前置**：门 0（不依赖 A 轨）。做完后 D 系列才不会每条命令都弹窗。
 
-- [ ] `src/tool/builtin/bash/permissions.ts` → `classifyBashPermission()` 插入策略层：
-      `HARD_DENY` → **白名单命中且选项/读写根/超时全合规则 allow** → 只读 passthrough → 其余 ask
-- [ ] 数据源：`<PILOT_HOME>/system/security/command-policy.yaml`（`PolicyStore` 已有 revision 锁、拒绝软链）
-- [ ] 第一条登记命令：`data-analysis.run`（`--script/--input/--out`，`inputRoots=[inbox,scratch]`，
-      `outputRoots=[exports]`，`timeoutMs=600000`）
-- [ ] 策略文件非法 → **fail-closed 到 ask**（不是直接拒），并写审计
-- [ ] 测试：登记命令零弹窗；`python3 /tmp/x.py` 仍 ask；YAML 写坏后仍 ask + 审计
+- [x] `src/tool/builtin/bash/permissions.ts` → `classifyBashPermission(command, {cwd, env})` 插入策略层：
+      `HARD_DENY` → **白名单命中且选项/读写根全合规则 allow** → 只读 passthrough → 其余 ask（2026-11-11 完成）
+- [x] 数据源：`<PILOT_HOME>/system/security/command-policy.yaml`（`PolicyStore` 已有 revision 锁、拒绝软链）；
+      新增 `commandPolicyRuntime.ts` 按 **mtime** 缓存，管理员改完即时生效
+- [x] 第一条登记命令：`data-analysis.run`（`--script/--input/--out/--timeout/--mem-mb`，
+      `inputRoots=[inbox,scratch]`，`outputRoots=[exports]`，`timeoutMs=1_800_000`）+ `data-analysis.check`
+- [x] 策略文件非法 → **fail-closed 到 ask**（不是直接拒），并写审计 `policy.invalid`
+- [x] 测试 `tests/security/registered-commands.spec.ts`（11 条）：形状识别 / 合规 allow / 越根 deny /
+      `..` 与绝对路径逃逸 / 未登记选项与 `--flag=value` / 未登记 id / 端到端 allow / 端到端 deny /
+      `python3` 仍 ask / 坏 YAML 回落 ask / 管理员 `enabled: false` 生效
+- [x] `npx tsc --noEmit` ✅ ｜ `npm test` → **827 tests / 825 pass / 0 fail / 2 skipped**
 
 ### 3.2 B1 技能本体（5.3d）
 
@@ -272,3 +276,18 @@
   新输出 → passthrough；写 inbox → deny）
 - 命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **816 tests / 814 pass / 0 fail / 2 skipped**
 - 结论：**门 0 通过**，可以并行开 A1（软删除）与 B0（白名单接线）
+
+### 2026-11-11 · B0 注册命令白名单接线
+
+- 新增：`security/policy/{skillCommandSpecs,registeredCommands,commandPolicyRuntime}.ts`
+- 改动：`parseCommandPolicy.ts`（注册 `data-analysis.run` / `data-analysis.check`）、
+  `bash/sandbox/networkPolicy.ts`（抽出 `simpleInvocationTokens`）、
+  `bash/permissions.ts`（策略层）、`bash.ts`（把 `cwd`/`env` 传进去）
+- 三档结果：合规 → `allow`（零弹窗）；越根 → `deny`（不可点通过）；其余 → 回落 `ask`
+- 冒烟（dist + 临时 PILOT_HOME 实测）：
+  `analysis.sh run ... --out exports/...` → allow ｜ `--out inbox/x` → deny ｜
+  `python3 x.py` → ask ｜ `docx.sh make --out exports/a.docx` → allow
+- **行为变化**：已登记的 `pdf/docx/pptx/spreadsheets/diagram` 子命令合规时也不再弹窗；
+  不想放行的子命令在 YAML 里 `enabled: false` 即可
+- 命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **827 tests / 825 pass / 0 fail / 2 skipped**
+- 下一步：D1 设计定稿 → D2 技能骨架（B 轨），或转 A1 软删除

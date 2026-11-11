@@ -44,15 +44,24 @@ const CD_PREFIX_RE = /^cd\s+(?:"[^"]*"|'[^']*'|[^\s;&|<>]+)\s*&&\s*(?=\S)/u;
  * 任意代码开了出口。
  */
 export function isSingleSimpleInvocation(command: string): boolean {
+  return simpleInvocationTokens(command) !== undefined;
+}
+
+/**
+ * 去掉最多 3 层 `cd <path> &&` 前缀后做单命令分词；含管道/串联/重定向时返回 undefined。
+ * 命令白名单（security/policy/registeredCommands.ts）复用同一个分词口径，
+ * 保证"能不能出网"和"能不能免弹窗"不会对同一条命令给出互相矛盾的结论。
+ */
+export function simpleInvocationTokens(command: string): string[] | undefined {
   let rest = String(command ?? "").trim();
   for (let index = 0; index < 3; index += 1) {
     const prefix = rest.match(CD_PREFIX_RE);
     if (!prefix) break;
     rest = rest.slice(prefix[0].length).trim();
   }
-  if (!rest) return false;
+  if (!rest) return undefined;
   const tokens = tokenizeSimpleShell(rest);
-  return tokens !== undefined && tokens.length > 0;
+  return tokens && tokens.length > 0 ? tokens : undefined;
 }
 
 export function resolveCommandNetworkPolicy(
