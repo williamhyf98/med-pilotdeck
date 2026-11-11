@@ -83,8 +83,17 @@ describe('parseRequirements', () => {
 describe('analysisCacheRoot', () => {
   it('优先用 PILOTDECK_ANALYSIS_CACHE，其次 XDG_CACHE_HOME，最后 ~/.cache', () => {
     expect(analysisCacheRoot({ PILOTDECK_ANALYSIS_CACHE: '/x/cache' })).toBe('/x/cache');
-    expect(analysisCacheRoot({ XDG_CACHE_HOME: '/xdg' })).toBe(path.join('/xdg', 'pilotdeck-analysis'));
-    expect(analysisCacheRoot({ HOME: '/home/u' })).toBe(path.join('/home/u', '.cache', 'pilotdeck-analysis'));
+    const noApp = { appRoot: '/nonexistent-app-root' };
+    expect(analysisCacheRoot({ XDG_CACHE_HOME: '/xdg' }, noApp)).toBe(path.join('/xdg', 'pilotdeck-analysis'));
+    expect(analysisCacheRoot({ HOME: '/home/u' }, noApp)).toBe(path.join('/home/u', '.cache', 'pilotdeck-analysis'));
+  });
+
+  it('存在共享只读运行时时优先用它（与 analysis.sh 的探测顺序一致）', async () => {
+    const appRoot = await makeTemp('pd-app-root-');
+    const shared = path.join(appRoot, '.runtime', 'cache', 'xdg', 'pilotdeck-analysis');
+    await fs.mkdir(path.join(shared, 'runtime', 'bin'), { recursive: true });
+    await fs.writeFile(path.join(shared, 'runtime', 'bin', 'python'), '', 'utf8');
+    expect(analysisCacheRoot({ XDG_CACHE_HOME: '/xdg' }, { appRoot })).toBe(shared);
   });
 });
 

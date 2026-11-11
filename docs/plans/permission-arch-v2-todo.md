@@ -427,3 +427,39 @@
 - 端到端手工样例（临时工作区，中文列名 + 中文图题）：120 行 CSV → `by-group.csv` / `ttest.csv`
   （t=-4.2461，p=4.4e-05，与手算一致）/ `sbp-by-group.png`（960×640，中文零方框）/ `run.json`（含输入 sha256）
 - 仍未验证：arm64 **容器**里的 bootstrap（本机无 docker）；node12 上的同一步
+
+### 2026-11-11 · 真实会话暴露的三处问题：附件路径 / 拦截文案 / 共享运行时
+
+起因：管理员在「数据分析」项目上传 15 张 CSV 让 agent 做分析，`check` 返回
+`not_bootstrapped`（不是数据问题），agent 只好用 awk/grep 手搓，产出一份全 0 假阴性
+（它自己识破并作废，最终 `exports/` 为空）。逐项定位后修三处：
+
+**P3（真 bug）附件路径按 `projectKey` 拼，图片/PDF 内容进不了模型**
+- 证据：每条消息都带 `Attachment not found: <app>/ui/general_med-…/inbox/…csv`，而文件就在
+  `<PILOT_HOME>/users/1/workspaces/general_med/general_med-…/inbox/` 下
+- 根因：`ui/server/pilotdeck-bridge.js` 把 `projectKey` 当"项目根"传给
+  `uiFilesToAttachments` / `uiImagesToAttachments` → `path.resolve(projectKey, 'inbox/x.csv')`
+  解析成 `<server cwd>/<projectKey>/inbox/x.csv`（路径合法但不存在）
+- 修法：新增 `buildTurnAttachments()`，统一用 `resolveAgentCwd(projectKey)` 得到真实项目目录；
+  trauma 附件复用同一个根
+- 测试：`ui/server/pilotdeck-bridge.test.js` +2（相对路径必须落在项目目录内、越界路径被丢弃）
+
+**P2（体验）拦截文案里没有 analysis.sh，agent 白试两轮**
+- `src/tool/automationPolicyConstraints.ts` 的提示只列 pdf/docx/pptx/spreadsheet/diagram；
+  `errorRecovery.ts` 的 avoid-retry 理由还写着"永久禁止解释器执行"，等于告诉 agent 这条路彻底不通
+- 修法：两处文案都补上 `skills/data-analysis/scripts/analysis.sh`，并说明"写脚本到 scratch/，
+  走 analysis.sh 而不是自己调解释器"
+
+**P1（架构）运行时改为一台机器一份只读，不再按用户复制**
+- 之前：`bootstrap` 落在 `${XDG_CACHE_HOME}/pilotdeck-analysis`，而沙箱把 `XDG_CACHE_HOME`
+  改成 `<PILOT_HOME>/users/<id>/.cache` → 每用户一条 venv（589 MB × N），且 packager 装好的那份没人看得到
+- 现在：`analysis.sh` 三级解析（`PILOTDECK_ANALYSIS_CACHE` → `<app>/.runtime/cache/xdg/pilotdeck-analysis`
+  → 每用户缓存）；`skillCacheEnv()` 注入 `PILOTDECK_ANALYSIS_CACHE`，`appReadOnlyGrants()` 把它加进
+  只读挂载；字体缓存 `MPLCONFIGDIR` 单独放每用户目录（共享目录只读，写不进去）
+- 管理员页 `analysisCacheRoot()` 同步同一顺序（否则会出现"管理页 ready、agent 报未就绪"）
+- 实测（macOS）：共享运行时 `chmod -R a-w` 后跑绘图 → `status: ok`、PNG 正常、
+  `XDG_CACHE_HOME/pilotdeck-analysis-mpl` 被创建、共享目录未被写
+- 测试：`adminSkills.test.js` +1（存在共享运行时时优先）
+
+命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **857 tests / 855 pass / 0 fail / 2 skipped** ｜
+`cd ui && npx vitest run` → **169 files / 1233 passed**

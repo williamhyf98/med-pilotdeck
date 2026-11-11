@@ -16,6 +16,7 @@
  */
 import express from 'express';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -27,6 +28,7 @@ const SKILL_ROOT = path.resolve(
   process.env.PILOTDECK_DATA_ANALYSIS_SKILL_DIR ||
     path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'skills', 'data-analysis'),
 );
+const APP_ROOT = path.join(SKILL_ROOT, '..', '..');
 
 const TIER_NAMES = {
   基础档: 'base',
@@ -37,8 +39,18 @@ const TIER_NAMES = {
 const TIER_HEADING = /^#\s*-+\s*(.+?)\s*-+\s*$/;
 const REQUIREMENT_LINE = /^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(\[[^\]]*\])?\s*(.*)$/;
 
-export function analysisCacheRoot(env = process.env) {
+/**
+ * 解析顺序必须与 `skills/data-analysis/scripts/analysis.sh` 一致，否则管理页显示 ready、
+ * agent 却报 not_bootstrapped：
+ *   1. PILOTDECK_ANALYSIS_CACHE（沙箱里注入的，通常指向共享运行时）
+ *   2. `<app>/.runtime/cache/xdg/pilotdeck-analysis/runtime`（所有用户共用的只读运行时）
+ *   3. `${XDG_CACHE_HOME:-$HOME/.cache}/pilotdeck-analysis`（每用户缓存，开发机自举用）
+ */
+export function analysisCacheRoot(env = process.env, options = {}) {
   if (env.PILOTDECK_ANALYSIS_CACHE) return path.resolve(env.PILOTDECK_ANALYSIS_CACHE);
+  const appRoot = options.appRoot ? path.resolve(options.appRoot) : path.resolve(APP_ROOT);
+  const shared = path.join(appRoot, '.runtime', 'cache', 'xdg', 'pilotdeck-analysis');
+  if (existsSync(path.join(shared, 'runtime', 'bin', 'python'))) return shared;
   const base = env.XDG_CACHE_HOME || path.join(env.HOME || os.homedir(), '.cache');
   return path.join(base, 'pilotdeck-analysis');
 }

@@ -41,7 +41,9 @@ create_venv "$PILOTDECK_ROOT/plugins/med-tools/.venv" \
 export PDF_SKILL_CACHE="$XDG_CACHE_HOME/pilotdeck-pdf"
 export DOCX_SKILL_CACHE="$XDG_CACHE_HOME/pilotdeck-docx"
 # data-analysis 与文档技能共用一个 wheels 目录，只打一份进离线包
-export PILOTDECK_ANALYSIS_CACHE="$XDG_CACHE_HOME/pilotdeck-analysis"
+# 运行时落在 <app>/.runtime/cache/xdg/pilotdeck-analysis：全机器共用一份（沙箱里按只读挂载），
+# 每个用户的可写字体缓存另在各自的 XDG_CACHE_HOME 下，不会写到这里
+export PILOTDECK_ANALYSIS_CACHE="$RUNTIME_CACHE_DIR/xdg/pilotdeck-analysis"
 export PILOTDECK_ANALYSIS_WHEELS="$PYTHON_WHEELS_DIR"
 bash "$PILOTDECK_ROOT/skills/pdf/scripts/pdf.sh" bootstrap-runtime >/dev/null
 bash "$PILOTDECK_ROOT/skills/docx/scripts/docx.sh" bootstrap-runtime >/dev/null

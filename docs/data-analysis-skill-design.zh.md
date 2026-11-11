@@ -99,6 +99,27 @@ bash "$SKILL_ROOT/scripts/analysis.sh" run \
 
 离线镜像构建若也出现长时间回溯，先怀疑这两条，而不是网络。
 
+### 3.4 运行时落在哪（一份共享，不按用户复制）
+
+venv 有 **589 MB**（17 包 + 依赖），按用户各装一份，12 个用户就是 ~7 GB 纯重复。
+所以运行时是**全机器共享一份只读**，可写的字体缓存才按用户分：
+
+| 目录 | 作用 | 权限 | 谁写 |
+|---|---|---|---|
+| `<app>/.runtime/cache/xdg/pilotdeck-analysis/runtime` | venv（共享运行时） | 只读 | 只有打包期 `prepare-offline-runtime.sh` |
+| `${XDG_CACHE_HOME:-~/.cache}/pilotdeck-analysis-mpl` | matplotlib 字体缓存 | 每用户可写 | 首次 bootstrap / 首次绘图 |
+
+**解析顺序**（`analysis.sh` 与管理员页 `analysisCacheRoot()` 必须一致，否则会出现
+"管理页 ready、agent 报 not_bootstrapped"）：
+
+1. `PILOTDECK_ANALYSIS_CACHE` —— 沙箱里由 `skillCacheEnv()` 注入，指向共享目录；
+2. `<app>/.runtime/cache/xdg/pilotdeck-analysis` —— 存在 `runtime/bin/python` 就用它
+   （开发机手动 `analysis.sh` 时无需任何环境变量也能命中）；
+3. `${XDG_CACHE_HOME:-$HOME/.cache}/pilotdeck-analysis` —— 每用户缓存，`bootstrap-runtime` 自举时用。
+
+沙箱授权：`appReadOnlyGrants()` 把共享运行时加进只读挂载（`bwrap --ro-bind`），
+**不要**把它改成可写 —— 那等于让任意用户篡改所有人共用的 venv。
+
 ## 4. 执行期安全（12 条必须拒绝 + 3 条资源限制）
 
 每条拒绝都要写审计（`action: analysis.rejected`，带命中的规则名）。

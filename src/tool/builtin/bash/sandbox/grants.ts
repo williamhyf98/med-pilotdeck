@@ -17,7 +17,9 @@ export function grantForms(input: string): string[] {
 export function appReadOnlyGrants(appRoot: string, nodeBinDir: string): string[] {
   const entries = ["dist", "node_modules", "skills", "plugins", join(".runtime", "node"), join(".runtime", "python"),
     join(".runtime", "cache", "xdg", "pilotdeck-pdf"),
-    ...["docx", "pptx", "spreadsheets"].map((name) => join(".runtime", "cache", "xdg", `pilotdeck-${name}`))];
+    // data-analysis 的 venv 是**所有用户共用一份**的只读运行时；每个用户的
+    // 可写缓存（matplotlib 字体缓存等）仍留在自己的 XDG_CACHE_HOME 下。
+    ...["docx", "pptx", "spreadsheets", "analysis"].map((name) => join(".runtime", "cache", "xdg", `pilotdeck-${name}`))];
   return [...new Set([
     ...entries.map((entry) => join(appRoot, entry)).filter(existsSync),
     nodeBinDir,
@@ -32,6 +34,7 @@ export function skillCacheEnv(appRoot: string): Record<string, string> {
       ["DOCX_SKILL_CACHE", "docx"],
       ["PPTX_SKILL_CACHE", "pptx"],
       ["SPREADSHEET_SKILL_CACHE", "spreadsheets"],
+      ["PILOTDECK_ANALYSIS_CACHE", "analysis"],
     ] as const).flatMap(([key, name]) => {
       const path = join(appRoot, ".runtime", "cache", "xdg", `pilotdeck-${name}`);
       return existsSync(path) ? [[key, path]] : [];

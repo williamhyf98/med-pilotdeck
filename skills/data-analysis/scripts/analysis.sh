@@ -12,14 +12,27 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+APP_ROOT="$(cd "$SKILL_DIR/../.." && pwd)"
 RUNTIME_SOURCE="$SKILL_DIR/runtime"
 # wheels 优先用部署包统一的那份（离线包只用 offline/python-wheels，不重复打一份）
 WHEEL_DIR="${PILOTDECK_ANALYSIS_WHEELS:-$RUNTIME_SOURCE/wheels}"
-CACHE_ROOT="${PILOTDECK_ANALYSIS_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/pilotdeck-analysis}"
+
+# 运行时缓存根目录（venv 所在处）。三级顺序：
+#   1. PILOTDECK_ANALYSIS_CACHE —— 应用侧显式指定（沙箱里由 skillCacheEnv 注入）
+#   2. <app>/.runtime/cache/xdg/pilotdeck-analysis —— 离线包/开发机上**所有用户共用**的只读运行时
+#   3. ${XDG_CACHE_HOME:-$HOME/.cache}/pilotdeck-analysis —— 每用户各自的缓存（开发机自举用）
+SHARED_CACHE="$APP_ROOT/.runtime/cache/xdg/pilotdeck-analysis"
+if [[ -n "${PILOTDECK_ANALYSIS_CACHE:-}" ]]; then
+  CACHE_ROOT="$PILOTDECK_ANALYSIS_CACHE"
+elif [[ -x "$SHARED_CACHE/runtime/bin/python" ]]; then
+  CACHE_ROOT="$SHARED_CACHE"
+else
+  CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/pilotdeck-analysis"
+fi
 RUNTIME_CACHE="$CACHE_ROOT/runtime"
-# 字体缓存与运行时同层共享：bootstrap 时预热一次，之后每次 run 都直接读缓存，
-# 不再触发 matplotlib 的字体扫描子进程（冷缓存会跑 fc-list / system_profiler）。
-export MPLCONFIGDIR="${MPLCONFIGDIR:-$CACHE_ROOT/mpl}"
+# 字体缓存**必须可写**，所以不放在共享只读的运行时目录里：每个用户一份，
+# bootstrap 时预热，之后每次 run 直接读，不再触发 matplotlib 扫字体（fc-list / system_profiler）。
+export MPLCONFIGDIR="${MPLCONFIGDIR:-${XDG_CACHE_HOME:-$HOME/.cache}/pilotdeck-analysis-mpl}"
 # 随包中文字体（与 pdf 技能共用一份，不打第二份进镜像）
 export PILOTDECK_ANALYSIS_FONTS="${PILOTDECK_ANALYSIS_FONTS:-$SKILL_DIR/../pdf/assets/fonts}"
 STAMP_FILE="$RUNTIME_CACHE/.pilotdeck-requirements-hash"
