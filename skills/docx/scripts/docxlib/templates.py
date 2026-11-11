@@ -9,6 +9,7 @@ from .protocol import (
     BUILTIN_TEMPLATE_ID,
     THEMED_TEMPLATE_ID,
     normalize_style_policy,
+    palette_for_policy,
 )
 
 
@@ -90,4 +91,7 @@ def resolve_document_style(
         )
     if policy["mode"] == "user":
         style.update(overrides)
+    # 块级语义角色色（primary / danger …）按当前模板解析：
+    # neutral 用中性值，主题用主题自己的颜色词。
+    style["palette"] = palette_for_policy(policy)
     return policy, style

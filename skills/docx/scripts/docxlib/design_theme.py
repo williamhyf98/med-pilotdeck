@@ -74,6 +74,8 @@ def resolve_design_theme(name: str) -> dict[str, Any]:
             "id": selected["id"],
             "label": theme["label"],
             "style": style,
+            # 完整颜色词，供块级"语义角色色"解析（protocol.palette_for_policy）。
+            "colors": {key: str(value).upper() for key, value in colors.items()},
             "warning": selected.get("warning")
             or (
                 "design-tokens.json 不在随包目录中，已回退到内置最小主题"

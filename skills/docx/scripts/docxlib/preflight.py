@@ -27,6 +27,7 @@ from .protocol import (
     normalize_document_policy,
     normalize_document_structure,
     normalize_style_policy,
+    palette_for_policy,
 )
 from .render import render_docx
 from .toc import toc_status
@@ -385,36 +386,34 @@ def _builtin_style_gate_issues(
     policy = acceptance.get("style_policy")
     if not isinstance(policy, dict) or policy.get("mode") != "builtin":
         return []
-    if policy.get("template", "neutral-document-v1") != "neutral-document-v1":
-        # Themed builtin templates intentionally use the design palette; the
-        # neutral-only chromatic gates do not apply to them.
-        return []
+    # builtin 模式允许块级配色，但只能取"当前模板调色板"里的颜色（neutral 是中性值，
+    # 主题是主题自己的颜色词）。这里只拦越界颜色，不再按"零彩色"一刀切。
     summary = audit.get("summary", {})
     checks = (
         (
-            "chromatic_filled_table_cells",
+            "off_palette_filled_table_cells",
             "builtin-style-chromatic-table-fill",
-            "The built-in neutral template does not allow chromatic table fills.",
+            "Table cell fills must use the active template palette.",
         ),
         (
             "accent_table_styles",
             "builtin-style-accent-table",
-            "The built-in neutral template does not allow Accent table styles.",
+            "Builtin templates do not allow Accent table styles.",
         ),
         (
-            "chromatic_text_runs",
+            "off_palette_text_runs",
             "builtin-style-chromatic-text",
-            "The built-in neutral template requires black or neutral text.",
+            "Text colors must use the active template palette.",
         ),
         (
-            "chromatic_paragraph_fills",
+            "off_palette_paragraph_fills",
             "builtin-style-chromatic-paragraph-fill",
-            "The built-in neutral template does not allow chromatic paragraph fills.",
+            "Paragraph fills must use the active template palette.",
         ),
         (
-            "chromatic_table_borders",
+            "off_palette_table_borders",
             "builtin-style-chromatic-table-border",
-            "The built-in neutral template requires neutral table borders.",
+            "Table borders must use the active template palette.",
         ),
     )
     issues: list[dict[str, Any]] = []
@@ -769,7 +768,10 @@ def preflight_docx(
     validation = assert_valid_docx(input_path)
     artifact_sha256 = file_sha256(input_path)
     inspection = inspect_docx(input_path)
-    audit = audit_docx(input_path, profile=profile)
+    # 审计要按"当前模板的调色板"判定越界配色：neutral 用中性值，
+    # 主题用它自己的颜色词，否则主题色会被误判成越界。
+    audit_palette = palette_for_policy(acceptance.get("style_policy"))
+    audit = audit_docx(input_path, profile=profile, palette=audit_palette)
     warning_dispositions = load_dispositions(dispositions_path)
     for code, rationale in (dispositions or {}).items():
         if not isinstance(rationale, str) or not rationale.strip():

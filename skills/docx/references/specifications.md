@@ -75,29 +75,36 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
 - 诸如 “formal report” 或 “professional document” 这样的笼统目标
   不构成明确的视觉要求。
 
-### 1.1 内置调色板（builtin 模式的块级配色）
+### 1.1 语义角色色（builtin 模式的块级配色）
 
-内置模式下改块级颜色，只能从下面 11 个颜色里挑；写**名字**或写**等价 hex** 都行，
-大小写不敏感，`#` 可省略。调色板之外的颜色（例如 `FF00FF`）会被拒绝，
+内置模式下改块级颜色，只能写**语义角色名**，或写该名字**在当前模板下**的等价 hex。
+名字大小写不敏感，`#` 可省略。调色板之外的颜色（例如 `FF00FF`）会被拒绝，
 错误码 `builtin-style-override`。
 
-| 名字 | hex | 用途 |
+**名字按当前模板解析**：`neutral-document-v1` 用下表的中性值；
+主题（`themed-v1`）用该主题自己的 `primary`/`accent`/`rule`/`soft`/`ink`/`muted`，
+所以同一份 spec 换主题后整体仍然协调。`success`/`warning`/`danger`/`info`
+四个语义色全模板统一，保证 Word / PPT / PDF / Excel 里的"风险红"是同一个红。
+
+| 名字 | 中性模板 hex | 用途 |
 | --- | --- | --- |
 | `ink` | `000000` | 正文墨色 |
 | `muted` | `595959` | 次要文字 |
 | `rule` | `D9D9D9` | 分隔线、表格边框 |
-| `soft` | `F2F2F2` | 浅底、标注填充 |
+| `soft` | `F2F2F2` | 浅底、标注填充、斑马纹 |
 | `white` | `FFFFFF` | 反白文字、白色底 |
+| `onPrimary` | `FFFFFF` | 主色底上的文字 |
 | `primary` | `1F4E79` | 主色：表头底、标题 |
 | `accent` | `8C6D1F` | 强调色 |
-| `success` | `2E7D32` | 通过、完成 |
-| `warning` | `B26B00` | 提醒、待办 |
-| `danger` | `B3261E` | 风险、错误 |
-| `info` | `1565C0` | 提示、说明 |
+| `success` | `157F3D` | 通过、完成 |
+| `warning` | `B45309` | 提醒、待办 |
+| `danger` | `B42318` | 风险、错误 |
+| `info` | `1F5FA9` | 提示、说明 |
 
-典型搭配：`{"accent":"warning","fill":"soft"}` 的提醒框；
-`{"header_fill":"primary","header_text_color":"white","border_color":"rule"}` 的表格。
-调色板**不**放开字体、字号、行距、页边距、表格 `style`、run 的 `color`，
+主题下另有 `support`（辅助色）。典型搭配：
+`{"accent":"warning","fill":"soft"}` 的提醒框；
+`{"header_fill":"primary","header_text_color":"onPrimary","border_color":"rule"}` 的表格。
+角色色**不**放开字体、字号、行距、页边距、表格 `style`、run 的 `color`，
 这些仍然属于模板，内置模式下照旧报错。用户模式不受此限制，可写任意六位 hex。
 
 支持的页面值：`a4` 和 `letter`。支持的方向：`portrait` 和 `landscape`。
@@ -150,8 +157,11 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
 
 ```json
 {"type": "title", "text": "Program Readiness Brief"}
-{"type": "subtitle", "text": "Decision meeting · 13 July 2026"}
+{"type": "subtitle", "text": "Decision meeting · 13 July 2026", "alignment": "left"}
 ```
+
+两者默认居中；需要左对齐（长标题、正文大标题）时加 `"alignment": "left"`，
+可选 `left` / `center` / `right`。图注跟随图片对齐。
 
 ### 标题
 
@@ -175,9 +185,11 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
 ```json
 {"type": "bullet", "text": "Confirm the release owner"}
 {"type": "numbered", "text": "Approve the deployment window"}
+{"type": "bullet", "text": "Second-level detail", "level": 2}
 ```
 
 每个列表项创建一个块。不要把多个项用换行放在一个段落中。
+只有两级（`level` 取 1 或 2）；一级用默认列表样式，二级缩进一级。
 
 ### 引文
 
@@ -248,10 +260,13 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
   "type": "image",
   "path": "figures/timeline.png",
   "width_inches": 5.5,
+  "alignment": "left",
   "caption": "Figure 1. Delivery timeline",
   "alt_text": "Milestones from discovery through launch"
 }
 ```
+
+默认居中；`alignment` 可选 `left` / `center` / `right`，图注与图片对齐。
 
 相对路径从 JSON 文件所在目录解析。远程 URL 会被拒绝。
 用户聊天上传的图片在 `inbox/<批次>/`，路径写在用户消息的
@@ -322,6 +337,9 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
   ],
   "column_widths": [4, 2, 1.5],
   "alignments": ["left", "left", "center"],
+  "variant": "three-line",
+  "zebra": false,
+  "cell_valign": "center",
   "repeat_header": true,
   "caption": "Table 1. Launch readiness"
 }
@@ -351,6 +369,17 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
   `Medium Shading 1 Accent 1`。任何其他值都是规范错误，而不是
   静默回退。
 - 题注放在表格之前，并在分页时与表格保持在一起。
+
+三个可选的局部样式（生成时写，不用二次 edit）：
+
+| 字段 | 取值 | 效果 |
+| --- | --- | --- |
+| `variant` | `grid`（默认）/ `three-line` | 三线表：顶线、表头下线、底线，无竖线与内部横线；医学论文/病例报告的常规表格式 |
+| `zebra` | `true` / `false`（默认） | 数据行隔行浅底（`soft`），只对数据行生效，表头不参与 |
+| `cell_valign` | `center`（默认）/ `top` | 单元格垂直对齐；多行文本或长字段时用 `top` 更整齐 |
+
+`variant: "three-line"` 与 `zebra: true` 互斥（会报 `invalid-spec`）；
+三线表仍可配 `header_fill`，但通常不需要。
 
 ## 5. 编辑补丁
 

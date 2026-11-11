@@ -106,25 +106,39 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" make \
 `accent` 左边线。不要自行编造十六进制颜色，也不要为凑效果满篇添加色块。
 未知主题会直接报 `invalid-design-theme`，不要猜测近似主题。
 
-#### 内置调色板：模板不动，块级配色可调
+#### 语义角色色：模板不动，块级配色可调
 
 不指定主题（`neutral-document-v1`）时，模板锁的是字体、字号、行距、页边距和
-表格网格样式，但**单个块的配色可以改**，只能从这 11 个颜色里挑（名字或等价 hex 都行）：
+表格网格样式，但**单个块的配色可以改**，只能写语义角色名（或该名字在当前模板下的等价 hex）：
 
-| 名字 | hex | 名字 | hex |
+| 名字 | 中性 hex | 名字 | 中性 hex |
 | --- | --- | --- | --- |
 | `ink` | `000000` | `primary` | `1F4E79` |
 | `muted` | `595959` | `accent` | `8C6D1F` |
-| `rule` | `D9D9D9` | `success` | `2E7D32` |
-| `soft` | `F2F2F2` | `warning` | `B26B00` |
-| `white` | `FFFFFF` | `danger` | `B3261E` |
-| `info` | `1565C0` | | |
+| `rule` | `D9D9D9` | `success` | `157F3D` |
+| `soft` | `F2F2F2` | `warning` | `B45309` |
+| `white` | `FFFFFF` | `danger` | `B42318` |
+| `onPrimary` | `FFFFFF` | `info` | `1F5FA9` |
+
+上表是中性模板的值；**名字按当前模板解析**——`clinical` 下 `primary` 是 `12404F`，
+`mono` 下是深灰，所以同一份 spec 换主题后整体仍协调。四个语义色
+（`success`/`warning`/`danger`/`info`）跨 Word/PPT/PDF/Excel 统一。
 
 可改的字段只有：标注块的 `fill`/`accent`，表格的
 `header_fill`/`header_text_color`/`border_color`。调色板之外的颜色会被拒绝
 （`builtin-style-override`）；`style_overrides`、表格 `style`、run 的
 `color`/`size_pt` 仍属模板，照旧不允许。细则见
-`references/specifications.md` 的「1.1 内置调色板」。
+`references/specifications.md` 的「1.1 语义角色色」。
+
+另有几个**纯排版**开关（不碰模板骨架，生成时直接写）：
+
+| 字段 | 取值 | 用途 |
+| --- | --- | --- |
+| `table.variant` | `grid` / `three-line` | 三线表（医学论文常规表格式） |
+| `table.zebra` | `true` / `false` | 数据行隔行浅底（`soft`） |
+| `table.cell_valign` | `center` / `top` | 单元格垂直对齐 |
+| `title`/`subtitle`/`image` 的 `alignment` | `left` / `center` / `right` | 标题、图片与图注对齐 |
+| `bullet`/`numbered` 的 `level` | `1` / `2` | 两级列表 |
 
 `prepare` 同样支持 `--design-theme`（需 `--style-mode builtin`），会把
 规范化后的主题 ID 冻结进验收清单；之后 `create` 的 `style_policy` 必须

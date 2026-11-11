@@ -38,7 +38,7 @@
 2. **内置样式：** 只要用户未指定视觉系统，就使用 `neutral-document-v1`。
    这是当前唯一对外提供的内置模板。
    默认不主动上色；确实需要区分语义时，只能从内置调色板取色
-   （见 `specifications.md` 的「1.1 内置调色板」）。
+   （见 `specifications.md` 的「1.1 语义角色色」）。
 
 `neutral-document-v1` 有意保持克制：
 

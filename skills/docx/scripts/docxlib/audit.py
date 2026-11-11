@@ -20,6 +20,7 @@ from .common import (
 )
 from .core import inspect_docx, iter_document_paragraphs, iter_document_tables
 from .fields import update_fields_on_open_enabled
+from .protocol import BUILTIN_PALETTE
 
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -222,11 +223,19 @@ def _is_chromatic_fill(value: str) -> bool:
     return max(red, green, blue) - min(red, green, blue) >= 12
 
 
+def _is_off_palette(value: str | None, allowed: set[str]) -> bool:
+    """该颜色不在当前模板的调色板里（大小写不敏感）。"""
+    if not value or not re.fullmatch(r"[0-9A-Fa-f]{6}", value):
+        return False
+    return value.upper() not in allowed
+
+
 def audit_docx(
     input_path: str | Path,
     output_json: str | Path | None = None,
     *,
     profile: str = "draft",
+    palette: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     if profile not in {"draft", "final", "accessible"}:
         raise DocxSkillError(
@@ -248,6 +257,10 @@ def audit_docx(
     info = inspect_docx(path)
     doc = Document(str(path))
     issues: list[dict[str, Any]] = []
+    # 当前模板允许的颜色（角色名 → hex）；用于统计"调色板外"的显式配色。
+    allowed_colors = {
+        str(value).upper() for value in (palette or BUILTIN_PALETTE).values()
+    }
 
     heading_levels: list[tuple[int, str]] = []
     direct_font_runs = 0
@@ -256,6 +269,8 @@ def audit_docx(
     chromatic_text_runs = 0
     chromatic_used_styles: set[str] = set()
     chromatic_paragraph_fills = 0
+    off_palette_text_runs = 0
+    off_palette_paragraph_fills = 0
     header_content_items = 0
     footer_content_items = 0
     for location, paragraph in iter_document_paragraphs(doc):
@@ -270,6 +285,8 @@ def audit_docx(
         paragraph_fill = _paragraph_fill(paragraph)
         if paragraph_fill and _is_chromatic_fill(paragraph_fill):
             chromatic_paragraph_fills += 1
+        if _is_off_palette(paragraph_fill, allowed_colors):
+            off_palette_paragraph_fills += 1
         if (
             text
             and style_name.casefold() == "caption"
@@ -318,6 +335,9 @@ def audit_docx(
                 chromatic_text_runs += 1
                 if not run_color and style_name:
                     chromatic_used_styles.add(style_name)
+            # 只看显式写入 run 的颜色：样式自带颜色属于模板，不算越界。
+            if _is_off_palette(run_color, allowed_colors):
+                off_palette_text_runs += 1
             differs_from_style = bool(
                 (run.font.name and (style_font is None or run.font.name != style_font.name))
                 or (run.font.size and (style_font is None or run.font.size != style_font.size))
@@ -430,9 +450,11 @@ def audit_docx(
     table_cell_count = 0
     explicitly_filled_cells = 0
     chromatic_filled_cells = 0
+    off_palette_filled_cells = 0
     accent_table_styles = 0
     accent_tables_with_manual_fill = 0
     chromatic_table_borders = 0
+    off_palette_table_borders = 0
     for table_index, (table_location, table) in enumerate(
         iter_document_tables(doc),
         start=1,
@@ -447,6 +469,11 @@ def audit_docx(
             for value in _table_border_colors(table)
         ):
             chromatic_table_borders += 1
+        if any(
+            _is_off_palette(value, allowed_colors)
+            for value in _table_border_colors(table)
+        ):
+            off_palette_table_borders += 1
         table_has_manual_fill = False
         seen_cells: set[int] = set()
         for row in table.rows:
@@ -462,6 +489,8 @@ def audit_docx(
                     explicitly_filled_cells += 1
                     if _is_chromatic_fill(fill):
                         chromatic_filled_cells += 1
+                    if _is_off_palette(fill, allowed_colors):
+                        off_palette_filled_cells += 1
         if is_accent_style and table_has_manual_fill:
             accent_tables_with_manual_fill += 1
         grid = table._tbl.tblGrid
@@ -720,6 +749,10 @@ def audit_docx(
             "chromatic_used_style_count": len(chromatic_used_styles),
             "chromatic_paragraph_fills": chromatic_paragraph_fills,
             "chromatic_table_borders": chromatic_table_borders,
+            "off_palette_filled_table_cells": off_palette_filled_cells,
+            "off_palette_text_runs": off_palette_text_runs,
+            "off_palette_paragraph_fills": off_palette_paragraph_fills,
+            "off_palette_table_borders": off_palette_table_borders,
             "inspection_coverage": info.get("inspection_coverage", {}).get("status"),
         },
         "issues": issues,

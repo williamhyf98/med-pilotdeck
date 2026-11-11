@@ -57,11 +57,14 @@ from .protocol import (
 from .templates import resolve_document_style
 
 
-def resolve_color(value: Any) -> str | None:
-    """调色板名字（如 ``primary``）归一成 hex；其它值原样去 ``#``；空值返回 None。"""
+def resolve_color(
+    value: Any,
+    palette: dict[str, str] | None = None,
+) -> str | None:
+    """语义角色名（如 ``primary``）按当前调色板归一成 hex；其它值原样去 ``#``。"""
     if value is None:
         return None
-    token = palette_color(value)
+    token = palette_color(value, palette)
     if token:
         return token
     text = str(value).strip().lstrip("#")
@@ -775,6 +778,49 @@ def _set_table_borders(table: Table, color: str) -> None:
         border.set(qn("w:color"), color)
 
 
+def _set_three_line_borders(table: Table, color: str) -> None:
+    """三线表：顶线 + 底线 + 表头下线，其余（左右、内部竖线、内部横线）全部隐藏。"""
+    properties = table._tbl.tblPr
+    borders = properties.find(qn("w:tblBorders"))
+    if borders is None:
+        borders = OxmlElement("w:tblBorders")
+        properties.append(borders)
+    widths = {"top": "12", "bottom": "12", "left": "0", "right": "0", "insideH": "0", "insideV": "0"}
+    for name, size in widths.items():
+        border = borders.find(qn(f"w:{name}"))
+        if border is None:
+            border = OxmlElement(f"w:{name}")
+            borders.append(border)
+        if size == "0":
+            border.set(qn("w:val"), "none")
+            border.set(qn("w:sz"), "0")
+        else:
+            border.set(qn("w:val"), "single")
+            border.set(qn("w:sz"), size)
+        border.set(qn("w:space"), "0")
+        border.set(qn("w:color"), color)
+    # 表头行底部加一条常规细线，形成"三条线"。
+    if table.rows:
+        for cell in table.rows[0].cells:
+            _set_cell_border(cell, "bottom", color, size="6")
+
+
+def _set_cell_border(cell: Any, edge: str, color: str, *, size: str = "4") -> None:
+    properties = cell._tc.get_or_add_tcPr()
+    borders = properties.find(qn("w:tcBorders"))
+    if borders is None:
+        borders = OxmlElement("w:tcBorders")
+        properties.append(borders)
+    border = borders.find(qn(f"w:{edge}"))
+    if border is None:
+        border = OxmlElement(f"w:{edge}")
+        borders.append(border)
+    border.set(qn("w:val"), "single")
+    border.set(qn("w:sz"), size)
+    border.set(qn("w:space"), "0")
+    border.set(qn("w:color"), color)
+
+
 def _format_paragraph_runs(paragraph: Paragraph, style_tokens: dict[str, Any]) -> None:
     for run in paragraph.runs:
         _set_run_fonts(run, style_tokens["body_font"], style_tokens["east_asia_font"])
@@ -944,6 +990,14 @@ def _column_alignment(value: str) -> Any:
     return WD_ALIGN_PARAGRAPH.LEFT
 
 
+def _block_alignment(block: dict[str, Any], *, default: Any) -> Any:
+    """块的 alignment 字段 → WD_ALIGN_PARAGRAPH；未写则用模板默认。"""
+    value = block.get("alignment")
+    if value is None:
+        return default
+    return _column_alignment(str(value))
+
+
 def _paragraph_alignment(value: str) -> Any:
     normalized = value.lower()
     if normalized == "center":
@@ -1085,11 +1139,12 @@ def _structured_content(
 
 
 def _add_content_block(doc: DocumentObject, block: dict[str, Any], style_tokens: dict[str, Any], base_dir: Path) -> None:
+    palette = style_tokens.get("palette") if isinstance(style_tokens, dict) else None
     block_type = str(block.get("type", "paragraph"))
     text = str(block.get("text", ""))
     if block_type == "title":
         paragraph = doc.add_paragraph()
-        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        paragraph.alignment = _block_alignment(block, default=WD_ALIGN_PARAGRAPH.CENTER)
         paragraph.paragraph_format.space_after = Pt(14)
         title_size = float(style_tokens["title_size"])
         paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.AT_LEAST
@@ -1102,7 +1157,7 @@ def _add_content_block(doc: DocumentObject, block: dict[str, Any], style_tokens:
                 run.font.color.rgb = RGBColor.from_string(style_tokens["title_color"])
     elif block_type == "subtitle":
         paragraph = doc.add_paragraph()
-        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        paragraph.alignment = _block_alignment(block, default=WD_ALIGN_PARAGRAPH.CENTER)
         _populate_paragraph(paragraph, block, style_tokens)
         for run in paragraph.runs:
             run.font.size = run.font.size or Pt(style_tokens["body_size"] + 2)
@@ -1129,10 +1184,12 @@ def _add_content_block(doc: DocumentObject, block: dict[str, Any], style_tokens:
             for run in paragraph.runs:
                 run.bold = True
     elif block_type == "bullet":
-        paragraph = doc.add_paragraph(style="List Bullet")
+        level = 2 if block.get("level") == 2 else 1
+        paragraph = doc.add_paragraph(style="List Bullet 2" if level == 2 else "List Bullet")
         _populate_paragraph(paragraph, block, style_tokens)
     elif block_type == "numbered":
-        paragraph = doc.add_paragraph(style="List Number")
+        level = 2 if block.get("level") == 2 else 1
+        paragraph = doc.add_paragraph(style="List Number 2" if level == 2 else "List Number")
         _populate_paragraph(paragraph, block, style_tokens)
     elif block_type == "quote":
         paragraph = doc.add_paragraph(style="Quote")
@@ -1157,11 +1214,15 @@ def _add_content_block(doc: DocumentObject, block: dict[str, Any], style_tokens:
             run = paragraph.add_run(text)
             _set_run_fonts(run, style_tokens["body_font"], style_tokens["east_asia_font"])
         raw_fill = block.get("fill", style_tokens["callout_fill"])
-        fill = resolve_color(raw_fill) if raw_fill else None
+        fill = resolve_color(raw_fill, palette) if raw_fill else None
         _set_paragraph_callout(
             paragraph,
             fill,
-            resolve_color(block.get("accent", style_tokens["callout_border_color"])) or "595959",
+            resolve_color(
+                block.get("accent", style_tokens["callout_border_color"]),
+                palette,
+            )
+            or "595959",
         )
     elif block_type == "checklist":
         items = block.get("items")
@@ -1221,28 +1282,43 @@ def _add_content_block(doc: DocumentObject, block: dict[str, Any], style_tokens:
         table = doc.add_table(rows=1 if headers else 0, cols=column_count)
         table.style = str(block.get("style", style_tokens["table_style"]))
         table.alignment = WD_TABLE_ALIGNMENT.LEFT
+        variant = str(block.get("variant", "grid"))
         border_color = (
-            resolve_color(block.get("border_color", style_tokens["table_border_color"]))
+            resolve_color(
+                block.get("border_color", style_tokens["table_border_color"]), palette
+            )
             or "595959"
         )
-        _set_table_borders(table, border_color)
+        cell_valign = (
+            WD_CELL_VERTICAL_ALIGNMENT.TOP
+            if str(block.get("cell_valign", "center")) == "top"
+            else WD_CELL_VERTICAL_ALIGNMENT.CENTER
+        )
+        if variant == "three-line":
+            # 三线表：只有顶线、表头下线、底线，无竖线、无内部横线。
+            _set_three_line_borders(table, border_color)
+        else:
+            _set_table_borders(table, border_color)
+        zebra_fill = None
+        if block.get("zebra") and variant != "three-line":
+            zebra_fill = resolve_color("soft", palette) or "F2F2F2"
         if headers:
             raw_header_fill = block.get(
                 "header_fill",
                 style_tokens["table_header_fill"],
             )
-            header_fill = resolve_color(raw_header_fill) if raw_header_fill else None
+            header_fill = resolve_color(raw_header_fill, palette) if raw_header_fill else None
             raw_header_text_color = block.get(
                 "header_text_color",
                 style_tokens["table_header_text_color"],
             )
             header_text_color = (
-                resolve_color(raw_header_text_color) if raw_header_text_color else None
+                resolve_color(raw_header_text_color, palette) if raw_header_text_color else None
             )
             for index, value in enumerate(headers):
                 cell = table.rows[0].cells[index]
                 cell.text = str(value)
-                cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                cell.vertical_alignment = cell_valign
                 header_paragraph = cell.paragraphs[0]
                 header_paragraph.alignment = paragraph_alignments[index]
                 header_paragraph.paragraph_format.first_line_indent = Pt(0)
@@ -1254,13 +1330,15 @@ def _add_content_block(doc: DocumentObject, block: dict[str, Any], style_tokens:
                     _set_run_fonts(run, style_tokens["body_font"], style_tokens["east_asia_font"])
                 if header_text_color:
                     _set_cell_text_color(cell, header_text_color)
-        for row_values in rows:
+        for row_index, row_values in enumerate(rows):
             if not isinstance(row_values, list) or len(row_values) != column_count:
                 raise DocxSkillError("Every table row must match the column count")
             cells = table.add_row().cells
             for index, value in enumerate(row_values):
                 cells[index].text = str(value)
-                cells[index].vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                cells[index].vertical_alignment = cell_valign
+                if zebra_fill and row_index % 2 == 1:
+                    _shade_cell(cells[index], zebra_fill)
                 for paragraph in cells[index].paragraphs:
                     paragraph.alignment = paragraph_alignments[index]
                     paragraph.paragraph_format.first_line_indent = Pt(0)
@@ -1278,7 +1356,8 @@ def _add_content_block(doc: DocumentObject, block: dict[str, Any], style_tokens:
     elif block_type == "image":
         image_path = resolve_local_image(block.get("path"), base_dir=base_dir)
         paragraph = doc.add_paragraph()
-        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        image_alignment = _block_alignment(block, default=WD_ALIGN_PARAGRAPH.CENTER)
+        paragraph.alignment = image_alignment
         alt_text = str(block.get("alt_text", "")).strip()
         _add_normalized_picture(
             paragraph,
@@ -1290,7 +1369,7 @@ def _add_content_block(doc: DocumentObject, block: dict[str, Any], style_tokens:
         if caption:
             paragraph.paragraph_format.keep_with_next = True
             cap = doc.add_paragraph(str(caption))
-            cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            cap.alignment = image_alignment
             _format_paragraph_runs(cap, style_tokens)
     elif block_type == "toc":
         locale = str(style_tokens.get("locale", "")).lower()

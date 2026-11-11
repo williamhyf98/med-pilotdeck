@@ -10,63 +10,104 @@ from typing import Any, Iterable
 from .common import DocxSkillError, assert_internal_control_path
 
 
-PROTOCOL_VERSION = 9
+PROTOCOL_VERSION = 10
 RESULT_STATUSES = ("ok", "partial", "unsupported", "blocked", "error")
 RICH_RUN_FIELDS = {"text", "bold", "italic", "underline", "color", "size_pt"}
 ALIGNMENTS = ("left", "center", "right")
 SUPPORTED_FIELD_KEYWORDS = ("TOC", "PAGE", "NUMPAGES", "DATE", "TIME")
 BUILTIN_TEMPLATE_ID = "neutral-document-v1"
 
-# 内置模板锁的是**模板本身**（字体、字号、行距、页边距、表格网格样式），
-# 不锁"这一份文档里某个块用哪种颜色"。块级配色允许改，但只能从这份调色板里挑：
-# 名字或等价 hex 都行，杜绝模型随手写 #FF00FF 把文档弄花。
+# 模板锁的是**模板本身**（字体、字号、行距、页边距、表格网格样式），
+# 不锁"这一份文档里某个块用哪种颜色"。块级配色允许改，但只能从调色板里挑：
+# 写名字或写该名字在当前模板下的等价 hex 都行，杜绝随手 #FF00FF 把文档弄花。
+#
+# 名字是**语义角色**，解析到"当前模板的调色板"：neutral 用下面的中性值，
+# 主题（themed-v1）用该主题自己的 primary/accent/rule/soft/ink/muted，
+# 这样同一份 spec 换主题后整体仍然协调。
+STATUS_PALETTE: dict[str, str] = {
+    # 与 skills/_shared/design-tokens.json 的 semantic.fg 保持一致，
+    # 让 Word / PPT / PDF / Excel 里的"风险红"是同一个红。
+    "success": "157F3D",
+    "warning": "B45309",
+    "danger": "B42318",
+    "info": "1F5FA9",
+}
+
 BUILTIN_PALETTE: dict[str, str] = {
     "ink": "000000",
     "muted": "595959",
     "rule": "D9D9D9",
     "soft": "F2F2F2",
     "white": "FFFFFF",
+    "onPrimary": "FFFFFF",
     "primary": "1F4E79",
     "accent": "8C6D1F",
-    "success": "2E7D32",
-    "warning": "B26B00",
-    "danger": "B3261E",
-    "info": "1565C0",
+    **STATUS_PALETTE,
 }
 
 
-def palette_color(value: Any) -> str | None:
+def palette_color(value: Any, palette: dict[str, str] | None = None) -> str | None:
     """把调色板名字或调色板里的 hex 归一成 6 位大写 hex；不是调色板颜色则返回 None。"""
     if not isinstance(value, str):
         return None
+    active = palette or BUILTIN_PALETTE
     text = value.strip().lstrip("#").lower()
     if not text:
         return None
-    if text in BUILTIN_PALETTE:
-        return BUILTIN_PALETTE[text]
-    for hex_value in BUILTIN_PALETTE.values():
+    lowered = {name.lower(): value for name, value in active.items()}
+    if text in lowered:
+        return lowered[text].upper()
+    for hex_value in active.values():
         if text == hex_value.lower():
-            return hex_value
+            return hex_value.upper()
     return None
 
 
-def _require_builtin_color(value: Any, field: str) -> None:
+def palette_for_policy(style_policy: dict[str, Any] | None) -> dict[str, str]:
+    """当前模板生效的调色板：neutral 用内置中性值，主题用主题自己的颜色词。"""
+    policy = style_policy if isinstance(style_policy, dict) else {}
+    if (
+        policy.get("mode") == "builtin"
+        and policy.get("template") == THEMED_TEMPLATE_ID
+        and policy.get("theme")
+    ):
+        # 局部导入：design_theme 只依赖 common，不会与 protocol 形成循环。
+        from .design_theme import resolve_design_theme
+
+        themed = resolve_design_theme(str(policy["theme"]))
+        colors = themed.get("colors") or {}
+        palette = dict(STATUS_PALETTE)
+        for name in ("ink", "muted", "rule", "soft", "primary", "accent", "onPrimary", "support"):
+            value = colors.get(name)
+            if value:
+                palette[name] = str(value).upper()
+        palette["white"] = str(colors.get("surface") or "FFFFFF").upper()
+        return palette
+    return dict(BUILTIN_PALETTE)
+
+
+def _require_builtin_color(
+    value: Any,
+    field: str,
+    palette: dict[str, str] | None = None,
+) -> None:
+    active = palette or BUILTIN_PALETTE
     _require_string(value, field, allow_empty=False)
-    if palette_color(value) is None:
+    if palette_color(value, active) is None:
         raise DocxSkillError(
-            f"{field} must use the builtin palette: "
-            + ", ".join(f"{name} ({hex_value})" for name, hex_value in BUILTIN_PALETTE.items()),
+            f"{field} must use the active palette: "
+            + ", ".join(f"{name} ({hex_value})" for name, hex_value in active.items()),
             code="builtin-style-override",
-            details={"field": field, "palette": BUILTIN_PALETTE},
+            details={"field": field, "palette": active},
         )
 
 
 PALETTE_HINT = (
-    "六位 hex（如 1F4E79），或内置调色板名："
-    + " / ".join(BUILTIN_PALETTE)
-    + "。builtin 模式下只能是调色板里的颜色。"
+    "六位 hex，或语义角色名（primary / accent / ink / muted / rule / soft / white / "
+    "onPrimary / success / warning / danger / info，主题下另有 support）。"
+    "角色名按当前模板解析；builtin 模式下只接受调色板里的颜色。"
 )
-COLOR_TOKEN_PATTERN = r"^#?(?:[0-9A-Fa-f]{6}|[A-Za-z]{3,9})$"
+COLOR_TOKEN_PATTERN = r"^#?(?:[0-9A-Fa-f]{6}|[A-Za-z]{3,12})$"
 
 
 THEMED_TEMPLATE_ID = "themed-v1"
@@ -87,6 +128,8 @@ SUPPORTED_TABLE_STYLES = (
     "Light Grid Accent 1",
     "Medium Shading 1 Accent 1",
 )
+TABLE_VARIANTS = ("grid", "three-line")
+CELL_VERTICAL_ALIGNMENTS = ("top", "center")
 HEX_COLOR_PATTERN = r"^#?[0-9A-Fa-f]{6}$"
 STYLE_OVERRIDE_FIELDS = {
     "body_font",
@@ -121,13 +164,13 @@ RICH_RUN_PROPERTY_SCHEMAS: dict[str, Any] = {
 
 
 CREATE_BLOCK_SCHEMAS: dict[str, set[str]] = {
-    "title": {"type", "text", "runs"},
-    "subtitle": {"type", "text", "runs"},
+    "title": {"type", "text", "runs", "alignment"},
+    "subtitle": {"type", "text", "runs", "alignment"},
     "heading": {"type", "level", "text", "runs"},
     "paragraph": {"type", "text", "runs", "style", "bold"},
     "body": {"type", "text", "runs", "style", "bold"},
-    "bullet": {"type", "text", "runs"},
-    "numbered": {"type", "text", "runs"},
+    "bullet": {"type", "text", "runs", "level"},
+    "numbered": {"type", "text", "runs", "level"},
     "quote": {"type", "text", "runs"},
     "callout": {"type", "label", "text", "runs", "fill", "accent"},
     "checklist": {"type", "items", "checked"},
@@ -141,12 +184,15 @@ CREATE_BLOCK_SCHEMAS: dict[str, set[str]] = {
         "alignments",
         "repeat_header",
         "style",
+        "variant",
+        "zebra",
+        "cell_valign",
         "caption",
         "header_fill",
         "header_text_color",
         "border_color",
     },
-    "image": {"type", "path", "width_inches", "caption", "alt_text"},
+    "image": {"type", "path", "width_inches", "alignment", "caption", "alt_text"},
     "toc": {"type", "title", "levels", "page_break_after"},
     "field": {"type", "instruction", "placeholder", "alignment"},
     "page_break": {"type"},
@@ -172,8 +218,14 @@ def _rich_text_properties(block_type: str) -> dict[str, Any]:
 
 
 CREATE_BLOCK_PROPERTY_SCHEMAS: dict[str, dict[str, Any]] = {
-    "title": _rich_text_properties("title"),
-    "subtitle": _rich_text_properties("subtitle"),
+    "title": {
+        **_rich_text_properties("title"),
+        "alignment": {"enum": list(ALIGNMENTS)},
+    },
+    "subtitle": {
+        **_rich_text_properties("subtitle"),
+        "alignment": {"enum": list(ALIGNMENTS)},
+    },
     "heading": {
         **_rich_text_properties("heading"),
         "level": {"type": "integer", "minimum": 1, "maximum": 3},
@@ -188,8 +240,14 @@ CREATE_BLOCK_PROPERTY_SCHEMAS: dict[str, dict[str, Any]] = {
         "style": {"type": "string"},
         "bold": {"type": "boolean"},
     },
-    "bullet": _rich_text_properties("bullet"),
-    "numbered": _rich_text_properties("numbered"),
+    "bullet": {
+        **_rich_text_properties("bullet"),
+        "level": {"type": "integer", "enum": [1, 2]},
+    },
+    "numbered": {
+        **_rich_text_properties("numbered"),
+        "level": {"type": "integer", "enum": [1, 2]},
+    },
     "quote": _rich_text_properties("quote"),
     "callout": {
         **_rich_text_properties("callout"),
@@ -264,6 +322,9 @@ CREATE_BLOCK_PROPERTY_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "repeat_header": {"type": "boolean"},
         "style": {"enum": list(SUPPORTED_TABLE_STYLES)},
+        "variant": {"enum": list(TABLE_VARIANTS)},
+        "zebra": {"type": "boolean"},
+        "cell_valign": {"enum": list(CELL_VERTICAL_ALIGNMENTS)},
         "caption": {"type": "string"},
         "header_fill": {
             "oneOf": [
@@ -295,6 +356,7 @@ CREATE_BLOCK_PROPERTY_SCHEMAS: dict[str, dict[str, Any]] = {
         "type": {"const": "image"},
         "path": {"type": "string", "minLength": 1},
         "width_inches": {"type": "number", "exclusiveMinimum": 0},
+        "alignment": {"enum": list(ALIGNMENTS)},
         "caption": {"type": "string"},
         "alt_text": {"type": "string"},
     },
@@ -1496,6 +1558,7 @@ def _validate_style_overrides(value: Any) -> dict[str, Any]:
 def validate_create_spec(spec: dict[str, Any]) -> None:
     _reject_unknown(spec, CREATE_SCHEMA["properties"], "create specification")
     style_policy = normalize_style_policy(spec.get("style_policy"))
+    palette = palette_for_policy(style_policy)
     document_structure = normalize_document_structure(
         spec.get("document_structure")
     )
@@ -1690,6 +1753,18 @@ def validate_create_spec(spec: dict[str, Any]) -> None:
                 or level > 3
             ):
                 raise DocxSkillError("heading.level must be an integer from 1 to 3")
+        if block_type in {"title", "subtitle", "image"}:
+            if "alignment" in block and block["alignment"] not in ALIGNMENTS:
+                raise DocxSkillError(
+                    f"{block_type}.alignment must be left, center, or right",
+                    code="invalid-spec",
+                )
+        if block_type in {"bullet", "numbered"}:
+            level = block.get("level", 1)
+            if level not in (1, 2) or isinstance(level, bool):
+                raise DocxSkillError(
+                    f"{block_type}.level must be 1 or 2", code="invalid-spec"
+                )
         if block_type in {"paragraph", "body"}:
             if "style" in block:
                 if style_policy["mode"] == "builtin":
@@ -1713,7 +1788,9 @@ def validate_create_spec(spec: dict[str, Any]) -> None:
                     else:
                         if style_policy["mode"] == "builtin":
                             # 模板本身不改，但这块提示框用什么颜色可以改——受调色板约束。
-                            _require_builtin_color(block[field], f"callout.{field}")
+                            _require_builtin_color(
+                                block[field], f"callout.{field}", palette
+                            )
                         else:
                             _require_hex_color(block[field], f"callout.{field}")
         if block_type in {"checklist", "source_list"}:
@@ -1785,7 +1862,7 @@ def validate_create_spec(spec: dict[str, Any]) -> None:
                 if field not in block:
                     continue
                 if style_policy["mode"] == "builtin":
-                    _require_builtin_color(block[field], f"table.{field}")
+                    _require_builtin_color(block[field], f"table.{field}", palette)
                 else:
                     _require_hex_color(block[field], f"table.{field}")
             headers = block.get("headers", [])
@@ -1838,6 +1915,27 @@ def validate_create_spec(spec: dict[str, Any]) -> None:
                 raise DocxSkillError(
                     "table.repeat_header must be boolean", code="invalid-spec"
                 )
+            if "zebra" in block and not isinstance(block["zebra"], bool):
+                raise DocxSkillError(
+                    "table.zebra must be boolean", code="invalid-spec"
+                )
+            variant = block.get("variant", "grid")
+            if variant not in TABLE_VARIANTS:
+                raise DocxSkillError(
+                    f"Unsupported table variant: {variant!r}",
+                    code="invalid-spec",
+                    details={"supported_table_variants": list(TABLE_VARIANTS)},
+                )
+            if variant == "three-line" and block.get("zebra"):
+                # 三线表靠留白和三条横线，斑马纹会把它变成另一种东西。
+                raise DocxSkillError(
+                    "table.zebra cannot be combined with variant 'three-line'",
+                    code="invalid-spec",
+                )
+            if "cell_valign" in block and block["cell_valign"] not in CELL_VERTICAL_ALIGNMENTS:
+                raise DocxSkillError(
+                    "table.cell_valign must be top or center", code="invalid-spec"
+                )
             for field in ("style", "caption"):
                 if field in block:
                     _require_string(block[field], f"table.{field}")
@@ -1848,7 +1946,7 @@ def validate_create_spec(spec: dict[str, Any]) -> None:
             ):
                 if field in block and block[field] is not None:
                     if style_policy["mode"] == "builtin":
-                        _require_builtin_color(block[field], f"table.{field}")
+                        _require_builtin_color(block[field], f"table.{field}", palette)
                     else:
                         _require_hex_color(block[field], f"table.{field}")
             if (

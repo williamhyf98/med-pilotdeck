@@ -595,3 +595,32 @@ dist 实测：`docx/references/specifications.md` → OK；`docx/../src/cli/pilo
   XML 落盘 `1F4E79`×2、`B3261E`、`F2F2F2`、`D9D9D9`×6；远端 Renderer 目视：深蓝表头白字、
   浅灰底 + 红色色条提示框，均正常
 - 命令：`npm test` → **864 tests / 862 pass / 0 fail / 2 skipped**
+
+### 2026-11-11 · docx：配色门禁对齐调色板 + 角色色按主题解析 + 四个排版开关
+
+- 背景：上一轮放开了块级配色，但 `preflight` 仍按"零彩色"判 error（`create` 过、`deliver` 拦）；
+  且同名的 `primary` 在主题下取的是中性深蓝，和主题色打架。
+- 修法一（门禁）：`preflight._builtin_style_gate_issues()` 改判"调色板外"计数，
+  `audit_docx()` 新增 `palette=` 与四个 `off_palette_*` 指标
+  （表单元格/文字/段落底/表格边框）；`preflight` 用 `palette_for_policy(acceptance.style_policy)`
+  传入当前模板调色板
+- 修法二（角色色）：`protocol.palette_for_policy()` 按模板返回调色板——neutral 用中性值，
+  `themed-v1` 用 `design_theme` 的颜色词（`design_theme` 现在回传 `colors`）；
+  `templates` 把它塞进 `style["palette"]`，`core.resolve_color()` 据此解析；
+  四个语义色（success/warning/danger/info）改为与 `_shared/design-tokens.json` 的
+  `semantic.fg` 一致，保证 Word/PPT/PDF/Excel 同色
+- 修法三（排版开关，纯样式不碰骨架）：
+  `table.variant: grid|three-line`（三线表，顶/底 1.5pt + 表头下线，无竖线）、
+  `table.zebra`（数据行隔行 `soft`，与三线表互斥）、
+  `table.cell_valign: center|top`、
+  `title`/`subtitle`/`image` 的 `alignment`、
+  `bullet`/`numbered` 的 `level: 1|2`
+- `PROTOCOL_VERSION` 9→10（新增块字段）
+- 验证：
+  - neutral + `header_fill: primary`：`preflight` 不再报 `builtin-style-chromatic-table-fill`（只剩 `render-unavailable`）
+  - clinical + `primary`：XML 落 `12404F`（不是 `1F4E79`），`off_palette_*` 全 0
+  - clinical + `header_fill: 1F4E79`（中性色不在主题里）：被拒
+  - 远端 Renderer 目视：三线表无竖线、斑马纹隔行、二级列表缩进、标题左对齐、主题青绿表头正常
+- 测试：`self-test` 新增 `themed-palette-resolves` / `preflight-palette-gate` / `themed-off-palette-blocked`；
+  `npm test` → **864 tests / 862 pass / 0 fail / 2 skipped**
+- 未做：pptx / pdf / xlsx 的同类开口（按计划排后面）

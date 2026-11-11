@@ -37,8 +37,8 @@ from .fields import (
     update_fields_on_open_enabled,
 )
 from .lineage import latest_input_path, resolve_latest_input
-from .preflight import preflight_docx
-from .protocol import capabilities, schema_for
+from .preflight import _builtin_style_gate_issues, preflight_docx
+from .protocol import capabilities, palette_for_policy, schema_for
 from .qa import (
     finalize_visual_qa,
     initialize_visual_qa,
@@ -87,7 +87,7 @@ def run_smoke_test() -> dict[str, Any]:
         root = Path(temp_dir)
 
         capability_result = capabilities()
-        assert capability_result["protocol_version"] == 9
+        assert capability_result["protocol_version"] == 10
         assert len(capability_result["capability_states"]) == len(
             set(capability_result["capability_states"])
         )
@@ -520,9 +520,99 @@ def run_smoke_test() -> dict[str, Any]:
         )
         palette_docx = root / "builtin-palette.docx"
         create_docx(palette_spec, palette_docx)
-        palette_audit = audit_docx(palette_docx, profile="final")
+        palette_audit = audit_docx(
+            palette_docx, profile="final", palette=palette_for_policy(
+                {"mode": "builtin", "template": "neutral-document-v1"}
+            )
+        )
         assert palette_audit["summary"]["tables"] == 1
+        assert palette_audit["summary"]["off_palette_filled_table_cells"] == 0
+        assert palette_audit["summary"]["off_palette_table_borders"] == 0
         steps.append("builtin-palette-colors")
+
+        # 同名角色色在主题下解析成主题自己的颜色：clinical 的 primary 是 12404F，
+        # 而不是中性模板的 1F4E79。同一份 spec 换主题应整体协调。
+        themed_palette_spec = root / "themed-palette.json"
+        _dump(
+            themed_palette_spec,
+            {
+                "style_policy": {
+                    "mode": "builtin",
+                    "template": "themed-v1",
+                    "theme": "clinical",
+                },
+                "locale": "zh-CN",
+                "content": [
+                    {"type": "title", "text": "主题角色色"},
+                    {
+                        "type": "table",
+                        "headers": ["A", "B"],
+                        "rows": [["1", "2"]],
+                        "header_fill": "primary",
+                        "header_text_color": "onPrimary",
+                        "border_color": "rule",
+                    },
+                ],
+            },
+        )
+        themed_docx = root / "themed-palette.docx"
+        create_docx(themed_palette_spec, themed_docx)
+        themed_palette = palette_for_policy(
+            {"mode": "builtin", "template": "themed-v1", "theme": "clinical"}
+        )
+        assert themed_palette["primary"] == "12404F"
+        themed_audit = audit_docx(themed_docx, profile="final", palette=themed_palette)
+        assert themed_audit["summary"]["off_palette_filled_table_cells"] == 0
+        with zipfile.ZipFile(themed_docx) as archive:
+            themed_xml = archive.read("word/document.xml").decode("utf-8")
+        assert "12404F" in themed_xml
+        assert "1F4E79" not in themed_xml
+        steps.append("themed-palette-resolves")
+
+        # 主题下调色板外的 hex（中性的 1F4E79 在 clinical 里不存在）必须被拒。
+        themed_off_spec = root / "themed-off-palette.json"
+        _dump(
+            themed_off_spec,
+            {
+                "style_policy": {
+                    "mode": "builtin",
+                    "template": "themed-v1",
+                    "theme": "clinical",
+                },
+                "content": [
+                    {
+                        "type": "table",
+                        "headers": ["A"],
+                        "rows": [["1"]],
+                        "header_fill": "1F4E79",
+                    }
+                ],
+            },
+        )
+        _expect_error(
+            create_docx,
+            "error",
+            "builtin-style-override",
+            themed_off_spec,
+            root / "themed-off-palette.docx",
+        )
+        negative_checks.append("themed-off-palette-blocked")
+
+        # preflight 的 style 门禁：只拦"调色板外"，不再按零彩色一刀切。
+        neutral_policy = {"mode": "builtin", "template": "neutral-document-v1"}
+        assert not _builtin_style_gate_issues(
+            {"style_policy": neutral_policy},
+            {"summary": {"off_palette_filled_table_cells": 0}},
+        )
+        gate_issues = _builtin_style_gate_issues(
+            {"style_policy": neutral_policy},
+            {"summary": {"off_palette_filled_table_cells": 2}},
+        )
+        assert [item["code"] for item in gate_issues] == [
+            "builtin-style-chromatic-table-fill"
+        ]
+        assert gate_issues[0]["severity"] == "error"
+        steps.append("preflight-palette-gate")
 
         off_palette_spec = root / "builtin-off-palette.json"
         _dump(
