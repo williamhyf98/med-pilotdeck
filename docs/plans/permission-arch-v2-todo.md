@@ -338,3 +338,39 @@
   `ui/server/adminGating.test.js` 增加一行（非管理员 403）
 - 命令：`cd ui && npx vitest run server/routes/adminSkills.test.js server/adminGating.test.js` → 53 passed
 - 未做：前端页面（与 A3 管理员总览一起排）
+
+### 2026-11-11 · B1 审计接线 + 两个"真跑不起来"的坑
+
+写集成测试时撞到两个只有真调用才暴露的问题，都已修：
+
+1. **自动化策略把 `analysis.sh` 整条命令硬拦了**。`src/tool/automationPolicyConstraints.ts`
+   的 `BUNDLED_DOCUMENT_ENTRYPOINT` 只认 `pdf|docx|pptx|spreadsheet|diagram`，`bash …/analysis.sh`
+   于是命中"non-bundled shell execution"，而 `--script scratch/…py` 又命中
+   "executable source in command" —— 也就是说 B0 放行了、这一层却根本不让执行。
+   新增 `BUNDLED_ANALYSIS_ENTRYPOINT`：把 `bash <…>/analysis.sh <参数…>` 整条视作受信任入口
+   （只吃到 `;&|` 为止），参数仍由命令策略白名单与执行器二次校验。
+2. **`check` 用退出码表达"没就绪"**，于是 bash 工具把整条命令判成失败、把 JSON 吞了，
+   agent 看不到 status。改成 `check` 永远退出 0（状态是数据不是错误），
+   `bootstrap-runtime` 自己在末尾判 `runtime_ready`。
+
+审计接线：`src/security/audit/analysisOutcome.ts` 解析执行器最后一行 JSON，在 bash 工具抛错
+**之前**落审计：
+
+| 执行器结果 | 审计 action |
+|---|---|
+| `rejected`（静态，退出 3） | `analysis.rejected`，reason = `static:<规则>` |
+| `blocked`（运行期，退出 8） | `analysis.blocked`，reason = `runtime:<事件>` |
+| 超时（退出 5 / bash 层超时） | `analysis.timeout` |
+| `oom`（退出 6） | `analysis.oom` |
+| `ok` / 普通 `failed` | 不写（否则日常噪声淹没拒绝） |
+
+端到端实测（真 bash 工具 + 真执行器 + 临时工作区）：
+`check --json` → success；正常分析 → success 且 `run.json.status=ok`；
+`import subprocess` → 退出 3、审计落到 `analysis.rejected`。
+
+新增/补充测试：`tests/tool/analysis-audit.spec.ts`（9 条）、
+`tests/skills/data-analysis-runner.spec.ts`（+2 条：check 的退出码、`PILOTDECK_ANALYSIS_PYTHON`
+必须是可执行路径）、`tests/tool/automation-policy-constraints.spec.ts`（+data-analysis 用例，
+并把 data-analysis 加进"所有文档技能入口示例都过自动化策略"那条）。
+
+命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **844 tests / 842 pass / 0 fail / 2 skipped**

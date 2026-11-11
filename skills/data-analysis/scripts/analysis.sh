@@ -89,7 +89,9 @@ cmd_check() {
     printf 'status=%s usable=%s python=%s runtime=%s packages=%s\n' \
       "$status" "$usable" "${system_python:-none}" "$RUNTIME_CACHE" "$packages"
   fi
-  [[ "$status" == "ready" ]]
+  # 体检本身不该失败：状态是**数据**，不是错误。调用方（agent / 管理页）看 status 字段。
+  # 需要"不就绪就报错"的场合（bootstrap），在自己的入口里判断 runtime_ready。
+  return 0
 }
 
 cmd_bootstrap_runtime() {
@@ -127,16 +129,25 @@ cmd_bootstrap_runtime() {
 
   requirements_hash > "$STAMP_FILE"
   cmd_check --json
+  runtime_ready
 }
 
 cmd_run() {
   local python_path=""
   if [[ -n "${PILOTDECK_ANALYSIS_PYTHON:-}" ]]; then
+    # 只接受可执行文件路径；写成 "python3" 或 "/usr/bin/env python3" 这类
+    # 命令串会在 exec 处失败且没有任何提示，所以先挡住
+    if [[ ! -x "$PILOTDECK_ANALYSIS_PYTHON" ]]; then
+      printf '{"status":"error","error":"PILOTDECK_ANALYSIS_PYTHON must be an executable path: %s"}\n' \
+        "$(json_escape "$PILOTDECK_ANALYSIS_PYTHON")"
+      exit 2
+    fi
     python_path="$PILOTDECK_ANALYSIS_PYTHON"
   elif runtime_ready; then
     python_path="$(venv_python)"
   else
-    printf '{"status":"error","error":"analysis runtime is not ready; run bootstrap-runtime at image build time","status_detail":"%s"}\n' "$(cmd_check --json >/dev/null 2>&1 || printf 'not_bootstrapped')"
+    printf '{"status":"error","error":"analysis runtime is not ready; run bootstrap-runtime at image build time","detail":%s}\n' \
+      "$(cmd_check --json 2>/dev/null || printf 'null')"
     exit 2
   fi
   mkdir -p "$MPLCONFIGDIR"

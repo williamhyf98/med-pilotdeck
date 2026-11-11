@@ -50,6 +50,12 @@ const EXECUTABLE_SOURCE_FILENAMES = new Set([
 
 const BUNDLED_DOCUMENT_ENTRYPOINT =
   /\bbash\s+(?:"[^"]*(?:pdf|docx|pptx|spreadsheet|diagram)\.sh"|'[^']*(?:pdf|docx|pptx|spreadsheet|diagram)\.sh'|[^\s;&|]*(?:pdf|docx|pptx|spreadsheet|diagram)\.sh)(?=$|[\s;&|])/giu;
+// data-analysis 的唯一入口要求 `--script <scratch/*.py>`，参数本身就是脚本路径。
+// 它整条调用（入口 + 参数）一起视为受信任：参数由命令策略白名单
+// （security/policy/skillCommandSpecs.ts）和执行器自己再校验一遍。
+// 注意只吃到 `;&|` 为止，管道后面的东西照旧逐条检查。
+const BUNDLED_ANALYSIS_ENTRYPOINT =
+  /\bbash\s+(?:"[^"]*\/analysis\.sh"|'[^']*\/analysis\.sh'|[^\s;&|]*\/analysis\.sh) *[^;&|]*/giu;
 // Keeps the stripped entrypoint's own arguments out of command position, so subcommands
 // such as `make` are not mistaken for the build tool of the same name.
 const BUNDLED_ENTRYPOINT_PLACEHOLDER = " bundled-entrypoint ";
@@ -101,6 +107,9 @@ export function getAutomationPolicyViolation(toolName: string, input: unknown): 
   if (!command) return undefined;
 
   const commandWithoutBundledEntrypoints = command.replace(
+    BUNDLED_ANALYSIS_ENTRYPOINT,
+    BUNDLED_ENTRYPOINT_PLACEHOLDER,
+  ).replace(
     BUNDLED_DOCUMENT_ENTRYPOINT,
     BUNDLED_ENTRYPOINT_PLACEHOLDER,
   );

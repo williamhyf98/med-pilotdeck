@@ -17,8 +17,12 @@ const analysisSh = join(repo, "skills", "data-analysis", "scripts", "analysis.sh
 function detectPython() {
   const candidates = [process.env.PILOTDECK_ANALYSIS_PYTHON, "python3", "python"].filter(Boolean);
   for (const candidate of candidates) {
-    const probe = spawnSync(candidate, ["-c", "import sys; print(sys.version_info[0])"], { encoding: "utf8" });
-    if (probe.status === 0 && probe.stdout.trim() === "3") return candidate;
+    // 必须是绝对可执行路径：analysis.sh 拒绝 "python3" 这种命令名
+    const probe = spawnSync(candidate, ["-c", "import sys; print(sys.executable) if sys.version_info[0] == 3 else print('')"], {
+      encoding: "utf8",
+    });
+    const resolved = (probe.stdout ?? "").trim();
+    if (probe.status === 0 && resolved) return resolved;
   }
   return null;
 }
@@ -248,5 +252,36 @@ test("参数越界与非法脚本一律拒绝", { skip: SKIP }, async () => {
     const badSuffix = runAnalysis(workspace, ["--script", "scratch/work/t1/note.txt", "--out", "exports/z"]);
     assert.equal(badSuffix.status, 2, "--script 只接受 .py");
     assert.ok(notPython.endsWith(".py"));
+  });
+});
+
+test("check --json 永远以 0 退出，状态在 JSON 字段里", { skip: SKIP }, async () => {
+  await withWorkspace(async ({ workspace }) => {
+    const result = spawnSync("bash", [analysisSh, "check", "--json"], {
+      cwd: workspace,
+      encoding: "utf8",
+      env: { ...process.env, PILOTDECK_ANALYSIS_CACHE: join(workspace, "..", "..", "..", "cache") },
+    });
+    assert.equal(result.status, 0, `check 不应以非 0 退出：${result.stdout}${result.stderr}`);
+    const json = JSON.parse(result.stdout.trim());
+    assert.ok(["ready", "missing_dependencies", "not_bootstrapped"].includes(json.status));
+    assert.equal(typeof json.packages, "number");
+  });
+});
+
+test("PILOTDECK_ANALYSIS_PYTHON 不是可执行文件时立刻报错，而不是 exec 失败后静默", { skip: SKIP }, async () => {
+  await withWorkspace(async ({ workspace }) => {
+    const script = await putScript(workspace, "nopy", "print('hi')\n");
+    const result = spawnSync(
+      "bash",
+      [analysisSh, "run", "--script", script, "--out", "exports/x"],
+      {
+        cwd: workspace,
+        encoding: "utf8",
+        env: { ...process.env, PILOTDECK_ANALYSIS_PYTHON: "python3" },
+      },
+    );
+    assert.equal(result.status, 2);
+    assert.match(result.stdout, /PILOTDECK_ANALYSIS_PYTHON must be an executable path/);
   });
 });

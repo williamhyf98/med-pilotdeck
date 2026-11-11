@@ -2,6 +2,8 @@ import type { PilotDeckToolDefinition } from "../protocol/types.js";
 import { PilotDeckToolRuntimeError } from "../protocol/errors.js";
 import { NodeShellCommandRunner, type PilotDeckCommandRunner } from "./bash/commandRunner.js";
 import { classifyBashPermission, isReadOnlyShellCommand } from "./bash/permissions.js";
+import { appendAudit } from "../../security/audit/auditLog.js";
+import { analysisAuditEvent } from "../../security/audit/analysisOutcome.js";
 
 export type BashInput = {
   command: string;
@@ -188,12 +190,25 @@ export function createBashTool(options?: CreateBashToolOptions): PilotDeckToolDe
         onStderr: emitProgress?.("stderr"),
       });
 
+      // 数据分析技能的拒绝/超时/OOM 必须留痕（spec §4「每条拒绝都要写审计」）。
+      // 放在下面两个 throw 之前：退出码非 0 会抛错，抛之前先把审计落了。
+      const auditAnalysis = (timedOut: boolean): void => {
+        try {
+          const event = analysisAuditEvent({ command, stdout: result.stdout, timedOut });
+          if (event) appendAudit(event, { env: context.env });
+        } catch {
+          // 审计是旁路，不能影响工具本身
+        }
+      };
+
       if (result.timedOut) {
+        auditAnalysis(true);
         emitDeepChestActivity("DeepChest 流程超时", "流程未完成，请检查最终错误提示", "failed");
         throw new PilotDeckToolRuntimeError("tool_timeout", `Command timed out after ${timeoutMs}ms.`);
       }
 
       if (result.exitCode !== 0) {
+        auditAnalysis(false);
         emitDeepChestActivity("DeepChest 流程失败", "流程未完成，请检查最终错误提示", "failed");
         const summary = formatShellFailure(command, result);
         const diagnostic = formatShellFailureDiagnostic(result);

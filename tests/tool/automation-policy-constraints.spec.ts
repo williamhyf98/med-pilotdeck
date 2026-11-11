@@ -50,6 +50,8 @@ test("automation policy blocks interpreter and shell bypasses", () => {
     "make report",
     "bash \"$PDF_SKILL_ROOT/scripts/pdf.sh\" make --markdown a.md --out a.pdf; make clean",
     "bash \"$PDF_SKILL_ROOT/scripts/pdf.sh\" make --markdown a.md --out a.pdf && npm run build",
+    "bash \"$ANALYSIS_SKILL_ROOT/scripts/analysis.sh\" run --script scratch/work/t1/analysis.py --input inbox/batch1 --out exports/analysis/a-1; make clean",
+    "bash skills/data-analysis/scripts/analysis.sh run --script scratch/work/t1/analysis.py --out exports/a && python3 scratch/work/t1/analysis.py",
   ];
   for (const command of blocked) {
     assert.ok(
@@ -71,6 +73,9 @@ test("automation policy permits bundled document entrypoints and ordinary file o
     "DIAGRAM_SKILL_ROOT=\"$(dirname \"/opt/pilotdeck/skills/diagram-maker/SKILL.md\")\"; mkdir -p \"$PWD/scratch/qa\"; bash \"$DIAGRAM_SKILL_ROOT/scripts/diagram.sh\" make --markdown \"$PWD/scratch/qa/flow.mmd\" --out \"$PWD/exports/flow.svg\"",
     "mkdir -p exports && bash \"$PDF_SKILL_ROOT/scripts/pdf.sh\" make --markdown scratch/qa/content.md --out exports/report.pdf",
     "SPREADSHEET_SKILL_ROOT=\"/opt/pilotdeck/skills/spreadsheets\"\nbash \"$SPREADSHEET_SKILL_ROOT/scripts/spreadsheet.sh\" make --spec scratch/qa/book.json --out exports/book.xlsx",
+    "bash \"$ANALYSIS_SKILL_ROOT/scripts/analysis.sh\" check --json",
+    "bash \"$ANALYSIS_SKILL_ROOT/scripts/analysis.sh\" run --script scratch/work/t1/analysis.py --input inbox/batch1 --out exports/analysis/a-1",
+    "bash skills/data-analysis/scripts/analysis.sh run --script scratch/work/t1/analysis.py --out exports/analysis/a-1",
   ];
   for (const command of allowed) {
     assert.equal(
@@ -82,7 +87,7 @@ test("automation policy permits bundled document entrypoints and ordinary file o
 });
 
 test("all documented document-skill bash entrypoints pass the automation policy", () => {
-  for (const skill of ["pdf", "docx", "pptx", "spreadsheets", "diagram-maker"]) {
+  for (const skill of ["pdf", "docx", "pptx", "spreadsheets", "diagram-maker", "data-analysis"]) {
     const skillPath = resolve(`skills/${skill}/SKILL.md`);
     const commands = readFileSync(skillPath, "utf8")
       .split(/\r?\n/u)

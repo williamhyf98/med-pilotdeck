@@ -73,6 +73,9 @@ bash "$ANALYSIS_SKILL_ROOT/scripts/analysis.sh" run \
 | 7 | 执行器自身故障 | 报告运维，不要自己找替代方案 |
 | 8 | 运行期护栏拦下（`blocked`） | **停止**，说明被拦的动作；不允许绕 |
 
+`check` 例外：**永远以 0 退出**，状态在 JSON 的 `status` 里（`ready` / `missing_dependencies` /
+`not_bootstrapped`）。所以先跑 `check --json` 读字段，不要看它的退出码。
+
 ## 输出位置
 
 执行器会落一套可复现产物：
