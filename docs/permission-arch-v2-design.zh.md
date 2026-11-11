@@ -684,7 +684,7 @@ macOS 的 SBPL profile 同步调整（`writeDirs` 换成 `scope.root` + 必要�
 | 技能分组 | Linux（交付 / node12） | macOS（开发） |
 |---|---|---|
 | `data-analysis`（待实现） | `none` | `none` |
-| `docx` / `pptx` / `spreadsheets` | `open`（过渡） | `allowlist 10.31.112.13:19400` |
+| `docx` / `pptx` / `spreadsheets` | `open`（过渡） | `allowlist`（**端口级** `*:19400`，见 10.5.9） |
 | `frontend-slides` | `none` | `none` |
 | `pdf` / `diagram-maker` / 未匹配命令 | `none` | `none` |
 
@@ -766,7 +766,7 @@ multiUser:
 | bwrap 每次调用可覆盖网络 | ✅ 已实现（`wrap()` 新增 `network`） | `sandbox/bwrap.ts` |
 | 启动自检 + fail-closed | ✅ 已实现 | `sandbox/netProbe.ts`、`commandRunner.ts` |
 | `allowlist` 显式报错（不静默降级） | ✅ 已实现 | `sandbox/networkPolicy.ts` |
-| macOS 三态真正生效 | ⬜ 第 2 步 | `sandbox/sandboxExec.ts` |
+| macOS 三态真正生效 | ✅ 已实现（2026-11-11） | `sandbox/sandboxExec.ts` |
 | 端口级 allowlist | ⬜ 第 3 步 | — |
 
 **node12 验证记录（2026-11-10，bwrap 0.6.1）**：
@@ -781,6 +781,39 @@ multiUser:
 **为什么必须卡「单条简单命令」**：`bash skills/docx/scripts/docx.sh make && python3 evil.py`
 里只出现 `docx` 一个技能名，若只看技能名就会把整条复合命令都放行 —— 等于给任意代码开了出口。
 这条规则是 2026-11-10 在 node12 实测时发现的真实漏洞。
+
+#### 10.5.9 macOS 三态实测与实现（2026-11-11）
+
+环境：macOS 15.6.1 (24G90)，`/usr/bin/sandbox-exec`，node v22.23.2。
+
+**SBPL 事实（全部实测）**：
+
+| # | 事实 | 证据 |
+|---|---|---|
+| N6 | `remote ip` **只接受 `*` 或 `localhost`**，写数字 IP 直接报错 | `(remote ip "10.31.112.13:19400")` → `host must be * or localhost in network address`；`tcp` 写法同样失败 |
+| N7 | 只能做**端口级**白名单：`(allow network-outbound (remote ip "*:19400"))` | 连 19400 通、连 `1.1.1.1:443` EPERM |
+| N8 | 回环必须**出站+入站两条**，只给出站时 `listen` 仍 EPERM | 只配 outbound → 自起服务 `listen-err:EPERM`；补 `(allow network-inbound (local ip "localhost:*"))` 后成功 |
+| N9 | 沙箱内**主机名解析全死**，`dns.lookup('localhost')` 也是 ENOTFOUND | `fetch('http://localhost:p')` 失败、`fetch('http://127.0.0.1:p')` 成功 → 沙箱内必须用 IP 字面量 |
+| N10 | `remote unix-socket` 各种写法均**无法生效** | literal/subpath/裸路径三种写法实测仍 EPERM |
+| N11 | macOS 无法隔离宿主回环（没有 netns） | 甲方案放行回环后，沙箱可连宿主 `127.0.0.1:<port>` |
+
+**落地口径（甲方案）**：
+
+```
+none      : (deny network*) + localhost 出站 + localhost 入站
+allowlist : 同上 + 每个端口一条 (allow network-outbound (remote ip "*:<port>"))
+open      : (allow network*)
+```
+
+`networkAllow` 里的 `host` 字段在 macOS 上**不生效**（N6），只取端口；启动日志打印 `allowPorts=...` 以免误解。
+
+**已知让步与风险**：
+
+| 项 | 说明 |
+|---|---|
+| 宿主回环不再隔离（N11） | 启动自检的「宿主回环可达」在 darwin 上不计为泄漏（`networkIsolationLeaks({allowHostLoopback})`），否则永远无法启动 |
+| 端口级 ≠ IP 级（N7） | `*:19400` 允许连任意主机的 19400，只是 DNS 被断，IP 字面量仍可外发 |
+| `frontend-slides` 另有两个障碍 | chromium 需要 `(allow mach-register)`（否则 `bootstrap_check_in` FATAL）；脚本运行时还会 `npm install playwright`（离线 `ENOTCACHED`）。两者都与网络档无关，另案处理 |
 
 ---
 
