@@ -211,11 +211,13 @@ function normalizeSlides(spec) {
       throw new Error(`Unsupported slide type ${JSON.stringify(type)} at slides[${index}]`);
     }
     if (raw.accent !== undefined && raw.accent !== null) {
-      const role = String(raw.accent).trim().toLowerCase();
-      if (!SLIDE_ACCENT_ROLES.includes(role)) {
+      const accent = String(raw.accent).trim();
+      const role = accent.toLowerCase();
+      // 设计档 A：六位 hex 也允许，可读性由 slide-style 的对比度门禁负责。
+      if (!SLIDE_ACCENT_ROLES.includes(role) && !/^#?[0-9A-Fa-f]{6}$/u.test(accent)) {
         throw new Error(
           `Unsupported slides[${index}].accent ${JSON.stringify(raw.accent)}; `
-          + `use ${SLIDE_ACCENT_ROLES.join(', ')}`,
+          + `use ${SLIDE_ACCENT_ROLES.join(', ')} or a 6-digit hex such as #1F5FA9`,
         );
       }
     }

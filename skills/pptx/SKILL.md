@@ -168,6 +168,9 @@ bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" themes
 | `success` | 成功绿（与 Word/PDF/Excel 同色） |
 | `danger` | 风险红（同上） |
 
+也可以直接写六位 hex（`"accent": "#1F5FA9"`）当这一页的自定义强调色：
+浅底页要求与纸面 ≥ 3:1，深底页会自动提亮到看得清。
+
 只在确实要"这一页不同"时用；整篇每页都换色等于没有强调。写错取值会直接报错，
 不会静默回退。
 

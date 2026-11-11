@@ -137,11 +137,16 @@ function darkTokens(tokens, accentOverride) {
 
 export function resolveSlideAccent(tokens, value) {
   if (value === undefined || value === null || value === '') return null;
-  const role = String(value).trim().toLowerCase();
+  const text = String(value).trim();
+  // 设计档 A：允许直接给 6 位 hex 作单页强调色，可读性在 tokensForSlide 里把关。
+  const custom = parseHex(text);
+  if (custom) return toHex(custom);
+  const role = text.toLowerCase();
   const key = ROLE_KEYS[role];
   if (!key) {
     throw new Error(
-      `Unsupported slide accent ${JSON.stringify(value)}; use ${SLIDE_ACCENT_ROLES.join(', ')}`,
+      `Unsupported slide accent ${JSON.stringify(value)}; use ${SLIDE_ACCENT_ROLES.join(', ')}`
+        + ' or a 6-digit hex such as #1F5FA9',
     );
   }
   const color = tokens?.colors?.[key];
@@ -172,5 +177,16 @@ export function tokensForSlide(tokens, slide = {}) {
     return darkTokens(tokens, accent);
   }
   if (!accent) return tokens;
+  // 自定义 hex 只在一页内生效，但必须在这一页的纸面上看得清（3:1，非文字图形）。
+  if (parseHex(slide.accent)) {
+    const paper = tokens?.colors?.paper ?? tokens?.colors?.white ?? 'FFFFFF';
+    const ratio = contrastRatio(accent, paper);
+    if (ratio + 1e-9 < 3) {
+      throw new Error(
+        `Slide accent #${accent} only reaches ${ratio.toFixed(2)}:1 against the slide `
+          + `background #${paper}; use an accent with at least 3:1 contrast`,
+      );
+    }
+  }
   return { ...tokens, colors: { ...tokens.colors, accent } };
 }
