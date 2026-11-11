@@ -92,14 +92,14 @@
 
 ### 1.2 路径校验三条（1d）
 
-统一落点：`src/tool/builtin/filesystem/pathSafety.ts` 的 `isWriteDenied()` 与 `forWrite` 分支
+统一落点：`src/tool/builtin/filesystem/pathSafety.ts` 的 `writeDenialMessage()` 与三处 `forWrite` 分支
 （全仓 23 处 `resolvePilotDeckWorkspacePath` 调用自动生效；上传接口不走它，无需豁免）。
 
-- [ ] ① `reserved`：顶层 `.trash` / `.usage.json` / `.pinned` / `.tmp` 写入 → deny
-- [ ] ② `inbox`：**写操作**目标落在 `inbox/**` → deny（读不变）
+- [x] ① `reserved`：顶层 `.trash` / `.usage.json` / `.pinned` / `.tmp` 写入 → deny（2026-11-11 完成）
+- [x] ② `inbox`：**写操作**目标落在 `inbox/**` → deny（读不变）（2026-11-11 完成）
 - [ ] ③ 覆盖确认：目标已存在且内容不同 → 返回 `ask`，旧内容存 `scratch/tool-results/snapshots/<turnId>/`
-- [ ] 测试：写 `inbox/x.txt` deny / 读 `inbox/x.txt` ok / 写 `.trash/x` deny / 覆盖走 ask / 新文件直通
-- [ ] `npm test` 全绿
+- [x] 测试：`tests/tool/path-safety-write-roots.spec.ts` **9 条全过**（覆盖确认用例待 ③ 完成后追加）
+- [x] `npm test` 全绿（2026-11-11：806 tests / 804 pass / 0 fail / 2 skipped）
 
 **验收**：`§14` 第 15、16 条通过。参考基线 `tests/tool/path-safety-{chat-attachments,multiuser}.spec.ts`。
 
@@ -233,3 +233,15 @@
 - 决策变更留档：D-P10（软删除保留、删除按钮提前）、D-P11（inbox 单列）、D-P12（白名单接线）、
   D-P13（bash 可写 inbox 入风险表）、D-P14（两轨三门）、D-P15（取消统一路径校验）。
 - 网络出口部分已关闭，不再讨论。
+
+### 2026-11-11 · 门 0 / 1.2 第一切片
+
+- 改动：`src/tool/builtin/filesystem/pathSafety.ts` 新增 `RESERVED_WORKSPACE_ENTRIES`、
+  `READ_ONLY_WORKSPACE_ROOTS`、`writeDenialMessage()`；三处 `forWrite` 分支改为输出带原因的拒绝消息
+  （原来统一是 "not allowed by default"，模型分不清原因）
+- 新增测试：`tests/tool/path-safety-write-roots.spec.ts`（9 条，含 bypass / default 两种模式）
+- 命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **806 tests / 804 pass / 0 fail / 2 skipped**
+- 实测结论：写 `inbox/**`、`.trash|.usage.json|.pinned|.tmp` 均 `path_not_allowed` 且消息含原因；
+  `exports/`、`scratch/`、用户自建目录（含 `我的资料/`）不受影响；**只有顶层段生效**
+  （`my/inbox/x` 与 `data/.trash/a` 允许），避免把用户自己的同名子目录误杀
+- 未做：③ 覆盖确认（下一步）
