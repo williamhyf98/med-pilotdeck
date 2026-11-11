@@ -24,6 +24,7 @@ import express from 'express';
 
 import authRoutes from './routes/auth.js';
 import { createAdminUsersRouter } from './routes/adminUsers.js';
+import adminSkillsRoutes from './routes/adminSkills.js';
 import projectsRoutes from './routes/projects.js';
 import gitRoutes from './routes/git.js';
 import mcpRoutes from './routes/mcp.js';
@@ -80,6 +81,7 @@ export function buildApiRouter({
 
   // ── System administration ─────────────────────────────────────────────
   api.use('/admin', ...requireAdminChain, createAdminUsersRouter({ onUserRevoked, stopUserRuntime }));
+  api.use('/admin/skills', ...requireAdminChain, adminSkillsRoutes);
   // pilotdeck.yaml holds every provider API key; MCP/gateway/update change what
   // the server runs. None of it is per-user data.
   api.use('/config', ...requireAdminChain, configRoutes);

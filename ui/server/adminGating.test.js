@@ -107,6 +107,7 @@ const ADMIN_ONLY = [
   ['PUT', '/api/ccr/config'],
   ['GET', '/api/browse-filesystem'], ['POST', '/api/create-folder'], ['POST', '/api/projects/create'],
   ['GET', '/api/admin/users'],
+  ['GET', '/api/admin/skills/data-analysis/deps'],
   ['PUT', '/api/settings/permissions'],
 ];
 

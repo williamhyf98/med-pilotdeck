@@ -183,11 +183,11 @@
 |---|---|---|---|---|
 | D1 | 设计文档定稿（依赖清单 / 12 条安全用例 / 正确性清单） | 0.5d | B0 | ✅ |
 | D2 | 技能骨架 `skills/data-analysis/**` | 0.5d | D1 | ✅ |
-| D3 | 离线运行时（venv + wheels + Dockerfile 两处） | 0.5d | D2 | 🟡 `requirements.txt` + `bootstrap-runtime` 已写；Dockerfile 与 wheels 未接 |
+| D3 | 离线运行时（venv + wheels + Dockerfile 两处） | 0.5d | D2 | 🟡 代码已接（Dockerfile 加 `-r`、`prepare-offline-runtime.sh` 调 bootstrap）；未在 arm64 容器实测 |
 | D4 | 唯一入口 `analysis.sh run` | 1d | D3 | ✅ |
 | D5 | 执行期安全（AST 黑名单 + 运行期护栏 + 资源上限） | 1d | D4 | ✅ |
 | D6 | 产物落位 `exports/analysis/<slug>-<ts>/` | 0.3d | D4 | ✅ |
-| D7 | 管理员「数据分析依赖」页 | 1d | D3 | ⬜ |
+| D7 | 管理员「数据分析依赖」页 | 1d | D3 | 🟡 只读接口 `GET /api/admin/skills/data-analysis/deps` 完成；前端页面未做 |
 | D8 | 正确性 + 安全测试 | 1d | D5、D6 | 🟡 S1–S12 + C1/C12/R1 已覆盖；C2–C11、R2/R3 待补 |
 
 **门 3 通过条件**：设计书 §14 第 24、25 条必须失败且留审计；
@@ -312,4 +312,29 @@
 - 新增测试：`tests/skills/data-analysis-runner.spec.ts`（6 条：S1–S12 逐条、运行期护栏 6 类、
   C1 数值与 BOM、C12 两次一致、R1 超时、参数越界）
 - 命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **833 tests / 831 pass / 0 fail / 2 skipped**
-- 未做：D3 的 Dockerfile/wheels、D7 管理员依赖页、D8 的 C2–C11 与 R2/R3
+- 未做：D8 的 C2–C11 与 R2/R3、D7 前端页面
+
+### 2026-11-11 · B1 离线运行时接线 + 随包中文字体（D3 代码部分）
+
+- `packaging/offline-arm64.Dockerfile`：离线 requirements 加一行
+  `-r /src/skills/data-analysis/runtime/requirements.txt`（与 pdf/docx/med-tools 共用同一批 wheels）
+- `scripts/prepare-offline-runtime.sh`：导出 `PILOTDECK_ANALYSIS_CACHE` / `PILOTDECK_ANALYSIS_WHEELS`
+  并调 `analysis.sh bootstrap-runtime`（wheels 目录由 `analysis.sh` 的 `WHEEL_DIR` 承接，不再往技能里拷第二份）
+- `scripts/check-offline.sh`：加一条结构检查（技能入口必须存在）
+- 字体：`analysis_plot.py` 注册随包 Noto Sans SC / Noto Serif SC（复用 `skills/pdf/assets/fonts`，
+  不打第二份进镜像），`analysis.sh` 导出 `PILOTDECK_ANALYSIS_FONTS`，bootstrap 时预热字体缓存
+- 实测（系统 python3）：`import analysis_plot` → `family= Noto Sans SC`，中文标题零 glyph 警告，
+  PNG 960×640
+- 未验证：arm64 容器里的 `pip wheel` 解析（本机无 docker/arm64）
+
+### 2026-11-11 · D7（后端）管理员「数据分析依赖」只读页
+
+- 新增 `ui/server/routes/adminSkills.js`：`GET /api/admin/skills/data-analysis/deps`
+  （挂在 `requireAdminChain` 下），返回依赖清单（包名/约束/档位）、venv 里实际装到的版本、
+  运行时状态（`ready` / `missing_dependencies` / `not_bootstrapped`）、bootstrap 时间
+- 判定口径与 `analysis.sh check` 对齐：以 `.pilotdeck-requirements-hash` 与 requirements 的
+  sha256 是否相等为准；**不 spawn python**（管理页不该有执行面），版本直接读 `*.dist-info` 目录名
+- 测试：`ui/server/routes/adminSkills.test.js`（9 条，vitest）+
+  `ui/server/adminGating.test.js` 增加一行（非管理员 403）
+- 命令：`cd ui && npx vitest run server/routes/adminSkills.test.js server/adminGating.test.js` → 53 passed
+- 未做：前端页面（与 A3 管理员总览一起排）
