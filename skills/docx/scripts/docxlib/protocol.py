@@ -86,26 +86,120 @@ def palette_for_policy(style_policy: dict[str, Any] | None) -> dict[str, str]:
     return dict(BUILTIN_PALETTE)
 
 
+def _shared_tokens():
+    """`skills/_shared/tokens.py`（对比度与配色工具）；缺失时返回 None。"""
+    from .design_theme import shared_tokens_module
+
+    return shared_tokens_module()
+
+
 def _require_builtin_color(
     value: Any,
     field: str,
     palette: dict[str, str] | None = None,
+    *,
+    background: str | None = None,
+    minimum: float | None = None,
 ) -> None:
+    """模板模式下的块级配色：调色板角色，或过得了对比度门禁的自定义强调色。
+
+    设计档 A：允许用户/模型指定 `#RRGGBB`，但只作用于强调位（文字、表头底、
+    色条、提示框），并且必须与它实际所在的底色拉开足够对比度；
+    设计档 B：语义四色（success/warning/danger/info）仍只走调色板，
+    自定义 hex 撞上语义色不会获得任何"语义"含义。
+    """
     active = palette or BUILTIN_PALETTE
     _require_string(value, field, allow_empty=False)
-    if palette_color(value, active) is None:
+    if palette_color(value, active) is not None:
+        return
+    module = _shared_tokens()
+    color = module.normalize_hex(value) if module is not None else None
+    if color is None:
         raise DocxSkillError(
-            f"{field} must use the active palette: "
+            f"{field} must be a palette role or a 6-digit hex accent: "
             + ", ".join(f"{name} ({hex_value})" for name, hex_value in active.items()),
             code="builtin-style-override",
             details={"field": field, "palette": active},
+        )
+    if background is None or minimum is None or module is None:
+        return
+    ground = module.normalize_hex(background)
+    if ground is None:
+        return
+    try:
+        module.ensure_contrast(color, ground, minimum, field=field)
+    except ValueError as exc:
+        raise DocxSkillError(
+            str(exc),
+            code="style-contrast-too-low",
+            details={
+                "field": field,
+                "color": color,
+                "background": ground,
+                "minimum": minimum,
+            },
+        ) from exc
+
+
+def _color_grounds(
+    palette: dict[str, str],
+    style_policy: dict[str, Any],
+) -> dict[str, str]:
+    """块级配色要对比的"底色"：正文墨色、纸面、表头默认底/字色。"""
+    from_theme = style_policy.get("template") == THEMED_TEMPLATE_ID
+    ink = str(palette.get("ink", "000000")).upper()
+    paper = str(palette.get("white", "FFFFFF")).upper()
+    return {
+        "ink": ink,
+        "paper": paper,
+        # neutral 模板的表头不填色（纸面），主题模板填 primary。
+        "header_fill": str(palette.get("primary", paper)).upper() if from_theme else paper,
+        # neutral 表头字色跟随正文墨色，主题跟随 onPrimary。
+        "header_text": str(palette.get("onPrimary", ink)).upper() if from_theme else ink,
+    }
+
+
+def _require_table_colors(
+    block: dict[str, Any],
+    palette: dict[str, str],
+    style_policy: dict[str, Any],
+    grounds: dict[str, str],
+) -> None:
+    """表头底色/表头字色/边框：默认值成对校验，自定义 hex 必须与对方拉开对比度。"""
+    module = _shared_tokens()
+    text_min = module.MIN_TEXT_CONTRAST if module is not None else 4.5
+    line_min = module.MIN_LINE_CONTRAST if module is not None else 1.5
+    header_fill = palette_color(block.get("header_fill"), palette) or grounds["header_fill"]
+    header_text = (
+        palette_color(block.get("header_text_color"), palette) or grounds["header_text"]
+    )
+    for field in ("header_fill", "header_text_color", "border_color"):
+        value = block.get(field)
+        if value is None:
+            continue
+        if style_policy["mode"] != "builtin":
+            _require_hex_color(value, f"table.{field}")
+            continue
+        if field == "header_fill":
+            background, minimum = header_text, text_min
+        elif field == "header_text_color":
+            background, minimum = header_fill, text_min
+        else:
+            background, minimum = grounds["paper"], line_min
+        _require_builtin_color(
+            value,
+            f"table.{field}",
+            palette,
+            background=background,
+            minimum=minimum,
         )
 
 
 PALETTE_HINT = (
     "六位 hex，或语义角色名（primary / accent / ink / muted / rule / soft / white / "
     "onPrimary / success / warning / danger / info，主题下另有 support）。"
-    "角色名按当前模板解析；builtin 模式下只接受调色板里的颜色。"
+    "角色名按当前模板解析；builtin 模式下也可以给六位 hex 自定义强调色，"
+    "但必须与所在底色达到 4.5:1（文字）/ 3:1（色条）/ 1.5:1（边框）的对比度。"
 )
 COLOR_TOKEN_PATTERN = r"^#?(?:[0-9A-Fa-f]{6}|[A-Za-z]{3,12})$"
 
@@ -1559,6 +1653,7 @@ def validate_create_spec(spec: dict[str, Any]) -> None:
     _reject_unknown(spec, CREATE_SCHEMA["properties"], "create specification")
     style_policy = normalize_style_policy(spec.get("style_policy"))
     palette = palette_for_policy(style_policy)
+    grounds = _color_grounds(palette, style_policy)
     document_structure = normalize_document_structure(
         spec.get("document_structure")
     )
@@ -1787,10 +1882,34 @@ def validate_create_spec(spec: dict[str, Any]) -> None:
                         _require_string(block[field], "callout.label")
                     else:
                         if style_policy["mode"] == "builtin":
-                            # 模板本身不改，但这块提示框用什么颜色可以改——受调色板约束。
-                            _require_builtin_color(
-                                block[field], f"callout.{field}", palette
-                            )
+                            # 模板本身不改，但这块提示框用什么颜色可以改：
+                            # fill 是文字底色（对墨色 ≥ 4.5:1），accent 是左侧色条
+                            # （对纸面 ≥ 3:1）。
+                            module = _shared_tokens()
+                            if field == "fill":
+                                _require_builtin_color(
+                                    block[field],
+                                    f"callout.{field}",
+                                    palette,
+                                    background=grounds["ink"],
+                                    minimum=(
+                                        module.MIN_TEXT_CONTRAST
+                                        if module is not None
+                                        else 4.5
+                                    ),
+                                )
+                            else:
+                                _require_builtin_color(
+                                    block[field],
+                                    f"callout.{field}",
+                                    palette,
+                                    background=grounds["paper"],
+                                    minimum=(
+                                        module.MIN_UI_CONTRAST
+                                        if module is not None
+                                        else 3.0
+                                    ),
+                                )
                         else:
                             _require_hex_color(block[field], f"callout.{field}")
         if block_type in {"checklist", "source_list"}:
@@ -1858,13 +1977,7 @@ def validate_create_spec(spec: dict[str, Any]) -> None:
                         "fields": sorted(forbidden_builtin_table_fields),
                     },
                 )
-            for field in ("header_fill", "header_text_color", "border_color"):
-                if field not in block:
-                    continue
-                if style_policy["mode"] == "builtin":
-                    _require_builtin_color(block[field], f"table.{field}", palette)
-                else:
-                    _require_hex_color(block[field], f"table.{field}")
+            _require_table_colors(block, palette, style_policy, grounds)
             headers = block.get("headers", [])
             rows = block.get("rows", [])
             if not isinstance(headers, list) or not isinstance(rows, list):
@@ -1939,16 +2052,7 @@ def validate_create_spec(spec: dict[str, Any]) -> None:
             for field in ("style", "caption"):
                 if field in block:
                     _require_string(block[field], f"table.{field}")
-            for field in (
-                "header_fill",
-                "header_text_color",
-                "border_color",
-            ):
-                if field in block and block[field] is not None:
-                    if style_policy["mode"] == "builtin":
-                        _require_builtin_color(block[field], f"table.{field}", palette)
-                    else:
-                        _require_hex_color(block[field], f"table.{field}")
+            _require_table_colors(block, palette, style_policy, grounds)
             if (
                 "style" in block
                 and block["style"] not in SUPPORTED_TABLE_STYLES

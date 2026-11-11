@@ -530,6 +530,48 @@ def run_smoke_test() -> dict[str, Any]:
         assert palette_audit["summary"]["off_palette_table_borders"] == 0
         steps.append("builtin-palette-colors")
 
+        # 调色板之外的自定义强调色：只要与底色拉得开就放行（设计档 A）。
+        custom_accent_spec = root / "builtin-custom-accent.json"
+        _dump(
+            custom_accent_spec,
+            {
+                "style_policy": {
+                    "mode": "builtin",
+                    "template": "neutral-document-v1",
+                },
+                "locale": "zh-CN",
+                "content": [
+                    {"type": "title", "text": "自定义强调色"},
+                    {
+                        "type": "callout",
+                        "label": "强调",
+                        "text": "强调色可以自定义",
+                        "accent": "#1F5FA9",
+                    },
+                    {
+                        "type": "table",
+                        "headers": ["A", "B"],
+                        "rows": [["1", "2"]],
+                        "header_fill": "#1F4E79",
+                        "header_text_color": "#FFFFFF",
+                    },
+                ],
+            },
+        )
+        custom_docx = root / "builtin-custom-accent.docx"
+        create_docx(custom_accent_spec, custom_docx)
+        custom_audit = audit_docx(
+            custom_docx,
+            profile="final",
+            palette=palette_for_policy(
+                {"mode": "builtin", "template": "neutral-document-v1"}
+            ),
+        )
+        # 颜色不在调色板里，但对比度达标 —— 不算越界。
+        assert custom_audit["summary"]["off_palette_filled_table_cells"] == 0
+        assert custom_audit["summary"]["off_palette_paragraph_fills"] == 0
+        steps.append("builtin-custom-accent-accepted")
+
         # 同名角色色在主题下解析成主题自己的颜色：clinical 的 primary 是 12404F，
         # 而不是中性模板的 1F4E79。同一份 spec 换主题应整体协调。
         themed_palette_spec = root / "themed-palette.json"
@@ -569,7 +611,7 @@ def run_smoke_test() -> dict[str, Any]:
         assert "1F4E79" not in themed_xml
         steps.append("themed-palette-resolves")
 
-        # 主题下调色板外的 hex（中性的 1F4E79 在 clinical 里不存在）必须被拒。
+        # 调色板外的颜色若和底色糊在一起，必须被拒（设计档 A 的对比度门禁）。
         themed_off_spec = root / "themed-off-palette.json"
         _dump(
             themed_off_spec,
@@ -584,7 +626,8 @@ def run_smoke_test() -> dict[str, Any]:
                         "type": "table",
                         "headers": ["A"],
                         "rows": [["1"]],
-                        "header_fill": "1F4E79",
+                        # 白字压在这个浅橘底上只有 1.13:1，属于"糊成一团"。
+                        "header_fill": "FFEEDD",
                     }
                 ],
             },
@@ -592,7 +635,7 @@ def run_smoke_test() -> dict[str, Any]:
         _expect_error(
             create_docx,
             "error",
-            "builtin-style-override",
+            "style-contrast-too-low",
             themed_off_spec,
             root / "themed-off-palette.docx",
         )
@@ -622,8 +665,9 @@ def run_smoke_test() -> dict[str, Any]:
                     {
                         "type": "callout",
                         "label": "越界",
-                        "text": "调色板之外的颜色",
-                        "accent": "FF00FF",
+                        "text": "与白底几乎分不开的强调色",
+                        # 浅黄压在纸面上只有 1.07:1，色条等于看不见。
+                        "accent": "FFF200",
                     }
                 ]
             },
@@ -631,11 +675,11 @@ def run_smoke_test() -> dict[str, Any]:
         _expect_error(
             create_docx,
             "error",
-            "builtin-style-override",
+            "style-contrast-too-low",
             off_palette_spec,
             root / "builtin-off-palette.docx",
         )
-        negative_checks.append("builtin-off-palette-blocked")
+        negative_checks.append("builtin-low-contrast-accent-blocked")
 
         builtin_acceptance = root / "builtin-acceptance.json"
         _dump(

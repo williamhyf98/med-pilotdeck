@@ -386,14 +386,16 @@ def _builtin_style_gate_issues(
     policy = acceptance.get("style_policy")
     if not isinstance(policy, dict) or policy.get("mode") != "builtin":
         return []
-    # builtin 模式允许块级配色，但只能取"当前模板调色板"里的颜色（neutral 是中性值，
-    # 主题是主题自己的颜色词）。这里只拦越界颜色，不再按"零彩色"一刀切。
+    # builtin 模式允许块级配色：调色板里的颜色随便用；调色板之外的自定义强调色
+    # 只要能和自己所在底色拉开对比度也放行（设计档 A）。审计里已按对比度过滤，
+    # 这些计数只在"越界且看不清"时才增长，所以这里仍然按 error 拦。
     summary = audit.get("summary", {})
     checks = (
         (
             "off_palette_filled_table_cells",
             "builtin-style-chromatic-table-fill",
-            "Table cell fills must use the active template palette.",
+            "Table cell fills must use the template palette or a fill that keeps "
+            "text contrast at 4.5:1.",
         ),
         (
             "accent_table_styles",
@@ -403,17 +405,20 @@ def _builtin_style_gate_issues(
         (
             "off_palette_text_runs",
             "builtin-style-chromatic-text",
-            "Text colors must use the active template palette.",
+            "Text colors must use the template palette or keep 4.5:1 contrast "
+            "against their background.",
         ),
         (
             "off_palette_paragraph_fills",
             "builtin-style-chromatic-paragraph-fill",
-            "Paragraph fills must use the active template palette.",
+            "Paragraph fills must use the template palette or keep 4.5:1 contrast "
+            "with the text they carry.",
         ),
         (
             "off_palette_table_borders",
             "builtin-style-chromatic-table-border",
-            "Table borders must use the active template palette.",
+            "Table borders must use the template palette or stay visible (1.5:1) "
+            "against the page.",
         ),
     )
     issues: list[dict[str, Any]] = []

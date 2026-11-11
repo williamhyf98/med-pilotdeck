@@ -230,6 +230,53 @@ def _is_off_palette(value: str | None, allowed: set[str]) -> bool:
     return value.upper() not in allowed
 
 
+def _contrast_ratio(first: str, second: str) -> float | None:
+    """WCAG 对比度；共享模块缺失时返回 None（此时按"不可判定"处理）。"""
+    try:
+        from .design_theme import shared_tokens_module
+
+        module = shared_tokens_module()
+        if module is not None:
+            return float(module.contrast_ratio(first, second))
+    except Exception:  # noqa: BLE001 - 审计不能因为对比度工具缺失而失败
+        return None
+    return None
+
+
+def _off_palette_unreadable(
+    value: str | None,
+    allowed: set[str],
+    ground: str | None,
+    minimum: float,
+) -> bool:
+    """调色板之外的颜色只有"看不清"时才算问题（设计档 A）。
+
+    自定义强调色本身是允许的，交付门禁不该因为它不在调色板里就一票否决；
+    真正要拦的是"和它的底色糊在一起"的颜色。
+    """
+    if not _is_off_palette(value, allowed):
+        return False
+    if not ground:
+        return True
+    ratio = _contrast_ratio(str(value), str(ground))
+    return True if ratio is None else ratio + 1e-9 < minimum
+
+
+def _paragraph_text_color(paragraph: Any, fallback: str) -> str:
+    for run in paragraph.runs:
+        if run.font.color.rgb is not None:
+            return str(run.font.color.rgb).upper()
+    return fallback
+
+
+def _cell_text_color(cell: Any, fallback: str) -> str:
+    for paragraph in cell.paragraphs:
+        for run in paragraph.runs:
+            if run.font.color.rgb is not None:
+                return str(run.font.color.rgb).upper()
+    return fallback
+
+
 def audit_docx(
     input_path: str | Path,
     output_json: str | Path | None = None,
@@ -261,6 +308,9 @@ def audit_docx(
     allowed_colors = {
         str(value).upper() for value in (palette or BUILTIN_PALETTE).values()
     }
+    active_palette = palette or BUILTIN_PALETTE
+    ink_color = str(active_palette.get("ink", "000000")).upper()
+    paper_color = str(active_palette.get("white", "FFFFFF")).upper()
 
     heading_levels: list[tuple[int, str]] = []
     direct_font_runs = 0
@@ -285,7 +335,12 @@ def audit_docx(
         paragraph_fill = _paragraph_fill(paragraph)
         if paragraph_fill and _is_chromatic_fill(paragraph_fill):
             chromatic_paragraph_fills += 1
-        if _is_off_palette(paragraph_fill, allowed_colors):
+        if _off_palette_unreadable(
+            paragraph_fill,
+            allowed_colors,
+            _paragraph_text_color(paragraph, ink_color),
+            4.5,
+        ):
             off_palette_paragraph_fills += 1
         if (
             text
@@ -336,7 +391,12 @@ def audit_docx(
                 if not run_color and style_name:
                     chromatic_used_styles.add(style_name)
             # 只看显式写入 run 的颜色：样式自带颜色属于模板，不算越界。
-            if _is_off_palette(run_color, allowed_colors):
+            if _off_palette_unreadable(
+                run_color,
+                allowed_colors,
+                paragraph_fill or paper_color,
+                4.5,
+            ):
                 off_palette_text_runs += 1
             differs_from_style = bool(
                 (run.font.name and (style_font is None or run.font.name != style_font.name))
@@ -470,7 +530,7 @@ def audit_docx(
         ):
             chromatic_table_borders += 1
         if any(
-            _is_off_palette(value, allowed_colors)
+            _off_palette_unreadable(value, allowed_colors, paper_color, 1.5)
             for value in _table_border_colors(table)
         ):
             off_palette_table_borders += 1
@@ -489,7 +549,12 @@ def audit_docx(
                     explicitly_filled_cells += 1
                     if _is_chromatic_fill(fill):
                         chromatic_filled_cells += 1
-                    if _is_off_palette(fill, allowed_colors):
+                    if _off_palette_unreadable(
+                        fill,
+                        allowed_colors,
+                        _cell_text_color(cell, ink_color),
+                        4.5,
+                    ):
                         off_palette_filled_cells += 1
         if is_accent_style and table_has_manual_fill:
             accent_tables_with_manual_fill += 1

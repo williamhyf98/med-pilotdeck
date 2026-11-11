@@ -67,7 +67,7 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
   它锁的是**模板本身**：不允许 `style_overrides`，也不允许表格块上的 `style`
   （网格/边框样式属于模板）。但**块级配色可以改**——标注块的
   `fill`/`accent`、表格的 `header_fill`/`header_text_color`/`border_color`
-  都允许，前提是只用内置调色板里的颜色（见 1.1）。
+  都允许：用内置调色板的角色名，或一个能过对比度门禁的自定义 hex（见 1.1）。
 - 用户模式为
   `{"mode":"user","source":"explicit-requirements|reference-template|existing-document"}`。
   `explicit-requirements` 来源还要求非空的 `requirements`
@@ -77,9 +77,22 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
 
 ### 1.1 语义角色色（builtin 模式的块级配色）
 
-内置模式下改块级颜色，只能写**语义角色名**，或写该名字**在当前模板下**的等价 hex。
-名字大小写不敏感，`#` 可省略。调色板之外的颜色（例如 `FF00FF`）会被拒绝，
-错误码 `builtin-style-override`。
+内置模式下改块级颜色，可以写**语义角色名**、该名字**在当前模板下**的等价 hex，
+或一个自定义的六位 hex。名字大小写不敏感，`#` 可省略。
+
+自定义 hex 是"强调色"通道，只作用于强调位（标注底色/色条、表头底色、表头字色、
+表格边框），并且必须和它实际所在的底色拉开对比度：
+
+| 用途 | 最低对比度 |
+| --- | --- |
+| 文字（标注文字与其底色、表头字色与表头底色） | 4.5:1 |
+| 色条、实底等非文字图形 | 3:1 |
+| 表格边框 | 1.5:1 |
+
+不达标返回 `style-contrast-too-low`，`error` 里会给一个可用的近似色
+（例如"可改用 #736B63"）。写法不是六位 hex 时返回 `builtin-style-override`。
+`success`/`warning`/`danger`/`info` 的语义不能被自定义 hex 顶替——
+自定义色只是颜色，不会变成"风险红"。
 
 **名字按当前模板解析**：`neutral-document-v1` 用下表的中性值；
 主题（`themed-v1`）用该主题自己的 `primary`/`accent`/`rule`/`soft`/`ink`/`muted`，
@@ -209,8 +222,10 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
 ```
 
 `accent` 是左边线颜色，`fill` 是底色且可选；中性标注可省略 `fill`。
-用户模式下两者是六位 RGB 十六进制值；内置模式下必须用内置调色板的名字或等价 hex
-（例如 `{"accent":"warning","fill":"soft"}`）。保持标注简短。
+用户模式下两者是六位 RGB 十六进制值；内置模式下用调色板的名字或等价 hex
+（例如 `{"accent":"warning","fill":"soft"}`），也可以给自定义强调色：
+`fill` 要和墨色 ≥ 4.5:1（深底配浅字最容易踩坑），`accent` 要和纸面 ≥ 3:1。
+保持标注简短。
 
 ### 检查清单
 
@@ -361,8 +376,9 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" schema --command edit
 - 内置模式的模板固定为中性表格样式：它拒绝表格块上的 `style`。但表头底色、
   表头字色和边框颜色属于"这份文档的配色"，允许改，前提是取自内置调色板：
   例如 `{"header_fill":"primary","header_text_color":"white","border_color":"rule"}`。
-  调色板之外的颜色会被拒绝（`builtin-style-override`）。省略这些字段则沿用
-  模板默认（白色单元格、加粗黑色表头、中性边框）。
+  也可以写自定义 hex（`{"header_fill":"#1F4E79","header_text_color":"#FFFFFF"}`），
+  前提是字色与表头底色 ≥ 4.5:1，否则返回 `style-contrast-too-low`。
+  省略这些字段则沿用模板默认（白色单元格、加粗黑色表头、中性边框）。
 - 用户模式在这些字段实现所提供样式时可以使用它们。
   支持的表格样式为 `Table Grid`、`Light Grid`、`Light Shading`、
   `Light Shading Accent 1`、`Light Grid Accent 1` 和

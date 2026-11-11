@@ -35,6 +35,24 @@ def _reader(root: Path) -> ModuleType | None:
     return module
 
 
+_SHARED_MODULE: ModuleType | None = None
+_SHARED_RESOLVED = False
+
+
+def shared_tokens_module() -> ModuleType | None:
+    """`skills/_shared/tokens.py`（配色/对比度工具），按需加载并缓存。"""
+    global _SHARED_MODULE, _SHARED_RESOLVED
+    if _SHARED_RESOLVED:
+        return _SHARED_MODULE
+    for root in _roots():
+        module = _reader(root)
+        if module is not None:
+            _SHARED_MODULE = module
+            break
+    _SHARED_RESOLVED = True
+    return _SHARED_MODULE
+
+
 def resolve_design_theme(name: str) -> dict[str, Any]:
     """Return the theme id/label plus the DOCX style tokens it controls."""
     for root in _roots():

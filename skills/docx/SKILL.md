@@ -125,9 +125,10 @@ bash "$DOCX_SKILL_ROOT/scripts/docx.sh" make \
 （`success`/`warning`/`danger`/`info`）跨 Word/PPT/PDF/Excel 统一。
 
 可改的字段只有：标注块的 `fill`/`accent`，表格的
-`header_fill`/`header_text_color`/`border_color`。调色板之外的颜色会被拒绝
-（`builtin-style-override`）；`style_overrides`、表格 `style`、run 的
-`color`/`size_pt` 仍属模板，照旧不允许。细则见
+`header_fill`/`header_text_color`/`border_color`。除了调色板角色，也可以直接给
+六位 hex 作**自定义强调色**，但要过对比度门禁：文字 4.5:1、色条 3:1、边框 1.5:1，
+不达标返回 `style-contrast-too-low` 并给出可用的近似色。
+`style_overrides`、表格 `style`、run 的 `color`/`size_pt` 仍属模板，照旧不允许。细则见
 `references/specifications.md` 的「1.1 语义角色色」。
 
 另有几个**纯排版**开关（不碰模板骨架，生成时直接写）：
