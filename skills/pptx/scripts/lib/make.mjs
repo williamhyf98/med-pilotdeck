@@ -3,7 +3,7 @@ import path from 'node:path';
 import { auditPptx } from './audit.mjs';
 import { inspectPptx } from './ooxml.mjs';
 import { renderPptx, renderingAvailability } from './render.mjs';
-import { SLIDE_ACCENT_ROLES, tokensForSlide } from './slide-style.mjs';
+import { SLIDE_ACCENT_ROLES, SLIDE_TONES, tokensForSlide } from './slide-style.mjs';
 import { buildToolkit } from './toolkit.mjs';
 
 const HEADING = /^(#{1,3})\s+(.+?)\s*$/u;
@@ -216,6 +216,15 @@ function normalizeSlides(spec) {
         throw new Error(
           `Unsupported slides[${index}].accent ${JSON.stringify(raw.accent)}; `
           + `use ${SLIDE_ACCENT_ROLES.join(', ')}`,
+        );
+      }
+    }
+    if (raw.tone !== undefined && raw.tone !== null) {
+      const tone = String(raw.tone).trim().toLowerCase();
+      if (!SLIDE_TONES.includes(tone)) {
+        throw new Error(
+          `Unsupported slides[${index}].tone ${JSON.stringify(raw.tone)}; `
+          + `use ${SLIDE_TONES.join(', ')}`,
         );
       }
     }

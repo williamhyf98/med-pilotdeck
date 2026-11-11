@@ -64,6 +64,9 @@ bash "$PPTX_TOOL" make \
 `slides[].accent` 可选，用于单页强调色：`accent`（默认）/ `support` / `primary` /
 `success` / `danger`。只改该页的强调元素，背景、字体、版式不变；其它取值直接报错。
 
+`slides[].tone` 可选，`light`（默认）或 `dark`：只把该页配色换成深底（文字与强调色
+自动调整到可读），版式不变。`title` / `section` / `closing` 已是深底，传 `dark` 会报错。
+
 支持的 `slides[].type`：
 
 

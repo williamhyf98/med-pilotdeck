@@ -171,6 +171,25 @@ bash "$PPTX_SKILL_ROOT/scripts/pptx.sh" themes
 只在确实要"这一页不同"时用；整篇每页都换色等于没有强调。写错取值会直接报错，
 不会静默回退。
 
+### 单页深底（`slides[].tone`）
+
+给某一页换深底，用来做"这一页是结论/警示"的视觉重音。取值只有两个：
+
+```json
+{"type": "statement", "title": "核心结论", "tone": "dark",
+ "statement": "先稳定，再转运", "support": "战创伤处置的第一原则"}
+```
+
+- `light`（默认）/ `dark`。**只改配色，不改版式**：背景换成主题主色，文字换成
+  该主题的深底文字色，强调色自动提亮到在深底上可读（保色相，不会把"风险红"冲成粉色）。
+- 前面已测过的版式都能用：`content` / `statement` / `metric` / `table` / `quote` /
+  `chart` / `comparison` / `two-column` / `timeline` / `case` / `evidence` / `imaging`。
+- `title` / `section` / `closing` 本来就是深底，传 `tone: "dark"` 会直接报错，
+  不要画蛇添足。
+- 深底页的对比度由构建器保证（正文 ≥ 4.5:1、强调色 ≥ 3.5:1）；如果某个主题的
+  主色太浅、达不到，构建会报错而不是给你一页看不清的字。
+- **整篇 1–2 页深底足够**；每页都深等于没有重音，而且打印/投影都不友好。
+
 ### 页面纹理（默认开启）
 
 每页背景在纯色之上叠一层极淡的纸纹（`assets/textures/grain.png`，随包分发，

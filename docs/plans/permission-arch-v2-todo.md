@@ -641,3 +641,20 @@ dist 实测：`docx/references/specifications.md` → OK；`docx/../src/cli/pilo
 - 测试：`pptx.sh self-test` 通过；`npm test` → 864 / 862 pass / 0 fail / 2 skipped
 - 未做：`slide.tone`（深底页）——需要在 4–5 个版式上做对比度白名单 + 逐页目视验收，
   下一轮单独做
+
+### 2026-11-11 · pptx 方案 A 第二步：单页深底（slide.tone）
+
+- 实现仍在 `lib/slide-style.mjs`，不动 layout-library：`tone: dark` 时派生一份
+  "深底 token"——背景用主题主色，文字用 `onDark`，`rule`/`soft` 按比例提亮，
+  强调色/正负色用 **HSL 提亮**（保色相饱和度）而不是混白，避免"风险红"被冲成粉灰
+- 对比度兜底：正文 ≥ 4.5:1、强调色 ≥ 3.5:1；达不到会继续提亮，仍达不到则由主题本身决定
+  （目前 6 套主题均通过）
+- 边界：`title`/`section`/`closing` 已是深底，传 `tone: dark` 直接报错；
+  `tone` 非法值报错，不静默回退
+- 验证（clinical 主题，逐页远端 Renderer 目视）：
+  `content` / `metric` / `table` / `statement` / `quote` / `chart` / `comparison` /
+  `two-column` / `timeline` / `case` / `evidence` / `imaging` 共 12 种版式深底均正常；
+  表格斑马纹在深底下改为 18% 提亮才看得出；danger 强调由 `B42318` 提为 `EA6B62`
+- 文档：`SKILL.md` 新增「单页深底」小节，`references/creation.md` 补字段
+- 测试：`pptx.sh self-test` 通过；`npm test` → 864 / 862 pass / 0 fail / 2 skipped
+- 未做：`split` 版式（需要真实图片才能验，逻辑与 imaging 同源）
