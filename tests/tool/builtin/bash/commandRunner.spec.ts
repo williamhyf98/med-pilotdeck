@@ -188,18 +188,27 @@ test("startup guard rejects root-wide and symlinked grants but accepts specific 
 test("startup guard permits ancestor metadata but rejects literal metadata inside protected data", () => {
   const root = mkdtempSync(join(tmpdir(), "sb-meta-"));
   try {
-    const home = join(root, "data", "users", "2");
+    const dataRoot = join(root, "data");
+    const users = join(dataRoot, "users");
+    const home = join(users, "2");
     mkdirSync(home, { recursive: true });
-    mkdirSync(join(root, "data", "users", "3"), { recursive: true });
+    mkdirSync(join(users, "3"), { recursive: true });
     const sandbox = (metadataOnly: string[]): CommandSandbox => ({
       kind: "sandbox-exec",
       grants: () => ({ readOnly: [], writable: [home], metadataOnly }),
       wrap: () => ({ file: "/usr/bin/sandbox-exec", args: [] }),
       probe: async () => ({ ok: true }),
     });
-    assert.doesNotThrow(() => assertSandboxGrantsSafe(sandbox([root, home]), home));
-    for (const target of [join(root, "data"), join(root, "data", "system", "auth.db"),
-      join(root, "data", "users", "3"), join(root, "data", "users", "3", "secret")]) {
+    // 祖先链必须整体放行：chdir() 要逐级解析每一层，缺一层就是 ENOTDIR（macOS）。
+    for (const ancestor of [root, dataRoot, users]) {
+      assert.doesNotThrow(
+        () => assertSandboxGrantsSafe(sandbox([ancestor, home]), home),
+        `ancestor ${ancestor} must be allowed as literal metadata`,
+      );
+    }
+    // 兄弟用户的 home 及其内容、system 目录、数据根下的具体文件仍然必须拒绝。
+    for (const target of [join(dataRoot, "system"), join(dataRoot, "system", "auth.db"),
+      join(users, "3"), join(users, "3", "secret"), join(users, "3", ".tmp")]) {
       assert.throws(() => assertSandboxGrantsSafe(sandbox([target]), home), /Unsafe sandbox metadata grant/);
     }
   } finally {

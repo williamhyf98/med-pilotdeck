@@ -485,3 +485,23 @@
   并用 analysis.sh 复跑同类错误写法 → `status: failed`、退出 4、`stderrTail` 带 `FileNotFoundError`
 
 命令：`npx tsc --noEmit` ✅ ｜ `node --test dist/tests/tool/builtin/bash/sandbox/sandboxExec.spec.js` → 18/18
+
+### 2026-11-11 · 重启后 503：祖先链 metadata 被启动守卫判成"覆盖受保护数据"
+
+- 现象：重启机器后 UI 全部报 `Server error (503): Service Unavailable`，
+  `code: GATEWAY_UNAVAILABLE`；日志首行是
+  `Unsafe sandbox metadata grant <dataRoot>/users overlaps protected data.` →
+  `[gateway-pool] stopped gateway for user 1 (start-failed)`
+- 根因：上一条修 chdir 时把 userHome 的**祖先链**（含 `…/users`、`…/<dataRoot>`）放进了
+  `metadataOnly`，但启动守卫只认"**在 userHome 之内**"的授权
+  （`covered(form, root)`），祖先属于反向包含，于是被误判为越权并直接抛错
+- 为什么不能简单退回：`chdir()` 要逐级解析，删掉祖先链就回到"ls 正常、cd 报 Not a directory"
+- 修法：守卫把 userHome 的**祖先或自身**都视为合法（`covered(form, root) || covered(root, form)`）。
+  安全性不变：`metadataOnly` 是 `(literal …)`，只允许 stat 该路径本身，不给目录内容；
+  `users/2`（兄弟 home）、其下任意子路径、`system/*` 仍然全部拒绝
+- 测试：`commandRunner.spec.ts` 的守卫用例扩成"整条祖先链都放行 + 兄弟 home/子路径必须拒绝"
+- 运维注意：**gateway 子进程跑的是 `dist/src/cli/pilotdeck.js`**，只改 `src` 不 `npm run build`
+  的话 503 依旧（服务端 tsx 跑源码，网关跑编译产物，两边不同步）
+
+命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **859 tests / 857 pass / 0 fail / 2 skipped** ｜
+重启后 `GET /api/projects` → `200`，日志 `[gateway-pool] gateway ready for user 1`

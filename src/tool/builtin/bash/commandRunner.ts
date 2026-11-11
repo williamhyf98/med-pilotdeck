@@ -223,9 +223,15 @@ export function assertSandboxGrantsSafe(sandbox: CommandSandbox, userHome: strin
   // macOS allows literal stat() on selected ancestors to traverse into shared
   // runtimes. These literals do not grant directory contents; reject any that
   // point inside protected data (except the current user's home).
+  //
+  // chdir() resolves every path component, so the user's own ancestor chain
+  // (…/users, …/data-root, …) must be granted metadata too, otherwise `cd` in
+  // the sandbox fails with ENOTDIR even though `ls` works. Ancestors of the
+  // current home are therefore allowed, while sibling homes and anything
+  // below `users/` stay rejected.
   for (const grant of grants.metadataOnly ?? []) {
     for (const form of grantForms(grant)) {
-      if (own.some((root) => covered(form, root))) continue;
+      if (own.some((root) => covered(form, root) || covered(root, form))) continue;
       if ([...protectedPaths, ...otherHomes].some((target) =>
         grantForms(target).some((protectedForm) => covered(form, protectedForm)))) {
         throw new Error(`Unsafe sandbox metadata grant ${form} overlaps protected data.`);
