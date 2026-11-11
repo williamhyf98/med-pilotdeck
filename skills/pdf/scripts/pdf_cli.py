@@ -484,10 +484,43 @@ def resolve_pdf_role(palette: dict[str, Any] | None, role: Any, location: str) -
     """角色名 → 6 位 hex 色值。
 
     fg 字色 / bg 浅底 / bar 左侧色条 / fill 实底 / onFill 实底上的字。
+
+    设计档 A：除角色名外也接受自定义强调色（`#RRGGBB`），但必须与纸面拉开
+    4.5:1 对比度（这个色同时会当文字色用），否则直接报错。
+    语义四色（success/warning/danger/info）仍然只能写角色名。
     """
-    key = PDF_ROLE_KEYS.get(str(role or "").strip().lower())
+    text = str(role or "").strip()
+    module = _shared_tokens_module()
+    custom = module.normalize_hex(text) if module is not None else None
+    if custom:
+        ground = palette_colors(palette)["paper"]
+        if module is not None:
+            try:
+                custom = module.ensure_contrast(
+                    custom,
+                    ground,
+                    module.MIN_TEXT_CONTRAST,
+                    field=location,
+                )
+            except ValueError as exc:
+                raise PdfToolError(str(exc)) from exc
+            background = module.mix_hex(custom, toward=ground, weight=0.12)
+            on_fill = module.on_color(custom, dark=palette_colors(palette)["ink"])
+        else:  # 没有共享模块时按老规矩只认角色名
+            raise PdfToolError(f"{location} must be one of {PDF_ROLE_NAMES}")
+        return {
+            "fg": custom,
+            "bg": background,
+            "bar": custom,
+            "fill": custom,
+            "onFill": on_fill,
+        }
+    key = PDF_ROLE_KEYS.get(text.lower())
     if not key:
-        raise PdfToolError(f"{location} must be one of {PDF_ROLE_NAMES}")
+        raise PdfToolError(
+            f"{location} must be one of {PDF_ROLE_NAMES}, or a 6-digit hex accent "
+            "such as #1F5FA9"
+        )
     colors_map = palette_colors(palette)
     ink = colors_map["ink"]
     if key in PDF_SURFACE_ROLES:
@@ -2362,6 +2395,16 @@ def command_self_test(args: argparse.Namespace) -> int:
         pass
     else:
         raise PdfToolError("self-test expected theme roles to require a design theme")
+    # 设计档 A：自定义强调色（hex）放行，糊在纸面上的浅色必须被拒。
+    custom_accent = resolve_pdf_role(None, "#1F5FA9", "self-test.role")
+    if custom_accent["fill"] != "1F5FA9" or custom_accent["onFill"] not in {"FFFFFF", "000000"}:
+        raise PdfToolError(f"self-test custom accent drifted: {custom_accent}")
+    try:
+        resolve_pdf_role(None, "#FFF200", "self-test.role")
+    except PdfToolError:
+        pass
+    else:
+        raise PdfToolError("self-test expected low-contrast hex accent to be rejected")
 
     styled_spec = root / "styled.json"
     styled_pdf = root / "styled.pdf"

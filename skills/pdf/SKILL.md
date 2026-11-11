@@ -132,6 +132,8 @@ bash "$PDF_SKILL_ROOT/scripts/pdf.sh" make --title "病例报告" --markdown bod
   和 Word/PPT/Excel 同一个红/黄/绿/蓝，**不选主题也能用**；
   `primary` / `accent` / `support` / `ink` / `muted` / `rule` 跟随当前主题，
   `soft` / `paper` 当底色用。没选主题却写主题角色会直接报错，不会静默变黑。
+- 也可以直接给六位 hex 当强调色（`{"accent":"#1F5FA9"}`）：它同时会当文字色用，
+  所以要和纸面 ≥ 4.5:1，不达标直接报错并给出可用的近似色。
 
 ### 正文插图（用户上传照片）
 
