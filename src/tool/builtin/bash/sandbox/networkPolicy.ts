@@ -1,5 +1,5 @@
 import type { SandboxNetworkMode } from "../../../../pilot/config/types.js";
-import { tokenizeSimpleShell } from "../permissions.js";
+import { tokenizeSimpleShell } from "../tokenizeSimpleShell.js";
 
 /**
  * 按命令判定网络出口（spec §10.5）。
