@@ -71,8 +71,13 @@ export function buildNetworkRules(mode: SandboxNetworkMode, allow: readonly Sand
 }
 
 /** Framework Python calls realpath on each ancestor of a shared venv. */
-function metadataAncestors(config: SandboxExecConfig): string[] {
-  const prefixes = ["/Users", ...appReadOnlyGrants(config.appRoot, config.nodeBinDir)];
+// 目录的**祖先链**必须可 stat，否则 `chdir` 直接失败：
+// macOS 在 chdir 时要逐级解析路径，任何一层没拿到 file-read-metadata 就返回 ENOTDIR。
+// 少了 userHome 那一串，沙箱里 `cd inbox/x` 会报 "Not a directory"，
+// 而 `ls inbox/x` 却正常（open 只走叶子节点的 file* 授权）—— 这个组合会让人
+// 以为是脚本写错了，实际是"相对路径全部按错目录解析"，产出静默全 0。
+function metadataAncestors(config: SandboxExecConfig, userHome: string): string[] {
+  const prefixes = ["/Users", ...appReadOnlyGrants(config.appRoot, config.nodeBinDir), userHome];
   const result = new Set<string>();
   for (const grant of prefixes) {
     for (const spelling of pathForms(grant)) {
@@ -98,7 +103,7 @@ export function buildSandboxProfile(config: SandboxExecConfig, userHome: string)
     ...buildNetworkRules(config.network ?? "open", config.networkAllow),
     // Read metadata only for each ancestor. Subpath /Users would also reveal
     // the names of every user account through stat() calls.
-    `(allow file-read-metadata ${[...new Set(metadataAncestors(config))].map((p) => `(literal "${escapeSbpl(p)}")`).join(" ")})`,
+    `(allow file-read-metadata ${[...new Set(metadataAncestors(config, userHome))].map((p) => `(literal "${escapeSbpl(p)}")`).join(" ")})`,
     `(allow file-read* (literal "/") ${subpaths(readDirs)})`,
     `(allow file* (literal "/dev/null") ${subpaths(writeDirs)})`,
     "",
@@ -127,7 +132,7 @@ export class SandboxExecSandbox implements CommandSandbox {
     return {
       readOnly: [...new Set([...SYSTEM_READ_DIRS, ...appReadOnlyGrants(this.config.appRoot, this.config.nodeBinDir)].flatMap(pathForms))],
       writable: [...new Set([...SYSTEM_WRITE_DIRS, userHome].flatMap(pathForms))],
-      metadataOnly: metadataAncestors(this.config),
+      metadataOnly: metadataAncestors(this.config, userHome),
     };
   }
 

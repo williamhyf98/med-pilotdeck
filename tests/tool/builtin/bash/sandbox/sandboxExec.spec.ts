@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -60,6 +60,40 @@ test("every literal metadata grant in the profile is reported to the startup gua
   for (const literal of metadataLine.matchAll(/\(literal "([^"]+)"\)/g)) {
     assert.ok(sandbox.grants("/data/users/2").metadataOnly?.includes(literal[1]));
   }
+});
+
+test("userHome 的祖先链必须可读到元数据，否则沙箱里 chdir 会 ENOTDIR", () => {
+  const profile = buildSandboxProfile(config, "/data/users/2");
+  const metadataLine = profile.split("\n").find((line) => line.startsWith("(allow file-read-metadata "));
+  assert.ok(metadataLine);
+  // 每一层祖先都要在，缺一层 chdir 就失败
+  for (const ancestor of ["/data/users", "/data"]) {
+    assert.ok(
+      metadataLine.includes(`(literal "${ancestor}")`),
+      `metadata line is missing ancestor ${ancestor}`,
+    );
+  }
+});
+
+// 回归：曾经 ls 正常、cd 报 "Not a directory"，导致相对路径全部失效 → 静默全 0
+test("沙箱里 cd 进子目录要真的成功（macOS）", () => {
+  const sandboxExec = "/usr/bin/sandbox-exec";
+  if (process.platform !== "darwin" || !existsSync(sandboxExec)) return;
+  withTempDir((root) => {
+    const userHome = join(root, "users", "1");
+    const sub = join(userHome, "workspaces", "app", "ws", "inbox", "batch");
+    mkdirSync(sub, { recursive: true });
+    const profilePath = join(root, "profile.sb");
+    writeFileSync(profilePath, buildSandboxProfile({ appRoot: root, nodeBinDir: "/usr/bin" }, userHome), "utf8");
+    const run = spawnSync(
+      sandboxExec,
+      ["-f", profilePath, "/bin/sh", "-c", "cd inbox/batch && pwd"],
+      { cwd: join(userHome, "workspaces", "app", "ws"), encoding: "utf8" },
+    );
+    assert.equal(run.status, 0, run.stderr);
+    // macOS 的 /var 是指向 /private/var 的符号链接，两边都归一化再比
+    assert.equal(realpathSync(run.stdout.trim()), realpathSync(sub));
+  });
 });
 
 test("profile grants writes only under userHome, system temp dirs and /dev/null", () => {
