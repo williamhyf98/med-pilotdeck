@@ -17,7 +17,7 @@
 | **门 0** | 审计骨架 + 路径校验三条跑通 | **所有人**（含 B 轨） | ✅ **已通过（2026-11-11）** |
 | 门 1 | 删除能进 `.trash`、可恢复 | A 轨前端删除按钮 | 未开始 |
 | 门 2 | 前端工作区页 + 管理员总览可交付 | 只有 A 轨 | 未开始 |
-| 门 3 | 数据分析技能可交付（含安全用例全绿） | 只有 B 轨 | 未开始 |
+| 门 3 | 数据分析技能可交付（含安全用例全绿） | 只有 B 轨 | 🟡 代码侧已全绿（S1–S12 + C1–C12 + R1–R3）；差 arm64 容器实测 + C6/C11 在依赖齐全机器复跑 |
 
 > 心法：**门 0 谁都别跳；之后 A 轨（用户看得见 / 能删 / 知道 inbox 多大）与
 > B 轨（agent 能安全跑分析脚本）各走各的，唯一交汇点是门 0 和 B0。**
@@ -188,7 +188,7 @@
 | D5 | 执行期安全（AST 黑名单 + 运行期护栏 + 资源上限） | 1d | D4 | ✅ |
 | D6 | 产物落位 `exports/analysis/<slug>-<ts>/` | 0.3d | D4 | ✅ |
 | D7 | 管理员「数据分析依赖」页 | 1d | D3 | ✅ 设置页「扩展 / 技能依赖」+ 只读接口 |
-| D8 | 正确性 + 安全测试 | 1d | D5、D6 | 🟡 S1–S12 + C1/C12/R1 已覆盖；C2–C11、R2/R3 待补 |
+| D8 | 正确性 + 安全测试 | 1d | D5、D6 | ✅ S1–S12 + C1–C12 + R1–R3 全接上；C6/C11 因本机缺 lifelines/wfdb 显式 skip |
 
 **门 3 通过条件**：设计书 §14 第 24、25 条必须失败且留审计；
 真实 CSV 能产出统计结果与图文件。
@@ -385,3 +385,25 @@
 - 测试：`SkillsDeps.test.tsx`（3 条：渲染、接口失败提示、刷新重取）＋ 侧栏顺序断言同步
 - 命令：`cd ui && npx tsc --noEmit` ✅ ｜ `npx vitest run` → **169 files / 1230 passed** ｜
   `npx vite build` ✅
+
+### 2026-11-11 · D8 正确性 + 资源用例（C2–C11、R2/R3）
+
+- 新增 `tests/skills/data-analysis-correctness.spec.ts`（13 条）：**真执行器 + 真产物**，参考值不取自被测代码 ——
+  手算闭式解（C5 斜率/截距 = 2/3）、独立公式重算（C4 用均值和标准误重算 t，p 对一次性黄金值）、
+  同数据集上 scipy/statsmodels 的一次性值（C2/C3）、写进去的值再读回来（C10 PixelSpacing）
+- 覆盖：C2 分组均值 / C3 缺失值丢弃数 / C4 t 检验 / C5 OLS / C6 KM / C7 图像 ≥800px 且带标题轴标签 /
+  C8 UTF-8 BOM / C9 100 MB 分块读 / C10 DICOM 3 序列×2 层 / C11 wfdb / R2 超内存 / R2b 资源上限下发 / R3 大文件写 scratch
+- 实测（本机）：**10 通过 / 3 skip**；补 pydicom 后（`PILOTDECK_ANALYSIS_PYTHON=/tmp/pdvenv/bin/python`）
+  → **11 通过 / 2 skip**。C6 缺 lifelines、C11 缺 wfdb 显式 skip 并写明原因（本机 PyPI 被 SSL 中间证书挡住，
+  `pip install` 装不上；装得到依赖的机器上会自动从 skip 变成真跑，不假装通过）
+- 测试驱动修掉三个真问题（都是"正常脚本被误判成攻击"这类，比少一层防护更糟）：
+  ① numpy.testing 在 import 期跑 `lscpu` 探 ARM SVE（statsmodels 带进来）→ 若无条件拒，正常 OLS 直接 `blocked`；
+     护栏白名单补 `lscpu` / `nproc` / `sysctl`（`sysctl` 禁 `-w` / `-p` / `=` 写入参数）
+  ② urllib3 在 import 期 `socket(AF_INET6)` + `bind('::1')` 探 IPv6（pydicom 的依赖）→ 原 `socket.*` 一刀切
+     会让所有 requests 系库变 `blocked`；改成只拦真正出网的 8 个事件，`bind` 只许回环（不含 `0.0.0.0`）
+     → 顺带补上"对外监听"拒绝用例（`data-analysis-runner.spec.ts` 现有 8 条）
+  ③ `MemoryError` 原先被算成 `failed`，审计拿不到 `analysis.oom` → 执行器 status 判定改成
+     `timeout > blocked > oom > (ok|failed)` 的显式分支
+- 命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **857 tests / 852 pass / 0 fail / 5 skipped**
+  （5 = 原有 2 条 + D8 的 C6/C10/C11；C10 装 pydicom 后可跑通）
+- 遗留（不阻塞门 3 结论）：C6/C11 未在本机真跑，需在 node12 / 交付镜像（依赖齐全）上跑一次留档

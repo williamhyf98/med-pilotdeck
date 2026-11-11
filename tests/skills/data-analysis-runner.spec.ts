@@ -105,6 +105,7 @@ const GUARD_CASES = [
   ["pathlib 动态越界写", "import pathlib\npathlib.Path('../' * 3 + 'inbox/y.csv').write_text('y')\n"],
   ["getattr 绕开 os.system", "import os\ngetattr(os, 'sys' + 'tem')('echo hi')\n"],
   ["动态导入 socket", "import builtins\nmod = getattr(builtins, '__imp' + 'ort__')('so' + 'cket')\nmod.create_connection(('127.0.0.1', 9))\n"],
+  ["对外监听", "import builtins\nmod = getattr(builtins, '__imp' + 'ort__')('so' + 'cket')\ns = mod.socket()\ns.bind(('0.0.0.0', 0))\n"],
   ["动态导入 subprocess", "import builtins\nsp = getattr(builtins, '__imp' + 'ort__')('sub' + 'process')\nsp.run(['/bin/echo', 'hi'])\n"],
   ["chdir 到工作区外", "import os\nos.chdir('/')\n"],
 ];
