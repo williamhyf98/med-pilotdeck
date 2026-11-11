@@ -15,7 +15,7 @@
 | 门 | 含义 | 谁卡在这 | 状态 |
 |---|---|---|---|
 | **门 0** | 审计骨架 + 路径校验三条跑通 | **所有人**（含 B 轨） | ✅ **已通过（2026-11-11）** |
-| 门 1 | 删除能进 `.trash`、可恢复 | A 轨前端删除按钮 | 未开始 |
+| 门 1 | 删除能进 `.trash`、可恢复 | A 轨前端删除按钮 | 🟡 后端已通过（A1，2026-11-11）；差 A2 前端删除入口 |
 | 门 2 | 前端工作区页 + 管理员总览可交付 | 只有 A 轨 | 未开始 |
 | 门 3 | 数据分析技能可交付（含安全用例全绿） | 只有 B 轨 | 🟡 代码侧已全绿（S1–S12 + C1–C12 + R1–R3）；差 arm64 容器实测 + C6/C11 在依赖齐全机器复跑 |
 
@@ -120,13 +120,20 @@
 
 **前置**：门 0。**没有 `.trash` 兜底就不许出现删除入口。**
 
-- [ ] `ui/server/routes/storage.js` 的 `deleteTarget()`：`kind:'file'` 由 `fs.rm` 改
+- [x] `ui/server/routes/storage.js` 的 `deleteTarget()`：`kind:'file'` 由 `fs.rm` 改
       `rename` → `<groupRoot>/.trash/<相对路径>.<时间戳>`
-- [ ] 保留项拦截：`.trash` / `.usage.json` / `.pinned` / `.tmp` 及其子路径 → 400
-- [ ] `rename` 失败（磁盘满等）→ 可读错误 + 审计；**不得退化为 `rm`**
-- [ ] `POST /api/trash/restore`（原路径被占用则提示改名）
-- [ ] 每日过期清理任务（7 天，物理删除，写审计）
-- [ ] 测试：删 inbox 文件后原件消失、`.trash` 出现；恢复成功；保留项 400
+- [x] 保留项拦截：`.trash` / `.usage.json` / `.pinned` / `.tmp` 及其子路径 → 400
+- [x] `rename` 失败（磁盘满等）→ 可读错误 + 审计；**不得退化为 `rm`**
+- [x] `POST /api/trash/restore`（原路径被占用则提示改名）
+- [x] 每日过期清理任务（7 天，物理删除，写审计）
+- [x] 测试：删 inbox 文件后原件消失、`.trash` 出现；恢复成功；保留项 400
+
+实测结论（2026-11-11）：新增 `ui/server/services/trash.js`（rename 进 `.trash`、`parseTrashedRelative`
+还原路径、`restoreFromTrash`、`purgeExpiredTrash`）与 `trashRetention.js`（启动跑一次 + 每 24h）；
+`GET /api/storage/trash`、`POST /api/storage/trash/restore` 已接。`kind:'file'` 走软删除，
+`kind:'workspace'` / `kind:'archive'` 仍为 `fs.rm`（本轮范围外，见 §16 风险）。
+命令：`cd ui && npx vitest run server/routes/storage.trash.test.js server/routes/storage.test.js` → 11 passed；
+`cd ui && npm test` → 170 files / 1240 passed；根目录 `npm test` → **864 tests / 862 pass / 0 fail / 2 skipped**。
 
 **验收**：设计书 §14 第 4 条「进 `.trash`，提示"已移入回收站"，不得真删」。
 
@@ -711,3 +718,29 @@ dist 实测：`docx/references/specifications.md` → OK；`docx/../src/cli/pilo
 - 已知限制：`inspect --tables-out` 用 pdfplumber 的线条策略，三线表没有竖线时数不出表格
   （内容仍在文本层，可正常取文与目视）；
 - 未做：正文内联强调（`==高亮==`）、表格单元格级角色色、多栏版式
+
+### 2026-11-11 · A1 软删除（门 1 后端）
+
+- 问题：以前"删除文件"就是 `fs.rm`，删掉不可恢复；设计书 §6.3 要求先进 `.trash`，
+  7 天后才物理删除，且保留项不许删。
+- 实现：
+  - `ui/server/services/trash.js`：`moveFileToTrash()` 用同盘 `rename`（原子、不占双倍空间），
+    失败只抛 `trash_failed` + 写审计，**绝不退化成 `rm`**；条目名
+    `<groupRoot>/.trash/<原相对路径>.<YYYYMMDDTHHMMSSmmmZ>`，同毫秒冲突顺延 1ms，
+    后缀可解析回原路径；`restoreFromTrash()` 原路径被占用报 `target_exists`（409），
+    不覆盖；`purgeExpiredTrash()` 只删超过 7 天的，逐条写 `trash.purge` 审计
+  - `ui/server/services/trashRetention.js`：启动跑一次 + 每 24h（`unref` 定时器）；
+    多用户下枚举 `<PILOT_HOME>/users/*`，单用户退回根目录；失败只记日志，不影响启动
+  - `ui/server/routes/storage.js`：`kind:'file'` 改软删除；`scanFiles()` 跳过根级 `.trash`
+    （回收站文件不再出现在文件树/预览）；`totals` 新增 `trashBytes` 并计入 `totalBytes`
+    （回收站仍占磁盘），`workspaceBytes` 只算当前文件；保留项删除 → 400 `invalid_input`；
+    新增 `GET /api/storage/trash`（列表 + 合计）与 `POST /api/storage/trash/restore`
+    （400/404/409/500 按错误码映射）
+  - 审计动作：`file.trash` / `file.trash_failed` / `trash.restore` / `trash.restore_failed` /
+    `trash.purge` / `trash.purge_failed`
+- 验证：`cd ui && npx vitest run server/routes/storage.trash.test.js server/routes/storage.test.js`
+  → 11 passed（rename 成功、恢复、二次恢复 404、占位 409、保留项 400、过期清理、扫描口径）；
+  `cd ui && npm test` → 170 files / 1240 passed；根目录 `npm test` → 864 / 862 pass / 0 fail / 2 skipped
+- 已知限制：清空整个工作区（`kind:'workspace'`）与归档（`kind:'archive'`）仍是硬删；
+  前端还没有回收站列表/恢复入口（A2/A3）；`.trash` 本身仍可能被 bash 的 `rm/mv` 直接动到
+  （与 inbox 残留风险同类）
