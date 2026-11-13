@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CommandSandbox, SandboxWrapOptions } from "./index.js";
 import { appReadOnlyGrants, grantForms, skillCacheEnv, type SandboxGrants } from "./grants.js";
+import { resolveWriteRoots } from "./writeScope.js";
 
 export type BwrapSandboxConfig = {
   /** 代码根目录（含 package.json），只读挂载。 */
@@ -14,6 +15,8 @@ export type BwrapSandboxConfig = {
   network: boolean;
   /** 额外只读挂载的绝对路径（系统程序，如 python3、libreoffice）。 */
   extraBinds: string[];
+  /** 可写范围收窄开关（默认 false = 整个 userHome 可写）。 */
+  narrowWrites?: boolean;
 };
 
 /** 系统只读挂载（spec §16.4）。 */
@@ -35,12 +38,19 @@ export class BwrapSandbox implements CommandSandbox {
 
   constructor(private readonly config: BwrapSandboxConfig) {}
 
-  grants(userHome: string): SandboxGrants {
+  grants(userHome: string, writeRoots?: readonly string[]): SandboxGrants {
+    const writable = resolveWriteRoots({
+      userHome,
+      writeRoots,
+      narrowWrites: this.config.narrowWrites === true,
+    });
     const readOnly = [...SYSTEM_RO_BINDS, ...appReadOnlyGrants(this.config.appRoot, this.config.nodeBinDir),
       ...this.config.extraBinds.map((bind) => resolve(bind))].filter(existsSync);
+    // 收窄档位下 home 变成只读挂载（`--ro-bind`），读权限必须算进 readOnly。
+    if (this.config.narrowWrites === true) readOnly.push(...grantForms(resolve(userHome)));
     return {
       readOnly: [...new Set(readOnly.flatMap(grantForms))],
-      writable: grantForms(userHome),
+      writable: [...new Set(writable.flatMap(grantForms))],
     };
   }
 
@@ -51,6 +61,16 @@ export class BwrapSandbox implements CommandSandbox {
     const cwd = resolve(options.cwd);
     const userHome = resolve(options.userHome);
     if (existsSync(userHome)) mkdirSync(join(userHome, ".tmp"), { recursive: true });
+    const writeRoots = resolveWriteRoots({
+      userHome,
+      writeRoots: options.writeRoots,
+      narrowWrites: this.config.narrowWrites === true,
+    });
+    const narrowed = this.config.narrowWrites === true;
+    if (narrowed) {
+      // `--bind` 的源必须存在；.tmp 已建，.cache 可能还没建。
+      mkdirSync(join(userHome, ".cache"), { recursive: true });
+    }
     const args: string[] = [
       // 清空宿主环境，下方只通过 --setenv 注入白名单，避免密钥随子进程泄漏
       "--clearenv",
@@ -66,9 +86,20 @@ export class BwrapSandbox implements CommandSandbox {
     for (const path of appReadOnlyGrants(appRoot, nodeBinDir)) {
       args.push("--ro-bind", path, path);
     }
+    if (narrowed) {
+      // 收窄模式：home 整体只读，只有 writeRoots 逐个读写挂载。
+      // 先 ro-bind 再 bind 子目录 —— bwrap 按参数顺序挂载，后者覆盖前者。
+      args.push("--ro-bind", userHome, userHome);
+      const bindForms = new Set<string>();
+      for (const root of writeRoots) {
+        for (const form of grantForms(root)) bindForms.add(form);
+      }
+      for (const form of bindForms) args.push("--bind", form, form);
+    } else {
+      // 兼容模式：整个用户 home 是唯一可写区域。
+      args.push("--bind", userHome, userHome);
+    }
     args.push(
-      // 用户 home 是唯一可写区域
-      "--bind", userHome, userHome,
       // 隔离与生命周期
       "--unshare-pid",
       "--unshare-ipc",

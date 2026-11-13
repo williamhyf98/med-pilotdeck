@@ -184,6 +184,8 @@ export function createBashTool(options?: CreateBashToolOptions): PilotDeckToolDe
       const result = await runner.run(command, {
         cwd: context.cwd,
         env: context.env,
+        // 沙箱可写范围只到当前工作区（收窄开关打开时生效）。
+        writeRoots: [context.cwd],
         timeoutMs,
         signal: context.abortSignal,
         onStdout: emitProgress?.("stdout"),

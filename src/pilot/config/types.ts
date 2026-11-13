@@ -33,6 +33,12 @@ export interface SandboxConfig {
   networkOpenSkills?: string[];
   /** 额外只读挂载的绝对路径（系统程序）。默认 []。 */
   extraReadOnlyBinds?: string[];
+  /**
+   * 可写范围收窄：`true` = 沙箱只允许写「当前工作区 + `<home>/.cache` + `<home>/.tmp`」；
+   * `false`（默认）= 保持历史行为，整个用户 home 可写。
+   * 见 `docs/plans/sandbox-write-scope-narrowing.md`。
+   */
+  narrowWrites?: boolean;
 }
 
 export type PilotConfigSourceKind = "default" | "project" | "env";

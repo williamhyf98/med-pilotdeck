@@ -59,7 +59,7 @@ function sandboxDiagnostic(key: keyof SandboxConfig, message: string, diagnostic
 
 function sandboxBool(
   raw: Record<string, unknown>,
-  key: "allowUnsandboxed",
+  key: "allowUnsandboxed" | "narrowWrites",
   fallback: boolean,
   diagnostics: PilotConfigDiagnostic[],
 ): boolean {
@@ -157,6 +157,7 @@ function parseSandbox(raw: unknown, diagnostics: PilotConfigDiagnostic[]): Sandb
     networkAllow: sandboxNetworkAllow(section, diagnostics),
     networkOpenSkills: sandboxNetworkOpenSkills(section, diagnostics),
     extraReadOnlyBinds: sandboxBinds(section, diagnostics),
+    narrowWrites: sandboxBool(section, "narrowWrites", false, diagnostics),
   };
 }
 

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { CommandSandbox, SandboxWrapOptions } from "./index.js";
 import { appReadOnlyGrants, grantForms, type SandboxGrants } from "./grants.js";
+import { resolveWriteRoots } from "./writeScope.js";
 import type { SandboxNetworkAllowEntry, SandboxNetworkMode } from "../../../../pilot/config/types.js";
 
 export type SandboxExecConfig = {
@@ -20,6 +21,8 @@ export type SandboxExecConfig = {
    * 所以这里**只取 port**，host 字段在 macOS 上不生效。
    */
   networkAllow?: SandboxNetworkAllowEntry[];
+  /** 可写范围收窄开关（默认 false = 整个 userHome 可写）。 */
+  narrowWrites?: boolean;
 };
 
 export const SANDBOX_EXEC_BIN = "/usr/bin/sandbox-exec";
@@ -92,9 +95,24 @@ function metadataAncestors(config: SandboxExecConfig, userHome: string): string[
 }
 
 /** 生成 SBPL profile（spec §16.5）。 */
-export function buildSandboxProfile(config: SandboxExecConfig, userHome: string): string {
-  const readDirs = [...SYSTEM_READ_DIRS, ...appReadOnlyGrants(config.appRoot, config.nodeBinDir)].flatMap(pathForms);
-  const writeDirs = [...pathForms(userHome), ...SYSTEM_WRITE_DIRS];
+export function buildSandboxProfile(
+  config: SandboxExecConfig,
+  userHome: string,
+  writeRoots?: readonly string[],
+): string {
+  // 读范围**必须显式包含整个 userHome**：默认（兼容）档位下 home 是写规则
+  // `(allow file* (subpath home))` 顺带给的读权限；一旦收窄成只读挂载，
+  // 写规则里就没有 home 了 —— 不在这里补一条，收窄后连 `memory/`、`inbox/`
+  // 都读不了（2026-11-12 实测：`cat ~/memory/x` → EPERM）。读范围不随收窄变化。
+  const readDirs = [...SYSTEM_READ_DIRS, ...appReadOnlyGrants(config.appRoot, config.nodeBinDir), ...pathForms(userHome)].flatMap(pathForms);
+  const writeDirs = [
+    ...resolveWriteRoots({
+      userHome,
+      writeRoots,
+      narrowWrites: config.narrowWrites === true,
+    }).flatMap(pathForms),
+    ...SYSTEM_WRITE_DIRS,
+  ];
   return [
     "(version 1)",
     "(deny default)",
@@ -128,16 +146,26 @@ export class SandboxExecSandbox implements CommandSandbox {
 
   constructor(private readonly config: SandboxExecConfig) {}
 
-  grants(userHome: string): SandboxGrants {
+  grants(userHome: string, writeRoots?: readonly string[]): SandboxGrants {
+    const writable = resolveWriteRoots({
+      userHome,
+      writeRoots,
+      narrowWrites: this.config.narrowWrites === true,
+    });
     return {
-      readOnly: [...new Set([...SYSTEM_READ_DIRS, ...appReadOnlyGrants(this.config.appRoot, this.config.nodeBinDir)].flatMap(pathForms))],
-      writable: [...new Set([...SYSTEM_WRITE_DIRS, userHome].flatMap(pathForms))],
+      // 读范围始终包含整个 home（见 buildSandboxProfile 的注释）。
+      readOnly: [...new Set([...SYSTEM_READ_DIRS, ...appReadOnlyGrants(this.config.appRoot, this.config.nodeBinDir), ...pathForms(userHome)].flatMap(pathForms))],
+      writable: [...new Set([...SYSTEM_WRITE_DIRS, ...writable].flatMap(pathForms))],
       metadataOnly: metadataAncestors(this.config, userHome),
     };
   }
 
   wrap(command: string, options: SandboxWrapOptions): { file: string; args: string[] } {
     mkdirSync(join(options.userHome, ".tmp"), { recursive: true });
+    // 收窄模式下 .cache 也在可写清单里；先建出来，避免首次加载字体缓存时踩 ENOENT。
+    if (this.config.narrowWrites === true) {
+      mkdirSync(join(options.userHome, ".cache"), { recursive: true });
+    }
     // 单条命令的网络覆盖（spec §10.5）：false=断网；true=允许出网。
     // 全局配了 networkAllow 时，放行的技能走端口级 allowlist，而不是全开。
     const mode: SandboxNetworkMode =
@@ -152,7 +180,13 @@ export class SandboxExecSandbox implements CommandSandbox {
     // able to replace the policy file between wrap() and sandbox-exec startup.
     return {
       file: SANDBOX_EXEC_BIN,
-      args: ["-p", buildSandboxProfile({ ...this.config, network: mode }, options.userHome), "/bin/sh", "-c", command],
+      args: [
+        "-p",
+        buildSandboxProfile({ ...this.config, network: mode }, options.userHome, options.writeRoots),
+        "/bin/sh",
+        "-c",
+        command,
+      ],
     };
   }
 

@@ -11,6 +11,7 @@ import {
   type CommandNetworkDecision,
 } from "./sandbox/networkPolicy.js";
 import { networkIsolationLeaks, probeNetworkIsolation } from "./sandbox/netProbe.js";
+import { describeWriteScope } from "./sandbox/writeScope.js";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import type { SandboxNetworkMode } from "../../../pilot/config/types.js";
@@ -21,6 +22,11 @@ export type PilotDeckCommandOptions = {
   env?: NodeJS.ProcessEnv;
   /** 用户 home（沙箱可写根）。缺省时取 env 中的 PILOT_HOME。 */
   userHome?: string;
+  /**
+   * 本次调用声明可写的目录（通常是 agent 工作区）。
+   * 仅当 `multiUser.sandbox.narrowWrites: true` 时生效；缺省为 `[cwd]`。
+   */
+  writeRoots?: readonly string[];
   timeoutMs: number;
   signal?: AbortSignal;
   /** Called on each stdout chunk as it arrives. Errors thrown by the callback are swallowed. */
@@ -84,6 +90,7 @@ export async function initializeSandbox(config: MultiUserConfig, env: NodeJS.Pro
   const sandboxConfig = config.sandbox ?? {};
   const networkPolicy = sandboxConfig.network ?? "open";
   const networkAllow = sandboxConfig.networkAllow ?? [];
+  const narrowWrites = sandboxConfig.narrowWrites ?? false;
   assertNetworkPolicySupported(networkPolicy, process.platform, networkAllow);
   const sandbox = await selectSandbox({
     configuredKind: sandboxConfig.kind,
@@ -94,12 +101,13 @@ export async function initializeSandbox(config: MultiUserConfig, env: NodeJS.Pro
     extraReadOnlyBinds: sandboxConfig.extraReadOnlyBinds,
     networkMode: networkPolicy,
     networkAllow,
+    narrowWrites,
   });
   if (multiUserEnabled && sandbox.kind !== "none") {
     if (!env.PILOT_HOME || !isAbsolute(env.PILOT_HOME)) {
       throw new Error("Multi-user sandbox requires an absolute PILOT_HOME.");
     }
-    assertSandboxGrantsSafe(sandbox, env.PILOT_HOME);
+    assertSandboxGrantsSafe(sandbox, env.PILOT_HOME, { narrowWrites });
   }
   let probe: { ok: true } | { ok: false; reason: string };
   try {
@@ -121,7 +129,10 @@ export async function initializeSandbox(config: MultiUserConfig, env: NodeJS.Pro
     console.warn("[sandbox] Multi-user mode running without an OS sandbox (multiUser.sandbox.allowUnsandboxed: true). This is UNSAFE for production.");
   }
   setCommandSandbox(sandbox);
-  console.log(`[sandbox] ${sandbox.kind} (${probe.ok ? "ok" : probe.reason})`);
+  console.log(
+    `[sandbox] ${sandbox.kind} (${probe.ok ? "ok" : probe.reason})` +
+      `, writes=${describeWriteScope(narrowWrites)}`,
+  );
 
   const openSkills = sandboxConfig.networkOpenSkills ?? [];
   setNetworkPolicy({ policy: networkPolicy, openSkills });
@@ -185,8 +196,35 @@ async function assertNetworkIsolationOnStartup(
   console.log(`[sandbox] 网络自检通过（${observation.durationMs} ms）：内网/公网/DNS 均不可达`);
 }
 
-/** Verify the actual OS grants, not the assumed layout of the application. */
-export function assertSandboxGrantsSafe(sandbox: CommandSandbox, userHome: string): void {
+/**
+ * 用户可以整体抛弃的目录（W6）。收窄档位下这些**任何一个**出现在 writable 里都是配置错误：
+ * - `memory` / `logs`：agent 的记忆与日志，写坏等于篡改审计
+ * - `skills`：技能脚本本体，写坏等于任意执行
+ * - `.trash`：回收站（删除/恢复靠 rename），被 bash 直接 rm 等于绕过审计
+ * - `projects`：项目元数据（`.cwd` marker），不是用户文件
+ * - `workspaces`：工作区根；只允许当前工作区（由 `writeRoots` 声明）
+ */
+const NARROW_FORBIDDEN_HOME_DIRS = ["memory", "logs", "skills", ".trash", "projects", "workspaces"] as const;
+
+export type SandboxGrantScopes = {
+  /** 开关打开时才做 W6 反向断言；关闭时保持历史行为（整个 home 可写）。 */
+  narrowWrites?: boolean;
+  /** 本次允许可写的根（通常是 agent 工作区）。 */
+  writeRoots?: readonly string[];
+};
+
+/**
+ * Verify the actual OS grants, not the assumed layout of the application.
+ *
+ * `narrowWrites: true` 时额外断言（W6，fail-closed）：可写范围只能是
+ * 「`writeRoots` + `.cache` + `.tmp`」，任何覆盖 `memory/logs/skills/.trash/projects`、
+ * 覆盖 `workspaces` 根或兄弟工作区、落在 home 之外的可写授权都视为实现错误，启动即失败。
+ */
+export function assertSandboxGrantsSafe(
+  sandbox: CommandSandbox,
+  userHome: string,
+  scopes: SandboxGrantScopes = {},
+): void {
   const home = resolve(userHome);
   const users = dirname(home);
   const dataRoot = dirname(users);
@@ -220,6 +258,7 @@ export function assertSandboxGrantsSafe(sandbox: CommandSandbox, userHome: strin
       }
     }
   }
+  if (scopes.narrowWrites === true) assertNarrowWritableScope(grants.writable, home, scopes.writeRoots ?? [], covered);
   // macOS allows literal stat() on selected ancestors to traverse into shared
   // runtimes. These literals do not grant directory contents; reject any that
   // point inside protected data (except the current user's home).
@@ -235,6 +274,46 @@ export function assertSandboxGrantsSafe(sandbox: CommandSandbox, userHome: strin
       if ([...protectedPaths, ...otherHomes].some((target) =>
         grantForms(target).some((protectedForm) => covered(form, protectedForm)))) {
         throw new Error(`Unsafe sandbox metadata grant ${form} overlaps protected data.`);
+      }
+    }
+  }
+}
+
+/** W6：收窄档位下把"可写范围"逐条压回白名单，任何越界即抛错。 */
+function assertNarrowWritableScope(
+  writable: readonly string[],
+  home: string,
+  writeRoots: readonly string[],
+  covered: (candidate: string, root: string) => boolean,
+): void {
+  // macOS 的 /var ↔ /private/var：授权与 home 可能以两种拼写出现，两边都要比。
+  const homeForms = grantForms(home);
+  const workspacesForms = grantForms(join(home, "workspaces"));
+  const forbidden = NARROW_FORBIDDEN_HOME_DIRS.filter((name) => name !== "workspaces")
+    .map((name) => ({ name, forms: grantForms(join(home, name)) }));
+  const allowedForms = writeRoots.flatMap((root) => grantForms(root));
+  for (const grant of writable) {
+    for (const form of grantForms(grant)) {
+      // 1) 可写授权必须落在 home 内：落到 /tmp 之类等于绕开全部隔离。
+      if (!homeForms.some((root) => covered(form, root))) {
+        throw new Error(`Unsafe narrow write grant ${form} escapes the user home.`);
+      }
+      // 2) home 本身永远不能再整体可写。
+      if (homeForms.some((root) => covered(root, form))) {
+        throw new Error(`Unsafe narrow write grant ${form} covers the whole user home.`);
+      }
+      // 3) `workspaces` 根不可写；其内部只允许 `writeRoots` 声明的当前工作区。
+      if (workspacesForms.some((root) => covered(root, form))) {
+        throw new Error(`Unsafe narrow write grant ${form} covers the workspaces root.`);
+      }
+      if (workspacesForms.some((root) => covered(form, root)) && !allowedForms.some((allowed) => covered(form, allowed))) {
+        throw new Error(`Unsafe narrow write grant ${form} covers another user workspace.`);
+      }
+      // 4) 其余受保护目录，双向都拒绝（覆盖它，或位于它内部）。
+      for (const { name, forms } of forbidden) {
+        if (forms.some((dir) => covered(dir, form) || covered(form, dir))) {
+          throw new Error(`Unsafe narrow write grant ${form} overlaps protected directory ${join(home, name)}.`);
+        }
       }
     }
   }
@@ -266,6 +345,7 @@ export class NodeShellCommandRunner implements PilotDeckCommandRunner {
             cwd: options.cwd,
             userHome: options.userHome ?? resolvePilotHome(options.env ?? process.env),
             env: options.env ?? process.env,
+            writeRoots: options.writeRoots ?? [options.cwd],
             ...(networkDecision ? { network: networkDecision.allowNetwork } : {}),
           })
         : undefined;

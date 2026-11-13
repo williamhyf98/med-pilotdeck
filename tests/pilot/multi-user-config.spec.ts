@@ -24,6 +24,7 @@ test("sandbox defaults when the section is absent: auto kind, no unsandboxed, ne
     networkAllow: [],
     networkOpenSkills: [],
     extraReadOnlyBinds: [],
+    narrowWrites: false,
   });
   assert.deepEqual(diags, []);
 });
@@ -38,6 +39,7 @@ test("sandbox overrides are applied without diagnostics", () => {
         networkAllow: [{ host: "10.31.112.13", port: 19400 }],
         networkOpenSkills: ["docx", "pptx"],
         extraReadOnlyBinds: ["/usr/local/bin"],
+        narrowWrites: true,
       },
     },
     diags,
@@ -49,6 +51,7 @@ test("sandbox overrides are applied without diagnostics", () => {
     networkAllow: [{ host: "10.31.112.13", port: 19400 }],
     networkOpenSkills: ["docx", "pptx"],
     extraReadOnlyBinds: ["/usr/local/bin"],
+    narrowWrites: true,
   });
   assert.deepEqual(diags, []);
 });
@@ -69,6 +72,7 @@ test("invalid sandbox values fall back to defaults with one diagnostic per key",
     networkAllow: [],
     networkOpenSkills: [],
     extraReadOnlyBinds: [],
+    narrowWrites: false,
   });
   const paths = diags.map((d) => d.path).sort();
   assert.deepEqual(paths, [
@@ -78,4 +82,14 @@ test("invalid sandbox values fall back to defaults with one diagnostic per key",
     "multiUser.sandbox.network",
   ]);
   assert.ok(diags.every((d) => d.code === "multi-user.sandbox.invalid" && d.severity === "warning" && d.recoverable === true));
+});
+test("narrowWrites falls back to false with a diagnostic when not a boolean", () => {
+  const diags = [];
+  const r = parseMultiUserConfig({ sandbox: { narrowWrites: "yes" } }, diags);
+  assert.equal(r.sandbox?.narrowWrites, false);
+  assert.deepEqual(
+    diags.map((d) => d.path),
+    ["multiUser.sandbox.narrowWrites"],
+  );
+  assert.equal(diags[0].code, "multi-user.sandbox.invalid");
 });

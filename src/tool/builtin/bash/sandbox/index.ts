@@ -14,6 +14,11 @@ export type SandboxWrapOptions = {
   userHome: string;
   env: NodeJS.ProcessEnv;
   /**
+   * 本次调用声明可写的目录（通常是 agent 的工作区）。
+   * 只有 `narrowWrites: true` 时才生效；`false` 时仍以整个 userHome 为可写根。
+   */
+  writeRoots?: readonly string[];
+  /**
    * 本次调用的网络出口覆盖：`false` = 断网，`true` = 放行。
    * 不传时使用沙箱创建时的配置。用于「按技能区分出口」（spec §10.5）。
    */
@@ -27,7 +32,7 @@ export interface CommandSandbox {
   /** 启动时自检：二进制存在、能执行 `true`，失败则返回原因 */
   probe(): Promise<{ ok: true } | { ok: false; reason: string }>;
   /** Effective filesystem grants for this user's command (including canonical symlink targets). */
-  grants(userHome: string): SandboxGrants;
+  grants(userHome: string, writeRoots?: readonly string[]): SandboxGrants;
 }
 
 export interface SelectSandboxOptions {
@@ -43,16 +48,23 @@ export interface SelectSandboxOptions {
   networkMode?: SandboxNetworkMode;
   /** `allowlist` 档的端口白名单（macOS 只按 port 生成规则）。 */
   networkAllow?: SandboxNetworkAllowEntry[];
+  /**
+   * 可写范围收窄开关（`multiUser.sandbox.narrowWrites`）。默认 `false` = 整个 home 可写。
+   * 见 `docs/plans/sandbox-write-scope-narrowing.md`。
+   */
+  narrowWrites?: boolean;
 }
 
 export type BwrapFactoryOptions = {
   network: boolean;
   extraReadOnlyBinds: string[];
+  narrowWrites: boolean;
 };
 
 export type SandboxExecFactoryOptions = {
   network: SandboxNetworkMode;
   networkAllow: SandboxNetworkAllowEntry[];
+  narrowWrites: boolean;
 };
 
 /** 可替换的实现工厂，便于测试注入探测结果；生产代码使用默认工厂。 */
@@ -68,6 +80,7 @@ const DEFAULT_FACTORIES: SandboxFactories = {
       nodeBinDir: dirname(process.execPath),
       network: options.network,
       extraBinds: options.extraReadOnlyBinds,
+      narrowWrites: options.narrowWrites,
     }),
   "sandbox-exec": (options) =>
     new SandboxExecSandbox({
@@ -75,6 +88,7 @@ const DEFAULT_FACTORIES: SandboxFactories = {
       nodeBinDir: dirname(process.execPath),
       network: options.network,
       networkAllow: options.networkAllow,
+      narrowWrites: options.narrowWrites,
     }),
 };
 
@@ -119,10 +133,12 @@ async function resolveSandbox(
   const bwrapOptions: BwrapFactoryOptions = {
     network: options.network ?? true,
     extraReadOnlyBinds: options.extraReadOnlyBinds ?? [],
+    narrowWrites: options.narrowWrites ?? false,
   };
   const execOptions: SandboxExecFactoryOptions = {
     network: options.networkMode ?? (options.network === false ? "none" : "open"),
     networkAllow: options.networkAllow ?? [],
+    narrowWrites: options.narrowWrites ?? false,
   };
   if (options.configuredKind) {
     return { sandbox: instantiate(options.configuredKind, factories, bwrapOptions, execOptions) };

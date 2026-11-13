@@ -77,7 +77,12 @@ test("with a sandbox, wrap() receives cwd, userHome, env and its argv is spawned
 
   assert.deepEqual(sandbox.wrapCalls, [{
     command: "ls",
-    options: { cwd: "/root/.pilotdeck/users/u1/projects", userHome: "/root/.pilotdeck/users/u1", env },
+    options: {
+      cwd: "/root/.pilotdeck/users/u1/projects",
+      userHome: "/root/.pilotdeck/users/u1",
+      env,
+      writeRoots: ["/root/.pilotdeck/users/u1/projects"],
+    },
   }]);
   assert.equal(calls[0].file, "/fake/sandbox-launcher");
   assert.deepEqual(calls[0].args, ["--wrapped", "ls"]);
@@ -143,7 +148,10 @@ test("startup probe: a configured sandbox-exec is probed by initializeSandbox an
       {},
     );
     assert.equal(sandbox.kind, "sandbox-exec");
-    assert.ok(logs.includes("[sandbox] sandbox-exec (ok)"), `unexpected startup log: ${logs.join(" | ")}`);
+    assert.ok(
+      logs.some((line) => /^\[sandbox\] sandbox-exec \(ok\), writes=home$/.test(line)),
+      `unexpected startup log: ${logs.join(" | ")}`,
+    );
     assert.equal(getCommandSandbox(), sandbox);
   } finally {
     console.log = originalLog;
@@ -210,6 +218,62 @@ test("startup guard permits ancestor metadata but rejects literal metadata insid
     for (const target of [join(dataRoot, "system"), join(dataRoot, "system", "auth.db"),
       join(users, "3"), join(users, "3", "secret"), join(users, "3", ".tmp")]) {
       assert.throws(() => assertSandboxGrantsSafe(sandbox([target]), home), /Unsafe sandbox metadata grant/);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---- S4 / W6：收窄档位的可写范围反向断言 ----
+function narrowGuardSandbox(writable: string[]): CommandSandbox {
+  return {
+    kind: "sandbox-exec",
+    grants: () => ({ readOnly: [], writable }),
+    wrap: () => ({ file: "/usr/bin/sandbox-exec", args: [] }),
+    probe: async () => ({ ok: true }),
+  };
+}
+
+test("narrow writes guard：工作区 + .cache + .tmp 是唯一合法组合", () => {
+  const root = mkdtempSync(join(tmpdir(), "sb-narrow-ok-"));
+  try {
+    const home = join(root, "data", "users", "2");
+    const workspace = join(home, "workspaces", "p1");
+    mkdirSync(workspace, { recursive: true });
+    const writable = [workspace, join(home, ".cache"), join(home, ".tmp")];
+    assert.doesNotThrow(() =>
+      assertSandboxGrantsSafe(narrowGuardSandbox(writable), home, { narrowWrites: true, writeRoots: [workspace] }),
+    );
+    // 兼容档位不做这条断言（整个 home 可写是历史行为）
+    assert.doesNotThrow(() => assertSandboxGrantsSafe(narrowGuardSandbox([home]), home));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("narrow writes guard：覆盖 home、受保护目录、兄弟工作区、home 之外一律拒绝", () => {
+  const root = mkdtempSync(join(tmpdir(), "sb-narrow-bad-"));
+  try {
+    const home = join(root, "data", "users", "2");
+    const workspace = join(home, "workspaces", "p1");
+    mkdirSync(workspace, { recursive: true });
+    const bad: Array<[string, RegExp]> = [
+      [home, /covers the whole user home/],
+      [join(home, "memory"), /protected directory/],
+      [join(home, "logs", "audit"), /protected directory/],
+      [join(home, "skills"), /protected directory/],
+      [join(home, ".trash"), /protected directory/],
+      [join(home, "projects"), /protected directory/],
+      [join(home, "workspaces"), /covers the workspaces root/],
+      [join(home, "workspaces", "p2"), /another user workspace/],
+      [join(root, "tmp"), /escapes the user home/],
+    ];
+    for (const [path, pattern] of bad) {
+      assert.throws(
+        () => assertSandboxGrantsSafe(narrowGuardSandbox([path]), home, { narrowWrites: true, writeRoots: [workspace] }),
+        pattern,
+        `expected ${path} to be rejected`,
+      );
     }
   } finally {
     rmSync(root, { recursive: true, force: true });

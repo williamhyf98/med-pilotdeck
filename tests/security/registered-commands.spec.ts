@@ -53,6 +53,21 @@ test("compliant registered invocation is allowed", async () => {
   });
 });
 
+// 链式分析：上一次 run 的产物直接作为下一次 `--input`，不必先 cp 回 scratch。
+test("--input may point at a previous run under exports/", async () => {
+  await withWorkspace(async ({ workspace }) => {
+    const tokens = [
+      "bash", DATA_SCRIPT, "run",
+      "--script", "scratch/work/t2/analysis.py",
+      "--input", "exports/analysis/xiaohua-dedup/20261112-062930/tables",
+      "--out", "exports/analysis/xiaohua-cat",
+    ];
+    const result = evaluateRegisteredCommand(tokens, { policy: DEFAULT_POLICY, cwd: workspace });
+    assert.equal(result.kind, "allow");
+    assert.equal(result.rule.id, "data-analysis.run");
+  });
+});
+
 test("writing outside the registered output roots is a security violation", async () => {
   await withWorkspace(async ({ workspace }) => {
     const tokens = ["bash", DATA_SCRIPT, "run", "--out", "inbox/x"];

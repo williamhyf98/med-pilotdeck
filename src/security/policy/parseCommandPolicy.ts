@@ -58,10 +58,12 @@ export const REGISTERED_COMMANDS: Readonly<Record<string, CommandCeiling>> = fre
     outputRoots: Object.values(options).includes("output") ? WRITE_ROOTS : [],
     maxTimeoutMs: 600_000,
   }])),
-  // 数据分析：读 inbox/scratch、写 exports、单次最长 30 分钟（spec §15.6 D4）
+  // 数据分析：读 inbox/scratch/exports、写 exports、单次最长 30 分钟（spec §15.6 D4）
+  // `exports` 可读是为了链式分析：上一次 run 清洗好的表直接作为下一次 `--input`，
+  // 不必先 cp 回 scratch（那条路要靠手写 glob，最容易写错）。产物仍然只写 exports。
   "data-analysis.run": {
     options: Object.keys(SKILL_COMMAND_SPECS["data-analysis.run"]!),
-    inputRoots: ["inbox", "scratch"],
+    inputRoots: ["inbox", "scratch", "exports"],
     outputRoots: ["exports"],
     maxTimeoutMs: 1_800_000,
   },
