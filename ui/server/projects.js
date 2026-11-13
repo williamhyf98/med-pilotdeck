@@ -25,6 +25,8 @@ import { randomBytes } from 'node:crypto';
 
 import {
     getPilotDeckGateway,
+    abortViaGateway,
+    isSessionActiveViaGateway,
 } from './pilotdeck-bridge.js';
 import { mapLegacySessionPresentation } from '../../src/web/server/legacySessionPresentation.js';
 import {
@@ -46,10 +48,11 @@ import {
     ensureWorkspaceLayout,
 } from './utils/pilotPaths.js';
 import { deleteSessionArtifacts } from './utils/sessionCleanup.js';
-import { archiveAndDeleteProjectStorage } from './utils/projectDelete.js';
+import { purgeSessionMemoryRows } from './services/sessionMemory.js';
+import { purgeProjectStorage } from './utils/projectDelete.js';
 import { mapCronRunOutcome } from '../../src/cron/protocol/types.js';
 import sessionManager from './sessionManager.js';
-import { applyCustomSessionNames } from './database/db.js';
+import { applyCustomSessionNames, sessionNamesDb } from './database/db.js';
 import { requireUserScope } from './middleware/userScope.js';
 
 /** Project type ids (P0). Immutable after create. */
@@ -602,31 +605,134 @@ async function renameProject(projectName, displayName) {
     return { success: true };
 }
 
-async function deleteSession(projectName, sessionId, _options = {}) {
+async function deleteSession(projectName, sessionId, options = {}) {
     const pilotHome = resolveScopedHome();
-    const result = await deleteSessionArtifacts(projectName, sessionId, { pilotHome });
-    return result;
+    // 子任务会话（background_task）的 transcript 落在父会话目录下，
+    // 只能靠调用方给的相对路径定位；这里一路透传，别吞掉。
+    const result = await deleteSessionArtifacts(projectName, sessionId, {
+        pilotHome,
+        relativeTranscriptPath: options.relativeTranscriptPath ?? undefined,
+    });
+    // 文件清完还要清记忆库里的原始对话（L0）。L1/L2 是项目级提炼结论，按设计保留。
+    const memory = await purgeSessionMemoryRows({
+        projectId: result.projectId,
+        sessionId: result.sessionId,
+        pilotHome,
+    });
+    return { ...result, deleted: { ...result.deleted, memoryRows: memory.deletedRows } };
+}
+
+/** 项目 chats 目录里的所有会话 id（排除回退影子副本）。 */
+async function listProjectSessionIds(chatDir) {
+    let entries = [];
+    try {
+        entries = await fs.readdir(chatDir);
+    } catch (error) {
+        if (error?.code === 'ENOENT') return [];
+        throw error;
+    }
+    return entries
+        .filter((name) => name.endsWith('.jsonl') && !name.includes('.pre-rewind'))
+        .map((name) => name.slice(0, -'.jsonl'.length));
 }
 
 /**
- * P7: delete project chats + project memory; archive `$WS` under archives/projects.
+ * 删掉绑在这个项目上的 cron 任务。
  *
- * @returns {{ success: boolean, projectId: string, archivePath: string | null }}
+ * 项目没了但定时任务还在，下一次到点就会拿旧 projectKey 空跑一轮；
+ * 网关不可用/超时都只记日志 —— 不能因为清理附属物失败就卡住"删项目"本身。
  */
-async function deleteProject(projectName, force = false) {
+async function deleteProjectCronTasks(projectId) {
+    const withTimeout = (promise, ms) => Promise.race([
+        promise,
+        new Promise((resolve) => setTimeout(() => resolve(null), ms)),
+    ]);
+    try {
+        const gateway = await withTimeout(getPilotDeckGateway(), 5000);
+        if (!gateway) return { deleted: 0, reason: 'timeout' };
+        const listed = await withTimeout(
+            gateway.cronList({ projectKey: projectId, includeHistory: false, limit: 200 }),
+            5000,
+        );
+        const tasks = Array.isArray(listed?.tasks) ? listed.tasks : [];
+        let deleted = 0;
+        for (const task of tasks) {
+            if (!task?.taskId) continue;
+            const ok = await withTimeout(
+                gateway.cronDelete({ taskId: task.taskId, projectKey: projectId, stopRunning: true })
+                    .then(() => true),
+                5000,
+            );
+            if (ok) deleted += 1;
+        }
+        return { deleted };
+    } catch (error) {
+        console.warn('[projects] cron cleanup on delete failed:', error?.message ?? error);
+        return { deleted: 0, reason: 'error' };
+    }
+}
+
+/**
+ * 删除项目（2026-11-12 起是**真删**，不留归档、不进回收站）。
+ *
+ * 顺序是刻意的：先能失败的（掐运行、删 cron），最后动不可逆的磁盘。
+ * 任何一步失败都抛错并说明停在哪，不做"删一半当成功"。
+ *
+ * @param {string} projectName 项目名 / 项目 id
+ * @param {{ force?: boolean, confirmName?: string }} [options]
+ * @returns {Promise<{ success: boolean, projectId: string, deleted: object }>}
+ */
+async function deleteProject(projectName, options = {}) {
+    const force = Boolean(options.force);
     const pilotHome = resolveScopedHome();
     const projectId = resolveProjectStorageId(
         resolveGatewayProjectKey(projectName, pilotHome),
         pilotHome,
     );
-    const result = await archiveAndDeleteProjectStorage({
-        pilotHome,
-        projectId,
-        force,
-    });
+
+    // 输入项目名确认（存储页与侧边栏都走这条）：接受展示名、项目 id、调用方给的名字。
+    if (typeof options.confirmName === 'string') {
+        const meta = await readProjectMeta(pilotHome, projectId).catch(() => null);
+        const displayName = typeof meta?.displayName === 'string' && meta.displayName.trim()
+            ? meta.displayName.trim()
+            : projectId;
+        const accepted = new Set([displayName, projectId, projectName].filter(Boolean));
+        if (!accepted.has(options.confirmName.trim())) {
+            throw Object.assign(new Error('Confirmation name does not match the project'), {
+                code: 'CONFIRM_MISMATCH',
+            });
+        }
+    }
+
+    const chatDir = resolveProjectChatDir(projectName, pilotHome);
+    const sessionIds = await listProjectSessionIds(chatDir);
+
+    // 1) 掐掉还在跑的 turn：不掐的话网关会在删除之后继续往旧路径写。
+    for (const sessionId of sessionIds) {
+        if (!isSessionActiveViaGateway(sessionId)) continue;
+        try {
+            await abortViaGateway(sessionId);
+        } catch (error) {
+            console.warn(`[projects] abort on project delete failed for ${sessionId}:`, error?.message ?? error);
+        }
+    }
+
+    // 2) 删网关里的定时任务（best-effort）。
+    const cron = await deleteProjectCronTasks(projectId);
+
+    // 3) 真删磁盘。
+    const result = await purgeProjectStorage({ pilotHome, projectId, force });
+
+    // 4) 清会话名（SQLite）。做在磁盘之后：名字行是最后一点痕迹。
+    try {
+        sessionNamesDb.deleteNamesForSessions(requireUserScope().userId, sessionIds);
+    } catch (error) {
+        console.warn('[projects] session_names cleanup failed:', error?.message ?? error);
+    }
+
     directoryCache.delete(projectName);
     directoryCache.delete(projectId);
-    return result;
+    return { ...result, cron };
 }
 
 async function resolveProjectIdForPathOrName(projectName, fullPath) {

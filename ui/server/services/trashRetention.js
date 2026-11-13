@@ -35,6 +35,8 @@ export async function runTrashRetention(options = {}) {
         retentionDays = TRASH_RETENTION_DAYS,
     } = options;
     const homes = options.homes ?? await listUserHomes(env);
+    // 整包回收站（`<home>/.trash/groups`）随项目归档一起下线，存量由启动时
+    // `purgeLegacyProjectArchives()` 清掉，这里只处理工作区里的文件级回收站。
     return purgeExpiredTrashInHomes(homes, { now, retentionDays });
 }
 

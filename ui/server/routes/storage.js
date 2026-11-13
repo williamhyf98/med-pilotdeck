@@ -1,3 +1,17 @@
+/**
+ * 存储页（设置 → 存储）的唯一数据源。
+ *
+ * 2026-11-12 重构后语义收窄为「**项目视角**」：
+ *
+ * - 只列**在用项目**：名称 / 类型 / 会话数 / 占用 / 回收站占用 / 最后活动；
+ * - 项目里的目录清单与**工作区页面一致**（inbox / exports / scratch + 用户自建目录）；
+ *   隐藏目录（`.trash` / `.pilotdeck`）不出现，`.pilotdeck` 也不计入占用；
+ * - 只提供两个动作：只读预览文件、**永久删除整个项目**；
+ * - 不再有归档 tab，也不再从这一页删单个文件（文件级删除只属于工作区页的回收站）。
+ *
+ * 删除动作本身走 `DELETE /api/projects/:projectName`（见 `projects.deleteProject`），
+ * 这里不重复实现，避免两套删除语义。
+ */
 import express from 'express';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -7,13 +21,7 @@ import {
     PROJECT_TYPE_KEYS,
     resolveScopedHome,
 } from '../utils/pilotPaths.js';
-import {
-    TRASH_DIR_NAME,
-    isReservedRelativePath,
-    listTrash,
-    moveFileToTrash,
-    restoreFromTrash,
-} from '../services/trash.js';
+import { listTrash } from '../services/trash.js';
 
 const router = express.Router();
 const TYPE_KEYS = new Set(Object.values(PROJECT_TYPE_KEYS));
@@ -80,8 +88,11 @@ async function scanFiles(root) {
         for (const entry of entries) {
             const absolutePath = path.join(directory, entry.name);
             if (entry.isSymbolicLink()) continue;
-            // 软删除的文件仍在磁盘上，但不算"当前文件"：树和预览都不该看到它。
-            if (directory === root && entry.name === TRASH_DIR_NAME) continue;
+            // `.` 开头的都是内部物件，不当作"用户的文件"：
+            // `.trash`（软删除，单独记 trashBytes）、`.pilotdeck`（会话级过程数据，
+            // 有自己的 14 天 TTL）、`.usage.json` / `.pinned` 之类的记账文件。
+            // 与工作区页面一致：那边也是 name.startsWith('.') 一律不显示。
+            if (entry.name.startsWith('.')) continue;
             if (entry.isDirectory()) {
                 await visit(absolutePath);
                 continue;
@@ -102,6 +113,77 @@ async function scanFiles(root) {
     return files;
 }
 
+/** 三个默认目录（工作区布局保证存在）+ 用户自建的顶层目录。 */
+const DEFAULT_TOP_LEVEL_DIRS = ['inbox', 'exports', 'scratch'];
+
+/**
+ * 顶层目录清单：**和工作区页面看到的一模一样** —— 三个规定目录永远在，
+ * 再加用户新建的顶层目录（空的也列出来，否则"我建的空目录去哪了"）。
+ * 这里的数字都从已扫出的 `files[]` 里算，不额外遍历。
+ */
+async function readTopLevelFolders(root, files) {
+    const counts = new Map();
+    const sizes = new Map();
+    for (const file of files) {
+        const top = file.path.split('/')[0];
+        counts.set(top, (counts.get(top) ?? 0) + 1);
+        sizes.set(top, (sizes.get(top) ?? 0) + file.sizeBytes);
+    }
+
+    const names = new Set(DEFAULT_TOP_LEVEL_DIRS);
+    const directoryNames = new Set();
+    for (const entry of await readDirectoryNames(root)) {
+        // 只认目录；隐藏目录（.trash / .pilotdeck）不进清单
+        if (!entry.isDirectory()) continue;
+        if (entry.name.startsWith('.')) continue;
+        directoryNames.add(entry.name);
+        names.add(entry.name);
+    }
+    // 顶层散落文件（正常布局里不会有，但别让它从页面上凭空消失）
+    for (const top of counts.keys()) {
+        if (!directoryNames.has(top)) names.add(top);
+    }
+
+    const ordered = [
+        ...DEFAULT_TOP_LEVEL_DIRS,
+        ...[...names].filter((name) => !DEFAULT_TOP_LEVEL_DIRS.includes(name)).sort((a, b) => a.localeCompare(b)),
+    ];
+    return ordered.map((name) => ({
+        name,
+        fileCount: counts.get(name) ?? 0,
+        sizeBytes: sizes.get(name) ?? 0,
+    }));
+}
+
+/**
+ * 工作区用量按顶层目录聚合：只从已经扫出来的 `files[]` 里加，不额外遍历磁盘。
+ * 自定义目录（如 `我的资料/`）不进这三项，所以 `inbox + exports + scratch <= totalBytes`。
+ */
+function aggregateUsage(files, totalBytes) {
+    const usage = {
+        inboxBytes: 0,
+        exportsBytes: 0,
+        scratchBytes: 0,
+        totalBytes,
+    };
+    for (const file of files) {
+        const topLevel = file.path.split('/')[0];
+        if (topLevel === 'inbox') usage.inboxBytes += file.sizeBytes;
+        else if (topLevel === 'exports') usage.exportsBytes += file.sizeBytes;
+        else if (topLevel === 'scratch') usage.scratchBytes += file.sizeBytes;
+    }
+    return usage;
+}
+
+/** 单个工作区（任意目录）的用量，给工作区面板的三条用量条用。 */
+export async function measureWorkspaceUsage(workspaceRoot) {
+    const files = await scanFiles(workspaceRoot);
+    return aggregateUsage(
+        files,
+        files.reduce((sum, file) => sum + file.sizeBytes, 0),
+    );
+}
+
 async function readProjectMeta(pilotHome, typeKey, projectId) {
     try {
         const raw = await fs.readFile(
@@ -115,184 +197,103 @@ async function readProjectMeta(pilotHome, typeKey, projectId) {
     }
 }
 
-async function scanWorkspaceGroups(pilotHome) {
+/**
+ * 会话数与最后活动时间：数 `projects/<类型>/<项目>/chats/*.jsonl`。
+ * 回退影子副本（`.pre-rewind`）不是独立会话，跳过。
+ */
+async function readSessionStats(pilotHome, typeKey, projectId) {
+    const chatDir = path.join(pilotHome, 'projects', typeKey, projectId, 'chats');
+    let entries = [];
+    try {
+        entries = await fs.readdir(chatDir, { withFileTypes: true });
+    } catch {
+        return { sessionCount: 0, lastActivityAt: null };
+    }
+    let count = 0;
+    let last = 0;
+    for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith('.jsonl') || entry.name.includes('.pre-rewind')) continue;
+        count += 1;
+        try {
+            const stat = await fs.stat(path.join(chatDir, entry.name));
+            if (stat.mtimeMs > last) last = stat.mtimeMs;
+        } catch {
+            // 统计失败不影响列表
+        }
+    }
+    return { sessionCount: count, lastActivityAt: last > 0 ? new Date(last).toISOString() : null };
+}
+
+async function scanProjectGroups(pilotHome) {
     const workspaceRoot = path.join(pilotHome, 'workspaces');
-    const groups = [];
+    const projects = [];
     for (const typeEntry of await readDirectoryNames(workspaceRoot)) {
         if (!typeEntry.isDirectory() || !TYPE_KEYS.has(typeEntry.name)) continue;
         const typeRoot = path.join(workspaceRoot, typeEntry.name);
         for (const projectEntry of await readDirectoryNames(typeRoot)) {
             if (!projectEntry.isDirectory() || !isSafeSegment(projectEntry.name)) continue;
             const groupRoot = path.join(typeRoot, projectEntry.name);
-            const [files, meta, trashEntries] = await Promise.all([
+            const [files, meta, trashEntries, sessionStats] = await Promise.all([
                 scanFiles(groupRoot),
                 readProjectMeta(pilotHome, typeEntry.name, projectEntry.name),
                 listTrash(groupRoot),
+                readSessionStats(pilotHome, typeEntry.name, projectEntry.name),
             ]);
-            groups.push({
+            const sizeBytes = files.reduce((sum, file) => sum + file.sizeBytes, 0);
+            projects.push({
                 id: projectEntry.name,
-                projectId: projectEntry.name,
                 displayName: typeof meta.displayName === 'string' && meta.displayName.trim()
                     ? meta.displayName.trim()
                     : projectEntry.name,
                 projectType: meta.type
-                    ?? (typeEntry.name === PROJECT_TYPE_KEYS.war_trauma
-                        ? 'war_trauma'
-                        : 'general_medicine'),
+                    ?? (typeEntry.name === PROJECT_TYPE_KEYS.war_trauma ? 'war_trauma' : 'general_medicine'),
                 typeKey: typeEntry.name,
-                sizeBytes: files.reduce((sum, file) => sum + file.sizeBytes, 0),
+                sizeBytes,
+                usage: aggregateUsage(files, sizeBytes),
                 trashBytes: trashEntries.reduce((sum, entry) => sum + entry.sizeBytes, 0),
                 trashCount: trashEntries.length,
+                ...sessionStats,
                 files,
+                folders: await readTopLevelFolders(groupRoot, files),
             });
         }
     }
-    return groups.sort((left, right) => left.displayName.localeCompare(right.displayName));
-}
-
-async function scanArchiveGroups(pilotHome) {
-    const archiveRoot = path.join(pilotHome, 'archives', 'projects');
-    const groups = [];
-    for (const entry of await readDirectoryNames(archiveRoot)) {
-        if (!entry.isDirectory() || !isSafeSegment(entry.name)) continue;
-        const files = await scanFiles(path.join(archiveRoot, entry.name));
-        const timestampMatch = entry.name.match(/-(\d{8}T\d{6}Z(?:-[A-Za-z0-9._-]+)?)$/);
-        groups.push({
-            id: entry.name,
-            projectId: timestampMatch ? entry.name.slice(0, -timestampMatch[0].length) : entry.name,
-            archivedAt: timestampMatch?.[1] ?? null,
-            sizeBytes: files.reduce((sum, file) => sum + file.sizeBytes, 0),
-            files,
-        });
-    }
-    return groups.sort((left, right) => right.id.localeCompare(left.id));
+    return projects.sort((left, right) => left.displayName.localeCompare(right.displayName));
 }
 
 export async function scanStorage(pilotHome = resolveScopedHome()) {
-    const [workspaces, archives] = await Promise.all([
-        scanWorkspaceGroups(pilotHome),
-        scanArchiveGroups(pilotHome),
-    ]);
-    const workspaceBytes = workspaces.reduce((sum, group) => sum + group.sizeBytes, 0);
-    const archiveBytes = archives.reduce((sum, group) => sum + group.sizeBytes, 0);
-    const trashBytes = workspaces.reduce((sum, group) => sum + (group.trashBytes ?? 0), 0);
+    const projects = await scanProjectGroups(pilotHome);
+    const workspaceBytes = projects.reduce((sum, project) => sum + project.sizeBytes, 0);
+    const trashBytes = projects.reduce((sum, project) => sum + (project.trashBytes ?? 0), 0);
     return {
         totals: {
-            // 回收站里的文件仍占磁盘，所以计入 totalBytes；但不计入 workspaceBytes，
-            // 那是"当前文件"的口径。
-            totalBytes: workspaceBytes + archiveBytes + trashBytes,
+            // 回收站里的文件仍占磁盘，计入 totalBytes，但不计入 workspaceBytes（那是"当前文件"口径）。
+            totalBytes: workspaceBytes + trashBytes,
             workspaceBytes,
-            archiveBytes,
             trashBytes,
+            projectCount: projects.length,
         },
-        workspaces,
-        archives,
+        projects,
     };
 }
 
-function resolveGroupRoot(pilotHome, scope, groupId, typeKey) {
-    if (!isSafeSegment(groupId)) throw invalidInput('Invalid storage group');
-    if (scope === 'workspace') {
-        if (!TYPE_KEYS.has(typeKey)) throw invalidInput('Invalid project type');
-        return path.join(pilotHome, 'workspaces', typeKey, groupId);
-    }
-    if (scope === 'archive') {
-        return path.join(pilotHome, 'archives', 'projects', groupId);
-    }
-    throw invalidInput('Invalid storage scope');
-}
-
-async function resolveManagedFile(pilotHome, input) {
-    const groupRoot = resolveGroupRoot(pilotHome, input.scope, input.groupId, input.typeKey);
-    if (typeof input.path !== 'string' || !input.path || path.isAbsolute(input.path)) {
+/** 只读预览：只允许落在某个**在用项目**的工作区里。 */
+export async function resolvePreviewTarget(pilotHome, query) {
+    const { typeKey, groupId, path: relativePath } = query;
+    if (!TYPE_KEYS.has(typeKey)) throw invalidInput('Invalid project type');
+    if (!isSafeSegment(groupId)) throw invalidInput('Invalid project id');
+    if (typeof relativePath !== 'string' || !relativePath || path.isAbsolute(relativePath)) {
         throw invalidInput('A relative file path is required');
     }
-    const target = path.resolve(groupRoot, input.path);
+    const groupRoot = path.join(pilotHome, 'workspaces', typeKey, groupId);
+    const target = path.resolve(groupRoot, relativePath);
     assertInside(groupRoot, target);
-    const [realRoot, realTarget, realHome] = await Promise.all([
-        fs.realpath(groupRoot),
-        fs.realpath(target),
-        fs.realpath(pilotHome),
-    ]);
+    assertWithinUserHome(target, pilotHome);
+    const [realRoot, realTarget] = await Promise.all([fs.realpath(groupRoot), fs.realpath(target)]);
     assertInside(realRoot, realTarget);
-    assertWithinUserHome(realTarget, realHome);
-    const stat = await fs.lstat(realTarget);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw invalidInput('Target is not a regular file');
-    return { groupRoot: realRoot, target: realTarget, stat };
-}
-
-function normalizeDeleteTargets(pilotHome, targets) {
-    if (!Array.isArray(targets) || targets.length === 0) {
-        throw invalidInput('Select at least one file or group');
-    }
-    if (targets.length > 1000) throw invalidInput('Too many delete targets');
-
-    return targets.map((target) => {
-        if (!target || typeof target !== 'object') throw invalidInput('Invalid delete target');
-        const groupRoot = resolveGroupRoot(pilotHome, target.scope, target.groupId, target.typeKey);
-        if (target.kind === 'workspace') {
-            if (target.scope !== 'workspace') throw invalidInput('Invalid workspace delete target');
-            return { ...target };
-        }
-        if (target.kind === 'archive') {
-            if (target.scope !== 'archive') throw invalidInput('Invalid archive delete target');
-            return { ...target };
-        }
-        if (target.kind !== 'file' || typeof target.path !== 'string' || path.isAbsolute(target.path)) {
-            throw invalidInput('Invalid file delete target');
-        }
-        const absolutePath = path.resolve(groupRoot, target.path);
-        assertInside(groupRoot, absolutePath);
-        assertWithinUserHome(absolutePath, pilotHome);
-        if (isReservedRelativePath(target.path)) {
-            throw invalidInput(
-                `"${target.path.split(/[\\/]/)[0]}" is a reserved system path and cannot be deleted`,
-            );
-        }
-        return { ...target };
-    });
-}
-
-async function deleteTarget(pilotHome, target) {
-    const groupRoot = resolveGroupRoot(pilotHome, target.scope, target.groupId, target.typeKey);
-    if (target.kind === 'archive') {
-        await fs.rm(groupRoot, { recursive: true, force: false });
-        return;
-    }
-    if (target.kind === 'workspace') {
-        await fs.rm(groupRoot, { recursive: true, force: false });
-        await Promise.all(['inbox', 'exports', 'scratch'].map((name) =>
-            fs.mkdir(path.join(groupRoot, name), { recursive: true }),
-        ));
-        return;
-    }
-    const resolved = await resolveManagedFile(pilotHome, target);
-    // A1：文件不真删，rename 进 `.trash`；失败由 moveFileToTrash 抛错，绝不退化 rm。
-    await moveFileToTrash(
-        resolved.groupRoot,
-        path.relative(resolved.groupRoot, resolved.target).split(path.sep).join('/'),
-    );
-}
-
-export async function deleteStorageTargets(targets, pilotHome = resolveScopedHome()) {
-    const normalized = normalizeDeleteTargets(pilotHome, targets);
-    const settled = await Promise.allSettled(
-        normalized.map((target) => deleteTarget(pilotHome, target)),
-    );
-    const deleted = [];
-    const failed = [];
-    settled.forEach((result, index) => {
-        const target = targets[index];
-        if (result.status === 'fulfilled') {
-            deleted.push(target);
-        } else {
-            failed.push({
-                target,
-                error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-            });
-        }
-    });
-    return { deleted, failed };
+    const stat = await fs.stat(realTarget);
+    if (!stat.isFile()) throw invalidInput('Not a regular file');
+    return { target: realTarget, stat };
 }
 
 router.get('/', async (_req, res) => {
@@ -307,12 +308,7 @@ router.get('/', async (_req, res) => {
 router.get('/preview', async (req, res) => {
     try {
         const pilotHome = resolveScopedHome();
-        const resolved = await resolveManagedFile(pilotHome, {
-            scope: req.query.scope,
-            groupId: req.query.groupId,
-            typeKey: req.query.typeKey,
-            path: req.query.path,
-        });
+        const resolved = await resolvePreviewTarget(pilotHome, req.query);
         const kind = previewKind(resolved.target);
         if (!kind) return res.status(415).json({ error: 'This file type cannot be previewed' });
 
@@ -336,76 +332,6 @@ router.get('/preview', async (req, res) => {
     } catch (error) {
         const status = error?.code === 'invalid_input' ? 400 : error?.code === 'ENOENT' ? 404 : 500;
         return res.status(status).json({ error: error instanceof Error ? error.message : String(error) });
-    }
-});
-
-router.post('/delete', async (req, res) => {
-    try {
-        const result = await deleteStorageTargets(req.body?.targets);
-        const snapshot = await scanStorage();
-        res.status(result.failed.length > 0 ? 207 : 200).json({ ...result, snapshot });
-    } catch (error) {
-        const status = error?.code === 'invalid_input' ? 400 : 500;
-        res.status(status).json({
-            error: error instanceof Error ? error.message : String(error),
-            code: error?.code ?? 'storage_error',
-        });
-    }
-});
-
-function statusForTrashError(error) {
-    switch (error?.code) {
-        case 'invalid_input': return 400;
-        case 'trash_not_found': return 404;
-        case 'target_exists': return 409;
-        default: return 500;
-    }
-}
-
-/** 回收站列表：`.trash` 里还有哪些文件、什么时候删的、多大。 */
-router.get('/trash', async (req, res) => {
-    try {
-        const pilotHome = resolveScopedHome();
-        const groupRoot = resolveGroupRoot(
-            pilotHome,
-            req.query.scope ?? 'workspace',
-            req.query.groupId,
-            req.query.typeKey,
-        );
-        const entries = await listTrash(groupRoot);
-        res.json({
-            entries,
-            totals: {
-                count: entries.length,
-                bytes: entries.reduce((sum, entry) => sum + entry.sizeBytes, 0),
-            },
-        });
-    } catch (error) {
-        res.status(statusForTrashError(error)).json({
-            error: error instanceof Error ? error.message : String(error),
-            code: error?.code ?? 'storage_error',
-        });
-    }
-});
-
-/** 恢复：`path` 是回收站里的相对路径（`GET /trash` 返回的 `path`）。 */
-router.post('/trash/restore', async (req, res) => {
-    try {
-        const pilotHome = resolveScopedHome();
-        const groupRoot = resolveGroupRoot(
-            pilotHome,
-            req.body?.scope ?? 'workspace',
-            req.body?.groupId,
-            req.body?.typeKey,
-        );
-        const restored = await restoreFromTrash(groupRoot, req.body?.path);
-        const snapshot = await scanStorage();
-        res.json({ restored, snapshot });
-    } catch (error) {
-        res.status(statusForTrashError(error)).json({
-            error: error instanceof Error ? error.message : String(error),
-            code: error?.code ?? 'storage_error',
-        });
     }
 });
 

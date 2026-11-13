@@ -10,7 +10,7 @@ import { DEFAULT_RETENTION } from "../../src/pilot/config/parseMultiUserConfig.j
 const DAY = 86_400_000;
 function home() {
   const h = mkdtempSync(join(tmpdir(), "pd-ret-"));
-  for (const d of ["logs", ".tmp/chat-attachments/old", ".tmp/chat-attachments/new", "archives/projects"]) mkdirSync(join(h, d), { recursive: true });
+  for (const d of ["logs", ".tmp/chat-attachments/old", ".tmp/chat-attachments/new"]) mkdirSync(join(h, d), { recursive: true });
   return h;
 }
 const old = (p, days) => { const t = (Date.now() - days * DAY) / 1000; utimesSync(p, t, t); };
@@ -35,34 +35,6 @@ test("removes attachments older than attachmentMaxAgeDays and prunes empty dirs"
   assert.equal(r.removedAttachments, 1);
   assert.ok(!existsSync(join(h, ".tmp/chat-attachments/old")));
   assert.ok(existsSync(join(h, ".tmp/chat-attachments/new/b.png")));
-  rmSync(h, { recursive: true, force: true });
-});
-
-test("removes project archives older than archiveMaxAgeDays by their name timestamp", async () => {
-  const h = home();
-  const fmt = (d) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-  const oldDir = join(h, "archives/projects", `general_med-x-${fmt(new Date(Date.now() - 40 * DAY))}`);
-  const newDir = join(h, "archives/projects", `general_med-y-${fmt(new Date(Date.now() - 2 * DAY))}`);
-  mkdirSync(oldDir); mkdirSync(newDir); mkdirSync(join(h, "archives/projects/not-a-timestamp"));
-  const r = await runRetention({ pilotHome: h, config: DEFAULT_RETENTION });
-  assert.equal(r.removedArchives.length, 1);
-  assert.ok(!existsSync(oldDir)); assert.ok(existsSync(newDir)); assert.ok(existsSync(join(h, "archives/projects/not-a-timestamp")));
-  rmSync(h, { recursive: true, force: true });
-});
-
-test("logs the archives it is about to remove, by name, capped at 20", async () => {
-  const h = home();
-  const fmt = (d) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-  const stamp = fmt(new Date(Date.now() - 40 * DAY));
-  for (let i = 0; i < 23; i += 1) mkdirSync(join(h, "archives/projects", `general_med-p${i}-${stamp}`));
-  const lines = [];
-  const r = await runRetention({ pilotHome: h, config: DEFAULT_RETENTION, log: (m) => lines.push(m) });
-  assert.equal(r.removedArchives.length, 23);
-  const line = lines.find((l) => l.startsWith("[retention] removing "));
-  assert.ok(line, `no removal line in ${JSON.stringify(lines)}`);
-  assert.match(line, /^\[retention\] removing 23 expired project archive\(s\): /);
-  assert.match(line, /\+3 more$/);
-  assert.equal(line.split(", ").length, 21);
   rmSync(h, { recursive: true, force: true });
 });
 

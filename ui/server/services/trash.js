@@ -183,7 +183,7 @@ async function removeEmptyParents(trashRoot, absolutePath) {
 
 /** 恢复一条回收站条目；原路径已存在时抛 `target_exists`，不覆盖。 */
 export async function restoreFromTrash(groupRoot, trashedRelative, options = {}) {
-    const { audit = true } = options;
+    const { audit = true, actor } = options;
     const parsed = parseTrashedRelative(trashedRelative);
     if (!parsed) {
         const error = new Error('Not a trash entry');
@@ -222,6 +222,7 @@ export async function restoreFromTrash(groupRoot, trashedRelative, options = {})
                 tool: 'trash.restore',
                 target: parsed.originalPath,
                 reason: error?.code ?? 'restore_failed',
+                ...(actor ? { actor } : {}),
                 meta: { message: error instanceof Error ? error.message : String(error) },
             });
         }
@@ -238,13 +239,38 @@ export async function restoreFromTrash(groupRoot, trashedRelative, options = {})
             tool: 'trash.restore',
             target: parsed.originalPath,
             reason: 'restored',
+            ...(actor ? { actor } : {}),
             meta: { deletedAt: parsed.deletedAt.toISOString() },
         });
     }
     return { path: parsed.originalPath, deletedAt: parsed.deletedAt.toISOString() };
 }
 
-/** 列出回收站条目（只走 `.trash` 内部）。 */
+/** 目录/文件大小（不跟随软链），给"整目录进回收站"的条目录大小。 */
+async function measureEntry(absolute) {
+    const stat = await fs.lstat(absolute).catch(() => null);
+    if (!stat) return 0;
+    if (!stat.isDirectory()) return stat.size;
+    let total = 0;
+    let dirents = [];
+    try {
+        dirents = await fs.readdir(absolute, { withFileTypes: true });
+    } catch {
+        return 0;
+    }
+    for (const dirent of dirents) {
+        total += await measureEntry(path.join(absolute, dirent.name));
+    }
+    return total;
+}
+
+/**
+ * 列出回收站条目（只走 `.trash` 内部）。
+ *
+ * 一个条目既可以是文件（`.trash/inbox/a.csv.<stamp>`），也可以是**整个目录**
+ * （`.trash/我的资料.<stamp>`，来自"清空工作区"）。先判断当前项自身是否带
+ * 时间戳后缀：带后缀就是条目、不再往里走；不带才是回收站的中间层级，继续递归。
+ */
 export async function listTrash(groupRoot) {
     const trashRoot = path.join(groupRoot, TRASH_DIR_NAME);
     const entries = [];
@@ -258,25 +284,68 @@ export async function listTrash(groupRoot) {
         }
         for (const entry of dirents) {
             const absolute = path.join(directory, entry.name);
-            if (entry.isDirectory()) {
-                await visit(absolute);
-                continue;
-            }
-            if (!entry.isFile() || entry.isSymbolicLink()) continue;
             const trashedPath = toPosix(absolute, groupRoot);
             const parsed = parseTrashedRelative(trashedPath);
-            if (!parsed) continue;
-            const stat = await fs.stat(absolute);
-            entries.push({
-                path: trashedPath,
-                originalPath: parsed.originalPath,
-                deletedAt: parsed.deletedAt.toISOString(),
-                sizeBytes: stat.size,
-            });
+            if (parsed) {
+                entries.push({
+                    path: trashedPath,
+                    originalPath: parsed.originalPath,
+                    deletedAt: parsed.deletedAt.toISOString(),
+                    sizeBytes: await measureEntry(absolute),
+                    kind: entry.isDirectory() ? 'directory' : 'file',
+                });
+                continue;
+            }
+            if (entry.isDirectory()) await visit(absolute);
         }
     }
     await visit(trashRoot);
     return entries.sort((left, right) => right.deletedAt.localeCompare(left.deletedAt));
+}
+
+/**
+ * 一次性物理删除若干条目（过期清理 / 手动清空共用）。
+ * 目录条目必须 `recursive: true`，否则 `fs.rm` 会 EISDIR 失败。
+ */
+async function purgeEntries(groupRoot, entries, { reason, audit, actor, retentionDays }) {
+    let purged = 0;
+    let freedBytes = 0;
+    for (const entry of entries) {
+        try {
+            await fs.rm(path.join(groupRoot, entry.path), { recursive: true, force: true });
+            purged += 1;
+            freedBytes += entry.sizeBytes;
+            if (audit) {
+                appendAudit({
+                    action: 'trash.purge',
+                    decision: 'allow',
+                    tool: reason === 'manual' ? 'trash.empty' : 'trash.retention',
+                    target: entry.originalPath,
+                    reason,
+                    ...(actor ? { actor } : {}),
+                    meta: {
+                        deletedAt: entry.deletedAt,
+                        ...(retentionDays !== undefined ? { retentionDays } : {}),
+                        bytes: entry.sizeBytes,
+                        kind: entry.kind ?? 'file',
+                    },
+                });
+            }
+        } catch (error) {
+            if (audit) {
+                appendAudit({
+                    action: 'trash.purge_failed',
+                    decision: 'error',
+                    tool: reason === 'manual' ? 'trash.empty' : 'trash.retention',
+                    target: entry.originalPath,
+                    reason: error?.code ?? 'purge_failed',
+                    ...(actor ? { actor } : {}),
+                    meta: { message: error instanceof Error ? error.message : String(error) },
+                });
+            }
+        }
+    }
+    return { purged, freedBytes };
 }
 
 /** 物理删除超过保留期的条目；返回 `{ purged, freedBytes }`。 */
@@ -287,43 +356,19 @@ export async function purgeExpiredTrash(groupRoot, options = {}) {
         audit = true,
     } = options;
     const cutoff = now.getTime() - retentionDays * 86_400_000;
+    const entries = (await listTrash(groupRoot))
+        .filter((entry) => new Date(entry.deletedAt).getTime() <= cutoff);
+    return purgeEntries(groupRoot, entries, { reason: 'expired', audit, retentionDays });
+}
+
+/**
+ * 手动清空回收站——**整个系统唯一不可恢复的入口**（设计书 §6.3）。
+ * 调用方必须先做二次确认；这里只负责删干净并写审计。
+ */
+export async function emptyTrash(groupRoot, options = {}) {
+    const { audit = true, actor } = options;
     const entries = await listTrash(groupRoot);
-    let purged = 0;
-    let freedBytes = 0;
-    for (const entry of entries) {
-        if (new Date(entry.deletedAt).getTime() > cutoff) continue;
-        try {
-            await fs.rm(path.join(groupRoot, entry.path), { force: true });
-            purged += 1;
-            freedBytes += entry.sizeBytes;
-            if (audit) {
-                appendAudit({
-                    action: 'trash.purge',
-                    decision: 'allow',
-                    tool: 'trash.retention',
-                    target: entry.originalPath,
-                    reason: 'expired',
-                    meta: {
-                        deletedAt: entry.deletedAt,
-                        retentionDays,
-                        bytes: entry.sizeBytes,
-                    },
-                });
-            }
-        } catch (error) {
-            if (audit) {
-                appendAudit({
-                    action: 'trash.purge_failed',
-                    decision: 'error',
-                    tool: 'trash.retention',
-                    target: entry.originalPath,
-                    reason: error?.code ?? 'purge_failed',
-                    meta: { message: error instanceof Error ? error.message : String(error) },
-                });
-            }
-        }
-    }
-    return { purged, freedBytes };
+    return purgeEntries(groupRoot, entries, { reason: 'manual', audit, actor });
 }
 
 async function listGroupRoots(pilotHome) {

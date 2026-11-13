@@ -156,15 +156,113 @@ describe('admin users API', () => {
   });
 
   it('list carries storageBytes', async () => {
-    const { users } = await (await call('GET', '/api/admin/users', null, adminToken)).json();
+    const { users, storage } = await (await call('GET', '/api/admin/users', null, adminToken)).json();
     const alice = users.find((u) => u.username === 'alice');
     expect(users.every((u) => typeof u.storageBytes === 'number')).toBe(true);
     expect(alice.storageBytes).toBe(0);
+    expect(alice.inboxBytes).toBe(0);
+    expect(alice.archivedBytes).toBe(0);
+    expect(storage).toMatchObject({
+      totalBytes: 0,
+      totalInboxBytes: 0,
+      userTotalWarningBytes: 20 * 1024 ** 3,
+    });
+  });
+
+  it('re-walks the homes when the admin asks for a refresh', async () => {
+    const { ensureUserHomeSkeleton } = await import('../utils/pilotPaths.js');
+    const { users } = await (await call('GET', '/api/admin/users', null, adminToken)).json();
+    const alice = users.find((u) => u.username === 'alice');
+
+    // Prime the 60 s cache with the empty home, then write into inbox.
+    const cold = await (await call('GET', '/api/admin/users', null, adminToken)).json();
+    expect(cold.users.find((u) => u.id === alice.id).inboxBytes).toBe(0);
+    const home = ensureUserHomeSkeleton(alice.id);
+    const inbox = path.join(home, 'workspaces', 'proj-a', 'inbox');
+    fs.mkdirSync(inbox, { recursive: true });
+    fs.writeFileSync(path.join(inbox, 'scan.csv'), Buffer.alloc(4096));
+
+    const cached = await (await call('GET', '/api/admin/users', null, adminToken)).json();
+    expect(cached.users.find((u) => u.id === alice.id).inboxBytes).toBe(0);
+
+    const fresh = await (await call('GET', '/api/admin/users?refresh=1', null, adminToken)).json();
+    const row = fresh.users.find((u) => u.id === alice.id);
+    expect(row.inboxBytes).toBe(4096);
+    expect(row.storageBytes).toBeGreaterThanOrEqual(4096);
+    expect(fresh.storage.totalInboxBytes).toBe(4096);
   });
 
   it('toggles registration', async () => {
     expect((await (await call('GET', '/api/admin/settings/registration', null, adminToken)).json()).allowPublicRegistration).toBe(true);
     await call('PUT', '/api/admin/settings/registration', { allowPublicRegistration: false }, adminToken);
     expect((await (await call('GET', '/api/admin/settings/registration', null, adminToken)).json()).allowPublicRegistration).toBe(false);
+  });
+
+  it('lists archived accounts separately, with an expiry date', async () => {
+    const { users } = await (await call('GET', '/api/admin/users', null, adminToken)).json();
+    const alice = users.find((u) => u.username === 'alice');
+    fs.mkdirSync(path.join(root, 'users', String(alice.id), 'projects'), { recursive: true });
+    await call('DELETE', `/api/admin/users/${alice.id}`, null, adminToken);
+
+    const body = await (await call('GET', '/api/admin/users?refresh=1', null, adminToken)).json();
+    expect(body.archivedUsers.map((u) => u.username)).toEqual(['alice']);
+    const row = body.archivedUsers[0];
+    expect(row.archived).toBe(true);
+    expect(row.isActive).toBe(false);
+    expect(typeof row.archivedAt).toBe('string');
+    // 默认保留 30 天：到期时间必须晚于归档时间 29 天以上。
+    expect(new Date(row.expiresAt).getTime() - new Date(row.archivedAt).getTime())
+      .toBeGreaterThanOrEqual(29 * 86_400_000);
+    // 主表里仍然有这一行（同一行的两种视图），页面自己按 archived 过滤。
+    expect(body.users.find((u) => u.id === alice.id).archived).toBe(true);
+  });
+
+  it('restores an archived account and moves its home back', async () => {
+    const { users } = await (await call('GET', '/api/admin/users', null, adminToken)).json();
+    const alice = users.find((u) => u.username === 'alice');
+    const home = path.join(root, 'users', String(alice.id));
+    fs.mkdirSync(path.join(home, 'projects'), { recursive: true });
+    fs.writeFileSync(path.join(home, 'projects', 'note.txt'), 'hello');
+    await call('DELETE', `/api/admin/users/${alice.id}`, null, adminToken);
+    expect(fs.existsSync(home)).toBe(false);
+
+    const res = await call('POST', `/api/admin/users/${alice.id}/restore`, null, adminToken);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.restored).toBe(true);
+    expect(body.user).toMatchObject({ id: alice.id, isActive: true });
+    // 数据回来了，归档目录没了。
+    expect(fs.readFileSync(path.join(home, 'projects', 'note.txt'), 'utf8')).toBe('hello');
+    expect(fs.readdirSync(path.join(root, 'archives', 'users'))).toHaveLength(0);
+
+    const after = await (await call('GET', '/api/admin/users?refresh=1', null, adminToken)).json();
+    expect(after.archivedUsers).toHaveLength(0);
+    expect(after.users.find((u) => u.id === alice.id)).toMatchObject({ archived: false, isActive: true });
+  });
+
+  it('refuses to restore when a live home already exists', async () => {
+    const { users } = await (await call('GET', '/api/admin/users', null, adminToken)).json();
+    const alice = users.find((u) => u.username === 'alice');
+    fs.mkdirSync(path.join(root, 'users', String(alice.id), 'projects'), { recursive: true });
+    await call('DELETE', `/api/admin/users/${alice.id}`, null, adminToken);
+    // 有人手工建了同名 home（或并发恢复了一半）
+    fs.mkdirSync(path.join(root, 'users', String(alice.id)), { recursive: true });
+    const res = await call('POST', `/api/admin/users/${alice.id}/restore`, null, adminToken);
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe('HOME_EXISTS');
+  });
+
+  it('restore says NOT_ARCHIVED when there is nothing archived', async () => {
+    const { users } = await (await call('GET', '/api/admin/users', null, adminToken)).json();
+    const alice = users.find((u) => u.username === 'alice');
+    const res = await call('POST', `/api/admin/users/${alice.id}/restore`, null, adminToken);
+    expect(res.status).toBe(404);
+    expect((await res.json()).code).toBe('NOT_ARCHIVED');
+  });
+
+  it('restore on an unknown user is 404 USER_NOT_FOUND', async () => {
+    const res = await call('POST', '/api/admin/users/9999/restore', null, adminToken);
+    expect(res.status).toBe(404);
+    expect((await res.json()).code).toBe('USER_NOT_FOUND');
   });
 });

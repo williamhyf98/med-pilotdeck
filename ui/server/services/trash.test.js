@@ -1,16 +1,21 @@
-// A1 软删除：删除文件 = 移进 `.trash`，可恢复，7 天后才物理删除。
+/**
+ * 文件级回收站（A1/A2）：删除 = rename 进 `.trash`，可恢复，7 天后物理删除。
+ *
+ * 2026-11-12 起「存储页删单文件 / 整包归档」两条入口都下线了，写入方只剩工作区面板
+ * （`routes/workspaceFiles.js`），所以这里直接测 `services/trash.js` 本身。
+ */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { deleteStorageTargets, scanStorage } from './storage.js';
 import {
+    emptyTrash,
     listTrash,
     moveFileToTrash,
     parseTrashedRelative,
     purgeExpiredTrash,
     restoreFromTrash,
-} from '../services/trash.js';
+} from './trash.js';
 
 const temporaryHomes = [];
 let previousSystemHome;
@@ -21,10 +26,10 @@ async function makePilotHome() {
     return pilotHome;
 }
 
-async function makeWorkspace(pilotHome, relativeFile, content = 'report') {
+async function makeWorkspace(pilotHome, relativePath, content = 'report') {
     const projectId = 'general_med-example';
     const workspace = path.join(pilotHome, 'workspaces', 'general_med', projectId);
-    const target = path.join(workspace, relativeFile);
+    const target = path.join(workspace, relativePath);
     await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.writeFile(target, content);
     return { projectId, workspace, target };
@@ -63,21 +68,15 @@ afterEach(async () => {
     ));
 });
 
-describe('A1 软删除', () => {
+describe('文件级回收站', () => {
     it('把文件 rename 进 .trash 而不是真删，并留一条审计', async () => {
         const pilotHome = await makePilotHome();
-        const { projectId, workspace, target } = await makeWorkspace(pilotHome, 'exports/report.md', 'hello');
+        const { workspace, target } = await makeWorkspace(pilotHome, 'exports/report.md', 'hello');
 
-        const result = await deleteStorageTargets([{
-            kind: 'file',
-            scope: 'workspace',
-            groupId: projectId,
-            typeKey: 'general_med',
-            path: 'exports/report.md',
-        }], pilotHome);
+        const moved = await moveFileToTrash(workspace, 'exports/report.md');
 
-        expect(result.failed).toEqual([]);
         await expect(fs.access(target)).rejects.toThrow();
+        expect(moved.trashedPath).toMatch(/^\.trash\/exports\/report\.md\./);
 
         const entries = await listTrash(workspace);
         expect(entries).toHaveLength(1);
@@ -91,17 +90,21 @@ describe('A1 软删除', () => {
 
     it('系统保留项不能删（.trash / .usage.json / .pinned / .tmp）', async () => {
         const pilotHome = await makePilotHome();
-        const { projectId } = await makeWorkspace(pilotHome, 'exports/report.md');
+        const { workspace } = await makeWorkspace(pilotHome, 'exports/report.md');
 
         for (const reserved of ['.trash/old.md.20260101T000000000Z', '.usage.json', '.pinned', '.tmp/x']) {
-            await expect(deleteStorageTargets([{
-                kind: 'file',
-                scope: 'workspace',
-                groupId: projectId,
-                typeKey: 'general_med',
-                path: reserved,
-            }], pilotHome)).rejects.toThrow(/reserved system path/);
+            await expect(moveFileToTrash(workspace, reserved)).rejects.toThrow(/reserved system path/);
         }
+    });
+
+    it('不能借 ../ 逃出工作区', async () => {
+        const pilotHome = await makePilotHome();
+        const { workspace } = await makeWorkspace(pilotHome, 'exports/report.md');
+        const outside = path.join(pilotHome, 'keep.txt');
+        await fs.writeFile(outside, 'keep');
+
+        await expect(moveFileToTrash(workspace, '../../../keep.txt')).rejects.toThrow();
+        await expect(fs.readFile(outside, 'utf8')).resolves.toBe('keep');
     });
 
     it('rename 失败只报错，绝不退化成 rm', async () => {
@@ -167,22 +170,38 @@ describe('A1 软删除', () => {
         expect(purge.meta.retentionDays).toBe(7);
     });
 
-    it('扫描口径：回收站文件不再出现在文件列表，但计入 trashBytes', async () => {
+    it('emptyTrash 连目录条目一起清掉，并写 manual 审计', async () => {
         const pilotHome = await makePilotHome();
-        const { projectId } = await makeWorkspace(pilotHome, 'exports/report.md', '12345');
-        await deleteStorageTargets([{
-            kind: 'file',
-            scope: 'workspace',
-            groupId: projectId,
-            typeKey: 'general_med',
-            path: 'exports/report.md',
-        }], pilotHome);
+        const { workspace } = await makeWorkspace(pilotHome, 'exports/report.md', 'hello');
+        await fs.mkdir(path.join(workspace, '我的资料', '2026'), { recursive: true });
+        await fs.writeFile(path.join(workspace, '我的资料', '2026', 'a.csv'), '1234');
+        await moveFileToTrash(workspace, 'exports/report.md');
+        await moveFileToTrash(workspace, '我的资料');
+        expect(await listTrash(workspace)).toHaveLength(2);
 
-        const snapshot = await scanStorage(pilotHome);
-        expect(snapshot.workspaces[0].files).toEqual([]);
-        expect(snapshot.workspaces[0].trashCount).toBe(1);
-        expect(snapshot.totals.trashBytes).toBe(5);
-        expect(snapshot.totals.workspaceBytes).toBe(0);
-        expect(snapshot.totals.totalBytes).toBe(5);
+        const result = await emptyTrash(workspace, { actor: 'admin' });
+        expect(result.purged).toBe(2);
+        expect(result.freedBytes).toBe(5 + 4);
+        expect(await listTrash(workspace)).toEqual([]);
+        await expect(fs.access(path.join(workspace, '.trash', '我的资料'))).rejects.toThrow();
+
+        const audit = await readAudit(process.env.PILOTDECK_SYSTEM_HOME);
+        const purges = audit.filter((item) => item.action === 'trash.purge');
+        expect(purges).toHaveLength(2);
+        expect(purges.every((item) => item.reason === 'manual' && item.actor === 'admin')).toBe(true);
+        expect(purges.map((item) => item.meta.kind).sort()).toEqual(['directory', 'file']);
+    });
+
+    it('过期清理能把过期的目录条目整棵删掉', async () => {
+        const pilotHome = await makePilotHome();
+        const { workspace } = await makeWorkspace(pilotHome, 'exports/report.md', 'hello');
+        await fs.mkdir(path.join(workspace, '我的资料', '2026'), { recursive: true });
+        await fs.writeFile(path.join(workspace, '我的资料', '2026', 'a.csv'), '1234');
+        await moveFileToTrash(workspace, '我的资料', { now: new Date(Date.now() - 10 * 86_400_000) });
+
+        const result = await purgeExpiredTrash(workspace, { now: new Date() });
+        expect(result.purged).toBe(1);
+        expect(result.freedBytes).toBe(4);
+        expect(await listTrash(workspace)).toEqual([]);
     });
 });

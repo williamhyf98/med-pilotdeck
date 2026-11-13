@@ -260,6 +260,30 @@ const userDb = {
     db.prepare('UPDATE users SET is_active = ? WHERE id = ?').run(isActive ? 1 : 0, userId);
   },
 
+  /**
+   * 彻底删除一个账号（只给"已归档账号过期清理"用）。
+   *
+   * 删除账号是软删除，行会留很久；到期后由 `archivedUsersRetention` 调这里清干净。
+   * 依赖行必须显式删：`foreign_keys` 是连接级 PRAGMA，不能指望 CASCADE 一定开着，
+   * 而且 `session_names` 本来就没有外键。
+   */
+  purgeUser: (userId) => {
+    const id = Number(userId);
+    if (!Number.isInteger(id) || id <= 0) {
+      throw new Error('purgeUser requires a positive integer userId');
+    }
+    const tx = db.transaction((target) => {
+      db.prepare('DELETE FROM session_names WHERE user_id = ?').run(target);
+      db.prepare('DELETE FROM push_subscriptions WHERE user_id = ?').run(target);
+      db.prepare('DELETE FROM user_notification_preferences WHERE user_id = ?').run(target);
+      db.prepare('DELETE FROM api_keys WHERE user_id = ?').run(target);
+      db.prepare('DELETE FROM user_credentials WHERE user_id = ?').run(target);
+      const info = db.prepare('DELETE FROM users WHERE id = ?').run(target);
+      return Number(info.changes ?? 0);
+    });
+    return tx(id);
+  },
+
   updatePasswordHash: (userId, passwordHash) => {
     db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, userId);
   },
@@ -586,6 +610,19 @@ const sessionNamesDb = {
     return db.prepare(
       'DELETE FROM session_names WHERE user_id = ? AND session_id = ? AND provider = ?'
     ).run(userId, sessionId, provider).changes > 0;
+  },
+
+  /**
+   * 删项目时批量清掉这些会话的自定义名（不分 provider）。
+   * 返回删掉的行数；空列表直接返回 0（`IN ()` 是 SQL 语法错误）。
+   */
+  deleteNamesForSessions: (userId, sessionIds) => {
+    const ids = Array.isArray(sessionIds) ? sessionIds.filter((id) => typeof id === 'string' && id) : [];
+    if (ids.length === 0) return 0;
+    const placeholders = ids.map(() => '?').join(',');
+    return db.prepare(
+      `DELETE FROM session_names WHERE user_id = ? AND session_id IN (${placeholders})`
+    ).run(userId, ...ids).changes;
   },
 };
 

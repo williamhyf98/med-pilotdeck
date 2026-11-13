@@ -2,7 +2,7 @@ import { promises as fsp, realpathSync, existsSync } from "node:fs";
 import { join, relative, resolve, basename, dirname, isAbsolute, sep } from "node:path";
 import type { RetentionConfig } from "./config/parseMultiUserConfig.js";
 
-export type RetentionReport = { rotatedLogs: string[]; removedAttachments: number; removedArchives: string[] };
+export type RetentionReport = { rotatedLogs: string[]; removedAttachments: number };
 const DAY = 86_400_000;
 
 /**
@@ -106,49 +106,6 @@ async function pruneAttachments(home: string, cfg: RetentionConfig, now: number,
   await walk(root);
 }
 
-const ARCHIVE_TS = /-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/;
-async function pruneArchives(
-  home: string,
-  cfg: RetentionConfig,
-  now: number,
-  out: RetentionReport,
-  log: (m: string) => void,
-): Promise<void> {
-  const dir = join(home, "archives", "projects");
-  if (!existsSync(dir)) return;
-  assertInsideHome(dir, home);
-  const cutoff = now - cfg.archiveMaxAgeDays * DAY;
-  const expired: string[] = [];
-  for (const entry of await fsp.readdir(dir, { withFileTypes: true })) {
-    const name = entry.name;
-    if (!entry.isDirectory()) continue; // symlinks and stray files are never touched
-    const m = ARCHIVE_TS.exec(name);
-    if (!m) {
-      log(`[retention] skip archive without timestamp: ${name}`);
-      continue;
-    }
-    const when = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
-    if (new Date(when).getUTCMonth() !== +m[2] - 1) {
-      log(`[retention] skip archive with invalid timestamp: ${name}`);
-      continue;
-    }
-    if (when >= cutoff) continue;
-    expired.push(name);
-  }
-  if (expired.length === 0) return;
-  // Say what is about to go before it goes: a deletion nobody announced is the
-  // one a user reports as "my archive vanished".
-  const shown = expired.slice(0, 20).join(", ");
-  const rest = expired.length - 20;
-  log(`[retention] removing ${expired.length} expired project archive(s): ${shown}${rest > 0 ? `, +${rest} more` : ""}`);
-  for (const name of expired) {
-    const p = join(dir, name);
-    assertInsideHome(p, home);
-    await fsp.rm(p, { recursive: true, force: true });
-    out.removedArchives.push(name);
-  }
-}
-
 export type RunRetentionOptions = {
   pilotHome: string;
   config: RetentionConfig;
@@ -159,12 +116,11 @@ export type RunRetentionOptions = {
 export async function runRetention(opts: RunRetentionOptions): Promise<RetentionReport> {
   const log = opts.log ?? (() => {});
   const now = (opts.now ?? (() => new Date()))().getTime();
-  const out: RetentionReport = { rotatedLogs: [], removedAttachments: 0, removedArchives: [] };
+  const out: RetentionReport = { rotatedLogs: [], removedAttachments: 0 };
   // Each phase is isolated so one failure (or refused path) does not block the others.
   const phases: Array<[string, () => Promise<void>]> = [
     ["logs", () => rotateLogs(opts.pilotHome, opts.config, out)],
     ["attachments", () => pruneAttachments(opts.pilotHome, opts.config, now, out)],
-    ["archives", () => pruneArchives(opts.pilotHome, opts.config, now, out, log)],
   ];
   for (const [label, phase] of phases) {
     try {
@@ -173,7 +129,7 @@ export async function runRetention(opts: RunRetentionOptions): Promise<Retention
       log(`[retention] ${label} failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  if (out.rotatedLogs.length || out.removedAttachments || out.removedArchives.length) {
+  if (out.rotatedLogs.length || out.removedAttachments) {
     log(`[retention] ${JSON.stringify(out)}`);
   }
   return out;

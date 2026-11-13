@@ -88,7 +88,7 @@ describe('A/B isolation', () => {
     const wsDir = path.join(root, 'users', String(tokens.ids.alice), 'workspaces', 'general_med', a2.name);
     fs.mkdirSync(path.join(wsDir, 'inbox'), { recursive: true });
     fs.writeFileSync(path.join(wsDir, 'inbox', 'secret.txt'), 'alice secret');
-    const q = `scope=workspace&groupId=${encodeURIComponent(a2.name)}&typeKey=general_med&path=inbox/secret.txt`;
+    const q = `groupId=${encodeURIComponent(a2.name)}&typeKey=general_med&path=inbox/secret.txt`;
     const own = await api('alice', 'GET', `/api/storage/preview?${q}`);
     expect(own.status).toBe(200);
     expect(await own.text()).toBe('alice secret');
@@ -100,7 +100,7 @@ describe('A/B isolation', () => {
     const a = await (await api('alice', 'POST', '/api/projects/create-system', { displayName: '仅Alice', type: 'general_medicine' })).json();
     const scanA = await (await api('alice', 'GET', '/api/storage')).json();
     const scanB = await (await api('bob', 'GET', '/api/storage')).json();
-    expect(scanA.workspaces.map((w) => w.id)).toContain(a.name);
+    expect(scanA.projects.map((w) => w.id)).toContain(a.name);
     expect(JSON.stringify(scanB)).not.toContain(a.name);
   });
 

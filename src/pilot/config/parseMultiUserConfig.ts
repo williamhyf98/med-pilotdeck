@@ -11,7 +11,6 @@ export type RetentionConfig = {
   logMaxBytes: number;
   logKeep: number;
   attachmentMaxAgeDays: number;
-  archiveMaxAgeDays: number;
 };
 export type MultiUserConfig = {
   retention: RetentionConfig;
@@ -23,7 +22,6 @@ export const DEFAULT_RETENTION: RetentionConfig = {
   logMaxBytes: 20 * 1024 * 1024,
   logKeep: 5,
   attachmentMaxAgeDays: 7,
-  archiveMaxAgeDays: 30,
 };
 
 const SANDBOX_KINDS: readonly string[] = ["bwrap", "sandbox-exec", "none"];
@@ -172,7 +170,6 @@ export function parseMultiUserConfig(raw: unknown, diagnostics: PilotConfigDiagn
       logMaxBytes: num(ret, "logMaxBytes", DEFAULT_RETENTION.logMaxBytes, diagnostics),
       logKeep: num(ret, "logKeep", DEFAULT_RETENTION.logKeep, diagnostics),
       attachmentMaxAgeDays: num(ret, "attachmentMaxAgeDays", DEFAULT_RETENTION.attachmentMaxAgeDays, diagnostics),
-      archiveMaxAgeDays: num(ret, "archiveMaxAgeDays", DEFAULT_RETENTION.archiveMaxAgeDays, diagnostics),
     },
     gatewayPool:
       section.gatewayPool && typeof section.gatewayPool === "object"

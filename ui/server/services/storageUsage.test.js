@@ -84,3 +84,78 @@ describe('getUserStorageBytes', () => {
     expect(await getUserStorageBytes(5, { now })).toBe(0);
   });
 });
+
+describe('getUserStorageBreakdown', () => {
+  it('splits inbox bytes out of the total for flat and typed workspace layouts', async () => {
+    const { getUserStorageBreakdown } = await import('./storageUsage.js');
+    const flatInbox = path.join(home(6), 'workspaces', 'proj-a', 'inbox', 'batch1');
+    const typedInbox = path.join(home(6), 'workspaces', 'general_med', 'proj-b', 'inbox');
+    fs.mkdirSync(flatInbox, { recursive: true });
+    fs.mkdirSync(typedInbox, { recursive: true });
+    fs.mkdirSync(path.join(home(6), 'workspaces', 'proj-a', 'scratch'), { recursive: true });
+    fs.writeFileSync(path.join(flatInbox, 'scan.csv'), Buffer.alloc(1000));
+    fs.writeFileSync(path.join(typedInbox, 'notes.txt'), Buffer.alloc(300));
+    fs.writeFileSync(path.join(home(6), 'workspaces', 'proj-a', 'scratch', 'tmp.bin'), Buffer.alloc(50));
+    // `inbox` as a plain file name elsewhere must not be counted.
+    fs.mkdirSync(path.join(home(6), 'projects', 'p'), { recursive: true });
+    fs.writeFileSync(path.join(home(6), 'projects', 'p', 'inbox'), Buffer.alloc(7));
+
+    await expect(getUserStorageBreakdown(6)).resolves.toEqual({ bytes: 1357, inboxBytes: 1300 });
+  });
+
+  it('never reports more inbox bytes than total bytes', async () => {
+    const { getUserStorageBreakdown } = await import('./storageUsage.js');
+    const inbox = path.join(home(7), 'workspaces', 'p', 'inbox');
+    fs.mkdirSync(inbox, { recursive: true });
+    fs.writeFileSync(path.join(inbox, 'a.bin'), Buffer.alloc(10));
+    fs.writeFileSync(path.join(home(7), 'other.bin'), Buffer.alloc(10));
+    const { bytes, inboxBytes } = await getUserStorageBreakdown(7);
+    expect(inboxBytes).toBeLessThanOrEqual(bytes);
+    expect(inboxBytes).toBe(10);
+  });
+});
+
+describe('listArchivedUserBytes', () => {
+  it('sums archives/users/<id>-<stamp> per user without prefix collisions', async () => {
+    const { listArchivedUserBytes } = await import('./storageUsage.js');
+    const archives = path.join(root, 'archives', 'users');
+    fs.mkdirSync(path.join(archives, '1-2026-11-11T10-00-00-000Z'), { recursive: true });
+    fs.mkdirSync(path.join(archives, '12-2026-11-11T10-00-00-000Z', 'sub'), { recursive: true });
+    fs.writeFileSync(path.join(archives, '1-2026-11-11T10-00-00-000Z', 'a.bin'), Buffer.alloc(100));
+    fs.writeFileSync(path.join(archives, '12-2026-11-11T10-00-00-000Z', 'sub', 'b.bin'), Buffer.alloc(250));
+    // Anything that does not look like <id>-<stamp> is ignored.
+    fs.mkdirSync(path.join(archives, 'manual-copy'), { recursive: true });
+    fs.writeFileSync(path.join(archives, 'manual-copy', 'c.bin'), Buffer.alloc(9));
+
+    const byUser = await listArchivedUserBytes();
+    expect(byUser.get('1')).toBe(100);
+    expect(byUser.get('12')).toBe(250);
+    expect(byUser.has('manual-copy')).toBe(false);
+    expect([...byUser.values()].reduce((a, b) => a + b, 0)).toBe(350);
+  });
+
+  it('returns an empty map when nothing was archived yet', async () => {
+    const { listArchivedUserBytes } = await import('./storageUsage.js');
+    await expect(listArchivedUserBytes()).resolves.toBeInstanceOf(Map);
+    expect((await listArchivedUserBytes()).size).toBe(0);
+  });
+});
+
+describe('getUserTotalWarningBytes', () => {
+  it('falls back to the 20 GiB design default when no config exists', async () => {
+    const { getUserTotalWarningBytes, DEFAULT_USER_TOTAL_WARNING_BYTES } = await import('./storageUsage.js');
+    await expect(getUserTotalWarningBytes()).resolves.toBe(DEFAULT_USER_TOTAL_WARNING_BYTES);
+  });
+
+  it('reads workspace.quota.userTotalMaxBytes from pilotdeck.yaml', async () => {
+    const { getUserTotalWarningBytes } = await import('./storageUsage.js');
+    fs.writeFileSync(path.join(root, 'pilotdeck.yaml'), 'workspace:\n  quota:\n    userTotalMaxBytes: 5368709120\n');
+    await expect(getUserTotalWarningBytes()).resolves.toBe(5368709120);
+  });
+
+  it('ignores an unusable value', async () => {
+    const { getUserTotalWarningBytes, DEFAULT_USER_TOTAL_WARNING_BYTES } = await import('./storageUsage.js');
+    fs.writeFileSync(path.join(root, 'pilotdeck.yaml'), 'workspace:\n  quota:\n    userTotalMaxBytes: -1\n');
+    await expect(getUserTotalWarningBytes()).resolves.toBe(DEFAULT_USER_TOTAL_WARNING_BYTES);
+  });
+});

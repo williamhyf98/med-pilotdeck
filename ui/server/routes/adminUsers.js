@@ -7,8 +7,15 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { userDb, systemSettingsDb } from '../database/db.js';
 import { isReservedUsername } from '../services/adminBootstrap.js';
-import { getUserStorageBytes, invalidateStorageCache } from '../services/storageUsage.js';
+import {
+  getUserStorageBreakdown,
+  getUserTotalWarningBytes,
+  invalidateStorageCache,
+  listArchivedUserBytes,
+} from '../services/storageUsage.js';
 import { ensureUserHomeSkeleton, resolvePilotRoot, resolveUserHome } from '../utils/pilotPaths.js';
+import { archivedStamp, findArchivedHome, getArchivedUserMaxAgeDays, listArchivedHomes } from '../services/archivedUsers.js';
+import { appendAudit } from '../../../src/security/audit/auditLog.js';
 
 const fail = (res, status, code, error) => res.status(status).json({ error, code });
 const toPublic = (u) => ({ id: u.id, username: u.username, role: u.role, isActive: Number(u.is_active) === 1, createdAt: u.created_at, lastLogin: u.last_login });
@@ -34,10 +41,55 @@ function wouldRemoveLastAdmin(target, patch) {
 export function createAdminUsersRouter({ onUserRevoked = () => {}, stopUserRuntime = async () => {} } = {}) {
   const router = express.Router();
 
-  router.get('/users', guard(async (_req, res) => {
+  router.get('/users', guard(async (req, res) => {
+    // `?refresh=1` drops the 60 s cache so the admin's manual refresh really
+    // re-walks the homes (design §9.2.1).
+    if (req.query?.refresh === '1') invalidateStorageCache();
     const rows = userDb.listUsers().map(toPublic);
-    const sizes = await Promise.all(rows.map((u) => getUserStorageBytes(u.id)));
-    res.json({ users: rows.map((u, i) => ({ ...u, storageBytes: sizes[i] })) });
+    const [breakdowns, archived, userTotalWarningBytes, archivedHomes, maxAgeDays] = await Promise.all([
+      Promise.all(rows.map((u) => getUserStorageBreakdown(u.id))),
+      listArchivedUserBytes(),
+      getUserTotalWarningBytes(),
+      listArchivedHomes(),
+      getArchivedUserMaxAgeDays(),
+    ]);
+    // 每个用户最近一次归档（一个账号可能删过多次，只有最新那份还能恢复）。
+    const archivedByUser = new Map();
+    for (const home of archivedHomes) {
+      if (!archivedByUser.has(home.userId)) archivedByUser.set(home.userId, home);
+    }
+    const expiresAtOf = (home) => new Date(home.archivedAt.getTime() + maxAgeDays * 86_400_000).toISOString();
+    const users = rows.map((u, i) => {
+      const home = archivedByUser.get(u.id);
+      return {
+        ...u,
+        storageBytes: breakdowns[i].bytes,
+        inboxBytes: breakdowns[i].inboxBytes,
+        // A deleted account keeps its row (deactivated) but its home moved to
+        // archives/users/. Report those bytes on the row so totals still add up.
+        archivedBytes: archived.get(String(u.id)) ?? 0,
+        // 归档账号在用户管理页单独一块显示，不和在用账号混在一起。
+        archived: Boolean(home),
+        archivedAt: home ? home.archivedAt.toISOString() : null,
+        expiresAt: home ? expiresAtOf(home) : null,
+      };
+    });
+    const totalBytes = users.reduce((sum, u) => sum + u.storageBytes + u.archivedBytes, 0);
+    const totalInboxBytes = users.reduce((sum, u) => sum + u.inboxBytes, 0);
+    res.json({
+      users,
+      // 与 `users` 有重叠（同一行的两种视图），但顺序按归档时间从新到旧，
+      // 页面直接渲染这一份即可，不用再自己筛一遍。
+      archivedUsers: users
+        .filter((u) => u.archived)
+        .sort((a, b) => String(b.archivedAt).localeCompare(String(a.archivedAt))),
+      storage: {
+        totalBytes,
+        totalInboxBytes,
+        archivedBytes: users.reduce((sum, u) => sum + u.archivedBytes, 0),
+        userTotalWarningBytes,
+      },
+    });
   }));
 
   router.post('/users', guard(async (req, res) => {
@@ -92,14 +144,54 @@ export function createAdminUsersRouter({ onUserRevoked = () => {}, stopUserRunti
     let archived = false;
     const home = resolveUserHome(target.id);
     if (fs.existsSync(home)) {
-      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const dest = path.join(resolvePilotRoot(), 'archives', 'users', `${target.id}-${stamp}`);
+      const dest = path.join(resolvePilotRoot(), 'archives', 'users', `${target.id}-${archivedStamp()}`);
       await fsp.mkdir(path.dirname(dest), { recursive: true });
       await fsp.rename(home, dest);
       archived = true;
     }
     invalidateStorageCache(target.id);
     res.json({ user: toPublic(userDb.getUserById(target.id)), archived });
+  }));
+
+  /**
+   * 恢复一个已归档账号：把 home 从 `archives/users/<id>-<stamp>` 搬回
+   * `users/<id>`，重新激活，并踢掉旧登录态（`token_version + 1`）。
+   *
+   * 冲突一律拒绝而不是覆盖：
+   * - 活跃 home 已经存在 → 409 `HOME_EXISTS`（可能是并发恢复，或管理员手工建过目录）；
+   * - 找不到归档 → 404 `NOT_ARCHIVED`（已过期清理，或账户从没被删过）。
+   */
+  router.post('/users/:id/restore', guard(async (req, res) => {
+    const id = Number(req.params.id);
+    const target = userDb.getUserById(id);
+    if (!target) return fail(res, 404, 'USER_NOT_FOUND', 'User not found');
+    const home = resolveUserHome(id);
+    if (fs.existsSync(home)) return fail(res, 409, 'HOME_EXISTS', 'This account already has a live home directory');
+    const archivedHome = await findArchivedHome(id);
+    if (!archivedHome) return fail(res, 404, 'NOT_ARCHIVED', 'No archived home found for this account');
+
+    await fsp.mkdir(path.dirname(home), { recursive: true });
+    try {
+      await fsp.rename(archivedHome.dir, home);
+    } catch (error) {
+      // 跨设备时 rename 会失败：复制过去再删，避免把归档留在原地又报了成功。
+      if (error?.code !== 'EXDEV') throw error;
+      await fsp.cp(archivedHome.dir, home, { recursive: true, errorOnExist: true, force: false });
+      await fsp.rm(archivedHome.dir, { recursive: true, force: true });
+    }
+
+    userDb.setActive(id, true);
+    userDb.bumpTokenVersion(id);
+    invalidateStorageCache(id);
+    appendAudit({
+      action: 'user.restore',
+      decision: 'allow',
+      tool: 'admin.users',
+      target: `users/${id}`,
+      reason: 'admin_restore',
+      meta: { archive: archivedHome.name },
+    });
+    res.json({ user: toPublic(userDb.getUserById(id)), restored: true });
   }));
 
   router.post('/users/:id/reset-password', guard(async (req, res) => {
