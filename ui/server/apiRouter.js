@@ -42,6 +42,7 @@ import pluginsRoutes from './routes/plugins.js';
 import messagesRoutes from './routes/messages.js';
 import agentRoutes from './routes/agent.js';
 import updateRoutes from './routes/update.js';
+import { createWorkspaceFilesRouter } from './routes/workspaceFiles.js';
 
 /**
  * Inline handlers index.js hands over, with the chain each is mounted behind.
@@ -71,6 +72,8 @@ export function buildApiRouter({
   onUserRevoked = () => {},
   stopUserRuntime = async () => {},
   inline = {},
+  /** Tests inject a stub; production uses `projects.extractProjectDirectory`. */
+  extractProjectDirectory,
 }) {
   const api = express.Router();
   const requireUser = [authenticateToken, userScopeMiddleware];
@@ -91,7 +94,11 @@ export function buildApiRouter({
   api.use('/update', ...requireAdminChain, updateRoutes);
 
   // ── Per-user surfaces ─────────────────────────────────────────────────
-  api.use('/projects', ...requireUser, projectsRoutes);
+  // The workspace写操作/回收站 router rides the same chain as projectsRoutes,
+  // in one mount so the auth middleware runs once per request, not twice.
+  api.use('/projects', ...requireUser, projectsRoutes, createWorkspaceFilesRouter({
+    ...(extractProjectDirectory ? { extractProjectDirectory } : {}),
+  }));
   api.use('/git', ...requireUser, gitRoutes);
   api.use('/taskmaster', ...requireUser, taskmasterRoutes);
   // `POST /memory/settings` is global and carries its own `requireAdmin`;

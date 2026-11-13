@@ -52,6 +52,8 @@ import { createSanitizingWriter, sanitizeValue, scopedSanitizeOptions } from './
 import { isExplicitCrossUserAccessRequest } from './utils/crossUserRequestGuard.js';
 import { getWebPermissionMode } from './services/webPermissionMode.js';
 import { createGatewayPool } from './services/gatewayPool.js';
+import { cleanTurnScratch } from './services/scratchTurnCleanup.js';
+import { getWorkspaceLimits } from './services/workspaceLimits.js';
 import { DISABLE_LOCAL_AUTH } from './constants/config.js';
 import { readMultiUserConfig } from './services/pilotdeckConfig.js';
 import { requireUserScope, runWithUserScope } from './middleware/userScope.js';
@@ -280,6 +282,40 @@ function ensureSessionState(sessionKey, projectKey, channelKey) {
         state.channelKey = channelKey;
     }
     return state;
+}
+
+// 回合结束就删本轮 scratch（设计书 §8 / 2026-11-12）：
+//   - 删的是 `scratch/work/<session>/<turn>/` 与本轮落盘的 `scratch/tool-results/<turn>-*`；
+//   - `scratch/qa|docx|data|tmp` 这些跨回合复用的草稿不在这里删，交给 TTL 扫描；
+//   - 只做旁路：不 await 进主流程、出错只打日志，绝不影响这一轮的收尾。
+const cleanedTurnScratch = new Set();
+
+function scheduleTurnScratchCleanup(projectKey, sessionKey, turnId) {
+    if (!turnId) return;
+    const key = `${projectKey}\u0000${sessionKey}\u0000${turnId}`;
+    if (cleanedTurnScratch.has(key)) return;
+    cleanedTurnScratch.add(key);
+    if (cleanedTurnScratch.size > 1000) {
+        const keep = [...cleanedTurnScratch].slice(-500);
+        cleanedTurnScratch.clear();
+        for (const item of keep) cleanedTurnScratch.add(item);
+    }
+    void (async () => {
+        try {
+            const limits = await getWorkspaceLimits();
+            if (limits.cleanOnTurnEnd === false) return;
+            const workspaceRoot = resolveAgentCwd(projectKey, resolveScopedHome());
+            const result = await cleanTurnScratch(workspaceRoot, { sessionId: sessionKey, turnId });
+            const removed = result.removedDirs.length + result.removedFiles.length;
+            if (removed > 0) {
+                console.log(
+                    `[scratch] turn cleanup: ${removed} item(s), freed ${result.freedBytes} bytes (${turnId})`,
+                );
+            }
+        } catch (error) {
+            console.warn('[scratch] turn cleanup skipped:', error?.message ?? error);
+        }
+    })();
 }
 
 function clearActiveRunIfCurrent(state, runId) {
@@ -1609,6 +1645,7 @@ export async function runChatViaGateway(
                 if (event && event.type === 'turn_completed') {
                     sawTurnCompleted = true;
                     clearActiveRunIfCurrent(state, runId);
+                    scheduleTurnScratchCleanup(projectKey, sessionKey, runId);
                 }
                 const suppressDuplicateError = eventForFrames?.type === 'error' && state.hasVisibleFailureStatus;
                 if (!suppressDuplicateError) {

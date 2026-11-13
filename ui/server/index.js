@@ -98,6 +98,20 @@ import {
 // it is unit-testable; index.js boots a server at import time.
 import { sendRouteError } from './utils/routeErrors.js';
 import { startTrashRetention } from './services/trashRetention.js';
+import { measureWorkspaceUsage } from './routes/storage.js';
+import { cleanScratch, startScratchRetention } from './services/scratchRetention.js';
+import { startToolResultsRetention } from './services/toolResultsRetention.js';
+import { startRewindBackupRetention } from './services/rewindBackupRetention.js';
+import { startSessionMemorySweep } from './services/sessionMemory.js';
+import { startArchivedUsersRetention } from './services/archivedUsersRetention.js';
+import { purgeLegacyProjectArchives } from './services/legacyProjectArchives.js';
+import { getWorkspaceLimits } from './services/workspaceLimits.js';
+import {
+    assertNoSymlinkOnPath,
+    normalizeWritePath,
+    resolveInsideRoot,
+    WORKSPACE_PANEL_HIDDEN_NAMES,
+} from './utils/workspacePaths.js';
 import { shapeOfficePreviewStatus } from './utils/officePreviewStatus.js';
 import { bindConnectionScope, runMessageInScope, closeUserSockets, sendToAdminSockets, SOCKET_ROLE, SOCKET_USER_ID } from './services/wsScope.js';
 import sessionManager from './sessionManager.js';
@@ -981,6 +995,17 @@ app.delete('/api/projects/:projectName/sessions/:sessionId', ...requireUser, asy
     try {
         const { projectName, sessionId } = req.params;
         console.log(`[API] Deleting session: ${sessionId} from project: ${projectName}`);
+        // 先掐掉可能还在跑的这一轮。不掐的话，网关会在文件删完之后继续把 transcript、
+        // scratch 工作目录、记忆库 L0 写回来 —— 用户看到的就是"会话删了又冒出来"。
+        // 只在本机登记为 active 时才去打扰网关（避免为一次删除拉起一个空闲连接）；
+        // 取消失败不阻断删除，最多是这一轮的尾部写入漏网（有 14 天 / 每日扫描兜底）。
+        if (isSessionActiveViaGateway(sessionId)) {
+            try {
+                await abortViaGateway(sessionId);
+            } catch (error) {
+                console.warn(`[API] abort before delete failed for ${sessionId}:`, error?.message || error);
+            }
+        }
         await deleteSession(projectName, sessionId, {
             sessionKind: req.query.sessionKind || null,
             parentSessionId: req.query.parentSessionId || null,
@@ -991,7 +1016,11 @@ app.delete('/api/projects/:projectName/sessions/:sessionId', ...requireUser, asy
         res.json({ success: true });
     } catch (error) {
         console.error(`[API] Error deleting session ${req.params.sessionId}:`, error);
-        res.status(500).json({ error: error.message });
+        // 非法 sessionId / transcript 路径是客户端问题，回 400；其它按 500 处理。
+        const status = error?.code === 'INVALID_SESSION_ID' || error?.code === 'INVALID_TRANSCRIPT_PATH'
+            ? 400
+            : 500;
+        res.status(status).json({ error: error.message });
     }
 });
 
@@ -1021,19 +1050,24 @@ app.put('/api/sessions/:sessionId/rename', ...requireUser, async (req, res) => {
     }
 });
 
-// Delete project endpoint (P7: chats+memory deleted; workspace archived)
+// Delete project endpoint：工作区 / 对话 / 记忆 / 回收站全部物理删除（不再归档）
 app.delete('/api/projects/:projectName', ...requireUser, async (req, res) => {
     try {
         const { projectName } = req.params;
         const force = req.query.force === 'true';
-        const result = await deleteProject(projectName, force);
+        // 真删不可恢复，前端必须回传用户手打的项目名；服务端再核一遍，不信任前端。
+        const confirmName = typeof req.query.confirmName === 'string' && req.query.confirmName.trim()
+            ? req.query.confirmName
+            : undefined;
+        const result = await deleteProject(projectName, { force, confirmName });
         res.json({
             success: true,
             projectId: result?.projectId ?? null,
-            archivePath: result?.archivePath ?? null,
+            deleted: result?.deleted ?? null,
         });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        const status = error?.code === 'CONFIRM_MISMATCH' ? 400 : 500;
+        res.status(status).json({ error: error.message, code: error?.code ?? null });
     }
 });
 
@@ -2075,14 +2109,13 @@ app.put('/api/projects/:projectName/file', ...requireUser, async (req, res) => {
             return res.status(404).json({ error: 'Project not found' });
         }
 
-        // Handle both absolute and relative paths
-        const resolved = path.isAbsolute(filePath)
-            ? path.resolve(filePath)
-            : path.resolve(projectRoot, filePath);
-        const normalizedRoot = path.resolve(projectRoot) + path.sep;
-        if (!resolved.startsWith(normalizedRoot)) {
-            return res.status(403).json({ error: 'Path must be under project root' });
-        }
+        // 与新建目录同一套规则：相对路径、无 ..、无隐藏段、不落保留项、
+        // inbox 只读、逐段拒绝软链（否则可以从预览弹窗里写到工作区外面去）。
+        const root = path.resolve(projectRoot);
+        const relative = path.isAbsolute(filePath) ? path.relative(root, filePath) : filePath;
+        const segments = normalizeWritePath(relative);
+        const resolved = resolveInsideRoot(root, segments);
+        await assertNoSymlinkOnPath(root, resolved);
 
         const saveExtension = getFileExtension(resolved);
         if (OFFICE_PDF_PREVIEW_EXTENSIONS.has(saveExtension) || saveExtension === 'pdf') {
@@ -2100,6 +2133,10 @@ app.put('/api/projects/:projectName/file', ...requireUser, async (req, res) => {
             message: 'File saved successfully'
         });
     } catch (error) {
+        const status = error?.httpStatus;
+        if (status) {
+            return res.status(status).json({ error: error.message, code: error.code });
+        }
         console.error('Error saving file:', error);
         if (error.code === 'ENOENT') {
             res.status(404).json({ error: 'File or directory not found' });
@@ -2108,6 +2145,97 @@ app.put('/api/projects/:projectName/file', ...requireUser, async (req, res) => {
         } else {
             res.status(500).json({ error: error.message });
         }
+    }
+});
+
+// ── 工作区面板（A3）─────────────────────────────────────────────────────────
+// 三条用量条 + 目录懒加载。阈值先按设计书 §9.2 的默认值给，
+// 读 `workspace.quota` 配置是后续步骤。
+const WORKSPACE_PANEL_MAX_ENTRIES = 500;
+
+function isWorkspacePanelHidden(name) {
+    return name.startsWith('.') || WORKSPACE_PANEL_HIDDEN_NAMES.has(name);
+}
+
+app.get('/api/projects/:projectName/workspace/usage', ...requireUser, async (req, res) => {
+    try {
+        const workspaceRoot = await extractProjectDirectory(req.params.projectName);
+        const usage = await measureWorkspaceUsage(workspaceRoot);
+        const limits = await getWorkspaceLimits();
+        res.setHeader('Cache-Control', 'no-store');
+        res.json({
+            usage,
+            // scratchWarnBytes 就是上限本身：前端按 80%（softRatio）变色，
+            // 与设计书 §8.2 的"80% 变黄"一致。
+            thresholds: {
+                workspaceWarnBytes: limits.workspaceWarnBytes,
+                scratchWarnBytes: limits.scratchMaxBytes,
+            },
+            // 只读参数，给"立即清理""自动清理"的说明文案用。
+            scratchPolicy: {
+                maxBytes: limits.scratchMaxBytes,
+                softRatio: limits.scratchSoftRatio,
+                ttlDays: limits.scratchTtlDays,
+                protectRecentMinutes: limits.protectRecentMinutes,
+                // 回合结束是否立即清本轮 work/tool-results（D10）；前端只用于文案，不提供开关。
+                cleanOnTurnEnd: limits.cleanOnTurnEnd,
+            },
+        });
+    } catch (error) {
+        console.error('[workspace] usage failed:', error);
+        res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+});
+
+// 单层目录：名称 / 大小 / mtime，只读、不跟随软链、隐藏系统保留项
+app.get('/api/projects/:projectName/files/list', ...requireUser, async (req, res) => {
+    try {
+        const workspaceRoot = await extractProjectDirectory(req.params.projectName);
+        const requested = typeof req.query.path === 'string' ? req.query.path : '';
+        const resolvedResult = resolvePathInProject(workspaceRoot, requested);
+        if (!resolvedResult.valid) {
+            return res.status(403).json({ error: resolvedResult.error });
+        }
+        const stats = await fsPromises.stat(resolvedResult.resolved).catch(() => null);
+        if (!stats?.isDirectory()) {
+            return res.status(404).json({ error: 'Directory not found' });
+        }
+
+        const dirents = await fsPromises.readdir(resolvedResult.resolved, { withFileTypes: true });
+        const entries = [];
+        let truncated = false;
+        for (const dirent of dirents) {
+            if (isWorkspacePanelHidden(dirent.name) || dirent.isSymbolicLink()) continue;
+            if (entries.length >= WORKSPACE_PANEL_MAX_ENTRIES) {
+                truncated = true;
+                break;
+            }
+            const absolute = path.join(resolvedResult.resolved, dirent.name);
+            const stat = await fsPromises.lstat(absolute).catch(() => null);
+            if (!stat) continue;
+            const isDirectory = stat.isDirectory();
+            entries.push({
+                name: dirent.name,
+                path: projectRelativePath(workspaceRoot, absolute),
+                type: isDirectory ? 'directory' : 'file',
+                size: isDirectory ? null : stat.size,
+                modified: stat.mtime.toISOString(),
+            });
+        }
+        entries.sort((left, right) => (
+            left.type === right.type
+                ? left.name.localeCompare(right.name, 'zh-CN')
+                : left.type === 'directory' ? -1 : 1
+        ));
+        res.setHeader('Cache-Control', 'no-store');
+        res.json({
+            path: projectRelativePath(workspaceRoot, resolvedResult.resolved),
+            entries,
+            truncated,
+        });
+    } catch (error) {
+        console.error('[workspace] list failed:', error);
+        res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
     }
 });
 
@@ -4189,6 +4317,29 @@ async function startServer() {
 
                     // 回收站 7 天过期清理（启动跑一次，之后每天一次）。
                     startTrashRetention();
+
+                    // scratch 自动清理（启动跑一次，之后每 6 小时一次；只清 scratch）。
+                    startScratchRetention();
+
+                    // 会话级工具结果缓存（<workspace>/.pilotdeck/tool-results）兜底清理：
+                    // 孤儿会话目录立即清，其余超过 toolResultsTtlDays（默认 14 天）再清。
+                    startToolResultsRetention();
+
+                    // 回退备份（<chatDir>/.rewind-backups）：每会话留最近 3 份、30 天过期。
+                    // 删会话时会立即清空，这里只是用户从不删会话时的兜底。
+                    startRewindBackupRetention();
+
+                    // 记忆库 L0 兜底：清掉 transcript 已不存在的原始对话行（历史遗留 + 绕过接口的删除）。
+                    startSessionMemorySweep();
+
+                    // 已归档账号保留期（multiUser.retention.archivedUserMaxAgeDays，默认 30 天）：
+                    // 到期删归档目录 + 账号行；恢复过的账号会被跳过。
+                    startArchivedUsersRetention();
+
+                    // 项目归档已下线（删项目改真删）：启动时把旧归档与整包回收站的存量清掉。
+                    await purgeLegacyProjectArchives().catch((error) => {
+                        console.warn('[legacy-archives] cleanup failed:', error?.message ?? error);
+                    });
 
                     // Start background memory scheduler for auto index/dream.
                     startMemoryScheduler();
