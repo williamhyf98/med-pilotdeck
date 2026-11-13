@@ -9,11 +9,14 @@ type TooltipProps = {
   content?: ReactNode;
   position?: TooltipPosition;
   className?: string;
+  /** 箭头颜色跟随气泡自定义时用（默认仍是 gray-900 / gray-100）。 */
+  arrowClassName?: string;
   delay?: number;
   inline?: boolean;
 };
 
-function getArrowClasses(position: TooltipPosition): string {
+function getArrowClasses(position: TooltipPosition, override?: string): string {
+  if (override) return override;
   switch (position) {
     case 'top':
       return 'top-full left-1/2 transform -translate-x-1/2 border-t-gray-900 dark:border-t-gray-100';
@@ -33,6 +36,7 @@ function Tooltip({
   content,
   position = 'top',
   className = '',
+  arrowClassName,
   delay = 350,
   inline = false,
 }: TooltipProps) {
@@ -191,7 +195,7 @@ function Tooltip({
         >
           {content}
           {/* Arrow */}
-          <div className={cn('absolute w-0 h-0 border-4 border-transparent', getArrowClasses(position))} />
+          <div className={cn('absolute w-0 h-0 border-4 border-transparent', getArrowClasses(position, arrowClassName))} />
         </div>,
         document.body
       )}

@@ -1064,7 +1064,7 @@ function SplitBody(props: SplitBodyProps) {
               ? (workbenchWidth ? `${workbenchWidth}px` : '100vw')
               : `${FILES_PANEL_WIDTH}px`,
             ...(!isMobile ? { width: FILES_PANEL_WIDTH } : {}) } as React.CSSProperties}
-          aria-label="项目文件"
+          aria-label="工作区"
         >
           <div className="pd-side-panel-content h-full">
             <Suspense fallback={<TabSkeleton />}>

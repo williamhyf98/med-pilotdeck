@@ -1584,7 +1584,8 @@
     opacity: 1;
   }
   
-  input[type="checkbox"]:focus {
+  /* 只在键盘聚焦时画焦点环：鼠标点选时这圈 --ring（暖色主题下是棕色）会像多余的外框 */
+  input[type="checkbox"]:focus-visible {
     opacity: 1;
     outline: 2px solid hsl(var(--ring));
     outline-offset: 2px;
@@ -1603,7 +1604,7 @@
     border-color: rgb(37 99 235); /* blue-600 */
   }
   
-  .dark input[type="checkbox"]:focus {
+  .dark input[type="checkbox"]:focus-visible {
     --tw-ring-color: rgb(59 130 246); /* blue-500 */
     --tw-ring-offset-color: rgb(31 41 55); /* gray-800 */
   }

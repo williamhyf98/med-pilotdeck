@@ -218,7 +218,7 @@ describe('MainContent file workspace routing', () => {
     expect(await screen.findByTestId('editor-sidebar')).not.toBeNull();
 
     rerender(<MainContent {...propsFor('chat', setActiveTab)} />);
-    expect(screen.getByRole('complementary', { name: '项目文件' }).className).toContain('pd-side-panel-exit');
+    expect(screen.getByRole('complementary', { name: '工作区' }).className).toContain('pd-side-panel-exit');
     expect(screen.getByRole('complementary', { name: '文件预览' }).className).toContain('pd-side-panel-exit');
     await waitFor(() => expect(screen.queryByTestId('editor-sidebar')).toBeNull());
 
@@ -257,7 +257,7 @@ describe('MainContent file workspace routing', () => {
 
     expect(await screen.findByTestId('runtime-chat')).not.toBeNull();
     const preview = screen.getByRole('complementary', { name: '文件预览' });
-    const files = screen.getByRole('complementary', { name: '项目文件' });
+    const files = screen.getByRole('complementary', { name: '工作区' });
     expect(preview).not.toBeNull();
     expect(files).not.toBeNull();
     expect(preview.querySelector('.pd-side-panel-content')).not.toBeNull();
@@ -278,10 +278,10 @@ describe('MainContent file workspace routing', () => {
     view.rerender(<MainContent {...propsFor('files')} />);
     expect(preview.className).toContain('pd-side-panel-exit');
     expect(preview.style.getPropertyValue('--pd-side-content-width')).toBe('560px');
-    expect(screen.getByRole('complementary', { name: '项目文件' }).className)
+    expect(screen.getByRole('complementary', { name: '工作区' }).className)
       .toContain('pd-side-panel-enter');
     await waitFor(() => expect(screen.queryByRole('complementary', { name: '文件预览' })).toBeNull());
-    expect(screen.getByRole('complementary', { name: '项目文件' })).not.toBeNull();
+    expect(screen.getByRole('complementary', { name: '工作区' })).not.toBeNull();
   });
 
   it.each([false, true])('lets the expanded preview hide the conversation (mobile: %s)', (isMobile) => {
@@ -290,7 +290,7 @@ describe('MainContent file workspace routing', () => {
 
     const chat = screen.getByTestId('runtime-chat').parentElement;
     const preview = screen.getByRole('complementary', { name: '文件预览' });
-    const files = screen.getByRole('complementary', { name: '项目文件' });
+    const files = screen.getByRole('complementary', { name: '工作区' });
     expect(chat?.className).toContain('invisible');
     expect(preview.className).toContain('flex-1');
     expect(preview.style.width).toBe('');
@@ -438,7 +438,7 @@ describe('MainContent project-type workspace routing', () => {
     expect(screen.getByRole('region', { name: '伤情推演对话' })).not.toBeNull();
     expect(screen.getByLabelText('本轮伤情自由输入')).not.toBeNull();
     expect(screen.queryByRole('heading', { name: '分级救治全过程' })).toBeNull();
-    expect(screen.getByRole('complementary', { name: '项目文件' })).not.toBeNull();
+    expect(screen.getByRole('complementary', { name: '工作区' })).not.toBeNull();
     expect(mocks.chatProps.some((props) => props.hideComposer === true)).toBe(true);
   });
 });

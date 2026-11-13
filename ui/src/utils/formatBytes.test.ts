@@ -8,6 +8,9 @@ describe('formatBytes', () => {
     expect(formatBytes(2048)).toBe('2 KB');
     expect(formatBytes(5 * 1024 * 1024)).toBe('5.0 MB');
     expect(formatBytes(20 * 1024 * 1024)).toBe('20 MB');
+    expect(formatBytes(5 * 1024 ** 3)).toBe('5.0 GB');
+    expect(formatBytes(20 * 1024 ** 3)).toBe('20 GB');
+    expect(formatBytes(1.5 * 1024 ** 4)).toBe('1.5 TB');
   });
   it('returns a dash for missing or invalid values', () => {
     expect(formatBytes(undefined)).toBe('-');
