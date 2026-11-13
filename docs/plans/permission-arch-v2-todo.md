@@ -15,8 +15,8 @@
 | 门 | 含义 | 谁卡在这 | 状态 |
 |---|---|---|---|
 | **门 0** | 审计骨架 + 路径校验三条跑通 | **所有人**（含 B 轨） | ✅ **已通过（2026-11-11）** |
-| 门 1 | 删除能进 `.trash`、可恢复 | A 轨前端删除按钮 | 🟡 后端已通过（A1，2026-11-11）；差 A2 前端删除入口 |
-| 门 2 | 前端工作区页 + 管理员总览可交付 | 只有 A 轨 | 未开始 |
+| 门 1 | 删除能进 `.trash`、可恢复 | A 轨前端删除按钮 | ✅ **已通过（2026-11-11，A1+A2）**；恢复按钮按设计留到第二批（先用 `POST /api/storage/trash/restore`） |
+| 门 2 | 前端工作区页 + 管理员总览可交付 | 只有 A 轨 | ✅ **已通过（2026-11-11，A3 收尾；判定见 §2.3 末尾）** |
 | 门 3 | 数据分析技能可交付（含安全用例全绿） | 只有 B 轨 | 🟡 代码侧已全绿（S1–S12 + C1–C12 + R1–R3）；差 arm64 容器实测 + C6/C11 在依赖齐全机器复跑 |
 
 > 心法：**门 0 谁都别跳；之后 A 轨（用户看得见 / 能删 / 知道 inbox 多大）与
@@ -141,11 +141,25 @@
 
 **前置**：A1。
 
-- [ ] 前端删除只针对 `kind:'file'`；文案统一为"移入回收站（7 天后自动释放）"，**不出现"永久删除"**
-- [ ] 批量删除一次汇总确认（列文件数 + 总大小）
-- [ ] `scanStorage()` 返回体加 `usage: { inboxBytes, exportsBytes, scratchBytes, totalBytes }`
+- [x] 前端删除只针对 `kind:'file'`；文案统一为"移入回收站（7 天后自动释放）"，**不出现"永久删除"**
+      （2026-11-11 调整：归档 tab 的**组勾选**代表整包 `kind:'archive'`，同样是软删除、7 天释放）
+- [x] 批量删除一次汇总确认（列文件数 + 总大小）
+- [x] `scanStorage()` 返回体加 `usage: { inboxBytes, exportsBytes, scratchBytes, totalBytes }`
       （从已有 `files[].path` 前缀聚合，不新增扫描）
-- [ ] 测试：三组之和 = `workspaceBytes`；删文件后总量下降
+- [x] 测试：三组之和 = `workspaceBytes`；删文件后总量下降
+
+实测结论（2026-11-11）：只改 `StorageV2.tsx` 的**既有**删除入口（未新增入口，A3 面板另起）：
+分组整包删除按钮移除、全选只选文件、文案改为"移入回收站"、确认框列"共 N 个文件，合计 X"、
+成功提示"已移入回收站，7 天内可恢复"；总量区新增第 4 格"回收站（7 天后释放）"。
+后端 `scanWorkspaceGroups()` 加 `usage`，按 `files[].path` 顶层目录聚合，自定义目录不计入三项，
+故 `inbox+exports+scratch <= totalBytes`（只含三个默认目录时相等）。
+顺带补了一个 A1 遗留的记账缺口：归档里的文件同样走软删除，`scanArchiveGroups()` 现在也读 `.trash`，
+`totals.trashBytes` 把工作区与归档两边相加，否则删归档文件时 `totalBytes` 会凭空变小。
+命令：`cd ui && npx vitest run server/routes/storage.trash.test.js server/routes/storage.test.js
+src/components/main-content-v2/StorageV2.test.tsx` → 17 passed；`cd ui && npm test` → 170 files / 1243 passed
+（并行跑时 `memory.test.js` 有一条既存偶发 403 抖动，单跑 3/3 稳定，与本轮改动无关）；
+`cd ui && npx tsc --noEmit` ✅；`npx eslint src/components/main-content-v2/StorageV2.tsx` ✅；
+根目录 `npm test` → **864 / 862 pass / 0 fail / 2 skipped**。
 
 **门 1 通过条件**：删除 → `.trash` → 能恢复，且保留项拦得住。
 
@@ -153,14 +167,48 @@
 
 **前置**：A2 的 `usage` 字段。
 
-- [ ] 工作区页：目录树懒加载（名称/大小/mtime）、预览（pdf/docx/xlsx/图片/文本）
-- [ ] **三条用量条**：工作区总量 / `scratch` / `inbox`（纯提示，超阈值变黄）
-- [ ] 能力卡片三行文案（可读＝整个工作区；可写＝除 `inbox` 与保留项；技能文档只读）
-- [ ] 管理员总览（设计书 §9.2.1）：合计、排序、占比、**其中 inbox 列**、阈值着色、手动刷新、归档标灰
-- [ ] 普通用户访问 `/api/admin/users` → 403（补测试锁定）
-- [ ] 旧 `StorageV2.tsx` 保持不动（不在它上面加删除入口）
+- [x] 工作区页：目录树懒加载（名称/大小/mtime）、预览（pdf/docx/xlsx/图片/文本）
+- [x] **三条用量条**：工作区总量 / `scratch` / `inbox`（纯提示，超阈值变黄）
+- [x] 能力卡片三行文案（可读＝整个工作区；可写＝除 `inbox` 与保留项；技能文档只读）
+- [x] 管理员总览（设计书 §9.2.1）：合计、排序、占比、**其中 inbox 列**、阈值着色、手动刷新、归档标灰
+- [x] 普通用户访问 `/api/admin/users` → 403（补测试锁定）
+- [x] 旧 `StorageV2.tsx` 保持不动（不在它上面加删除入口）
+
+实测结论（2026-11-11，工作区面板部分）：
+- 面板本体改造的是 `FilesV2.tsx`（原「项目文件」面板）：标题改「工作区」，`MainContent` 侧栏
+  `aria-label` 同步改「工作区」。目录树改成按层请求，不再一次拉整棵树
+- 新接口：`GET /api/projects/:name/workspace/usage`（三条用量条 + 阈值占位）、
+  `GET /api/projects/:name/files/list?path=`（单层目录，名称/大小/mtime，隐藏 `.trash` 等保留项与软链，
+  单目录最多 500 项并回 `truncated`）
+- 预览复用已有链路：图片/PDF 走 `/files/content`，Office（docx/xlsx/pptx/csv）走
+  `/files/preview/pdf`，文本走 `/file`；预览弹窗可"在编辑器中打开"保留原有编辑路径
+- 三条用量条：工作区总量 / scratch 用「数值 / 提示阈值」，≥80% 变黄；inbox 条显示数值 + 占工作区百分比
+- `/api/admin/users` 的 403 由 `ui/server/adminGating.test.js` 锁定（未改）
+- 命令：`cd ui && npx vitest run src/components/main-content-v2/FilesV2.test.tsx` → 3 passed；
+  `cd ui && npm test` → 170 files / 1248 passed；`npx tsc --noEmit` ✅；`eslint FilesV2.tsx` ✅
+
+实测结论（2026-11-11，管理员总览部分）：
+- 后端 `storageUsage.js` 一次遍历同时产出 `{ bytes, inboxBytes }`：`inbox` 只认
+  `workspaces/<id>/inbox` 与 `workspaces/<typeKey>/<id>/inbox` 两处（其余同名目录、文件都不算），
+  因此 `inboxBytes <= bytes` 恒成立；`getUserStorageBytes()` 仍返回数字，旧调用与旧测试不受影响
+- 新增 `listArchivedUserBytes()`：扫 `<root>/archives/users/<id>-<stamp>`，按 `<id>-` 前缀归属
+  （`1-` 不会吞掉 `12-`），被删账号的目录仍计入合计，行上标「已归档」灰标 +「（含归档 X）」
+- 新增 `getUserTotalWarningBytes()`：读 `workspace.quota.userTotalMaxBytes`，缺配置回落 20 GiB（§9.2 默认）
+- `GET /api/admin/users` 增加 `inboxBytes` / `archivedBytes` 与顶层 `storage: { totalBytes,
+  totalInboxBytes, archivedBytes, userTotalWarningBytes }`；`?refresh=1` 先 `invalidateStorageCache()` 再重算
+- 前端「用户」页：页头合计 + 用户数 + 其中 inbox + 单用户告警值；「刷新」按钮走 `?refresh=1`；
+  「存储用量」列表头可点击切换升/降序（默认降序）；新增「占比」「其中 inbox（占本用户 %）」两列；
+  超告警值的存储单元格标琥珀色并带 title；列数 7 → 9，确认行 `colSpan` 同步
+- `formatBytes` 补 GB/TB（原来到 MB 就截断，20 GB 会显示成 20480 MB）
+- 命令：`cd ui && npx vitest run server/services/storageUsage.test.js server/routes/adminUsers.test.js
+  src/components/settings/view/users/UsersSettings.test.tsx src/utils/formatBytes.test.ts` → 39 passed；
+  `cd ui && npm test` → **170 files / 1258 passed**；`npx tsc --noEmit` ✅；
+  `eslint users/index.tsx users/useUsersAdmin.ts utils/formatBytes.ts` ✅
 
 **门 2 通过条件**：设计书 §14 第 18、19、21、22 条。
+
+判定：18（工作区页三用量条 + 预览）✅、19（管理员总览合计/排序/占比/inbox 列/告警着色/刷新/归档标灰）✅、
+21（普通用户 `/api/admin/users` → 403）✅、22（删除先进回收站、可恢复）✅ → **门 2 达成**
 
 ---
 
@@ -176,6 +224,8 @@
       新增 `commandPolicyRuntime.ts` 按 **mtime** 缓存，管理员改完即时生效
 - [x] 第一条登记命令：`data-analysis.run`（`--script/--input/--out/--timeout/--mem-mb`，
       `inputRoots=[inbox,scratch]`，`outputRoots=[exports]`，`timeoutMs=1_800_000`）+ `data-analysis.check`
+      - 2026-11-12 追记：`inputRoots` 放宽为 `[inbox,scratch,exports]`（链式分析直接吃上一轮产物），
+        写入范围不变；见 `data-analysis-skill-design.zh.md` §3 U2 补充
 - [x] 策略文件非法 → **fail-closed 到 ask**（不是直接拒），并写审计 `policy.invalid`
 - [x] 测试 `tests/security/registered-commands.spec.ts`（11 条）：形状识别 / 合规 allow / 越根 deny /
       `..` 与绝对路径逃逸 / 未登记选项与 `--flag=value` / 未登记 id / 端到端 allow / 端到端 deny /
@@ -190,12 +240,13 @@
 |---|---|---|---|---|
 | D1 | 设计文档定稿（依赖清单 / 12 条安全用例 / 正确性清单） | 0.5d | B0 | ✅ |
 | D2 | 技能骨架 `skills/data-analysis/**` | 0.5d | D1 | ✅ |
-| D3 | 离线运行时（venv + wheels + Dockerfile 两处） | 0.5d | D2 | 🟡 代码已接；**macOS 本机 bootstrap 实测已通过（status: ready）**；arm64 容器未实测 |
+| D3 | 离线运行时（venv + wheels + Dockerfile 两处） | 0.5d | D2 | 🟡 代码已接；**macOS 本机 bootstrap 实测已通过（status: ready）**；C6/C11 已于 2026-11-12 在本机跑通（共享运行时含 lifelines/wfdb）；仅剩 arm64 容器实测 |
 | D4 | 唯一入口 `analysis.sh run` | 1d | D3 | ✅ |
 | D5 | 执行期安全（AST 黑名单 + 运行期护栏 + 资源上限） | 1d | D4 | ✅ |
-| D6 | 产物落位 `exports/analysis/<slug>-<ts>/` | 0.3d | D4 | ✅ |
+| D6 | 产物落位 `exports/analysis/<slug>-<ts>/` | 0.3d | D4 | ✅（目录规则已被 D9 取代） |
 | D7 | 管理员「数据分析依赖」页 | 1d | D3 | ✅ 设置页「扩展 / 技能依赖」+ 只读接口 |
 | D8 | 正确性 + 安全测试 | 1d | D5、D6 | ✅ S1–S12 + C1–C12 + R1–R3 全接上；C6/C11 因本机缺 lifelines/wfdb 显式 skip |
+| D9 | 产物改为「一轮一目录」：`exports/<YYYYMMDD-HHMMSS>-<中文主题>/`，失败就地重试、`report.md` 骨架 | 1d | D8 | ✅ 执行器 + `SKILL.md` + 4 条新用例；旧 `exports/analysis/` 已移入回收站 |
 
 **门 3 通过条件**：设计书 §14 第 24、25 条必须失败且留审计；
 真实 CSV 能产出统计结果与图文件。
@@ -231,11 +282,15 @@
 
 | 项 | 触发条件 |
 |---|---|
-| 回收站页面（列表 / 恢复 / 清空） | A1 稳定运行 2 周；"清空"是唯一不可恢复入口，必须单独汇总确认 |
-| 前端写操作：新建目录、就地编辑 | 回收站页面先上线 |
-| `scratch` 自动清理 | 告警跑满 2 周、拿到真实用量分布 |
-| `kind:'workspace'` / `kind:'archive'` 硬删除收口 | 与"归档"功能一起设计 |
-| 可见性白名单 / 沙箱可写范围收窄 | `skills/_shared` 结构冻结、skills 回归跑完（不急） |
+| [x] 回收站页面（列表 / 恢复 / 清空） | 已完成 2026-11-12；"清空"是唯一不可恢复入口，二次确认 + 审计 `trash.purge` |
+| [x] 前端写操作：新建目录 | 已完成 2026-11-12（多级、父目录须已存在、隐藏名/保留项/软链拒绝） |
+| [x] 前端写操作：就地编辑 | 已完成 2026-11-12；文本预览弹窗「编辑→保存/取消」，保存走 `PUT /file` 并共用同一套路径规则 |
+| [x] `scratch` 自动清理 | 已完成 2026-11-12；启动一次 + 每 6 小时，只清 scratch，`.pinned`/保护窗免删 |
+| [x] `scratch` 分档清理（D10） | 已完成 2026-11-12；回合结束删本轮 `work/<session>/<turn>/` 与 `tool-results/<turn>-*`，其余 TTL 30→7 天；开关 `workspace.quota.cleanOnTurnEnd` |
+| [x] `kind:'workspace'` 硬删除收口 | 已完成 2026-11-12；改为逐顶层条目软删 + 重建默认目录 |
+| [x] `kind:'archive'` 硬删除收口 | 2026-11-11 已改 `moveGroupToTrash`（整组进 `.trash/groups`） |
+| 可见性白名单 | **评估后暂缓**（2026-11-12）：UI 层已无脚本入口，真正缺口是"agent 能念脚本"；要 100% 成立必须做"执行/读取分离"（宿主执行器），成本 4–6d，详见 §6 同日日志 |
+| 沙箱可写范围收窄 | **S1–S4 已完成（2026-11-12）**：接线 + 开关（默认 `false`）+ W6 反向断言 + 自动化用例，macOS 实测 E1–E7 全绿。剩 **S2：Linux bwrap 真机回归**（需先 push）。见 [sandbox-write-scope-narrowing.md](./sandbox-write-scope-narrowing.md) |
 
 **参考总量**：第一批 ≈13.6d（两人并行关键路径 7.3d）；第二批 ≈3.5d；第三批 ≈3d。
 
@@ -414,6 +469,13 @@
 - 命令：`npx tsc --noEmit` ✅ ｜ `npm test` → **857 tests / 852 pass / 0 fail / 5 skipped**
   （5 = 原有 2 条 + D8 的 C6/C10/C11；C10 装 pydicom 后可跑通）
 - 遗留（不阻塞门 3 结论）：C6/C11 未在本机真跑，需在 node12 / 交付镜像（依赖齐全）上跑一次留档
+- **追记（2026-11-12）：上面这条已作废。** 11-11 14:58 与 15:38 两次 `analysis.sh bootstrap-runtime`
+  把 `lifelines 0.30.3` + `wfdb 4.3.1` 装进了两个 venv（`~/.cache/pilotdeck-analysis`、
+  `.runtime/cache/xdg/pilotdeck-analysis`）。测试的 `pickPython()` 会按候选顺序挑一个**能 import 目标模块**的
+  解释器，因此 C6/C11 早就自动从 skip 变成真跑了，不需要改测试。
+  实测：`node --test dist/tests/skills/data-analysis-correctness.spec.js` → **13 pass / 0 skip**。
+  （`npm test` 里仍显示的 2 条 skip 是平台条件跳过：`sandbox-exec 不存在`、`bwrap 未安装`，与依赖无关。）
+  教训：这条备注写在 `pip` 被 SSL 挡住的那次，后来装好了却没回头改——文档里的"未做"要带观察命令。
 
 ### 2026-11-11 · macOS 本机把运行时真装起来（D3 开发机侧 + D8 补全）
 
@@ -744,3 +806,618 @@ dist 实测：`docx/references/specifications.md` → OK；`docx/../src/cli/pilo
 - 已知限制：清空整个工作区（`kind:'workspace'`）与归档（`kind:'archive'`）仍是硬删；
   前端还没有回收站列表/恢复入口（A2/A3）；`.trash` 本身仍可能被 bash 的 `rm/mv` 直接动到
   （与 inbox 残留风险同类）
+
+### 2026-11-11 · A2 删除入口收口 + 用量聚合（门 1 通过）
+
+- 问题：A1 把文件删除改成进回收站后，旧的 `StorageV2` 仍写着"永久删除""此操作不可恢复"，
+  而且分组按钮还能触发 `kind:'workspace'/'archive'` 的**硬删除**——用户看到的语义和实际行为相反。
+- 决定：A2 只收口**既有**删除入口，不新增入口；A3 的工作区面板仍按设计另起，不在 `StorageV2` 上扩展
+  （见设计书 §5.3.1 的 2026-11-11 修订注记）。
+- 实现：
+  - `StorageV2.tsx`：删除目标只剩 `kind:'file'`；移除分组整包删除按钮；分组勾选框改为"只选文件"；
+    主按钮"移入回收站"；确认框显示"共 N 个文件，合计 X"+"7 天内可恢复"；成功提示"已移入回收站"；
+    总量区新增"回收站（7 天后释放）"一格（`totalBytes` 已含回收站，三者相加不再等于总量，
+    必须单列才不误导）；工作区文件为空但 `trashCount>0` 时提示回收站里还有几个
+  - `storage.js`：`scanWorkspaceGroups()` 增加 `usage: {inboxBytes, exportsBytes, scratchBytes, totalBytes}`，
+    复用 `files[]` 聚合，不新增磁盘遍历
+- 验证：`npx vitest run storage.trash.test.js storage.test.js StorageV2.test.tsx` → 17 passed；
+  `cd ui && npm test` → 170 files / 1243 passed（`memory.test.js` 并行偶发 403 为既存抖动，单跑稳定）；
+  `npx tsc --noEmit` ✅；`eslint StorageV2.tsx` ✅；根目录 `npm test` → 864 / 862 pass / 0 fail / 2 skipped
+- 已知限制：①前端仍没有"恢复"按钮（第二批），恢复只能用 API；②清空工作区/整包归档的硬删除
+  后端仍在，但前端已无法触发，等第二批收口；③`usage` 只在前端类型里预留，A3 面板才真正展示三条用量条
+
+- 视觉微调（2026-11-11）：勾选框保留原生方框样式，只去掉**外围**那圈棕色焦点框——
+  根源是 `index.css` 里 `input[type="checkbox"]:focus` 用 `--ring`（暖色主题下是棕红）画 2px outline，
+  鼠标点选也会触发。改为 `:focus-visible`：鼠标点选不再出框，键盘 Tab 聚焦仍有焦点环。
+
+### 2026-11-11 · 归档整包也进回收站（A2 追加）
+
+- 需求：①"归档残留"这个词像垃圾，改成「已归档项目」并加副标题；②删除归档也要走
+  "移入回收站、7 天后自动释放"，不能再硬删；③不新增"单文件归档"。
+- 实现：
+  - `ui/server/services/groupTrash.js`（新增）：整组回收站放在**用户 home** 下
+    `<PILOT_HOME>/.trash/groups/`，布局 `workspaces/<type>/<id>.<stamp>` /
+    `archives/<id>.<stamp>`。为什么不在 `trash.js` 里做：文件级回收站是"每个工作区根一个
+    `.trash`"，整组删除时不能把工作区移进它自己内部，只能提到 home 级。
+    提供 `moveGroupToTrash` / `listGroupTrash` / `restoreGroupFromTrash` /
+    `purgeExpiredGroupTrash` / `groupTrashUsage`
+  - `trashRetention.js`：7 天任务同时清理整组回收站
+  - `storage.js`：`kind:'archive'` 由 `fs.rm` 改为 `moveGroupToTrash`；
+    `totals.trashBytes` 加整组回收站占用；新增 `GET /api/storage/trash/groups`、
+    `POST /api/storage/trash/groups/restore`
+  - `StorageV2.tsx`：总量第三格改名「已归档项目」+ 副标题"删除项目时保留的文件，不会自动清理"；
+    归档分组行新增"删除归档"按钮（文案"移入回收站（7 天后自动释放）"），确认框同样列
+    文件数 + 合计大小
+- 验证：`npx vitest run storage.trash.test.js storage.test.js StorageV2.test.tsx` → 18 passed
+  （含整组 move/restore/409/过期清理/扫描口径）；`cd ui && npm test` → 170 files / 1247 passed；
+  `npx tsc --noEmit` ✅；`eslint StorageV2.tsx` ✅
+- 已知限制：`kind:'workspace'`（清空整个工作区）后端仍是硬删，前端未暴露，等第二批收口；
+  两类回收站的"恢复/清空"UI 仍留到第二批（接口已可用）。
+- 修正（同日，按反馈）：撤掉归档行那个独立的"删除归档"按钮——顶部红色「移入回收站」选中归档里的文件
+  就能完成同样的事，不需要第二个入口。后端 `kind:'archive'` 仍是软删除（整组进 `.trash/groups`，
+  仅 API 可达），前端不新增入口；`StorageV2` 的删除目标回到只有 `kind:'file'`。
+
+### 2026-11-11 · 归档改为"组勾选 + 红色按钮"整包删除
+
+- 需求：不加行内按钮，但要让删除**整个归档**是真的整包（目录直接消失），而不是只把里面的文件一个个搬走。
+- 实现（`StorageV2.tsx`）：
+  - 归档 tab 的组勾选 = 一个 `kind:'archive'` 目标（整包）；勾单个文件时会自动取消该组的整包选择，
+    避免"确认框写整包、实际只删一个文件"
+  - 顶部红色「移入回收站」对整包目标发 `{ kind:'archive', scope:'archive', groupId }`，
+    确认框显示"整个归档目录（含 N 个文件，X）会移入回收站，7 天内可恢复"
+  - 空归档也可整包勾选删除（否则空壳永远留着），空工作区仍禁用
+  - 混选（整包 + 单个文件）时按"选中的 N 项"描述，不冒充整包
+- 后端无需改动：`kind:'archive'` 在上一轮已改成 `moveGroupToTrash`（`<PILOT_HOME>/.trash/groups/archives/`），
+  7 天过期任务与 `GET/POST /api/storage/trash/groups*` 恢复接口都已就位
+- 验证：`npx vitest run StorageV2.test.tsx` → 5 passed（整包、空归档、文件级、扫描口径）；
+  `cd ui && npm test` → 170 files / 1247 passed；`npx tsc --noEmit` ✅；`eslint StorageV2.tsx` ✅
+- 已知限制：`kind:'workspace'`（清空整个工作区）后端仍是硬删且前端不暴露；两类回收站的 UI 恢复按钮仍在第二批
+
+### 2026-11-11 · A3 收尾：管理员"各用户目录占用总览"（§9.2.1）
+
+- 需求：管理员一眼看到每个用户目录占多少、谁在涨、inbox 占多少；不新增"停用账号"之类快捷操作。
+- 实现：
+  - `ui/server/services/storageUsage.js`：`sumDirectory` 换成 `walkDirectory`，一次遍历同时累计
+    `bytes` 与 `inboxBytes`（`workspaces/<id>/inbox` 与 `workspaces/<type>/<id>/inbox` 两处），
+    新增 `getUserStorageBreakdown()` / `listArchivedUserBytes()` / `getUserTotalWarningBytes()`，
+    `getUserStorageBytes()` 保留原签名。缓存仍是每用户 60 s，`invalidateStorageCache()` 同时清
+    归档与阈值缓存
+  - `ui/server/routes/adminUsers.js`：`GET /users` 返回 `inboxBytes` / `archivedBytes` 与顶层
+    `storage` 汇总；`?refresh=1` 先清缓存。归档目录按 `<id>-` 前缀归属，删掉的账号依旧计入合计
+  - `ui/src/components/settings/view/users/*`：合计行、刷新按钮、存储列排序（默认降序）、
+    占比列、其中 inbox 列（含占本用户百分比）、超阈值琥珀色、归档灰标；`storage` 汇总由 hook 透传
+  - `ui/src/utils/formatBytes.ts`：补 GB / TB 两档
+- 设计取舍：不把"占比"算成 `storageBytes / 所有用户 storageBytes` 之外的东西——分母含归档字节，
+  与页头合计一致，避免出现"各行占比加起来不是 100%"。
+- 验证：见 §2.3 实测结论（39 条定向用例 + 170 files / 1258 passed + tsc + eslint 全绿）
+- 已知限制：①归档目录只做总量与行内提示，没有"查看/恢复已归档账号"的入口（第二批）；
+  ②阈值只读 `pilotdeck.yaml`，管理页还没有编辑配额的表单（§9.2 的配置表单未做）；③告警只着色不拦截
+
+### 2026-11-12 · 第二批：回收站 UI / 新建目录 / scratch 清理 / 工作区硬删收口
+
+- 需求：进第二批，不再等"A1 跑满 2 周"这类触发条件；回收站、新建目录、scratch 自动清理、
+  `kind:'workspace'` 硬删收口一起做。
+- 后端：
+  - `services/trash.js`：`listTrash` 按"是否带时间戳后缀"区分**条目**与中间层 →
+    目录也能作为单个回收站条目（递归计量、整体恢复）；抽出 `purgeEntries` 让
+    7 天过期与手动清空共用一套审计（`trash.purge`，`meta.kind`/`retentionDays`）；
+    新增 `emptyTrash(groupRoot,{audit,actor})`（`reason: manual`，`tool: trash.empty`）
+  - `services/workspaceLimits.js`（新）：`workspace.quota` 唯一来源 + 60 s 缓存 + 非法值回落默认；
+    默认 workspace 5 GiB / scratch 1 GiB / soft 0.8 / TTL 30 d / 保护窗 10 min / 单用户 20 GiB / 影像 2 GiB
+  - `services/scratchRetention.js`（新）：只清 `scratch/<四类>`，按单元整体删，
+    先 TTL 后超限，按 `tool-results → preview → work → qa` + `lastUsedAt` 清到软阈值；
+    `.pinned`（JSON 数组 / 逐行）与保护窗免删；启动一次 + 每 6 h；审计 `scratch.clean(_failed)`
+  - `routes/storage.js`：`kind:'workspace'` 由 `fs.rm` 改为逐顶层条目 `moveFileToTrash`
+    （跳过保留项）后重建 `inbox/exports/scratch`
+  - `utils/workspacePaths.js`（新）：把新建目录的校验从 `index.js` 抽出来
+    （`index.js` import 即起服务，路由逻辑只能靠起服务测；与既有 `routeErrors.js` 同一做法）
+  - `index.js`：新增 `POST …/files/mkdir`、`GET …/trash`、`POST …/trash/restore`、
+    `POST …/trash/empty`（必须 `confirm:true`）、`POST …/workspace/scratch/clean`；
+    `/workspace/usage` 返回由配置算出的阈值 + `scratchPolicy`；启动处 `startScratchRetention()`
+- 前端（`FilesV2.tsx`）：头部「新建目录」+ 弹窗（多级、父目录须已存在）；
+  用量条下补「只有 scratch 会被自动清理」说明 + 「立即清理 scratch」（为 0 时禁用）；
+  可折叠「回收站」区（条目数/大小/7 天说明、逐项恢复、清空 → 二次确认）
+- 验证：
+  - `npx vitest run server/services/workspaceLimits.test.js` → 6 passed（默认/部分覆盖/非法值/YAML 坏/影像覆盖/60 s 缓存）
+  - `npx vitest run server/services/scratchRetention.test.js` → 8 passed（只动 scratch、TTL、清理顺序、未超限不动、
+    `.pinned` 两种格式、审计字段）
+  - `npx vitest run server/utils/workspacePaths.test.js` → 11 passed（绝对路径/盘符/`..`/隐藏名/非法字符/层级/长度/越界/软链）
+  - `npx vitest run server/routes/storage.trash.test.js server/services/storageUsage.test.js src/components/main-content-v2/FilesV2.test.tsx` → 35 passed
+  - `npx vitest run`（ui 全量）→ **173 files / 1290 passed**
+  - `npx tsc --noEmit` ✅ ｜ `eslint`（index.js / workspacePaths / scratchRetention / workspaceLimits / trash / storage）✅
+- 已知限制：
+  1. 新增的 5 个路由没有 HTTP 级自动化测试——`index.js` import 即 `listen`；已把**校验规则**
+     抽到 `workspacePaths.js` 单测覆盖，路由本身只做"校验 → 调用 service → 映射状态码"，
+     手工验收需重启 `node server/index.js` 后 curl。
+  2. 就地编辑 UI 未做（后端 `/api/files/save` 已可用）。
+  3. 可见性白名单/沙箱可写范围收窄仍延后（依赖 skills 结构冻结）。
+  4. scratch 清理是旁路任务，**不会**在测试里验证定时器本身，只验证 `cleanScratch` 单次行为。
+- 未提交：本轮所有改动仍在工作区（用户要求只改代码、不 commit/push）。
+
+### 2026-11-12 · 第二批收尾：就地编辑 + 路由级测试
+
+- 需求：把第二批剩余的两项做完——①预览弹窗里的就地编辑；②新路由的 HTTP 级测试。
+- 实现：
+  - `ui/server/routes/workspaceFiles.js`（新）：把第二批 5 条路由从 `index.js` 搬出来，
+    改成 `createWorkspaceFilesRouter({ extractProjectDirectory })`。理由与 `apiRouter.js` 一致：
+    `index.js` import 即 listen，路由只能靠起真服务测；注入依赖后可以用临时工作区跑完整链路。
+  - `apiRouter.js`：新增可选参数 `extractProjectDirectory`；`/projects` 挂载改为
+    `api.use('/projects', ...requireUser, projectsRoutes, workspaceFilesRouter)`——
+    同一条 `requireUser` 链只跑一次，不重复鉴权。
+  - `index.js`：删掉 92 行内联路由 + 不再使用的 import；保留 `/workspace/usage` 等面板接口。
+  - `utils/workspacePaths.js`：新增 `normalizeWritePath()`（`normalizeNewPath` + inbox 顶层只读）
+    与 `WORKSPACE_READ_ONLY_ROOTS`。
+  - `PUT /api/projects/:name/file`：路径校验由"前缀 startsWith"换成
+    `normalizeWritePath → resolveInsideRoot → assertNoSymlinkOnPath`；
+    越界/隐藏名/保留项/inbox/软链统一 400（原先是 403 或直接放行），二进制 Office/PDF 仍 415。
+  - `FilesV2.tsx`：文本预览弹窗新增「编辑」→ textarea → 「保存 / 取消」；
+    保存成功回写预览内容并 `refresh()`；`truncated` 与 inbox 文件不显示编辑按钮
+    （前者会截断丢内容，后者是只读原始凭证）；关闭弹窗时清空草稿。
+- 验证：
+  - `npx vitest run server/routes/workspaceFiles.test.js` → 18 passed（mkdir 201/400×6/409/404/软链；
+    回收站空列表、恢复、404、409 冲突、缺 confirm 400、confirm 清空；scratch clean；未知项目 500）
+  - `npx vitest run server/utils/workspacePaths.test.js` → 12 passed（新增 `normalizeWritePath`：inbox 只读、
+    `我的资料/inbox` 放行、exports/scratch 放行）
+  - `npx vitest run src/components/main-content-v2/FilesV2.test.tsx` → 9 passed
+    （新增：编辑保存发 PUT 且刷新、取消不写盘）
+  - `npx vitest run server/adminGating.test.js` → 44 passed（挂载表改动后鉴权矩阵不变）
+  - `npx vitest run`（ui 全量）→ **174 files / 1311 passed**
+  - `npx tsc --noEmit` ✅ ｜ `eslint`（FilesV2 / index.js / apiRouter.js / workspaceFiles / workspacePaths）✅
+- 行为变更（需要知道）：
+  1. `PUT /api/projects/:name/file` 现在拒绝写 `inbox/**`（400 `read_only_root`）。
+     代码编辑器打开 inbox 内文件后保存会看到明确报错；这是有意的"上传件不可改写"。
+  2. 同一接口原先对绝对路径只做 `startsWith` 前缀判断，现在逐段拒绝软链，软链目录内的写入会失败。
+  3. 越界从 403 统一为 400 + `code`，前端按 `error` 文案展示，不影响既有调用方。
+- 剩余：§7 可见性白名单 / 沙箱可写范围收窄（依赖 skills 结构冻结）。
+- 未提交：本轮所有改动仍在工作区。
+
+### 2026-11-12 · 决策变更：inbox 对用户本人可写
+
+- 背景：第二批收尾时 `PUT /api/projects/:name/file` 按 agent 的规则拦了 `inbox/`，
+  导致用户在代码编辑器里保存上传件会被 400。
+- 决定：**inbox 只对 agent 只读**。`src/tool/builtin/filesystem/pathSafety.ts` 的
+  `READ_ONLY_WORKSPACE_ROOTS`（agent 工具层）保持不变；UI 写入路径
+  （`normalizeWritePath`）不再拦 `inbox/`，`FilesV2` 也不再隐藏 inbox 文件的「编辑」按钮。
+- 理由：inbox 里是**用户自己的**上传件；改表头/补列是正常操作。agent 仍不得改写它，
+  因为 agent 的写入会让"原始凭证"失去可追溯性。
+- 验证：`npx vitest run server/utils/workspacePaths.test.js src/components/main-content-v2/FilesV2.test.tsx`
+  → 23 passed（新增 inbox 可写 2 条、inbox 文件可编辑 1 条）
+
+### 2026-11-12 · 可见性白名单评估结论 + 沙箱可写收窄清单
+
+- 用户问题：能否做到"用户看不到脚本、也无法让 agent 念脚本"，同时不影响 agent 运行技能？
+- 核查结论（代码事实）：
+  - **UI 层本来就没有脚本入口**：`SkillsV2` 只调 `/api/skills/read|write`，
+    `SkillManager.read()` 写死 `join(skillDir, "SKILL.md")`；`write()` 对 builtin/medical 直接
+    `read_only` 403（`assertMutableScope`）。所以"UI 层脚本不可见"**无需改动**。
+  - **跨用户隔离已有测试**：`tests/tool/path-safety-multiuser.spec.ts`（绝对路径、`../` 逃逸、软链）。
+  - **真正的缺口只有一个**：bash 沙箱里整个 user home 可写，且 bash 绕过 `pathSafety`。
+- 关于"agent 不念脚本"的技术定性：
+  - 只要技能脚本还在 agent 沙箱内，"能执行"就等于"能 `cat`"（解释器必须可读；
+    `chmod 0111` 对 `.sh/.py` 无效；bwrap 无 deny-read 原语）。**只靠文件权限做不到**。
+  - 100% 方案只有"执行/读取分离"：沙箱不挂载 `skills/`，注册命令改由宿主进程执行，
+    并脱敏 traceback（Python 默认会打印源码行）。成本 4–6d，主要花在五个技能的
+    network/cache/env 重新接线。**本轮不做**（用户决定先搁置）。
+- 本轮产出：`docs/plans/sandbox-write-scope-narrowing.md`（改造清单 W1–W8、回归用例
+  A1–A10 / E1–E7 / N1–N4、残余风险、回滚开关 `multiUser.sandbox.narrowWrites`、2–2.5d 估时）。
+- 未改任何代码，未提交。
+
+### 2026-11-12 · 沙箱可写范围收窄 S1（接线 + 开关，默认关闭）
+
+- 开关：`multiUser.sandbox.narrowWrites`，缺省 `false` → **行为与现状完全一致**（整个 home 可写）。
+- 新增 `src/tool/builtin/bash/sandbox/writeScope.ts`：`resolveWriteRoots()` 是 bwrap argv /
+  sandbox-exec profile / 启动自检 `grants()` 的**唯一口径**，避免三处不一致。
+- 收窄档位（`true`）：home 整体只读，只放行「当前工作区 + `<home>/.cache` + `<home>/.tmp`」；
+  越界、相对路径、home 本身一律丢弃。读权限不变。
+- 接线：`bash.ts` 传 `writeRoots: [context.cwd]`；`commandRunner.ts` 读配置并打印
+  `[sandbox] <kind> (ok), writes=narrow|home`。
+- 顺带修复：`analysis.rejected` 审计用真实时钟分片，跨天后 `tests/tool/analysis-audit.spec.ts`
+  必挂 → 改为跟随 `context.now`。
+- 测试：`npx tsc --noEmit` ✅ ｜ `npm test` → **873 / 871 pass / 0 fail / 2 skipped** ｜
+  `ui && npx vitest run` → **174 files / 1313 passed**。
+- 未做：S2（Linux 真开 + E1–E7 技能回归）、S3（macOS）、S4（反向断言 N1–N4）。默认值保持 `false`。
+- 未提交：改动仍在工作区。
+
+### 2026-11-12 · 沙箱可写收窄 S3（macOS 真开 + E1–E7）
+
+- 方法：临时用户 home + 真实 `pilotdeck.yaml`（只把 `narrowWrites` 改 `true`）+ `initializeSandbox`
+  + `NodeShellCommandRunner`，不碰正在运行的 5170 服务。
+- **抓到一个真缺陷并修复**：SBPL 读规则从来没单独列 `home`（兼容档位靠写规则 `file*` 顺带），
+  收窄后 `home` 立刻不可读 → `cat ~/memory/x` EPERM、`analysis.sh run` 读不了 `inbox/`。
+  修法：`readDirs` 显式加入 `home`，`grants().readOnly` 同步，补 2 条断言。
+- 结果：E1–E7 全绿（pdf/docx/pptx/xlsx/analysis/html/diagram 都出产物）；
+  反向用例 越界写 `memory|logs|projects|其他工作区|软链逃逸` 全部 EPERM，写 `exports|.cache|.tmp` 正常，
+  读 `memory|skills` 正常；`narrowWrites: false` 对照组越界写全部成功。
+- 未覆盖：`docx --render`（本机无 LibreOffice / 无 19400 渲染服务）、Linux bwrap（S2）。
+- 测试：`npx tsc --noEmit` ✅ ｜ `npm test` → **873 / 871 pass / 0 fail / 2 skipped**。
+- 默认值仍为 `false`；未提交。
+
+### 2026-11-12 · 沙箱可写收窄 S4（W6 反向断言 + 自动化用例）
+
+- 代码：`assertSandboxGrantsSafe()` 增加 `{ narrowWrites, writeRoots }`；收窄档位下可写授权必须
+  「在 home 内、不等于 home、不覆盖 workspaces 根、只含声明的当前工作区、不碰 memory/logs/skills/.trash/projects」，
+  命中即启动失败（fail-closed）。`initializeSandbox()` 已把开关传进去。
+- 测试：`commandRunner.spec.ts` +2 条（合法组合通过 / 9 种越界逐一抛错）；
+  新增 `tests/tool/builtin/bash/sandbox/writableScope.integration.spec.ts` 7 条真跑沙箱用例
+  （A6/A7/A8/A9 + N1/N2/N3），无沙箱平台整组 skip。
+- 结果：`npx tsc --noEmit` ✅ ｜ `npm test` → **882 / 880 pass / 0 fail / 2 skipped**；
+  S3 harness 复跑仍全绿。
+- 未做：S2（Linux bwrap 真机）、`docx --render` 链路；默认值仍 `false`；未提交。
+
+### 2026-11-12 · 决策变更：数据分析产物改为「一轮一目录」（D9，设计已定未实现）
+
+- 现象：2026-11-12 一轮对话实跑留下 **14 个平级目录 / 102 个文件**（`exports/analysis/` 下），
+  其中 6 个是失败、重复或空跑；`find exports -name report.md` 为空；
+  agent 回复末尾的产物卡片一次列出 25 个文件，用户在工作区里找不到对应关系。
+- 根因：旧约定"一次运行一个目录"（2026-11-11 追加），且失败半成品留在 `tables/`；
+  slug 只留 `[A-Za-z0-9._-]` 把中文过滤成拼音（`xiaohua`、`cat2`、`s1`）；
+  `report.md` 只写在退出码表的一行里，模型稳定跳过（14/14 未生成）。
+- 决定（设计书 §6 / §9 U4）：
+  1. **一轮一目录**：`exports/<YYYYMMDD-HHMMSS>-<中文主题>/`，根目录按 `PILOTDECK_TURN_ID` 钉死，
+     不再有 `analysis/` 中间层；跨轮不覆盖，同轮允许覆盖；
+  2. **失败就地重试**：半成品留在原目录给 agent 读，下一次重试开始前删掉 `attempts[-1].produced`，
+     成功时目录里只剩最终产物；不搬到 scratch、不新建目录；
+  3. **`report.md` 由执行器出骨架**（标题 / 口径 / 表图索引 / 结论占位），agent 只补结论；
+  4. 表图命名 `<序号>_<中文名>.csv`；子目录只给同轮"互不相关的第二件事"；
+  5. 工作区列表按 `modified` 倒序（服务端 `files/list` 一处改动）。
+- 待办：`run_analysis.py`（轮次绑定 / attempts / 精确清理 / report 骨架）、`SKILL.md`（6 处路径 +
+  "失败不许换目录" + "半成品只能读不能抄"）、`tests/skills/data-analysis-runner.spec.ts`
+  （`status: ok` 语义反转 + 新增轮次用例）、`exports/analysis/` 整包移入回收站（不碰根下 docx/pdf）。
+- 实现（2026-11-12 同日完成）：
+  - `run_analysis.py`：`PILOTDECK_WORK_DIR`/`PILOTDECK_TURN_ID` → `scratch/.../.analysis-root.json` 钉住根目录；
+    `--out` 第一段改写回该目录、其余段保留为子目录；同名目录自动加 `-2`；
+    运行前后快照算出 `produced`，失败写 `attempts[]` 并回 `staleFiles`，下次运行前删掉上次失败产物；
+    成功追加 `steps[]`；`report.md` 生成骨架（`<!-- index:start/end -->` 之间每次成功刷新索引，
+    正文与 `## 结论` 一字不动），`run.json.reportMissing` 标记结论是否还没写。
+  - 无 `PILOTDECK_TURN_ID` 时（CLI / 测试）退化为旧语义：`--out` 原样使用、已有成功结果仍拒绝覆盖。
+  - `SKILL.md`：路径 6 处改掉；新增「一轮一个目录」「失败就地重试不许换目录」「半成品只能读不能抄」
+    「回答末尾给 `exports/<目录>/`」。
+  - 测试：`data-analysis-runner.spec.ts` 14 → 18 条（换名被改写 / 跨轮开新目录 / 失败留半成品并清理 /
+    report 骨架与索引刷新），原「已成功目录不许覆盖」用例在 standalone 模式下保持通过。
+  - 迁移：`moveFileToTrash(工作区, 'exports/analysis')` → `.trash/exports/analysis.20261112T082826981Z`
+    （1.49 MB，1 条记录，7 天自动释放）；`exports/` 根下 7 个 docx/pdf/pptx 未动。
+- 测试：`npm test` → **899 tests / 897 pass / 0 fail / 2 skipped**。
+- 未提交：改动仍在工作区。
+
+### 2026-11-12 · D10：scratch 分档清理（回合结束即删本轮）
+
+- 现象：`scratch/` 实测 11 MB，其中 `work/` 9.9 MB（38 张 png），`data/` 856 KB、`qa/` 40 KB、`docx/` 24 KB。
+  一个 30 天的统一 TTL 会让"用完即弃"的回合目录压满 1 GiB，也会让"跨轮还用"的草稿被过早清掉。
+- 决定：按目录分三档（不再一刀切）——
+  1. `scratch/work/<session>/<turn>/`：**回合结束立刻删**（体积主体，跨轮价值≈0）；
+  2. `scratch/tool-results/<turnId>-*`：回合结束删本轮文件；`refs/result-NNNN.txt` 无 turnId 前缀，留给 TTL；
+  3. `scratch/qa|docx|data|tmp`：保留，`scratchTtlDays` **30 → 7 天**；`preview`、`.analysis-cache` 不动。
+- 实现：
+  - 新增 `ui/server/services/scratchTurnCleanup.js`：`safeScratchSegment()`（与 `AgentLoop.buildTurnEnvironment`
+    的 `safeWorkPathSegment` 同一套 NFKC + 字符白名单）定位目录；删 `work/<session>/<turn>`，
+    兜底再删 `work/<turn>`；空 session 目录顺手 `rmdir`；按 `<turn>-` 前缀删 tool-results 文件；
+    符号链接跳过，所有路径经 `within(scratchRoot, target)` 校验，异常只 `log.warn`、**永不抛错**。
+  - `pilotdeck-bridge.js`：新增 `scheduleTurnScratchCleanup()`（Set 去重、fire-and-forget），
+    挂在 `turn_completed`（正常 / 失败 / abort 三条路径都会发），**不挂 SSE `done`**（客户端断线也会触发）。
+  - `workspaceLimits.js`：`scratchTtlDays` 默认 7；新增 `cleanOnTurnEnd`（默认 `true`，
+    yaml 写 `false` 可关，非布尔值回落默认）。
+- 已知缺口：always-on / 定时任务的 `turn_completed`（`registerAlwaysOnNotificationForwarding`）没有 `projectKey`，
+  无法定位工作区，未挂清理 → 这类会话的 `work/` 由 TTL 兜底（最长 7 天）。
+- 测试：`scratchTurnCleanup.test.js` 8 条（删本轮留他轮 / 不碰四类草稿 / 前缀删 / 空 session 回收 /
+  非空不删 / 软链不跟随 / 无 scratch 安静返回 / 段名一致）；`workspaceLimits.test.js` +2 条（默认 7 天与开关默认开 / yaml 关闭生效）。
+  `npx vitest run scratchTurnCleanup scratchRetention workspaceLimits` → **3 files / 24 tests passed**。
+- 未提交：改动仍在工作区。
+
+### 2026-11-12 · D11：「立即清理 scratch」改成强制清理
+
+- 现象：点「立即清理 scratch」返回"没有可清理的内容（最近使用过的会自动跳过）"，但目录里有 11 MB。
+- 根因：按钮只是"现在跑一次自动清理规则"，三条闸门一条都不满足 ——
+  ①TTL 7 天未到；②总量 11 MB ≪ 1 GiB；③`SCRATCH_CATEGORIES` 只有 4 类，
+  `data`/`docx`/`tmp`/`qc` 和 `scratch` 根下的散文件根本不在扫描范围；
+  另外 `work/` 以**会话**为单元，一个会话里所有回合同生共死，9.9 MB 的那一坨永远"最近用过"。
+- 决定（A 方案）：用户手动点按钮 = 明确授权，语义改为"能删的全删"。
+  - `force: true` 忽略 TTL 与容量；只保留 60 秒防抖窗（正在跑的回合）与 `.pinned`；
+  - 必须同时带 `confirm: true`（缺 → 400 `confirm_required`），前端加二次确认弹窗，
+    弹窗里写明体积、"exports/inbox/我的资料不受影响"、"不可恢复"；
+  - 审计 `reason: 'manual'`；不带 body 的旧调用仍走自动规则（定时任务/脚本用）。
+- 配套修的两个真问题：
+  1. 扫描范围扩到 8 类目录 + `scratch/` 根下散落项（跳过隐藏项 `.analysis-cache` 等）；
+  2. `work/` 改按**回合**拆单元（`work/<session>/<turn>` 各自独立），删空的会话目录顺手 `rmdir`；
+  3. 目录的 `lastUsedAt` 改用子项 mtime 最大值 —— 目录 mtime 只在增删条目时更新，
+     用它判过期会误判（实测：旧文件放进新目录，整个会话被当成"刚用过"）。
+- 实测（本机 `general_med-mwbs19p9-fa8d27`）：30 个单元、共 10.88 MB，强制清理后全部释放；
+  `exports/` 8 个报告目录、`inbox/`、`我的资料/` 不受影响。
+- 测试：`scratchRetention.test.js` 8 → 15 条；`workspaceFiles.test.js` +2 条（force 缺 confirm 400 / force+confirm 真删）；
+  `FilesV2.test.tsx` +1 条（先弹确认再提交 `{force:true,confirm:true}`）。
+- 结果：`ui` → **175 files / 1333 tests passed**；根仓库 → **899 / 897 pass / 2 skipped**；`tsc --noEmit` ✅。
+- 未提交。
+
+### 2026-11-12 · D12：工作区面板拖拽移动 + 三处文案
+
+- 需求：①除 `exports`/`inbox`/`scratch` 三个骨架根外，其余内容支持拖拽移动（进目录、进回收站）；
+  ②去掉"可读/可写/只读"能力卡，换成三目录说明；③把"只有 scratch 会被自动清理…"改成"scratch 会定期自动清理"；
+  ④用量条 `inbox` 与 `scratch` 换位。
+- 后端：
+  - `POST /:projectName/files/move` `{from, toDir}`：`rename` 原子移动；`toDir: ''` = 工作区根；
+    拒绝骨架根（`pinned_root`）、拒绝移进 `scratch`（`scratch_is_disposable`）、
+    同名 409、移进自己 400、跨设备 400；审计 `file.move`。
+  - `POST /:projectName/files/trash` `{path}`：复用 `moveFileToTrash`（软删进 `.trash`，7 天可恢复），
+    拒绝骨架根；审计沿用 `file.trash`。
+  - 两个接口都复用 `normalizeNewPath` / `resolveInsideRoot` / `assertNoSymlinkOnPath`（`..`、隐藏名、软链逐段拒绝）。
+- 前端：`TreeBranch` 增加 HTML5 拖拽（`dragstart` 冒泡要用 `stopPropagation`，否则父行会覆盖拖拽源）；
+  目录行与"列表空白处"是落点，回收站标题行是软删除落点；拖拽中落点高亮；`exports/inbox/scratch` 根不可拖。
+- 文案/布局：用量条 `总量 → inbox → scratch`；能力卡换成 `DirectoryLegend`（inbox/exports/scratch 各一句）；
+  底部提示改"scratch 会定期自动清理；inbox 与 exports 不会"；目录标题右侧加"拖拽可移动"。
+- 测试：`workspaceFiles.test.js` +6 条（移动成功 / 移到根 / 拒绝骨架与 scratch / 同名与移进自己 / 软删进回收站 / 拒绝删骨架）；
+  `FilesV2.test.tsx` +2 条（拖到目录行发 move、拖到回收站发 trash），并更新原能力卡断言。
+- 结果：`ui` → **175 files / 1343 tests passed**；`tsc -p ui` ✅。一次全量跑出过 1 条偶发失败，重跑即绿（与本轮改动无关，待观察）。
+- 未提交。
+
+### 2026-11-12 · D12 复盘：拖拽进回收站没反应 / 面板微调
+
+- 现象：把「我的资料」拖到回收站没反应；用户以为是"拖拽没做出来"。
+- 根因（两条叠加）：
+  1. 5170 上的 node 服务是 17:08 启动的，早于路由改造 → `/files/move`、`/files/trash` 是 404。
+     Vite HMR 让前端看起来是新的，但后端没重启，视觉上就是"拖了没反应"。
+  2. 回收站的落点只有标题行那一条（约 20px 高），拖偏一点就落空。
+- 处理：
+  - 重启用新端口配置（`SERVER_PORT=3020 VITE_PORT=5170`）拉起 dev，`/files/*` 从 401（未登录）而不是 404 可证路由已生效。
+  - 落点改为**整个回收站板块**（含展开后的列表），悬停时整块变红。
+  - 新增拖拽蒙层：暗色背景 + 底部红色垃圾桶 `animate-bounce` + "松开鼠标，移入回收站"；
+    `dragleave` / `drop` / `dragend` 三处都会收起，蒙层 `pointer-events-none` 不影响落点判定。
+  - `draggable` 从外层 `div` 挪到行内 `button`（Chrome 下从按钮起拖更稳），仍保留 `stopPropagation` 防父行覆盖拖拽源。
+- 同时按需求调整：
+  - 删掉"只有 scratch 会被自动清理…"整句；scratch 说明改为"中间产物，会定期自动清理，也可手动立即清理"；
+  - "立即清理 scratch" 按钮移到说明卡外面、卡片下方右对齐；
+  - **允许**把内容拖进 `scratch`（去掉 `scratch_is_disposable` 400），成功后提示会被定期清理。
+- 测试：`workspaceFiles.test.js` 26 条、`FilesV2.test.tsx` 13 条（新增"悬停出现提示层、拖完消失"断言）；
+  全量 `ui` → **175 files / 1343 tests passed**；`tsc -p ui` ✅。
+- 未提交。
+
+### 2026-11-12 · D12 二次微调：落点范围 / 蒙层 / 提示自动消失
+
+- 按反馈调整：
+  1. "立即清理 scratch" 放回**说明卡上方**（用量条下、右对齐）；
+  2. scratch 说明改为"中间产物，会自动清理，可手动立即清理"；
+  3. 回收站落点扩到**面板底部整块**：`回收站板块 + 其下方空白` 都算（把该 `<section>` 设为 `flex-1 min-h-[96px]`，
+     空白处也在它内部）；
+  4. 拖拽蒙层改为**面板底部 40% 的由下往上灰色渐变**（`from-black/55 via-black/25 to-transparent`），
+     `absolute` 于面板而非全屏；垃圾桶缩到 56px 居中；删掉"松开鼠标"文案；
+  5. 顶部提示 4 秒自动消失（`NOTICE_TTL_MS`，错误提示同样处理）。
+- 测试：`FilesV2.test.tsx` 14 条（新增"提示 4 秒后自动消失"；蒙层断言改为 `data-testid="trash-drop-overlay"`）。
+  全量 `ui` 连跑 3 次 → **1344 tests 全绿**；`tsc -p ui` ✅。
+- 备注：全量曾偶发 1 条失败，三次复跑均未复现，暂按 flake 观察。
+- 未提交。
+
+### 2026-11-12 · D12 三次微调：小字按钮 / 动态总量提示 / 头部图标按钮
+
+- 按反馈调整：
+  1. "立即清理 scratch" 从横排按钮改为 **scratch 进度条正下方的小字下划线按钮**，
+     字号/颜色与 inbox 的"上传原件不会自动清理"一致，hover 变前景色（有按钮感），scratch 为空时禁用；
+     顺带把 `UsageBar.note` 的类型从 `string` 放宽到 `ReactNode`，容器 `<p>` 改 `<div>`（`<p>` 里不能塞 `<button>`）。
+  2. "仅为提示，超阈值不拦截写入" 改成**随工作区总量变化**的 4 档提示语
+     （`totalRatio = 总占用 / 提示阈值`）：`<60%` 正常 / `≥60%` 留意大目录 / `≥80%` 建议清理 scratch 或删导出 /
+     `≥95%` 建议立即清理并移出大文件；四档都保留"不拦截写入"或只给建议，永不阻断。
+  3. 头部"上传文件"从文字按钮改成与"新建目录"同款的 8×8 图标按钮；
+     "新建目录 / 上传文件 / 刷新"三个按钮都包一层 `Tooltip`，鼠标悬停在按钮**上方**弹主题气泡
+     （`bg-foreground` 底 + `text-background` 字 + 同色箭头）。
+     同时去掉三者的原生 `title`，避免原生 tooltip 与气泡叠加。
+- 组件改动：`ui/src/shared/view/ui/Tooltip.tsx` 新增可选 `arrowClassName`（箭头颜色跟随自定义气泡），
+  默认行为不变，其它调用点不受影响。
+- 测试：`FilesV2.test.tsx` 16 条（新增"高占用时提示语变化"、"悬停出现头部气泡"；首条用例改为断言默认提示语）。
+  全量 `ui` → **175 files / 1346 tests passed**；`tsc -p ui` ✅。
+- 备注：全量偶发 1 条 `adminUsers.test.js` 自建 http server 的 `ECONNRESET` / `UND_ERR_SOCKET`，
+  单跑该文件 17 条全绿、整包重跑亦全绿，判定为并发下的自连 flake，与本轮改动无关。
+- 未提交。
+
+### 2026-11-12 · D13：`.pilotdeck/tool-results` 生命周期（删会话即清 + 14 天兜底）
+
+- 现象：每个工作区根下都出现 `.pilotdeck/tool-results/<会话ID>/`（图片 base64、长文本、大 JSON），
+  用户在工作区看到的只是目录本身；这些是"超出内联预算"的工具结果副本，供历史消息回看与 agent `read_file` 回读。
+- 问题：`sessionCleanup.js` 只清 transcript / inbox / case，**删会话不清它**；也没有 TTL，
+  `users/1/.pilotdeck` 下还躺着 3 个 transcript 早已不存在的孤儿（约 0.9 MB）。
+- 改动：
+  1. `sessionCleanup.js` 增加**第 4 类** `toolResults`：删 `<workspace>/.pilotdeck/tool-results/<slug>/`，
+     并只在空时收掉 `tool-results/`、`.pilotdeck/`（`.pilotdeck` 还可能是项目级 skills/commands 的载体）。
+  2. 新增 `ui/server/services/toolResultsRetention.js`：启动跑一次 + 每 6 小时一次；
+     - transcript 已不存在 → 删（1 小时宽限，避开"目录刚建、transcript 未落盘"）；
+     - 最新 mtime 超过 `toolResultsTtlDays`（默认 14 天）→ 删；`refs/` 只走这条；
+     - 扫 `<home>/.pilotdeck/tool-results` 与 `workspaces/**/.pilotdeck/tool-results`（最多 3 层）。
+  3. `workspaceLimits.js` 新增 `toolResultsTtlDays`（默认 14，读 `workspace.quota.toolResultsTtlDays`）；
+     `index.js` 启动时接上 `startToolResultsRetention()`。
+- 数据清理：对 `users/1` 实跑一次 → 删掉 **16 个单元 / 5.7 MB**（0.9 MB 孤儿 + 4.8 MB 超过 14 天的旧缓存），
+  剩余的是 14 天内仍在用的会话缓存与用户自己的 `.pilotdeck/plans/*.md`，未动。
+- 测试：新增 `toolResultsRetention.test.js` 9 条（存活保留 / 孤儿删 / 宽限期 / TTL / retentionDays 覆盖 / refs 按 TTL /
+  空容器回收但保留非空 `.pilotdeck` / 主目录级 / 目录不存在）；`sessionCleanup.test.js` +3 条（删缓存并回收空容器 /
+  保留 skills / 无缓存时 false）。
+- 结果：`ui` → **176 files / 1358 tests**，其中 1 条 `adminUsers.test.js` 自连 flake 失败，单跑 17 条全绿（同上一轮已知 flake）。
+  `tsc -p ui` ✅。
+- 未提交。
+
+### 2026-11-12 · D14：删会话补齐侧车目录 / 回退备份 / 子任务 transcript
+
+- 审计结论：删会话原来只清 transcript、inbox 批次、战创伤 case、`.pilotdeck/tool-results`，
+  留下三类"删了还在"的东西：
+  1. `<chats>/<会话>/`（`file-history` 编辑前备份 + `subagents` 子代理 transcript）；
+  2. `<chats>/.rewind-backups/<会话>.<时间戳>.jsonl` —— 每次回退都写一份**整份对话**，
+     实测 11 份 / 6.1 MB，无上限无 TTL（隐私 + 空间双风险，最大单份 2.0 MB）；
+  3. 子任务会话的 transcript 在 `<父会话>/subagents/` 下，而删除接口把
+     `relativeTranscriptPath` 丢掉了（`projects.js` 形参写成 `_options`），真删会删错位置。
+- 改动：
+  1. `sessionCleanup.js` 增加第 5 类 `sessionDir`（整目录删 `<chats>/<会话>/`）与
+     第 6 类 `rewindBackups`（按 `<slug>.` 前缀精确匹配，不动别人会话的备份，删空后收掉目录）；
+     并消费 `relativeTranscriptPath`：必须是 chat 目录内的 `.jsonl`，否则抛
+     `INVALID_TRANSCRIPT_PATH`，绝不"猜一个位置删掉"。
+  2. `projects.js` 的 `deleteSession` 不再吞掉 options，把 `relativeTranscriptPath` 透传下去。
+  3. 新增 `ui/server/services/rewindBackupRetention.js`：启动跑一次 + 每 6 小时一次；
+     **每会话只留最近 3 份**（按文件名里的时间戳排序，不依赖 mtime）+ **30 天过期**；
+     清空后收掉 `.rewind-backups`；`index.js` 启动时接上 `startRewindBackupRetention()`。
+- 数据清理：对 `users/1` 实跑 → 删 3 份 / 861 KB（`web:s_072f…` 4→3、`web:s_e98d…` 5→3），
+  剩余 8 份 / 5.3 MB 均在保留策略内。
+- 测试：`rewindBackupRetention.test.js` 7 条（文件名解析 / 每会话留 3 / 会话间互不影响 /
+  30 天过期 / keep 覆盖 / 空目录回收 / 目录不存在）；`sessionCleanup.test.js` +4 条
+  （侧车目录 / 只删本会话回退备份 / 子任务相对路径 / 拒绝越界路径）。
+- 顺带修掉一个**既有**隐患：`sessionId` 之前不校验是否单段路径，`DELETE /sessions/..`
+  （或 `%2e%2e`）会让 `path.join` 跳出会话目录，而接下来就是 `fs.rm(recursive)`。
+  现在 `..`、`.`、含 `/` `\` 的 sessionId 一律 `INVALID_SESSION_ID`，删除路由回 400。
+- 结果：`ui` → **177 files / 1370 tests passed**；`tsc -p ui` ✅。
+- 未提交。
+
+### 2026-11-12 · D15：删会话补齐 scratch 工作目录与记忆库 L0
+
+- 逐项审计后还发现两类没被清：
+  1. `<工作区>/scratch/work/<safeSegment(会话ID)>/` —— 本会话所有轮次的中间产物。
+     正常回合结束会被 `scratchTurnCleanup` 删，但"没删成"的残留会一直留到 7 天 TTL。
+  2. **记忆库 L0**：`<home>/memory/<类型>/<项目>/control.sqlite` 的 `l0_sessions`
+     按 `session_key` 存**原始对话消息**。删会话以前完全不动它 →
+     "会话删了，原文还在库里"。实测 `users/1` 里已有 **15 个已删会话的孤儿 session_key / 17 行**。
+- 改动：
+  1. `sessionCleanup.js` 增加第 7 类 `scratchWork`（映射函数与
+     `AgentLoop.safeWorkPathSegment` 逐字符一致，有单测锁住）。
+  2. 新增 `ui/server/services/sessionMemory.js`：
+     - `purgeSessionMemoryRows()`：删会话时删 `session_key IN (id, id || '.pre-rewind')`；
+       记忆库不存在 / 无表 / 文件损坏都只记日志，不让删会话半途而废；
+     - `purgeOrphanSessionMemory()` + `startSessionMemorySweep()`：每天扫一次，
+       删掉 transcript 已不存在的 L0 行（覆盖本功能上线前删除的会话与绕过接口的删除）。
+  3. `projects.js` 的 `deleteSession` 在文件清理后调用记忆清理，返回里带 `memoryRows`。
+  4. `index.js` 启动时接上 `startSessionMemorySweep()`。
+- 数据清理：对 `users/1` 实跑 → 删 **17 行 / 15 个 session_key**（约 20 KB 原文 JSON）；
+  复扫结果 **0 孤儿**。
+- 记忆边界（写进设计书 §8.7.2）：L0（原文）与会话同生共死；L1/L2（提炼结论）
+  是按项目存的长期记忆，删会话不动，要清走"清空项目记忆"。
+- 测试：`sessionMemory.test.js` 7 条（只删本会话 / 含 `.pre-rewind` / 无库 / 无表 /
+  非法项目 / 库损坏 / 孤儿扫描）；`sessionCleanup.test.js` +2 条（scratch 工作目录 /
+  不碰别的会话）。
+- 结果：`ui` → **178 files / 1379 tests passed**；`tsc -p ui` ✅。
+- 未提交。
+
+### 2026-11-12 · D16：删会话补齐回退影子 transcript（`.pre-rewind`）
+
+- 审计最后一轮发现：`rewindSession` 早期把回退前的**整份对话**另存成
+  `<chats>/<会话>.pre-rewind.jsonl`；对影子会话再回退还能叠出 `.pre-rewind.pre-rewind.jsonl`。
+  会话列表靠 `isRecoveryArtifactSessionKey` 把它们当"恢复残留"藏起来，所以
+  **界面上看不见，删会话也不会碰** —— 实测 `users/1` 里还有 **6 个影子文件 / 约 1.2 MB**，
+  分布在 4 个项目。
+- 改动：`sessionCleanup.js` 第 1 类之后增加 1a/1b —— 一次 `readdir(chatDir)`，
+  按「同前缀 + 名字含 `pre-rewind`」删；`deleted.rewindShadows` 单独回报。
+  `readdir` 只读一层 → 不会误伤 `<父会话>/subagents/`、`.rewind-backups/`，
+  也不会碰 `<会话>-2.jsonl` 这种同前缀的别的会话（有单测）。
+- 测试：`sessionCleanup.test.js` +2 条（删两层影子 / 不碰同前缀会话）→ 该文件 20 条。
+- 顺带补上「运行中删除」：`DELETE /api/projects/:projectName/sessions/:sessionId` 在真正删文件前，
+  若 `isSessionActiveViaGateway(sessionId)` 为真就先 `abortViaGateway` 掐掉这一轮。
+  否则网关会在删除之后继续往 transcript / `scratch/work` / L0 写，会话"删了又冒出来"。
+  取消失败只记日志不阻断删除。
+- 结果：`ui` → **178 files / 1381 tests passed**；`tsc -p ui` ✅。
+- 未提交。
+
+### 2026-11-12 · D17：孤儿 case 目录清理 + 记忆边界定稿
+
+- 决策：**L1/L2 提炼记忆保留**（按 `source_session_key` 精确删的方案否掉：结论可能已融合多会话）。
+- 数据清理：`users/1` 下 `memory/trauma_med/<项目>/cases/` 里 **16 个孤儿 case 目录 / 2.68 MB**
+  （对应会话早已删除、`chats/` 里没有 transcript，界面上无法进入）→ 已整目录删除；
+  删后 `cases/` 只剩 8 个活会话的目录。
+- 文档：设计书新增 **§8.7.3 删一个项目到底删什么**（归档语义 + 4 类删除 + 6 类保留 + 3 条待补）。
+- 未提交。
+
+### 2026-11-12 · D18：已归档账号的展示 / 恢复 / 到期清理
+
+- 背景：删账号是软删除（行留着、home 搬到 `archives/users/`），但只能删不能看、不能回滚，
+  归档也永不释放。
+- 后端：
+  - `services/archivedUsers.js`：`archivedStamp()` / `parseArchivedHome()`（互为逆运算，
+    `<id>-` 横必须有，防止用户 1 吞掉用户 12）、`listArchivedHomes()`、`findArchivedHome()`、
+    `getArchivedUserMaxAgeDays()`（读 `multiUser.retention.archivedUserMaxAgeDays`，默认 30）。
+  - `services/archivedUsersRetention.js`：启动跑一次 + 每天一次；过期删目录 → 删账号行
+    （session_names / push_subscriptions / user_notification_preferences / api_keys / user_credentials）；
+    已恢复、活跃 home 已存在、目录删失败三种情况一律跳过。
+  - `database/db.js`：新增 `userDb.purgeUser(id)`（事务内清 5 张依赖表 + users 行）。
+  - `routes/adminUsers.js`：`GET /users` 增加 `archived` / `archivedAt` / `expiresAt` 与顶层
+    `archivedUsers`；新增 `POST /users/:id/restore`（409 `HOME_EXISTS` / 404 `NOT_ARCHIVED`，
+    恢复后 `token_version + 1` 并写审计 `user.restore`）；删除路由改用共享 `archivedStamp()`。
+  - `index.js` 接线 `startArchivedUsersRetention()`。
+- 前端：用户管理页主表过滤归档账号，新增「已归档账号」区块（用户名/角色/归档时间/到期时间/占用/恢复），
+  恢复走二次确认；`api.admin.restoreUser`、hook 增加 `archivedUsers` 与 `restoreUser`；
+  错误码 `HOME_EXISTS` / `NOT_ARCHIVED` 本地化；删除确认文案改成"归档 30 天后自动清除"。
+- 测试：`archivedUsers.test.js` 9 条、`archivedUsersRetention.test.js` 7 条、
+  `adminUsers.test.js` +5 条、`UsersSettings.test.tsx` +1 条。
+- 结果：`ui` → **180 files / 1403 tests passed**；`tsc -p ui` ✅。
+- 未提交（服务端改动需重启才生效）。
+
+### 2026-11-12 · D19：删项目改真删 + 存储页收敛为项目视角
+
+- 用户决策：项目归档这套"删了还在盘上占 30 天"的设计**整体下线**。
+  - 侧边栏「删除项目」和存储页「删除项目」都变成**物理删除**；
+  - 不再有归档 tab、不再留 `archives/projects`、不再有整包回收站（`.trash/groups`）；
+  - 存储页保留**只读预览**（要能点开看"这 300 MB 是什么"）；
+  - 破坏性操作前必须**输入项目名确认**；
+  - 历史归档存量随本次上线**直接清掉**。
+- 后端：
+  - `utils/projectDelete.js`：`archiveAndDeleteProjectStorage()` → `purgeProjectStorage()`，
+    真删 5 处（workspace / projects 类型目录 / 旧扁平 projects / memory / always-on），
+    失败抛 `PROJECT_PURGE_FAILED` 并带 `stage` + `target`。
+  - `projects.js#deleteProject(name, {force, confirmName})`：先校验手打名字（不符 400
+    `CONFIRM_MISMATCH`）→ 掐运行中的 turn → 删网关 cron → 真删磁盘 → 清 `session_names`。
+  - `routes/storage.js`：只剩 `GET /`（项目视角快照）与 `GET /preview`（只读）；
+    删掉 `/delete`、`/trash*`、`/trash/groups*` 与 `deleteStorageTargets` / `groupTrash`。
+  - `services/legacyProjectArchives.js`：启动清 `archives/projects` 与 `.trash/groups`，
+    **不碰 `archives/users`**；`src/pilot/retention.ts` 移除 `pruneArchives` 与 `archiveMaxAgeDays`。
+- 前端：
+  - `StorageV2.tsx` 重写：四格总量 + 项目表格（类型/会话/占用/回收站/最后活动）
+    + 展开看 exports/inbox/scratch 与只读文件树 + [删除项目]（输入项目名）。
+  - `AppShellV2` 的「删除项目」弹窗加同名输入框，确认按钮在名字匹配前禁用；
+    文案改成"工作区、对话、记忆、回收站全部永久删除"。
+  - `api.deleteProject(name, {force, confirmName})`。
+- 测试：`storage.test.js` 重写（项目快照 + 预览路径校验）、`StorageV2.test.tsx` 重写 5 条、
+  新增 `projectDelete.test.js` 4 条、`legacyProjectArchives.test.js` 4 条、
+  `storage.trash.test.js` 迁为 `services/trash.test.js`（9 条，去掉整包/存储页删文件）。
+- 未提交；**服务端改动需重启才生效**。
+
+### 2026-11-12 · D20：删项目弹窗收口 + 登录态到期体验
+
+- 删项目弹窗（存储页 + 侧边栏）只留一句结论：`永久删除项目「X」？` + `这一步直接从磁盘删除，且无法恢复。`，
+  不再罗列会话数 / 文件数 / 回收站清单 —— 该看的在展开的目录树里已经能看到。
+- 登录态：排查"点战创伤医学就掉登录" → 不是该页面的问题，是 **7 天 JWT 到期**。
+  日志里同一账号出现两枚 token：旧 token `iat=11-04 11:37 / exp=11-11 11:37`，
+  点击发生在 11-12 21:06（已过期 33 小时），首个请求拿到 `401 INVALID_TOKEN`，
+  前端 `authenticatedFetch` 按"会话结束"清掉登录态；随后用户重新登录（21:06:34 / 21:06:55）。
+  `auth.db` 里 admin 的 `token_version` 仍是 7，说明**不是被踢下线**。
+- 改动（前端，纯体验层）：
+  - `auth/utils.ts` 新增 `readJwtExpiryMs()` / `isJwtExpired()`（只解码不验签）；
+  - `AuthContext` 启动时先判 `exp`：已过期就直接按会话结束处理（写明"登录已失效"），
+    **不再拿过期 token 去打一次必然 401 的请求**；
+  - 新增"回到前台静默续期"：`visibilitychange` / `focus` 时若剩余寿命 < 24h，
+    发一个轻量 `/api/auth/user`，借服务端的 `X-Refreshed-Token` 续期。
+    长期挂着的标签页不会再"下一次点击才突然过期"。
+- 测试：`auth/utils.test.ts` 5 条；`AuthContext.test.tsx` +2 条（过期不请求 / 前台续期）。
+- 结果：`ui` → **183 files / 1413 tests passed**；`tsc -p ui` ✅。
+- 未提交。
+
+### 2026-11-12 · D21：`.pilotdeck` 整目录 14 天 TTL + 存储页不显示隐藏项 + 目录清单对齐工作区
+
+- 用户要求（三条）：
+  1. `.pilotdeck` 的**所有**内容都加 14 天 TTL（此前只有 `tool-results/` 有，`plans/` 无限留存）；
+  2. 存储页不再显示 `.pilotdeck` 目录下的内容；
+  3. 存储页每个项目展开后的目录，改成与**工作区页**一致 —— 三个规定目录 + 用户自建目录。
+- 后端：
+  - `services/toolResultsRetention.js` 重写：`findToolResultsRoots()` → `findPilotdeckRoots()`，
+    返回 `{dir, scope}`：`<home>/workspaces/**/.pilotdeck` = `workspace`（**整目录都管**），
+    `<home>/.pilotdeck` = `home`（只清 `tool-results`，因为单用户模式下它就是应用主目录本身）。
+  - `sweepToolResults()` 保留原逻辑（孤儿 1 小时宽限 + TTL，`refs/` 只走 TTL）；
+    新增 `sweepSiblings()`：`tool-results` 之外的任何子项（`plans/`、自建目录…）只按 TTL 删。
+    `CONFIG_ENTRY_NAMES = {skills, commands, mcp.json, settings.json}` 不删（人工配置，非过程数据）。
+    删空后依次收掉 `tool-results/` 和空的 `.pilotdeck/`。
+  - TTL 沿用 `workspace.quota.toolResultsTtlDays`（默认 14），`startToolResultsRetention()` 签名不变，
+    `index.js` 无需改。
+  - `routes/storage.js#scanFiles()`：从"只跳过根级 `.trash`"改成**任何层级 `.` 开头一律跳过**
+    （`.pilotdeck` / `.trash` / `.usage.json` / `.pinned`），既不进文件列表也不计入占用。
+  - `routes/storage.js` 新增 `DEFAULT_TOP_LEVEL_DIRS = ['inbox','exports','scratch']` 与
+    `readTopLevelFolders()`，项目条目多一个 `folders: [{name,fileCount,sizeBytes}]`：
+    三个默认目录永远在（即使不存在/为空），再并入磁盘上的非隐藏顶层目录（空的自建目录也列）。
+- 前端 `StorageV2.tsx`：
+  - 删掉 `groupByTopLevel()`，改用后端 `folders`（缺字段时按文件路径兜底 + 补三个默认目录）；
+  - 展开项目后是**目录行**（chevron + 目录图标 + 目录名 + 一句说明 + `N 个 · 大小`），
+    点目录才展开该目录的文件列表，空目录显示"空目录"；
+  - 顶部保留一行用量摘要，回收站条数/体积单独一行提示。
+- 测试：
+  - `toolResultsRetention.test.js` 5 → **14 条**（`plans/` 过期删除、自定义项删除、`skills/`+`mcp.json`
+    60 天不删、清空后 `.pilotdeck` 被收掉、主目录级只清 `tool-results`）；
+  - `storage.test.js` 5 → **8 条**（`.pilotdeck` 不进 `files[]`/不计占用；`folders` = 三个默认 + 自建，
+    含空的 `scratch`、顶层散落文件也有一行）；
+  - `StorageV2.test.tsx` 5 → **7 条**（目录默认折叠、空目录提示、自建目录分组、隐藏目录兜底不显示）。
+- 结果：`ui` → **183 files / 1423 tests passed**；`tsc -p ui` ✅；`eslint` ✅；根 `tsc` ✅；根 `npm test` → 897 条、0 失败。
+- 未提交；**服务端改动需重启才生效**。
