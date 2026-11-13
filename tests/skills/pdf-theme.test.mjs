@@ -272,3 +272,37 @@ test('a long table repeats its header on the next page', { skip: SKIP }, async (
     ['序号', '项目', '数值'],
   );
 });
+
+// 2026-11-12：报告文件只是留档。旧写法 `audit` 只回 hardFailures 的**个数**、
+// `deliver` 只回三个 stage 状态字符串，"哪一关为什么没过"全在 json 里。
+// 现在 stdout 必须带原文。
+test('audit prints the full report, not just counts', { skip: SKIP }, async (t) => {
+  const dir = await tempDir(t);
+  const pdf = path.join(dir, 'audit.pdf');
+  const made = run(['make', '--title', '审计', '--out', pdf]);
+  assert.equal(made.status, 0, made.text);
+
+  const reportPath = path.join(dir, 'audit.json');
+  const audited = run(['audit', '--input', pdf, '--out', reportPath]);
+  assert.equal(audited.status, 0, audited.text);
+  assert.ok(Array.isArray(audited.json?.hardFailures), 'stdout 必须带 hardFailures 数组');
+  assert.ok(Array.isArray(audited.json?.warnings), 'stdout 必须带 warnings 数组');
+  assert.match(audited.json?.report ?? '', /audit\.json$/u, '报告路径要一起带出来');
+  // 文件与 stdout 是同一份
+  const written = JSON.parse(await readFile(reportPath, 'utf8'));
+  assert.deepEqual(written.hardFailures, audited.json.hardFailures);
+});
+
+test('deliver prints the gate details, not just stage names', { skip: SKIP }, async (t) => {
+  const dir = await tempDir(t);
+  const pdf = path.join(dir, 'deliver.pdf');
+  const made = run(['make', '--title', '交付', '--out', pdf]);
+  assert.equal(made.status, 0, made.text);
+
+  const reportPath = path.join(dir, 'delivery.json');
+  const delivered = run(['deliver', '--input', pdf, '--report', reportPath]);
+  assert.ok(delivered.json, delivered.text);
+  assert.ok(delivered.json.gates && Array.isArray(delivered.json.gates.errors), 'stdout 必须带 gates.errors');
+  assert.ok(delivered.json.audit && Array.isArray(delivered.json.audit.hardFailures));
+  assert.match(delivered.json.report ?? '', /delivery\.json$/u, '报告路径要一起带出来');
+});

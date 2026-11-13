@@ -854,11 +854,9 @@ def main(argv: list[str]) -> int:
     text = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
     if args.out:
         Path(args.out).expanduser().write_text(text, encoding="utf-8")
-        print(json.dumps({"status": report["status"], "out": args.out,
-                          "errors": report["counts"]["errors"],
-                          "warnings": report["counts"]["warnings"]}, ensure_ascii=False))
-    else:
-        sys.stdout.write(text)
+    # --out 只是留档：stdout 永远打全量报告。旧写法在 --out 时只回计数，
+    # 调用方看到 errors: 3 却不知道是哪三条，还得再读一遍文件。
+    sys.stdout.write(text)
     return 1 if report["status"] == "error" else 0
 
 

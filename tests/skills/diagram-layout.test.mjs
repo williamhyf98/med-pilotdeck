@@ -191,3 +191,29 @@ test('a branched graph keeps LR even when wide', async (t) => {
   assert.equal(made.status, 0, made.text);
   assert.equal(made.json.direction, 'LR', 'branching graphs keep the requested layout');
 });
+
+// 2026-11-12：`--report` 只是留档。旧写法带 --report 时只回 {"status","report"}，
+// 于是 label-truncated / label-not-rendered / overflow 三种不同修法全被藏进文件。
+test('audit --report still prints issues on stdout', async (t) => {
+  const dir = await tempDir(t);
+  const spec = path.join(dir, 'long-label.json');
+  await writeFile(spec, JSON.stringify({
+    nodes: [
+      { id: 'a', label: '这是一段特别长的节点说明文字，用来测试超过三行以后是否会被判定为截断丢字，需要足够多的字数才会触发这个检查，所以这里继续往后面写很多很多字' },
+      { id: 'b', label: '乙' },
+    ],
+    edges: [{ from: 'a', to: 'b' }],
+  }));
+  const svg = path.join(dir, 'long.svg');
+  const made = run(['make', '--spec', spec, '--out', svg]);
+  assert.equal(made.status, 0, made.text);
+
+  const report = path.join(dir, 'audit.json');
+  const audited = run(['audit', '--input', svg, '--spec', spec, '--report', report]);
+  assert.equal(audited.status, 1, audited.text);
+  assert.equal(audited.json?.status, 'error');
+  const codes = (audited.json?.issues ?? []).map((item) => item.code);
+  assert.ok(codes.includes('label-truncated'), `stdout 必须带 issues 明细，实际 ${codes}`);
+  const written = JSON.parse(await readFile(report, 'utf8'));
+  assert.deepEqual(written.issues.map((item) => item.code), codes);
+});

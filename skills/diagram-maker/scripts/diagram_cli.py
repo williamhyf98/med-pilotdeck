@@ -10,6 +10,7 @@ import json
 import math
 import os
 import re
+import sys
 import tempfile
 import xml.etree.ElementTree as ET
 
@@ -1185,9 +1186,10 @@ def main() -> int:
     report_path = getattr(args, "report", None)
     if report_path:
         Path(report_path).expanduser().write_text(text, encoding="utf-8")
-        print(json.dumps({"status": result["status"], "report": report_path}, ensure_ascii=False))
-    else:
-        print(json.dumps(result, ensure_ascii=False))
+    # --report 只是留档：stdout 永远打全量（含 issues[].code / message）。
+    # 旧写法在带 --report 时只回 {"status","report"}，而 SKILL.md 的示例正好带 --report，
+    # 于是 label-truncated / label-not-rendered / overflow 三种完全不同的修法全被藏进文件里。
+    sys.stdout.write(text)
     return 1 if result.get("status") == "error" else 0
 
 

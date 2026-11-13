@@ -211,6 +211,23 @@ test('audit output is deterministic for the same file', () => {
   assert.ok(first.timing_ms.total >= 0);
 });
 
+// 2026-11-12：`--out` 只是留档。旧写法在带 --out 时只打 status/计数，
+// 调用方看到 errors: 3 却不知道是哪三条，还得再读一遍文件。
+test('--out still prints the full report, not just counts', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'html-audit-out-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const out = path.join(dir, 'audit.json');
+
+  const { status, report } = audit(path.join(fixtures, 'bad-structure.html'), '--out', out);
+  assert.equal(status, 1);
+  assert.ok(Array.isArray(report.issues) && report.issues.length > 0, 'stdout 必须带 issues 明细');
+  assert.match(report.issues[0].message, /./u);
+  assert.equal(report.counts.errors, report.issues.filter((item) => item.severity === 'error').length);
+  // 文件内容与 stdout 一致（留档不是摘要）
+  const written = JSON.parse(await readFile(out, 'utf8'));
+  assert.deepEqual(written.issues, report.issues);
+});
+
 test('layout estimates only touch marked blocks and never change the file', async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'html-estimate-'));
   t.after(() => rm(dir, { recursive: true, force: true }));

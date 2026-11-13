@@ -504,10 +504,8 @@ def main(argv: list[str]) -> int:
         report_path = Path(args.report).expanduser()
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(text, encoding="utf-8")
-        print(json.dumps({k: report[k] for k in ("status", "output", "index", "zip")
-                          if k in report}, ensure_ascii=False))
-    else:
-        sys.stdout.write(text)
+    # --report 只是留档：stdout 永远打全量（含 errors / missing assets 明细）。
+    sys.stdout.write(text)
     return 0 if report["status"] in {"ok", "warning", "delivered_with_missing_assets"} else 1
 
 

@@ -846,12 +846,18 @@ def command_audit(args: argparse.Namespace) -> int:
     payload = audit_document(input_path)
     out = output_file(args.out)
     write_json(out, payload)
+    # 报告文件只是留档：stdout 必须带全量 hardFailures/warnings 原文。
+    # 只回个数（旧写法）时 agent 只知道"有 1 条硬失败"，看不到是哪一条，
+    # 只能再花一次调用去读 json，或者干脆瞎改一版重跑。
+    # 结论字段放最前面：超长报告会被 ToolResultBudget 截断成预览，
+    # 把 hardFailures/warnings 排在 pages/metadata 之前，截断时也留得住。
     emit(
         {
             "status": payload["status"],
             "report": str(out),
-            "hardFailures": len(payload["hardFailures"]),
-            "warnings": len(payload["warnings"]),
+            "hardFailures": payload["hardFailures"],
+            "warnings": payload["warnings"],
+            **payload,
         }
     )
     return 3 if payload["hardFailures"] else 0
@@ -1228,17 +1234,9 @@ def command_deliver(args: argparse.Namespace) -> int:
         else default_qa_dir(input_path) / "delivery.json"
     )
     write_json(report_path, report)
-    emit(
-        {
-            "status": status,
-            "report": str(report_path),
-            "artifact": artifact_sha,
-            "pageCount": page_count,
-            "coverage": coverage["status"],
-            "render": render["status"],
-            "visualReview": visual["status"],
-        }
-    )
+    # 同 command_audit：文件留档，stdout 带全量。旧写法只回
+    # coverage/render/visualReview 三个状态字符串，"哪一关为什么没过"全在文件里。
+    emit({**report, "report": str(report_path)})
     return 3 if status == "failed" else 0
 
 

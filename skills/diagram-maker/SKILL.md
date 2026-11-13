@@ -103,6 +103,9 @@ bash "$DIAGRAM_SKILL_ROOT/scripts/diagram.sh" audit \
   来源一致，出现 `label-not-rendered` 说明这张 SVG 是改稿前生成的，需要重新 `make`。
 - `status=warning` 可以交付，但要跟用户说明原因（例如"这张图较宽，插入 Word 会缩小"）。
 - `status=error` 必须先修：缩短文案、拆成两个节点、或换布局方向，不要直接交付。
+- `--report` 只是留档：**stdout 已经带全量 `issues`**。先看 `issues[].code`
+  （`label-truncated` = 文案超三行会被丢字、`label-not-rendered` = 图是改稿前的、
+  `overflow` = 越出画布），再决定改哪儿；不要靠猜。
 - `make` 的返回里已有 `warnings`（例如 `label-truncated`），看到就先处理。
 
 审计只覆盖几何与文案完整性；**配色是否好看、箭头是否易读仍需用户看**，不要

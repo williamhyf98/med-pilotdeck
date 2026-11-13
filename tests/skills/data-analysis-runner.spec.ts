@@ -49,7 +49,7 @@ async function putScript(workspace, name, body) {
   return relative;
 }
 
-function runAnalysis(workspace, args) {
+function runAnalysis(workspace, args, extraEnv = {}) {
   const result = spawnSync("bash", [analysisSh, "run", ...args], {
     cwd: workspace,
     encoding: "utf8",
@@ -58,6 +58,7 @@ function runAnalysis(workspace, args) {
       ...process.env,
       PILOTDECK_ANALYSIS_PYTHON: PYTHON,
       PILOTDECK_ANALYSIS_CACHE: join(workspace, "..", "..", "..", "cache"),
+      ...extraEnv,
     },
   });
   let json = null;
@@ -245,6 +246,94 @@ test("失败的运行可以就地重试（只有成功结果被锁定）", { ski
   });
 });
 
+// 2026-11-12 实跑教训：脚本抛异常时只回 `{"status":"failed"}`，agent 看不到 traceback，
+// 只能靠猜（还会去 python3 读 run.json 然后被策略拦）。失败必须把 stderr 末尾交回去。
+test("失败时 stdout 直接带回 stderrTail / logPath / hint", { skip: SKIP }, async () => {
+  await withWorkspace(async ({ workspace }) => {
+    const script = await putScript(
+      workspace,
+      "boom",
+      "print('stage=load')\ncounts = {'甲': 1}\nprint(counts['乙'])\n",
+    );
+    const out = "exports/analysis/boom";
+    const result = runAnalysis(workspace, ["--script", script, "--out", out]);
+
+    assert.equal(result.status, 4, `应返回 4：${result.text}`);
+    assert.equal(result.json?.status, "failed");
+    assert.match(result.json?.errorSummary ?? "", /^KeyError:/u, "errorSummary 就是 traceback 最后一行");
+    assert.match(result.json?.stderrTail ?? "", /KeyError/u, "stderrTail 必须包含异常类型");
+    assert.match(result.json?.stderrTail ?? "", /'乙'|"乙"/u, "stderrTail 必须包含出错的键");
+    assert.equal(result.json?.logPath, "exports/analysis/boom/run.json");
+    assert.match(result.json?.hint ?? "", /exception/u, "hint 要说明是脚本异常");
+    assert.match(result.json?.stdoutTail ?? "", /stage=load/u, "stdoutTail 保留崩溃前的输出");
+  });
+});
+
+test("成功时不回传 stderrTail，避免正常路径多耗 token", { skip: SKIP }, async () => {
+  await withWorkspace(async ({ workspace }) => {
+    await writeSample(workspace, Array.from({ length: 10 }, (_, i) => i + 1));
+    const script = await putScript(workspace, "quiet", C1_SCRIPT);
+    const out = "exports/analysis/quiet";
+    const result = runAnalysis(workspace, ["--script", script, "--input", "inbox/batch1", "--out", out]);
+    assert.equal(result.status, 0, result.text);
+    assert.equal(result.json?.status, "ok");
+    assert.equal(result.json?.stderrTail, undefined);
+    assert.equal(result.json?.hint, undefined);
+  });
+});
+
+// 链式分析：上一次 run 的 tables/ 直接作为下一次 --input，不必先 cp 回 scratch。
+test("--input 可以指向上一次 run 的 exports 产物", { skip: SKIP }, async () => {
+  await withWorkspace(async ({ workspace }) => {
+    await writeSample(workspace, Array.from({ length: 10 }, (_, i) => i + 1));
+    // 先造一份"上一次的产物"，模拟 exports/analysis/<slug>/tables/sample.csv
+    await mkdir(join(workspace, "exports", "analysis", "prev", "tables"), { recursive: true });
+    await writeFile(
+      join(workspace, "exports", "analysis", "prev", "tables", "sample.csv"),
+      "id,value\n1,2\n2,4\n",
+      "utf8",
+    );
+
+    const script = await putScript(workspace, "chain", C1_SCRIPT);
+    const out = "exports/analysis/chain";
+    const result = runAnalysis(workspace, [
+      "--script", script,
+      "--input", "exports/analysis/prev/tables",
+      "--out", out,
+    ]);
+
+    assert.equal(result.status, 0, `链式分析应成功：${result.text}`);
+    const record = JSON.parse(await readFile(join(workspace, out, "run.json"), "utf8"));
+    assert.equal(record.input, "exports/analysis/prev/tables");
+    assert.equal(record.inputs.length, 1, "输入指纹要记下沿用来的产物");
+  });
+});
+
+test("超长 stderr 只回传末尾 1600 字符，结论仍在", { skip: SKIP }, async () => {
+  await withWorkspace(async ({ workspace }) => {
+    const script = await putScript(
+      workspace,
+      "deep",
+      [
+        "import sys",
+        "for i in range(300):",
+        "    sys.stderr.write('noise line %d\\n' % i)",
+        "raise ValueError('boom')",
+        "",
+      ].join("\n"),
+    );
+    const out = "exports/analysis/deep";
+    const result = runAnalysis(workspace, ["--script", script, "--out", out, "--timeout", "30"]);
+
+    assert.equal(result.status, 4, `应返回 4：${result.text}`);
+    const tail = result.json?.stderrTail ?? "";
+    assert.ok(tail.length <= 1601, `stderrTail 必须被截断，实际 ${tail.length}`);
+    assert.ok(tail.startsWith("…"), "截断处要有省略号，提示前面还有内容");
+    assert.match(result.json?.errorSummary ?? "", /^ValueError: boom/u, "最后一行仍是结论");
+    assert.match(tail, /ValueError: boom/u, "截断后末尾仍带结论");
+  });
+});
+
 test("R1：死循环到 --timeout 被杀，状态记为 timeout", { skip: SKIP }, async () => {
   await withWorkspace(async ({ workspace }) => {
     const script = await putScript(workspace, "spin", "while True:\n    pass\n");
@@ -272,8 +361,11 @@ test("参数越界与非法脚本一律拒绝", { skip: SKIP }, async () => {
     const badOut = runAnalysis(workspace, ["--script", script, "--out", "scratch/x"]);
     assert.equal(badOut.status, 2, "--out 必须在 exports/ 下");
 
-    const badInput = runAnalysis(workspace, ["--script", script, "--input", "exports", "--out", "exports/y"]);
-    assert.equal(badInput.status, 2, "--input 只能是 inbox/ 或 scratch/");
+    // exports/ 自 2026-11-12 起可读（链式分析），其它根仍然拒绝
+    const badInput = runAnalysis(workspace, ["--script", script, "--input", "memory", "--out", "exports/y"]);
+    assert.equal(badInput.status, 2, "--input 只能是 inbox/、scratch/ 或 exports/");
+    const escapeInput = runAnalysis(workspace, ["--script", script, "--input", "../inbox", "--out", "exports/y2"]);
+    assert.equal(escapeInput.status, 2, "--input 不能越根");
 
     const notPython = await putScript(workspace, "note", "");
     await writeFile(join(workspace, "scratch/work/t1/note.txt"), "x", "utf8");
@@ -311,5 +403,140 @@ test("PILOTDECK_ANALYSIS_PYTHON 不是可执行文件时立刻报错，而不是
     );
     assert.equal(result.status, 2);
     assert.match(result.stdout, /PILOTDECK_ANALYSIS_PYTHON must be an executable path/);
+  });
+});
+
+// ---- 2026-11-12 改版：一轮一目录（设计书 §6 / U4）------------------------
+
+function turnEnv(workspace, turn) {
+  return {
+    PILOTDECK_TURN_ID: turn,
+    PILOTDECK_WORK_DIR: join(workspace, "scratch", "work", "s1", turn),
+  };
+}
+
+const PARTIAL_SCRIPT = `
+import os
+from pathlib import Path
+out = Path(os.environ["PILOTDECK_ANALYSIS_OUT"])
+(out / "tables" / "half.csv").write_text("x", encoding="utf-8")
+raise RuntimeError("boom")
+`;
+
+test("轮次模式：换根目录名被改写回钉住的目录，并说明怎么开子目录", { skip: SKIP }, async () => {
+  await withWorkspace(async ({ workspace }) => {
+    await writeSample(workspace, [1, 2, 3]);
+    const script = await putScript(workspace, "turn1", C1_SCRIPT);
+    const env = turnEnv(workspace, "turnA");
+
+    const first = runAnalysis(
+      workspace,
+      ["--script", script, "--input", "inbox/batch1", "--out", "exports/内科问答分析"],
+      env,
+    );
+    assert.equal(first.status, 0, first.text);
+    assert.match(first.json.root, /^exports\/\d{8}-\d{6}-内科问答分析$/u, "根目录应带时间戳前缀");
+    assert.equal(first.json.out, first.json.root);
+
+    // 同一轮里 agent 另起一个名字：被改写回原根目录，并给出提示
+    const second = runAnalysis(
+      workspace,
+      ["--script", script, "--input", "inbox/batch1", "--out", "exports/另一个主题"],
+      env,
+    );
+    assert.equal(second.status, 0, second.text);
+    assert.equal(second.json.out, first.json.root, "同一轮不应出现第二个根目录");
+    assert.match(second.json.note ?? "", /钉住/u);
+
+    // 显式写子目录则保留
+    const third = runAnalysis(
+      workspace,
+      ["--script", script, "--input", "inbox/batch1", "--out", `${first.json.root}/02-教学材料`],
+      env,
+    );
+    assert.equal(third.status, 0, third.text);
+    assert.equal(third.json.out, `${first.json.root}/02-教学材料`);
+    assert.ok(existsSync(join(workspace, third.json.out, "tables", "c1.csv")));
+  });
+});
+
+test("轮次模式：下一轮即使同一个主题也开新目录，上一轮保留", { skip: SKIP }, async () => {
+  await withWorkspace(async ({ workspace }) => {
+    await writeSample(workspace, [1, 2, 3]);
+    const script = await putScript(workspace, "turn2", C1_SCRIPT);
+    const args = ["--script", script, "--input", "inbox/batch1", "--out", "exports/内科问答分析"];
+
+    const first = runAnalysis(workspace, args, turnEnv(workspace, "turnA"));
+    assert.equal(first.status, 0, first.text);
+    const second = runAnalysis(workspace, args, turnEnv(workspace, "turnB"));
+    assert.equal(second.status, 0, second.text);
+
+    assert.notEqual(second.json.root, first.json.root, "跨轮必须开新目录");
+    assert.ok(existsSync(join(workspace, first.json.root, "run.json")), "上一轮目录必须原样保留");
+  });
+});
+
+test("轮次模式：失败留半成品给 agent 读，重试前自动清掉", { skip: SKIP }, async () => {
+  await withWorkspace(async ({ workspace }) => {
+    await writeSample(workspace, [1, 2, 3]);
+    const broken = await putScript(workspace, "partial", PARTIAL_SCRIPT);
+    const fixed = await putScript(workspace, "fixed", C1_SCRIPT);
+    const env = turnEnv(workspace, "turnC");
+    const out = "exports/失败重试";
+
+    const failed = runAnalysis(workspace, ["--script", broken, "--out", out], env);
+    assert.equal(failed.status, 4, failed.text);
+    assert.deepEqual(failed.json.staleFiles, ["tables/half.csv"], "半成品清单要回给 agent");
+    const root = failed.json.root;
+    assert.ok(existsSync(join(workspace, root, "tables", "half.csv")), "半成品要留在原地给 agent 看");
+
+    const retried = runAnalysis(workspace, ["--script", fixed, "--input", "inbox/batch1", "--out", root], env);
+    assert.equal(retried.status, 0, retried.text);
+    assert.equal(existsSync(join(workspace, root, "tables", "half.csv")), false, "重试前应清掉上一次的半成品");
+    assert.ok(existsSync(join(workspace, root, "tables", "c1.csv")));
+
+    const record = JSON.parse(await readFile(join(workspace, root, "run.json"), "utf8"));
+    assert.equal(record.attempt, 2);
+    assert.equal(record.attempts[0].status, "failed");
+    assert.equal(record.attempts[0].cleaned, true);
+    assert.equal(record.steps.length, 1, "只有成功那次进 steps");
+  });
+});
+
+test("轮次模式：report.md 骨架由执行器生成，索引随步骤刷新且不覆盖 agent 结论", { skip: SKIP }, async () => {
+  await withWorkspace(async ({ workspace }) => {
+    await writeSample(workspace, [1, 2, 3]);
+    const script = await putScript(workspace, "rep1", C1_SCRIPT);
+    const env = turnEnv(workspace, "turnD");
+
+    const first = runAnalysis(
+      workspace,
+      ["--script", script, "--input", "inbox/batch1", "--out", "exports/报告骨架"],
+      env,
+    );
+    assert.equal(first.status, 0, first.text);
+    assert.equal(first.json.reportMissing, true, "结论没写时应标记 reportMissing");
+    const root = first.json.root;
+    const reportPath = join(workspace, root, "report.md");
+    const skeleton = await readFile(reportPath, "utf8");
+    assert.match(skeleton, /## 数据口径/u);
+    assert.match(skeleton, /tables\/c1\.csv/u, "索引要列出本次产物");
+    assert.match(skeleton, /TODO\(agent\)/u);
+
+    // agent 填结论 → 再跑一步 → 结论保留、索引追加、reportMissing 变 false
+    await writeFile(reportPath, skeleton.replace(/<!-- TODO\(agent\)[^>]*-->/u, "结论：共 3 例。"), "utf8");
+    const more = await putScript(
+      workspace,
+      "rep2",
+      'import os\nfrom pathlib import Path\nout = Path(os.environ["PILOTDECK_ANALYSIS_OUT"])\n(out / "tables" / "c2.csv").write_text("y", encoding="utf-8")\n',
+    );
+    const second = runAnalysis(workspace, ["--script", more, "--out", root], env);
+    assert.equal(second.status, 0, second.text);
+    assert.equal(second.json.reportMissing, false);
+
+    const updated = await readFile(reportPath, "utf8");
+    assert.match(updated, /结论：共 3 例。/u, "agent 写的结论不能被覆盖");
+    assert.match(updated, /tables\/c1\.csv/u);
+    assert.match(updated, /tables\/c2\.csv/u, "新步骤的产物要进索引");
   });
 });

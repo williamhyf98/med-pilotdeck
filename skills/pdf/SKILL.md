@@ -228,6 +228,10 @@ bash "$PDF_SKILL_ROOT/scripts/pdf.sh" deliver \
 `--max-pages` 用于直接声明要求；`--visual-review` 传入绑定产物哈希的逐页评审；
 `--require-render` 表示没有渲染结果就不允许交付。
 
+**返回里已经带全量明细**（`--report` 只是留档）：`status=failed` 时直接读
+`hardFailures`（审计原文）、`gates.errors`（门禁原因）、`render.reason`（渲染失败原因），
+不要去猜，也不用再单独打开报告文件。`audit` 同理，`hardFailures` 是字符串数组。
+
 默认把报告和渲染图写到 `$PILOTDECK_WORK_DIR/pdf/qa/`；没有设置该变量时写到
 `<PDF 所在目录>/.pdf-qa/<文件名>/`。按全尺寸查看每一张 `page-*.png`，硬失败必须消除。
 清单见 [qa-checklist.md](references/qa-checklist.md)。
