@@ -443,13 +443,15 @@ export default function AppShellV2() {
     setDeleteTarget(null);
     setDeleteError(null);
   }, [isDeletingProject]);
-	  const handleConfirmDelete = useCallback(async () => {
-	    if (!deleteTarget) return;
-	    const target = deleteTarget;
+  // 删除项目现在是真删（工作区 / 对话 / 记忆 / 回收站全部物理删掉），所以要求用户
+  // 手打项目名再放行；名字由弹窗回传，服务端还会再核一遍。
+  const handleConfirmDelete = useCallback(async (confirmName: string) => {
+    if (!deleteTarget) return;
+    const target = deleteTarget;
     setIsDeletingProject(true);
     setDeleteError(null);
     try {
-      const response = await api.deleteProject(target.name, true);
+      const response = await api.deleteProject(target.name, { force: true, confirmName });
       if (!response.ok) {
         const body = (await response.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error || `Failed (HTTP ${response.status})`);
@@ -461,8 +463,8 @@ export default function AppShellV2() {
       setDeleteError(err instanceof Error ? err.message : 'Failed to delete project');
     } finally {
       setIsDeletingProject(false);
-	    }
-	  }, [deleteTarget, refreshProjectsSilently, sidebarSharedProps]);
+    }
+  }, [deleteTarget, refreshProjectsSilently, sidebarSharedProps]);
 
 	  const [deleteSessionTarget, setDeleteSessionTarget] = useState<DeleteSessionTarget | null>(null);
 	  const [isDeletingSession, setIsDeletingSession] = useState(false);
@@ -839,7 +841,7 @@ type DeleteProjectDialogProps = {
   isDeleting: boolean;
   error: string | null;
   onCancel: () => void;
-  onConfirm: () => void;
+  onConfirm: (confirmName: string) => void;
 };
 
 function DeleteProjectDialog({
@@ -850,8 +852,10 @@ function DeleteProjectDialog({
   onConfirm,
 }: DeleteProjectDialogProps) {
   const { t } = useTranslation('sidebar');
-  const sessionCount = project.sessions?.length ?? 0;
   const displayName = project.displayName || project.name;
+  const [typedName, setTypedName] = useState('');
+  // 尾随空格容易让人以为打错了，比较时统一 trim。
+  const matches = typedName.trim() === displayName.trim();
 
   return (
     <div className="fixed inset-0 z-[65] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
@@ -862,36 +866,38 @@ function DeleteProjectDialog({
           </div>
           <div className="min-w-0 flex-1">
             <h3 className="text-base font-semibold text-foreground">
-              {t('deleteConfirmation.title', { defaultValue: 'Delete project?' })}
+              {t('deleteConfirmation.titleWithName', {
+                name: displayName,
+                defaultValue: 'Delete project "{{name}}" permanently?',
+              })}
             </h3>
-            <p className="mt-1 break-all text-sm text-muted-foreground">
-              <span className="font-mono text-xs">{displayName}</span>
-            </p>
           </div>
         </div>
 
         <div className="space-y-3 p-5">
           <p className="text-sm text-foreground">
-            {t('deleteConfirmation.body', {
-              defaultValue:
-                'This permanently deletes the project’s conversations and project memory.',
-            })}
-            {sessionCount > 0 ? (
-              <>
-                {' '}
-                {t('deleteConfirmation.sessionCount', {
-                  count: sessionCount,
-                  defaultValue: 'About {{count}} conversation(s) will be removed.',
-                })}
-              </>
-            ) : null}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {t('deleteConfirmation.archiveNote', {
-              defaultValue:
-                'Generated files are archived on disk (not permanently wiped). Conversations and project memory cannot be recovered.',
+            {t('deleteConfirmation.permanentNote', {
+              defaultValue: 'This deletes it from disk and cannot be undone.',
             })}
           </p>
+          <div className="space-y-1.5">
+            <label htmlFor="delete-project-confirm-name" className="block text-xs font-medium text-foreground">
+              {t('deleteConfirmation.typeNameLabel', {
+                name: displayName,
+                defaultValue: 'Type "{{name}}" to confirm',
+              })}
+            </label>
+            <input
+              id="delete-project-confirm-name"
+              autoFocus
+              value={typedName}
+              onChange={(event) => setTypedName(event.target.value)}
+              disabled={isDeleting}
+              autoComplete="off"
+              spellCheck={false}
+              className="h-9 w-full rounded-md border border-border bg-background px-3 font-mono text-sm text-foreground outline-none transition focus:border-destructive/60 focus:ring-2 focus:ring-destructive/15 disabled:opacity-60"
+            />
+          </div>
           {error ? (
             <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               {error}
@@ -910,9 +916,9 @@ function DeleteProjectDialog({
           </button>
           <button
             type="button"
-            onClick={onConfirm}
-            disabled={isDeleting}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-destructive px-3 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-60"
+            onClick={() => onConfirm(typedName.trim())}
+            disabled={isDeleting || !matches}
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-destructive px-3 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-40"
           >
             {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" strokeWidth={1.75} />}
             {isDeleting

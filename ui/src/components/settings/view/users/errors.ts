@@ -2,7 +2,14 @@ import type { ActionResult } from './useUsersAdmin';
 
 type Translate = (key: string) => string;
 
-const KNOWN_ERROR_CODES = new Set(['LAST_ADMIN', 'RESERVED_USERNAME', 'USERNAME_TAKEN', 'WEAK_CREDENTIALS']);
+const KNOWN_ERROR_CODES = new Set([
+  'LAST_ADMIN',
+  'RESERVED_USERNAME',
+  'USERNAME_TAKEN',
+  'WEAK_CREDENTIALS',
+  'HOME_EXISTS',
+  'NOT_ARCHIVED',
+]);
 
 type Failure = Extract<ActionResult, { ok: false }>;
 

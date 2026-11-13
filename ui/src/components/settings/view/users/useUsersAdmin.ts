@@ -10,6 +10,22 @@ export type AdminUser = {
   createdAt?: string;
   lastLogin?: string | null;
   storageBytes?: number;
+  /** Part of `storageBytes` under `<workspaces>/…/inbox` (never auto-cleaned). */
+  inboxBytes?: number;
+  /** Bytes held by this user's archived home (deleted account), if any. */
+  archivedBytes?: number;
+  /** True when the account was deleted and its home sits in `archives/users/`. */
+  archived?: boolean;
+  archivedAt?: string | null;
+  /** 归档到期的时刻（服务端按保留天数算好，前端只管显示）。 */
+  expiresAt?: string | null;
+};
+/** Deployment-wide figures behind the storage column (design §9.2.1). */
+export type StorageSummary = {
+  totalBytes: number;
+  totalInboxBytes: number;
+  archivedBytes: number;
+  userTotalWarningBytes: number;
 };
 export type ActionResult<T = unknown> =
   | { ok: true; data?: T }
@@ -36,19 +52,23 @@ function run<T = unknown>(request: () => Promise<Response>): Promise<ActionResul
 
 export function useUsersAdmin() {
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [archivedUsers, setArchivedUsers] = useState<AdminUser[]>([]);
+  const [storage, setStorage] = useState<StorageSummary | null>(null);
   const [registrationOpen, setRegistrationOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force = false) => {
     setLoading(true);
     setError(null);
     try {
-      const [u, r] = await Promise.all([api.admin.listUsers(), api.admin.getRegistration()]);
+      const [u, r] = await Promise.all([api.admin.listUsers(force), api.admin.getRegistration()]);
       const uj = await u.json().catch(() => ({}));
       const rj = await r.json().catch(() => ({}));
       if (!u.ok) throw new Error(uj?.error ?? 'failed');
       setUsers(uj.users ?? []);
+      setArchivedUsers(uj.archivedUsers ?? []);
+      setStorage(uj.storage ?? null);
       setRegistrationOpen(Boolean(rj?.allowPublicRegistration));
     } catch (e) {
       setError((e as Error).message);
@@ -66,16 +86,22 @@ export function useUsersAdmin() {
 
   return {
     users,
+    /** 已删除、数据仍在归档里的账号，按归档时间从新到旧。 */
+    archivedUsers,
+    storage,
     loading,
     error,
     registrationOpen,
     refresh,
+    /** Manual refresh: bypasses the server's 60 s storage cache. */
+    refreshStorage: () => refresh(true),
     createUser: (username: string, password: string, role: UserRole) =>
       after(() => api.admin.createUser(username, password, role)),
     setRole: (id: number, role: UserRole) => after(() => api.admin.patchUser(id, { role })),
     setActive: (id: number, isActive: boolean) => after(() => api.admin.patchUser(id, { isActive })),
     resetPassword: (id: number) => run<{ password: string }>(() => api.admin.resetPassword(id)),
     deleteUser: (id: number) => after(() => api.admin.deleteUser(id)),
+    restoreUser: (id: number) => after(() => api.admin.restoreUser(id)),
     setRegistration: (allow: boolean) => after(() => api.admin.setRegistration(allow)),
   };
 }

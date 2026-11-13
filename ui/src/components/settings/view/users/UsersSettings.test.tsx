@@ -18,13 +18,31 @@ const hook = vi.hoisted(() => ({
   resetPassword: vi.fn(async (..._a: unknown[]) => ({ ok: true as const, data: { password: 'Abc123XyZ987' } })),
   createUser: vi.fn(async (..._a: unknown[]): Promise<{ ok: true } | { ok: false; code: string; message: string }> => ({ ok: true })),
   setRegistration: vi.fn(async (..._a: unknown[]) => ({ ok: true as const })),
+  refreshStorage: vi.fn(async (..._a: unknown[]) => undefined),
+  restoreUser: vi.fn(async (..._a: unknown[]) => ({ ok: true as const })),
 }));
+const archived = vi.hoisted(() => [
+  {
+    id: 9,
+    username: 'ghost',
+    role: 'user',
+    isActive: false,
+    archived: true,
+    archivedAt: '2026-11-01T00:00:00.000Z',
+    expiresAt: '2026-12-01T00:00:00.000Z',
+    storageBytes: 0,
+    inboxBytes: 0,
+    archivedBytes: 8192,
+  },
+]);
 vi.mock('./useUsersAdmin', () => ({
   useUsersAdmin: () => ({
     users: [
-      { id: 1, username: 'admin', role: 'admin', isActive: true, createdAt: '2026-10-01', lastLogin: null, storageBytes: 1024 },
-      { id: 2, username: 'alice', role: 'user', isActive: true, createdAt: '2026-10-02', lastLogin: null, storageBytes: 2048 },
+      { id: 1, username: 'admin', role: 'admin', isActive: true, createdAt: '2026-10-01', lastLogin: null, storageBytes: 4096, inboxBytes: 1024, archivedBytes: 0 },
+      { id: 2, username: 'alice', role: 'user', isActive: true, createdAt: '2026-10-02', lastLogin: null, storageBytes: 2048, inboxBytes: 512, archivedBytes: 0 },
     ],
+    archivedUsers: archived,
+    storage: { totalBytes: 6144, totalInboxBytes: 1536, archivedBytes: 0, userTotalWarningBytes: 20 * 1024 ** 3 },
     loading: false, error: null, registrationOpen: true, refresh: vi.fn(), ...hook,
   }),
 }));
@@ -109,5 +127,37 @@ describe('UsersSettings', () => {
     render(<UsersSettings />);
     fireEvent.click(screen.getByRole('switch', { name: 'settingsPage.users.registration' }));
     await waitFor(() => expect(hook.setRegistration).toHaveBeenCalledWith(false));
+  });
+
+  it('shows the deployment total, sorts by storage and offers a manual refresh', async () => {
+    render(<UsersSettings />);
+    expect(screen.getByText(/settingsPage\.users\.summary:2/)).toBeTruthy();
+
+    // Default order is descending by bytes, so admin (4 KB) sits above alice (2 KB).
+    const bodyRows = () => screen.getAllByRole('row').slice(1);
+    expect(bodyRows()[0].textContent).toContain('admin');
+    expect(bodyRows()[0].textContent).toContain('25.0%'); // inbox share of that user
+
+    fireEvent.click(screen.getByRole('button', { name: 'settingsPage.users.sortByStorage' }));
+    expect(bodyRows()[0].textContent).toContain('alice');
+
+    fireEvent.click(screen.getByRole('button', { name: 'settingsPage.users.refresh' }));
+    await waitFor(() => expect(hook.refreshStorage).toHaveBeenCalled());
+  });
+
+  it('lists archived accounts separately and restores one after confirmation', async () => {
+    render(<UsersSettings />);
+    // 归档账号不在主表里，只在独立的区块出现，并且带归档/到期时间。
+    expect(screen.getByText('settingsPage.users.archivedTitle')).toBeTruthy();
+    expect(screen.getByText('ghost')).toBeTruthy();
+    expect(screen.getByText('settingsPage.users.archivedTag')).toBeTruthy();
+    expect(screen.getByText('settingsPage.users.expiresAt')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'settingsPage.users.restore' }));
+    expect(screen.getByText('settingsPage.users.restoreHint')).toBeTruthy();
+    expect(hook.restoreUser).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'settingsPage.users.confirm' }));
+    await waitFor(() => expect(hook.restoreUser).toHaveBeenCalledWith(9));
   });
 });
