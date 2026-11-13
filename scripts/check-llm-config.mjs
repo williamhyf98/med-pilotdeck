@@ -16,8 +16,9 @@
  *   PILOTDECK_LLM_CHECK_TIMEOUT_MS    per-model probe timeout (default 10000)
  */
 import { existsSync, readFileSync } from 'node:fs';
+import net from 'node:net';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 
 const PLACEHOLDER_API_KEY = 'PLACEHOLDER_RUN_ONBOARDING_TO_REPLACE';
@@ -55,6 +56,55 @@ function normalizeProtocol(protocol) {
   if (value === 'google') return 'google';
   if (value === 'openai-responses' || value === 'responses') return 'openai-responses';
   return 'openai';
+}
+
+/**
+ * 一次 TCP 握手（不等待任何 HTTP 响应）。
+ *
+ * 用途：超时之后区分"根本连不上"和"连上了但服务不回包"。生产上两者都表现为
+ * 10 秒超时，运维看到同一句 `timeout after 10s` 分不清是网络还是模型还在加载
+ * （实测 10.31.112.47:18001 就是 TCP 40ms 通、HTTP 12s 无响应）。
+ */
+export function tcpReachable(rawUrl, timeoutMs = 1500) {
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return Promise.resolve({ ok: false, target: String(rawUrl), reason: 'invalid url' });
+  }
+  const port = Number(url.port) || (url.protocol === 'https:' ? 443 : 80);
+  const target = `${url.hostname}:${port}`;
+  return new Promise((resolvePromise) => {
+    const socket = net.connect({ host: url.hostname, port });
+    const done = (ok, reason) => {
+      socket.destroy();
+      resolvePromise({ ok, target, reason });
+    };
+    socket.setTimeout(timeoutMs, () => done(false, 'connect timeout'));
+    socket.once('connect', () => done(true));
+    socket.once('error', (error) => done(false, error?.code || error?.message || 'connect failed'));
+  });
+}
+
+/** 超时文案：把 TCP 层的事实带上，避免只写一句 timeout。 */
+export async function describeTimeout(rawUrl, timeoutMs, reachPromise) {
+  const seconds = Math.round(timeoutMs / 1000);
+  const reach = await (reachPromise ?? tcpReachable(rawUrl));
+  return reach.ok
+    ? `timeout after ${seconds}s: TCP ${reach.target} 已连通，但没有任何 HTTP 响应（服务可能仍在加载模型或已假死）`
+    : `timeout after ${seconds}s: 无法连接 ${reach.target}（${reach.reason ?? 'unreachable'}）`;
+}
+
+/**
+ * `fetch failed` 单独一个字符串等于没信息（undici 把真实原因藏在 `cause`）。
+ * 这里把 ENOTFOUND / ECONNREFUSED / CERT_HAS_EXPIRED 之类的 code 带出来。
+ */
+export function describeFetchError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  const cause = error?.cause;
+  const code = cause?.code || cause?.errno;
+  if (!code || message.includes(String(code))) return message;
+  return `${message} (${code})`;
 }
 
 function providerAllowsMissingApiKey(providerId) {
@@ -227,6 +277,8 @@ async function probeModel({ providerId, modelId, provider, timeoutMs }) {
   for (const url of urls) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    // 与 HTTP 探针并行的 TCP 握手：超时那一刻直接拿来解释原因，不额外等待。
+    const reachPromise = tcpReachable(url);
     try {
       const response = await fetch(url, { ...options, signal: controller.signal });
       const text = await response.text();
@@ -257,9 +309,9 @@ async function probeModel({ providerId, modelId, provider, timeoutMs }) {
     } catch (error) {
       clearTimeout(timer);
       if (error?.name === 'AbortError') {
-        lastError = `timeout after ${Math.round(timeoutMs / 1000)}s`;
+        lastError = await describeTimeout(url, timeoutMs, reachPromise);
       } else {
-        lastError = error instanceof Error ? error.message : String(error);
+        lastError = describeFetchError(error);
       }
     }
   }
@@ -339,6 +391,7 @@ async function probeEmbedding({ embedding, timeoutMs }) {
   for (const url of urls) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const reachPromise = tcpReachable(url);
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -381,14 +434,36 @@ async function probeEmbedding({ embedding, timeoutMs }) {
     } catch (error) {
       clearTimeout(timer);
       if (error?.name === 'AbortError') {
-        lastError = `timeout after ${Math.round(timeoutMs / 1000)}s`;
+        lastError = await describeTimeout(url, timeoutMs, reachPromise);
       } else {
-        lastError = error instanceof Error ? error.message : String(error);
+        lastError = describeFetchError(error);
       }
     }
   }
 
   return { ok: false, error: lastError };
+}
+
+/** 单个 chat 目标：配置校验 + 一次最小 completion 探针。 */
+async function probeChatTarget(target, main, defaultTimeoutMs) {
+  const label = `${target.providerId}/${target.modelId}`;
+  const isMain = target.providerId === main.providerId && target.modelId === main.modelId;
+  const configCheck = isUsableProvider(target.providerId, target.provider, target.modelId);
+  if (!configCheck.ok) return { label, isMain, ok: false, error: configCheck.reason };
+  const probeTimeoutMs = Number.isFinite(target.provider.probeTimeoutMs) && target.provider.probeTimeoutMs > 0
+    ? target.provider.probeTimeoutMs
+    : defaultTimeoutMs;
+  const result = await probeModel({ ...target, timeoutMs: probeTimeoutMs });
+  return { label, isMain, ok: result.ok, error: result.error };
+}
+
+/** embedding：配置校验 + 一次单条文本向量化。 */
+async function probeEmbeddingTarget(target, timeoutMs) {
+  const label = `embedding/${target.modelId}`;
+  const configCheck = isUsableEmbedding(target.embedding);
+  if (!configCheck.ok) return { label, ok: false, error: configCheck.reason, dimension: 0 };
+  const result = await probeEmbedding({ embedding: target.embedding, timeoutMs });
+  return { label, ok: result.ok, error: result.error, dimension: result.dimension ?? 0 };
 }
 
 async function main() {
@@ -438,53 +513,38 @@ async function main() {
   console.log(`    probe:  ${totalProbes} model(s), default timeout ${timeoutMs}ms`);
   console.log('');
 
+  // 并发探测：一个不回包的服务不该让后面的模型排队等满超时（历史上 4 个目标 = 40s+）。
+  const embeddingPromise = embeddingTarget
+    ? probeEmbeddingTarget(embeddingTarget, timeoutMs)
+    : Promise.resolve(null);
+  const [chatOutcomes, embeddingOutcome] = await Promise.all([
+    Promise.all(chatTargets.map((target) => probeChatTarget(target, main, timeoutMs))),
+    embeddingPromise,
+  ]);
+
   let mainOk = false;
   let failedCount = 0;
 
-  for (const target of chatTargets) {
-    const label = `${target.providerId}/${target.modelId}`;
-    const isMain = target.providerId === main.providerId && target.modelId === main.modelId;
-    const configCheck = isUsableProvider(target.providerId, target.provider, target.modelId);
-    if (!configCheck.ok) {
-      failedCount += 1;
-      console.log(`  ${BAD} ${label}${isMain ? '  (main agent)' : ''}`);
-      console.log(`      ${configCheck.reason}`);
-      continue;
-    }
-
-    const probeTimeoutMs = Number.isFinite(target.provider.probeTimeoutMs) && target.provider.probeTimeoutMs > 0
-      ? target.provider.probeTimeoutMs : timeoutMs;
-    const result = await probeModel({ ...target, timeoutMs: probeTimeoutMs });
-    if (result.ok) {
+  for (const outcome of chatOutcomes) {
+    const { label, isMain, ok, error } = outcome;
+    if (ok) {
       if (isMain) mainOk = true;
       console.log(`  ${OK} ${label}${isMain ? '  (main agent)' : ''}`);
     } else {
       failedCount += 1;
       console.log(`  ${BAD} ${label}${isMain ? '  (main agent)' : ''}`);
-      console.log(`      ${result.error}`);
+      console.log(`      ${error}`);
     }
   }
 
-  if (embeddingTarget) {
-    const label = `embedding/${embeddingTarget.modelId}`;
-    const configCheck = isUsableEmbedding(embeddingTarget.embedding);
-    if (!configCheck.ok) {
-      failedCount += 1;
-      console.log(`  ${BAD} ${label}  (embedding)`);
-      console.log(`      ${configCheck.reason}`);
+  if (embeddingOutcome) {
+    if (embeddingOutcome.ok) {
+      const dimNote = embeddingOutcome.dimension ? `  dim=${embeddingOutcome.dimension}` : '';
+      console.log(`  ${OK} ${embeddingOutcome.label}  (embedding)${dimNote}`);
     } else {
-      const result = await probeEmbedding({
-        embedding: embeddingTarget.embedding,
-        timeoutMs,
-      });
-      if (result.ok) {
-        const dimNote = result.dimension ? `  dim=${result.dimension}` : '';
-        console.log(`  ${OK} ${label}  (embedding)${dimNote}`);
-      } else {
-        failedCount += 1;
-        console.log(`  ${BAD} ${label}  (embedding)`);
-        console.log(`      ${result.error}`);
-      }
+      failedCount += 1;
+      console.log(`  ${BAD} ${embeddingOutcome.label}  (embedding)`);
+      console.log(`      ${embeddingOutcome.error}`);
     }
   }
 
@@ -502,6 +562,9 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  fail(error instanceof Error ? error.message : String(error));
-});
+// 只有被直接执行时才跑；被测试 import 时保持纯函数可复用。
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    fail(error instanceof Error ? error.message : String(error));
+  });
+}
