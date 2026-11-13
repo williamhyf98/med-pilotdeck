@@ -219,4 +219,238 @@ describe('AuthContext (multi-user)', () => {
     act(() => { revoke(); });
     await waitFor(() => expect(screen.getByText('out:TOKEN_REVOKED')).toBeTruthy());
   });
+
+  it('keeps the token when /api/auth/user fails with a server error', async () => {
+    localStorage.setItem('auth-token', 't');
+    fetchMock.mockImplementation((url: string) =>
+      url.endsWith('/status') ? json(200, {}) : json(502, { error: 'bad gateway' }));
+    const mod = await import('./AuthContext');
+    function Probe() {
+      const a = mod.useAuth();
+      return <div>{a.isLoading ? 'loading' : a.user ? 'in' : 'out'}</div>;
+    }
+    render(<mod.AuthProvider><Probe /></mod.AuthProvider>);
+    await waitFor(() => expect(screen.getByText('out')).toBeTruthy());
+    // 后端暂时不可用不等于会话结束：token 必须留着，刷新后能直接恢复。
+    expect(localStorage.getItem('auth-token')).toBe('t');
+  });
+
+  it('ignores an old auth check that answers after a new token is stored', async () => {
+    localStorage.setItem('auth-token', 'old');
+    let finishUser!: (response: Response) => void;
+    fetchMock.mockImplementation((url: string) => {
+      if (url.endsWith('/status')) return json(200, {});
+      return new Promise<Response>((resolve) => { finishUser = resolve; });
+    });
+    const mod = await import('./AuthContext');
+    const handle: { auth: ReturnType<typeof mod.useAuth> | null } = { auth: null };
+    function Probe() {
+      const auth = mod.useAuth();
+      handle.auth = auth;
+      return <div>{auth.isLoading ? 'loading' : auth.user ? 'in' : 'out'}</div>;
+    }
+    render(<mod.AuthProvider><Probe /></mod.AuthProvider>);
+    await waitFor(() => expect(finishUser).toBeTypeOf('function'));
+    await act(async () => {
+      localStorage.setItem('auth-token', 'new');
+      window.dispatchEvent(new StorageEvent('storage', { key: 'auth-token', oldValue: 'old', newValue: 'new' }));
+      finishUser(new Response(JSON.stringify({ code: 'INVALID_TOKEN' }), { status: 401 }));
+    });
+    expect(localStorage.getItem('auth-token')).toBe('new');
+    expect(handle.auth?.token).toBe('new');
+    expect(handle.auth?.sessionEndedCode).toBeNull();
+  });
+
+  it('adopts a token written by another tab', async () => {
+    localStorage.setItem('auth-token', 't');
+    fetchMock.mockImplementation((url: string) =>
+      url.endsWith('/status') ? json(200, {}) : json(200, { user: { id: 1, username: 'alice', role: 'user' } }));
+    const mod = await import('./AuthContext');
+    let seen: string | null = null;
+    function Probe() {
+      const a = mod.useAuth();
+      seen = a.token;
+      return <div>{a.user ? 'in' : 'out'}</div>;
+    }
+    render(<mod.AuthProvider><Probe /></mod.AuthProvider>);
+    await waitFor(() => expect(screen.getByText('in')).toBeTruthy());
+    localStorage.setItem('auth-token', 'other-tab');
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: 'auth-token', newValue: 'other-tab' }));
+    });
+    await waitFor(() => expect(seen).toBe('other-tab'));
+  });
+
+  it('does not replace a newer login when an older removal probe finishes', async () => {
+    localStorage.setItem('auth-token', 'old');
+    let finishProbe!: (response: Response) => void;
+    let userCalls = 0;
+    fetchMock.mockImplementation((url: string) => {
+      if (url.endsWith('/status')) return json(200, {});
+      if (++userCalls === 1) {
+        return json(200, { user: { id: 1, username: 'alice', role: 'user' } });
+      }
+      return new Promise<Response>((resolve) => { finishProbe = resolve; });
+    });
+    const handle = await loadSession();
+    localStorage.removeItem('auth-token');
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: 'auth-token', oldValue: 'old', newValue: null }));
+    });
+    await waitFor(() => expect(finishProbe).toBeTypeOf('function'));
+    await act(async () => {
+      localStorage.setItem('auth-token', 'new');
+      window.dispatchEvent(new StorageEvent('storage', { key: 'auth-token', oldValue: null, newValue: 'new' }));
+      finishProbe(new Response(JSON.stringify({ user: { id: 1, username: 'alice', role: 'user' } }), { status: 200 }));
+    });
+    expect(localStorage.getItem('auth-token')).toBe('new');
+    expect(handle.auth?.token).toBe('new');
+    expect(screen.getByText('in:none')).toBeTruthy();
+  });
+
+  it('does not sign out a newer login when an older removal probe is rejected', async () => {
+    localStorage.setItem('auth-token', 'old');
+    let finishProbe!: (response: Response) => void;
+    let userCalls = 0;
+    fetchMock.mockImplementation((url: string) => {
+      if (url.endsWith('/status')) return json(200, {});
+      if (++userCalls === 1) return json(200, { user: { id: 1, username: 'alice', role: 'user' } });
+      return new Promise<Response>((resolve) => { finishProbe = resolve; });
+    });
+    const handle = await loadSession();
+    localStorage.removeItem('auth-token');
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: 'auth-token', oldValue: 'old', newValue: null }));
+    });
+    await waitFor(() => expect(finishProbe).toBeTypeOf('function'));
+    await act(async () => {
+      localStorage.setItem('auth-token', 'new');
+      window.dispatchEvent(new StorageEvent('storage', { key: 'auth-token', oldValue: null, newValue: 'new' }));
+      finishProbe(new Response(JSON.stringify({ code: 'TOKEN_REVOKED' }), { status: 401 }));
+    });
+    expect(localStorage.getItem('auth-token')).toBe('new');
+    expect(handle.auth?.token).toBe('new');
+    expect(screen.getByText('in:none')).toBeTruthy();
+  });
+
+  it('does not restore a token when its removal probe cannot reach the server', async () => {
+    localStorage.setItem('auth-token', 'old');
+    let userCalls = 0;
+    fetchMock.mockImplementation((url: string) => {
+      if (url.endsWith('/status')) return json(200, {});
+      return ++userCalls === 1
+        ? json(200, { user: { id: 1, username: 'alice', role: 'user' } })
+        : Promise.reject(new Error('offline'));
+    });
+    await loadSession();
+    localStorage.removeItem('auth-token');
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: 'auth-token', oldValue: 'old', newValue: null }));
+    });
+    await waitFor(() => expect(userCalls).toBe(2));
+    expect(localStorage.getItem('auth-token')).toBeNull();
+  });
+
+  it('rejects an older same-account token written by another tab', async () => {
+    const enc = (value: unknown) => btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const tokenFor = (version: number, issued: number) =>
+      `${enc({ alg: 'HS256' })}.${enc({ userId: 1, tokenVersion: version, iat: issued, exp: issued + 604800 })}.sig`;
+    const fresh = tokenFor(8, Math.floor(Date.now() / 1000));
+    const stale = tokenFor(7, Math.floor(Date.now() / 1000) - 86400);
+    localStorage.setItem('auth-token', fresh);
+    fetchMock.mockImplementation((url: string) =>
+      url.endsWith('/status') ? json(200, {}) : json(200, { user: { id: 1, username: 'alice', role: 'user' } }));
+    const handle = await loadSession();
+    localStorage.setItem('auth-token', stale);
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: 'auth-token', oldValue: fresh, newValue: stale }));
+    });
+    expect(localStorage.getItem('auth-token')).toBe(fresh);
+    expect(handle.auth?.token).toBe(fresh);
+  });
+
+  it('ignores a delayed storage event if the stored token has since changed', async () => {
+    localStorage.setItem('auth-token', 'old');
+    fetchMock.mockImplementation((url: string) =>
+      url.endsWith('/status') ? json(200, {}) : json(200, { user: { id: 1, username: 'alice', role: 'user' } }));
+    const handle = await loadSession();
+    localStorage.setItem('auth-token', 'new');
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: 'auth-token', oldValue: 'old', newValue: null }));
+    });
+    expect(handle.auth?.token).toBe('old');
+    expect(localStorage.getItem('auth-token')).toBe('new');
+  });
+
+  it('signs out when another tab drops the token', async () => {
+    localStorage.setItem('auth-token', 't');
+    let userCalls = 0;
+    fetchMock.mockImplementation((url: string) => {
+      if (url.endsWith('/status')) return json(200, {});
+      userCalls += 1;
+      // The second call is the post-removal "is this token really dead?" probe.
+      return userCalls === 1
+        ? json(200, { user: { id: 1, username: 'alice', role: 'user' } })
+        : json(401, { code: 'TOKEN_REVOKED' });
+    });
+    await loadSession();
+    localStorage.removeItem('auth-token');
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: 'auth-token', newValue: null }));
+    });
+    await waitFor(() => expect(screen.getByText('out:TOKEN_REVOKED')).toBeTruthy());
+    expect(localStorage.getItem('auth-token')).toBeNull();
+  });
+
+  it('restores a token that another tab removed but the server still accepts', async () => {
+    localStorage.setItem('auth-token', 't');
+    fetchMock.mockImplementation((url: string) =>
+      url.endsWith('/status') ? json(200, {}) : json(200, { user: { id: 1, username: 'alice', role: 'user' } }));
+    await loadSession();
+    localStorage.removeItem('auth-token');
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: 'auth-token', newValue: null }));
+    });
+    await waitFor(() => expect(localStorage.getItem('auth-token')).toBe('t'));
+    expect(screen.getByText(/^in:/)).toBeTruthy();
+  });
+
+  // 形如 JWT 的假 token：只需要 payload 里的 exp，前端不解签名。
+  const jwtWithExpiry = (expSeconds: number) => {
+    const enc = (value: unknown) => {
+      const bytes = new TextEncoder().encode(JSON.stringify(value));
+      let binary = '';
+      bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+      return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    };
+    return `${enc({ alg: 'HS256' })}.${enc({ userId: 1, exp: expSeconds })}.sig`;
+  };
+
+  it('过期的 token 不再拿去请求，直接按会话结束处理', async () => {
+    localStorage.setItem('auth-token', jwtWithExpiry(Math.floor(Date.now() / 1000) - 60));
+    fetchMock.mockImplementation((url: string) =>
+      url.endsWith('/status') ? json(200, {}) : json(200, { user: { id: 1, username: 'alice', role: 'user' } }));
+    const mod = await import('./AuthContext');
+    function SessionProbe() {
+      const a = mod.useAuth();
+      return <div>{a.isLoading ? 'loading' : a.user ? 'in' : `out:${a.sessionEndedCode ?? 'none'}`}</div>;
+    }
+    render(<mod.AuthProvider><SessionProbe /></mod.AuthProvider>);
+    await waitFor(() => expect(screen.getByText('out:INVALID_TOKEN')).toBeTruthy());
+    expect(localStorage.getItem('auth-token')).toBeNull();
+    // 关键：明知过期就别再打 /api/auth/user，少一次无意义 401
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/api/auth/user'))).toBe(false);
+  });
+
+  it('回到前台时若 token 快到期，会静默续一次', async () => {
+    localStorage.setItem('auth-token', jwtWithExpiry(Math.floor(Date.now() / 1000) + 3600));
+    fetchMock.mockImplementation((url: string) =>
+      url.endsWith('/status') ? json(200, {}) : json(200, { user: { id: 1, username: 'alice', role: 'user' } }));
+    await loadSession();
+    const userCalls = () =>
+      fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/api/auth/user')).length;
+    expect(userCalls()).toBe(1);
+    act(() => { window.dispatchEvent(new Event('focus')); });
+    await waitFor(() => expect(userCalls()).toBe(2));
+  });
 });

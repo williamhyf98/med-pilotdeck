@@ -54,6 +54,69 @@ describe('authenticatedFetch auth handling', () => {
     expect(events).toEqual([]);
   });
 
+  it('does not delete the current token when the 401 answers an explicitly overridden stale token', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ code: 'TOKEN_REVOKED' }), { status: 401 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { authenticatedFetch } = await import('./api.js');
+    await authenticatedFetch('/api/user/preferences', {
+      method: 'PATCH',
+      headers: { Authorization: 'Bearer stale' },
+    });
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer stale');
+    expect(localStorage.getItem('auth-token')).toBe('old');
+    expect(events).toEqual([]);
+  });
+
+  it('still signs out when the revoked 401 answers the request token that is current', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ code: 'TOKEN_REVOKED' }), { status: 401 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { authenticatedFetch } = await import('./api.js');
+    await authenticatedFetch('/api/projects');
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer old');
+    expect(localStorage.getItem('auth-token')).toBeNull();
+    expect(events).toEqual([{ code: 'TOKEN_REVOKED' }]);
+  });
+
+  it('ignores X-Refreshed-Token from a request that used a stale token', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', {
+      status: 200,
+      headers: { 'X-Refreshed-Token': 'stale-refresh' },
+    })));
+    const { authenticatedFetch } = await import('./api.js');
+    await authenticatedFetch('/api/projects', { headers: { authorization: 'Bearer stale' } });
+    expect(localStorage.getItem('auth-token')).toBe('old');
+  });
+
+  it('does not replace a fresh session with an older refreshed token from a cached response', async () => {
+    const jwt = (claims) => `header.${btoa(JSON.stringify(claims))}.signature`;
+    const fresh = jwt({ userId: 1, tokenVersion: 8, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 86400 });
+    const stale = jwt({ userId: 1, tokenVersion: 7, iat: Math.floor(Date.now() / 1000) - 8 * 86400, exp: Math.floor(Date.now() / 1000) - 86400 });
+    localStorage.setItem('auth-token', fresh);
+    const refreshed = [];
+    const listener = (e) => refreshed.push(e.detail.token);
+    window.addEventListener('pilotdeck:token-refreshed', listener);
+    try {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', {
+        status: 200,
+        headers: { 'X-Refreshed-Token': stale },
+      })));
+      const { authenticatedFetch } = await import('./api.js');
+      await authenticatedFetch('/api/projects/trauma/sessions/web%3As_123/token-usage?provider=pilotdeck');
+      expect(localStorage.getItem('auth-token')).toBe(fresh);
+      expect(refreshed).toEqual([]);
+    } finally {
+      window.removeEventListener('pilotdeck:token-refreshed', listener);
+    }
+  });
+
+  it('bypasses the browser cache for authenticated requests', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { authenticatedFetch } = await import('./api.js');
+    await authenticatedFetch('/api/projects/trauma/sessions/web%3As_123/token-usage?provider=pilotdeck');
+    expect(fetchMock.mock.calls[0][1].cache).toBe('no-store');
+  });
+
   it('keeps the response body readable after a 401 was inspected', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ code: 'NO_TOKEN', error: 'nope' }), { status: 401 })));
     const { authenticatedFetch } = await import('./api.js');

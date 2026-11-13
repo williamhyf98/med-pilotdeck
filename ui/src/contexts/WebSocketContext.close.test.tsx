@@ -55,7 +55,26 @@ describe('WebSocketContext close codes', () => {
     act(() => { vi.advanceTimersByTime(60_000); });
     window.removeEventListener('pilotdeck:auth-revoked', listener);
     expect(FakeWS.instances).toHaveLength(1);
-    expect(events).toEqual([{ code: 'TOKEN_REVOKED' }]);
+    expect(events).toEqual([{ code: 'TOKEN_REVOKED', token: 't' }]);
+  });
+
+  it('does not sign out when 4401 closes a socket built with a superseded token', async () => {
+    // Another tab already logged in and stored a newer token.
+    localStorage.setItem('auth-token', 'fresh');
+    mockAuth();
+    const events: unknown[] = [];
+    const refreshed: unknown[] = [];
+    const onRevoked = (e: any) => events.push(e.detail);
+    const onRefreshed = (e: any) => refreshed.push(e.detail);
+    window.addEventListener('pilotdeck:auth-revoked', onRevoked);
+    window.addEventListener('pilotdeck:token-refreshed', onRefreshed);
+    const { WebSocketProvider } = await import('./WebSocketContext');
+    render(<WebSocketProvider><div /></WebSocketProvider>);
+    act(() => { FakeWS.instances[0].onclose({ code: 4401, reason: 'UNAUTHENTICATED' }); });
+    window.removeEventListener('pilotdeck:auth-revoked', onRevoked);
+    window.removeEventListener('pilotdeck:token-refreshed', onRefreshed);
+    expect(events).toEqual([]);
+    expect(refreshed).toEqual([{ token: 'fresh' }]);
   });
 
   it('does not reconnect after 4403 and does not dispatch auth-revoked', async () => {

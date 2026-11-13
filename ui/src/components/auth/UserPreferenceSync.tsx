@@ -97,14 +97,14 @@ export default function UserPreferenceSync({ children }: { children: ReactNode }
       const serialized = JSON.stringify(snapshot);
       if (serialized === lastPersisted) return;
       lastPersisted = serialized;
-      // A queued save must never pick up the next account's token.
-      const token = localStorage.getItem('auth-token');
+      // The queue already re-checks the active account before running, so let
+      // authenticatedFetch attach the *current* token. Pinning a token here meant
+      // a stale 401 could delete a freshly issued session.
       void enqueueUserPreferenceSave(async () => {
         if (!active || String(getStorageUserId()) !== userId) return;
         const response = await authenticatedFetch('/api/user/preferences', {
           method: 'PATCH',
           body: JSON.stringify(snapshot),
-          ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
         });
         if (!response.ok) throw new Error('Unable to save UI preferences');
       }).catch((error) => {

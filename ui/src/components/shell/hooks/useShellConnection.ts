@@ -5,6 +5,7 @@ import type { Terminal } from '@xterm/xterm';
 import type { Project, ProjectSession } from '../../../types/app';
 import { TERMINAL_INIT_DELAY_MS } from '../constants/constants';
 import { getShellWebSocketUrl, parseShellMessage, sendSocketMessage } from '../utils/socket';
+import { adoptStoredToken, isSupersededToken, readAuthToken } from '../../../utils/authToken';
 
 const ANSI_ESCAPE_REGEX =
   /(?:\u001B\[[0-?]*[ -/]*[@-~]|\u009B[0-?]*[ -/]*[@-~]|\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)|\u009D[^\u0007\u009C]*(?:\u0007|\u009C)|\u001B[PX^_][^\u001B]*\u001B\\|[\u0090\u0098\u009E\u009F][^\u009C]*\u009C|\u001B[@-Z\\-_])/g;
@@ -131,6 +132,13 @@ export function useShellConnection({
 
         const socket = new WebSocket(wsUrl);
         wsRef.current = socket;
+        // 记住这条连接实际用的是哪枚 token，4401 时才能判断是不是"旧连接"。
+        let socketToken: string | null = null;
+        try {
+          socketToken = new URL(wsUrl, window.location.href).searchParams.get('token');
+        } catch {
+          socketToken = null;
+        }
 
         socket.onopen = () => {
           setIsConnected(true);
@@ -174,9 +182,16 @@ export function useShellConnection({
             deniedRef.current = true;
             setDeniedReason('ADMIN_REQUIRED');
           } else if (event.code === 4401) {
-            window.dispatchEvent(new CustomEvent('pilotdeck:auth-revoked', {
-              detail: { code: event.reason || 'TOKEN_REVOKED' },
-            }));
+            if (isSupersededToken(socketToken)) {
+              // 旧 token 的连接被拒，但 localStorage 里已有更新的账号会话：
+              // 让上层跟上新 token，不要结束当前登录。
+              const currentToken = readAuthToken();
+              if (currentToken) adoptStoredToken(currentToken);
+            } else {
+              window.dispatchEvent(new CustomEvent('pilotdeck:auth-revoked', {
+                detail: { code: event.reason || 'TOKEN_REVOKED', token: socketToken },
+              }));
+            }
           }
           setIsConnected(false);
           setIsConnecting(false);

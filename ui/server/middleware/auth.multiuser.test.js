@@ -1,5 +1,6 @@
 // ui/server/middleware/auth.multiuser.test.js
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import jwt from 'jsonwebtoken';
 
 afterEach(() => { vi.restoreAllMocks(); vi.resetModules(); vi.unstubAllEnvs(); });
 
@@ -38,6 +39,21 @@ describe('authenticateToken (multi-user)', () => {
     await authenticateToken(req, res, next);
     expect(next).toHaveBeenCalled();
     expect(req.user).toMatchObject({ id: 1, role: 'user', token_version: 2 });
+  });
+
+  it('marks refreshed authenticated responses as non-cacheable', async () => {
+    users.clear();
+    const u = seed({ id: 1, username: 'alice', role: 'user', token_version: 2, is_active: 1 });
+    const { authenticateToken, JWT_SECRET } = await load(false);
+    const oldButValid = jwt.sign(
+      { userId: u.id, tokenVersion: 2, iat: Math.floor(Date.now() / 1000) - 4 * 86400 },
+      JWT_SECRET,
+      { expiresIn: '7d' },
+    );
+    const res = mockRes();
+    await authenticateToken({ headers: { authorization: `Bearer ${oldButValid}` }, query: {} }, res, vi.fn());
+    expect(res.headers['X-Refreshed-Token']).toBeTruthy();
+    expect(res.headers['Cache-Control']).toContain('no-store');
   });
 
   it('rejects a token whose version is stale', async () => {

@@ -70,6 +70,10 @@ const authenticateToken = async (req, res, next) => {
     return denied(res, 401, resolved.code, messages[resolved.code]);
   }
 
+  // Authenticated GET responses may be identical across logins while the
+  // refresh header changes. Never let a cached response replay an old token.
+  res.setHeader('Cache-Control', 'private, no-store');
+
   // Auto-refresh: if token is past halfway through its lifetime, issue a new one
   if (decoded.exp && decoded.iat) {
     const now = Math.floor(Date.now() / 1000);

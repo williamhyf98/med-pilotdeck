@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../components/auth/context/AuthContext';
 import { IS_PLATFORM } from '../constants/config';
+import { adoptStoredToken, isSupersededToken, readAuthToken } from '../utils/authToken';
 
 type WSSubscriber = (msg: any) => void;
 
@@ -174,8 +175,16 @@ const useWebSocketProviderState = (): WebSocketContextType => {
           if (event.code === 4401 || event.code === 4403) {
             setReconnectInfo({ attempt: 0, nextRetryMs: 0, status: 'disconnected' });
             if (event.code === 4401) {
+              // 这条 socket 用的是"已经被替换掉"的旧 token（比如另一个标签页刚
+              // 重新登录）时，关闭只说明这条连接过期了，不代表当前会话结束。
+              // 跟着 localStorage 里的新 token 重连，别把人踢下线。
+              if (isSupersededToken(token)) {
+                const currentToken = readAuthToken();
+                if (currentToken) adoptStoredToken(currentToken);
+                return;
+              }
               window.dispatchEvent(new CustomEvent('pilotdeck:auth-revoked', {
-                detail: { code: event.reason || 'TOKEN_REVOKED' },
+                detail: { code: event.reason || 'TOKEN_REVOKED', token },
               }));
             }
             return;

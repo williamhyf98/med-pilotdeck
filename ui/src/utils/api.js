@@ -1,4 +1,5 @@
 import { IS_PLATFORM } from "../constants/config";
+import { isOlderTokenForSameUser } from "./authToken";
 
 const normalizePathForUrl = (value) => String(value || '').replace(/\\/g, '/');
 
@@ -33,6 +34,32 @@ const appendAuthToken = (url) => {
 
 const SESSION_ENDED_CODES = ['TOKEN_REVOKED', 'USER_DISABLED', 'INVALID_TOKEN', 'USER_NOT_FOUND'];
 
+// Read the bearer token a request is *actually* sent with. Callers may override
+// the Authorization header (e.g. a queued save captured an older token), so the
+// 401 guard must compare against what went out on the wire - not against what
+// localStorage happens to hold at the time we built the default headers.
+const readAuthorizationToken = (headers) => {
+  if (!headers) return null;
+  // Iterate entries instead of reading a single property: headers may be a
+  // Headers instance, an array of pairs, or a plain object that mixes
+  // `Authorization` and `authorization`. Last one wins, which is the order the
+  // fetch layer applies them in.
+  const entries = typeof Headers !== 'undefined' && headers instanceof Headers
+    ? [...headers.entries()]
+    : Array.isArray(headers)
+      ? headers
+      : Object.entries(headers);
+  let value = null;
+  for (const [key, entryValue] of entries) {
+    if (String(key).toLowerCase() !== 'authorization') continue;
+    value = Array.isArray(entryValue) ? entryValue.join(', ') : entryValue;
+  }
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  const match = /^Bearer\s+(.+)$/i.exec(trimmed);
+  return match ? match[1] : (trimmed || null);
+};
+
 // Utility function for authenticated API calls
 export const authenticatedFetch = (url, options = {}) => {
   const token = localStorage.getItem('auth-token');
@@ -52,15 +79,24 @@ export const authenticatedFetch = (url, options = {}) => {
     defaultHeaders['Authorization'] = `Bearer ${token}`;
   }
 
+  const headers = {
+    ...defaultHeaders,
+    ...fetchOptions.headers,
+  };
+  const sentToken = readAuthorizationToken(headers);
+
   return fetch(url, {
     ...fetchOptions,
-    headers: {
-      ...defaultHeaders,
-      ...fetchOptions.headers,
-    },
+    // Previously cached authenticated GETs can carry a stale refresh header
+    // even after the server starts sending no-store.
+    ...(sentToken ? { cache: 'no-store' } : {}),
+    headers,
   }).then(async (response) => {
     const refreshedToken = response.headers.get('X-Refreshed-Token');
-    if (refreshedToken && localStorage.getItem('auth-token') === token) {
+    // Only rotate the stored token when the request that earned the refresh was
+    // sent with the token that is still current.
+    if (refreshedToken && sentToken && localStorage.getItem('auth-token') === sentToken
+      && !isOlderTokenForSameUser(refreshedToken, sentToken)) {
       localStorage.setItem('auth-token', refreshedToken);
       window.dispatchEvent(new CustomEvent('pilotdeck:token-refreshed', { detail: { token: refreshedToken } }));
     }
@@ -71,8 +107,9 @@ export const authenticatedFetch = (url, options = {}) => {
       try {
         const body = await response.clone().json();
         // A response to a request sent with an older token must not sign out
-        // (or delete) a newer session, e.g. right after a password change.
-        if (SESSION_ENDED_CODES.includes(body?.code) && localStorage.getItem('auth-token') === token) {
+        // (or delete) a newer session, e.g. right after a password change or
+        // when a queued preference write still carries the previous token.
+        if (SESSION_ENDED_CODES.includes(body?.code) && sentToken && localStorage.getItem('auth-token') === sentToken) {
           localStorage.removeItem('auth-token');
           window.dispatchEvent(new CustomEvent('pilotdeck:auth-revoked', { detail: { code: body.code } }));
         }
@@ -196,7 +233,8 @@ export const api = {
 
   // Admin endpoints (admin role required)
   admin: {
-    listUsers: () => authenticatedFetch('/api/admin/users'),
+    // `refresh` asks the server to drop its 60 s storage cache first.
+    listUsers: (refresh = false) => authenticatedFetch(`/api/admin/users${refresh ? '?refresh=1' : ''}`),
     createUser: (username, password, role) => authenticatedFetch('/api/admin/users', {
       method: 'POST',
       body: JSON.stringify({ username, password, role }),
@@ -207,6 +245,7 @@ export const api = {
     }),
     resetPassword: (id) => authenticatedFetch(`/api/admin/users/${id}/reset-password`, { method: 'POST' }),
     deleteUser: (id) => authenticatedFetch(`/api/admin/users/${id}`, { method: 'DELETE' }),
+    restoreUser: (id) => authenticatedFetch(`/api/admin/users/${id}/restore`, { method: 'POST' }),
     getRegistration: () => authenticatedFetch('/api/admin/settings/registration'),
     setRegistration: (allow) => authenticatedFetch('/api/admin/settings/registration', {
       method: 'PUT',
@@ -298,10 +337,22 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ projectPath, fromEntryId }),
     }),
-  deleteProject: (projectName, force = false) =>
-    authenticatedFetch(`/api/projects/${projectName}${force ? '?force=true' : ''}`, {
-      method: 'DELETE',
-    }),
+  /**
+   * 删除项目 = 永久删除（不可恢复）。
+   * `confirmName` 是用户在对话框里手打的项目名，服务端会再核一遍。
+   */
+  deleteProject: (projectName, options) => {
+    const force = options?.force === true;
+    const confirmName = options?.confirmName;
+    const params = new URLSearchParams();
+    if (force) params.set('force', 'true');
+    if (typeof confirmName === 'string' && confirmName) params.set('confirmName', confirmName);
+    const query = params.toString();
+    return authenticatedFetch(
+      `/api/projects/${encodeURIComponent(projectName)}${query ? `?${query}` : ''}`,
+      { method: 'DELETE' },
+    );
+  },
   searchConversationsUrl: (query, limit = 50) => {
     const token = localStorage.getItem('auth-token');
     const params = new URLSearchParams({ q: query, limit: String(limit) });
