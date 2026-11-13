@@ -56,11 +56,11 @@ import { LargeFileRepair, type LargeFileRepairDecision } from "./LargeFileRepair
 import { resolveOutputTokenRetryBump } from "./outputTokenRetry.js";
 import { projectToolResults } from "./projectToolResults.js";
 import {
-  MAX_TOOL_CALLS_GRACE_PROMPT,
   SKILL_SOURCE_GRACE_AFTER_TURNS,
   SKILL_SOURCE_GRACE_PROMPT,
   SKILL_SOURCE_STOP_AFTER_TURNS,
   areOnlySkillSourceInspections,
+  maxToolCallsGracePrompt,
   resolveEffectiveMaxToolCalls,
   resolveEffectiveMaxTurns,
 } from "./spinGuards.js";
@@ -1936,7 +1936,10 @@ export class AgentLoop {
         && !hasUsedMaxToolCallsGrace
       ) {
         hasUsedMaxToolCallsGrace = true;
-        pushTransientSyntheticPrompt(MAX_TOOL_CALLS_GRACE_PROMPT, "max_tool_calls_grace");
+        pushTransientSyntheticPrompt(
+          maxToolCallsGracePrompt(effectiveMaxToolCalls - toolCallCount),
+          "max_tool_calls_grace",
+        );
         yield { type: "turn_continued", sessionId: input.sessionId, turnId: input.turnId, reason: "model_error" };
         continue;
       }

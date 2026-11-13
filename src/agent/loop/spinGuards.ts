@@ -3,8 +3,20 @@
  * skill-source inspection streaks (grep/read_file/glob under skills/.../scripts).
  */
 
-export const DEFAULT_MAX_TOOL_CALLS = 20;
-export const DEFAULT_MAX_TURNS = 25;
+/**
+ * 交互式对话的默认预算。
+ *
+ * 2026-11-12 实跑：数据分析任务（读数据 → 写脚本 → 跑 → 看报错 → 改 → 再跑 → 出图 →
+ * 写报告）在 18 次调用时就撞上旧的 20 次上限，模型被迫在交付文档之前收尾。
+ * 纯问答用不到 20 次，而"分析 + 出交付物"这类任务 20 次明显不够，所以抬到 40
+ * （软提醒同步移到第 38 次，见 maxToolCallsGracePrompt）。
+ *
+ * `maxTurns` 必须大于 `maxToolCalls`：每次调用至少占一个 turn，串行时
+ * turns ≈ toolCalls + 1，多留的余量给"模型报错重试"这种不产生工具调用的 turn，
+ * 否则真正卡住流程的会变成 turn 上限（它没有软提醒，直接结束）。
+ */
+export const DEFAULT_MAX_TOOL_CALLS = 40;
+export const DEFAULT_MAX_TURNS = 45;
 
 /** Consecutive model steps whose tools are only skill-source inspection. */
 export const SKILL_SOURCE_GRACE_AFTER_TURNS = 4;
@@ -17,10 +29,27 @@ export const SKILL_SOURCE_GRACE_PROMPT = [
   "state the limitation briefly, offer a practical alternative (plain-text PDF, Word/PPT with images, etc.), and do not call more tools.",
 ].join(" ");
 
-export const MAX_TOOL_CALLS_GRACE_PROMPT = [
-  "You are approaching the tool-call budget for this turn.",
-  "Stop calling tools. Reply to the user in clear natural language with the current result or an honest limitation, and any next-step suggestion.",
-].join(" ");
+/**
+ * 软提醒文案（2026-11-12 改写）。
+ *
+ * 旧文案以 "approaching the tool-call budget" 开头、紧接着 "Stop calling tools"，
+ * 模型只记住后半句，把"还剩 2 次"理解成"已经用完"，于是放弃写交付物直接交文字。
+ * 现在明确给出剩余次数，并说明这是**预算提醒不是停止信号**，把剩余预算导向交付物。
+ */
+export function maxToolCallsGracePrompt(remaining: number): string {
+  const left = Number.isFinite(remaining) ? Math.max(0, Math.floor(remaining)) : 0;
+  return [
+    left > 0
+      ? `Tool-call budget for this turn: ${left} call${left === 1 ? "" : "s"} left.`
+      : "Tool-call budget for this turn is used up.",
+    left > 0
+      ? "This is a budget warning, not a stop: you may still call tools."
+      : "Calling another tool now ends the turn with an error.",
+    "Spend the remaining budget on the user-facing deliverable (write the final file, run the final command), not on further exploration.",
+    "Do not re-run a command that already failed with the same input, and do not go hunting for logs the tool output already gave you.",
+    "If you cannot finish, reply with the result you already have, the single blocking step, and what the next turn should do.",
+  ].join(" ");
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)

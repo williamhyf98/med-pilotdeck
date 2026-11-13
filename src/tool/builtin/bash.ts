@@ -195,7 +195,8 @@ export function createBashTool(options?: CreateBashToolOptions): PilotDeckToolDe
       const auditAnalysis = (timedOut: boolean): void => {
         try {
           const event = analysisAuditEvent({ command, stdout: result.stdout, timedOut });
-          if (event) appendAudit(event, { env: context.env });
+          // 用工具上下文的时钟，保证审计文件按本次调用的日期分片（测试也因此可注入）。
+          if (event) appendAudit(event, { env: context.env, now: context.now?.() });
         } catch {
           // 审计是旁路，不能影响工具本身
         }
@@ -211,7 +212,7 @@ export function createBashTool(options?: CreateBashToolOptions): PilotDeckToolDe
         auditAnalysis(false);
         emitDeepChestActivity("DeepChest 流程失败", "流程未完成，请检查最终错误提示", "failed");
         const summary = formatShellFailure(command, result);
-        const diagnostic = formatShellFailureDiagnostic(result);
+        const diagnostic = formatShellFailureDiagnostic(command, result);
         throw new PilotDeckToolRuntimeError("tool_execution_failed", summary, {
           command,
           exitCode: result.exitCode,
@@ -336,6 +337,7 @@ function formatShellFailure(
 }
 
 function formatShellFailureDiagnostic(
+  command: string,
   result: { exitCode: number | null; stdout: string; stderr: string },
 ): string {
   const stream = result.stderr.trim().length > 0 ? result.stderr : result.stdout;
@@ -343,6 +345,7 @@ function formatShellFailureDiagnostic(
   const moduleMissing = parseMissingModule(stream);
   const commandNotFound = parseCommandNotFound(stream);
   const syntaxError = parseSyntaxError(stream);
+  const quotedGlob = parseQuotedGlobMiss(command, stream);
 
   const lines = [
     "BASH_FAILURE_DIAGNOSTIC",
@@ -362,6 +365,12 @@ function formatShellFailureDiagnostic(
   } else if (syntaxError) {
     lines.push(`- likely_cause: ${syntaxError}`);
     lines.push("- next_step: fix the syntax in the saved script or command, then rerun a minimal check.");
+  } else if (quotedGlob) {
+    lines.push(`- likely_cause: quoted glob passed literally: ${quotedGlob}`);
+    lines.push(
+      "- next_step: `*`/`?` inside quotes is not expanded by the shell. "
+      + "Drop the quotes, or run `ls` on the parent directory and pass the exact path.",
+    );
   } else {
     lines.push("- likely_cause: command exited non-zero; inspect stderr/stdout below for the root cause.");
     lines.push("- next_step: change the command or script before retrying; do not rerun unchanged.");
@@ -398,6 +407,28 @@ function parseCommandNotFound(text: string): string | undefined {
 
 function parseSyntaxError(text: string): string | undefined {
   return /(?:^|\n)\s*(SyntaxError:[^\n]+)/u.exec(text)?.[1]?.trim();
+}
+
+const QUOTED_GLOB_TOKEN_RE = /"([^"]*[*?][^"]*)"|'([^']*[*?][^']*)'/gu;
+const MISSING_PATH_RE = /(?:No such file or directory|cannot stat|cannot access|No such file)/iu;
+const FILE_OP_RE = /(?:^|[\s;&|(])(?:cp|mv|ln|rm|cat|head|tail|less|more|du|find|tar|unzip|rsync)\b/u;
+
+/**
+ * 典型写法：cp "exports/20261112-162430-分析/tables/*.csv" .，通配符被引号包住 ——
+ * 引号里的 `*` 不会被 shell 展开，于是"文件明明在"却报 `No such file or directory`，
+ * agent 往往转去怀疑路径写错、重跑一遍同样的命令。只在"文件操作 + 找不到文件 +
+ * 引号里真带通配符"三条同时成立时提示，避免把 `grep 'Error.*'` 这种**正确**用法误判。
+ */
+export function parseQuotedGlobMiss(command: string, stream: string): string | undefined {
+  if (!MISSING_PATH_RE.test(stream) || !FILE_OP_RE.test(command)) return undefined;
+  for (const match of command.matchAll(QUOTED_GLOB_TOKEN_RE)) {
+    const token = (match[1] ?? match[2] ?? "").trim();
+    if (!token || !/[*?]/u.test(token)) continue;
+    // 只认"看起来像路径"的：含 `/`，或以短扩展名结尾
+    if (!token.includes("/") && !/\.[A-Za-z0-9]{1,6}$/u.test(token)) continue;
+    return token;
+  }
+  return undefined;
 }
 
 function tailSnippet(value: string, maxChars: number): string {

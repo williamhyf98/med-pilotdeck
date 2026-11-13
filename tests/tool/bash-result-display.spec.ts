@@ -120,6 +120,44 @@ test("bash failure diagnostic extracts Python traceback location and exception",
     assert.match(text, /likely_cause: TypeError: bad frame/);
     assert.match(text, /failing_location: \/tmp_workspace\/script\.py:3 in main/);
 });
+
+test("bash failure diagnostic flags a glob that was quoted (shell did not expand it)", async () => {
+    const runtime = createRuntime({
+        async run() {
+            return {
+                exitCode: 1,
+                stdout: "",
+                stderr: "cp: cannot stat 'exports/analysis/xiaohua-dedup-2026*/消化科_去重后.csv': No such file or directory\n",
+                timedOut: false,
+                durationMs: 5,
+            };
+        },
+    });
+    const command = "cp \"exports/analysis/xiaohua-dedup-2026*/消化科_去重后.csv\" scratch/work/t2/";
+    const result = await runtime.execute({ id: "call-bash", name: "bash", input: { command } }, context());
+    assert.equal(result.type, "error");
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    assert.match(text, /likely_cause: quoted glob passed literally/);
+    assert.match(text, /is not expanded by the shell/);
+});
+
+test("quoted regexp in grep is not mistaken for a quoting bug", async () => {
+    const runtime = createRuntime({
+        async run() {
+            return {
+                exitCode: 2,
+                stdout: "",
+                stderr: "grep: missing.txt: No such file or directory\n",
+                timedOut: false,
+                durationMs: 3,
+            };
+        },
+    });
+    const command = "grep 'Error.*' missing.txt";
+    const result = await runtime.execute({ id: "call-bash", name: "bash", input: { command } }, context());
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    assert.doesNotMatch(text, /quoted glob passed literally/);
+});
 test("bash success keeps full output for ToolResultBudget persistence", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pilotdeck-bash-budget-"));
     const tail = "TAIL IMPORTANT SUCCESS MARKER";

@@ -102,8 +102,20 @@ export type RouterRuntime = {
 };
 
 export const MODEL_CONNECTION_TIMEOUT_MS = 30_000;
-export const MODEL_FIRST_PROGRESS_TIMEOUT_MS = 30_000;
-export const MODEL_PROGRESS_IDLE_TIMEOUT_MS = 30_000;
+/**
+ * 首字节 / 中途静默的看门狗（2026-11-12 由 30s 提到 60s）。
+ *
+ * 背景：llmpro 代理背后的 deepseek-v4.1-flash-mb、glm-5.3-mb **不做真流式**——
+ * 实测 2500 字要 15.5s 才吐第一个块，然后 707 个块挤在 0.2s 内一次性到齐
+ * （同机 gpt-5.5 是 1.8s 首块、逐块到达）。也就是说"静默时长"≈"整段生成时长"，
+ * 30s 的阈值在 5000 字左右就会把正常的长文档生成误判成卡死，症状是
+ * 生成到一半报 `Model output was idle for 30000ms`（docx/pptx 长稿最常见）。
+ *
+ * 60s ≈ 一万字的一次性缓冲，覆盖绝大多数长稿；真死连接仍由
+ * `MODEL_STREAM_HARD_TIMEOUT_MS`（10 分钟）兜底，不会无限挂。
+ */
+export const MODEL_FIRST_PROGRESS_TIMEOUT_MS = 60_000;
+export const MODEL_PROGRESS_IDLE_TIMEOUT_MS = 60_000;
 export const MODEL_STREAM_HARD_TIMEOUT_MS = LITELLM_DEFAULT_REQUEST_TIMEOUT_MS;
 
 export function createRouterRuntime(

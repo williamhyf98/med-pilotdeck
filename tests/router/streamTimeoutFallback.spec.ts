@@ -18,9 +18,12 @@ test("stream timeout constants match the configured watchdog policy", () => {
   // 5s was too aggressive for intranet vLLM: cold cache, queued requests and
   // long-context prefill routinely exceed it, which surfaced as
   // "Model connection timed out after 5000ms" on otherwise healthy providers.
+  // 30s was too aggressive for buffering proxies: llmpro's deepseek/glm emit the
+  // whole answer in one flush (no token-level deltas), so silence ≈ total
+  // generation time and any document over ~5k characters tripped the watchdog.
   assert.equal(MODEL_CONNECTION_TIMEOUT_MS, 30_000);
-  assert.equal(MODEL_FIRST_PROGRESS_TIMEOUT_MS, 30_000);
-  assert.equal(MODEL_PROGRESS_IDLE_TIMEOUT_MS, 30_000);
+  assert.equal(MODEL_FIRST_PROGRESS_TIMEOUT_MS, 60_000);
+  assert.equal(MODEL_PROGRESS_IDLE_TIMEOUT_MS, 60_000);
   assert.equal(MODEL_STREAM_HARD_TIMEOUT_MS, 600_000);
 });
 
