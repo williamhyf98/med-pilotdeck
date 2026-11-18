@@ -1,8 +1,16 @@
 export const ADD_WORKSPACE_FILE_MENTION_EVENT = 'pilotdeck:add-workspace-file-mention';
+export const WORKSPACE_FILE_MENTION_DRAG_MIME = 'application/x-pilotdeck-workspace-file-mention';
+
+export type WorkspaceFileMentionDragPayload = {
+  projectName: string;
+  relativePath: string;
+  kind: 'file' | 'directory';
+};
 
 export type WorkspaceFileMentionRequest = {
   projectName: string;
   relativePath: string;
+  kind?: 'file' | 'directory';
 };
 
 export function isWorkspaceFileMentionRequest(
@@ -16,6 +24,36 @@ export function isWorkspaceFileMentionRequest(
       && typeof request.relativePath === 'string'
       && request.relativePath.trim(),
   );
+}
+
+export function parseWorkspaceFileMentionDrag(
+  dataTransfer: DataTransfer | null | undefined,
+): WorkspaceFileMentionDragPayload | null {
+  if (!dataTransfer) return null;
+  const raw = dataTransfer.getData(WORKSPACE_FILE_MENTION_DRAG_MIME);
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as Partial<WorkspaceFileMentionDragPayload>;
+    if (
+      typeof value.projectName !== 'string'
+      || !value.projectName.trim()
+      || typeof value.relativePath !== 'string'
+      || !value.relativePath.trim()
+      || value.relativePath.startsWith('/')
+      || value.relativePath.includes('\\')
+      || value.relativePath.split('/').some((segment) => !segment || segment === '.' || segment === '..')
+      || (value.kind !== 'file' && value.kind !== 'directory')
+    ) {
+      return null;
+    }
+    return {
+      projectName: value.projectName,
+      relativePath: value.relativePath,
+      kind: value.kind,
+    };
+  } catch {
+    return null;
+  }
 }
 
 const normalizeSlashes = (value: string) => value.replace(/\\/g, '/');

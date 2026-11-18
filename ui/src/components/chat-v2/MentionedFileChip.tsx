@@ -1,9 +1,11 @@
-import { X } from 'lucide-react';
+import { File, FolderOpen, X } from 'lucide-react';
 import { cn } from '../../lib/utils.js';
 import { getDocumentReferenceFileMeta } from './DocumentReferenceChip';
 
 type MentionedFileChipProps = {
   name: string;
+  relativePath?: string;
+  kind?: 'file' | 'directory';
   className?: string;
   removeLabel?: string;
   onRemove?: () => void;
@@ -11,12 +13,15 @@ type MentionedFileChipProps = {
 
 export default function MentionedFileChip({
   name,
+  relativePath,
+  kind = 'file',
   className,
   removeLabel,
   onRemove,
 }: MentionedFileChipProps) {
-  const meta = getDocumentReferenceFileMeta(name);
-  const FileIcon = meta.Icon;
+  const meta = kind === 'directory' ? null : getDocumentReferenceFileMeta(name);
+  const FileIcon = kind === 'directory' ? FolderOpen : meta?.Icon || File;
+  const displayPath = relativePath || name;
 
   return (
     <div
@@ -24,20 +29,20 @@ export default function MentionedFileChip({
         'flex h-8 min-w-0 max-w-full items-center rounded-lg bg-neutral-100 text-left text-neutral-600 dark:bg-neutral-900 dark:text-neutral-300',
         className,
       )}
-      title={name}
+      title={displayPath}
     >
       <span className="flex h-full min-w-0 flex-1 items-center gap-2 px-2.5">
         <span
           className={cn(
             'flex h-5 shrink-0 items-center gap-1 rounded px-1.5 text-[10px] font-semibold leading-none',
-            meta.className,
+            meta?.className || 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300',
           )}
         >
           <FileIcon className="h-3 w-3" strokeWidth={2} />
-          {meta.label}
+          {kind === 'directory' ? 'DIR' : meta?.label || 'FILE'}
         </span>
         <span className="min-w-0 flex-1 truncate whitespace-nowrap text-[13px] leading-5">
-          {name}
+          {displayPath}
         </span>
       </span>
       {onRemove ? (

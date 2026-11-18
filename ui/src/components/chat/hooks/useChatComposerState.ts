@@ -173,6 +173,7 @@ type UploadedAttachmentFile = {
 };
 
 export type AttachedMedicalFolder = {
+  id: string;
   rootName: string;
   entries: MedicalFolderEntry[];
 };
@@ -279,10 +280,14 @@ export function useChatComposerState({
     return '';
   });
   const [attachedImages, setAttachedImages] = useState<File[]>([]);
-  // Folder picks are merged into attachedImages (same as paperclip multi-file).
-  const attachedMedicalFolder: AttachedMedicalFolder | null = null;
+  const latestAttachedImagesRef = useRef(attachedImages);
+  latestAttachedImagesRef.current = attachedImages;
+  // Folder picks are uploaded as files, while this parallel state keeps the
+  // folder grouping visible in the composer.
+  const [attachedMedicalFolders, setAttachedMedicalFolders] = useState<AttachedMedicalFolder[]>([]);
   /** Files added via folder picker/drop — always path-only (no content inline). */
   const folderOriginFilesRef = useRef<WeakSet<File>>(new WeakSet());
+  const folderRelativePathsRef = useRef<WeakMap<File, string>>(new WeakMap());
   const [documentReferences, setDocumentReferences] = useState<ContentReference[]>([]);
   const [uploadingImages, setUploadingImages] = useState<Map<string, number>>(new Map());
   const [imageErrors, setImageErrors] = useState<Map<string, string>>(new Map());
@@ -684,8 +689,13 @@ export function useChatComposerState({
   const {
     showFileDropdown,
     filteredFiles,
+    filteredFileTree,
+    fileMentionQuery,
+    expandedMentionDirectories,
+    toggleMentionDirectory,
     selectedFileIndex,
     selectFile,
+    handleWorkspaceFileMentionDrop,
     setCursorPosition,
     handleFileMentionsKeyDown,
     mentionedFiles,
@@ -720,43 +730,51 @@ export function useChatComposerState({
       return;
     }
 
-    setAttachedImages((previous) => {
-      const validation = validateAttachmentBatch({
-        existingCount: previous.length,
-        existingBytes: totalFileBytes(previous),
-        incoming: result.entries.map((entry) => ({
-          name: entry.relativePath || entry.file.name,
-          size: entry.file.size,
-        })),
-        scanOverflow: result.scanOverflow,
-      });
+    const validation = validateAttachmentBatch({
+      existingCount: latestAttachedImagesRef.current.length,
+      existingBytes: totalFileBytes(latestAttachedImagesRef.current),
+      incoming: result.entries.map((entry) => ({
+        name: entry.relativePath || entry.file.name,
+        size: entry.file.size,
+      })),
+      scanOverflow: result.scanOverflow,
+    });
 
-      if (!validation.ok) {
-        setImageErrors((previousErrors) => {
-          const next = new Map(previousErrors);
-          next.set(MAX_ATTACHMENTS_ERROR_KEY, formatAttachmentLimitErrors(validation.errors));
-          if (softWarningText) next.set(MEDICAL_FOLDER_WARNING_KEY, softWarningText);
-          else next.delete(MEDICAL_FOLDER_WARNING_KEY);
-          return next;
-        });
-        return previous;
-      }
-
-      const files = result.entries.map((entry) => entry.file);
-      for (const file of files) {
-        folderOriginFilesRef.current.add(file);
-      }
+    if (!validation.ok) {
       setImageErrors((previousErrors) => {
         const next = new Map(previousErrors);
-        next.delete(MAX_ATTACHMENTS_ERROR_KEY);
+        next.set(MAX_ATTACHMENTS_ERROR_KEY, formatAttachmentLimitErrors(validation.errors));
         if (softWarningText) next.set(MEDICAL_FOLDER_WARNING_KEY, softWarningText);
         else next.delete(MEDICAL_FOLDER_WARNING_KEY);
         return next;
       });
-      const merged = [...previous, ...files];
-      syncQueuedBusySendSnapshot({ attachedImages: merged });
-      return merged;
+      return;
+    }
+
+    const files = result.entries.map((entry) => entry.file);
+    for (const entry of result.entries) {
+      folderOriginFilesRef.current.add(entry.file);
+      folderRelativePathsRef.current.set(entry.file, entry.relativePath);
+    }
+    setImageErrors((previousErrors) => {
+      const next = new Map(previousErrors);
+      next.delete(MAX_ATTACHMENTS_ERROR_KEY);
+      if (softWarningText) next.set(MEDICAL_FOLDER_WARNING_KEY, softWarningText);
+      else next.delete(MEDICAL_FOLDER_WARNING_KEY);
+      return next;
     });
+    const merged = [...latestAttachedImagesRef.current, ...files];
+    latestAttachedImagesRef.current = merged;
+    setAttachedImages(merged);
+    setAttachedMedicalFolders((folders) => [
+      ...folders,
+      {
+        id: `folder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        rootName: result.rootName || '文件夹',
+        entries: result.entries,
+      },
+    ]);
+    syncQueuedBusySendSnapshot({ attachedImages: merged });
   }, [syncQueuedBusySendSnapshot]);
 
   const handleMedicalFolderFiles = useCallback((files: FileList | File[] | null) => {
@@ -769,15 +787,35 @@ export function useChatComposerState({
     medicalFolderInputRef.current?.click();
   }, []);
 
-  const clearAttachedMedicalFolder = useCallback(() => {
-    // Folder files live in attachedImages now; this only clears folder warnings.
-    setImageErrors((previous) => {
-      if (!previous.has(MEDICAL_FOLDER_WARNING_KEY)) return previous;
-      const next = new Map(previous);
-      next.delete(MEDICAL_FOLDER_WARNING_KEY);
+  const removeAttachedFolder = useCallback((folderId: string) => {
+    const target = attachedMedicalFolders.find((folder) => folder.id === folderId);
+    if (!target) return;
+    const targetFiles = new Set(target.entries.map((entry) => entry.file));
+    setAttachedMedicalFolders((folders) => folders.filter((folder) => folder.id !== folderId));
+    setAttachedImages((files) => {
+      const next = files.filter((file) => !targetFiles.has(file));
+      latestAttachedImagesRef.current = next;
+      syncQueuedBusySendSnapshot({ attachedImages: next });
       return next;
     });
-  }, []);
+  }, [attachedMedicalFolders, syncQueuedBusySendSnapshot]);
+
+  const removeAttachedImage = useCallback((index: number) => {
+    const target = attachedImages[index];
+    if (!target) return;
+    setAttachedMedicalFolders((folders) => folders
+      .map((folder) => ({
+        ...folder,
+        entries: folder.entries.filter((entry) => entry.file !== target),
+      }))
+      .filter((folder) => folder.entries.length > 0));
+    setAttachedImages((previous) => {
+      const next = previous.filter((file) => file !== target);
+      latestAttachedImagesRef.current = next;
+      syncQueuedBusySendSnapshot({ attachedImages: next });
+      return next;
+    });
+  }, [attachedImages, syncQueuedBusySendSnapshot]);
 
   const handleImageFiles = useCallback((files: File[]) => {
     const looksLikeFolder = files.some((file) => {
@@ -808,6 +846,7 @@ export function useChatComposerState({
         return next;
       });
       syncQueuedBusySendSnapshot({ attachedImages: addResult.files });
+      latestAttachedImagesRef.current = addResult.files;
       return addResult.files;
     });
   }, [handleMedicalFolderFiles, syncQueuedBusySendSnapshot]);
@@ -861,8 +900,11 @@ export function useChatComposerState({
       const dataTransfer = (event as DragEvent | undefined)?.dataTransfer;
       void (async () => {
         if (dataTransfer) {
+          if (handleWorkspaceFileMentionDrop(dataTransfer)) {
+            return;
+          }
           const collected = await collectMedicalFilesFromDataTransfer(dataTransfer);
-          if (collected.hasDirectory || collected.entries.length > 0 || collected.scanOverflow) {
+          if (collected.hasDirectory || collected.scanOverflow) {
             applyMedicalFolderCollection(collected);
             return;
           }
@@ -964,7 +1006,9 @@ export function useChatComposerState({
           executeCommand(matchedCommand, trimmedInput);
           setInput('');
           inputValueRef.current = '';
+          latestAttachedImagesRef.current = [];
           setAttachedImages([]);
+          setAttachedMedicalFolders([]);
           setDocumentReferences([]);
           clearMentionedFiles();
           setUploadingImages(new Map());
@@ -1095,6 +1139,11 @@ export function useChatComposerState({
         if (pathOnlyIndexes.length > 0) {
           formData.append('pathOnlyIndexes', JSON.stringify(pathOnlyIndexes));
         }
+        if (hasFolderOrigin) {
+          formData.append('relativePaths', JSON.stringify(
+            filesToUpload.map((file) => folderRelativePathsRef.current.get(file) || file.name),
+          ));
+        }
 
         try {
           const response = await authenticatedFetch(`/api/projects/${encodeURIComponent(selectedProject.name)}/upload-attachments`, {
@@ -1175,12 +1224,17 @@ export function useChatComposerState({
       const mentionNoteFiles = submitMentionedFiles.map((file) => ({
         name: file.name,
         path: file.relativePath,
+        relativePath: file.relativePath,
+        kind: file.kind || 'file',
       }));
       const mentionAttachments: ChatAttachment[] = submitMentionedFiles.map((file) => ({
         name: file.name,
         path: file.relativePath,
         relativePath: file.relativePath,
-        metadata: { workspaceFileMention: true },
+        metadata: {
+          workspaceFileMention: true,
+          workspaceFileMentionKind: file.kind || 'file',
+        },
       }));
       const agentVisibleUploadedFiles = [
         ...uploadedFiles,
@@ -1295,7 +1349,9 @@ export function useChatComposerState({
       setInput('');
       inputValueRef.current = '';
       resetCommandMenuState();
+      latestAttachedImagesRef.current = [];
       setAttachedImages([]);
+      setAttachedMedicalFolders([]);
       setDocumentReferences([]);
       clearMentionedFiles();
       setUploadingImages(new Map());
@@ -1507,7 +1563,9 @@ export function useChatComposerState({
       ? safeLocalStorage.getItem(draftStorageKey) || ''
       : '';
     setDocumentReferences([]);
+    latestAttachedImagesRef.current = [];
     setAttachedImages([]);
+    setAttachedMedicalFolders([]);
     setUploadingImages(new Map());
     setImageErrors(new Map());
     setInput((previous) => {
@@ -1895,20 +1953,16 @@ export function useChatComposerState({
     handleToggleCommandMenu,
     showFileDropdown,
     filteredFiles: filteredFiles as MentionableFile[],
+    filteredFileTree: filteredFileTree as MentionableFile[],
+    fileMentionQuery,
+    expandedMentionDirectories,
+    toggleMentionDirectory,
     selectedFileIndex,
     selectFile,
+    handleWorkspaceFileMentionDrop,
     mentionedFiles,
     removeMentionedFile,
     attachedImages,
-    setAttachedImages: (value: SetStateAction<File[]>) => {
-      setAttachedImages((previous) => {
-        const next = typeof value === 'function'
-          ? (value as (previous: File[]) => File[])(previous)
-          : value;
-        syncQueuedBusySendSnapshot({ attachedImages: next });
-        return next;
-      });
-    },
     documentReferences,
     removeDocumentReference: (id: string) => {
       setDocumentReferences((previous) => {
@@ -1942,8 +1996,9 @@ export function useChatComposerState({
     isBusySendQueued,
     isBusySendConfirmed,
     cancelBusySendQueue,
-    attachedMedicalFolder,
-    clearAttachedMedicalFolder,
+    attachedMedicalFolders,
+    removeAttachedFolder,
+    removeAttachedImage,
     openMedicalFolderPicker,
     medicalFolderInputRef,
     handleMedicalFolderInputChange: (event: ChangeEvent<HTMLInputElement>) => {

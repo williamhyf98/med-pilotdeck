@@ -4,7 +4,37 @@ import {
   getWorkspaceRelativePath,
   hasWorkspaceFileMention,
   insertWorkspaceFileMention,
+  parseWorkspaceFileMentionDrag,
+  WORKSPACE_FILE_MENTION_DRAG_MIME,
 } from './workspaceFileMention';
+
+describe('parseWorkspaceFileMentionDrag', () => {
+  it('accepts a project file and rejects malformed payloads', () => {
+    const transfer = (raw: string) => ({
+      getData: (type: string) => type === WORKSPACE_FILE_MENTION_DRAG_MIME ? raw : '',
+    }) as DataTransfer;
+    expect(parseWorkspaceFileMentionDrag(transfer(JSON.stringify({
+      projectName: 'project-a',
+      relativePath: 'inbox/scan.dcm',
+      kind: 'file',
+    })))).toEqual({
+      projectName: 'project-a',
+      relativePath: 'inbox/scan.dcm',
+      kind: 'file',
+    });
+    expect(parseWorkspaceFileMentionDrag(transfer('{broken'))).toBeNull();
+    expect(parseWorkspaceFileMentionDrag(transfer(JSON.stringify({
+      projectName: 'project-a',
+      relativePath: '',
+      kind: 'file',
+    })))).toBeNull();
+    expect(parseWorkspaceFileMentionDrag(transfer(JSON.stringify({
+      projectName: 'project-a',
+      relativePath: 'inbox/../../secret',
+      kind: 'directory',
+    })))).toBeNull();
+  });
+});
 
 describe('getWorkspaceRelativePath', () => {
   it('returns a workspace-relative path for POSIX paths', () => {

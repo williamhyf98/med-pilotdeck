@@ -349,10 +349,10 @@ function ChatInterfaceV2({
     filteredFiles,
     selectedFileIndex,
     selectFile,
+    handleWorkspaceFileMentionDrop,
     mentionedFiles,
     removeMentionedFile,
     attachedImages,
-    setAttachedImages,
     documentReferences,
     removeDocumentReference,
     uploadingImages,
@@ -378,11 +378,16 @@ function ChatInterfaceV2({
     isBusySendQueued,
     isBusySendConfirmed,
     cancelBusySendQueue,
-    attachedMedicalFolder,
-    clearAttachedMedicalFolder,
+    attachedMedicalFolders,
+    removeAttachedFolder,
+    removeAttachedImage,
     openMedicalFolderPicker,
     medicalFolderInputRef,
     handleMedicalFolderInputChange,
+    filteredFileTree,
+    fileMentionQuery,
+    expandedMentionDirectories,
+    toggleMentionDirectory,
   } = useChatComposerState({
     selectedProject,
     selectedSession,
@@ -871,25 +876,27 @@ function ChatInterfaceV2({
       medicalFolderInputRef={medicalFolderInputRef}
       onMedicalFolderInputChange={handleMedicalFolderInputChange}
       attachedImages={attachedImages}
-      onRemoveImage={(index) =>
-        setAttachedImages((previous) =>
-          previous.filter((_, currentIndex) => currentIndex !== index),
-        )
-      }
+      onRemoveImage={removeAttachedImage}
       documentReferences={documentReferences}
       onRemoveDocumentReference={removeDocumentReference}
       mentionedFiles={mentionedFiles}
       onRemoveMentionedFile={removeMentionedFile}
-      attachedMedicalFolder={attachedMedicalFolder}
-      onRemoveMedicalFolder={clearAttachedMedicalFolder}
-        onOpenDocumentReference={onFileOpen ? (filePath) => onFileOpen(filePath) : undefined}
+      attachedMedicalFolders={attachedMedicalFolders}
+      onRemoveMedicalFolder={removeAttachedFolder}
+      onOpenDocumentReference={onFileOpen ? (filePath) => onFileOpen(filePath) : undefined}
       uploadingImages={uploadingImages}
       isSubmitPending={isSubmitPending}
       imageErrors={imageErrors}
       showFileDropdown={showFileDropdown}
       filteredFiles={filteredFiles}
+      filteredFileTree={filteredFileTree}
+      fileMentionQuery={fileMentionQuery}
+      expandedMentionDirectories={expandedMentionDirectories}
+      onToggleMentionDirectory={toggleMentionDirectory}
+      mentionProjectName={selectedProject?.name}
       selectedFileIndex={selectedFileIndex}
       onSelectFile={selectFile}
+      onDropWorkspaceMention={handleWorkspaceFileMentionDrop}
       filteredCommands={filteredCommands}
       selectedCommandIndex={selectedCommandIndex}
       onCommandSelect={handleCommandSelect}

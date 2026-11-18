@@ -7,6 +7,7 @@ import {
   FileCode2,
   FileSpreadsheet,
   FileText,
+  FolderOpen,
   Image,
   MessageSquarePlus,
   Presentation,
@@ -29,6 +30,7 @@ type CardFile = {
   operation?: 'created' | 'updated';
   status?: 'complete' | 'incomplete';
   sha256?: string;
+  kind?: 'file' | 'directory';
 };
 
 type MessageFileCardProps = {
@@ -42,6 +44,9 @@ type MessageFileCardProps = {
 const extensionOf = (name: string) => name.split('.').pop()?.toLowerCase() || '';
 
 function fileVisual(file: CardFile) {
+  if (file.kind === 'directory') {
+    return { Icon: FolderOpen, className: 'bg-amber-50 text-amber-700 dark:bg-amber-950/70 dark:text-amber-300' };
+  }
   const ext = extensionOf(file.name);
   if (['xls', 'xlsx', 'et', 'csv', 'tsv', 'ods'].includes(ext)) {
     return { Icon: FileSpreadsheet, className: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/70 dark:text-emerald-300' };
@@ -96,9 +101,10 @@ export function MessageFileCard({
   const { t } = useTranslation('chat');
   const relativePath = resolveRelativePath(file.path, project);
   const canUseWorkspaceActions = Boolean(project?.name && relativePath);
+  const canBrowse = Boolean(onBrowse && file.kind !== 'directory');
   const { Icon, className: visualClassName } = fileVisual(file);
   const sizeLabel = formatBytes(file.size);
-  const typeLabel = extensionOf(file.name).toUpperCase() || 'FILE';
+  const typeLabel = file.kind === 'directory' ? 'DIR' : extensionOf(file.name).toUpperCase() || 'FILE';
   const handleReference = () => {
     if (!project?.name || !relativePath) return;
     window.dispatchEvent(new CustomEvent(ADD_WORKSPACE_FILE_MENTION_EVENT, {
@@ -106,7 +112,7 @@ export function MessageFileCard({
     }));
   };
   const handleBrowse = async () => {
-    if (!onBrowse) return;
+    if (!canBrowse || !onBrowse) return;
     if (source === 'agent' && project?.name && relativePath && file.sha256) {
       try {
         const response = await api.fileContentSha256(project.name, relativePath);
@@ -149,11 +155,11 @@ export function MessageFileCard({
       <button
         type="button"
         onClick={() => { void handleBrowse(); }}
-        disabled={!onBrowse}
+        disabled={!canBrowse}
         className={cn(
           'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
           visualClassName,
-          onBrowse && 'cursor-pointer transition-transform hover:scale-[1.03]',
+          canBrowse && 'cursor-pointer transition-transform hover:scale-[1.03]',
         )}
         aria-label={t('fileArtifacts.browse', { defaultValue: 'Preview {{name}}', name: file.name }) as string}
       >
@@ -163,10 +169,10 @@ export function MessageFileCard({
         <button
           type="button"
           onClick={() => { void handleBrowse(); }}
-          disabled={!onBrowse}
+          disabled={!canBrowse}
           className="block max-w-full truncate text-left text-[13px] font-medium text-neutral-900 hover:underline disabled:no-underline dark:text-neutral-100"
         >
-          {file.name}
+          {file.kind === 'directory' ? file.path : file.name}
         </button>
         <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-neutral-500 dark:text-neutral-400">
           <span>{typeLabel}</span>
@@ -179,7 +185,7 @@ export function MessageFileCard({
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-0.5">
-        {onBrowse ? (
+        {canBrowse ? (
           <button
             type="button"
             onClick={() => { void handleBrowse(); }}
@@ -297,6 +303,9 @@ export function UserAttachmentCards({
             path: attachment.path || attachment.filePath || '',
             mimeType: attachment.mimeType,
             size: attachment.size,
+            kind: attachment.metadata?.workspaceFileMentionKind === 'directory'
+              ? 'directory'
+              : 'file',
           }}
           project={project}
           source="user"

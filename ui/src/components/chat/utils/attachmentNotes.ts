@@ -32,6 +32,7 @@ type AttachmentPathNoteFile = {
   name: string;
   path: string;
   relativePath?: string;
+  kind?: 'file' | 'directory';
 };
 
 export type MedicalFolderPathNote = {
@@ -70,10 +71,11 @@ export function buildAttachmentPathNote(
   if (files.length === 0) return folderNote;
 
   const lines = files.map((file) => {
+    const directoryPrefix = file.kind === 'directory' ? '[directory] ' : '';
     if (file.relativePath && file.relativePath !== file.name) {
-      return `- ${file.name} (${file.relativePath}): ${file.path}`;
+      return `- ${directoryPrefix}${file.name} (${file.relativePath}): ${file.path}`;
     }
-    return `- ${file.name}: ${file.path}`;
+    return `- ${directoryPrefix}${file.name}: ${file.path}`;
   });
   return `${folderNote}\n\n${ATTACHMENT_NOTE_MARKER}\n${lines.join('\n')}\n${ATTACHMENT_NOTE_END_MARKER}\n`;
 }
@@ -164,8 +166,12 @@ export function parseUserAttachmentNote(content: unknown): {
 
     const rawName = line.slice(2, separator).trim();
     const filePath = line.slice(separator + 2).trim();
+    const isDirectory = rawName.startsWith('[directory] ');
+    const displayName = isDirectory ? rawName.slice('[directory] '.length).trim() : rawName;
     const relativePathMatch = rawName.match(/^(.*?)\s+\(([^()]*)\)$/);
-    const name = relativePathMatch?.[1]?.trim() || rawName;
+    const name = (relativePathMatch?.[1]?.trim() || displayName)
+      .replace(/^\[directory\]\s*/i, '')
+      .trim();
     const relativePath = relativePathMatch?.[2]?.trim();
     if (!name || !filePath) continue;
     const mimeType = inferAttachmentMimeType(name, filePath);
@@ -176,6 +182,12 @@ export function parseUserAttachmentNote(content: unknown): {
       path: filePath,
       mimeType,
       ...(relativePath ? { relativePath } : {}),
+      ...(isDirectory ? {
+        metadata: {
+          workspaceFileMention: true,
+          workspaceFileMentionKind: 'directory',
+        },
+      } : {}),
     });
   }
 

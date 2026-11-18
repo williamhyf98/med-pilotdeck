@@ -42,3 +42,24 @@ it('maps a pre-migration attachment path back into the current project', () => {
   fireEvent.click(screen.getByRole('button', { name: 'scan.dcm' }));
   expect(onBrowse).toHaveBeenCalledWith('inbox/scan.dcm');
 });
+
+it('shows a referenced folder without offering a file preview', () => {
+  const onBrowse = vi.fn();
+  render(
+    <UserAttachmentCards
+      attachments={[{
+        name: 'case-001',
+        path: 'inbox/case-001',
+        metadata: { workspaceFileMention: true, workspaceFileMentionKind: 'directory' },
+      }]}
+      project={{ name: 'project-a', fullPath: '/workspace/project-a' } as Project}
+      onBrowse={onBrowse}
+    />,
+  );
+
+  const folder = screen.getByRole('button', { name: 'inbox/case-001' });
+  expect((folder as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByText('DIR')).not.toBeNull();
+  fireEvent.click(folder);
+  expect(onBrowse).not.toHaveBeenCalled();
+});

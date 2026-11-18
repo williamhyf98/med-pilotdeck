@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type {
   ChangeEvent,
   ClipboardEvent,
+  DragEvent,
   FormEvent,
   KeyboardEvent,
   MouseEvent,
@@ -15,8 +16,11 @@ import {
   Bot,
   Check,
   ChevronDown,
+  ChevronRight,
   CircleGauge,
   CircleHelp,
+  File,
+  Folder,
   ListChecks,
   Loader2,
   Paperclip,
@@ -40,6 +44,7 @@ import type { MentionableFile, MentionedFile } from '../chat/hooks/useFileMentio
 import DocumentReferenceChip from './DocumentReferenceChip';
 import MentionedFileChip from './MentionedFileChip';
 import SkillRecommendBar from './SkillRecommendBar';
+import { WORKSPACE_FILE_MENTION_DRAG_MIME } from '../../utils/workspaceFileMention';
 
 interface SlashCommand {
   name: string;
@@ -69,8 +74,8 @@ export type ComposerV2Props = {
   onMedicalFolderInputChange?: (event: ChangeEvent<HTMLInputElement>) => void;
   attachedImages: File[];
   onRemoveImage: (index: number) => void;
-  attachedMedicalFolder?: AttachedMedicalFolder | null;
-  onRemoveMedicalFolder?: () => void;
+  attachedMedicalFolders?: AttachedMedicalFolder[];
+  onRemoveMedicalFolder?: (folderId: string) => void;
   documentReferences: ContentReference[];
   onRemoveDocumentReference: (id: string) => void;
   onOpenDocumentReference?: (filePath: string) => void;
@@ -81,8 +86,14 @@ export type ComposerV2Props = {
 
   showFileDropdown: boolean;
   filteredFiles: MentionableFile[];
+  filteredFileTree: MentionableFile[];
+  fileMentionQuery?: string;
+  mentionProjectName?: string;
+  expandedMentionDirectories?: Set<string>;
+  onToggleMentionDirectory?: (path: string) => void;
   selectedFileIndex: number;
   onSelectFile: (file: MentionableFile) => void;
+  onDropWorkspaceMention?: (dataTransfer: DataTransfer) => boolean;
 
   filteredCommands: SlashCommand[];
   selectedCommandIndex: number;
@@ -153,6 +164,170 @@ export type ComposerV2Props = {
   onGenerateSkill?: () => void;
   generateSkillDisabled?: boolean;
 };
+
+function formatAttachmentSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+  }
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function mentionNodeDragPayload(projectName: string, node: MentionableFile): string {
+  return JSON.stringify({
+    projectName,
+    relativePath: node.path,
+    kind: node.kind,
+  });
+}
+
+function MentionFileTree({
+  nodes,
+  expandedPaths,
+  onToggleDirectory,
+  onSelectFile,
+  onMentionDirectory,
+  projectName,
+  query,
+  selectedFilePath,
+}: {
+  nodes: MentionableFile[];
+  expandedPaths: Set<string>;
+  onToggleDirectory: (path: string) => void;
+  onSelectFile: (file: MentionableFile) => void;
+  onMentionDirectory: (directory: MentionableFile) => void;
+  projectName?: string;
+  query: string;
+  selectedFilePath?: string;
+}) {
+  const { t } = useTranslation('chat');
+  const treeRef = useRef<HTMLDivElement>(null);
+  const draggedNodeRef = useRef<MentionableFile | null>(null);
+  useEffect(() => {
+    if (!selectedFilePath) return;
+    const selectedNode = treeRef.current?.querySelector('[data-selected="true"]');
+    if (selectedNode && 'scrollIntoView' in selectedNode) {
+      selectedNode.scrollIntoView({ block: 'nearest' });
+    }
+  }, [selectedFilePath]);
+
+  useEffect(() => {
+    const handleDragOver = (event: globalThis.DragEvent) => {
+      if (!draggedNodeRef.current) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    };
+    const handleDrop = (event: globalThis.DragEvent) => {
+      const draggedNode = draggedNodeRef.current;
+      if (!draggedNode) return;
+      draggedNodeRef.current = null;
+      event.preventDefault();
+      event.stopPropagation();
+      // The popup includes padding outside the tree rows; dropping anywhere in it cancels.
+      const popup = treeRef.current?.parentElement;
+      if (!popup?.contains(event.target as Node)) onSelectFile(draggedNode);
+    };
+    document.addEventListener('dragover', handleDragOver, true);
+    document.addEventListener('drop', handleDrop, true);
+    return () => {
+      document.removeEventListener('dragover', handleDragOver, true);
+      document.removeEventListener('drop', handleDrop, true);
+    };
+  }, [onSelectFile]);
+
+  const renderNodes = (items: MentionableFile[], depth: number): ReactNode[] => items.map((node) => {
+    const isDirectory = node.kind === 'directory';
+    const isExpanded = isDirectory && (query.trim().length > 0 || expandedPaths.has(node.path));
+    const children = node.children || [];
+    const handleDragStart = (event: DragEvent<HTMLDivElement>) => {
+      if (!projectName) return;
+      draggedNodeRef.current = node;
+      event.dataTransfer.effectAllowed = 'copy';
+      event.dataTransfer.setData(
+        WORKSPACE_FILE_MENTION_DRAG_MIME,
+        mentionNodeDragPayload(projectName, node),
+      );
+      event.dataTransfer.setData('text/plain', node.path);
+    };
+    const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      if (isDirectory) onToggleDirectory(node.path);
+      else onSelectFile(node);
+    };
+
+    return (
+      <div key={node.path}>
+        <div
+          role="treeitem"
+          aria-expanded={isDirectory ? isExpanded : undefined}
+          data-selected={!isDirectory && selectedFilePath === node.path ? 'true' : undefined}
+          tabIndex={0}
+          draggable={!isDirectory || depth > 0}
+          onDragStart={handleDragStart}
+          onDragEnd={() => { draggedNodeRef.current = null; }}
+          onKeyDown={handleKeyDown}
+          onClick={() => (isDirectory ? onToggleDirectory(node.path) : onSelectFile(node))}
+          className={cn(
+            'flex min-w-0 items-center gap-1 rounded-md px-2 py-1.5 text-left text-[12px] text-neutral-700 outline-none transition hover:bg-neutral-50 focus-visible:bg-neutral-100 focus-visible:ring-1 focus-visible:ring-neutral-300 dark:text-neutral-200 dark:hover:bg-neutral-800/70 dark:focus-visible:bg-neutral-800',
+            !isDirectory && selectedFilePath === node.path && 'bg-neutral-100 dark:bg-neutral-800',
+          )}
+          style={{ paddingLeft: 8 + depth * 16 }}
+          title={node.path}
+        >
+          <span className="flex h-4 w-4 shrink-0 items-center justify-center text-neutral-400">
+            {isDirectory ? (
+              <ChevronRight
+                className={`h-3.5 w-3.5 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                strokeWidth={1.8}
+              />
+            ) : null}
+          </span>
+          {isDirectory ? (
+            isExpanded
+              ? <FolderOpen className="h-4 w-4 shrink-0 text-amber-500" strokeWidth={1.8} />
+              : <Folder className="h-4 w-4 shrink-0 text-amber-500" strokeWidth={1.8} />
+          ) : (
+            <File className="h-4 w-4 shrink-0 text-neutral-400" strokeWidth={1.8} />
+          )}
+          <span className="min-w-0 flex-1 truncate">{node.name}</span>
+          {isDirectory && depth > 0 ? (
+            <button
+              type="button"
+              draggable={false}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onMentionDirectory(node);
+              }}
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-neutral-400 transition hover:bg-neutral-200 hover:text-neutral-800 dark:hover:bg-neutral-700 dark:hover:text-neutral-100"
+              title={t('input.mentionDirectory', { path: node.path, defaultValue: `Mention directory ${node.path}` }) as string}
+              aria-label={t('input.mentionDirectory', { path: node.path, defaultValue: `Mention directory ${node.path}` }) as string}
+            >
+              <AtSign className="h-3.5 w-3.5" strokeWidth={1.8} />
+            </button>
+          ) : null}
+        </div>
+        {isDirectory && isExpanded && children.length > 0
+          ? <div role="group">{renderNodes(children, depth + 1)}</div>
+          : null}
+        {isDirectory && isExpanded && node.truncated ? (
+          <div
+            className="py-1 text-[11px] text-neutral-500 dark:text-neutral-400"
+            style={{ paddingLeft: 24 + depth * 16 }}
+          >
+            {t('input.truncatedDirectory', { defaultValue: 'Showing the first 500 items. View the full directory in the workspace.' })}
+          </div>
+        ) : null}
+      </div>
+    );
+  });
+
+  return <div role="tree" ref={treeRef}>{renderNodes(nodes, 0)}</div>;
+}
 
 export function PermissionRequestsSlot({
   pendingPermissionRequests,
@@ -325,7 +500,7 @@ export default function ComposerV2({
   onMedicalFolderInputChange,
   attachedImages,
   onRemoveImage,
-  attachedMedicalFolder = null,
+  attachedMedicalFolders = [],
   onRemoveMedicalFolder,
   documentReferences,
   onRemoveDocumentReference,
@@ -336,8 +511,14 @@ export default function ComposerV2({
   imageErrors,
   showFileDropdown,
   filteredFiles,
+  filteredFileTree,
+  fileMentionQuery = '',
+  mentionProjectName,
+  expandedMentionDirectories = new Set(['inbox', 'exports', 'export']),
+  onToggleMentionDirectory,
   selectedFileIndex,
   onSelectFile,
+  onDropWorkspaceMention,
   filteredCommands,
   selectedCommandIndex,
   onCommandSelect,
@@ -378,6 +559,9 @@ export default function ComposerV2({
   const { t } = useTranslation('chat');
   const [isContextPopoverOpen, setIsContextPopoverOpen] = useState(false);
   const [isRunModeMenuOpen, setIsRunModeMenuOpen] = useState(false);
+  const [expandedAttachedFolders, setExpandedAttachedFolders] = useState<Set<string>>(
+    () => new Set(),
+  );
   const attachmentPanelRef = useRef<HTMLDivElement>(null);
 
   const hasBlockingPermissionPanel = pendingPermissionRequests.some(
@@ -388,10 +572,13 @@ export default function ComposerV2({
     || attachedImages.length > 0
     || documentReferences.length > 0
     || mentionedFiles.length > 0
-    || Boolean(attachedMedicalFolder?.entries?.length);
+    || attachedMedicalFolders.some((folder) => folder.entries.length > 0);
   const hasUploadingImages = uploadingImages.size > 0;
   const attachmentLimitError = imageErrors.get(MAX_ATTACHMENTS_ERROR_KEY);
   const medicalFolderWarning = imageErrors.get(MEDICAL_FOLDER_WARNING_KEY);
+  const filesInFolders = new Set(attachedMedicalFolders.flatMap(
+    (folder) => folder.entries.map((entry) => entry.file),
+  ));
 
   // Option B: after any attachment-area change, keep the panel scrolled to the
   // bottom so newly added chips / hard-fail red copy remain visible.
@@ -406,7 +593,7 @@ export default function ComposerV2({
     attachedImages,
     documentReferences,
     mentionedFiles,
-    attachedMedicalFolder,
+    attachedMedicalFolders,
     attachmentLimitError,
     medicalFolderWarning,
   ]);
@@ -483,38 +670,87 @@ export default function ComposerV2({
         {!hasBlockingPermissionPanel ? (
           <form
             onSubmit={onSubmit as (event: FormEvent<HTMLFormElement>) => void}
+            onDragOverCapture={(event) => {
+              if (!event.dataTransfer.types.includes(WORKSPACE_FILE_MENTION_DRAG_MIME)) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = 'copy';
+            }}
+            onDropCapture={(event) => {
+              if (!event.dataTransfer.types.includes(WORKSPACE_FILE_MENTION_DRAG_MIME)) return;
+              event.preventDefault();
+              event.stopPropagation();
+              onDropWorkspaceMention?.(event.dataTransfer);
+            }}
             className={cn(
               'pd-composer-container relative',
               chromeMode === 'medical' && 'pd-composer--medical',
             )}
           >
-            {attachedImages.length > 0 || documentReferences.length > 0 || mentionedFiles.length > 0 || attachedMedicalFolder || attachmentLimitError || medicalFolderWarning ? (
+            {attachedImages.length > 0 || documentReferences.length > 0 || mentionedFiles.length > 0 || attachedMedicalFolders.length > 0 || attachmentLimitError || medicalFolderWarning ? (
               <div
                 ref={attachmentPanelRef}
                 className="pd-composer-attachment-panel mb-2 rounded-lg border border-neutral-200 bg-neutral-50 p-2 dark:border-neutral-800 dark:bg-neutral-900"
               >
                 <div className="flex flex-wrap gap-2">
-                  {attachedMedicalFolder ? (
-                    <div className="inline-flex max-w-full items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[12px] text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-100">
-                      <FolderOpen className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
-                      <span className="min-w-0 truncate">
-                        {attachedMedicalFolder.rootName}
-                        <span className="ml-1 text-emerald-700/80 dark:text-emerald-200/80">
-                          ({attachedMedicalFolder.entries.length} files)
-                        </span>
-                      </span>
-                      {onRemoveMedicalFolder ? (
-                        <button
-                          type="button"
-                          onClick={onRemoveMedicalFolder}
-                          className="inline-flex h-5 w-5 items-center justify-center rounded text-emerald-700 hover:bg-emerald-100 dark:text-emerald-200 dark:hover:bg-emerald-900/50"
-                          aria-label={t('input.removeMedicalFolder', { defaultValue: 'Remove medical folder' }) as string}
-                        >
-                          <X className="h-3.5 w-3.5" strokeWidth={2} />
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : null}
+                  {attachedMedicalFolders.map((folder) => {
+                    const expanded = expandedAttachedFolders.has(folder.id);
+                    const folderSize = folder.entries.reduce((sum, entry) => sum + entry.file.size, 0);
+                    return (
+                      <div
+                        key={folder.id}
+                        className="min-w-[220px] max-w-full rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[12px] text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-100"
+                      >
+                        <div className="flex min-w-0 items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedAttachedFolders((previous) => {
+                              const next = new Set(previous);
+                              if (next.has(folder.id)) next.delete(folder.id);
+                              else next.add(folder.id);
+                              return next;
+                            })}
+                            className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                            aria-expanded={expanded}
+                            title={expanded
+                              ? (t('input.collapseFolder', { defaultValue: 'Collapse folder contents' }) as string)
+                              : (t('input.expandFolder', { defaultValue: 'Expand folder contents' }) as string)}
+                          >
+                            <ChevronRight className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+                            <FolderOpen className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+                            <span className="min-w-0 truncate">
+                              {folder.rootName}
+                              <span className="ml-1 text-emerald-700/80 dark:text-emerald-200/80">
+                                ({t('input.folderFiles', {
+                                  count: folder.entries.length,
+                                  size: formatAttachmentSize(folderSize),
+                                  defaultValue: `${folder.entries.length} files · ${formatAttachmentSize(folderSize)}`,
+                                })})
+                              </span>
+                            </span>
+                          </button>
+                          {onRemoveMedicalFolder ? (
+                            <button
+                              type="button"
+                              onClick={() => onRemoveMedicalFolder(folder.id)}
+                              className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-emerald-700 hover:bg-emerald-100 dark:text-emerald-200 dark:hover:bg-emerald-900/50"
+                              aria-label={t('input.removeMedicalFolder', { defaultValue: 'Remove folder' }) as string}
+                            >
+                              <X className="h-3.5 w-3.5" strokeWidth={2} />
+                            </button>
+                          ) : null}
+                        </div>
+                        {expanded ? (
+                          <div className="mt-1.5 space-y-0.5 border-t border-emerald-200/70 pt-1.5 text-[11px] text-emerald-800/90 dark:border-emerald-900/60 dark:text-emerald-100/80">
+                            {folder.entries.map((entry) => (
+                              <div key={`${folder.id}:${entry.relativePath}`} className="truncate pl-6" title={entry.relativePath}>
+                                {entry.relativePath}
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                   {documentReferences.map((reference) => (
                     <DocumentReferenceChip
                       key={reference.id}
@@ -534,19 +770,25 @@ export default function ComposerV2({
                     <MentionedFileChip
                       key={file.relativePath}
                       name={file.name}
+                      relativePath={file.relativePath}
+                      kind={file.kind}
                       className="pd-composer-reference-chip sm:max-w-[520px]"
                       removeLabel={t('input.removeMention', { defaultValue: 'Remove file' }) as string}
                       onRemove={() => onRemoveMentionedFile(file.relativePath)}
                     />
                   ))}
                   {attachedImages.map((file, index) => (
-                    <ImageAttachment
-                      key={index}
-                      file={file}
-                      onRemove={() => onRemoveImage(index)}
-                      uploadProgress={uploadingImages.get(file.name)}
-                      error={imageErrors.get(file.name)}
-                    />
+                    filesInFolders.has(file)
+                      ? null
+                      : (
+                        <ImageAttachment
+                          key={index}
+                          file={file}
+                          onRemove={() => onRemoveImage(index)}
+                          uploadProgress={uploadingImages.get(file.name)}
+                          error={imageErrors.get(file.name)}
+                        />
+                      )
                   ))}
                 </div>
                 {attachmentLimitError ? (
@@ -562,30 +804,18 @@ export default function ComposerV2({
               </div>
             ) : null}
 
-            {showFileDropdown && filteredFiles.length > 0 ? (
-              <div className="absolute bottom-full left-0 right-0 z-50 mb-2 max-h-48 overflow-y-auto rounded-lg border border-neutral-200 bg-white shadow-lg dark:border-neutral-800 dark:bg-neutral-900">
-                {filteredFiles.map((file, index) => (
-                  <div
-                    key={file.path}
-                    className={cn(
-                      'cursor-pointer border-b border-neutral-100 px-3 py-2 text-[13px] last:border-b-0 dark:border-neutral-800',
-                      index === selectedFileIndex
-                        ? 'bg-neutral-100 dark:bg-neutral-800'
-                        : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/60',
-                    )}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                    }}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      onSelectFile(file);
-                    }}
-                  >
-                    <div className="font-medium">{file.name}</div>
-                  </div>
-                ))}
+            {showFileDropdown && filteredFileTree.length > 0 ? (
+              <div className="absolute bottom-full left-0 right-0 z-50 mb-2 max-h-72 overflow-y-auto rounded-lg border border-neutral-200 bg-white p-1 shadow-lg dark:border-neutral-800 dark:bg-neutral-900">
+                <MentionFileTree
+                  nodes={filteredFileTree}
+                  expandedPaths={expandedMentionDirectories}
+                  onToggleDirectory={onToggleMentionDirectory || (() => undefined)}
+                  onSelectFile={onSelectFile}
+                  onMentionDirectory={onSelectFile}
+                  projectName={mentionProjectName}
+                  query={fileMentionQuery}
+                  selectedFilePath={selectedFileIndex >= 0 ? filteredFiles[selectedFileIndex]?.path : undefined}
+                />
               </div>
             ) : null}
 

@@ -50,6 +50,20 @@ describe('attachment path notes', () => {
     expect(note).not.toContain('[Medical materials folder attached');
   });
 
+  it('marks referenced directories for the agent and restores their kind on reload', () => {
+    const note = buildAttachmentPathNote([
+      { name: 'case-001', path: 'inbox/case-001', relativePath: 'inbox/case-001', kind: 'directory' },
+    ]);
+    expect(note).toContain('- [directory] case-001 (inbox/case-001): inbox/case-001');
+    expect(parseUserAttachmentNote(`检查文件夹${note}`).attachments).toEqual([{
+      name: 'case-001',
+      path: 'inbox/case-001',
+      relativePath: 'inbox/case-001',
+      mimeType: undefined,
+      metadata: { workspaceFileMention: true, workspaceFileMentionKind: 'directory' },
+    }]);
+  });
+
   it('can still prepend a legacy medical folder note when explicitly requested', () => {
     const note = buildAttachmentPathNote(
       [{ name: 'extra.txt', path: '/tmp/extra.txt' }],

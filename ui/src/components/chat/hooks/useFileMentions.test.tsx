@@ -2,14 +2,19 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../../../types/app';
-import { ADD_WORKSPACE_FILE_MENTION_EVENT } from '../../../utils/workspaceFileMention';
+import {
+  ADD_WORKSPACE_FILE_MENTION_EVENT,
+  WORKSPACE_FILE_MENTION_DRAG_MIME,
+} from '../../../utils/workspaceFileMention';
 import { useFileMentions } from './useFileMentions';
 
-const { getFilesMock } = vi.hoisted(() => ({
+const { getFilesMock, listFilesMock } = vi.hoisted(() => ({
   getFilesMock: vi.fn(),
+  listFilesMock: vi.fn(),
 }));
 
 vi.mock('../../../utils/api', () => ({
+  authenticatedFetch: listFilesMock,
   api: {
     getFiles: getFilesMock,
   },
@@ -26,6 +31,7 @@ const textareaRef = { current: null } as RefObject<HTMLTextAreaElement>;
 describe('useFileMentions chips', () => {
   beforeEach(() => {
     getFilesMock.mockReset();
+    listFilesMock.mockReset();
     getFilesMock.mockResolvedValue({
       ok: true,
       json: async () => [],
@@ -57,6 +63,7 @@ describe('useFileMentions chips', () => {
       {
         name: 'report.docx',
         relativePath: 'docs/report.docx',
+        kind: 'file',
         absolutePath: '/workspace/project-a/docs/report.docx',
       },
     ]);
@@ -135,14 +142,14 @@ describe('useFileMentions chips', () => {
       ok: true,
       json: async () => [
         {
-          name: 'docs',
+          name: 'inbox',
           type: 'directory',
-          path: '/workspace/project-a/docs',
+          path: '/workspace/project-a/inbox',
           children: [
             {
               name: 'report.docx',
               type: 'file',
-              path: '/workspace/project-a/docs/report.docx',
+              path: '/workspace/project-a/inbox/report.docx',
             },
           ],
         },
@@ -179,30 +186,34 @@ describe('useFileMentions chips', () => {
     expect(result.current.mentionedFiles).toEqual([
       {
         name: 'report.docx',
-        relativePath: 'docs/report.docx',
-        absolutePath: '/workspace/project-a/docs/report.docx',
+        relativePath: 'inbox/report.docx',
+        absolutePath: '/workspace/project-a/inbox/report.docx',
       },
     ]);
     rerender({ input: inputValue });
     expect(result.current.showFileDropdown).toBe(false);
   });
 
-  it('matches dropdown entries on the file name only, never the path', async () => {
+  it('filters to inbox and exports and matches nested file paths', async () => {
     getFilesMock.mockResolvedValue({
       ok: true,
       json: async () => [
         {
-          name: 'secret-folder',
+          name: 'inbox',
           type: 'directory',
-          path: '/workspace/project-a/secret-folder',
+          path: '/workspace/project-a/inbox',
           children: [
             {
-              name: 'notes.txt',
-              type: 'file',
-              path: '/workspace/project-a/secret-folder/notes.txt',
+              name: 'case-001',
+              type: 'directory',
+              children: [
+                { name: 'notes.txt', type: 'file', path: '/workspace/project-a/inbox/case-001/notes.txt' },
+              ],
             },
           ],
         },
+        { name: 'exports', type: 'directory', children: [{ name: 'brief.pdf', type: 'file' }] },
+        { name: 'scratch', type: 'directory', children: [{ name: 'scratch.txt', type: 'file' }] },
       ],
     });
 
@@ -210,18 +221,147 @@ describe('useFileMentions chips', () => {
     const { result } = renderHook(() => useFileMentions({
       selectedProject: project,
       mentionScopeKey: 'draft_input_project-a:session-a',
-      input: '@secret',
+      input: '@notes',
       setInput,
       textareaRef,
     }));
 
-    act(() => result.current.setCursorPosition('@secret'.length));
+    act(() => result.current.setCursorPosition('@notes'.length));
     await waitFor(() => {
       expect(result.current.showFileDropdown).toBe(true);
+      expect(result.current.filteredFiles.map((file) => file.path)).toEqual(['inbox/case-001/notes.txt']);
     });
 
-    // "secret" only appears in the directory path, which is hidden from the
-    // dropdown — so it must not match anything either.
+    expect(result.current.filteredFileTree[0]?.children?.[0]?.children?.[0]?.path)
+      .toBe('inbox/case-001/notes.txt');
+    act(() => result.current.setCursorPosition('@notes'.length));
+    expect(result.current.filteredFileTree.some((node) => node.path === 'scratch')).toBe(false);
+  });
+
+  it('keeps nested directories collapsed until expanded, and supports folder references', async () => {
+    getFilesMock.mockResolvedValue({
+      ok: true,
+      json: async () => [{
+        name: 'inbox',
+        type: 'directory',
+        children: [{
+          name: 'case-001',
+          type: 'directory',
+          children: [{ name: 'scan.dcm', type: 'file' }],
+        }],
+      }],
+    });
+
+    let inputValue = '@';
+    const setInput = vi.fn((value: SetStateAction<string>) => {
+      inputValue = typeof value === 'function' ? value(inputValue) : value;
+    });
+    const { result, rerender } = renderHook(
+      ({ input }) => useFileMentions({
+        selectedProject: project,
+        mentionScopeKey: 'draft_input_project-a:session-a',
+        input,
+        setInput,
+        textareaRef,
+      }),
+      { initialProps: { input: inputValue } },
+    );
+    act(() => result.current.setCursorPosition(1));
+    await waitFor(() => expect(result.current.filteredFileTree[0]?.children).toHaveLength(1));
     expect(result.current.filteredFiles).toHaveLength(0);
+
+    act(() => result.current.toggleMentionDirectory('inbox/case-001'));
+    expect(result.current.filteredFiles.map((file) => file.path)).toEqual(['inbox/case-001/scan.dcm']);
+
+    act(() => result.current.selectFile(result.current.filteredFileTree[0].children![0]));
+    rerender({ input: inputValue });
+    expect(result.current.mentionedFiles[0]).toMatchObject({
+      relativePath: 'inbox/case-001',
+      kind: 'directory',
+    });
+    expect(inputValue).toBe('');
+  });
+
+  it('adds a dragged directory only for the active project', () => {
+    const { result } = renderHook(() => useFileMentions({
+      selectedProject: project,
+      mentionScopeKey: 'draft_input_project-a:session-a',
+      input: '',
+      setInput: vi.fn(),
+      textareaRef,
+    }));
+    const transfer = {
+      getData: (type: string) => type === WORKSPACE_FILE_MENTION_DRAG_MIME
+        ? JSON.stringify({ projectName: project.name, relativePath: 'exports/results', kind: 'directory' })
+        : '',
+    } as DataTransfer;
+    act(() => expect(result.current.handleWorkspaceFileMentionDrop(transfer)).toBe(true));
+    expect(result.current.mentionedFiles[0]).toMatchObject({
+      relativePath: 'exports/results',
+      kind: 'directory',
+    });
+    const otherProjectTransfer = {
+      getData: () => JSON.stringify({ projectName: 'other', relativePath: 'inbox/report.pdf', kind: 'file' }),
+    } as unknown as DataTransfer;
+    act(() => expect(result.current.handleWorkspaceFileMentionDrop(otherProjectTransfer)).toBe(false));
+    expect(result.current.mentionedFiles).toHaveLength(1);
+  });
+
+  it('loads children beyond the initial tree depth when a directory is opened', async () => {
+    getFilesMock.mockResolvedValue({
+      ok: true,
+      json: async () => [{
+        name: 'inbox',
+        type: 'directory',
+        children: [{ name: 'deep', type: 'directory' }],
+      }],
+    });
+    listFilesMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        entries: [{ name: 'scan.dcm', type: 'file', path: 'inbox/deep/scan.dcm' }],
+        truncated: false,
+      }),
+    });
+    const { result } = renderHook(() => useFileMentions({
+      selectedProject: project,
+      mentionScopeKey: 'draft_input_project-a:session-a',
+      input: '@',
+      setInput: vi.fn(),
+      textareaRef,
+    }));
+    act(() => result.current.setCursorPosition(1));
+    await waitFor(() => expect(result.current.filteredFileTree[0]?.children).toHaveLength(1));
+    act(() => result.current.toggleMentionDirectory('inbox/deep'));
+    await waitFor(() => expect(result.current.filteredFiles.map((file) => file.path))
+      .toEqual(['inbox/deep/scan.dcm']));
+    expect(listFilesMock).toHaveBeenCalledWith(
+      '/api/projects/project-a/files/list?path=inbox%2Fdeep',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it('removes a pending @query when a file is dragged into the composer', () => {
+    let inputValue = 'Review @scan';
+    const setInput = vi.fn((value: SetStateAction<string>) => {
+      inputValue = typeof value === 'function' ? value(inputValue) : value;
+    });
+    const { result } = renderHook(() => useFileMentions({
+      selectedProject: project,
+      mentionScopeKey: 'draft_input_project-a:session-a',
+      input: inputValue,
+      setInput,
+      textareaRef,
+    }));
+    act(() => result.current.setCursorPosition(inputValue.length));
+    expect(result.current.showFileDropdown).toBe(true);
+    const transfer = {
+      getData: (type: string) => type === WORKSPACE_FILE_MENTION_DRAG_MIME
+        ? JSON.stringify({ projectName: project.name, relativePath: 'inbox/scan.dcm', kind: 'file' })
+        : '',
+    } as DataTransfer;
+    act(() => expect(result.current.handleWorkspaceFileMentionDrop(transfer)).toBe(true));
+    expect(inputValue).toBe('Review ');
+    expect(result.current.mentionedFiles[0]?.relativePath).toBe('inbox/scan.dcm');
   });
 });
