@@ -37,6 +37,7 @@ export declare class HeartbeatIndexer {
     private routeGeneralCandidate;
     captureL0Session(input: {
         sessionKey: string;
+        turnId?: string;
         timestamp?: string;
         messages: MemoryMessage[];
         source?: string;

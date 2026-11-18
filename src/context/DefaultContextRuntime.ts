@@ -298,6 +298,7 @@ export class DefaultContextRuntime implements ContextRuntime {
     try {
       await this.memoryResolver.captureTurn({
         sessionId: input.sessionId,
+        turnId: input.turnId,
         projectRoot: this.projectRoot ?? "",
         messages: input.messages.filter((message) => !message.metadata?.forkCarryover),
         attachmentContext: input.attachmentContext,

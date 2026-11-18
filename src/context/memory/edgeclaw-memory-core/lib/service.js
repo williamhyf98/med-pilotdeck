@@ -573,6 +573,7 @@ export class EdgeClawMemoryService {
         }
         this.indexer.captureL0Session({
             sessionKey: input.sessionKey,
+            turnId: input.turnId,
             timestamp: input.timestamp ?? nowIso(),
             messages: normalizedMessages,
             source: input.source ?? this.source,
@@ -582,6 +583,17 @@ export class EdgeClawMemoryService {
             normalizedMessages,
             sessionKey: input.sessionKey,
         };
+    }
+    /** Only unindexed L0 from this exact turn can be removed safely. */
+    revokePendingTurn(sessionKey, turnId) {
+        if (this.closed)
+            throw new Error("Memory service is closed");
+        const removed = this.repository.deletePendingL0ByTurn(sessionKey, turnId);
+        if (removed > 0) {
+            this.reconcileAutoIndexAnchor();
+            this.retriever.resetTransientState();
+        }
+        return removed;
     }
     async flush(options = {}) {
         return this.withMaintenance(() => this.flushInternal(options));

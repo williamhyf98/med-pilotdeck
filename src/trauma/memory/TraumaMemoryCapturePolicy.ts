@@ -261,12 +261,13 @@ export function evaluateTraumaMemoryCapture(
  */
 export type TraumaMemoryCaptureSink = (input: {
   sessionId: string;
+  turnId?: string;
   preferences: readonly ValidatedTraumaPreference[];
   turnStatus: TraumaTurnStatus;
 }) => void;
 
 type CaptureWriterLike = {
-  capture(input: { sessionId: string; text: string }): boolean;
+  capture(input: { sessionId: string; turnId?: string; text: string }): boolean;
 };
 
 type CaptureLoggerLike = {
@@ -319,6 +320,7 @@ export function createTraumaMemoryCaptureSink(options: {
 
       const written = options.writer.capture({
         sessionId: input.sessionId,
+        ...(input.turnId ? { turnId: input.turnId } : {}),
         text: decision.text,
       });
       options.logger?.info?.(`${line} written=${written}`);

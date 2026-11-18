@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { canonicalMessagesToMemoryMessages } from "../../src/context/memory/MemoryResolver.js";
+import { EdgeClawMemoryProvider } from "../../src/context/memory/EdgeClawMemoryProvider.js";
 import { normalizeMessages } from "../../src/context/memory/edgeclaw-memory-core/src/message-utils.js";
 import type { CanonicalMessage } from "../../src/model/index.js";
 import { LlmMemoryExtractor } from "../../src/context/memory/edgeclaw-memory-core/src/core/skills/llm-extraction.js";
@@ -15,6 +16,28 @@ const exchange = (name: string, file: string, text: string, isError = false): Ca
   { role: "assistant", content: [{ type: "tool_call", id: "read-1", name, input: { file_path: file, path: file } }] },
   { role: "user", content: [{ type: "tool_result", toolCallId: "read-1", content: [{ type: "text", text }], isError }] },
 ];
+
+test("memory provider forwards the actual agent turn ID to L0 capture", async () => {
+  const captured: { sessionKey: string; turnId?: string }[] = [];
+  const provider = new EdgeClawMemoryProvider({
+    service: {
+      retrieveContext: async () => ({ systemContext: "" }),
+      captureTurn: (_messages, input) => {
+        captured.push(input);
+        return { captured: true, normalizedMessages: [], sessionKey: input.sessionKey };
+      },
+    },
+  });
+  await provider.captureTurn({
+    sessionId: "web:s_capture",
+    turnId: "turn-42",
+    projectRoot: "/project",
+    messages: [query],
+    errored: false,
+  });
+  assert.deepEqual(captured.map(({ sessionKey, turnId }) => ({ sessionKey, turnId })),
+    [{ sessionKey: "web:s_capture", turnId: "turn-42" }]);
+});
 
 test("current registered attachment survives normalization independently of chat length", () => {
   const text = "入院记录：" + "患者事实。".repeat(2000) + "末尾：青霉素过敏";

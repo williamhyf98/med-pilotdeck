@@ -55,6 +55,7 @@ function normalizeL0Row(row) {
     return {
         l0IndexId: String(row.l0_index_id),
         sessionKey: String(row.session_key),
+        ...(typeof row.turn_id === "string" && row.turn_id ? { turnId: row.turn_id } : {}),
         timestamp: String(row.timestamp),
         messages: normalizeMessages(parseJson(String(row.messages_json ?? "[]"), [])),
         source: String(row.source ?? ""),
@@ -397,6 +398,7 @@ export class MemoryRepository {
       CREATE TABLE IF NOT EXISTS l0_sessions (
         l0_index_id TEXT PRIMARY KEY,
         session_key TEXT NOT NULL,
+        turn_id TEXT,
         timestamp TEXT NOT NULL,
         messages_json TEXT NOT NULL,
         source TEXT NOT NULL,
@@ -411,6 +413,11 @@ export class MemoryRepository {
         updated_at TEXT NOT NULL
       );
     `);
+        const l0Columns = this.db.prepare("PRAGMA table_info(l0_sessions)").all();
+        if (!l0Columns.some((column) => column.name === "turn_id")) {
+            this.db.exec("ALTER TABLE l0_sessions ADD COLUMN turn_id TEXT");
+        }
+        this.db.exec("CREATE INDEX IF NOT EXISTS idx_l0_sessions_pending_turn ON l0_sessions(session_key, turn_id, indexed)");
         this.migratePipelineStateTable();
     }
     migratePipelineStateTable() {
@@ -743,20 +750,31 @@ export class MemoryRepository {
       INSERT INTO l0_sessions (
         l0_index_id,
         session_key,
+        turn_id,
         timestamp,
         messages_json,
         source,
         indexed,
         created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(l0_index_id) DO UPDATE SET
         session_key = excluded.session_key,
+        turn_id = excluded.turn_id,
         timestamp = excluded.timestamp,
         messages_json = excluded.messages_json,
         source = excluded.source,
         indexed = excluded.indexed,
         created_at = excluded.created_at
-    `).run(record.l0IndexId, record.sessionKey, record.timestamp, JSON.stringify(record.messages), record.source || "openclaw", record.indexed ? 1 : 0, createdAt);
+    `).run(record.l0IndexId, record.sessionKey, record.turnId ?? null, record.timestamp, JSON.stringify(record.messages), record.source || "openclaw", record.indexed ? 1 : 0, createdAt);
+    }
+    deletePendingL0ByTurn(sessionKey, turnId) {
+        if (!sessionKey || !turnId)
+            return 0;
+        const result = this.db.prepare(`
+      DELETE FROM l0_sessions
+      WHERE session_key = ? AND turn_id = ? AND indexed = 0
+    `).run(sessionKey, turnId);
+        return result.changes ?? 0;
     }
     listPendingSessionKeys(limit = 50, preferredSessionKeys) {
         const normalizedPreferred = Array.isArray(preferredSessionKeys)

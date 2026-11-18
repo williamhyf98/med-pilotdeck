@@ -26,6 +26,7 @@ export type MemoryRetrieveResult = {
 export type MemoryCaptureTurnInput = {
   attachmentContext?: AttachmentCaptureContext;
   sessionId: string;
+  turnId: string;
   projectRoot: string;
   messages: CanonicalMessage[];
   errored: boolean;

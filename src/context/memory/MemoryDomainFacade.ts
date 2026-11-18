@@ -54,7 +54,7 @@ export type MemoryDomainServiceLike = {
    */
   captureTurn?(
     rawMessages: readonly unknown[],
-    input: { sessionKey: string; timestamp?: string; source?: string },
+    input: { sessionKey: string; turnId?: string; timestamp?: string; source?: string },
   ): { captured: boolean } | void;
 };
 
@@ -92,6 +92,7 @@ export type MemoryDomainReadInput = {
  */
 export type MemoryDomainWriteInput = {
   sessionId: string;
+  turnId?: string;
   text: string;
   timestamp?: string;
   source?: string;
@@ -188,6 +189,7 @@ export class MemoryDomainFacade {
     try {
       const result = captureTurn([{ role: "user", content: text }], {
         sessionKey: input.sessionId,
+        ...(input.turnId ? { turnId: input.turnId } : {}),
         timestamp: input.timestamp ?? new Date().toISOString(),
         source: input.source ?? "pilotdeck-trauma",
       });

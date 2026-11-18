@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { EdgeClawMemoryService, type EdgeClawMemoryServiceOptions } from "../src/service.ts";
 
@@ -90,6 +91,95 @@ test("通用医学默认即时模式保留内容门：空库不维护，单轮�
     };
     await assert.rejects(service.runDueScheduledMaintenance(), error => error === dreamBoundary);
   } finally { service.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("revokePendingTurn only removes matching unindexed L0 and keeps other or indexed turns", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ec-rewind-pending-"));
+  const service = new EdgeClawMemoryService({ workspaceDir: dir, rootDir: dir });
+  try {
+    const capture = (sessionKey: string, turnId: string, content: string) => service.captureTurn(
+      [{ role: "user", content }, { role: "assistant", content: `${content} answer` }],
+      { sessionKey, turnId },
+    );
+    capture("session-a", "turn-1", "same question");
+    capture("session-a", "turn-2", "second question");
+    capture("session-b", "turn-2", "other session");
+    const indexed = service.repository.listUnindexedL0BySession("session-a")
+      .find((row) => row.turnId === "turn-1");
+    assert.ok(indexed);
+    service.repository.markL0Indexed([indexed.l0IndexId]);
+
+    assert.equal(service.revokePendingTurn("session-a", "turn-2"), 1);
+    assert.equal(service.revokePendingTurn("session-a", "turn-2"), 0);
+    assert.deepEqual(service.repository.listAllL0().map(({ sessionKey, turnId, indexed }) => ({
+      sessionKey, turnId, indexed,
+    })), [
+      { sessionKey: "session-a", turnId: "turn-1", indexed: true },
+      { sessionKey: "session-b", turnId: "turn-2", indexed: false },
+    ]);
+  } finally {
+    service.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("revokePendingTurn ignores legacy records without turnId", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ec-rewind-legacy-"));
+  const service = new EdgeClawMemoryService({ workspaceDir: dir, rootDir: dir });
+  try {
+    service.captureTurn([{ role: "user", content: "old question" }], { sessionKey: "legacy" });
+    assert.equal(service.revokePendingTurn("legacy", "turn-1"), 0);
+    assert.equal(service.repository.listUnindexedL0BySession("legacy").length, 1);
+  } finally {
+    service.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("opening an existing L0 database adds turnId without losing legacy rows", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ec-rewind-migrate-"));
+  const dbPath = join(dir, "control.sqlite");
+  const db = new DatabaseSync(dbPath);
+  db.exec(`CREATE TABLE l0_sessions (
+    l0_index_id TEXT PRIMARY KEY, session_key TEXT NOT NULL, timestamp TEXT NOT NULL,
+    messages_json TEXT NOT NULL, source TEXT NOT NULL, indexed INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  )`);
+  db.prepare(`INSERT INTO l0_sessions (
+    l0_index_id, session_key, timestamp, messages_json, source, indexed, created_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+    "old-l0", "existing", "2026-01-01T00:00:00Z",
+    JSON.stringify([{ role: "user", content: "old question" }]), "pilotdeck", 0, "2026-01-01T00:00:00Z",
+  );
+  db.close();
+  const service = new EdgeClawMemoryService({ workspaceDir: dir, rootDir: dir, dbPath });
+  try {
+    assert.equal(service.repository.listUnindexedL0BySession("existing")[0]?.messages[0]?.content, "old question");
+    service.captureTurn([{ role: "user", content: "new question" }],
+      { sessionKey: "existing", turnId: "new-turn" });
+    assert.equal(service.revokePendingTurn("existing", "new-turn"), 1);
+    assert.equal(service.repository.listUnindexedL0BySession("existing").length, 1);
+  } finally {
+    service.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the same text in a new turn has a separate revocable L0 record", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ec-rewind-duplicate-"));
+  const service = new EdgeClawMemoryService({ workspaceDir: dir, rootDir: dir });
+  try {
+    const messages = [{ role: "user", content: "same question" }, { role: "assistant", content: "same reply" }];
+    const timestamp = "2026-11-13T00:00:00.000Z";
+    service.captureTurn(messages, { sessionKey: "same-session", turnId: "first", timestamp });
+    service.captureTurn(messages, { sessionKey: "same-session", turnId: "second", timestamp });
+    assert.equal(service.repository.listUnindexedL0BySession("same-session").length, 2);
+    assert.equal(service.revokePendingTurn("same-session", "second"), 1);
+    assert.equal(service.repository.listUnindexedL0BySession("same-session")[0]?.turnId, "first");
+  } finally {
+    service.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("通用医学新项目默认即时维护，已有显式模式与旧间隔设置不被覆盖", () => {

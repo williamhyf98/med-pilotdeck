@@ -745,6 +745,7 @@ export class InProcessGateway implements Gateway {
               this.options.captureTraumaMemory?.({
                 projectKey: input.projectKey!,
                 sessionId: input.sessionKey,
+                turnId: runId,
                 preferences: acceptedPreferences,
                 turnStatus: "completed",
               });

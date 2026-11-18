@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { createAgentProjectSessionStorage } from "../../src/session/storage/ProjectSessionStorage.js";
 import { readTranscript } from "../../src/session/transcript/TranscriptReader.js";
 import { rewindWebSession, RewindSessionError } from "../../src/web/server/rewindSession.js";
+import { EdgeClawMemoryService } from "../../src/context/memory/edgeclaw-memory-core/src/service.js";
 
 const FIXED_NOW = () => new Date("2026-09-21T08:00:00.000Z");
 
@@ -80,6 +81,98 @@ test("rewind removes the last user turn in place and writes a backup", async () 
             names.filter((name) => !name.startsWith("."))), [join(storage.transcriptPath).split("/").pop()]);
     }
     finally {
+        await rm(projectRoot, { recursive: true, force: true });
+        await rm(pilotHome, { recursive: true, force: true });
+    }
+});
+
+test("rewind revokes pending memory for the exact removed turn before writing the transcript", async () => {
+    const { projectRoot, pilotHome } = await makeFixture("pilotdeck-rewind-memory");
+    try {
+        const sessionKey = "web:s_rewind_memory";
+        const storage = createAgentProjectSessionStorage({
+            projectRoot, pilotHome, sessionId: sessionKey, now: FIXED_NOW,
+        });
+        await writeTwoTurns(storage, sessionKey);
+        const before = await readTranscript(storage.transcriptPath);
+        const target = findAcceptedInput(before.entries, "turn-2");
+        let called = 0;
+        await rewindWebSession(
+            { sessionKey, fromEntryId: target.entryId },
+            {
+                projectRoot, pilotHome, now: FIXED_NOW,
+                revokePendingMemory: async (key, turnId) => {
+                    called++;
+                    assert.equal(key, sessionKey);
+                    assert.equal(turnId, "turn-2");
+                    assert.equal((await readTranscript(storage.transcriptPath)).entries.length, before.entries.length);
+                },
+            },
+        );
+        assert.equal(called, 1);
+        assert.equal((await readTranscript(storage.transcriptPath)).entries.length, before.entries.length - 2);
+    } finally {
+        await rm(projectRoot, { recursive: true, force: true });
+        await rm(pilotHome, { recursive: true, force: true });
+    }
+});
+
+test("rewind removes the matching pending L0 without touching another turn", async () => {
+    const { projectRoot, pilotHome } = await makeFixture("pilotdeck-rewind-memory-integrated");
+    const service = new EdgeClawMemoryService({
+        workspaceDir: projectRoot,
+        rootDir: pilotHome,
+        defaultIndexingSettings: { maintenanceMode: "manual" },
+    });
+    try {
+        const sessionKey = "web:s_rewind_memory_integrated";
+        const storage = createAgentProjectSessionStorage({
+            projectRoot, pilotHome, sessionId: sessionKey, now: FIXED_NOW,
+        });
+        await writeTwoTurns(storage, sessionKey);
+        service.captureTurn([{ role: "user", content: "第一问" }], { sessionKey, turnId: "turn-1" });
+        service.captureTurn([{ role: "user", content: "第二问" }], { sessionKey, turnId: "turn-2" });
+        const { entries } = await readTranscript(storage.transcriptPath);
+        const target = findAcceptedInput(entries, "turn-2");
+        await rewindWebSession(
+            { sessionKey, fromEntryId: target.entryId },
+            {
+                projectRoot, pilotHome, now: FIXED_NOW,
+                revokePendingMemory: (key, turnId) => {
+                    assert.equal(service.revokePendingTurn(key, turnId), 1);
+                },
+            },
+        );
+        assert.deepEqual(service.repository.listUnindexedL0BySession(sessionKey).map((row) => row.turnId), ["turn-1"]);
+        assert.equal(findAcceptedInput((await readTranscript(storage.transcriptPath)).entries, "turn-2"), undefined);
+    } finally {
+        service.close();
+        await rm(projectRoot, { recursive: true, force: true });
+        await rm(pilotHome, { recursive: true, force: true });
+    }
+});
+
+test("rewind leaves transcript unchanged when pending-memory revocation fails", async () => {
+    const { projectRoot, pilotHome } = await makeFixture("pilotdeck-rewind-memory-failure");
+    try {
+        const sessionKey = "web:s_rewind_memory_failure";
+        const storage = createAgentProjectSessionStorage({
+            projectRoot, pilotHome, sessionId: sessionKey, now: FIXED_NOW,
+        });
+        await writeTwoTurns(storage, sessionKey);
+        const before = await readTranscript(storage.transcriptPath);
+        const target = findAcceptedInput(before.entries, "turn-2");
+        await assert.rejects(
+            rewindWebSession(
+                { sessionKey, fromEntryId: target.entryId },
+                { projectRoot, pilotHome, now: FIXED_NOW, revokePendingMemory: () => {
+                    throw new Error("memory database unavailable");
+                } },
+            ),
+            /memory database unavailable/,
+        );
+        assert.deepEqual((await readTranscript(storage.transcriptPath)).entries, before.entries);
+    } finally {
         await rm(projectRoot, { recursive: true, force: true });
         await rm(pilotHome, { recursive: true, force: true });
     }

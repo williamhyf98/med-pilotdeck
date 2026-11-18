@@ -118,9 +118,12 @@ export declare class EdgeClawMemoryService {
     snapshot(limit?: number): MemoryUiSnapshot;
     captureTurn(rawMessages: readonly unknown[], input: {
         sessionKey: string;
+        turnId?: string;
         timestamp?: string;
         source?: string;
     }): CaptureTurnResult;
+    /** Only unindexed L0 from this exact turn can be removed safely. */
+    revokePendingTurn(sessionKey: string, turnId: string): number;
     flush(options?: {
         batchSize?: number;
         sessionKeys?: string[];

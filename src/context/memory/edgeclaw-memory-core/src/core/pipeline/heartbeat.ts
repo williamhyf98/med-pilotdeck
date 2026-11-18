@@ -550,21 +550,27 @@ export class HeartbeatIndexer {
 
   captureL0Session(input: {
     sessionKey: string;
+    turnId?: string;
     timestamp?: string;
     messages: MemoryMessage[];
     source?: string;
   }): L0SessionRecord | undefined {
     const timestamp = input.timestamp ?? nowIso();
     const recent = this.repository.listRecentL0(1)[0];
-    if (recent?.sessionKey === input.sessionKey && !hasNewContent(recent.messages, input.messages)) {
+    if (recent?.sessionKey === input.sessionKey
+      && (!input.turnId || recent.turnId === input.turnId)
+      && !hasNewContent(recent.messages, input.messages)) {
       this.logger?.info?.(`[clawxmemory] skip duplicate l0 capture for session=${input.sessionKey}`);
       return undefined;
     }
     const payload = JSON.stringify(input.messages);
-    const l0IndexId = buildL0IndexId(input.sessionKey, timestamp, payload);
+    // Distinct turns can have identical text and even the same millisecond.
+    const l0IndexId = buildL0IndexId(input.sessionKey, timestamp,
+      input.turnId ? `${input.turnId}:${payload}` : payload);
     const record: L0SessionRecord = {
       l0IndexId,
       sessionKey: input.sessionKey,
+      ...(input.turnId ? { turnId: input.turnId } : {}),
       timestamp,
       messages: input.messages,
       source: input.source ?? this.source,

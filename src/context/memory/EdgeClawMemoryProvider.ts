@@ -50,6 +50,7 @@ export type EdgeClawMemoryServiceLike = {
     rawMessages: readonly unknown[],
     input: {
       sessionKey: string;
+      turnId?: string;
       timestamp?: string;
       source?: string;
     },
@@ -179,6 +180,7 @@ export class EdgeClawMemoryProvider implements MemoryResolver {
     try {
       this.options.service.captureTurn(normalizedMessages, {
         sessionKey: input.sessionId,
+        turnId: input.turnId,
         timestamp: this.now().toISOString(),
         source: this.options.source ?? "pilotdeck",
       });

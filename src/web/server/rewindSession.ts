@@ -27,6 +27,8 @@ export type RewindWebSessionOptions = {
   projectRoot: string;
   pilotHome: string;
   now?: () => Date;
+  /** Runs after the transcript backup, before committing the rewind. */
+  revokePendingMemory?: (sessionKey: string, turnId: string) => Promise<void> | void;
 };
 
 export class RewindSessionError extends Error {
@@ -183,6 +185,7 @@ export async function rewindWebSession(
     resolve(backupDir, `${safeId}.${backupStamp}-${randomUUID().slice(0, 8)}.jsonl`),
   );
 
+  await options.revokePendingMemory?.(input.sessionKey, target.turnId);
   const body = finalEntries.map((entry) => `${JSON.stringify(entry)}\n`).join("");
   await writeFile(transcriptPath, body, { encoding: "utf8", mode: 0o600 });
 

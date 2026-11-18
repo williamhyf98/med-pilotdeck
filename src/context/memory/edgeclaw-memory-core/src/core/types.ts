@@ -192,6 +192,7 @@ export interface ProjectIdentityHint {
 export interface L0SessionRecord {
   l0IndexId: string;
   sessionKey: string;
+  turnId?: string;
   timestamp: string;
   messages: MemoryMessage[];
   source: string;

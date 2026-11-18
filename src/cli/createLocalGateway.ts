@@ -432,11 +432,13 @@ export function createLocalGateway(options: CreateLocalGatewayOptions = {}): Cre
         now,
       }),
     rewindSession: (input) =>
-      rewindWebSession(input, {
+      registry.rewindSession(input, () => rewindWebSession(input, {
         projectRoot: input.projectKey ? input.projectKey : fallbackProjectRoot,
         pilotHome,
         now,
-      }),
+        revokePendingMemory: (sessionKey, turnId) =>
+          registry.revokePendingMemory(input.projectKey ?? fallbackProjectRoot, sessionKey, turnId),
+      })),
     async recordAgentStatusMessage(input) {
       const storage = createAgentProjectSessionStorage({
         projectRoot: input.projectKey ? input.projectKey : fallbackProjectRoot,
@@ -610,6 +612,7 @@ type ProjectRuntime = {
   /** Coalesced project-level memory maintenance loop. */
   memoryMaintenanceInFlight?: Promise<void>;
   memoryMaintenanceRequested?: boolean;
+  memoryRewindPaused?: boolean;
   /**
    * Lazily-started MCP runtime (C1). Built on first session creation by
    * `ensureMcpReady()` because plugin refresh + connect is async.
@@ -1305,9 +1308,9 @@ class ProjectRuntimeRegistry {
     const service = runtime.memoryService;
     if (!service) return;
     runtime.memoryMaintenanceRequested = true;
-    if (runtime.memoryMaintenanceInFlight) return;
+    if (runtime.memoryMaintenanceInFlight || runtime.memoryRewindPaused) return;
     runtime.memoryMaintenanceInFlight = (async () => {
-      while (runtime.memoryMaintenanceRequested) {
+      while (runtime.memoryMaintenanceRequested && !runtime.memoryRewindPaused) {
         runtime.memoryMaintenanceRequested = false;
         try {
           await service.runDueScheduledMaintenance("scheduled");
@@ -1345,6 +1348,28 @@ class ProjectRuntimeRegistry {
         this.scheduleMemoryMaintenance(projectKey);
       }
     });
+  }
+
+  async rewindSession<T>(input: { projectKey?: string }, run: () => Promise<T>): Promise<T> {
+    const projectKey = input.projectKey ?? this.options.fallbackProjectRoot;
+    const runtime = this.resolve(projectKey);
+    // Pause new automatic maintenance before waiting for any in-flight indexing.
+    // The rewind callback then deletes pending L0 synchronously with the transcript rewind.
+    if (runtime.memoryRewindPaused) {
+      throw new Error("A memory rewind is already running for this project.");
+    }
+    runtime.memoryRewindPaused = true;
+    try {
+      await runtime.memoryMaintenanceInFlight;
+      return await run();
+    } finally {
+      runtime.memoryRewindPaused = false;
+      if (runtime.memoryMaintenanceRequested) this.scheduleMemoryMaintenance(projectKey);
+    }
+  }
+
+  revokePendingMemory(projectKey: string, sessionKey: string, turnId: string): void {
+    this.resolve(projectKey).memoryService?.revokePendingTurn(sessionKey, turnId);
   }
 
   /**

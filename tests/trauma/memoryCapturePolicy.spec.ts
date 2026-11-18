@@ -201,7 +201,7 @@ function identity(projectId: string): MemoryScopeIdentity {
 }
 
 function facadeWithRecorder() {
-  const writes: Array<{ messages: readonly unknown[]; sessionKey: string }> = [];
+  const writes: Array<{ messages: readonly unknown[]; sessionKey: string; turnId?: string }> = [];
   const facade = new MemoryDomainFacade({
     identity: identity("trauma_med/case-a"),
     service: {
@@ -209,7 +209,7 @@ function facadeWithRecorder() {
         return {};
       },
       captureTurn(rawMessages, input) {
-        writes.push({ messages: rawMessages, sessionKey: input.sessionKey });
+        writes.push({ messages: rawMessages, sessionKey: input.sessionKey, turnId: input.turnId });
         return { captured: true };
       },
     },
@@ -234,10 +234,11 @@ test("sink 只把过滤后的文本作为 user 单条消息写入", () => {
     redactedCount: 0,
     redactedHits: [],
   }];
-  sink({ sessionId: "web:s1", preferences, turnStatus: "completed" });
+  sink({ sessionId: "web:s1", turnId: "turn-42", preferences, turnStatus: "completed" });
 
   assert.equal(writes.length, 1);
   assert.equal(writes[0]?.sessionKey, "web:s1");
+  assert.equal(writes[0]?.turnId, "turn-42");
   assert.deepEqual(writes[0]?.messages, [
     { role: "user", content: "以后回答请先给结论再给依据，不要长篇铺垫。" },
   ]);
