@@ -119,4 +119,25 @@ describe('SkillsV2', () => {
     fireEvent.click(card);
     expect(await screen.findByRole('dialog', { name: /天气查询.*提示词内容/ })).toBeTruthy();
   });
+
+  it('displays the data-analysis skill as 数据分析', async () => {
+    authenticatedFetch.mockImplementation(async (url: string) => {
+      if (url === '/api/skills/read') return jsonResponse({ content: '# Data analysis' });
+      return jsonResponse({
+        builtin: [],
+        user: [{ ...englishSkill, slug: 'data-analysis', name: 'data-analysis' }],
+        medical: [],
+        project: [],
+        projectPath: project.fullPath,
+        isGeneralCwd: false,
+      });
+    });
+
+    render(<SkillsV2 selectedProject={project} />);
+
+    const card = await screen.findByRole('button', { name: /数据分析/ });
+    expect(screen.queryByText(/^data-analysis$/)).toBeNull();
+    fireEvent.click(card);
+    expect(await screen.findByRole('dialog', { name: /数据分析.*提示词内容/ })).toBeTruthy();
+  });
 });

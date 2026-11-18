@@ -4,6 +4,7 @@ const SKILL_DISPLAY_NAMES: Record<string, string> = {
   'apple-reminders': '苹果提醒事项管理',
   'bear-notes': 'Bear 笔记管理',
   blogwatcher: '博客与订阅监控',
+  'data-analysis': '数据分析',
   'diagram-maker': '图示制作',
   docx: 'Word 文档处理',
   'find-skills': '技能发现与安装',
