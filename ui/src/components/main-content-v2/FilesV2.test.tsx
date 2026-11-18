@@ -2,15 +2,46 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../../types/app';
+import { WORKSPACE_FILE_MENTION_DRAG_MIME } from '../../utils/workspaceFileMention';
 import FilesV2 from './FilesV2';
 
 const mocks = vi.hoisted(() => ({
   authenticatedFetch: vi.fn(),
   uploadFiles: vi.fn(),
+  binaryPreview: vi.fn(),
+  fileDownloadUrl: vi.fn((projectName: string, filePath: string) => (
+    `/file-download/${projectName}/${encodeURIComponent(filePath)}`
+  )),
+  workspaceDirectoryDownloadUrl: vi.fn((projectName: string, filePath: string) => (
+    `/download/${projectName}/${encodeURIComponent(filePath)}`
+  )),
+}));
+
+vi.mock('../code-editor/view/subcomponents/CodeEditorBinaryFile', () => ({
+  default: (props: {
+    file: { name: string; path: string };
+    projectName: string;
+    isExpanded: boolean;
+    onToggleExpand: () => void;
+  }) => {
+    mocks.binaryPreview(props);
+    return (
+      <div data-testid="office-preview">
+        Office preview: {props.file.name}
+        <button type="button" onClick={props.onToggleExpand}>
+          {props.isExpanded ? '收起预览' : '展开预览'}
+        </button>
+      </div>
+    );
+  },
 }));
 
 vi.mock('../../utils/api', () => ({
-  api: { uploadFiles: mocks.uploadFiles },
+  api: {
+    uploadFiles: mocks.uploadFiles,
+    fileDownloadUrl: mocks.fileDownloadUrl,
+    workspaceDirectoryDownloadUrl: mocks.workspaceDirectoryDownloadUrl,
+  },
   authenticatedFetch: mocks.authenticatedFetch,
 }));
 
@@ -84,6 +115,7 @@ describe('FilesV2 工作区面板', () => {
   beforeEach(() => {
     mocks.authenticatedFetch.mockReset();
     mocks.uploadFiles.mockReset();
+    mocks.binaryPreview.mockReset();
     mocks.uploadFiles.mockResolvedValue(new Response(JSON.stringify({ success: true }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -123,6 +155,40 @@ describe('FilesV2 工作区面板', () => {
     fireEvent.click(screen.getByRole('button', { name: /exports/ }));
     expect(await screen.findByText('诊疗报告.pdf')).not.toBeNull();
     expect(mocks.authenticatedFetch.mock.calls.some(([url]) => String(url).includes('path=exports'))).toBe(true);
+  });
+
+  it('普通文件支持右键下载和移入回收站，受保护根目录右键无反应', async () => {
+    render(<FilesV2 selectedProject={project} />);
+
+    const exports = await screen.findByRole('button', { name: /exports/ });
+    fireEvent.contextMenu(exports, { clientX: 120, clientY: 120 });
+    expect(screen.queryByRole('menu')).toBeNull();
+
+    fireEvent.click(exports);
+    const file = await screen.findByRole('button', { name: /诊疗报告\.pdf/ });
+    fireEvent.contextMenu(file, { clientX: 160, clientY: 160 });
+
+    expect(screen.getByRole('menuitem', { name: '下载' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '删除' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('menuitem', { name: '下载' }));
+    expect(mocks.fileDownloadUrl).toHaveBeenCalledWith(
+      project.name,
+      'exports/诊疗报告.pdf',
+    );
+    expect(mocks.workspaceDirectoryDownloadUrl).not.toHaveBeenCalled();
+
+    fireEvent.contextMenu(file, { clientX: 160, clientY: 160 });
+    fireEvent.click(screen.getByRole('menuitem', { name: '删除' }));
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '移入回收站' }));
+
+    await waitFor(() => {
+      expect(mocks.authenticatedFetch.mock.calls.some(([url, init]) => (
+        String(url).includes('/files/trash')
+        && JSON.parse(String(init?.body)).path === 'exports/诊疗报告.pdf'
+      ))).toBe(true);
+    });
   });
 
   it('工作区总量占比高时，提示语变成清理建议', async () => {
@@ -172,6 +238,86 @@ describe('FilesV2 工作区面板', () => {
     expect(await screen.findByText(/内容/)).not.toBeNull();
     fireEvent.click(within(dialog).getByRole('button', { name: '在编辑器中打开' }));
     expect(onFileOpen).toHaveBeenCalledWith('exports/note.md');
+  });
+
+  it.each(['report.docx', 'slides.pptx', 'table.xlsx', 'old.doc'])(
+    '弹窗预览 %s 时交给现有 Office 渲染器，而非强制请求 PDF 转换',
+    async (name) => {
+      installFetchRouter({
+        '/files/list?path=exports': jsonResponse({
+          path: 'exports',
+          truncated: false,
+          entries: [{ name, path: `exports/${name}`, type: 'file', size: 120, modified: null }],
+        }),
+      });
+      render(<FilesV2 selectedProject={project} />);
+      await screen.findByText('工作区总量');
+      fireEvent.click(screen.getByRole('button', { name: /exports/ }));
+      fireEvent.click(await screen.findByRole('button', { name: new RegExp(name.replace('.', '\\.')) }));
+
+      expect((await screen.findByTestId('office-preview')).textContent).toContain(name);
+      expect(mocks.binaryPreview).toHaveBeenCalledWith(expect.objectContaining({
+        projectName: project.name,
+        file: { name, path: `exports/${name}` },
+      }));
+      expect(mocks.authenticatedFetch.mock.calls.some(([url]) => String(url).includes('/files/preview/pdf'))).toBe(false);
+    },
+  );
+
+  it.each(['data.csv', 'data.tsv'])('弹窗以文本方式预览 %s', async (name) => {
+    installFetchRouter({
+      '/files/list?path=exports': jsonResponse({
+        path: 'exports',
+        truncated: false,
+        entries: [{ name, path: `exports/${name}`, type: 'file', size: 30, modified: null }],
+      }),
+      '/file?filePath=': jsonResponse({ content: '姓名,年龄\n张三,30' }),
+    });
+    render(<FilesV2 selectedProject={project} />);
+    await screen.findByText('工作区总量');
+    fireEvent.click(screen.getByRole('button', { name: /exports/ }));
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(name.replace('.', '\\.')) }));
+
+    expect(await screen.findByText(/张三,30/)).not.toBeNull();
+    expect(mocks.authenticatedFetch.mock.calls.some(([url]) => String(url).includes('/files/preview/pdf'))).toBe(false);
+  });
+
+  it('Office 弹窗的展开按钮可以扩大预览区域并收起', async () => {
+    installFetchRouter({
+      '/files/list?path=exports': jsonResponse({
+        path: 'exports',
+        truncated: false,
+        entries: [{ name: 'report.docx', path: 'exports/report.docx', type: 'file', size: 120, modified: null }],
+      }),
+    });
+    render(<FilesV2 selectedProject={project} />);
+    await screen.findByText('工作区总量');
+    fireEvent.click(screen.getByRole('button', { name: /exports/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /report\.docx/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(await within(dialog).findByRole('button', { name: '展开预览' }));
+    expect(dialog.className).toContain('h-full');
+    fireEvent.click(within(dialog).getByRole('button', { name: '收起预览' }));
+    expect(dialog.className).toContain('max-w-5xl');
+  });
+
+  it('PDF 弹窗继续从原始内容接口载入', async () => {
+    const createObjectURL = vi.fn(() => 'blob:workspace-preview');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', class extends URL {
+      static createObjectURL = createObjectURL;
+      static revokeObjectURL = revokeObjectURL;
+    });
+    installFetchRouter();
+    render(<FilesV2 selectedProject={project} />);
+    await screen.findByText('工作区总量');
+    fireEvent.click(screen.getByRole('button', { name: /exports/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /诊疗报告\.pdf/ }));
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(within(dialog).getByTitle('诊疗报告.pdf').getAttribute('src')).toBe('blob:workspace-preview'));
+    expect(mocks.authenticatedFetch.mock.calls.some(([url]) => String(url).includes('/files/content?'))).toBe(true);
+    fireEvent.click(within(dialog).getByRole('button', { name: '关闭预览' }));
+    vi.unstubAllGlobals();
   });
 
   it('上传文件到带时间戳的 inbox 批次，并刷新用量与目录', async () => {
@@ -336,6 +482,14 @@ describe('FilesV2 工作区面板', () => {
     const draggable = fileLabel.closest('[draggable="true"]');
     expect(draggable).not.toBeNull();
     fireEvent.dragStart(draggable!, { dataTransfer: dt });
+    expect(dt.setData).toHaveBeenCalledWith(
+      WORKSPACE_FILE_MENTION_DRAG_MIME,
+      JSON.stringify({
+        projectName: project.name,
+        relativePath: 'exports/诊疗报告.pdf',
+        kind: 'file',
+      }),
+    );
 
     const inboxRow = screen.getByRole('button', { name: /inbox/ });
     fireEvent.dragOver(inboxRow.parentElement!, { dataTransfer: dt });

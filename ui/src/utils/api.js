@@ -545,6 +545,8 @@ export const api = {
 
   fileDownloadUrl: (projectName, filePath) =>
     api.fileContentUrl(projectName, filePath, { download: true }),
+  workspaceDirectoryDownloadUrl: (projectName, directoryPath) =>
+    `/api/projects/${encodeURIComponent(projectName)}/files/directory-download?path=${encodeURIComponent(directoryPath)}`,
 
   // TaskMaster endpoints
   taskmaster: {

@@ -6,7 +6,24 @@ import StorageV2 from './StorageV2';
 
 const authenticatedFetch = vi.hoisted(() => vi.fn());
 
-vi.mock('../../utils/api', () => ({ authenticatedFetch }));
+const fileDownloadUrl = vi.hoisted(() => vi.fn(
+  (projectName: string, filePath: string) => `/file-download/${projectName}/${encodeURIComponent(filePath)}`,
+));
+
+const workspaceDirectoryDownloadUrl = vi.hoisted(() => vi.fn(
+  (projectName: string, filePath: string) => `/download/${projectName}/${encodeURIComponent(filePath)}`,
+));
+
+vi.mock('../../utils/api', () => ({
+  authenticatedFetch,
+  api: { fileDownloadUrl, workspaceDirectoryDownloadUrl },
+}));
+
+vi.mock('../code-editor/view/subcomponents/CodeEditorBinaryFile', () => ({
+  default: ({ file }: { file: { name: string } }) => (
+    <div data-testid="storage-office-preview">Office preview: {file.name}</div>
+  ),
+}));
 
 const snapshot = {
   totals: { totalBytes: 3072, workspaceBytes: 2048, trashBytes: 1024, projectCount: 1 },
@@ -51,21 +68,52 @@ function jsonResponse(body: unknown, status = 200): Response {
   } as unknown as Response;
 }
 
-function textResponse(body: string): Response {
-  return {
-    ok: true,
-    status: 200,
-    json: vi.fn(async () => ({})),
-    text: vi.fn(async () => body),
-    blob: vi.fn(async () => new Blob()),
-    headers: new Headers(),
-  } as unknown as Response;
+function workspaceListing(url: string): Response {
+  const pathParam = new URL(`http://storage.test${url}`).searchParams.get('path') ?? '';
+  if (pathParam === '') {
+    return jsonResponse({
+      entries: [
+        { name: 'inbox', path: 'inbox', type: 'directory', size: null, modified: null },
+        { name: 'exports', path: 'exports', type: 'directory', size: null, modified: null },
+        { name: 'scratch', path: 'scratch', type: 'directory', size: null, modified: null },
+        { name: '我的资料', path: '我的资料', type: 'directory', size: null, modified: null },
+      ],
+    });
+  }
+  if (pathParam === 'exports') {
+    return jsonResponse({
+      entries: [
+        { name: 'report.md', path: 'exports/report.md', type: 'file', size: 2048, modified: null },
+        { name: 'report.docx', path: 'exports/report.docx', type: 'file', size: 4096, modified: null },
+        { name: 'slides.pptx', path: 'exports/slides.pptx', type: 'file', size: 8192, modified: null },
+      ],
+    });
+  }
+  if (pathParam === '我的资料') {
+    return jsonResponse({
+      entries: [
+        { name: '2026', path: '我的资料/2026', type: 'directory', size: null, modified: null },
+      ],
+    });
+  }
+  if (pathParam === '我的资料/2026') {
+    return jsonResponse({
+      entries: [
+        { name: 'ct.png', path: '我的资料/2026/ct.png', type: 'file', size: 12, modified: null },
+      ],
+    });
+  }
+  return jsonResponse({ entries: [] });
 }
 
 describe('StorageV2（项目视角）', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    authenticatedFetch.mockResolvedValue(jsonResponse(snapshot));
+    authenticatedFetch.mockImplementation(async (url: string) => {
+      if (url.includes('/files/list')) return workspaceListing(url);
+      if (url.includes('/file?filePath=')) return jsonResponse({ content: 'hello world' });
+      return jsonResponse(snapshot);
+    });
   });
 
   afterEach(() => {
@@ -97,6 +145,119 @@ describe('StorageV2（项目视角）', () => {
     expect(await screen.findByText('空目录')).toBeTruthy();
   });
 
+  it('文件树支持右键下载和删除，受保护根目录右键无反应', async () => {
+    render(<StorageV2 />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /查看/ }));
+    const exports = await screen.findByRole('button', { name: /exports/ });
+    fireEvent.contextMenu(exports, { clientX: 100, clientY: 100 });
+    expect(screen.queryByRole('menu')).toBeNull();
+
+    fireEvent.click(exports);
+    const file = await screen.findByRole('button', { name: /report\.md/ });
+    fireEvent.contextMenu(file, { clientX: 140, clientY: 140 });
+    expect(screen.getByRole('menuitem', { name: '下载' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('menuitem', { name: '下载' }));
+    expect(fileDownloadUrl).toHaveBeenCalledWith(
+      'general_med-one',
+      'exports/report.md',
+    );
+    expect(workspaceDirectoryDownloadUrl).not.toHaveBeenCalled();
+
+    fireEvent.contextMenu(file, { clientX: 140, clientY: 140 });
+    fireEvent.click(screen.getByRole('menuitem', { name: '删除' }));
+    fireEvent.click(screen.getByRole('button', { name: '移入回收站' }));
+
+    await waitFor(() => {
+      expect(authenticatedFetch.mock.calls.some(([url, init]) => (
+        String(url).includes('/files/trash')
+        && JSON.parse(String(init?.body)).path === 'exports/report.md'
+      ))).toBe(true);
+    });
+  });
+
+  it('默认按最后活动时间倒序，并支持项目、数值和类型列切换排序', async () => {
+    authenticatedFetch.mockResolvedValueOnce(jsonResponse({
+      ...snapshot,
+      totals: { totalBytes: 10_000, workspaceBytes: 10_000, trashBytes: 0, projectCount: 3 },
+      projects: [
+        {
+          ...snapshot.projects[0],
+          id: 'general_med-z',
+          displayName: '乙项目',
+          projectType: 'general_medicine',
+          sizeBytes: 100,
+          trashCount: 1,
+          sessionCount: 2,
+          lastActivityAt: '2026-11-01T02:03:00.000Z',
+        },
+        {
+          ...snapshot.projects[0],
+          id: 'trauma-a',
+          displayName: 'Alpha',
+          projectType: 'war_trauma',
+          sizeBytes: 300,
+          trashCount: 3,
+          sessionCount: 1,
+          lastActivityAt: '2026-11-03T02:03:00.000Z',
+        },
+        {
+          ...snapshot.projects[0],
+          id: 'general_med-b',
+          displayName: '甲项目',
+          projectType: 'general_medicine',
+          sizeBytes: 200,
+          trashCount: 0,
+          sessionCount: 5,
+          lastActivityAt: '2026-11-02T02:03:00.000Z',
+        },
+      ],
+    }));
+    render(<StorageV2 />);
+
+    await screen.findByText('Alpha');
+    const rows = () => screen.getAllByRole('button', { name: /查看/ }).map((button) => (
+      button.closest('div.grid')?.textContent ?? ''
+    ));
+    expect(rows()[0]).toContain('Alpha');
+    expect(rows()[1]).toContain('甲项目');
+    expect(rows()[2]).toContain('乙项目');
+
+    const projectHeader = screen.getByRole('button', { name: /项目，点击排序/ });
+    fireEvent.click(projectHeader);
+    expect(screen.getAllByRole('button', { name: /查看/ }).map((button) => (
+      button.closest('div.grid')?.textContent ?? ''
+    ))[0]).toContain('Alpha');
+    expect(projectHeader.getAttribute('aria-label')).toContain('升序');
+
+    fireEvent.click(projectHeader);
+    expect(screen.getAllByRole('button', { name: /查看/ }).map((button) => (
+      button.closest('div.grid')?.textContent ?? ''
+    ))[0]).toContain('乙项目');
+    expect(projectHeader.getAttribute('aria-label')).toContain('降序');
+
+    const sizeHeader = screen.getByRole('button', { name: /占用，点击排序/ });
+    fireEvent.click(sizeHeader);
+    expect(screen.getAllByRole('button', { name: /查看/ }).map((button) => (
+      button.closest('div.grid')?.textContent ?? ''
+    ))[0]).toContain('乙项目');
+    expect(sizeHeader.getAttribute('aria-label')).toContain('升序');
+
+    fireEvent.click(sizeHeader);
+    expect(screen.getAllByRole('button', { name: /查看/ }).map((button) => (
+      button.closest('div.grid')?.textContent ?? ''
+    ))[0]).toContain('Alpha');
+    expect(sizeHeader.getAttribute('aria-label')).toContain('降序');
+
+    const typeHeader = screen.getByRole('button', { name: /类型，点击排序/ });
+    fireEvent.click(typeHeader);
+    expect(typeHeader.getAttribute('aria-label')).toContain('升序');
+    expect(screen.getAllByRole('button', { name: /查看/ }).map((button) => (
+      button.closest('div.grid')?.textContent ?? ''
+    ))[0]).toContain('甲项目');
+  });
+
   it('用户自建目录照常列出，文件按目录分组折叠', async () => {
     authenticatedFetch.mockResolvedValueOnce(jsonResponse({
       ...snapshot,
@@ -120,10 +281,11 @@ describe('StorageV2（项目视角）', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /查看/ }));
     expect(await screen.findByText('我的资料')).toBeTruthy();
-    expect(screen.getByText('自定义目录')).toBeTruthy();
     expect(screen.queryByText('ct.png')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /我的资料/ }));
+    expect(await screen.findByText('2026')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /2026/ }));
     expect(await screen.findByText('ct.png')).toBeTruthy();
   });
 
@@ -163,9 +325,7 @@ describe('StorageV2（项目视角）', () => {
   });
 
   it('预览是只读的，参数走 typeKey/groupId/path', async () => {
-    authenticatedFetch
-      .mockResolvedValueOnce(jsonResponse(snapshot))
-      .mockResolvedValueOnce(textResponse('hello world'));
+    authenticatedFetch.mockResolvedValueOnce(jsonResponse(snapshot));
     render(<StorageV2 />);
 
     fireEvent.click(await screen.findByRole('button', { name: /查看/ }));
@@ -174,12 +334,25 @@ describe('StorageV2（项目视角）', () => {
 
     await waitFor(() => {
       expect(authenticatedFetch).toHaveBeenCalledWith(
-        '/api/storage/preview?typeKey=general_med&groupId=general_med-one&path=exports%2Freport.md',
+        '/api/projects/general_med-one/file?filePath=exports%2Freport.md',
       );
     });
     expect(await screen.findByText('hello world')).toBeTruthy();
     // 预览不该带任何写操作
-    expect(authenticatedFetch).toHaveBeenCalledTimes(2);
+    expect(authenticatedFetch).toHaveBeenCalledTimes(4);
+  });
+
+  it('DOCX 和 PPTX 复用工作区的统一预览组件', async () => {
+    render(<StorageV2 />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /查看/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /exports/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /report\.docx/ }));
+    expect((await screen.findByTestId('storage-office-preview')).textContent).toContain('report.docx');
+
+    fireEvent.click(screen.getByRole('button', { name: '关闭预览' }));
+    fireEvent.click(screen.getByRole('button', { name: /slides\.pptx/ }));
+    expect((await screen.findByTestId('storage-office-preview')).textContent).toContain('slides.pptx');
   });
 
   it('删除项目必须手打项目名，确认后真删并刷新', async () => {

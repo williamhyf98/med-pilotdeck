@@ -70,7 +70,11 @@ type TasksSettingsContextValue = {
 type MainContentToast = { kind: 'error' | 'info'; text: string } | null;
 
 const FILES_PANEL_WIDTH = 320;
-const FILE_PREVIEW_WIDTH = 560;
+const FILE_PREVIEW_DEFAULT_WIDTH = 560;
+const FILE_PREVIEW_MIN_WIDTH = 420;
+const FILE_PREVIEW_MAX_WIDTH = 760;
+const CHAT_MIN_WIDTH = 420;
+const FILE_PREVIEW_STORAGE_KEY = 'pilotdeck:file-preview-width';
 const TOOL_PANEL_STORAGE_KEY = 'pilotdeck:dashboard-panel-width';
 const TOOL_PANEL_DEFAULT_WIDTH = 480;
 const TOOL_PANEL_MIN_WIDTH = 360;
@@ -117,6 +121,15 @@ function readStoredToolPanelWidth(): number {
     return Number.isFinite(stored) && stored > 0 ? stored : TOOL_PANEL_DEFAULT_WIDTH;
   } catch {
     return TOOL_PANEL_DEFAULT_WIDTH;
+  }
+}
+
+function readStoredFilePreviewWidth(): number {
+  try {
+    const stored = Number(safeLocalStorage.getItem(FILE_PREVIEW_STORAGE_KEY));
+    return Number.isFinite(stored) && stored > 0 ? stored : FILE_PREVIEW_DEFAULT_WIDTH;
+  } catch {
+    return FILE_PREVIEW_DEFAULT_WIDTH;
   }
 }
 
@@ -816,6 +829,8 @@ function SplitBody(props: SplitBodyProps) {
   const previewPresence = useAnimatedPresence(isFiles && hasEditor && Boolean(selectedProject), 480);
   const filesSplitContainerRef = useRef<HTMLDivElement | null>(null);
   const [workbenchWidth, setWorkbenchWidth] = useState(0);
+  const [filePreviewWidth, setFilePreviewWidth] = useState(readStoredFilePreviewWidth);
+  const [filePreviewResizing, setFilePreviewResizing] = useState(false);
   const [toolPanelWidth, setToolPanelWidth] = useState(readStoredToolPanelWidth);
   const [toolPanelResizing, setToolPanelResizing] = useState(false);
   const toolPanelMaxWidth = workbenchWidth > 0
@@ -824,9 +839,24 @@ function SplitBody(props: SplitBodyProps) {
         Math.min(TOOL_PANEL_MAX_WIDTH, workbenchWidth * TOOL_PANEL_MAX_LAYOUT_RATIO),
       )
     : TOOL_PANEL_MAX_WIDTH;
-  const filePreviewWidth = workbenchWidth > 0
-    ? Math.min(FILE_PREVIEW_WIDTH, Math.max(380, workbenchWidth - FILES_PANEL_WIDTH - 420))
-    : FILE_PREVIEW_WIDTH;
+  const filePreviewMaxWidth = workbenchWidth > 0
+    ? Math.max(
+        Math.min(
+          FILE_PREVIEW_MIN_WIDTH,
+          Math.max(0, workbenchWidth - FILES_PANEL_WIDTH - CHAT_MIN_WIDTH),
+        ),
+        Math.min(
+          FILE_PREVIEW_MAX_WIDTH,
+          workbenchWidth - FILES_PANEL_WIDTH - CHAT_MIN_WIDTH,
+        ),
+      )
+    : FILE_PREVIEW_MAX_WIDTH;
+  const filePreviewMinWidth = workbenchWidth > 0
+    ? Math.min(
+        FILE_PREVIEW_MIN_WIDTH,
+        Math.max(0, workbenchWidth - FILES_PANEL_WIDTH - CHAT_MIN_WIDTH),
+      )
+    : FILE_PREVIEW_MIN_WIDTH;
 
   useEffect(() => {
     const container = filesSplitContainerRef.current;
@@ -842,6 +872,22 @@ function SplitBody(props: SplitBodyProps) {
   useEffect(() => {
     setToolPanelWidth((width) => Math.min(Math.max(width, TOOL_PANEL_MIN_WIDTH), toolPanelMaxWidth));
   }, [toolPanelMaxWidth]);
+
+  const clampFilePreviewWidth = useCallback((width: number) => (
+    Math.min(Math.max(width, filePreviewMinWidth), filePreviewMaxWidth)
+  ), [filePreviewMaxWidth, filePreviewMinWidth]);
+
+  useEffect(() => {
+    setFilePreviewWidth((width) => clampFilePreviewWidth(width));
+  }, [clampFilePreviewWidth]);
+
+  useEffect(() => {
+    try {
+      safeLocalStorage.setItem(FILE_PREVIEW_STORAGE_KEY, String(Math.round(filePreviewWidth)));
+    } catch {
+      // The preview remains usable when localStorage is unavailable.
+    }
+  }, [filePreviewWidth]);
 
   useEffect(() => {
     try {
@@ -864,6 +910,16 @@ function SplitBody(props: SplitBodyProps) {
   const handleToolPanelResizeBy = useCallback((delta: number) => {
     setToolPanelWidth((width) => clampToolPanelWidth(width + delta));
   }, [clampToolPanelWidth]);
+
+  const handleFilePreviewResizeStart = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!isFiles || !hasEditor || isMobile || editorExpanded) return;
+    event.preventDefault();
+    setFilePreviewResizing(true);
+  }, [editorExpanded, hasEditor, isFiles, isMobile]);
+
+  const handleFilePreviewResizeBy = useCallback((delta: number) => {
+    setFilePreviewWidth((width) => clampFilePreviewWidth(width + delta));
+  }, [clampFilePreviewWidth]);
 
   useEffect(() => {
     if (!toolPanelResizing) return undefined;
@@ -888,6 +944,32 @@ function SplitBody(props: SplitBodyProps) {
       document.body.style.userSelect = '';
     };
   }, [clampToolPanelWidth, toolPanelResizing]);
+
+  useEffect(() => {
+    if (!filePreviewResizing) return undefined;
+
+    const handleMouseMove = (event: globalThis.MouseEvent) => {
+      const container = filesSplitContainerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      setFilePreviewWidth(clampFilePreviewWidth(
+        rect.right - event.clientX - FILES_PANEL_WIDTH,
+      ));
+    };
+    const handleMouseUp = () => setFilePreviewResizing(false);
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [clampFilePreviewWidth, filePreviewResizing]);
 
   const renderTool = () => {
     if (activeTab === 'shell') {
@@ -1041,11 +1123,33 @@ function SplitBody(props: SplitBodyProps) {
             '--pd-side-content-width': isMobile
               ? (workbenchWidth ? `${workbenchWidth}px` : '100vw')
               : previewExpandedDuringExit
-                ? `${Math.max(FILE_PREVIEW_WIDTH, workbenchWidth - FILES_PANEL_WIDTH)}px`
+                ? `${Math.max(FILE_PREVIEW_DEFAULT_WIDTH, workbenchWidth - FILES_PANEL_WIDTH)}px`
                 : `${filePreviewWidth}px`,
             ...(!isMobile && !previewExpandedDuringExit ? { width: filePreviewWidth } : {}) } as React.CSSProperties}
           aria-label="文件预览"
         >
+          {!isMobile && !previewExpandedDuringExit ? (
+            <div
+              role="separator"
+              tabIndex={0}
+              aria-label="调整编辑器宽度"
+              aria-orientation="vertical"
+              aria-valuemin={Math.round(filePreviewMinWidth)}
+              aria-valuemax={Math.round(filePreviewMaxWidth)}
+              aria-valuenow={Math.round(filePreviewWidth)}
+              onMouseDown={handleFilePreviewResizeStart}
+              onKeyDown={(event) => {
+                if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+                event.preventDefault();
+                handleFilePreviewResizeBy(event.key === 'ArrowLeft' ? 24 : -24);
+              }}
+              className="group absolute inset-y-0 left-0 z-30 w-1 cursor-col-resize outline-none"
+              title="拖动调整编辑器宽度"
+            >
+              <div className="absolute inset-y-0 left-1/2 w-3 -translate-x-1/2" />
+              <div className="absolute inset-y-0 left-0 w-0.5 bg-border opacity-0 transition-opacity group-hover:opacity-100 group-focus:opacity-100" />
+            </div>
+          ) : null}
           <div className="pd-side-panel-content h-full pr-3">
             <EditorSidebar {...editorSidebarProps} workspaceMode />
           </div>
@@ -1072,6 +1176,7 @@ function SplitBody(props: SplitBodyProps) {
                 key={selectedProject?.name ?? ''}
                 selectedProject={selectedProject}
                 onFileOpen={handleFileOpen}
+                onFileDelete={onFileDelete}
                 activeFilePath={activeFilePath}
                 onClose={() => setActiveTab('chat')}
               />

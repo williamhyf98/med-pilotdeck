@@ -1,9 +1,12 @@
 import {
   useCallback,
   useEffect,
+  lazy,
   useMemo,
   useRef,
   useState,
+  Suspense,
+  type MouseEvent,
   type ReactNode,
 } from 'react';
 import {
@@ -26,6 +29,7 @@ import {
 } from 'lucide-react';
 import type { Project } from '../../types/app';
 import { cn } from '../../lib/utils.js';
+import { WORKSPACE_FILE_MENTION_DRAG_MIME } from '../../utils/workspaceFileMention';
 import { api, authenticatedFetch } from '../../utils/api';
 import Tooltip from '../../shared/view/ui/Tooltip';
 import {
@@ -33,10 +37,18 @@ import {
   formatAttachmentLimitErrors,
   validateAttachmentBatch,
 } from '../chat/utils/medicalFolderUpload';
+import {
+  WorkspaceDeleteDialog,
+  WorkspaceFileContextMenu,
+  type WorkspaceActionEntry,
+} from './WorkspaceFileActions';
+
+const CodeEditorBinaryFile = lazy(() => import('../code-editor/view/subcomponents/CodeEditorBinaryFile'));
 
 type FilesV2Props = {
   selectedProject: Project | null;
   onFileOpen?: (filePath: string) => void;
+  onFileDelete?: (filePath: string) => void;
   activeFilePath?: string | null;
   onClose?: () => void;
 };
@@ -67,6 +79,7 @@ type WorkspaceUsage = {
 
 type UsageThresholds = {
   workspaceWarnBytes: number;
+  inboxWarnBytes: number;
   scratchWarnBytes: number;
 };
 
@@ -117,13 +130,14 @@ const EMPTY_USAGE: WorkspaceUsage = {
 
 const DEFAULT_THRESHOLDS: UsageThresholds = {
   workspaceWarnBytes: 5 * 1024 ** 3,
+  inboxWarnBytes: 0,
   scratchWarnBytes: 1024 ** 3,
 };
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']);
-const OFFICE_EXTENSIONS = new Set(['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'csv', 'tsv', 'odt', 'odp', 'ods', 'rtf']);
+const OFFICE_EXTENSIONS = new Set(['doc', 'docx', 'wps', 'ppt', 'pptx', 'dps', 'xls', 'xlsx', 'et', 'odt', 'odp', 'ods']);
 const TEXT_EXTENSIONS = new Set([
-  'txt', 'md', 'markdown', 'json', 'jsonl', 'xml', 'yaml', 'yml',
+  'txt', 'md', 'markdown', 'json', 'jsonl', 'xml', 'yaml', 'yml', 'csv', 'tsv',
   'log', 'html', 'htm', 'css', 'js', 'jsx', 'ts', 'tsx', 'py', 'sh', 'sql',
 ]);
 const MAX_TEXT_PREVIEW_CHARS = 200_000;
@@ -236,6 +250,7 @@ function DirectoryLegend() {
 }
 
 type TreeBranchProps = {
+  projectName?: string;
   entries: WorkspaceEntry[];
   depth: number;
   expanded: Set<string>;
@@ -251,9 +266,11 @@ type TreeBranchProps = {
   onDragEnd: () => void;
   onHover: (path: string | null) => void;
   onDropInto: (entry: WorkspaceEntry) => void;
+  onContextMenu: (event: MouseEvent, entry: WorkspaceEntry) => void;
 };
 
 function TreeBranch({
+  projectName,
   entries,
   depth,
   expanded,
@@ -269,6 +286,7 @@ function TreeBranch({
   onDragEnd,
   onHover,
   onDropInto,
+  onContextMenu,
 }: TreeBranchProps) {
   return (
     <>
@@ -309,8 +327,16 @@ function TreeBranch({
               onDragStart={(event) => {
                 // 子行的 dragstart 会冒泡到父行，只认真正被拖的那个元素
                 event.stopPropagation();
-                event.dataTransfer.effectAllowed = 'move';
+                event.dataTransfer.effectAllowed = 'copyMove';
                 event.dataTransfer.setData('text/plain', entry.path);
+                event.dataTransfer.setData(
+                  WORKSPACE_FILE_MENTION_DRAG_MIME,
+                  JSON.stringify({
+                    projectName: projectName || '',
+                    relativePath: entry.path,
+                    kind: entry.type,
+                  }),
+                );
                 onDragStart(entry);
               }}
               onDragEnd={(event) => {
@@ -318,6 +344,7 @@ function TreeBranch({
                 onDragEnd();
               }}
               onClick={() => (isDirectory ? onToggle(entry) : onPreview(entry))}
+              onContextMenu={(event) => onContextMenu(event, entry)}
               title={entry.path}
               aria-expanded={isDirectory ? open : undefined}
               className={cn(
@@ -356,6 +383,7 @@ function TreeBranch({
                 listing.entries.length > 0 ? (
                   <>
                     <TreeBranch
+                      projectName={projectName}
                       entries={listing.entries}
                       depth={depth + 1}
                       expanded={expanded}
@@ -371,6 +399,7 @@ function TreeBranch({
                       onDragEnd={onDragEnd}
                       onHover={onHover}
                       onDropInto={onDropInto}
+                      onContextMenu={onContextMenu}
                     />
                     {listing.truncated ? (
                       <p
@@ -401,6 +430,7 @@ function TreeBranch({
 export default function FilesV2({
   selectedProject,
   onFileOpen,
+  onFileDelete,
   activeFilePath,
   onClose,
 }: FilesV2Props) {
@@ -413,6 +443,7 @@ export default function FilesV2({
   const [uploading, setUploading] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
   const [preview, setPreview] = useState<PreviewState>(null);
+  const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const [trash, setTrash] = useState<TrashState>(EMPTY_TRASH);
   const [showTrash, setShowTrash] = useState(false);
   const [confirmEmpty, setConfirmEmpty] = useState(false);
@@ -428,6 +459,8 @@ export default function FilesV2({
   const [editingText, setEditingText] = useState(false);
   const [textDraft, setTextDraft] = useState('');
   const [savingText, setSavingText] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ entry: WorkspaceActionEntry; x: number; y: number } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<WorkspaceActionEntry | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const projectName = selectedProject?.name ?? '';
@@ -496,6 +529,7 @@ export default function FilesV2({
   useEffect(() => {
     setNotice(null);
     setPreview(null);
+    setPreviewFullscreen(false);
     setUsage(EMPTY_USAGE);
     setTrash(EMPTY_TRASH);
     setShowTrash(false);
@@ -542,6 +576,7 @@ export default function FilesV2({
 
   const openPreview = useCallback(async (entry: WorkspaceEntry) => {
     const kind = previewKindOf(entry.name);
+    setPreviewFullscreen(false);
     setEditingText(false);
     setTextDraft('');
     if (kind === 'none') {
@@ -561,12 +596,15 @@ export default function FilesV2({
       title: entry.name,
       path: entry.path,
       kind,
-      loading: true,
+      loading: kind !== 'office',
       error: null,
       objectUrl: null,
       text: null,
       truncated: false,
     });
+    // Office files have their own renderer and loading/error handling.
+    // The PDF conversion route only works when LibreOffice is selected.
+    if (kind === 'office') return;
     try {
       const encoded = encodeURIComponent(entry.path);
       if (kind === 'text') {
@@ -575,7 +613,7 @@ export default function FilesV2({
         );
         const data = await readJson<{ content?: string }>(response);
         const content = data.content ?? '';
-        setPreview((current) => current ? {
+        setPreview((current) => current?.path === entry.path ? {
           ...current,
           loading: false,
           text: content.slice(0, MAX_TEXT_PREVIEW_CHARS),
@@ -584,9 +622,7 @@ export default function FilesV2({
         return;
       }
 
-      const url = kind === 'office'
-        ? `/api/projects/${encodeURIComponent(projectName)}/files/preview/pdf?path=${encoded}`
-        : `/api/projects/${encodeURIComponent(projectName)}/files/content?path=${encoded}`;
+      const url = `/api/projects/${encodeURIComponent(projectName)}/files/content?path=${encoded}`;
       const response = await authenticatedFetch(url);
       if (!response.ok) {
         const body = await response.json().catch(() => ({})) as { error?: string };
@@ -594,7 +630,7 @@ export default function FilesV2({
       }
       const objectUrl = URL.createObjectURL(await response.blob());
       setPreview((current) => {
-        if (!current) {
+        if (current?.path !== entry.path) {
           URL.revokeObjectURL(objectUrl);
           return current;
         }
@@ -602,7 +638,7 @@ export default function FilesV2({
         return { ...current, loading: false, objectUrl };
       });
     } catch (error) {
-      setPreview((current) => current ? {
+      setPreview((current) => current?.path === entry.path ? {
         ...current,
         loading: false,
         error: (error as Error).message,
@@ -612,8 +648,61 @@ export default function FilesV2({
 
   const closePreview = useCallback(() => {
     setPreview(null);
+    setPreviewFullscreen(false);
     setEditingText(false);
     setTextDraft('');
+  }, []);
+
+  const isProtectedRoot = useCallback((entry: WorkspaceEntry) => (
+    entry.type === 'directory'
+    && !entry.path.includes('/')
+    && ['exports', 'inbox', 'scratch'].includes(entry.name)
+  ), []);
+
+  const openContextMenu = useCallback((event: MouseEvent, entry: WorkspaceEntry) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (isProtectedRoot(entry)) {
+      setContextMenu(null);
+      return;
+    }
+    setContextMenu({ entry, x: event.clientX, y: event.clientY });
+  }, [isProtectedRoot]);
+
+  const downloadEntry = useCallback(async (entry: WorkspaceActionEntry) => {
+    const anchor = document.createElement('a');
+    if (entry.type === 'file') {
+      anchor.href = api.fileDownloadUrl(projectName, entry.path);
+      anchor.download = entry.name;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      return;
+    }
+
+    const response = await authenticatedFetch(
+      api.workspaceDirectoryDownloadUrl(projectName, entry.path),
+      { suppressServerErrorToast: true },
+    );
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      throw new Error(body.error || `目录下载失败（${response.status}）`);
+    }
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.toLowerCase().includes('application/zip')) {
+      throw new Error('服务器返回的不是有效 ZIP 文件');
+    }
+    const objectUrl = URL.createObjectURL(await response.blob());
+    anchor.href = objectUrl;
+    anchor.download = `${entry.name}.zip`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+  }, [projectName]);
+
+  const requestDeleteEntry = useCallback((entry: WorkspaceActionEntry) => {
+    setDeleteTarget(entry);
   }, []);
 
   const startEditing = useCallback(() => {
@@ -808,12 +897,17 @@ export default function FilesV2({
       await readJson(response);
       await refresh();
       setNotice({ tone: 'success', text: `已移入回收站：${target}` });
+      onFileDelete?.(target);
+      if (preview?.path === target || preview?.path?.startsWith(`${target}/`)) closePreview();
+      setDeleteTarget(null);
+      return true;
     } catch (error) {
       setNotice({ tone: 'error', text: (error as Error).message });
+      return false;
     } finally {
       setMoving(false);
     }
-  }, [projectName, refresh]);
+  }, [closePreview, onFileDelete, preview?.path, projectName, refresh]);
 
   const canDrag = useCallback((entry: WorkspaceEntry, depth: number) => {
     if (moving) return false;
@@ -864,6 +958,8 @@ export default function FilesV2({
   const rootEntries = listings['']?.entries ?? [];
   const inboxShare = usage.totalBytes > 0 ? usage.inboxBytes / usage.totalBytes : 0;
   const workspaceWarned = usage.totalBytes >= thresholds.workspaceWarnBytes * 0.8;
+  const inboxWarned = thresholds.inboxWarnBytes > 0
+    && usage.inboxBytes >= thresholds.inboxWarnBytes * 0.8;
   const scratchWarned = usage.scratchBytes >= thresholds.scratchWarnBytes * 0.8;
   const totalRatio = thresholds.workspaceWarnBytes > 0
     ? usage.totalBytes / thresholds.workspaceWarnBytes
@@ -889,10 +985,16 @@ export default function FilesV2({
     {
       key: 'inbox',
       label: 'inbox',
-      valueText: `${formatBytes(usage.inboxBytes)} · 占 ${(inboxShare * 100).toFixed(1)}%`,
-      ratio: inboxShare,
-      warned: false,
-      note: '上传原件不会自动清理',
+      valueText: thresholds.inboxWarnBytes > 0
+        ? `${formatBytes(usage.inboxBytes)} / 提示 ${formatBytes(thresholds.inboxWarnBytes)}`
+        : `${formatBytes(usage.inboxBytes)} · 占 ${(inboxShare * 100).toFixed(1)}%`,
+      ratio: thresholds.inboxWarnBytes > 0
+        ? usage.inboxBytes / thresholds.inboxWarnBytes
+        : inboxShare,
+      warned: inboxWarned,
+      note: thresholds.inboxWarnBytes > 0
+        ? '上传原件不会自动清理；此数值仅用于提示'
+        : '上传原件不会自动清理；未设置独立提示值',
     },
     {
       key: 'scratch',
@@ -912,7 +1014,7 @@ export default function FilesV2({
         </button>
       ),
     },
-  ], [inboxShare, loading, scratchWarned, thresholds, totalNote, totalRatio, usage, workspaceWarned]);
+  ], [inboxShare, inboxWarned, loading, scratchWarned, thresholds, totalNote, totalRatio, usage, workspaceWarned]);
 
   if (!selectedProject) {
     return (
@@ -1079,6 +1181,7 @@ export default function FilesV2({
               }}
             >
               <TreeBranch
+                projectName={selectedProject?.name}
                 entries={rootEntries}
                 depth={0}
                 expanded={expanded}
@@ -1100,6 +1203,7 @@ export default function FilesV2({
                 onDropInto={(entry) => {
                   if (dragPath) void moveEntry(dragPath, entry.path);
                 }}
+                onContextMenu={openContextMenu}
               />
             </div>
           )}
@@ -1339,14 +1443,17 @@ export default function FilesV2({
 
       {preview ? (
         <div
-          className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
+          className={cn('fixed inset-0 z-[10000] flex items-center justify-center bg-black/55 backdrop-blur-sm', !previewFullscreen && 'p-4')}
           onMouseDown={closePreview}
         >
           <div
             role="dialog"
             aria-modal="true"
             aria-labelledby="workspace-preview-title"
-            className="flex h-[min(82vh,760px)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-neutral-900"
+            className={cn(
+              'flex w-full flex-col overflow-hidden bg-white shadow-2xl dark:bg-neutral-900',
+              previewFullscreen ? 'h-full' : 'h-[min(82vh,760px)] max-w-5xl rounded-2xl',
+            )}
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-neutral-200 px-4 dark:border-neutral-800">
@@ -1413,8 +1520,26 @@ export default function FilesV2({
                 </button>
               </div>
             </div>
-            <div className="min-h-0 flex-1 overflow-auto bg-neutral-100 dark:bg-neutral-950">
-              {preview.loading ? (
+            <div className={cn('min-h-0 flex-1 bg-neutral-100 dark:bg-neutral-950', preview.kind === 'office' ? 'flex flex-col overflow-hidden' : 'overflow-auto')}>
+              {preview.kind === 'office' ? (
+                <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-neutral-500">正在载入预览…</div>}>
+                  <CodeEditorBinaryFile
+                    key={`${projectName}:${preview.path}`}
+                    file={{ name: preview.title, path: preview.path }}
+                    projectName={projectName}
+                    isSidebar
+                    compactHeader
+                    headerPrefix={<div className="hidden" />}
+                    isFullscreen={false}
+                    isExpanded={previewFullscreen}
+                    onClose={closePreview}
+                    onToggleFullscreen={() => setPreviewFullscreen((value) => !value)}
+                    onToggleExpand={() => setPreviewFullscreen((value) => !value)}
+                    title={preview.title}
+                    message="无法预览该文件"
+                  />
+                </Suspense>
+              ) : preview.loading ? (
                 <div className="flex h-full items-center justify-center text-sm text-neutral-500">
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   正在载入预览…
@@ -1442,6 +1567,31 @@ export default function FilesV2({
           </div>
         </div>
       ) : null}
+
+      {contextMenu ? (
+        <WorkspaceFileContextMenu
+          entry={contextMenu.entry}
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onDownload={() => {
+            void downloadEntry(contextMenu.entry).catch((error) => {
+              setNotice({ tone: 'error', text: (error as Error).message });
+            });
+          }}
+          onDelete={() => requestDeleteEntry(contextMenu.entry)}
+          onClose={() => setContextMenu(null)}
+        />
+      ) : null}
+      <WorkspaceDeleteDialog
+        entry={deleteTarget}
+        busy={moving}
+        onCancel={() => {
+          if (!moving) setDeleteTarget(null);
+        }}
+        onConfirm={() => {
+          if (deleteTarget) void trashEntry(deleteTarget.path);
+        }}
+      />
     </div>
   );
 }

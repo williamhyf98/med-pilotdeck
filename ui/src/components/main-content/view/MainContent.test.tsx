@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   chatProps: [] as any[],
   editorExpanded: false,
   hasEditor: true,
+  editorSidebarProps: [] as any[],
 }));
 
 vi.mock('../../../contexts/TaskMasterContext', () => ({
@@ -79,7 +80,10 @@ vi.mock('../../code-editor/hooks/useEditorSidebar', () => ({
 }));
 
 vi.mock('../../code-editor/view/EditorSidebar', () => ({
-  default: () => <div data-testid="editor-sidebar" />,
+  default: (props: any) => {
+    mocks.editorSidebarProps.push(props);
+    return <div data-testid="editor-sidebar" />;
+  },
 }));
 
 vi.mock('../../chat-v2/ChatInterfaceV2', () => ({
@@ -186,6 +190,7 @@ beforeEach(() => {
   mocks.chatProps.length = 0;
   mocks.editorExpanded = false;
   mocks.hasEditor = true;
+  mocks.editorSidebarProps.length = 0;
 });
 
 afterEach(() => {
@@ -267,6 +272,16 @@ describe('MainContent file workspace routing', () => {
     expect(preview.nextElementSibling).toBe(files);
     expect(screen.getByTestId('files-explorer')).not.toBeNull();
     expect(screen.getByTestId('editor-sidebar')).not.toBeNull();
+    const separator = screen.getByRole('separator', { name: '调整编辑器宽度' });
+    expect(separator.getAttribute('aria-valuemin')).toBe('420');
+    expect(separator.getAttribute('aria-valuemax')).toBe('760');
+    expect(separator.getAttribute('aria-valuenow')).toBe('560');
+
+    fireEvent.keyDown(separator, { key: 'ArrowLeft' });
+    expect(separator.getAttribute('aria-valuenow')).toBe('584');
+    fireEvent.keyDown(separator, { key: 'ArrowRight' });
+    expect(separator.getAttribute('aria-valuenow')).toBe('560');
+
     expect(files.className).toContain('pd-side-panel-enter');
     expect(preview.className).toContain('pd-side-panel-enter');
   });

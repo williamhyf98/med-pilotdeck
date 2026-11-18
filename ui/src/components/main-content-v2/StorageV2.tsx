@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
 import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   ChevronDown,
   ChevronRight,
   Eraser,
   File,
   FileImage,
+  FileSpreadsheet,
   FileText,
   Folder,
   FolderOpen,
@@ -16,8 +20,16 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { authenticatedFetch } from '../../utils/api';
+import { api, authenticatedFetch } from '../../utils/api';
 import { cn } from '../../lib/utils.js';
+import { WORKSPACE_FILE_MENTION_DRAG_MIME } from '../../utils/workspaceFileMention';
+import {
+  WorkspaceDeleteDialog,
+  WorkspaceFileContextMenu,
+  type WorkspaceActionEntry,
+} from './WorkspaceFileActions';
+
+const CodeEditorBinaryFile = lazy(() => import('../code-editor/view/subcomponents/CodeEditorBinaryFile'));
 
 /**
  * 存储页（设置 → 存储）= **项目视角**（2026-11-12 重构）。
@@ -28,30 +40,17 @@ import { cn } from '../../lib/utils.js';
  *
  * 刻意不做的事：
  *   - 不再有「归档」tab —— 项目归档已下线，删项目就是物理删除；
- *   - 不再从这一页删单个文件 —— 文件级删除只属于工作区页的回收站（7 天后自动释放）。
+ *   - 文件级删除和下载使用与工作区页相同的接口和回收站语义。
  *   唯一的例外是**只读预览**：排查「这 300 MB 到底是什么」时，总得能点开看一眼。
  */
 
-type PreviewKind = 'image' | 'pdf' | 'text';
-
-type StorageFile = {
-  path: string;
-  name: string;
-  sizeBytes: number;
-  previewKind: PreviewKind | null;
-};
+type PreviewKind = 'image' | 'pdf' | 'office' | 'text' | 'none';
 
 type StorageUsage = {
   inboxBytes: number;
   exportsBytes: number;
   scratchBytes: number;
   totalBytes: number;
-};
-
-type StorageFolder = {
-  name: string;
-  fileCount: number;
-  sizeBytes: number;
 };
 
 type StorageProject = {
@@ -65,8 +64,14 @@ type StorageProject = {
   trashCount?: number;
   sessionCount?: number;
   lastActivityAt?: string | null;
-  files: StorageFile[];
-  folders?: StorageFolder[];
+  files: Array<{ path: string; name: string; sizeBytes: number }>;
+};
+
+type StorageSortKey = 'project' | 'type' | 'sessionCount' | 'sizeBytes' | 'trashCount' | 'lastActivityAt';
+type StorageSortDirection = 'asc' | 'desc';
+type StorageSort = {
+  key: StorageSortKey;
+  direction: StorageSortDirection;
 };
 
 type StorageSnapshot = {
@@ -81,18 +86,180 @@ type StorageSnapshot = {
 
 type PreviewState = {
   title: string;
+  path: string;
+  projectName: string;
   kind: PreviewKind;
   loading: boolean;
-  content: string | null;
-  objectUrl: string | null;
+  text: string | null;
   truncated: boolean;
   error: string | null;
 } | null;
+
+type WorkspaceEntry = {
+  name: string;
+  path: string;
+  type: 'directory' | 'file';
+  size: number | null;
+  modified: string | null;
+};
+
+type DirectoryListing = {
+  entries: WorkspaceEntry[];
+  truncated: boolean;
+};
+
+function treeKey(projectId: string, relativePath: string): string {
+  return `${projectId}:${relativePath}`;
+}
+
+type StorageTreeBranchProps = {
+  projectId: string;
+  projectName?: string;
+  entries: WorkspaceEntry[];
+  depth: number;
+  expandedPaths: Set<string>;
+  loadingPaths: Set<string>;
+  listings: Record<string, DirectoryListing>;
+  onToggleDirectory: (entry: WorkspaceEntry) => void;
+  onPreview: (entry: WorkspaceEntry) => void;
+  onContextMenu: (event: MouseEvent, entry: WorkspaceEntry) => void;
+};
+
+function StorageTreeBranch({
+  projectId,
+  projectName,
+  entries,
+  depth,
+  expandedPaths,
+  loadingPaths,
+  listings,
+  onToggleDirectory,
+  onPreview,
+  onContextMenu,
+}: StorageTreeBranchProps) {
+  return (
+    <>
+      {entries.map((entry) => {
+        const isDirectory = entry.type === 'directory';
+        const entryKey = treeKey(projectId, entry.path);
+        const open = isDirectory && expandedPaths.has(entryKey);
+        const listing = listings[entryKey];
+        const loading = loadingPaths.has(entryKey);
+        const kind = isDirectory ? null : previewKindOf(entry.name);
+        return (
+          <div key={entry.path}>
+            <button
+              type="button"
+              draggable
+              onDragStart={(event) => {
+                event.stopPropagation();
+                event.dataTransfer.effectAllowed = 'copy';
+                event.dataTransfer.setData(
+                  WORKSPACE_FILE_MENTION_DRAG_MIME,
+                  JSON.stringify({
+                    projectName: projectName || projectId,
+                    relativePath: entry.path,
+                    kind: entry.type,
+                  }),
+                );
+                event.dataTransfer.setData('text/plain', entry.path);
+              }}
+              onClick={() => (isDirectory ? onToggleDirectory(entry) : onPreview(entry))}
+              onContextMenu={(event) => onContextMenu(event, entry)}
+              aria-expanded={isDirectory ? open : undefined}
+              title={isDirectory ? entry.path : entry.name}
+              className="group flex w-full items-center gap-1.5 rounded-md py-1.5 pr-3 text-left transition-colors hover:bg-neutral-50 dark:hover:bg-neutral-800/60"
+              style={{ paddingLeft: 12 + depth * 18 }}
+            >
+              <span className="flex h-4 w-4 shrink-0 items-center justify-center text-neutral-400">
+                {isDirectory
+                  ? <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-90')} />
+                  : null}
+              </span>
+              <span className={cn(
+                'shrink-0',
+                isDirectory ? 'text-amber-500' : 'text-neutral-400',
+              )}
+              >
+                {isDirectory
+                  ? <FolderIcon name={entry.name} open={open} />
+                  : <FileKindIcon name={entry.name} />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className={cn(
+                  'block truncate text-sm leading-5',
+                  !isDirectory && kind !== 'none' && 'group-hover:text-blue-600 dark:group-hover:text-blue-400',
+                )}>
+                  {entry.name}
+                </span>
+                <span className="block truncate text-[10px] leading-4 text-neutral-400">
+                  {isDirectory
+                    ? (open ? `${listing?.entries.length ?? ''} 项` : '目录')
+                    : formatBytes(entry.size ?? 0)}
+                  {entry.modified ? ` · ${formatWhen(entry.modified)}` : ''}
+                </span>
+              </span>
+              {loading ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-neutral-400" /> : null}
+            </button>
+            {open ? (
+              listing ? (
+                listing.entries.length > 0 ? (
+                  <>
+                    <StorageTreeBranch
+                      projectId={projectId}
+                      projectName={projectName}
+                      entries={listing.entries}
+                      depth={depth + 1}
+                      expandedPaths={expandedPaths}
+                      loadingPaths={loadingPaths}
+                      listings={listings}
+                      onToggleDirectory={onToggleDirectory}
+                      onPreview={onPreview}
+                      onContextMenu={onContextMenu}
+                    />
+                    {listing.truncated ? (
+                      <p
+                        className="py-1 text-[10px] text-neutral-400"
+                        style={{ paddingLeft: 42 + depth * 18 }}
+                      >
+                        仅显示前 500 项，完整内容请下载
+                      </p>
+                    ) : null}
+                  </>
+                ) : (
+                  <p
+                    className="py-1 text-[10px] text-neutral-400"
+                    style={{ paddingLeft: 42 + depth * 18 }}
+                  >
+                    空目录
+                  </p>
+                )
+              ) : null
+            ) : null}
+          </div>
+        );
+      })}
+    </>
+  );
+}
 
 const EMPTY_SNAPSHOT: StorageSnapshot = {
   totals: { totalBytes: 0, workspaceBytes: 0, trashBytes: 0, projectCount: 0 },
   projects: [],
 };
+
+const DEFAULT_STORAGE_SORT: StorageSort = {
+  key: 'lastActivityAt',
+  direction: 'desc',
+};
+
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']);
+const OFFICE_EXTENSIONS = new Set(['doc', 'docx', 'wps', 'ppt', 'pptx', 'dps', 'xls', 'xlsx', 'et', 'odt', 'odp', 'ods']);
+const TEXT_EXTENSIONS = new Set([
+  'txt', 'md', 'markdown', 'json', 'jsonl', 'xml', 'yaml', 'yml', 'csv', 'tsv',
+  'log', 'html', 'htm', 'css', 'js', 'jsx', 'ts', 'tsx', 'py', 'sh', 'sql',
+]);
+const MAX_TEXT_PREVIEW_CHARS = 200_000;
 
 function formatBytes(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return '0 B';
@@ -113,6 +280,89 @@ function formatWhen(value: string | null | undefined): string {
   return date.toLocaleString('zh-CN', { hour12: false });
 }
 
+function compareProjectNames(
+  left: StorageProject,
+  right: StorageProject,
+  collator: Intl.Collator,
+): number {
+  // Keep Latin names before Chinese names, then let the locale collator
+  // handle English letters and Chinese pinyin within each group.
+  const leftStartsWithLatin = /^[A-Za-z0-9]/.test(left.displayName);
+  const rightStartsWithLatin = /^[A-Za-z0-9]/.test(right.displayName);
+  if (leftStartsWithLatin !== rightStartsWithLatin) {
+    return leftStartsWithLatin ? -1 : 1;
+  }
+  return collator.compare(left.displayName, right.displayName)
+    || collator.compare(left.id, right.id);
+}
+
+function compareStorageProjects(
+  left: StorageProject,
+  right: StorageProject,
+  key: StorageSortKey,
+  collator: Intl.Collator,
+): number {
+  if (key === 'project') {
+    return compareProjectNames(left, right, collator);
+  }
+  if (key === 'type') {
+    return collator.compare(projectTypeLabel(left.projectType), projectTypeLabel(right.projectType))
+      || collator.compare(left.displayName, right.displayName);
+  }
+  if (key === 'sessionCount') {
+    return (left.sessionCount ?? 0) - (right.sessionCount ?? 0);
+  }
+  if (key === 'sizeBytes') {
+    return left.sizeBytes - right.sizeBytes;
+  }
+  if (key === 'trashCount') {
+    return (left.trashCount ?? 0) - (right.trashCount ?? 0);
+  }
+
+  const leftTime = left.lastActivityAt ? new Date(left.lastActivityAt).getTime() : 0;
+  const rightTime = right.lastActivityAt ? new Date(right.lastActivityAt).getTime() : 0;
+  return (Number.isFinite(leftTime) ? leftTime : 0)
+    - (Number.isFinite(rightTime) ? rightTime : 0);
+}
+
+function sortDirectionLabel(direction: StorageSortDirection): string {
+  return direction === 'asc' ? '升序' : '降序';
+}
+
+function SortableHeader({
+  label,
+  sortKey,
+  activeSort,
+  onSort,
+  align = 'left',
+}: {
+  label: string;
+  sortKey: StorageSortKey;
+  activeSort: StorageSort;
+  onSort: (key: StorageSortKey) => void;
+  align?: 'left' | 'right';
+}) {
+  const active = activeSort.key === sortKey;
+  const direction = activeSort.direction;
+  const Icon = active ? (direction === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
+  const directionText = active ? `，当前${sortDirectionLabel(direction)}` : '，点击排序';
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(sortKey)}
+      className={cn(
+        'inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-neutral-500 transition hover:text-neutral-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-neutral-400 dark:hover:text-neutral-100',
+        align === 'right' && 'ml-auto justify-end',
+      )}
+      aria-label={`${label}${directionText}`}
+      title={`按${label}${active ? `（${sortDirectionLabel(direction)}）` : ''}排序`}
+    >
+      <span>{label}</span>
+      <Icon className={cn('h-3.5 w-3.5 shrink-0', active && 'text-blue-600 dark:text-blue-400')} strokeWidth={2} />
+    </button>
+  );
+}
+
 async function readJson<T>(response: Response): Promise<T> {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -121,72 +371,34 @@ async function readJson<T>(response: Response): Promise<T> {
   return body as T;
 }
 
-function FileKindIcon({ kind }: { kind: PreviewKind | null }) {
+function extensionOf(name: string): string {
+  const index = name.lastIndexOf('.');
+  return index >= 0 ? name.slice(index + 1).toLowerCase() : '';
+}
+
+function previewKindOf(name: string): PreviewKind {
+  const extension = extensionOf(name);
+  if (IMAGE_EXTENSIONS.has(extension)) return 'image';
+  if (extension === 'pdf') return 'pdf';
+  if (OFFICE_EXTENSIONS.has(extension)) return 'office';
+  if (TEXT_EXTENSIONS.has(extension)) return 'text';
+  return 'none';
+}
+
+function FileKindIcon({ name }: { name: string }) {
+  const kind = previewKindOf(name);
   if (kind === 'image') return <FileImage className="h-4 w-4" />;
+  if (kind === 'office') return <FileSpreadsheet className="h-4 w-4" />;
   if (kind === 'text' || kind === 'pdf') return <FileText className="h-4 w-4" />;
   return <File className="h-4 w-4" />;
 }
 
-/** 三个默认目录固定排在最前，和「工作区」页面看到的一致。 */
-const DEFAULT_DIRS = ['inbox', 'exports', 'scratch'] as const;
-
-function folderHint(name: string): string {
-  if (name === 'inbox') return '上传的原件，agent 只读';
-  if (name === 'exports') return '最终成品，可直接下载';
-  if (name === 'scratch') return '中间产物，会自动清理';
-  if (name.includes('.')) return '放在项目根目录的文件';
-  return '自定义目录';
-}
-
-function FolderIcon({ name }: { name: string }) {
+function FolderIcon({ name, open = false }: { name: string; open?: boolean }) {
   if (name === 'inbox') return <Inbox className="h-4 w-4" />;
   if (name === 'scratch') return <Eraser className="h-4 w-4" />;
+  if (open) return <FolderOpen className="h-4 w-4" />;
   if (name === 'exports') return <FolderOpen className="h-4 w-4" />;
-  if (name.includes('.')) return <File className="h-4 w-4" />;
   return <Folder className="h-4 w-4" />;
-}
-
-/** `.pilotdeck` / `.trash` 之类不展示，和工作区页保持一致（后端也会过滤，这里是兜底）。 */
-function topDirOf(filePath: string): string | null {
-  const top = filePath.split('/')[0] ?? '';
-  if (!top || top.startsWith('.')) return null;
-  return top;
-}
-
-/**
- * 目录清单：优先用后端给的 `folders`（三个默认目录永远在 + 用户自建目录），
- * 缺字段时按文件路径兜底，保证老快照也能渲染。
- */
-function resolveFolders(project: StorageProject): StorageFolder[] {
-  if (Array.isArray(project.folders) && project.folders.length > 0) return project.folders;
-  const counts = new Map<string, { fileCount: number; sizeBytes: number }>();
-  for (const file of project.files) {
-    const top = topDirOf(file.path);
-    if (!top) continue;
-    const current = counts.get(top) ?? { fileCount: 0, sizeBytes: 0 };
-    current.fileCount += 1;
-    current.sizeBytes += file.sizeBytes;
-    counts.set(top, current);
-  }
-  const names = [...new Set([...DEFAULT_DIRS, ...counts.keys()])];
-  return names.map((name) => ({
-    name,
-    fileCount: counts.get(name)?.fileCount ?? 0,
-    sizeBytes: counts.get(name)?.sizeBytes ?? 0,
-  }));
-}
-
-/** 顶层目录 → 该目录下的文件（已按路径排好序）。 */
-function groupFilesByFolder(files: StorageFile[]): Map<string, StorageFile[]> {
-  const map = new Map<string, StorageFile[]>();
-  for (const file of files) {
-    const top = topDirOf(file.path);
-    if (!top) continue;
-    const list = map.get(top);
-    if (list) list.push(file);
-    else map.set(top, [file]);
-  }
-  return map;
 }
 
 export default function StorageV2() {
@@ -194,15 +406,29 @@ export default function StorageV2() {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  /** key = `${project.id}:${folder.name}`；项目展开后再按目录逐层展开。 */
-  const [openFolders, setOpenFolders] = useState<Set<string>>(new Set());
+  const [sort, setSort] = useState<StorageSort>(DEFAULT_STORAGE_SORT);
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  const [listings, setListings] = useState<Record<string, DirectoryListing>>({});
+  const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set());
   const [preview, setPreview] = useState<PreviewState>(null);
+  const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const [notice, setNotice] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
 
   const [deleteTarget, setDeleteTarget] = useState<StorageProject | null>(null);
   const [typedName, setTypedName] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    project: StorageProject;
+    entry: WorkspaceActionEntry;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [deleteFileTarget, setDeleteFileTarget] = useState<{
+    project: StorageProject;
+    entry: WorkspaceActionEntry;
+  } | null>(null);
+  const [deletingFile, setDeletingFile] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -210,6 +436,10 @@ export default function StorageV2() {
       const response = await authenticatedFetch('/api/storage');
       const data = await readJson<StorageSnapshot>(response);
       setSnapshot({ ...data, projects: data.projects ?? [] });
+      setExpanded(new Set());
+      setListings({});
+      setExpandedPaths(new Set());
+      setLoadingPaths(new Set());
     } catch (error) {
       setNotice({ kind: 'error', text: (error as Error).message });
     } finally {
@@ -221,60 +451,216 @@ export default function StorageV2() {
     void refresh();
   }, [refresh]);
 
-  useEffect(() => () => {
-    if (preview?.objectUrl) URL.revokeObjectURL(preview.objectUrl);
-  }, [preview?.objectUrl]);
-
   const projects = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
-    if (!normalized) return snapshot.projects;
-    // 搜项目名、项目 id，也搜文件路径 —— 用户常常只记得文件名。
-    return snapshot.projects.filter((project) => (
+    const filtered = !normalized
+      ? snapshot.projects
+      : snapshot.projects.filter((project) => (
       `${project.displayName} ${project.id}`.toLocaleLowerCase().includes(normalized)
       || project.files.some((file) => file.path.toLocaleLowerCase().includes(normalized))
-    ));
-  }, [query, snapshot.projects]);
+      ));
+    const collator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
+    const direction = sort.direction === 'asc' ? 1 : -1;
+    return filtered
+      .map((project, index) => ({ project, index }))
+      .sort((left, right) => (
+        direction * compareStorageProjects(left.project, right.project, sort.key, collator)
+        || left.index - right.index
+      ))
+      .map(({ project }) => project);
+  }, [query, snapshot.projects, sort]);
 
-  const openPreview = async (project: StorageProject, file: StorageFile) => {
-    if (!file.previewKind) return;
+  const toggleSort = useCallback((key: StorageSortKey) => {
+    setSort((current) => (
+      current.key === key
+        ? {
+            key,
+            direction: current.direction === 'asc' ? 'desc' : 'asc',
+          }
+        : {
+            key,
+            direction: key === 'lastActivityAt' ? 'desc' : 'asc',
+          }
+    ));
+  }, []);
+
+  const workspaceProjectName = useCallback((project: StorageProject) => project.id, []);
+
+  const loadDirectory = useCallback(async (project: StorageProject, relativePath: string) => {
+    const key = treeKey(project.id, relativePath);
+    if (listings[key] || loadingPaths.has(key)) return;
+    setLoadingPaths((current) => new Set(current).add(key));
+    try {
+      const response = await authenticatedFetch(
+        `/api/projects/${encodeURIComponent(workspaceProjectName(project))}/files/list?path=${encodeURIComponent(relativePath)}`,
+      );
+      const data = await readJson<DirectoryListing>(response);
+      setListings((current) => ({
+        ...current,
+        [key]: { entries: data.entries ?? [], truncated: Boolean(data.truncated) },
+      }));
+    } catch (error) {
+      setNotice({ kind: 'error', text: (error as Error).message });
+    } finally {
+      setLoadingPaths((current) => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
+    }
+  }, [listings, loadingPaths, workspaceProjectName]);
+
+  const toggleDirectory = useCallback((project: StorageProject, entry: WorkspaceEntry) => {
+    const key = treeKey(project.id, entry.path);
+    const shouldOpen = !expandedPaths.has(key);
+    setExpandedPaths((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+    if (shouldOpen) void loadDirectory(project, entry.path);
+  }, [expandedPaths, loadDirectory]);
+
+  const openPreview = useCallback(async (project: StorageProject, entry: WorkspaceEntry) => {
+    const kind = previewKindOf(entry.name);
+    const projectName = workspaceProjectName(project);
+    setPreviewFullscreen(false);
+    if (kind === 'none') {
+      setPreview({
+        title: entry.name,
+        path: entry.path,
+        projectName,
+        kind,
+        loading: false,
+        text: null,
+        truncated: false,
+        error: '这个文件类型暂不支持预览，可下载或直接在编辑器中打开。',
+      });
+      return;
+    }
     setPreview({
-      title: file.name,
-      kind: file.previewKind,
-      loading: true,
-      content: null,
-      objectUrl: null,
+      title: entry.name,
+      path: entry.path,
+      projectName,
+      kind,
+      loading: kind === 'text',
+      text: null,
       truncated: false,
       error: null,
     });
+    if (kind !== 'text') return;
     try {
-      const params = new URLSearchParams({
-        typeKey: project.typeKey,
-        groupId: project.id,
-        path: file.path,
-      });
-      const response = await authenticatedFetch(`/api/storage/preview?${params}`);
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({})) as { error?: string };
-        throw new Error(body.error || `预览失败（${response.status}）`);
-      }
-      if (file.previewKind === 'text') {
-        const content = await response.text();
-        setPreview((current) => current ? {
+      const response = await authenticatedFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/file?filePath=${encodeURIComponent(entry.path)}`,
+      );
+      const data = await readJson<{ content?: string }>(response);
+      const content = data.content ?? '';
+      setPreview((current) => current?.path === entry.path ? {
           ...current,
           loading: false,
-          content,
-          truncated: response.headers.get('X-Preview-Truncated') === 'true',
+          text: content.slice(0, MAX_TEXT_PREVIEW_CHARS),
+          truncated: content.length > MAX_TEXT_PREVIEW_CHARS,
         } : current);
-      } else {
-        const objectUrl = URL.createObjectURL(await response.blob());
-        setPreview((current) => current ? { ...current, loading: false, objectUrl } : current);
-      }
     } catch (error) {
-      setPreview((current) => current
+      setPreview((current) => current?.path === entry.path
         ? { ...current, loading: false, error: (error as Error).message }
         : current);
     }
-  };
+  }, [workspaceProjectName]);
+
+  const closePreview = useCallback(() => {
+    setPreview(null);
+    setPreviewFullscreen(false);
+  }, []);
+
+  const isProtectedRoot = useCallback((entry: WorkspaceEntry) => (
+    entry.type === 'directory'
+    && !entry.path.includes('/')
+    && ['exports', 'inbox', 'scratch'].includes(entry.name)
+  ), []);
+
+  const openContextMenu = useCallback((
+    project: StorageProject,
+    event: MouseEvent,
+    entry: WorkspaceEntry,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (isProtectedRoot(entry)) {
+      setContextMenu(null);
+      return;
+    }
+    setContextMenu({
+      project,
+      entry: { name: entry.name, path: entry.path, type: entry.type },
+      x: event.clientX,
+      y: event.clientY,
+    });
+  }, [isProtectedRoot]);
+
+  const downloadEntry = useCallback(async (project: StorageProject, entry: WorkspaceActionEntry) => {
+    const anchor = document.createElement('a');
+    if (entry.type === 'file') {
+      anchor.href = api.fileDownloadUrl(project.id, entry.path);
+      anchor.download = entry.name;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      return;
+    }
+
+    const response = await authenticatedFetch(
+      api.workspaceDirectoryDownloadUrl(project.id, entry.path),
+      { suppressServerErrorToast: true },
+    );
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      throw new Error(body.error || `目录下载失败（${response.status}）`);
+    }
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.toLowerCase().includes('application/zip')) {
+      throw new Error('服务器返回的不是有效 ZIP 文件');
+    }
+    const objectUrl = URL.createObjectURL(await response.blob());
+    anchor.href = objectUrl;
+    anchor.download = `${entry.name}.zip`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+  }, []);
+
+  const trashFileEntry = useCallback(async (
+    project: StorageProject,
+    entry: WorkspaceActionEntry,
+  ) => {
+    setDeletingFile(true);
+    setNotice(null);
+    try {
+      const response = await authenticatedFetch(
+        `/api/projects/${encodeURIComponent(project.id)}/files/trash`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: entry.path }),
+        },
+      );
+      await readJson(response);
+      setDeleteFileTarget(null);
+      setContextMenu(null);
+      if (preview?.projectName === project.id
+        && (preview.path === entry.path || preview.path.startsWith(`${entry.path}/`))) {
+        closePreview();
+      }
+      setNotice({ kind: 'success', text: `已移入回收站：${entry.path}` });
+      await refresh();
+    } catch (error) {
+      setNotice({ kind: 'error', text: (error as Error).message });
+    } finally {
+      setDeletingFile(false);
+    }
+  }, [closePreview, preview, refresh]);
 
   const requestDelete = (project: StorageProject) => {
     setDeleteError(null);
@@ -437,31 +823,36 @@ export default function StorageV2() {
               </div>
             ) : (
               <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
-                <div className="hidden min-w-0 grid-cols-[minmax(0,1fr)_92px_72px_96px_104px_136px_168px] gap-3 border-b border-neutral-200 bg-neutral-50 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-500 dark:border-neutral-800 dark:bg-neutral-950/40 md:grid">
-                  <span>项目</span>
-                  <span>类型</span>
-                  <span className="text-right">会话</span>
-                  <span className="text-right">占用</span>
-                  <span className="text-right">回收站</span>
-                  <span className="text-right">最后活动</span>
+                <div className="hidden min-w-0 grid-cols-[minmax(0,1fr)_92px_72px_96px_104px_136px_168px] gap-3 border-b border-neutral-200 bg-neutral-50 px-4 py-2.5 dark:border-neutral-800 dark:bg-neutral-950/40 md:grid">
+                  <SortableHeader label="项目" sortKey="project" activeSort={sort} onSort={toggleSort} />
+                  <SortableHeader label="类型" sortKey="type" activeSort={sort} onSort={toggleSort} />
+                  <SortableHeader label="会话" sortKey="sessionCount" activeSort={sort} onSort={toggleSort} align="right" />
+                  <SortableHeader label="占用" sortKey="sizeBytes" activeSort={sort} onSort={toggleSort} align="right" />
+                  <SortableHeader label="回收站" sortKey="trashCount" activeSort={sort} onSort={toggleSort} align="right" />
+                  <SortableHeader label="最后活动" sortKey="lastActivityAt" activeSort={sort} onSort={toggleSort} align="right" />
                   <span className="text-right">操作</span>
                 </div>
 
                 {projects.map((project) => {
                   const open = expanded.has(project.id);
-                  const folders = resolveFolders(project);
-                  const filesByFolder = groupFilesByFolder(project.files);
+                  const rootKey = treeKey(project.id, '');
+                  const rootListing = listings[rootKey];
+                  const rootLoading = loadingPaths.has(rootKey);
                   return (
                     <div key={`${project.typeKey}:${project.id}`} className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
                       <div className="grid min-w-0 grid-cols-1 gap-2 px-4 py-3 md:grid-cols-[minmax(0,1fr)_92px_72px_96px_104px_136px_168px] md:items-center md:gap-3">
                         <button
                           type="button"
-                          onClick={() => setExpanded((current) => {
-                            const next = new Set(current);
-                            if (next.has(project.id)) next.delete(project.id);
-                            else next.add(project.id);
-                            return next;
-                          })}
+                          onClick={() => {
+                            const nextOpen = !expanded.has(project.id);
+                            setExpanded((current) => {
+                              const next = new Set(current);
+                              if (nextOpen) next.add(project.id);
+                              else next.delete(project.id);
+                              return next;
+                            });
+                            if (nextOpen) void loadDirectory(project, '');
+                          }}
                           className="flex min-w-0 items-center gap-2 text-left"
                           aria-expanded={open}
                         >
@@ -470,7 +861,6 @@ export default function StorageV2() {
                             : <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />}
                           <span className="min-w-0">
                             <span className="block truncate text-sm font-semibold">{project.displayName}</span>
-                            <span className="block truncate font-mono text-[11px] text-neutral-400">{project.id}</span>
                           </span>
                         </button>
                         <span className="text-xs text-neutral-500 md:text-sm md:text-neutral-600 dark:md:text-neutral-300">
@@ -485,11 +875,10 @@ export default function StorageV2() {
                         <span className="flex items-center gap-2 md:justify-end">
                           <button
                             type="button"
-                            onClick={() => setExpanded((current) => {
-                              const next = new Set(current);
-                              if (!next.has(project.id)) next.add(project.id);
-                              return next;
-                            })}
+                            onClick={() => {
+                              setExpanded((current) => new Set(current).add(project.id));
+                              void loadDirectory(project, '');
+                            }}
                             className="inline-flex h-8 items-center rounded-md border border-neutral-200 px-2.5 text-xs font-medium text-neutral-700 transition hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
                           >
                             查看
@@ -515,65 +904,32 @@ export default function StorageV2() {
                             <span className="text-neutral-400">预览只读；要删单个文件请去工作区页的回收站</span>
                           </div>
                           <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
-                            {folders.map((folder) => {
-                              const folderKey = `${project.id}:${folder.name}`;
-                              const folderOpen = openFolders.has(folderKey);
-                              const files = filesByFolder.get(folder.name) ?? [];
-                              return (
-                                <div key={folderKey} className="border-b border-neutral-100 last:border-0 dark:border-neutral-800">
-                                  <button
-                                    type="button"
-                                    onClick={() => setOpenFolders((current) => {
-                                      const next = new Set(current);
-                                      if (next.has(folderKey)) next.delete(folderKey);
-                                      else next.add(folderKey);
-                                      return next;
-                                    })}
-                                    aria-expanded={folderOpen}
-                                    className="flex w-full items-center gap-2 px-3 py-2 text-left transition hover:bg-neutral-50 dark:hover:bg-neutral-800/50"
-                                  >
-                                    {folderOpen
-                                      ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
-                                      : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-neutral-400" />}
-                                    <span className="shrink-0 text-neutral-400"><FolderIcon name={folder.name} /></span>
-                                    <span className="min-w-0 flex-1">
-                                      <span className="block truncate text-sm font-medium">{folder.name}</span>
-                                      <span className="block truncate text-[11px] text-neutral-400">{folderHint(folder.name)}</span>
-                                    </span>
-                                    <span className="shrink-0 font-mono text-xs text-neutral-500">
-                                      {folder.fileCount} 个 · {formatBytes(folder.sizeBytes)}
-                                    </span>
-                                  </button>
-                                  {folderOpen ? (
-                                    <div className="border-t border-neutral-100 bg-neutral-50/50 dark:border-neutral-800 dark:bg-neutral-950/20">
-                                      {files.length === 0 ? (
-                                        <p className="px-3 py-2 text-xs text-neutral-400">空目录</p>
-                                      ) : files.map((file) => (
-                                        <div key={file.path} className="flex items-center gap-3 border-b border-neutral-100 px-3 py-2 last:border-0 dark:border-neutral-800">
-                                          <span className="text-neutral-400"><FileKindIcon kind={file.previewKind} /></span>
-                                          <button
-                                            type="button"
-                                            disabled={!file.previewKind}
-                                            onClick={() => void openPreview(project, file)}
-                                            className={cn('min-w-0 flex-1 text-left', file.previewKind && 'group cursor-pointer')}
-                                            title={file.previewKind ? '点击预览（只读）' : '此类型暂不支持预览'}
-                                          >
-                                            <span className={cn(
-                                              'block truncate text-sm',
-                                              file.previewKind && 'group-hover:text-blue-600 dark:group-hover:text-blue-400',
-                                            )}>
-                                              {file.name}
-                                            </span>
-                                            <span className="block truncate font-mono text-[11px] text-neutral-400">{file.path}</span>
-                                          </button>
-                                          <span className="shrink-0 font-mono text-xs text-neutral-500">{formatBytes(file.sizeBytes)}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  ) : null}
-                                </div>
-                              );
-                            })}
+                            {!rootListing && rootLoading ? (
+                              <div className="flex items-center gap-2 px-3 py-4 text-xs text-neutral-400">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                正在读取目录…
+                              </div>
+                            ) : rootListing?.entries.length ? (
+                              <StorageTreeBranch
+                                projectId={project.id}
+                                projectName={project.id}
+                                entries={rootListing.entries}
+                                depth={0}
+                                expandedPaths={expandedPaths}
+                                loadingPaths={loadingPaths}
+                                listings={listings}
+                                onToggleDirectory={(entry) => toggleDirectory(project, entry)}
+                                onPreview={(entry) => void openPreview(project, entry)}
+                                onContextMenu={(event, entry) => openContextMenu(project, event, entry)}
+                              />
+                            ) : (
+                              <p className="px-3 py-4 text-xs text-neutral-400">空目录</p>
+                            )}
+                            {rootListing?.truncated ? (
+                              <p className="px-3 py-2 text-[10px] text-neutral-400">
+                                仅显示前 500 项，完整内容请下载
+                              </p>
+                            ) : null}
                           </div>
                           {project.trashCount ? (
                             <p className="mt-2 text-[11px] text-neutral-400">
@@ -653,18 +1009,38 @@ export default function StorageV2() {
       ) : null}
 
       {preview ? (
-        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm" onMouseDown={() => setPreview(null)}>
-          <div role="dialog" aria-modal="true" aria-labelledby="storage-preview-title" className="flex h-[min(82vh,760px)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-neutral-900" onMouseDown={(event) => event.stopPropagation()}>
+        <div
+          className={cn(
+            'fixed inset-0 z-[10000] flex items-center justify-center bg-black/55 backdrop-blur-sm',
+            !previewFullscreen && 'p-4',
+          )}
+          onMouseDown={closePreview}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="storage-preview-title"
+            className={cn(
+              'flex w-full flex-col overflow-hidden bg-white shadow-2xl dark:bg-neutral-900',
+              previewFullscreen ? 'h-full' : 'h-[min(82vh,760px)] max-w-5xl rounded-2xl',
+            )}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
             <div className="flex h-12 shrink-0 items-center justify-between border-b border-neutral-200 px-4 dark:border-neutral-800">
               <div className="min-w-0">
                 <h2 id="storage-preview-title" className="truncate text-sm font-semibold">{preview.title}</h2>
-                {preview.truncated ? <p className="text-[11px] text-amber-600">文件较大，仅显示前 512 KB</p> : null}
+                {preview.truncated ? <p className="text-[11px] text-amber-600">文件较大，仅显示前 200,000 个字符</p> : null}
               </div>
               <button type="button" onClick={() => setPreview(null)} className="rounded-md p-2 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800" aria-label="关闭预览">
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="min-h-0 flex-1 overflow-auto bg-neutral-100 dark:bg-neutral-950">
+            <div className={cn(
+              'min-h-0 flex-1 bg-neutral-100 dark:bg-neutral-950',
+              preview.kind === 'office' || preview.kind === 'image' || preview.kind === 'pdf'
+                ? 'flex flex-col overflow-hidden'
+                : 'overflow-auto',
+            )}>
               {preview.loading ? (
                 <div className="flex h-full items-center justify-center text-sm text-neutral-500">
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />正在载入预览…
@@ -672,18 +1048,57 @@ export default function StorageV2() {
               ) : preview.error ? (
                 <div className="flex h-full items-center justify-center p-8 text-sm text-red-600">{preview.error}</div>
               ) : preview.kind === 'text' ? (
-                <pre className="min-h-full whitespace-pre-wrap break-words bg-white p-5 font-mono text-xs leading-6 text-neutral-800 dark:bg-neutral-950 dark:text-neutral-200">{preview.content}</pre>
-              ) : preview.kind === 'image' && preview.objectUrl ? (
-                <div className="flex min-h-full items-center justify-center p-5">
-                  <img src={preview.objectUrl} alt={preview.title} className="max-h-full max-w-full rounded shadow-lg" />
-                </div>
-              ) : preview.objectUrl ? (
-                <iframe src={preview.objectUrl} title={preview.title} className="h-full min-h-[60vh] w-full bg-white" />
+                <pre className="min-h-full whitespace-pre-wrap break-words bg-white p-5 font-mono text-xs leading-6 text-neutral-800 dark:bg-neutral-950 dark:text-neutral-200">{preview.text}</pre>
+              ) : preview.kind === 'image' || preview.kind === 'pdf' || preview.kind === 'office' ? (
+                <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-neutral-500">正在载入预览…</div>}>
+                  <CodeEditorBinaryFile
+                    key={`${preview.projectName}:${preview.path}`}
+                    file={{ name: preview.title, path: preview.path }}
+                    projectName={preview.projectName}
+                    isSidebar
+                    compactHeader
+                    headerPrefix={<div className="hidden" />}
+                    isFullscreen={false}
+                    isExpanded={previewFullscreen}
+                    onClose={closePreview}
+                    onToggleFullscreen={() => setPreviewFullscreen((value) => !value)}
+                    onToggleExpand={() => setPreviewFullscreen((value) => !value)}
+                    title={preview.title}
+                    message="无法预览该文件"
+                  />
+                </Suspense>
               ) : null}
             </div>
           </div>
         </div>
       ) : null}
+
+      {contextMenu ? (
+        <WorkspaceFileContextMenu
+          entry={contextMenu.entry}
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onDownload={() => {
+            void downloadEntry(contextMenu.project, contextMenu.entry).catch((error) => {
+              setNotice({ kind: 'error', text: (error as Error).message });
+            });
+          }}
+          onDelete={() => setDeleteFileTarget(contextMenu)}
+          onClose={() => setContextMenu(null)}
+        />
+      ) : null}
+      <WorkspaceDeleteDialog
+        entry={deleteFileTarget?.entry ?? null}
+        busy={deletingFile}
+        onCancel={() => {
+          if (!deletingFile) setDeleteFileTarget(null);
+        }}
+        onConfirm={() => {
+          if (deleteFileTarget) {
+            void trashFileEntry(deleteFileTarget.project, deleteFileTarget.entry);
+          }
+        }}
+      />
     </div>
   );
 }

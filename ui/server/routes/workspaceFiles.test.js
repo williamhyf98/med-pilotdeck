@@ -3,6 +3,7 @@
 // 校验规则本身在 utils/workspacePaths.test.js 里单测；这里断言的是
 // "状态码 + 磁盘副作用"——两者都通过才算这条路由真的能用。
 import express from 'express';
+import JSZip from 'jszip';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
@@ -65,6 +66,11 @@ async function call(method, route, body) {
     return { status: response.status, payload };
 }
 
+async function download(route) {
+    const response = await fetch(`${base}/api/projects/demo${route}`);
+    return response;
+}
+
 const exists = async (target) => {
     try {
         await fs.lstat(target);
@@ -119,6 +125,37 @@ describe('POST /files/mkdir', () => {
         } finally {
             await fs.rm(outside, { recursive: true, force: true });
         }
+    });
+});
+
+describe('GET /files/directory-download', () => {
+    it('下载文件，并把目录打包为 ZIP', async () => {
+        await fs.mkdir(path.join(workspace, '我的资料', '2026'), { recursive: true });
+        await fs.writeFile(path.join(workspace, '我的资料', 'note.txt'), 'hello');
+        await fs.writeFile(path.join(workspace, '我的资料', '2026', 'report.md'), '# report');
+
+        const directoryResponse = await download('/files/directory-download?path=%E6%88%91%E7%9A%84%E8%B5%84%E6%96%99');
+        expect(directoryResponse.status).toBe(200);
+        expect(directoryResponse.headers.get('content-type')).toContain('application/zip');
+        const archive = await JSZip.loadAsync(await directoryResponse.arrayBuffer());
+        expect(Object.keys(archive.files).sort()).toEqual([
+            '2026/',
+            '2026/report.md',
+            'note.txt',
+        ]);
+        expect(await archive.file('note.txt').async('string')).toBe('hello');
+    });
+
+    it.each(['inbox', 'exports', 'scratch'])('拒绝下载受保护根目录 %s', async (name) => {
+        const response = await download(`/files/directory-download?path=${name}`);
+        const payload = await response.json();
+        expect(response.status).toBe(400);
+        expect(payload.code).toBe('pinned_root');
+    });
+
+    it('旧的混合文件下载接口已移除', async () => {
+        const response = await download('/files/download?path=note.txt');
+        expect(response.status).toBe(404);
     });
 });
 

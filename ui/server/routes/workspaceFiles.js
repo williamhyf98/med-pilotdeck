@@ -14,6 +14,7 @@
 import express from 'express';
 import { promises as fsPromises } from 'node:fs';
 import path from 'node:path';
+import JSZip from 'jszip';
 import { extractProjectDirectory as defaultExtractProjectDirectory } from '../projects.js';
 import { cleanScratch } from '../services/scratchRetention.js';
 import {
@@ -21,6 +22,7 @@ import {
 } from '../services/trash.js';
 import { appendAudit } from '../../../src/security/audit/auditLog.js';
 import { assertNoSymlinkOnPath, normalizeNewPath, resolveInsideRoot } from '../utils/workspacePaths.js';
+import { contentDispositionAttachment } from '../utils/downloadHeaders.js';
 
 /** 这三个是工作区骨架，不允许整体拖走（里面的内容可以）。 */
 const PINNED_ROOT_NAMES = new Set(['exports', 'inbox', 'scratch']);
@@ -32,6 +34,33 @@ function isPinnedRoot(segments) {
 function projectRelativePath(projectRoot, targetPath) {
     const relative = path.relative(path.resolve(projectRoot), path.resolve(targetPath));
     return relative.split(path.sep).join('/');
+}
+
+function getSafeDownloadName(value) {
+    return String(value || 'download')
+        .replace(/[\\/:*?"<>|\x00-\x1f]/g, '-')
+        .replace(/^\.+$/, 'download')
+        .trim() || 'download';
+}
+
+async function addDirectoryToZip(zip, directoryPath, rootPath) {
+    const entries = await fsPromises.readdir(directoryPath, { withFileTypes: true });
+    for (const entry of entries) {
+        if (entry.name.startsWith('.')) continue;
+        const absolutePath = path.join(directoryPath, entry.name);
+        const relativePath = path.relative(rootPath, absolutePath).split(path.sep).join('/');
+        if (!relativePath) continue;
+        if (entry.isDirectory()) {
+            zip.folder(relativePath);
+            await addDirectoryToZip(zip, absolutePath, rootPath);
+        } else if (entry.isFile()) {
+            const [content, stats] = await Promise.all([
+                fsPromises.readFile(absolutePath),
+                fsPromises.stat(absolutePath),
+            ]);
+            zip.file(relativePath, content, { date: stats.mtime });
+        }
+    }
 }
 
 async function statOrNull(target) {
@@ -46,6 +75,58 @@ async function statOrNull(target) {
 export function createWorkspaceFilesRouter(deps = {}) {
     const extractProjectDirectory = deps.extractProjectDirectory ?? defaultExtractProjectDirectory;
     const router = express.Router();
+
+    // Download one directory as a ZIP. Single-file downloads use the shared
+    // files/content endpoint so they behave exactly like preview downloads.
+    router.get('/:projectName/files/directory-download', async (req, res) => {
+        try {
+            const workspaceRoot = await extractProjectDirectory(req.params.projectName);
+            const root = path.resolve(workspaceRoot);
+            const segments = normalizeNewPath(req.query?.path);
+            if (isPinnedRoot(segments)) {
+                return res.status(400).json({
+                    error: 'exports / inbox / scratch 是工作区骨架，不能下载目录本身',
+                    code: 'pinned_root',
+                });
+            }
+            const target = resolveInsideRoot(root, segments);
+            await assertNoSymlinkOnPath(root, target);
+            const stats = await fsPromises.stat(target).catch(() => null);
+            if (!stats) return res.status(404).json({ error: '文件或目录不存在', code: 'not_found' });
+            if (!stats.isDirectory()) {
+                return res.status(400).json({ error: '目录下载接口只支持目录', code: 'invalid_input' });
+            }
+
+            const zip = new JSZip();
+            await addDirectoryToZip(zip, target, target);
+            res.setHeader('Content-Type', 'application/zip');
+            res.setHeader(
+                'Content-Disposition',
+                contentDispositionAttachment(`${getSafeDownloadName(path.basename(target))}.zip`),
+            );
+            const zipStream = zip.generateNodeStream({
+                type: 'nodebuffer',
+                compression: 'DEFLATE',
+                compressionOptions: { level: 6 },
+            });
+            zipStream.on('error', (error) => {
+                console.error('[workspace] directory download failed:', error);
+                if (!res.headersSent) {
+                    res.status(500).json({ error: '目录压缩失败', code: 'zip_failed' });
+                } else {
+                    res.destroy(error);
+                }
+            });
+            return zipStream.pipe(res);
+        } catch (error) {
+            const status = error?.httpStatus ?? (error?.code === 'ENOENT' ? 404 : 500);
+            if (status === 500) console.error('[workspace] directory download failed:', error);
+            return res.status(status).json({
+                error: error instanceof Error ? error.message : String(error),
+                code: error?.code,
+            });
+        }
+    });
 
     // 新建目录：任意层级，必须落在工作区内
     router.post('/:projectName/files/mkdir', async (req, res) => {
