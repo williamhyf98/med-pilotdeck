@@ -185,6 +185,12 @@ function formatModified(value: string | null): string {
   });
 }
 
+function isCancelledMove(from: string, toDir: string): boolean {
+  const parent = from.includes('/') ? from.slice(0, from.lastIndexOf('/')) : '';
+  // 原目录、自身及自身子目录都视为取消拖拽；服务器仍负责校验非法移动。
+  return parent === toDir || toDir === from || toDir.startsWith(`${from}/`);
+}
+
 async function readJson<T>(response: Response): Promise<T> {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -300,9 +306,14 @@ function TreeBranch({
           <div
             key={entry.path}
             onDragOver={isDirectory ? (event) => {
-              if (!dragPath || dragPath === entry.path) return;
+              if (!dragPath) return;
               event.preventDefault();
               event.stopPropagation();
+              if (isCancelledMove(dragPath, entry.path)) {
+                event.dataTransfer.dropEffect = 'none';
+                onHover(null);
+                return;
+              }
               event.dataTransfer.dropEffect = 'move';
               onHover(entry.path);
             } : undefined}
@@ -844,13 +855,11 @@ export default function FilesV2({
     }
   }, [projectName, refresh]);
 
-  const parentOf = (target: string) => (target.includes('/') ? target.slice(0, target.lastIndexOf('/')) : '');
-
   const moveEntry = useCallback(async (from: string, toDir: string) => {
     setDropTarget(null);
     setDragPath(null);
     setTrashHover(false);
-    if (!from || parentOf(from) === toDir) return;
+    if (!from || isCancelledMove(from, toDir)) return;
     setMoving(true);
     setNotice(null);
     try {
@@ -1167,8 +1176,9 @@ export default function FilesV2({
                 // 只把列表的空白处当"工作区根"；落在文件行上不误判成移到根目录
                 if (event.target !== event.currentTarget) return;
                 event.preventDefault();
-                event.dataTransfer.dropEffect = 'move';
-                setDropTarget('');
+                const cancelled = isCancelledMove(dragPath, '');
+                event.dataTransfer.dropEffect = cancelled ? 'none' : 'move';
+                setDropTarget(cancelled ? null : '');
               }}
               onDragLeave={(event) => {
                 if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;

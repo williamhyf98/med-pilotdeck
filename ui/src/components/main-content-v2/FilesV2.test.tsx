@@ -504,6 +504,49 @@ describe('FilesV2 工作区面板', () => {
     ));
   });
 
+  it('文件或目录放回原处、目录放回自身或子目录时静默取消拖拽', async () => {
+    installFetchRouter({
+      [`/files/list?path=${encodeURIComponent('exports/资料')}`]: jsonResponse({
+        path: 'exports/资料',
+        truncated: false,
+        entries: [{ name: '子目录', path: 'exports/资料/子目录', type: 'directory', size: null, modified: null }],
+      }),
+      '/files/list?path=exports': jsonResponse({
+        path: 'exports',
+        truncated: false,
+        entries: [
+          { name: '诊疗报告.pdf', path: 'exports/诊疗报告.pdf', type: 'file', size: 4096, modified: null },
+          { name: '资料', path: 'exports/资料', type: 'directory', size: null, modified: null },
+        ],
+      }),
+    });
+    render(<FilesV2 selectedProject={project} />);
+    const exportsRow = await screen.findByRole('button', { name: /exports/ });
+    fireEvent.click(exportsRow);
+    const fileRow = await screen.findByRole('button', { name: /诊疗报告\.pdf/ });
+    const folderRow = await screen.findByRole('button', { name: /资料/ });
+    fireEvent.click(folderRow);
+    const childRow = await screen.findByRole('button', { name: /子目录/ });
+    const dt = { effectAllowed: '', dropEffect: '', setData: vi.fn(), getData: () => '' };
+
+    for (const [source, target] of [
+      [fileRow, exportsRow],
+      [folderRow, exportsRow],
+      [folderRow, folderRow],
+      [folderRow, childRow],
+    ]) {
+      fireEvent.dragStart(source, { dataTransfer: dt });
+      fireEvent.dragOver(target.parentElement!, { dataTransfer: dt });
+      expect(dt.dropEffect).toBe('none');
+      fireEvent.drop(target.parentElement!, { dataTransfer: dt });
+      fireEvent.dragEnd(source, { dataTransfer: dt });
+    }
+
+    expect(mocks.authenticatedFetch.mock.calls.some(([url]) => String(url).includes('/files/move'))).toBe(false);
+    expect(screen.queryByText('不能把目录移动到它自己里面')).toBeNull();
+    expect(screen.getByRole('button', { name: /资料/ })).toBeTruthy();
+  });
+
   it('把文件拖到回收站会走软删除接口', async () => {
     installFetchRouter({
       '/files/trash': jsonResponse({ path: 'exports/诊疗报告.pdf' }),
