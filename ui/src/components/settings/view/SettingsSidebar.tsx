@@ -33,6 +33,7 @@ const MENU_ITEMS_ADMIN: SettingsMenuItemI18n[] = [
     ],
   },
   { key: "advanced", labelKey: "settingsPage.menu.advanced" },
+  { key: "workspaceQuota", labelKey: "settingsPage.menu.workspaceQuota" },
 ];
 
 const ACCOUNT_ITEM: SettingsMenuItemI18n = {

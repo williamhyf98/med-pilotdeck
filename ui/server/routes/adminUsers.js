@@ -76,6 +76,9 @@ export function createAdminUsersRouter({ onUserRevoked = () => {}, stopUserRunti
     });
     const totalBytes = users.reduce((sum, u) => sum + u.storageBytes + u.archivedBytes, 0);
     const totalInboxBytes = users.reduce((sum, u) => sum + u.inboxBytes, 0);
+    const overWarningUserCount = users.filter(
+      (u) => u.storageBytes + u.archivedBytes >= userTotalWarningBytes,
+    ).length;
     res.json({
       users,
       // 与 `users` 有重叠（同一行的两种视图），但顺序按归档时间从新到旧，
@@ -88,6 +91,7 @@ export function createAdminUsersRouter({ onUserRevoked = () => {}, stopUserRunti
         totalInboxBytes,
         archivedBytes: users.reduce((sum, u) => sum + u.archivedBytes, 0),
         userTotalWarningBytes,
+        overWarningUserCount,
       },
     });
   }));

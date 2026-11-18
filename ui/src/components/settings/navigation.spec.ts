@@ -8,6 +8,12 @@ describe("mapInitialTabToMenuKey", () => {
     );
   });
 
+  it("routes the workspace quota deep link to its dedicated page", () => {
+    expect(mapInitialTabToMenuKey("config:workspaceQuota")).toBe(
+      "workspaceQuota",
+    );
+  });
+
   it("routes legacy config sections to their dedicated pages", () => {
     expect(mapInitialTabToMenuKey("config:models")).toBe("modelPool");
     expect(mapInitialTabToMenuKey("config:agents")).toBe("agentModel");

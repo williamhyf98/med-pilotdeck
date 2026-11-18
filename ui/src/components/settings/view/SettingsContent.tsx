@@ -21,6 +21,7 @@ import OfficePreviewSections from "./officePreview";
 import SkillsDepsSections from "./skills";
 import AccountSettings from "./account";
 import UsersSettings from "./users";
+import WorkspaceQuotaSettings from "./workspaceQuota";
 
 type SettingsContentProps = {
   selectedKey: SettingsMenuKey;
@@ -47,6 +48,7 @@ const MENU_TITLE_KEYS: Record<SettingsMenuKey, string> = {
   extensions: "settingsPage.titles.extensions",
   mcpServers: "settingsPage.titles.mcpServers",
   officePreview: "settingsPage.titles.officePreview",
+  workspaceQuota: "settingsPage.titles.workspaceQuota",
   skills: "settingsPage.titles.skills",
   privacy: "settingsPage.titles.privacy",
   advanced: "settingsPage.titles.advanced",
@@ -85,6 +87,8 @@ export default function SettingsContent({
           <AccountSettings title={title} />
         ) : selectedKey === "users" ? (
           <UsersSettings title={title} />
+        ) : selectedKey === "workspaceQuota" ? (
+          <WorkspaceQuotaSettings title={title} />
         ) : isGeneral ? (
           <GeneralSections title={title} />
         ) : selectedKey === "agentModel" ? (

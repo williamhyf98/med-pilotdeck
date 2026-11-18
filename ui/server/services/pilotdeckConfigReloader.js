@@ -1,5 +1,6 @@
 import { applyConfigToProcessEnv } from './pilotdeckConfig.js';
 import { closeMemoryServices, startMemoryScheduler } from './memoryService.js';
+import { invalidateWorkspaceLimitsCache } from './workspaceLimits.js';
 
 // Applies a validated config to every running subsystem (env, memory) and
 // returns a per-subsystem summary so the UI can show what actually reloaded.
@@ -12,6 +13,7 @@ export async function reloadPilotDeckConfig(config) {
   };
 
   applyConfigToProcessEnv(config);
+  invalidateWorkspaceLimitsCache();
   result.processEnv.reloaded = true;
 
   closeMemoryServices();

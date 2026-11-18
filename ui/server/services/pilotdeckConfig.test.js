@@ -145,6 +145,32 @@ describe('readPilotDeckConfigFile fallback behavior', () => {
 });
 
 describe('validatePilotDeckConfig gateway validation', () => {
+    it('accepts the workspace quota form values and rejects invalid values', () => {
+        const valid = validatePilotDeckConfig({
+            workspace: {
+                quota: {
+                    workspaceWarnBytes: 5 * 1024 ** 3,
+                    inboxWarnBytes: 0,
+                    scratchMaxBytes: 1024 ** 3,
+                    scratchSoftRatio: 0.8,
+                    scratchTtlDays: 7,
+                    protectRecentMinutes: 10,
+                    cleanOnTurnEnd: true,
+                    userTotalMaxBytes: 20 * 1024 ** 3,
+                },
+            },
+        });
+        expect(valid.valid).toBe(true);
+
+        const invalid = validatePilotDeckConfig({
+            workspace: { quota: { scratchSoftRatio: 0.2 } },
+        });
+        expect(invalid.valid).toBe(false);
+        expect(invalid.errors).toContain(
+            'workspace.quota.scratchSoftRatio must be between 0.5 and 0.95',
+        );
+    });
+
     it('migrates the legacy interactive spreadsheet mode to built-in preview', () => {
         const validation = validatePilotDeckConfig({
             webui: {

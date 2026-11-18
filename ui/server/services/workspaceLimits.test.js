@@ -43,9 +43,20 @@ describe('getWorkspaceLimits', () => {
 
         const limits = await getWorkspaceLimits();
         expect(limits.workspaceWarnBytes).toBe(2 * GiB);
+        expect(limits.inboxWarnBytes).toBe(DEFAULT_WORKSPACE_LIMITS.inboxWarnBytes);
         expect(limits.scratchTtlDays).toBe(7);
         expect(limits.scratchMaxBytes).toBe(DEFAULT_WORKSPACE_LIMITS.scratchMaxBytes);
         expect(limits.userTotalMaxBytes).toBe(DEFAULT_WORKSPACE_LIMITS.userTotalMaxBytes);
+    });
+
+    it('允许单独设置 inbox 提示值，0 表示关闭', async () => {
+        const { getWorkspaceLimits, invalidateWorkspaceLimitsCache } = await import('./workspaceLimits.js');
+        writeConfig(`workspace:\n  quota:\n    inboxWarnBytes: ${2 * GiB}\n`);
+        expect((await getWorkspaceLimits()).inboxWarnBytes).toBe(2 * GiB);
+
+        invalidateWorkspaceLimitsCache();
+        writeConfig('workspace:\n  quota:\n    inboxWarnBytes: 0\n');
+        expect((await getWorkspaceLimits()).inboxWarnBytes).toBe(0);
     });
 
     it('默认 scratch TTL 是 7 天，回合结束清理默认开启', async () => {

@@ -111,6 +111,25 @@ export type PilotDeckConfig = {
       binaryPath?: string;
     };
   };
+  workspace?: {
+    quota?: {
+      workspaceWarnBytes?: number;
+      inboxWarnBytes?: number;
+      scratchMaxBytes?: number;
+      scratchSoftRatio?: number;
+      scratchTtlDays?: number;
+      protectRecentMinutes?: number;
+      cleanOnTurnEnd?: boolean;
+      toolResultsTtlDays?: number;
+      snapshotRetentionDays?: number;
+      userTotalMaxBytes?: number;
+      overrides?: {
+        imaging?: {
+          scratchMaxBytes?: number;
+        };
+      };
+    };
+  };
   customEnv?: Record<string, string>;
   router?: {
     enabled?: boolean;

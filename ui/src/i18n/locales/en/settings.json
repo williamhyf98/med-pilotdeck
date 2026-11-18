@@ -63,11 +63,19 @@
       "lastLogin": "Last login",
       "storage": "Storage",
       "summary": "All users: {{size}} · {{count}} users",
-      "summaryInbox": "of which inbox: {{size}}",
+      "summaryInbox": "inbox: {{size}}",
       "summaryWarning": "per-user warning at {{size}}",
-      "sortByStorage": "Sort by storage",
-      "share": "Share",
       "inbox": "Inbox",
+      "searchUsername": "Search username",
+      "searchArchivedUsername": "Search archived username",
+      "searchUsernamePlaceholder": "Search username",
+      "sort": "Click to sort",
+      "ascending": "ascending",
+      "descending": "descending",
+      "noMatchingUsers": "No matching users",
+      "pageOf": "Page {{page}} of {{pages}}",
+      "previousPage": "Previous",
+      "nextPage": "Next",
       "archivedTag": "archived",
       "archivedNote": "(archived {{size}})",
       "overWarning": "Over the per-user warning threshold {{size}}",
@@ -132,6 +140,7 @@
       "advanced": "Advanced",
       "about": "About",
       "users": "User management",
+      "workspaceQuota": "Workspace & quotas",
       "skills": "Skill dependencies"
     },
     "titles": {
@@ -153,7 +162,87 @@
       "advanced": "Advanced",
       "about": "About",
       "users": "User management",
+      "workspaceQuota": "Workspace & quotas",
       "skills": "Extensions / Skill dependencies"
+    },
+    "workspaceQuota": {
+      "description": "Adjust workspace warning values, scratch cleanup, and per-user storage alerts. These values warn operators but do not block uploads or writes.",
+      "sections": {
+        "alerts": {
+          "title": "Capacity alerts",
+          "description": "These values control visual warnings and admin alerts. They do not block files from being written."
+        },
+        "cleanup": {
+          "title": "Scratch cleanup",
+          "description": "Scratch stores intermediate results. Automatic cleanup only removes scratch; inbox and exports are preserved."
+        },
+        "usage": {
+          "title": "Current usage",
+          "description": "These deployment totals come from the storage scan used by User management."
+        }
+      },
+      "fields": {
+        "workspaceWarn": {
+          "label": "Workspace warning value",
+          "description": "Shows a warning when workspace usage reaches 80%; default 5 GB."
+        },
+        "inboxWarn": {
+          "label": "Inbox warning value",
+          "description": "Warns separately about inbox usage; 0 disables it. Disabled by default."
+        },
+        "userTotal": {
+          "label": "Per-user storage alert",
+          "description": "User management highlights a user's storage at or above this value; default 20 GB."
+        },
+        "scratchMax": {
+          "label": "Scratch cleanup limit",
+          "description": "Older scratch content is reclaimed when usage exceeds this value; default 1 GB."
+        },
+        "imagingScratchMax": {
+          "label": "Imaging workspace scratch limit",
+          "description": "Scratch limit used by imaging projects; default 2 GB."
+        },
+        "softRatio": {
+          "label": "Cleanup target ratio",
+          "description": "After cleanup starts, scratch is reduced toward this fraction of its limit; 50%–95%."
+        },
+        "ttl": {
+          "label": "Scratch retention days",
+          "description": "Unused scratch may be cleaned after this many days; default 7 days."
+        },
+        "protect": {
+          "label": "Recent activity protection",
+          "description": "Scratch used within this window is protected from cleanup; default 10 minutes."
+        },
+        "cleanOnTurnEnd": {
+          "label": "Clean this turn's scratch at turn end",
+          "description": "When enabled, intermediate results from the completed turn are removed immediately."
+        }
+      },
+      "units": {
+        "days": "days",
+        "minutes": "minutes"
+      },
+      "usage": {
+        "total": "All user workspaces",
+        "inbox": "All user inboxes",
+        "archived": "Archived data",
+        "ofAlert": "of warning value",
+        "userWarning": "{{count}} user(s) over the alert value"
+      },
+      "actions": {
+        "cancel": "Discard changes",
+        "save": "Save quota settings",
+        "saving": "Saving...",
+        "saved": "Saved"
+      },
+      "validation": {
+        "positive": "Capacity and day values must be greater than 0.",
+        "nonNegative": "The inbox warning value cannot be negative.",
+        "ratio": "The cleanup target ratio must be between 50% and 95%.",
+        "ttl": "Scratch retention must be between 1 and 365 days.",
+        "protect": "Recent activity protection must be between 0 and 1440 minutes."
+      }
     },
     "contentComingSoon": {
       "title": "Right panel content is not connected yet",
@@ -186,7 +275,8 @@
       "agentSchedule": "The config file is not valid YAML, so the Agents / Scheduled Tasks form is unavailable.",
       "integrations": "The config file is not valid YAML, so the Integrations form is unavailable.",
       "officePreview": "The config file is not valid YAML, so the Office Preview form is unavailable.",
-      "modelPool": "The config file is not valid YAML, so the Model Pool form is unavailable."
+      "modelPool": "The config file is not valid YAML, so the Model Pool form is unavailable.",
+      "workspaceQuota": "The config file is not valid YAML, so the Workspace & quotas form is unavailable."
     },
     "skills": {
       "description": "Python dependencies used by the data-analysis skill. Offline installs are not supported here, so this page only reports; if the status is not ready, ask an operator to run analysis.sh bootstrap-runtime.",

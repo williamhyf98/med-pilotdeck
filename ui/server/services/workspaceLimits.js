@@ -21,6 +21,8 @@ const GiB = 1024 ** 3;
 export const DEFAULT_WORKSPACE_LIMITS = Object.freeze({
   /** 工作区总量提示线（只提示，永不拒绝写入）。 */
   workspaceWarnBytes: 5 * GiB,
+  /** inbox 独立提示线；0 表示不启用，永不拒绝写入。 */
+  inboxWarnBytes: 0,
   /** scratch 上限；到达后由系统按 §8.4 清理。 */
   scratchMaxBytes: 1 * GiB,
   /** 超过上限的多少比例开始变黄。 */
@@ -60,6 +62,9 @@ function normalizeQuota(quota) {
   const overrides = quota?.overrides?.imaging ?? {};
   return {
     workspaceWarnBytes: positiveNumber(quota?.workspaceWarnBytes, base.workspaceWarnBytes),
+    inboxWarnBytes: Number.isFinite(quota?.inboxWarnBytes) && quota.inboxWarnBytes >= 0
+      ? quota.inboxWarnBytes
+      : base.inboxWarnBytes,
     scratchMaxBytes: positiveNumber(quota?.scratchMaxBytes, base.scratchMaxBytes),
     scratchSoftRatio: ratio(quota?.scratchSoftRatio, base.scratchSoftRatio),
     scratchTtlDays: positiveNumber(quota?.scratchTtlDays, base.scratchTtlDays),

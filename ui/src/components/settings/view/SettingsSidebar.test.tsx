@@ -30,6 +30,7 @@ describe('settings menu by role', () => {
       'officePreview',
       'skills',
       'advanced',
+      'workspaceQuota',
       'users',
     ]);
   });

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { useAuth } from '../../../auth/context/AuthContext';
 import { formatBytes } from '../../../../utils/formatBytes';
 import { SettingsCard, SettingsRow, SettingsToggle } from '../../shared/view';
@@ -16,10 +17,21 @@ type PendingConfirm =
 
 type IssuedPassword = { username: string; password: string };
 
+type UserSortKey = 'username' | 'role' | 'isActive' | 'createdAt' | 'lastLogin' | 'storage' | 'inbox';
+type ArchivedSortKey = 'username' | 'role' | 'archivedAt' | 'expiresAt' | 'storage';
+type SortState<K extends string> = { key: K; direction: 'asc' | 'desc' };
+
+const USERS_PER_PAGE = 10;
+const ARCHIVED_USERS_PER_PAGE = 5;
+
 const buttonClass =
   'rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50';
 const primaryButtonClass =
   'rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50';
+
+function userStorageBytes(target: AdminUser): number {
+  return (target.storageBytes ?? 0) + (target.archivedBytes ?? 0);
+}
 
 function formatDate(value: string | null | undefined): string {
   if (!value) return '-';
@@ -27,13 +39,133 @@ function formatDate(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
+function compareDateValues(left: string | null | undefined, right: string | null | undefined): number {
+  const leftTime = left ? new Date(left).getTime() : 0;
+  const rightTime = right ? new Date(right).getTime() : 0;
+  return (Number.isFinite(leftTime) ? leftTime : 0) - (Number.isFinite(rightTime) ? rightTime : 0);
+}
+
+function compareUsers(
+  left: AdminUser,
+  right: AdminUser,
+  key: UserSortKey,
+  collator: Intl.Collator,
+  roleLabels: Record<UserRole, string>,
+): number {
+  if (key === 'username') {
+    return collator.compare(left.username, right.username);
+  }
+  if (key === 'role') {
+    return collator.compare(roleLabels[left.role], roleLabels[right.role]);
+  }
+  if (key === 'isActive') {
+    return Number(left.isActive) - Number(right.isActive);
+  }
+  if (key === 'storage') {
+    return userStorageBytes(left) - userStorageBytes(right);
+  }
+  if (key === 'inbox') {
+    return (left.inboxBytes ?? 0) - (right.inboxBytes ?? 0);
+  }
+
+  const leftTime = left[key] ? new Date(left[key] as string).getTime() : 0;
+  const rightTime = right[key] ? new Date(right[key] as string).getTime() : 0;
+  return (Number.isFinite(leftTime) ? leftTime : 0) - (Number.isFinite(rightTime) ? rightTime : 0);
+}
+
+function compareArchivedUsers(
+  left: AdminUser,
+  right: AdminUser,
+  key: ArchivedSortKey,
+  collator: Intl.Collator,
+  roleLabels: Record<UserRole, string>,
+): number {
+  if (key === 'username') return collator.compare(left.username, right.username);
+  if (key === 'role') return collator.compare(roleLabels[left.role], roleLabels[right.role]);
+  if (key === 'storage') return (left.archivedBytes ?? 0) - (right.archivedBytes ?? 0);
+  if (key === 'archivedAt') return compareDateValues(left.archivedAt, right.archivedAt);
+  return compareDateValues(left.expiresAt, right.expiresAt);
+}
+
+function UsernameCell({
+  username,
+  archived = false,
+  archivedLabel,
+}: {
+  username: string;
+  archived?: boolean;
+  archivedLabel: string;
+}) {
+  return (
+    <td className="w-[220px] max-w-[220px] overflow-hidden px-3 py-2 font-medium text-foreground">
+      <span className="flex min-w-0 max-w-[220px] items-center">
+        <span
+          className="min-w-0 flex-1 truncate whitespace-nowrap"
+          title={username}
+        >
+          {username}
+        </span>
+        {archived ? (
+          <span className="ml-2 shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
+            {archivedLabel}
+          </span>
+        ) : null}
+      </span>
+    </td>
+  );
+}
+
+function SortableHeader<K extends string>({
+  label,
+  sortKey,
+  activeSort,
+  onSort,
+  sortLabel,
+  ascendingLabel,
+  descendingLabel,
+}: {
+  label: string;
+  sortKey: K;
+  activeSort: SortState<K>;
+  onSort: (key: K) => void;
+  sortLabel: string;
+  ascendingLabel: string;
+  descendingLabel: string;
+}) {
+  const active = activeSort.key === sortKey;
+  const direction = activeSort.direction;
+  const Icon = active ? (direction === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
+  const directionLabel = active ? (direction === 'asc' ? ascendingLabel : descendingLabel) : sortLabel;
+
+  return (
+    <button
+      type="button"
+      className="inline-flex items-center gap-1 whitespace-nowrap hover:text-foreground"
+      aria-label={`${label} · ${directionLabel}`}
+      title={`${label} · ${directionLabel}`}
+      onClick={() => onSort(sortKey)}
+    >
+      <span>{label}</span>
+      <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+    </button>
+  );
+}
+
 export default function UsersSettings({ title }: { title?: string }) {
   const { t } = useTranslation('settings');
   const { user: me } = useAuth();
   const admin = useUsersAdmin();
   const [showCreate, setShowCreate] = useState(false);
-  // Storage column sort: descending by default, so the biggest account is on top.
-  const [sortDesc, setSortDesc] = useState(true);
+  // Keep the existing default: largest accounts first.
+  const [sort, setSort] = useState<SortState<UserSortKey>>({ key: 'storage', direction: 'desc' });
+  const [searchQuery, setSearchQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const [archivedSearchQuery, setArchivedSearchQuery] = useState('');
+  const [archivedSort, setArchivedSort] = useState<SortState<ArchivedSortKey>>({
+    key: 'archivedAt',
+    direction: 'desc',
+  });
+  const [archivedPage, setArchivedPage] = useState(1);
   const [confirm, setConfirm] = useState<PendingConfirm | null>(null);
   const [issued, setIssued] = useState<IssuedPassword | null>(null);
   const [copied, setCopied] = useState(false);
@@ -58,25 +190,95 @@ export default function UsersSettings({ title }: { title?: string }) {
   const isSelf = (target: AdminUser) => me?.id === target.id;
 
   // Live home + archived home, both count against the deployment total.
-  const rowBytes = (target: AdminUser) => (target.storageBytes ?? 0) + (target.archivedBytes ?? 0);
   const totalBytes =
-    admin.storage?.totalBytes ?? admin.users.reduce((sum, target) => sum + rowBytes(target), 0);
+    admin.storage?.totalBytes ?? admin.users.reduce((sum, target) => sum + userStorageBytes(target), 0);
   const warningBytes = admin.storage?.userTotalWarningBytes ?? 0;
-  const shareOf = (target: AdminUser) => (totalBytes > 0 ? (rowBytes(target) / totalBytes) * 100 : 0);
-  const inboxShareOf = (target: AdminUser) => {
-    const bytes = rowBytes(target);
-    return bytes > 0 ? ((target.inboxBytes ?? 0) / bytes) * 100 : 0;
-  };
   const sortedUsers = useMemo(
-    () => admin.users
-      // 已归档账号在下方单独一块显示，主表只留在用账号（含"停用但没删"的）。
-      .filter((target) => !target.archived)
-      .sort((a, b) => (sortDesc ? rowBytes(b) - rowBytes(a) : rowBytes(a) - rowBytes(b))),
-    // rowBytes reads only these two fields; both live on the user objects.
-    [admin.users, sortDesc],
+    () => {
+      const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
+      const filtered = admin.users.filter((target) => (
+        !target.archived
+        && (!normalizedQuery || target.username.toLocaleLowerCase().includes(normalizedQuery))
+      ));
+      const collator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
+      const direction = sort.direction === 'asc' ? 1 : -1;
+      const roleLabels: Record<UserRole, string> = {
+        admin: t('settingsPage.users.roleAdmin'),
+        user: t('settingsPage.users.roleUser'),
+      };
+      return filtered
+        .map((target, index) => ({ target, index }))
+        .sort((left, right) => (
+          direction * compareUsers(left.target, right.target, sort.key, collator, roleLabels)
+          || collator.compare(left.target.username, right.target.username)
+          || left.index - right.index
+        ))
+        .map(({ target }) => target);
+    },
+    [admin.users, searchQuery, sort, t],
   );
   /** 在用账号数（归档账号单独一块，不计入"全部用户"）。 */
   const liveUserCount = admin.users.filter((target) => !target.archived).length;
+  const pageCount = Math.max(1, Math.ceil(sortedUsers.length / USERS_PER_PAGE));
+  const currentPage = Math.min(page, pageCount);
+  const pagedUsers = sortedUsers.slice(
+    (currentPage - 1) * USERS_PER_PAGE,
+    currentPage * USERS_PER_PAGE,
+  );
+  const sortedArchivedUsers = useMemo(
+    () => {
+      const normalizedQuery = archivedSearchQuery.trim().toLocaleLowerCase();
+      const filtered = admin.archivedUsers.filter((target) => (
+        !normalizedQuery || target.username.toLocaleLowerCase().includes(normalizedQuery)
+      ));
+      const collator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
+      const direction = archivedSort.direction === 'asc' ? 1 : -1;
+      const roleLabels: Record<UserRole, string> = {
+        admin: t('settingsPage.users.roleAdmin'),
+        user: t('settingsPage.users.roleUser'),
+      };
+      return filtered
+        .map((target, index) => ({ target, index }))
+        .sort((left, right) => (
+          direction * compareArchivedUsers(left.target, right.target, archivedSort.key, collator, roleLabels)
+          || collator.compare(left.target.username, right.target.username)
+          || left.index - right.index
+        ))
+        .map(({ target }) => target);
+    },
+    [admin.archivedUsers, archivedSearchQuery, archivedSort, t],
+  );
+  const archivedPageCount = Math.max(1, Math.ceil(sortedArchivedUsers.length / ARCHIVED_USERS_PER_PAGE));
+  const currentArchivedPage = Math.min(archivedPage, archivedPageCount);
+  const pagedArchivedUsers = sortedArchivedUsers.slice(
+    (currentArchivedPage - 1) * ARCHIVED_USERS_PER_PAGE,
+    currentArchivedPage * ARCHIVED_USERS_PER_PAGE,
+  );
+  const archivedHeaders: Array<{ key: ArchivedSortKey; label: string }> = [
+    { key: 'username', label: t('settingsPage.users.username') },
+    { key: 'role', label: t('settingsPage.users.role') },
+    { key: 'archivedAt', label: t('settingsPage.users.archivedAt') },
+    { key: 'expiresAt', label: t('settingsPage.users.expiresAt') },
+    { key: 'storage', label: t('settingsPage.users.storage') },
+  ];
+
+  const toggleSort = (key: UserSortKey) => {
+    setSort((current) => (
+      current.key === key
+        ? { key, direction: current.direction === 'asc' ? 'desc' : 'asc' }
+        : { key, direction: 'asc' }
+    ));
+    setPage(1);
+  };
+
+  const toggleArchivedSort = (key: ArchivedSortKey) => {
+    setArchivedSort((current) => (
+      current.key === key
+        ? { key, direction: current.direction === 'asc' ? 'desc' : 'asc' }
+        : { key, direction: 'asc' }
+    ));
+    setArchivedPage(1);
+  };
 
   const handleRole = (target: AdminUser, role: UserRole) => {
     if (role === target.role) return;
@@ -192,50 +394,130 @@ export default function UsersSettings({ title }: { title?: string }) {
         </p>
       ) : null}
 
-      <div className="overflow-x-auto rounded-xl border border-border bg-card/50">
-        <table className="w-full text-left text-sm">
-          <thead className="border-b border-border text-xs text-muted-foreground">
-            <tr>
-              <th className="px-3 py-2 font-medium">{t('settingsPage.users.username')}</th>
-              <th className="px-3 py-2 font-medium">{t('settingsPage.users.role')}</th>
-              <th className="px-3 py-2 font-medium">{t('settingsPage.users.active')}</th>
-              <th className="px-3 py-2 font-medium">{t('settingsPage.users.createdAt')}</th>
-              <th className="px-3 py-2 font-medium">{t('settingsPage.users.lastLogin')}</th>
-              <th className="px-3 py-2 font-medium">
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 hover:text-foreground"
-                  aria-label={t('settingsPage.users.sortByStorage')}
-                  onClick={() => setSortDesc((value) => !value)}
-                >
-                  {t('settingsPage.users.storage')}
-                  <span aria-hidden="true">{sortDesc ? '↓' : '↑'}</span>
-                </button>
-              </th>
-              <th className="px-3 py-2 font-medium">{t('settingsPage.users.share')}</th>
-              <th className="px-3 py-2 font-medium">{t('settingsPage.users.inbox')}</th>
-              <th className="px-3 py-2 font-medium">{t('settingsPage.users.actions')}</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {sortedUsers.flatMap((target) => {
+      <div>
+        <div className="mb-3">
+          <label htmlFor="users-username-search" className="sr-only">
+            {t('settingsPage.users.searchUsername')}
+          </label>
+          <input
+            id="users-username-search"
+            type="search"
+            value={searchQuery}
+            onChange={(event) => {
+              setSearchQuery(event.target.value);
+              setPage(1);
+            }}
+            placeholder={t('settingsPage.users.searchUsernamePlaceholder')}
+            className="w-full max-w-xs rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-ring"
+          />
+        </div>
+
+        <div className="overflow-x-auto rounded-xl border border-border bg-card/50">
+          <table className="w-full min-w-[980px] text-left text-sm">
+            <thead className="border-b border-border text-xs text-muted-foreground">
+              <tr>
+                <th className="whitespace-nowrap px-3 py-2 font-medium">
+                  <SortableHeader
+                    label={t('settingsPage.users.username')}
+                    sortKey="username"
+                    activeSort={sort}
+                    onSort={toggleSort}
+                    sortLabel={t('settingsPage.users.sort')}
+                    ascendingLabel={t('settingsPage.users.ascending')}
+                    descendingLabel={t('settingsPage.users.descending')}
+                  />
+                </th>
+                <th className="whitespace-nowrap px-3 py-2 font-medium">
+                  <SortableHeader
+                    label={t('settingsPage.users.role')}
+                    sortKey="role"
+                    activeSort={sort}
+                    onSort={toggleSort}
+                    sortLabel={t('settingsPage.users.sort')}
+                    ascendingLabel={t('settingsPage.users.ascending')}
+                    descendingLabel={t('settingsPage.users.descending')}
+                  />
+                </th>
+                <th className="whitespace-nowrap px-3 py-2 font-medium">
+                  <SortableHeader
+                    label={t('settingsPage.users.active')}
+                    sortKey="isActive"
+                    activeSort={sort}
+                    onSort={toggleSort}
+                    sortLabel={t('settingsPage.users.sort')}
+                    ascendingLabel={t('settingsPage.users.ascending')}
+                    descendingLabel={t('settingsPage.users.descending')}
+                  />
+                </th>
+                <th className="whitespace-nowrap px-3 py-2 font-medium">
+                  <SortableHeader
+                    label={t('settingsPage.users.createdAt')}
+                    sortKey="createdAt"
+                    activeSort={sort}
+                    onSort={toggleSort}
+                    sortLabel={t('settingsPage.users.sort')}
+                    ascendingLabel={t('settingsPage.users.ascending')}
+                    descendingLabel={t('settingsPage.users.descending')}
+                  />
+                </th>
+                <th className="whitespace-nowrap px-3 py-2 font-medium">
+                  <SortableHeader
+                    label={t('settingsPage.users.lastLogin')}
+                    sortKey="lastLogin"
+                    activeSort={sort}
+                    onSort={toggleSort}
+                    sortLabel={t('settingsPage.users.sort')}
+                    ascendingLabel={t('settingsPage.users.ascending')}
+                    descendingLabel={t('settingsPage.users.descending')}
+                  />
+                </th>
+                <th className="whitespace-nowrap px-3 py-2 font-medium">
+                  <SortableHeader
+                    label={t('settingsPage.users.storage')}
+                    sortKey="storage"
+                    activeSort={sort}
+                    onSort={toggleSort}
+                    sortLabel={t('settingsPage.users.sort')}
+                    ascendingLabel={t('settingsPage.users.ascending')}
+                    descendingLabel={t('settingsPage.users.descending')}
+                  />
+                </th>
+                <th className="whitespace-nowrap px-3 py-2 font-medium">
+                  <SortableHeader
+                    label={t('settingsPage.users.inbox')}
+                    sortKey="inbox"
+                    activeSort={sort}
+                    onSort={toggleSort}
+                    sortLabel={t('settingsPage.users.sort')}
+                    ascendingLabel={t('settingsPage.users.ascending')}
+                    descendingLabel={t('settingsPage.users.descending')}
+                  />
+                </th>
+                <th className="whitespace-nowrap px-3 py-2 font-medium">{t('settingsPage.users.actions')}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {pagedUsers.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                    {t('settingsPage.users.noMatchingUsers')}
+                  </td>
+                </tr>
+              ) : pagedUsers.flatMap((target) => {
               const self = isSelf(target);
               const pending = confirm?.id === target.id ? confirm : null;
-              const overWarning = warningBytes > 0 && rowBytes(target) > warningBytes;
+              const overWarning = warningBytes > 0 && userStorageBytes(target) > warningBytes;
               const rows = [
                 <tr key={target.id}>
-                  <td className="px-3 py-2 font-medium text-foreground">
-                    {target.username}
-                    {(target.archivedBytes ?? 0) > 0 ? (
-                      <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
-                        {t('settingsPage.users.archivedTag')}
-                      </span>
-                    ) : null}
-                  </td>
-                  <td className="px-3 py-2">
+                  <UsernameCell
+                    username={target.username}
+                    archived={(target.archivedBytes ?? 0) > 0}
+                    archivedLabel={t('settingsPage.users.archivedTag')}
+                  />
+                  <td className="whitespace-nowrap px-3 py-2">
                     <select
                       aria-label={t('settingsPage.users.role')}
-                      className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+                      className="min-w-24 rounded-md border border-border bg-background px-2 py-1 text-sm"
                       value={target.role}
                       disabled={busy}
                       onChange={(e) => handleRole(target, e.target.value as UserRole)}
@@ -244,7 +526,7 @@ export default function UsersSettings({ title }: { title?: string }) {
                       <option value="user">{t('settingsPage.users.roleUser')}</option>
                     </select>
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="whitespace-nowrap px-3 py-2">
                     <SettingsToggle
                       checked={target.isActive}
                       ariaLabel={t('settingsPage.users.active')}
@@ -252,30 +534,28 @@ export default function UsersSettings({ title }: { title?: string }) {
                       onChange={(next) => handleActive(target, next)}
                     />
                   </td>
-                  <td className="px-3 py-2 text-muted-foreground">{formatDate(target.createdAt)}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{formatDate(target.lastLogin)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{formatDate(target.createdAt)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{formatDate(target.lastLogin)}</td>
                   <td
-                    className={`px-3 py-2 ${
+                    className={`whitespace-nowrap px-3 py-2 ${
                       overWarning
                         ? 'font-medium text-amber-600 dark:text-amber-400'
                         : 'text-muted-foreground'
                     }`}
                     title={overWarning ? t('settingsPage.users.overWarning', { size: formatBytes(warningBytes) }) : undefined}
                   >
-                    {formatBytes(rowBytes(target))}
+                    {formatBytes(userStorageBytes(target))}
                     {(target.archivedBytes ?? 0) > 0 ? (
                       <span className="ml-1 text-xs font-normal text-muted-foreground">
                         {t('settingsPage.users.archivedNote', { size: formatBytes(target.archivedBytes) })}
                       </span>
                     ) : null}
                   </td>
-                  <td className="px-3 py-2 text-muted-foreground">{shareOf(target).toFixed(1)}%</td>
-                  <td className="px-3 py-2 text-muted-foreground">
+                  <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
                     {formatBytes(target.inboxBytes)}
-                    <span className="ml-1 text-xs">({inboxShareOf(target).toFixed(1)}%)</span>
                   </td>
-                  <td className="px-3 py-2">
-                    <div className="flex flex-wrap gap-2">
+                  <td className="whitespace-nowrap px-3 py-2">
+                    <div className="flex flex-nowrap gap-2">
                       <button
                         type="button"
                         className={buttonClass}
@@ -301,7 +581,7 @@ export default function UsersSettings({ title }: { title?: string }) {
               if (pending) {
                 rows.push(
                   <tr key={`${target.id}-confirm`} className="bg-muted/40">
-                    <td colSpan={9} className="px-3 py-3">
+                    <td colSpan={8} className="px-3 py-3">
                       <div className="flex flex-wrap items-center gap-3">
                         <p className="min-w-0 flex-1 text-sm text-foreground">
                           {pending.kind === 'delete'
@@ -320,9 +600,36 @@ export default function UsersSettings({ title }: { title?: string }) {
                 );
               }
               return rows;
-            })}
-          </tbody>
-        </table>
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {sortedUsers.length > 0 ? (
+          <div className="flex items-center justify-between gap-3 px-1 py-3 text-sm text-muted-foreground">
+            <span>{t('settingsPage.users.pageOf', { page: currentPage, pages: pageCount })}</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className={buttonClass}
+                disabled={currentPage <= 1}
+                aria-label={t('settingsPage.users.previousPage')}
+                onClick={() => setPage((value) => Math.max(1, value - 1))}
+              >
+                {t('settingsPage.users.previousPage')}
+              </button>
+              <button
+                type="button"
+                className={buttonClass}
+                disabled={currentPage >= pageCount}
+                aria-label={t('settingsPage.users.nextPage')}
+                onClick={() => setPage((value) => Math.min(pageCount, value + 1))}
+              >
+                {t('settingsPage.users.nextPage')}
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {admin.archivedUsers.length > 0 ? (
@@ -335,38 +642,67 @@ export default function UsersSettings({ title }: { title?: string }) {
               {t('settingsPage.users.archivedSummary', { count: admin.archivedUsers.length })}
             </p>
           </div>
+          <div className="mb-3">
+            <label htmlFor="archived-users-username-search" className="sr-only">
+              {t('settingsPage.users.searchArchivedUsername')}
+            </label>
+            <input
+              id="archived-users-username-search"
+              type="search"
+              value={archivedSearchQuery}
+              onChange={(event) => {
+                setArchivedSearchQuery(event.target.value);
+                setArchivedPage(1);
+              }}
+              placeholder={t('settingsPage.users.searchUsernamePlaceholder')}
+              className="w-full max-w-xs rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-ring"
+            />
+          </div>
           <div className="overflow-x-auto rounded-xl border border-border bg-card/50">
-            <table className="w-full text-left text-sm">
+            <table className="w-full min-w-[760px] text-left text-sm">
               <thead className="border-b border-border text-xs text-muted-foreground">
                 <tr>
-                  <th className="px-3 py-2 font-medium">{t('settingsPage.users.username')}</th>
-                  <th className="px-3 py-2 font-medium">{t('settingsPage.users.role')}</th>
-                  <th className="px-3 py-2 font-medium">{t('settingsPage.users.archivedAt')}</th>
-                  <th className="px-3 py-2 font-medium">{t('settingsPage.users.expiresAt')}</th>
-                  <th className="px-3 py-2 font-medium">{t('settingsPage.users.storage')}</th>
-                  <th className="px-3 py-2 font-medium">{t('settingsPage.users.actions')}</th>
+                  {archivedHeaders.map(({ key: sortKey, label }) => (
+                    <th key={sortKey} className="whitespace-nowrap px-3 py-2 font-medium">
+                      <SortableHeader
+                        label={label}
+                        sortKey={sortKey}
+                        activeSort={archivedSort}
+                        onSort={toggleArchivedSort}
+                        sortLabel={t('settingsPage.users.sort')}
+                        ascendingLabel={t('settingsPage.users.ascending')}
+                        descendingLabel={t('settingsPage.users.descending')}
+                      />
+                    </th>
+                  ))}
+                  <th className="whitespace-nowrap px-3 py-2 font-medium">{t('settingsPage.users.actions')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {admin.archivedUsers.flatMap((target) => {
+                {pagedArchivedUsers.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                      {t('settingsPage.users.noMatchingUsers')}
+                    </td>
+                  </tr>
+                ) : pagedArchivedUsers.flatMap((target) => {
                   const pending = confirm?.kind === 'restore' && confirm.id === target.id;
                   const rows = [
                     <tr key={target.id}>
-                      <td className="px-3 py-2 font-medium text-foreground">
-                        {target.username}
-                        <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
-                          {t('settingsPage.users.archivedTag')}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-muted-foreground">
+                      <UsernameCell
+                        username={target.username}
+                        archived
+                        archivedLabel={t('settingsPage.users.archivedTag')}
+                      />
+                      <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
                         {target.role === 'admin'
                           ? t('settingsPage.users.roleAdmin')
                           : t('settingsPage.users.roleUser')}
                       </td>
-                      <td className="px-3 py-2 text-muted-foreground">{formatDate(target.archivedAt)}</td>
-                      <td className="px-3 py-2 text-muted-foreground">{formatDate(target.expiresAt)}</td>
-                      <td className="px-3 py-2 text-muted-foreground">{formatBytes(target.archivedBytes)}</td>
-                      <td className="px-3 py-2">
+                      <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{formatDate(target.archivedAt)}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{formatDate(target.expiresAt)}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{formatBytes(target.archivedBytes)}</td>
+                      <td className="whitespace-nowrap px-3 py-2">
                         <button
                           type="button"
                           className={buttonClass}
@@ -407,6 +743,33 @@ export default function UsersSettings({ title }: { title?: string }) {
               </tbody>
             </table>
           </div>
+          {sortedArchivedUsers.length > 0 ? (
+            <div className="flex items-center justify-between gap-3 px-1 py-3 text-sm text-muted-foreground">
+              <span>
+                {t('settingsPage.users.pageOf', { page: currentArchivedPage, pages: archivedPageCount })}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className={buttonClass}
+                  disabled={currentArchivedPage <= 1}
+                  aria-label={t('settingsPage.users.previousPage')}
+                  onClick={() => setArchivedPage((value) => Math.max(1, value - 1))}
+                >
+                  {t('settingsPage.users.previousPage')}
+                </button>
+                <button
+                  type="button"
+                  className={buttonClass}
+                  disabled={currentArchivedPage >= archivedPageCount}
+                  aria-label={t('settingsPage.users.nextPage')}
+                  onClick={() => setArchivedPage((value) => Math.min(archivedPageCount, value + 1))}
+                >
+                  {t('settingsPage.users.nextPage')}
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
 

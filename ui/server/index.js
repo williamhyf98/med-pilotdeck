@@ -2169,6 +2169,7 @@ app.get('/api/projects/:projectName/workspace/usage', ...requireUser, async (req
             // 与设计书 §8.2 的"80% 变黄"一致。
             thresholds: {
                 workspaceWarnBytes: limits.workspaceWarnBytes,
+                inboxWarnBytes: limits.inboxWarnBytes,
                 scratchWarnBytes: limits.scratchMaxBytes,
             },
             // 只读参数，给"立即清理""自动清理"的说明文案用。

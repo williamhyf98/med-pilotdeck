@@ -26,6 +26,7 @@ export type StorageSummary = {
   totalInboxBytes: number;
   archivedBytes: number;
   userTotalWarningBytes: number;
+  overWarningUserCount?: number;
 };
 export type ActionResult<T = unknown> =
   | { ok: true; data?: T }

@@ -13,6 +13,7 @@ export function mapInitialTabToMenuKey(
     router: "agentRoute",
     gateway: "general",
     officePreview: "officePreview",
+    workspaceQuota: "workspaceQuota",
     customEnv: "advanced",
     alwaysOn: "agentResident",
     cron: "agentSchedule",

@@ -304,6 +304,65 @@ function validateGatewayConfig(config, errors, warnings) {
   }
 }
 
+function validateWorkspaceQuota(config, errors, warnings) {
+  const quota = config?.workspace?.quota;
+  if (quota === undefined) return;
+  if (!isRecord(quota)) {
+    errors.push('workspace.quota must be an object');
+    return;
+  }
+
+  const nonNegativeFields = [
+    ['workspaceWarnBytes', true],
+    ['inboxWarnBytes', true],
+    ['scratchMaxBytes', false],
+    ['scratchTtlDays', false],
+    ['toolResultsTtlDays', false],
+    ['snapshotRetentionDays', false],
+    ['userTotalMaxBytes', false],
+  ];
+  for (const [field, allowZero] of nonNegativeFields) {
+    if (quota[field] === undefined) continue;
+    if (
+      typeof quota[field] !== 'number'
+      || !Number.isFinite(quota[field])
+      || (allowZero ? quota[field] < 0 : quota[field] <= 0)
+    ) {
+      errors.push(
+        `workspace.quota.${field} must be ${allowZero ? 'a non-negative' : 'a positive'} number`,
+      );
+    }
+  }
+
+  if (quota.scratchSoftRatio !== undefined && (
+    typeof quota.scratchSoftRatio !== 'number'
+    || !Number.isFinite(quota.scratchSoftRatio)
+    || quota.scratchSoftRatio < 0.5
+    || quota.scratchSoftRatio > 0.95
+  )) {
+    errors.push('workspace.quota.scratchSoftRatio must be between 0.5 and 0.95');
+  }
+  if (quota.protectRecentMinutes !== undefined && (
+    typeof quota.protectRecentMinutes !== 'number'
+    || !Number.isFinite(quota.protectRecentMinutes)
+    || quota.protectRecentMinutes < 0
+    || quota.protectRecentMinutes > 1440
+  )) {
+    errors.push('workspace.quota.protectRecentMinutes must be between 0 and 1440');
+  }
+  if (quota.cleanOnTurnEnd !== undefined && typeof quota.cleanOnTurnEnd !== 'boolean') {
+    errors.push('workspace.quota.cleanOnTurnEnd must be a boolean');
+  }
+
+  if (
+    Number.isFinite(quota.userTotalMaxBytes)
+    && Number.isFinite(quota.workspaceWarnBytes)
+    && quota.userTotalMaxBytes < quota.workspaceWarnBytes
+  ) {
+    warnings.push('workspace.quota.userTotalMaxBytes is below workspaceWarnBytes');
+  }
+}
+
 export function validatePilotDeckConfig(config) {
   const normalized = normalizePilotDeckConfig(config);
   const errors = [];
@@ -333,6 +392,7 @@ export function validatePilotDeckConfig(config) {
 
   validateRouterModelRefs(normalized, errors);
   validateGatewayConfig(normalized, errors, warnings);
+  validateWorkspaceQuota(normalized, errors, warnings);
 
   if (normalized.webui?.runtime?.contextWindow !== undefined) {
     warnings.push(

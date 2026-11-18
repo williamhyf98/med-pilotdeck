@@ -63,11 +63,19 @@
       "lastLogin": "最近登录",
       "storage": "存储用量",
       "summary": "全部用户合计 {{size}} · {{count}} 个用户",
-      "summaryInbox": "其中 inbox {{size}}",
+      "summaryInbox": "inbox {{size}}",
       "summaryWarning": "单用户告警值 {{size}}",
-      "sortByStorage": "按存储用量排序",
-      "share": "占比",
-      "inbox": "其中 inbox",
+      "inbox": "inbox",
+      "searchUsername": "搜索用户名",
+      "searchArchivedUsername": "搜索已归档用户名",
+      "searchUsernamePlaceholder": "搜索用户名",
+      "sort": "点击排序",
+      "ascending": "升序",
+      "descending": "降序",
+      "noMatchingUsers": "没有匹配的用户",
+      "pageOf": "第 {{page}} / {{pages}} 页",
+      "previousPage": "上一页",
+      "nextPage": "下一页",
       "archivedTag": "已归档",
       "archivedNote": "（含归档 {{size}}）",
       "overWarning": "超过单用户告警值 {{size}}",
@@ -132,6 +140,7 @@
       "advanced": "高级",
       "about": "关于",
       "users": "用户管理",
+      "workspaceQuota": "工作区与配额",
       "skills": "技能依赖"
     },
     "titles": {
@@ -153,7 +162,87 @@
       "advanced": "高级",
       "about": "关于",
       "users": "用户管理",
+      "workspaceQuota": "工作区与配额",
       "skills": "扩展 / 技能依赖"
+    },
+    "workspaceQuota": {
+      "description": "调整工作区提示值、scratch 自动清理策略和用户存储告警。提示值只用于提醒，不会阻止上传或写入。",
+      "sections": {
+        "alerts": {
+          "title": "容量提示",
+          "description": "这些数值用于显示提示颜色和管理员告警，不会把文件写入拦截下来。"
+        },
+        "cleanup": {
+          "title": "scratch 自动清理",
+          "description": "scratch 用来保存中间产物；系统只会清理 scratch，不会自动删除 inbox 或 exports。"
+        },
+        "usage": {
+          "title": "当前占用",
+          "description": "这里显示全体用户的当前统计，数据来自用户管理页的存储扫描。"
+        }
+      },
+      "fields": {
+        "workspaceWarn": {
+          "label": "工作区总量提示值",
+          "description": "工作区总量达到 80% 后显示提醒，默认 5 GB。"
+        },
+        "inboxWarn": {
+          "label": "inbox 提示值",
+          "description": "单独提示 inbox 占用；填 0 表示不启用，默认不启用。"
+        },
+        "userTotal": {
+          "label": "单用户总量告警值",
+          "description": "用户管理页中，单个用户的存储达到此值后显示告警，默认 20 GB。"
+        },
+        "scratchMax": {
+          "label": "scratch 自动清理上限",
+          "description": "scratch 超过此值后按清理策略回收旧内容，默认 1 GB。"
+        },
+        "imagingScratchMax": {
+          "label": "影像工作区 scratch 上限",
+          "description": "影像类项目使用的 scratch 上限，默认 2 GB。"
+        },
+        "softRatio": {
+          "label": "清理目标比例",
+          "description": "触发清理后，scratch 会尽量降到上限的这个比例，范围 50%–95%。"
+        },
+        "ttl": {
+          "label": "scratch 保留天数",
+          "description": "长期未访问的 scratch 内容超过此天数后可被清理，默认 7 天。"
+        },
+        "protect": {
+          "label": "最近活动保护时间",
+          "description": "最近被使用的 scratch 内容在此时间内不会被清理，默认 10 分钟。"
+        },
+        "cleanOnTurnEnd": {
+          "label": "回合结束清理本轮 scratch",
+          "description": "开启后，回合结束时立即清理本轮产生的中间结果。"
+        }
+      },
+      "units": {
+        "days": "天",
+        "minutes": "分钟"
+      },
+      "usage": {
+        "total": "全体用户工作区",
+        "inbox": "全体用户 inbox",
+        "archived": "归档数据",
+        "ofAlert": "占提示值",
+        "userWarning": "{{count}} 个用户超过告警值"
+      },
+      "actions": {
+        "cancel": "取消修改",
+        "save": "保存配额设置",
+        "saving": "保存中...",
+        "saved": "已保存"
+      },
+      "validation": {
+        "positive": "容量和天数必须大于 0。",
+        "nonNegative": "inbox 提示值不能小于 0。",
+        "ratio": "清理目标比例必须在 50% 到 95% 之间。",
+        "ttl": "scratch 保留天数必须在 1 到 365 天之间。",
+        "protect": "最近活动保护时间必须在 0 到 1440 分钟之间。"
+      }
     },
     "contentComingSoon": {
       "title": "右侧内容区待接入",
@@ -186,7 +275,8 @@
       "agentSchedule": "配置文件当前不是有效 YAML，暂时无法加载智能体定时任务表单。",
       "integrations": "配置文件当前不是有效 YAML，暂时无法加载网关配置表单。",
       "officePreview": "配置文件当前不是有效 YAML，暂时无法加载 Office 预览表单。",
-      "modelPool": "配置文件当前不是有效 YAML，暂时无法加载模型池表单。"
+      "modelPool": "配置文件当前不是有效 YAML，暂时无法加载模型池表单。",
+      "workspaceQuota": "配置文件当前不是有效 YAML，暂时无法加载工作区与配额表单。"
     },
     "skills": {
       "description": "数据分析技能会用到的 Python 依赖。离线环境不能在线安装，这里只做查看：状态不对时请运维执行 analysis.sh bootstrap-runtime。",
