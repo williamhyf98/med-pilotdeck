@@ -9,6 +9,7 @@ import {
   Search,
   ZoomIn,
   ZoomOut,
+  ChevronsLeftRight,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type {
@@ -26,6 +27,8 @@ type BuiltinOfficeToolbarProps = {
   minZoom?: number;
   maxZoom?: number;
   onZoomChange: (zoom: number) => void;
+  fitWidthActive?: boolean;
+  onFitWidth?: () => void;
   currentItem?: number;
   itemCount?: number;
   onPreviousItem?: () => void;
@@ -68,6 +71,8 @@ export default function BuiltinOfficeToolbar({
   minZoom = 0.5,
   maxZoom = 2,
   onZoomChange,
+  fitWidthActive = false,
+  onFitWidth,
   currentItem,
   itemCount,
   onPreviousItem,
@@ -135,6 +140,18 @@ export default function BuiltinOfficeToolbar({
       >
         <ZoomIn className="h-4 w-4" strokeWidth={1.75} />
       </button>
+      {onFitWidth ? (
+        <button
+          type="button"
+          className={`${buttonClass} ${fitWidthActive ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300' : ''}`}
+          title={t('pdfToolbar.fitWidth')}
+          aria-label={t('pdfToolbar.fitWidth')}
+          aria-pressed={fitWidthActive}
+          onClick={onFitWidth}
+        >
+          <ChevronsLeftRight className="h-4 w-4" strokeWidth={1.75} />
+        </button>
+      ) : null}
 
       {hasItemControls ? (
         <>

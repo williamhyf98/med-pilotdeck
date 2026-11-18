@@ -41,6 +41,10 @@ type TextSelectionAction = {
   reference: ContentReference;
 };
 
+const PAGE_HORIZONTAL_PADDING = 56;
+const FIT_WIDTH_MARGIN = 16;
+const MIN_DOCX_ZOOM = 0.2;
+
 function surroundingText(text: string, selectedText: string, radius = 300) {
   const index = text.indexOf(selectedText);
   if (index < 0) return text.slice(0, radius * 2);
@@ -87,8 +91,9 @@ export default function DocxBuiltinPreview({
   const onErrorRef = useRef(onError);
   const [rendered, setRendered] = useState(false);
   const [outline, setOutline] = useState<OutlineItem[]>([]);
-  const [navigationVisible, setNavigationVisible] = useState(true);
+  const [navigationVisible, setNavigationVisible] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [fitWidth, setFitWidth] = useState(true);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchMatchIndex, setSearchMatchIndex] = useState(0);
@@ -125,6 +130,7 @@ export default function DocxBuiltinPreview({
     container.replaceChildren();
     setRendered(false);
     setOutline([]);
+    setFitWidth(true);
 
     renderAsync(blob, container, container, {
       className: 'pilotdeck-docx',
@@ -154,6 +160,28 @@ export default function DocxBuiltinPreview({
       container.replaceChildren();
     };
   }, [blob]);
+
+  useEffect(() => {
+    if (!rendered || !fitWidth || !scrollRef.current || !viewerRef.current) return undefined;
+    const scroll = scrollRef.current;
+    const pages = Array.from(viewerRef.current.querySelectorAll<HTMLElement>('section.pilotdeck-docx'));
+    if (pages.length === 0) return undefined;
+
+    const updateFit = () => {
+      const availableWidth = scroll.clientWidth;
+      const pageWidth = Math.max(...pages.map((page) => page.offsetWidth));
+      if (availableWidth <= 0 || pageWidth <= 0) return;
+      const nextZoom = Math.min(1, Math.max(
+        MIN_DOCX_ZOOM,
+        (availableWidth - FIT_WIDTH_MARGIN) / (pageWidth + PAGE_HORIZONTAL_PADDING),
+      ));
+      setZoom(nextZoom);
+    };
+    updateFit();
+    const observer = new ResizeObserver(updateFit);
+    observer.observe(scroll);
+    return () => observer.disconnect();
+  }, [rendered, fitWidth, navigationVisible]);
 
   useEffect(() => {
     const wrapper = viewerRef.current?.querySelector<HTMLElement>('.pilotdeck-docx-wrapper');
@@ -320,6 +348,8 @@ export default function DocxBuiltinPreview({
         .pilotdeck-docx-wrapper {
           background: rgb(245 245 245) !important;
           padding: 28px !important;
+          width: max-content;
+          margin: 0 auto;
         }
         .dark .pilotdeck-docx-wrapper {
           background: rgb(23 23 23) !important;
@@ -335,7 +365,13 @@ export default function DocxBuiltinPreview({
         navigationVisible={navigationVisible && outline.length > 0}
         onToggleNavigation={() => setNavigationVisible((value) => !value)}
         zoom={zoom}
-        onZoomChange={setZoom}
+        minZoom={MIN_DOCX_ZOOM}
+        onZoomChange={(value) => {
+          setFitWidth(false);
+          setZoom(value);
+        }}
+        fitWidthActive={fitWidth}
+        onFitWidth={() => setFitWidth(true)}
         searchQuery={searchQuery}
         onSearchQueryChange={setSearchQuery}
         searchOpen={searchOpen}
@@ -366,7 +402,7 @@ export default function DocxBuiltinPreview({
       <div className="flex min-h-0 flex-1">
         {navigationVisible && outline.length > 0 ? outlinePanel : null}
         <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-auto">
-          <div ref={viewerRef} data-testid="docx-builtin-preview" className="min-h-full" />
+          <div ref={viewerRef} data-testid="docx-builtin-preview" className="min-h-full min-w-full" />
           {selectionAction ? (
             <button
               type="button"

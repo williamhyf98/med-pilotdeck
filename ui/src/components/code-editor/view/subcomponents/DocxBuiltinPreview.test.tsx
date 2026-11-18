@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import DocxBuiltinPreview from './DocxBuiltinPreview';
 
 const renderAsyncMock = vi.hoisted(() => vi.fn(async (
@@ -13,6 +13,11 @@ const renderAsyncMock = vi.hoisted(() => vi.fn(async (
     const section = document.createElement('section');
     section.className = 'pilotdeck-docx';
     section.textContent = `Document section ${index + 1}`;
+    if (index === 0) {
+      const heading = document.createElement('h1');
+      heading.textContent = 'Introduction';
+      section.prepend(heading);
+    }
     wrapper.append(section);
   }
   bodyContainer.append(wrapper);
@@ -25,9 +30,61 @@ vi.mock('docx-preview', () => ({
 afterEach(() => {
   cleanup();
   renderAsyncMock.mockClear();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+let availableWidth = 520;
+let notifyResize: (() => void) | undefined;
+
+beforeEach(() => {
+  availableWidth = 520;
+  notifyResize = undefined;
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => availableWidth);
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function (this: HTMLElement) {
+    return this.matches('section.pilotdeck-docx') ? 800 : 0;
+  });
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(callback: ResizeObserverCallback) {
+      notifyResize = () => callback([], this as unknown as ResizeObserver);
+    }
+    observe() {}
+    disconnect() {}
+  });
 });
 
 describe('DocxBuiltinPreview', () => {
+  it('fits the whole page on open and keeps manual zoom during resizing', async () => {
+    render(
+      <DocxBuiltinPreview blob={new Blob(['docx-data'])} fileName="report.docx"
+        filePath="report.docx" onError={vi.fn()} />,
+    );
+
+    expect(await screen.findByText('59%')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'pdfToolbar.fitWidth' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.queryByText('pdfToolbar.outline')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'pdfToolbar.zoomIn' }));
+    expect(screen.getByText('70%')).not.toBeNull();
+
+    availableWidth = 720;
+    notifyResize?.();
+    expect(screen.getByText('70%')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'pdfToolbar.fitWidth' }));
+    expect(await screen.findByText('82%')).not.toBeNull();
+  });
+
+  it('recalculates page fit when the outline changes the document width', async () => {
+    render(
+      <DocxBuiltinPreview blob={new Blob(['docx-data'])} fileName="report.docx"
+        filePath="report.docx" onError={vi.fn()} />,
+    );
+
+    expect(await screen.findByText('59%')).not.toBeNull();
+    availableWidth = 320;
+    fireEvent.click(screen.getByRole('button', { name: 'pdfToolbar.showNavigation' }));
+    expect(await screen.findByText('36%')).not.toBeNull();
+  });
+
   it('opens file search as a floating overlay inside the preview surface', async () => {
     render(
       <DocxBuiltinPreview
