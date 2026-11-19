@@ -590,6 +590,37 @@ export function flattenCanonicalMessage(
   const stamp = context.entryTimestamp ?? (context.now ?? (() => new Date()))().toISOString();
   const out: WebMessage[] = [];
   const role: WebMessageRole = message.role === "user" ? "user" : "assistant";
+  const supplementalToolCallId = typeof (message.metadata as Record<string, unknown> | undefined)?.toolCallId === "string"
+    ? String((message.metadata as Record<string, unknown>).toolCallId)
+    : undefined;
+  const isToolResultSupplemental = (
+    role === "user"
+    && message.metadata?.purpose === "tool_result_supplemental"
+    && Boolean(supplementalToolCallId)
+  );
+
+  if (isToolResultSupplemental) {
+    const images = message.content
+      .filter((block): block is CanonicalImageBlock => block.type === "image")
+      .map(toWebMessageImage);
+    if (images.length > 0) {
+      out.push({
+        id: `${context.sessionKey}-tool-${context.index}-${supplementalToolCallId}-supplemental`,
+        sessionKey: context.sessionKey,
+        projectKey: context.projectKey,
+        createdAt: stamp,
+        provider: "pilotdeck",
+        role: "tool",
+        kind: "tool_result",
+        toolCallId: supplementalToolCallId,
+        images,
+        ...(context.entryId ? { entryId: context.entryId } : {}),
+        source: "history",
+      });
+    }
+    return out;
+  }
+
   let textBuffer = "";
   let pendingImages: NonNullable<WebMessage["images"]> = [];
   let lastToolResultMessage: WebMessage | undefined;
@@ -872,6 +903,75 @@ function compactBoundaryMetadata(entry: AgentTranscriptEntry & { type: "control_
   return meta;
 }
 
+type PendingSupplementalMedia = {
+  turnId: string;
+  toolCallId: string;
+  remaining: number;
+};
+
+function readSupplementalMessageCount(raw: unknown): number {
+  if (!isRecord(raw) || !Array.isArray(raw.supplementalMessages)) {
+    return 0;
+  }
+  return raw.supplementalMessages.length;
+}
+
+function enqueueLegacySupplementalMedia(
+  message: CanonicalMessage,
+  turnId: string,
+  pending: PendingSupplementalMedia[],
+): void {
+  if (message.role !== "user") return;
+  for (const block of message.content) {
+    if (block.type !== "tool_result") continue;
+    const count = readSupplementalMessageCount(block.raw);
+    if (count > 0) {
+      pending.push({ turnId, toolCallId: block.toolCallId, remaining: count });
+    }
+  }
+}
+
+function isMediaOnlyUserMessage(message: CanonicalMessage): boolean {
+  return message.role === "user"
+    && message.content.length > 0
+    && message.content.every((block) => block.type === "image" || block.type === "pdf");
+}
+
+/**
+ * Older transcripts persisted supplemental media as a standalone `role=user`
+ * message. The tool result's raw payload still records how many supplemental
+ * messages followed it, so recover the association while reading history.
+ */
+function markLegacySupplementalMedia(
+  message: CanonicalMessage,
+  turnId: string,
+  pending: PendingSupplementalMedia[],
+): CanonicalMessage {
+  if (
+    !isMediaOnlyUserMessage(message)
+    || message.metadata?.purpose === "tool_result_supplemental"
+  ) {
+    return message;
+  }
+
+  const pendingIndex = pending.findIndex((item) => item.turnId === turnId && item.remaining > 0);
+  if (pendingIndex < 0) return message;
+
+  const item = pending[pendingIndex]!;
+  item.remaining -= 1;
+  if (item.remaining === 0) {
+    pending.splice(pendingIndex, 1);
+  }
+  return {
+    ...message,
+    metadata: {
+      ...(message.metadata ?? {}),
+      toolCallId: item.toolCallId,
+      purpose: "tool_result_supplemental",
+    },
+  };
+}
+
 function extractWebVisibleMessages(entries: AgentTranscriptEntry[]): {
   messages: CanonicalMessage[];
   timestamps: string[];
@@ -888,6 +988,22 @@ function extractWebVisibleMessages(entries: AgentTranscriptEntry[]): {
   const sequences: number[] = [];
   const forkUnsupportedContents: boolean[] = [];
   const compactBoundaries: CompactBoundaryInfo[] = [];
+  const pendingSupplementalMedia: PendingSupplementalMedia[] = [];
+
+  const pushMessage = (
+    message: CanonicalMessage,
+    entry: AgentTranscriptEntry,
+    forkUnsupportedContent: boolean,
+  ): void => {
+    const normalized = markLegacySupplementalMedia(message, entry.turnId, pendingSupplementalMedia);
+    messages.push(cloneMessage(normalized));
+    timestamps.push(entry.createdAt);
+    entryIds.push(entry.entryId);
+    turnIds.push(entry.turnId);
+    sequences.push(entry.sequence);
+    forkUnsupportedContents.push(forkUnsupportedContent);
+    enqueueLegacySupplementalMedia(normalized, entry.turnId, pendingSupplementalMedia);
+  };
 
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
@@ -905,12 +1021,7 @@ function extractWebVisibleMessages(entries: AgentTranscriptEntry[]): {
             if (!shouldShowCompactReplacementInWeb(message)) {
               continue;
             }
-            messages.push(cloneMessage(message));
-            timestamps.push(entry.createdAt);
-            entryIds.push(entry.entryId);
-            turnIds.push(entry.turnId);
-            sequences.push(entry.sequence);
-            forkUnsupportedContents.push(entryForkUnsupported);
+            pushMessage(message, entry, entryForkUnsupported);
           }
         }
         break;
@@ -923,12 +1034,7 @@ function extractWebVisibleMessages(entries: AgentTranscriptEntry[]): {
         if (!shouldShowCompactReplacementInWeb(entry.message)) {
           break;
         }
-        messages.push(cloneMessage(entry.message));
-        timestamps.push(entry.createdAt);
-        entryIds.push(entry.entryId);
-        turnIds.push(entry.turnId);
-        sequences.push(entry.sequence);
-        forkUnsupportedContents.push(false);
+        pushMessage(entry.message, entry, false);
         break;
       case "control_boundary": {
         if (entry.boundary && entry.boundary.kind === "compact") {
@@ -971,6 +1077,7 @@ function extractSubagentExecutionMessages(entries: AgentTranscriptEntry[]): {
   const sequences: number[] = [];
   const compactBoundaries: CompactBoundaryInfo[] = [];
   let sawExecutionMessage = false;
+  const pendingSupplementalMedia: PendingSupplementalMedia[] = [];
 
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
@@ -987,11 +1094,17 @@ function extractSubagentExecutionMessages(entries: AgentTranscriptEntry[]): {
         if (entry.message.metadata?.synthetic || !shouldShowCompactReplacementInWeb(entry.message)) {
           break;
         }
-        messages.push(cloneMessage(entry.message));
+        const normalized = markLegacySupplementalMedia(
+          entry.message,
+          entry.turnId,
+          pendingSupplementalMedia,
+        );
+        messages.push(cloneMessage(normalized));
         timestamps.push(entry.createdAt);
         entryIds.push(entry.entryId);
         turnIds.push(entry.turnId);
         sequences.push(entry.sequence);
+        enqueueLegacySupplementalMedia(normalized, entry.turnId, pendingSupplementalMedia);
         break;
       case "control_boundary": {
         if (

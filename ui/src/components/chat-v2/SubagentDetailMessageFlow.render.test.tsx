@@ -92,11 +92,11 @@ describe('SubagentDetailMessageFlow', () => {
       tool('edit-1', 'Edit', 300),
     ]);
 
-    const thinkingText = screen.getByText('Choose the smallest patch.');
-    const status = screen.getByRole('status');
-
-    expect(screen.getAllByText('Choose the smallest patch.')).toHaveLength(1);
-    expect(Boolean(thinkingText.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(screen.queryByText('Choose the smallest patch.')).toBeNull();
+    const thinkingButton = screen.getByRole('button', { name: 'Thinking process' });
+    expect(thinkingButton.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(thinkingButton);
+    expect(screen.getByText('Choose the smallest patch.')).toBeTruthy();
   });
 
   it('renders completed standalone subagent thinking once', () => {
@@ -106,6 +106,12 @@ describe('SubagentDetailMessageFlow', () => {
       thinking('think-2', 'Standalone thought two.', 300),
     ], false);
 
+    expect(screen.queryByText('Standalone thought one.')).toBeNull();
+    expect(screen.queryByText('Standalone thought two.')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^Turn process: / }));
+    const thinkingButtons = screen.getAllByRole('button', { name: 'Thinking process' });
+    expect(thinkingButtons).toHaveLength(2);
+    thinkingButtons.forEach((button) => fireEvent.click(button));
     expect(screen.getAllByText('Standalone thought one.')).toHaveLength(1);
     expect(screen.getAllByText('Standalone thought two.')).toHaveLength(1);
   });
@@ -119,16 +125,14 @@ describe('SubagentDetailMessageFlow', () => {
     ], false);
 
     expect(screen.queryByText('Completed thought one.')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /Explored 1 file|已探索 1 个文件/i }));
-
-    const status = screen.getByRole('status');
-
+    fireEvent.click(screen.getByRole('button', { name: /^Turn process: / }));
+    const thinkingButtons = screen.getAllByRole('button', { name: 'Thinking process' });
+    expect(thinkingButtons).toHaveLength(2);
+    thinkingButtons.forEach((button) => fireEvent.click(button));
     expect(screen.getAllByText('Completed thought one.')).toHaveLength(1);
     expect(screen.getAllByText('Completed thought two.')).toHaveLength(1);
-    expect(status.textContent).toContain('Completed thought one.');
-    expect(status.textContent).toContain('Completed thought two.');
     expect(screen.queryByText('Thought through next step')).toBeNull();
-    expect(screen.getByText(/Explored 1 file|已探索 1 个文件/i)).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'Thinking process' })).toHaveLength(2);
   });
 
   it('opens local search and highlights subagent message content', async () => {

@@ -124,6 +124,7 @@ export type PilotDeckToolSupplementalMessage = {
   role: "user";
   content: PilotDeckToolResultContent[];
   isMeta?: boolean;
+  metadata?: Record<string, unknown>;
 };
 
 export type PilotDeckToolExecutionOutput<Output = unknown> = {

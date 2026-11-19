@@ -7,6 +7,8 @@ import type { ChatMessage, ChatRunMode } from '../chat/types/types';
 import type { Project } from '../../types/app';
 import MessagesPaneV2 from './MessagesPaneV2';
 import { getContextStatus } from './ComposerV2';
+import { normalizedToChatMessages } from '../chat/hooks/useChatMessages';
+import type { NormalizedMessage } from '../../stores/useSessionStore';
 
 beforeAll(() => {
   class ResizeObserverMock {
@@ -408,14 +410,146 @@ describe('MessagesPaneV2 render behavior', () => {
       ],
     });
 
-    const processSummary = screen.getByText('Thought through next step');
-    const runSummary = screen.getByText(/^Processed /);
+    expect(screen.queryByText('正在分析症状和危险信号。')).toBeNull();
+    const runSummary = screen.getByText(/^Turn process: /);
     const answer = screen.getByText('建议首先测量体温并评估伴随症状。');
     const panel = answer.closest('.pd-assistant-turn-surface-single');
 
     expect(panel).toBeTruthy();
-    expect(panel?.contains(processSummary)).toBe(true);
-    expect(panel?.contains(runSummary)).toBe(true);
+    expect(panel?.contains(runSummary)).toBe(false);
+    const processPanelButton = screen.getByRole('button', { name: /^Turn process: / });
+    expect(processPanelButton.getAttribute('aria-expanded')).toBe('false');
+
+    fireEvent.click(processPanelButton);
+    const thinkingButton = screen.getByRole('button', { name: 'Thinking process' });
+    expect(thinkingButton.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(thinkingButton);
+    expect(screen.getByText('正在分析症状和危险信号。')).toBeTruthy();
+  });
+
+  it('resizes the expanded process window without collapsing the process panel', () => {
+    renderPane({
+      showThinking: true,
+      messages: [
+        {
+          id: 'u-process-resize',
+          type: 'user',
+          content: '读取这个文件',
+          timestamp: '2026-09-18T08:05:00.000Z',
+        },
+        {
+          id: 'tool-process-resize',
+          type: 'assistant',
+          content: '',
+          timestamp: '2026-09-18T08:05:01.000Z',
+          isToolUse: true,
+          toolName: 'Read',
+          toolInput: { file_path: 'scratch/report.docx' },
+          toolResult: { content: '文件已读取', isError: false },
+        },
+        {
+          id: 'answer-process-resize',
+          type: 'assistant',
+          content: '文件读取完成。',
+          timestamp: '2026-09-18T08:05:02.000Z',
+        },
+      ],
+    });
+
+    const processButton = screen.getByRole('button', { name: /^Turn process: / });
+    fireEvent.click(processButton);
+
+    const resizeButton = screen.getByRole('button', { name: 'Expand process window' });
+    expect(processButton.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(resizeButton);
+
+    expect(processButton.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Restore process window' })).toBeTruthy();
+  });
+
+  it('keeps persisted tool images inside the collapsed process step', () => {
+    const imageDataUrl = 'data:image/jpeg;base64,/9j/4AAQ';
+    const normalizedMessages: NormalizedMessage[] = [
+      {
+        id: 'user-pdf',
+        sessionId: 'session-1',
+        provider: 'pilotdeck',
+        kind: 'text',
+        role: 'user',
+        content: '请检查 PDF',
+        timestamp: '2026-09-18T08:10:00.000Z',
+        turnId: 'turn-pdf',
+        runId: 'turn-pdf',
+      },
+      {
+        id: 'read-pdf',
+        sessionId: 'session-1',
+        provider: 'pilotdeck',
+        kind: 'tool_use',
+        toolName: 'Read',
+        toolId: 'read-pdf',
+        toolInput: { file_path: 'scratch/preview.pdf' },
+        timestamp: '2026-09-18T08:10:01.000Z',
+        turnId: 'turn-pdf',
+        runId: 'turn-pdf',
+      },
+      {
+        id: 'read-pdf-result',
+        sessionId: 'session-1',
+        provider: 'pilotdeck',
+        kind: 'tool_result',
+        toolId: 'read-pdf',
+        content: 'PDF pages extracted',
+        timestamp: '2026-09-18T08:10:02.000Z',
+        turnId: 'turn-pdf',
+        runId: 'turn-pdf',
+      },
+      {
+        id: 'read-pdf-supplemental',
+        sessionId: 'session-1',
+        provider: 'pilotdeck',
+        kind: 'tool_result',
+        toolId: 'read-pdf',
+        content: '',
+        toolResultImages: [{
+          data: imageDataUrl,
+          name: 'preview-page-1.jpg',
+          mimeType: 'image/jpeg',
+        }],
+        timestamp: '2026-09-18T08:10:03.000Z',
+        turnId: 'turn-pdf',
+        runId: 'turn-pdf',
+      },
+      {
+        id: 'answer-pdf',
+        sessionId: 'session-1',
+        provider: 'pilotdeck',
+        kind: 'text',
+        role: 'assistant',
+        content: '已检查 PDF。',
+        timestamp: '2026-09-18T08:10:04.000Z',
+        turnId: 'turn-pdf',
+        runId: 'turn-pdf',
+      },
+    ];
+
+    renderPane({
+      showProcessTrace: true,
+      messages: normalizedToChatMessages(normalizedMessages),
+    });
+
+    expect(screen.queryByAltText('preview-page-1.jpg')).toBeNull();
+    const processButton = screen.getByRole('button', { name: /^Turn process: / });
+    expect(processButton.getAttribute('aria-expanded')).toBe('false');
+
+    fireEvent.click(processButton);
+    const readStep = screen.getByRole('button', { name: 'Tool returned image' });
+    expect(readStep.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByAltText('preview-page-1.jpg')).toBeNull();
+
+    fireEvent.click(readStep);
+    expect(screen.getByAltText('preview-page-1.jpg')).toBeTruthy();
+    expect(screen.getByText('PDF pages extracted')).toBeTruthy();
   });
 
   it('shows the trauma-specific empty state for a new war-trauma conversation', () => {
@@ -618,17 +752,20 @@ describe('MessagesPaneV2 render behavior', () => {
       <SessionPaneHarness sessionId="session-a" messages={processMessages} />,
     );
 
-    const firstButton = screen.getByText('Explored 1 file').closest('button');
-    fireEvent.click(firstButton as HTMLButtonElement);
-    expect(firstButton?.getAttribute('aria-expanded')).toBe('true');
+    const processPanelButton = screen.getByRole('button', { name: /^Turn process: / });
+    fireEvent.click(processPanelButton);
+    const firstButton = screen.getByRole('button', { name: 'Read file' });
+    fireEvent.click(firstButton);
+    expect(firstButton.getAttribute('aria-expanded')).toBe('true');
 
     view.rerender(
       <SessionPaneHarness sessionId="session-b" messages={processMessages} />,
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Explored 1 file').closest('button')?.getAttribute('aria-expanded'))
+      expect(screen.getByRole('button', { name: /^Turn process: / }).getAttribute('aria-expanded'))
         .toBe('false');
+      expect(screen.queryByRole('button', { name: 'Read file' })).toBeNull();
     });
   });
 
@@ -671,11 +808,11 @@ describe('MessagesPaneV2 render behavior', () => {
     const userText = screen.getByText('继续优化');
     const assistantText = screen.getByText('I will inspect the current UI.');
     expect(statuses).toHaveLength(2);
-    expect(headerStatus.textContent).toContain('Processed');
-    expect(headerStatus.querySelector('button')).toBeNull();
+    expect(headerStatus.textContent).toContain('Turn process:');
+    expect(headerStatus.querySelector('button')).not.toBeNull();
     expect(userText.closest('.chat-message')?.className).toContain('pb-2');
     expect(liveStatus.textContent).toContain('Searching files');
-    expect(liveStatus.querySelector('button')).toBeNull();
+    expect(liveStatus.querySelector('button')).not.toBeNull();
     expect(Boolean(headerStatus.compareDocumentPosition(assistantText) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
   });
 
@@ -734,7 +871,7 @@ describe('MessagesPaneV2 render behavior', () => {
 
     renderPane({ messages });
 
-    const headerStatus = screen.getByText('Processed 1m 20s').closest('[role="status"]');
+    const headerStatus = screen.getByText('Turn process: 1m 20s').closest('[role="status"]');
     const userText = screen.getByText('继续优化');
     const assistantText = screen.getByText('I finished the changes.');
 
@@ -789,16 +926,10 @@ describe('MessagesPaneV2 render behavior', () => {
 
     expect(screen.queryByText('HiddenTool.tsx')).toBeNull();
 
-    const liveStatus = screen.getByText('Reading file').closest('[role="status"]');
-    expect(liveStatus).not.toBeNull();
-    if (!liveStatus) throw new Error('Expected live status container');
-    const expandButton = liveStatus.querySelector('button');
-    expect(expandButton).not.toBeNull();
-    expect(expandButton?.getAttribute('aria-expanded')).toBe('false');
-
-    fireEvent.click(expandButton as HTMLButtonElement);
-
-    expect(expandButton?.getAttribute('aria-expanded')).toBe('true');
+    const readButton = screen.getByRole('button', { name: 'Read file' });
+    expect(readButton.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(readButton);
+    expect(readButton.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByText('HiddenTool.tsx')).toBeTruthy();
   });
 
@@ -842,16 +973,16 @@ describe('MessagesPaneV2 render behavior', () => {
 
     const { container } = renderPane({ messages, isAssistantWorking: true, runMode: 'plan' });
 
-    const summary = screen.getByText(/Ran 1 command.*1 error/);
-    const button = summary.closest('button');
+    const button = screen.getByRole('button', { name: 'Run command' });
     expect(button).not.toBeNull();
+    expect(button?.textContent).not.toMatch(/error|retry|错误|重试/i);
     fireEvent.click(button as HTMLButtonElement);
 
     expect(screen.getByText(/find \. -maxdepth 1 -type f/)).toBeTruthy();
     expect(screen.queryByText('Parameters')).toBeNull();
     expect(container.querySelector('.border-l-red-500')).toBeNull();
     expect(screen.queryByRole('button', { name: /permissions\.grant|Grant Bash for this chat/ })).toBeNull();
-    expect(screen.getByText(/Plan mode denies side-effecting tool bash/)).toBeTruthy();
+    expect(screen.getAllByText(/Plan mode denies side-effecting tool bash/).length).toBeGreaterThan(0);
   });
 
   it('preserves an expanded live process row while streamed tool groups grow', () => {
@@ -882,13 +1013,10 @@ describe('MessagesPaneV2 render behavior', () => {
     ];
     const { rerender } = renderPane({ messages: baseMessages, isAssistantWorking: true });
 
-    const liveStatus = screen.getByText('Reading ReadHidden.tsx').closest('[role="status"]');
-    expect(liveStatus).not.toBeNull();
-    if (!liveStatus) throw new Error('Expected live status container');
-    const expandButton = liveStatus.querySelector('button');
-    expect(expandButton).not.toBeNull();
-    fireEvent.click(expandButton as HTMLButtonElement);
-    expect(expandButton?.getAttribute('aria-expanded')).toBe('true');
+    const readButton = screen.getByRole('button', { name: 'Read file' });
+    expect(readButton).not.toBeNull();
+    fireEvent.click(readButton);
+    expect(readButton.getAttribute('aria-expanded')).toBe('true');
 
     const nextMessages: ChatMessage[] = [
       ...baseMessages,
@@ -905,10 +1033,8 @@ describe('MessagesPaneV2 render behavior', () => {
     ];
     rerender(createPaneElement({ messages: nextMessages, isAssistantWorking: true }));
 
-    const updatedStatus = screen.getByText('Searching Footer').closest('[role="status"]');
-    expect(updatedStatus).not.toBeNull();
-    const updatedButton = updatedStatus?.querySelector('button');
-    expect(updatedButton?.getAttribute('aria-expanded')).toBe('true');
+    const updatedButton = screen.getByRole('button', { name: 'Search' });
+    expect(updatedButton.getAttribute('aria-expanded')).toBe('false');
     expect(screen.getByText('ReadHidden.tsx')).toBeTruthy();
   });
 
@@ -940,13 +1066,10 @@ describe('MessagesPaneV2 render behavior', () => {
     ];
     const { rerender } = renderPane({ messages: baseMessages, isAssistantWorking: true });
 
-    const liveStatus = screen.getByText('Reading ReadHidden.tsx').closest('[role="status"]');
-    expect(liveStatus).not.toBeNull();
-    if (!liveStatus) throw new Error('Expected live status container');
-    const expandButton = liveStatus.querySelector('button');
-    expect(expandButton).not.toBeNull();
-    fireEvent.click(expandButton as HTMLButtonElement);
-    expect(expandButton?.getAttribute('aria-expanded')).toBe('true');
+    const readButton = screen.getByRole('button', { name: 'Read file' });
+    expect(readButton).not.toBeNull();
+    fireEvent.click(readButton);
+    expect(readButton.getAttribute('aria-expanded')).toBe('true');
 
     const completedMessages: ChatMessage[] = [
       {
@@ -968,9 +1091,9 @@ describe('MessagesPaneV2 render behavior', () => {
     ];
     rerender(createPaneElement({ messages: completedMessages }));
 
-    const summary = screen.getByText('Explored 1 file');
-    const completedButton = summary.closest('button');
-    expect(completedButton?.getAttribute('aria-expanded')).toBe('false');
+    const summary = screen.getByText(/^Turn process: /);
+    expect(summary.closest('[role="status"]')?.querySelector('button')?.getAttribute('aria-expanded'))
+      .toBe('false');
     expect(screen.queryByText('ReadHidden.tsx')).toBeNull();
   });
 
@@ -1016,9 +1139,9 @@ describe('MessagesPaneV2 render behavior', () => {
 
     renderPane({ messages });
 
-    const summary = screen.getByText('Explored 1 file');
-    const processButton = summary.closest('button');
-    expect(processButton?.getAttribute('aria-expanded')).toBe('false');
+    const summary = screen.getByText(/^Turn process: /);
+    expect(summary.closest('[role="status"]')?.querySelector('button')?.getAttribute('aria-expanded'))
+      .toBe('false');
     expect(screen.queryByText('SearchHiddenNeedle.tsx')).toBeNull();
 
     fireEvent.keyDown(document, { key: 'f', ctrlKey: true });
@@ -1031,7 +1154,8 @@ describe('MessagesPaneV2 render behavior', () => {
       expect((screen.getByRole('button', { name: 'Previous match' }) as HTMLButtonElement).disabled).toBe(true);
       expect((screen.getByRole('button', { name: 'Next match' }) as HTMLButtonElement).disabled).toBe(true);
     });
-    expect(processButton?.getAttribute('aria-expanded')).toBe('false');
+    expect(summary.closest('[role="status"]')?.querySelector('button')?.getAttribute('aria-expanded'))
+      .toBe('false');
     expect(document.querySelector('mark.chat-history-search-highlight-active')).toBeNull();
   });
 
@@ -1163,28 +1287,24 @@ describe('MessagesPaneV2 render behavior', () => {
 
     renderPane({ messages, isAssistantWorking: true });
 
-    const firstAssistant = screen.getByText('I will inspect files first.');
-    const firstStatus = screen.getByText('Explored 1 file');
-    const secondAssistant = screen.getByText('Now I will verify the build.');
-    const runningStatus = screen.getByText('Running npm run build');
+    const firstStatus = screen.getByRole('button', { name: 'Run command' });
 
-    expect(Boolean(firstAssistant.compareDocumentPosition(firstStatus) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
-    expect(Boolean(firstStatus.compareDocumentPosition(secondAssistant) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
-    expect(Boolean(secondAssistant.compareDocumentPosition(runningStatus) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(screen.queryByText('I will inspect files first.')).toBeNull();
+    expect(screen.queryByText('Now I will verify the build.')).toBeNull();
+    expect(firstStatus).not.toBeNull();
 
     expect(screen.queryByText('FirstHidden.tsx')).toBeNull();
     const firstStatusContainer = firstStatus.closest('[role="status"]');
     expect(firstStatusContainer).not.toBeNull();
     if (!firstStatusContainer) throw new Error('Expected first inline status container');
-    expect(firstStatusContainer.parentElement?.className).toContain('mt-2');
-    expect(firstStatusContainer.parentElement?.className).toContain('gap-2');
-    const expandButton = firstStatusContainer.querySelector('button');
-    expect(expandButton).not.toBeNull();
+    fireEvent.click(firstStatus);
 
-    fireEvent.click(expandButton as HTMLButtonElement);
-
+    expect(screen.queryByText('FirstHidden.tsx')).toBeNull();
+    expect(screen.queryByText('I will inspect files first.')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Read file' }));
     expect(screen.getByText('FirstHidden.tsx')).toBeTruthy();
-    expect(firstAssistant.closest('.chat-message')?.className).toContain('pb-2');
+    fireEvent.click(screen.getAllByRole('button', { name: 'Model process note' })[0]);
+    expect(screen.getByText('I will inspect files first.')).toBeTruthy();
   });
 
   it('keeps completed process rows in their original positions after the turn finishes', () => {
@@ -1240,16 +1360,13 @@ describe('MessagesPaneV2 render behavior', () => {
 
     renderPane({ messages });
 
-    const firstAssistant = screen.getByText('I will inspect first.');
-    const readSummary = screen.getByText('Explored 1 file');
-    const secondAssistant = screen.getByText('Now I will run checks.');
-    const commandSummary = screen.getByText('Ran 1 command');
+    const firstAssistant = screen.getByText('All done.');
+    const readSummary = screen.getByText(/^Turn process: /);
     const finalAssistant = screen.getByText('All done.');
 
-    expect(Boolean(firstAssistant.compareDocumentPosition(readSummary) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
-    expect(Boolean(readSummary.compareDocumentPosition(secondAssistant) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
-    expect(Boolean(secondAssistant.compareDocumentPosition(commandSummary) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
-    expect(Boolean(commandSummary.compareDocumentPosition(finalAssistant) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(screen.queryByText('I will inspect first.')).toBeNull();
+    expect(screen.queryByText('Now I will run checks.')).toBeNull();
+    expect(Boolean(readSummary.compareDocumentPosition(finalAssistant) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
   });
 
   it('shows generating status after a closed live tool group while the assistant continues', () => {
@@ -1301,12 +1418,12 @@ describe('MessagesPaneV2 render behavior', () => {
 
     renderPane({ messages, activityMessages, isAssistantWorking: true });
 
-    expect(screen.getByText('Explored 1 file')).toBeTruthy();
-    expect(screen.getByText('Generating response')).toBeTruthy();
+    expect(screen.getAllByText(/^Turn process: /).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Model process note' })).toBeTruthy();
     expect(screen.queryByText('Reading file')).toBeNull();
   });
 
-  it('folds ordinary failed tools into a compact process row with error count', () => {
+  it('folds ordinary failed tools into a compact process row without an error count', () => {
     const now = new Date().toISOString();
     const failedResult = {
       content: '<tool_use_error>InputValidationError: missing file_path</tool_use_error>',
@@ -1358,21 +1475,21 @@ describe('MessagesPaneV2 render behavior', () => {
 
     const { container } = renderPane({ messages });
 
-    expect(screen.queryByText('Tool error')).toBeNull();
     expect(screen.queryByText('FailedTool.tsx')).toBeNull();
 
-    const summary = screen.getByText(/Edited 1 file.*Searched 1 time.*2 errors/);
-    const button = summary.closest('button');
-    expect(button).not.toBeNull();
-    expect(button?.className).toContain('inline-flex');
-    expect(button?.className).toContain('items-center');
-    expect(button?.className).toContain('text-[14px]');
-    expect(button?.className).toContain('leading-relaxed');
-    expect(button?.closest('.process-trace')?.className).not.toContain('my-');
+    const processPanelButton = screen.getByRole('button', { name: /^Turn process: / });
+    expect(processPanelButton.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(processPanelButton);
+    const errorButtons = screen.getAllByRole('button', { name: /^(Edit file|Search)$/ });
+    expect(errorButtons).toHaveLength(2);
+    expect(errorButtons.every((button) => !/error|retry|错误|重试/i.test(button.textContent || ''))).toBe(true);
+    expect(errorButtons[0].className).toContain('inline-flex');
+    expect(errorButtons[0].getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(errorButtons[0]);
 
-    fireEvent.click(button as HTMLButtonElement);
-
+    expect(errorButtons[0].getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByText('FailedTool.tsx')).toBeTruthy();
+    expect(screen.getAllByText(/InputValidationError/).length).toBeGreaterThan(0);
     expect(container.querySelector('.border-l-red-500')).toBeNull();
   });
 
@@ -1485,6 +1602,12 @@ describe('MessagesPaneV2 render behavior', () => {
         timestamp: new Date().toISOString(),
       },
       {
+        id: 'u-2',
+        type: 'user',
+        content: '再调整一下',
+        timestamp: new Date().toISOString(),
+      },
+      {
         id: 'a-2',
         type: 'assistant',
         content: 'Second assistant line.',
@@ -1499,7 +1622,6 @@ describe('MessagesPaneV2 render behavior', () => {
 
     expect(firstAssistant?.className).toContain('pb-4');
     expect(firstAssistant?.className).not.toContain('pb-8');
-    expect(firstAssistant?.className).toContain('pd-assistant-turn-start');
-    expect(secondAssistant?.className).toContain('pd-assistant-turn-end');
+    expect(secondAssistant?.className).not.toContain('pb-8');
   });
 });

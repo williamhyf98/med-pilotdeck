@@ -90,12 +90,28 @@
   "process": {
     "summary": {
       "processed": "已处理 {{duration}}",
+      "turnProcessed": "本轮过程：已处理 {{duration}}",
       "completed": "过程已完成",
       "failed": "过程失败",
       "cancelled": "过程已停止"
     },
+    "expandWindow": "展开过程窗口",
+    "collapseWindow": "还原过程窗口",
     "waitingForModel": "等待模型响应",
     "step": "步骤",
+    "events": {
+      "thinking": "思考过程",
+      "modelNarration": "模型过程说明",
+      "contextCompaction": "上下文准备",
+      "toolCall": "工具调用",
+      "subagent": "子任务进度",
+      "processUpdate": "过程更新",
+      "edit": "编辑文件",
+      "read": "读取文件",
+      "search": "搜索内容",
+      "command": "执行命令",
+      "toolImage": "工具返回图片"
+    },
     "metrics": {
       "toolCalls": "{{count}} 次工具调用",
       "searches": "{{count}} 次搜索",

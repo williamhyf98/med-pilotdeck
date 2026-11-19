@@ -146,7 +146,7 @@ function processAttachments(item: RenderableMessageItem | undefined) {
 const testT = (_key: string, options?: { defaultValue?: string }) => options?.defaultValue || '';
 
 describe('processGrouping', () => {
-  it('hides ordinary live tools while keeping assistant prose visible', () => {
+  it('folds ordinary live process output into one expandable group', () => {
     const messages = [
       user('u1'),
       assistant('a1', 'I will inspect the files.', 100),
@@ -157,10 +157,10 @@ describe('processGrouping', () => {
     const items = buildRenderableMessageItems(messages, { isAssistantWorking: true });
     const groups = getLiveProcessGroups(messages, { isAssistantWorking: true });
 
-    expect(items.map((item) => item.message.id)).toEqual(['u1', 'a1']);
+    expect(items.map((item) => item.message.id)).toEqual(['u1']);
     expect(groups).toHaveLength(1);
-    expect(groups[0].afterOriginalIndex).toBe(1);
-    expect(groups[0].detailMessages.map((message) => message.toolName)).toEqual(['Read', 'Grep']);
+    expect(groups[0].afterOriginalIndex).toBe(0);
+    expect(groups[0].detailMessages.map((message) => message.id)).toEqual(['a1', 'read-1', 'grep-1']);
   });
 
   it('summarizes Read and Grep tools as explored files and searches', () => {
@@ -173,10 +173,10 @@ describe('processGrouping', () => {
     ];
 
     const items = buildRenderableMessageItems(messages);
-    const assistantItem = items.find((item) => item.message.id === 'a1');
+    const userItem = items.find((item) => item.message.id === 'u1');
 
     expect(items.map((item) => item.message.id)).toEqual(['u1', 'a1']);
-    const attachment = processAttachments(assistantItem)[0];
+    const attachment = processAttachments(userItem)[0];
     expect(attachment?.processDetailMessages.map((message) => message.id)).toEqual([
       'read-1',
       'read-2',
@@ -206,7 +206,7 @@ describe('processGrouping', () => {
     ];
 
     const items = buildRenderableMessageItems(messages);
-    const attachment = processAttachments(items.find((item) => item.message.id === 'a1'))[0];
+    const attachment = processAttachments(items.find((item) => item.message.id === 'u1'))[0];
 
     expect(attachment?.inlineImages).toEqual([
       {
@@ -219,6 +219,78 @@ describe('processGrouping', () => {
     ]);
   });
 
+  it('keeps supplemental history images inside the collapsed tool step', () => {
+    const imageDataUrl = 'data:image/jpeg;base64,/9j/4AAQ';
+    const normalizedMessages: NormalizedMessage[] = [
+      normalizedText('u1', 'user', '请检查 PDF', 0),
+      normalizedTool('read-1', 'Read', { file_path: 'scratch/preview.pdf' }, 100),
+      {
+        id: 'read-1-result',
+        sessionId: 'session-1',
+        provider: 'pilotdeck',
+        kind: 'tool_result',
+        toolId: 'read-1',
+        turnId: 'turn-1',
+        content: 'PDF pages extracted',
+        timestamp: timestamp(110),
+        toolResultImages: [],
+      },
+      {
+        id: 'read-1-supplemental',
+        sessionId: 'session-1',
+        provider: 'pilotdeck',
+        kind: 'tool_result',
+        toolId: 'read-1',
+        turnId: 'turn-1',
+        content: '',
+        timestamp: timestamp(120),
+        toolResultImages: [{
+          data: imageDataUrl,
+          name: 'preview-page-1.jpg',
+          mimeType: 'image/jpeg',
+        }],
+      },
+      normalizedText('a1', 'assistant', '已检查。', 200),
+    ];
+
+    const messages = normalizedToChatMessages(normalizedMessages);
+    const items = buildRenderableMessageItems(messages);
+    const attachment = processAttachments(items.find((item) => item.message.id === 'u1'))[0];
+
+    expect(messages.filter((message) => message.type === 'user')).toHaveLength(1);
+    expect(attachment?.inlineImages).toEqual([{
+      data: imageDataUrl,
+      name: 'preview-page-1.jpg',
+      mimeType: 'image/jpeg',
+      source: 'tool_result',
+      toolId: 'read-1',
+    }]);
+  });
+
+  it('does not classify ordinary user uploaded images as tool-result images', () => {
+    const imageDataUrl = 'data:image/jpeg;base64,/9j/4AAQ';
+    const messages = normalizedToChatMessages([
+      {
+        id: 'user-image',
+        sessionId: 'session-1',
+        provider: 'pilotdeck',
+        kind: 'text',
+        role: 'user',
+        content: '请分析这张图片',
+        images: [imageDataUrl],
+        timestamp: timestamp(0),
+      },
+    ]);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.type).toBe('user');
+    expect(messages[0]?.images).toEqual([{
+      data: imageDataUrl,
+      name: '',
+    }]);
+    expect(buildRenderableMessageItems(messages)[0]?.afterProcessAttachments).toHaveLength(0);
+  });
+
   it('summarizes edit tools with unique edited file count', () => {
     const messages = [
       user('u1'),
@@ -229,7 +301,7 @@ describe('processGrouping', () => {
     ];
 
     const items = buildRenderableMessageItems(messages);
-    const summary = processAttachments(items.find((item) => item.message.id === 'a1'))[0]?.processSummary;
+    const summary = processAttachments(items.find((item) => item.message.id === 'u1'))[0]?.processSummary;
 
     expect(summary?.editedFileCount).toBe(2);
     expect(summary?.toolCallCount).toBe(3);
@@ -244,7 +316,7 @@ describe('processGrouping', () => {
     ];
 
     const items = buildRenderableMessageItems(messages);
-    const summary = processAttachments(items.find((item) => item.message.id === 'a1'))[0]?.processSummary;
+    const summary = processAttachments(items.find((item) => item.message.id === 'u1'))[0]?.processSummary;
 
     expect(summary?.commandCount).toBe(2);
     expect(summary?.toolCallCount).toBe(2);
@@ -265,8 +337,8 @@ describe('processGrouping', () => {
     ];
 
     const items = buildRenderableMessageItems(messages);
-    const assistantItem = items.find((item) => item.message.id === 'a1');
-    const attachment = processAttachments(assistantItem)[0];
+    const userItem = items.find((item) => item.message.id === 'u1');
+    const attachment = processAttachments(userItem)[0];
 
     expect(items.map((item) => item.message.id)).toEqual(['u1', 'a1']);
     expect(attachment?.processDetailMessages.map((message) => message.id)).toEqual([
@@ -281,7 +353,7 @@ describe('processGrouping', () => {
     expect(attachment?.processSummary.commandCount).toBe(1);
   });
 
-  it('keeps completed process summaries segmented at their original assistant positions', () => {
+  it('combines completed process output into one group after the user message', () => {
     const messages = [
       user('u1'),
       assistant('a1', 'First I will inspect files.', 100),
@@ -292,15 +364,15 @@ describe('processGrouping', () => {
     ];
 
     const items = buildRenderableMessageItems(messages);
-    const firstAssistant = items.find((item) => item.message.id === 'a1');
-    const secondAssistant = items.find((item) => item.message.id === 'a2');
+    const userItem = items.find((item) => item.message.id === 'u1');
     const thirdAssistant = items.find((item) => item.message.id === 'a3');
 
-    expect(items.map((item) => item.message.id)).toEqual(['u1', 'a1', 'a2', 'a3']);
-    expect(firstAssistant?.afterProcessAttachments).toHaveLength(1);
-    expect(firstAssistant?.afterProcessAttachments[0].processSummary.exploredFileCount).toBe(1);
-    expect(secondAssistant?.afterProcessAttachments).toHaveLength(1);
-    expect(secondAssistant?.afterProcessAttachments[0].processSummary.commandCount).toBe(1);
+    expect(items.map((item) => item.message.id)).toEqual(['u1', 'a3']);
+    expect(userItem?.afterProcessAttachments).toHaveLength(1);
+    expect(userItem?.afterProcessAttachments[0].processSummary.exploredFileCount).toBe(1);
+    expect(userItem?.afterProcessAttachments[0].processSummary.commandCount).toBe(1);
+    expect(userItem?.afterProcessAttachments[0].processDetailMessages.map((message) => message.id))
+      .toEqual(['a1', 'read-1', 'a2', 'bash-1']);
     expect(thirdAssistant?.beforeProcessAttachments).toHaveLength(0);
     expect(processAttachments(thirdAssistant)).toHaveLength(0);
   });
@@ -335,12 +407,12 @@ describe('processGrouping', () => {
     ];
 
     const items = buildRenderableMessageItems(messages);
-    const assistantItem = items.find((item) => item.message.id === 'a1');
+    const userItem = items.find((item) => item.message.id === 'u1');
 
     expect(items.map((item) => item.message.id)).toEqual(['u1', 'a1']);
-    expect(assistantItem?.beforeProcessAttachments).toHaveLength(1);
-    expect(assistantItem?.beforeProcessAttachments[0].processSummary.exploredFileCount).toBe(1);
-    expect(assistantItem?.afterProcessAttachments).toHaveLength(0);
+    expect(userItem?.afterProcessAttachments).toHaveLength(1);
+    expect(userItem?.afterProcessAttachments[0].processSummary.exploredFileCount).toBe(1);
+    expect(userItem?.beforeProcessAttachments).toHaveLength(0);
   });
 
   it('does not hide user-visible prompts, plan exits, permissions, or errors', () => {
@@ -370,10 +442,39 @@ describe('processGrouping', () => {
       'ask-1',
       'plan-1',
       'denied-1',
-      'error-1',
       'a1',
     ]);
-    expect(processAttachments(items.find((item) => item.message.id === 'a1'))).toHaveLength(0);
+    expect(processAttachments(items.find((item) => item.message.id === 'u1'))[0]?.processDetailMessages.map((message) => message.id))
+      .toEqual(['error-1']);
+  });
+
+  it('folds an in-progress tool error into the process row before a final answer exists', () => {
+    const messages = [
+      user('u1'),
+      tool('read-1', 'Read', { file_path: '/repo/src/Missing.tsx' }, 100, {
+        content: 'File not found',
+        isError: true,
+        errorCode: 'file_not_found',
+      }),
+      {
+        id: 'error-1',
+        type: 'error',
+        content: 'The file could not be read.',
+        timestamp: timestamp(200),
+      } satisfies ChatMessage,
+    ];
+
+    const liveItems = buildRenderableMessageItems(messages, { isAssistantWorking: true });
+    const liveGroups = getLiveProcessGroups(messages, { isAssistantWorking: true });
+    const completedItems = buildRenderableMessageItems(messages);
+    const completedAttachment = processAttachments(
+      completedItems.find((item) => item.message.id === 'u1'),
+    )[0];
+
+    expect(liveItems.map((item) => item.message.id)).toEqual(['u1']);
+    expect(liveGroups[0]?.detailMessages.map((message) => message.id)).toEqual(['read-1', 'error-1']);
+    expect(completedAttachment?.processDetailMessages.map((message) => message.id))
+      .toEqual(['read-1', 'error-1']);
   });
 
   it('folds plan-mode side-effect denials into the process row', () => {
@@ -389,8 +490,8 @@ describe('processGrouping', () => {
     ];
 
     const items = buildRenderableMessageItems(messages);
-    const assistantItem = items.find((item) => item.message.id === 'a1');
-    const attachments = processAttachments(assistantItem);
+    const userItem = items.find((item) => item.message.id === 'u1');
+    const attachments = processAttachments(userItem);
 
     expect(items.map((item) => item.message.id)).toEqual(['u1', 'a1']);
     expect(attachments).toHaveLength(1);
@@ -411,8 +512,8 @@ describe('processGrouping', () => {
     ];
 
     const items = buildRenderableMessageItems(messages);
-    const assistantItem = items.find((item) => item.message.id === 'a1');
-    const attachments = processAttachments(assistantItem);
+    const userItem = items.find((item) => item.message.id === 'u1');
+    const attachments = processAttachments(userItem);
 
     expect(items.map((item) => item.message.id)).toEqual(['u1', 'a1']);
     expect(attachments).toHaveLength(1);
@@ -436,7 +537,7 @@ describe('processGrouping', () => {
     expect(hasPendingWebFetchInRunningGroup(groups, false)).toBe(false);
   });
 
-  it('detects pending web_fetch across multiple live process groups', () => {
+  it('detects pending web_fetch in the single live process group', () => {
     const messages = [
       user('u1'),
       assistant('a1', 'Search first.', 100),
@@ -450,9 +551,8 @@ describe('processGrouping', () => {
     ];
     const groups = getLiveProcessGroups(messages, { isAssistantWorking: true });
 
-    expect(groups).toHaveLength(2);
-    expect(shouldShowWebFetchWaitingHint(groups[0], true)).toBe(false);
-    expect(shouldShowWebFetchWaitingHint(groups[1], true)).toBe(true);
+    expect(groups).toHaveLength(1);
+    expect(shouldShowWebFetchWaitingHint(groups[0], true)).toBe(true);
     expect(hasPendingWebFetchInRunningGroup(groups, true)).toBe(true);
   });
 
@@ -482,10 +582,10 @@ describe('processGrouping', () => {
     const items = buildRenderableMessageItems(messages, { isAssistantWorking: true });
     const groups = getLiveProcessGroups(messages, { isAssistantWorking: true });
 
-    expect(items.map((item) => item.message.id)).toEqual(['u1', 'a1', 'a-final']);
+    expect(items.map((item) => item.message.id)).toEqual(['u1', 'a-final']);
     expect(groups).toHaveLength(1);
-    expect(groups[0].afterOriginalIndex).toBe(1);
-    expect(groups[0].messages.map((message) => message.id)).toEqual(['read-1', 'grep-1']);
+    expect(groups[0].afterOriginalIndex).toBe(0);
+    expect(groups[0].messages.map((message) => message.id)).toEqual(['a1', 'read-1', 'grep-1']);
   });
 
   it('does not render thinking as standalone after empty live assistant shells', () => {
@@ -500,10 +600,10 @@ describe('processGrouping', () => {
     const items = buildRenderableMessageItems(messages, { isAssistantWorking: true });
     const groups = getLiveProcessGroups(messages, { isAssistantWorking: true });
 
-    expect(items.map((item) => item.message.id)).toEqual(['u1', 'a1']);
+    expect(items.map((item) => item.message.id)).toEqual(['u1']);
     expect(groups).toHaveLength(1);
-    expect(groups[0].messages.map((message) => message.id)).toEqual(['bash-1', 'think-1']);
-    expect(groups[0].detailMessages.map((message) => message.id)).toEqual(['bash-1', 'think-1']);
+    expect(groups[0].messages.map((message) => message.id)).toEqual(['a1', 'bash-1', 'think-1']);
+    expect(groups[0].detailMessages.map((message) => message.id)).toEqual(['a1', 'bash-1', 'think-1']);
   });
 
   it('keeps leading live thinking inside the current running status details', () => {
@@ -513,6 +613,7 @@ describe('processGrouping', () => {
       beforeOriginalIndex: null,
       startIndex: 2,
       endIndex: 4,
+      durationMs: 2_000,
       messages: [
         thinking('think-1', 'Decide which file to edit.', 200),
         tool('edit-1', 'Edit', { file_path: '/repo/src/App.tsx' }, 300, null),
@@ -554,10 +655,10 @@ describe('processGrouping', () => {
       'a-empty-2',
       'a-final',
     ]);
-    expect(items.map((item) => item.message.id)).toEqual(['u1', 'a1', 'a-final']);
+    expect(items.map((item) => item.message.id)).toEqual(['u1', 'a-final']);
     expect(groups).toHaveLength(1);
     expect(groups.map((group) => group.messages.map((message) => message.id))).toEqual([
-      ['read-1', 'grep-1'],
+      ['a1', 'read-1', 'grep-1'],
     ]);
   });
 
@@ -643,7 +744,7 @@ describe('processGrouping', () => {
     expect(traumaAttachment).toBeTruthy();
     expect(assistantItem?.beforeProcessAttachments).toHaveLength(0);
     expect(formatCompletedProcessTitle(traumaAttachment!.processDetailMessages, testT as any))
-      .toBe('本轮推演完成');
+      .toBe('');
 
     const steps = buildProcessToolSteps(traumaAttachment!.processDetailMessages);
     expect(steps.map((step) => step.title)).toEqual([

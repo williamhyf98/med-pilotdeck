@@ -15,26 +15,22 @@ import { getSessionRequestParams, isReadOnlySession, type Project, type ProjectS
 import { resolveProjectType } from '../app-shell/appShellSelection';
 import TraumaNewConversationEmptyState from '../trauma-workspace/TraumaNewConversationEmptyState';
 import { getIntrinsicMessageKey } from '../chat/utils/messageKeys';
-import MessageRowV2, { type LastTurnEditController } from './MessageRowV2';
+import MessageRowV2, { ProcessEventRows, type LastTurnEditController } from './MessageRowV2';
 import SubagentDetailModal from './SubagentDetailModal';
 import ChatHistorySearchBar from './ChatHistorySearchBar';
 import { useRegisterChatHistorySearchControls } from './ChatHistorySearchController';
 import { useChatHistorySearch } from './useChatHistorySearch';
 import type { SearchableChatMessageInput } from './chatHistorySearchUtils';
 import { useSubagentMessages } from './useSubagentMessages';
-import { ProcessLiveStatus, ProcessRunHeader, StreamingThinkingPreview, type ProcessTraceStep } from './ProcessTrace';
+import { ProcessLiveStatus, ProcessRunHeader, ProcessRunPanel, type ProcessTraceStep } from './ProcessTrace';
 import { formatProcessDuration } from './processTraceUtils';
 import { getToolDisplayName } from '../chat/tools/configs/toolConfigs';
 import {
   buildRenderableMessageItems,
-  getLiveProcessDetailMessages,
-  getLiveProcessGroupStep,
   getLiveProcessGroups,
-  getLiveProcessToolNameSteps,
   getWebFetchWaitingStep,
   shouldRenderLiveProcessGroup,
   shouldShowWebFetchWaitingHint,
-  splitLiveProcessGroupDetailMessages,
   type LiveProcessGroup,
   type RenderableMessageItem,
 } from './processGrouping';
@@ -111,10 +107,6 @@ export type VirtualMessageWindow = {
 const MESSAGE_VIRTUALIZATION_THRESHOLD = 160;
 const MESSAGE_WINDOW_OVERSCAN = 12;
 const MESSAGE_GAP_PX = 16;
-
-function isStreamingThinkingMessage(message: ChatMessage): boolean {
-  return Boolean(message.isThinking && String(message.id || '').startsWith('__streaming_thinking_'));
-}
 
 function isRenderableAssistantProse(message: ChatMessage): boolean {
   return (
@@ -664,18 +656,11 @@ function MessagesPaneV2({
         !message.isAgentActivity &&
         !isSubagentThinkingPlaceholder(message) &&
         !(isEffectiveAssistantWorking && message.isThinking && !message.isStreaming && index < lastUserIndex) &&
-        (!inlineThinking && isStreamingThinkingMessage(message) ? false : true) &&
         !(message.isThinking && !showThinking)
       );
       return filtered;
     },
     [visibleMessages, showProcessTrace, showThinking, inlineThinking, isEffectiveAssistantWorking],
-  );
-  const liveProcessDetailMessages = useMemo(
-    () => showProcessTrace && isEffectiveAssistantWorking
-      ? getLiveProcessDetailMessages(renderableMessages)
-      : [],
-    [isEffectiveAssistantWorking, renderableMessages, showProcessTrace],
   );
   const liveProcessGroups = useMemo(
     () => showProcessTrace && isEffectiveAssistantWorking
@@ -797,19 +782,6 @@ function MessagesPaneV2({
     () => [...subagentActivities].reverse().find(isRunningActivity) || null,
     [subagentActivities],
   );
-  const streamingThinkingContent = useMemo(() => {
-    if (!showProcessTrace || !showThinking || !isEffectiveAssistantWorking) {
-      return null;
-    }
-    for (let i = visibleMessages.length - 1; i >= 0; i--) {
-      const msg = visibleMessages[i];
-      if (isStreamingThinkingMessage(msg) && typeof msg.content === 'string' && msg.content.trim()) {
-        return msg.content;
-      }
-      if (msg.type === 'user') break;
-    }
-    return null;
-  }, [showProcessTrace, showThinking, isEffectiveAssistantWorking, visibleMessages]);
   const finalOnlyCompletedToolSteps = useMemo<ProcessTraceStep[]>(() => {
     if (showProcessTrace || !isEffectiveAssistantWorking) return [];
     let lastUserIndex = -1;
@@ -862,14 +834,6 @@ function MessagesPaneV2({
         state: 'running',
       };
     }
-    if (streamingThinkingContent) {
-      return {
-        id: 'live-thinking',
-        title: t('working.thinking', { defaultValue: 'thinking' }),
-        phase: 'thinking',
-        state: 'running',
-      };
-    }
     if (runningSubagentActivity) {
       return {
         id: runningSubagentActivity.activityId || runningSubagentActivity.id || 'live-subagent-waiting',
@@ -887,7 +851,6 @@ function MessagesPaneV2({
     finalOnlyCompletedToolSteps,
     runningSubagentActivity,
     showProcessTrace,
-    streamingThinkingContent,
     t,
     workingStatus,
   ]);
@@ -1082,93 +1045,64 @@ function MessagesPaneV2({
     scrollContainerRef,
   ]);
 
-  const renderLiveProcessDetailMessages = useCallback((detailMessages: ChatMessage[], groupId: string) => (
-    detailMessages.map((message: ChatMessage, index: number) => (
-      <MessageRowV2
-        key={`${groupId}-${getMessageKey(message, index)}`}
-        message={message}
-        prevMessage={index > 0 ? detailMessages[index - 1] : null}
-        nextMessage={index < detailMessages.length - 1 ? detailMessages[index + 1] : null}
-        provider={provider}
-        selectedProject={selectedProject}
-        createDiff={createDiff}
-        onFileOpen={onFileOpen}
-        onShowSettings={onShowSettings}
-        onGrantSessionToolPermission={onGrantSessionToolPermission}
-        autoExpandTools={autoExpandTools}
-        showRawParameters={showRawParameters}
-        showThinking={showThinking}
-        inlineThinking={inlineThinking}
-        isProcessExpanded={isProcessExpanded}
-        onProcessExpandedChange={handleProcessExpandedChange}
-        onOpenSubagentDetail={handleOpenSubagentDetail}
-        subagentActivityById={subagentActivityById}
-        subagentThinkingById={subagentThinkingById}
-        isSessionRunning={isEffectiveAssistantWorking}
-      />
-    ))
-  ), [
-    autoExpandTools,
-    createDiff,
-    getMessageKey,
-    handleOpenSubagentDetail,
-    inlineThinking,
-    onFileOpen,
-    onGrantSessionToolPermission,
-    onShowSettings,
-    provider,
-    selectedProject,
-    subagentActivityById,
-    subagentThinkingById,
-    isProcessExpanded,
-    handleProcessExpandedChange,
-    showRawParameters,
-    showThinking,
-    isEffectiveAssistantWorking,
-  ]);
-
   const renderLiveProcessGroup = useCallback((group: LiveProcessGroup, index: number) => {
-    const isLatestGroup = liveProcessGroups[liveProcessGroups.length - 1]?.id === group.id;
-    const step = getLiveProcessGroupStep(group, t, group.isRunning && isLatestGroup ? liveStatusStep : null);
     const showWebFetchWaiting = shouldShowWebFetchWaitingHint(group, resolvedPlanModeActive);
-    const toolSteps = getLiveProcessToolNameSteps(group, { sanitizeForUserId });
-    const defaultExpanded = false;
-    const expanded = isProcessExpanded(group.id, defaultExpanded);
-    const { beforeStatusMessages, statusDetailMessages } = splitLiveProcessGroupDetailMessages(group);
+    const panelKey = `${group.id}:panel:live`;
+    const expanded = isProcessExpanded(panelKey, true);
+    const showLiveStatusInsidePanel = (
+      shouldRenderBottomLiveStatus &&
+      index === liveProcessGroups.length - 1
+    );
     return (
       <Fragment key={group.id || `${group.afterOriginalIndex}-${index}`}>
-        {expanded && beforeStatusMessages.length > 0 ? (
-          <div className="pl-5">
-            {renderLiveProcessDetailMessages(beforeStatusMessages, `${group.id}-before-status`)}
-          </div>
-        ) : null}
-        <ProcessLiveStatus
-          step={step}
-          steps={toolSteps}
-          compact
+        <LiveProcessHeader
+          activities={nonSubagentLiveActivities}
+          startedAtMs={liveProcessStartedAtMs}
+          t={t}
+          defaultExpanded
           expanded={expanded}
-          onExpandedChange={(nextExpanded) => handleProcessExpandedChange(group.id, nextExpanded)}
+          onExpandedChange={(nextExpanded) => handleProcessExpandedChange(panelKey, nextExpanded)}
         >
-          {statusDetailMessages.length > 0 && toolSteps.length === 0
-            ? renderLiveProcessDetailMessages(statusDetailMessages, group.id)
-            : null}
-        </ProcessLiveStatus>
-        {showWebFetchWaiting ? (
-          <ProcessLiveStatus
-            step={getWebFetchWaitingStep(group.id, t)}
-            compact
+          <ProcessEventRows
+            messages={group.detailMessages}
+            processKey={group.id}
+            selectedProject={selectedProject}
+            onFileOpen={onFileOpen}
+            isProcessExpanded={isProcessExpanded}
+            onProcessExpandedChange={handleProcessExpandedChange}
+            defaultExpanded={false}
+            sanitizeForUserId={sanitizeForUserId}
           />
-        ) : null}
+          {showWebFetchWaiting ? (
+            <ProcessLiveStatus
+              step={getWebFetchWaitingStep(group.id, t)}
+              compact
+            />
+          ) : null}
+          {showLiveStatusInsidePanel ? (
+            <ProcessLiveStatus
+              step={liveStatusStep}
+              steps={showProcessTrace ? [] : finalOnlyCompletedToolSteps}
+              compact
+            />
+          ) : null}
+        </LiveProcessHeader>
       </Fragment>
     );
   }, [
+    finalOnlyCompletedToolSteps,
     handleProcessExpandedChange,
     isProcessExpanded,
-    liveProcessGroups,
+    liveProcessGroups.length,
+    liveProcessStartedAtMs,
     liveStatusStep,
+    nonSubagentLiveActivities,
+    onFileOpen,
     resolvedPlanModeActive,
-    renderLiveProcessDetailMessages,
     sanitizeForUserId,
+    selectedProject,
+    shouldRenderBottomLiveStatus,
+    showProcessTrace,
     t,
   ]);
 
@@ -1185,7 +1119,9 @@ function MessagesPaneV2({
       item.message,
     );
     const anchoredLiveGroups = liveProcessGroupsByAnchor.get(item.originalIndex) || [];
-    const rendersLiveHeaderAfterItem = showProcessTrace && item.renderIndex === liveProcessHeaderIndex - 1;
+    const rendersLiveHeaderAfterItem = showProcessTrace
+      && liveProcessGroups.length === 0
+      && item.renderIndex === liveProcessHeaderIndex - 1;
     const assistantTurnPanelPosition = getAssistantTurnPanelPosition(
       keyedMessageItems,
       item.renderIndex,
@@ -1225,12 +1161,21 @@ function MessagesPaneV2({
 
     return (
       <Fragment key={item.itemKey}>
-        {showProcessTrace && liveProcessHeaderIndex === 0 && item.renderIndex === 0 ? (
+        {showProcessTrace && liveProcessGroups.length === 0 && liveProcessHeaderIndex === 0 && item.renderIndex === 0 ? (
           <LiveProcessHeader
             activities={nonSubagentLiveActivities}
             startedAtMs={liveProcessStartedAtMs}
             t={t}
-          />
+            defaultExpanded
+            expanded={isProcessExpanded('live-process-panel', true)}
+            onExpandedChange={(nextExpanded) => handleProcessExpandedChange('live-process-panel', nextExpanded)}
+          >
+            <ProcessLiveStatus
+              step={liveStatusStep}
+              steps={showProcessTrace ? [] : finalOnlyCompletedToolSteps}
+              compact
+            />
+          </LiveProcessHeader>
         ) : null}
         <MeasuredMessageItem
           itemKey={item.itemKey}
@@ -1288,7 +1233,16 @@ function MessagesPaneV2({
               activities={nonSubagentLiveActivities}
               startedAtMs={liveProcessStartedAtMs}
               t={t}
-            />
+              defaultExpanded
+              expanded={isProcessExpanded('live-process-panel', true)}
+              onExpandedChange={(nextExpanded) => handleProcessExpandedChange('live-process-panel', nextExpanded)}
+            >
+              <ProcessLiveStatus
+                step={liveStatusStep}
+                steps={showProcessTrace ? [] : finalOnlyCompletedToolSteps}
+                compact
+              />
+            </LiveProcessHeader>
           ) : null}
           {item.afterRunAttachment && !defersRunAttachmentToAssistantPanel ? (
             <CompletedProcessHeader
@@ -1318,6 +1272,7 @@ function MessagesPaneV2({
     nonSubagentLiveActivities,
     liveProcessGroupsByAnchor,
     liveProcessHeaderIndex,
+    liveProcessGroups.length,
     liveProcessStartedAtMs,
     onFileOpen,
     onFork,
@@ -1544,30 +1499,40 @@ function MessagesPaneV2({
             <div aria-hidden="true" style={{ height: virtualWindow.bottomPadding }} />
           ) : null}
 
-          {showProcessTrace && isEffectiveAssistantWorking &&
+          {showProcessTrace && liveProcessGroups.length === 0 && isEffectiveAssistantWorking &&
           liveProcessHeaderIndex === keyedMessageItems.length &&
           keyedMessageItems[liveProcessHeaderIndex - 1]?.message.type !== 'user' ? (
             <LiveProcessHeader
               activities={nonSubagentLiveActivities}
               startedAtMs={liveProcessStartedAtMs}
               t={t}
-            />
-          ) : null}
-
-          {shouldRenderBottomLiveStatus ? (
-            <>
+              defaultExpanded
+              expanded={isProcessExpanded('live-process-panel', true)}
+              onExpandedChange={(nextExpanded) => handleProcessExpandedChange('live-process-panel', nextExpanded)}
+            >
               <ProcessLiveStatus
                 step={liveStatusStep}
                 steps={showProcessTrace ? [] : finalOnlyCompletedToolSteps}
-              >
-                {showProcessTrace && liveProcessDetailMessages.length > 0 && liveProcessGroups.length === 0
-                  ? renderLiveProcessDetailMessages(liveProcessDetailMessages, 'bottom-live-process')
-                  : null}
-              </ProcessLiveStatus>
-              {showProcessTrace && !inlineThinking && streamingThinkingContent ? (
-                <StreamingThinkingPreview content={streamingThinkingContent} />
-              ) : null}
-            </>
+                compact
+              />
+            </LiveProcessHeader>
+          ) : null}
+
+          {shouldRenderBottomLiveStatus && liveProcessGroups.length === 0 && !showProcessTrace ? (
+            <LiveProcessHeader
+              activities={nonSubagentLiveActivities}
+              startedAtMs={liveProcessStartedAtMs}
+              t={t}
+              defaultExpanded
+              expanded={isProcessExpanded('live-process-panel', true)}
+              onExpandedChange={(nextExpanded) => handleProcessExpandedChange('live-process-panel', nextExpanded)}
+            >
+              <ProcessLiveStatus
+                step={liveStatusStep}
+                steps={showProcessTrace ? [] : finalOnlyCompletedToolSteps}
+                compact
+              />
+            </LiveProcessHeader>
           ) : null}
         </div>
       )}
@@ -1756,10 +1721,18 @@ function LiveProcessHeader({
   activities,
   startedAtMs,
   t,
+  children,
+  defaultExpanded = true,
+  expanded,
+  onExpandedChange,
 }: {
   activities: ChatMessage[];
   startedAtMs: number | null;
   t: (key: string, options?: Record<string, unknown>) => string;
+  children?: ReactNode;
+  defaultExpanded?: boolean;
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
 }) {
   const fallbackStartedAtRef = useRef(Date.now());
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -1775,12 +1748,21 @@ function LiveProcessHeader({
     return Math.max(0, nowMs - effectiveStartedAtMs);
   }, [activities, nowMs, startedAtMs]);
   const duration = formatProcessDuration(elapsedMs);
-  const label = t('process.summary.processed', {
+  const label = t('process.summary.turnProcessed', {
     duration,
-    defaultValue: `Processed ${duration}`,
+    defaultValue: `Turn process: ${duration}`,
   });
 
-  return <ProcessRunHeader label={label} />;
+  return (
+    <ProcessRunPanel
+      label={label}
+      defaultExpanded={defaultExpanded}
+      expanded={expanded}
+      onExpandedChange={onExpandedChange}
+    >
+      {children}
+    </ProcessRunPanel>
+  );
 }
 
 function CompletedProcessHeader({
@@ -1791,9 +1773,9 @@ function CompletedProcessHeader({
   t: (key: string, options?: Record<string, unknown>) => string;
 }) {
   const duration = formatProcessDuration(durationMs);
-  const label = t('process.summary.processed', {
+  const label = t('process.summary.turnProcessed', {
     duration,
-    defaultValue: `Processed ${duration}`,
+    defaultValue: `Turn process: ${duration}`,
   });
 
   return <ProcessRunHeader label={label} />;

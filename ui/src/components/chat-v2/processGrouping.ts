@@ -1,7 +1,7 @@
 import type { TFunction } from 'i18next';
 import type { ChatMessage, ChatRunMode } from '../chat/types/types';
 import { isReadOnlyModeToolDeny } from '../chat/utils/chatPermissions';
-import type { ProcessTraceMetric, ProcessTraceStep } from './ProcessTrace';
+import type { ProcessTraceStep } from './ProcessTrace';
 import { formatProcessDuration } from './processTraceUtils';
 import { sanitizePathsClient } from '../../utils/pathSanitization';
 
@@ -23,10 +23,8 @@ export type ProcessAttachment = {
   endIndex: number;
   /**
    * Inline images returned by tools inside this collapsed segment (e.g.
-   * `read_file` on a PNG). Surfaced alongside the collapsed summary so the
-   * user can still see the picture without expanding the trace — otherwise
-   * the image hides behind the "Explored N files" pill, even though the
-   * model already replied "this is a 3D surface plot…" right after.
+   * `read_file` on a PNG). The renderer keeps them inside the expandable
+   * process details so images do not appear in the collapsed summary.
    */
   inlineImages: ProcessAttachmentImage[];
 };
@@ -53,6 +51,7 @@ export type LiveProcessGroup = {
   beforeOriginalIndex: number | null;
   startIndex: number;
   endIndex: number;
+  durationMs: number;
   messages: ChatMessage[];
   detailMessages: ChatMessage[];
   isRunning: boolean;
@@ -77,6 +76,7 @@ type CompletedProcessSegment = {
   id: string;
   startIndex: number;
   endIndex: number;
+  indices: number[];
   messages: ChatMessage[];
   detailMessages: ChatMessage[];
   previousHostIndex: number | null;
@@ -617,23 +617,15 @@ export function isProcessMessage(message: ChatMessage): boolean {
     message.isToolUse ||
       message.isTaskNotification ||
       message.isCompactBoundary ||
-      (message.isThinking && !message.isStreaming) ||
+      message.isThinking ||
+      (
+        message.isStreaming &&
+        message.type === 'assistant' &&
+        typeof message.content === 'string' &&
+        message.content.trim().length > 0
+      ) ||
       message.type === 'tool',
   );
-}
-
-function isExpandableProcessMessage(message: ChatMessage): boolean {
-  if (message.isThinking) {
-    return true;
-  }
-  if (!message.isToolUse || message.isSubagentContainer || isPermissionToolError(message)) {
-    return false;
-  }
-  const toolName = String(message.toolName || '');
-  if (!toolName || toolName === 'Task' || USER_VISIBLE_TOOL_NAMES.has(toolName)) {
-    return false;
-  }
-  return true;
 }
 
 function canHostProcessSummary(message: ChatMessage): boolean {
@@ -646,9 +638,118 @@ function canHostProcessSummary(message: ChatMessage): boolean {
     !message.isSubagentContainer &&
     !message.isTaskNotification &&
     !message.isThinking &&
+    !message.isStreaming &&
     typeof message.content === 'string' &&
     message.content.trim().length > 0
   );
+}
+
+export function isProcessNarrationMessage(message: ChatMessage): boolean {
+  return canHostProcessSummary(message);
+}
+
+function isDirectToolOutputMessage(message: ChatMessage): boolean {
+  const metadata = message.metadata;
+  return Boolean(
+    metadata
+    && typeof metadata === 'object'
+    && !Array.isArray(metadata)
+    && (metadata as Record<string, unknown>).directToolOutput === true,
+  );
+}
+
+function isProcessActivityBoundary(message: ChatMessage): boolean {
+  return Boolean(
+    isProcessMessage(message)
+      || message.isThinking
+      || message.isSubagentContainer
+      || message.isTaskNotification
+      || message.type === 'error'
+      || message.isInteractivePrompt
+      || isUserVisibleTool(message)
+      || isPermissionToolError(message)
+      || isTraumaRunnerStepMessage(message),
+  );
+}
+
+function findFinalAssistantIndex(messages: ChatMessage[], turn: MessageTurn): number {
+  let finalIndex = -1;
+  let directToolOutputIndex = -1;
+  let lastProcessActivityIndex = -1;
+
+  for (let index = turn.start + 1; index < turn.end; index += 1) {
+    const message = messages[index];
+    if (!message) continue;
+    if (isProcessActivityBoundary(message)) {
+      lastProcessActivityIndex = index;
+    }
+    if (canHostProcessSummary(message)) {
+      finalIndex = index;
+      if (isDirectToolOutputMessage(message)) {
+        directToolOutputIndex = index;
+      }
+    }
+  }
+
+  if (directToolOutputIndex >= 0) {
+    return directToolOutputIndex;
+  }
+  if (finalIndex < 0) {
+    return -1;
+  }
+  return lastProcessActivityIndex < 0 || finalIndex > lastProcessActivityIndex
+    ? finalIndex
+    : -1;
+}
+
+function isProcessCandidate(
+  message: ChatMessage,
+  finalAssistantIndex: number,
+  index: number,
+  hasAssociatedProcess: boolean,
+): boolean {
+  if (!message || message.type === 'user') return false;
+  if (index === finalAssistantIndex) return false;
+  if (message.isAgentActivity || message.isAgentActivitySummary) return false;
+  if (isEmptyAssistantShell(message)) return false;
+  if (message.isInterruptedNotice) return false;
+  if (message.isInteractivePrompt || isUserVisibleTool(message) || isPermissionToolError(message)) {
+    return false;
+  }
+  if (message.type === 'error') {
+    return hasAssociatedProcess;
+  }
+  return Boolean(
+    isProcessMessage(message) ||
+      canHostProcessSummary(message) ||
+      message.isThinking ||
+      message.isSubagentContainer ||
+      message.isTaskNotification,
+  );
+}
+
+function collectTurnProcessIndices(messages: ChatMessage[], turn: MessageTurn): number[] {
+  const finalAssistantIndex = findFinalAssistantIndex(messages, turn);
+  const hasAssociatedProcess = finalAssistantIndex >= 0 || messages
+    .slice(turn.start + 1, turn.end)
+    .some((message) => Boolean(
+      message
+      && (
+        isProcessMessage(message)
+        || message.isThinking
+        || message.isSubagentContainer
+        || message.isTaskNotification
+      ),
+    ));
+  const indices: number[] = [];
+
+  for (let index = turn.start + 1; index < turn.end; index += 1) {
+    if (isProcessCandidate(messages[index], finalAssistantIndex, index, hasAssociatedProcess)) {
+      indices.push(index);
+    }
+  }
+
+  return indices;
 }
 
 export function isEmptyAssistantShell(message: ChatMessage): boolean {
@@ -675,15 +776,14 @@ function isEmptyRenderableMessageItem(item: RenderableMessageItem): boolean {
   return isEmptyAssistantShell(item.message);
 }
 
-function isCollapsibleCompletedProcessMessage(message: ChatMessage): boolean {
-  return isProcessMessage(message);
-}
-
 export function getProcessToolKind(
   message: ChatMessage,
-): 'edit' | 'read' | 'search' | 'command' | 'subagent' | 'compact' | 'thinking' | 'tool' {
+): 'edit' | 'read' | 'search' | 'command' | 'subagent' | 'compact' | 'thinking' | 'narration' | 'tool' {
   if (message.isCompactBoundary) return 'compact';
   if (message.isThinking) return 'thinking';
+  if (message.type === 'assistant' && !message.isToolUse && (message.isStreaming || canHostProcessSummary(message))) {
+    return 'narration';
+  }
   if (message.isSubagentContainer || message.toolName === 'Task' || message.isTaskNotification) {
     return 'subagent';
   }
@@ -754,27 +854,6 @@ function collectProcessCounts(messages: ChatMessage[]): ProcessCounts {
   return counts;
 }
 
-function collectTraumaRunnerProcessMessages(messages: ChatMessage[], turn: MessageTurn): {
-  messages: ChatMessage[];
-  detailMessages: ChatMessage[];
-  indices: number[];
-} | null {
-  const collected: ChatMessage[] = [];
-  const indices: number[] = [];
-  for (let index = turn.start; index < turn.end; index += 1) {
-    const message = messages[index];
-    if (!message || !isTraumaRunnerStepMessage(message)) continue;
-    collected.push(message);
-    indices.push(index);
-  }
-  if (collected.length === 0) return null;
-  return {
-    messages: collected,
-    detailMessages: collected.filter(isExpandableProcessMessage),
-    indices,
-  };
-}
-
 function getDurationMs(start: unknown, end: unknown): number {
   const startTime = parseMessageTime(start);
   const endTime = parseMessageTime(end);
@@ -820,12 +899,32 @@ function hasCompletedTurnWork(messages: ChatMessage[], turn: MessageTurn): boole
     if (!message || message.isAgentActivity || message.isAgentActivitySummary || message.type === 'user') {
       continue;
     }
-    if (canHostProcessSummary(message) || isProcessMessage(message)) {
+    if (
+      canHostProcessSummary(message)
+      || isProcessMessage(message)
+      || message.isSubagentContainer
+      || message.isTaskNotification
+    ) {
       return true;
     }
   }
 
   return false;
+}
+
+export function getFinalAssistantMessageIndex(
+  messages: ChatMessage[],
+  turn: MessageTurn,
+): number {
+  return findFinalAssistantIndex(messages, turn);
+}
+
+export function getFinalAssistantMessageIndices(messages: ChatMessage[]): Set<number> {
+  return new Set(
+    createMessageTurns(messages)
+      .map((turn) => findFinalAssistantIndex(messages, turn))
+      .filter((index) => index >= 0),
+  );
 }
 
 function hasAgentActivitySummaryDetails(message: ChatMessage): boolean {
@@ -870,6 +969,7 @@ function createSyntheticProcessSummary(
   const counts = collectProcessCounts(detailMessages);
   const startedAt = messages[segmentStartIndex]?.timestamp ?? messages[turn.start]?.timestamp;
   const endedAt = messages[segmentEndIndex]?.timestamp ?? host?.timestamp;
+  const turnDurationMs = getTurnRunDurationMs(messages, turn);
 
   return {
     id: `process-summary-${attachmentId}`,
@@ -879,7 +979,7 @@ function createSyntheticProcessSummary(
     isAgentActivitySummary: true,
     startedAt: startedAt ? String(startedAt) : '',
     endedAt: endedAt ? String(endedAt) : '',
-    durationMs: getDurationMs(startedAt, endedAt),
+    durationMs: turnDurationMs ?? getDurationMs(startedAt, endedAt),
     state: counts.toolErrorCount > 0 ? 'failed' : 'completed',
     toolCallCount: counts.toolCallCount,
     toolErrorCount: counts.toolErrorCount,
@@ -914,76 +1014,38 @@ function collectToolResultImages(messages: ChatMessage[]): ProcessAttachmentImag
   return images;
 }
 
-function findNextHostIndex(messages: ChatMessage[], turn: MessageTurn, fromIndex: number): number | null {
-  for (let index = fromIndex; index < turn.end; index += 1) {
-    const message = messages[index];
-    if (message && canHostProcessSummary(message)) {
-      return index;
-    }
-  }
-  return null;
+function collectCompletedProcessSegments(messages: ChatMessage[], turn: MessageTurn): CompletedProcessSegment[] {
+  const indices = collectTurnProcessIndices(messages, turn);
+  if (indices.length === 0) return [];
+
+  const startIndex = indices[0];
+  const endIndex = indices[indices.length - 1];
+  const segmentMessages = indices
+    .map((index) => messages[index])
+    .filter((message): message is ChatMessage => Boolean(message));
+  const first = segmentMessages[0];
+  const finalAssistantIndex = findFinalAssistantIndex(messages, turn);
+
+  return [{
+    id: getStableProcessSegmentId(messages, turn, first, startIndex),
+    startIndex,
+    endIndex,
+    indices,
+    messages: segmentMessages,
+    detailMessages: segmentMessages,
+    previousHostIndex: messages[turn.start]?.type === 'user' ? turn.start : null,
+    nextHostIndex: finalAssistantIndex >= 0 ? finalAssistantIndex : null,
+  }];
 }
 
-function collectCompletedProcessSegments(messages: ChatMessage[], turn: MessageTurn): CompletedProcessSegment[] {
-  const segments: CompletedProcessSegment[] = [];
-  let previousHostIndex: number | null = null;
-  let segmentStartIndex = -1;
-  let segmentMessages: ChatMessage[] = [];
-
-  const finishSegment = (beforeOriginalIndex: number) => {
-    if (segmentMessages.length === 0 || segmentStartIndex < 0) {
-      segmentStartIndex = -1;
-      segmentMessages = [];
-      return;
-    }
-
-    const endIndex = beforeOriginalIndex - 1;
-    const first = segmentMessages[0];
-    const nextHostIndex = previousHostIndex == null
-      ? findNextHostIndex(messages, turn, beforeOriginalIndex)
-      : null;
-
-    segments.push({
-      id: getStableProcessSegmentId(messages, turn, first, segmentStartIndex),
-      startIndex: segmentStartIndex,
-      endIndex,
-      messages: segmentMessages,
-      detailMessages: segmentMessages.filter(isExpandableProcessMessage),
-      previousHostIndex,
-      nextHostIndex,
-    });
-
-    segmentStartIndex = -1;
-    segmentMessages = [];
-  };
-
-  for (let index = turn.start; index < turn.end; index += 1) {
-    const message = messages[index];
-    if (!message || message.isAgentActivity || message.isAgentActivitySummary) {
-      continue;
-    }
-
-    if (isEmptyAssistantShell(message)) {
-      continue;
-    }
-
-    if (isCollapsibleCompletedProcessMessage(message)) {
-      if (segmentMessages.length === 0) {
-        segmentStartIndex = index;
-      }
-      segmentMessages.push(message);
-      continue;
-    }
-
-    finishSegment(index);
-
-    if (canHostProcessSummary(message)) {
-      previousHostIndex = index;
-    }
+function getLiveTurnDurationMs(messages: ChatMessage[], turn: MessageTurn): number {
+  const completedDuration = getTurnRunDurationMs(messages, turn);
+  if (completedDuration != null) {
+    return completedDuration;
   }
 
-  finishSegment(turn.end);
-  return segments;
+  const endIndex = getTurnEndIndex(messages, turn);
+  return getDurationMs(messages[turn.start]?.timestamp, messages[endIndex]?.timestamp);
 }
 
 function pushProcessAttachment(
@@ -1030,39 +1092,9 @@ export function buildRenderableMessageItems(
     }
   }
 
-  const liveStandaloneThinkingIndices = new Set<number>();
-  if (liveTurn) {
-    let groupStart = -1;
-    let hasNonThinking = false;
-    const pendingThinkingIndices: number[] = [];
-
-    for (let i = liveTurn.start; i < liveTurn.end; i += 1) {
-      const msg = messages[i];
-      if (!msg || msg.isAgentActivity || msg.isAgentActivitySummary) continue;
-
-      if (isProcessMessage(msg)) {
-        if (groupStart < 0) groupStart = i;
-        if (!msg.isThinking) hasNonThinking = true;
-        else pendingThinkingIndices.push(i);
-      } else if (isEmptyAssistantShell(msg)) {
-        continue;
-      } else {
-        if (groupStart >= 0 && !hasNonThinking) {
-          for (const idx of pendingThinkingIndices) {
-            liveStandaloneThinkingIndices.add(idx);
-          }
-        }
-        groupStart = -1;
-        hasNonThinking = false;
-        pendingThinkingIndices.length = 0;
-      }
-    }
-    if (groupStart >= 0 && !hasNonThinking) {
-      for (const idx of pendingThinkingIndices) {
-        liveStandaloneThinkingIndices.add(idx);
-      }
-    }
-  }
+  const liveProcessIndices = liveTurn
+    ? new Set(collectTurnProcessIndices(messages, liveTurn))
+    : new Set<number>();
 
   messages.forEach((message, originalIndex) => {
     if (message.isAgentActivitySummary) {
@@ -1080,8 +1112,7 @@ export function buildRenderableMessageItems(
       liveTurn &&
       originalIndex >= liveTurn.start &&
       originalIndex < liveTurn.end &&
-      isProcessMessage(message) &&
-      !liveStandaloneThinkingIndices.has(originalIndex)
+      liveProcessIndices.has(originalIndex)
     ) {
       collapsedIndices.add(originalIndex);
       return;
@@ -1110,8 +1141,11 @@ export function buildRenderableMessageItems(
       return;
     }
 
+    const segments = collectCompletedProcessSegments(messages, turn);
     const durationMs = getTurnRunDurationMs(messages, turn);
-    if (durationMs != null && hasCompletedTurnWork(messages, turn)) {
+    // A process attachment already contains the single expandable entry for
+    // this turn. Do not add a second standalone duration header beside it.
+    if (segments.length === 0 && durationMs != null && hasCompletedTurnWork(messages, turn)) {
       const runAttachment: ProcessRunAttachment = {
         id: `completed-run-${turn.start}-${turn.end}`,
         durationMs,
@@ -1132,49 +1166,6 @@ export function buildRenderableMessageItems(
       }
     }
 
-    const traumaSegment = collectTraumaRunnerProcessMessages(messages, turn);
-    if (traumaSegment) {
-      for (const index of traumaSegment.indices) {
-        collapsedIndices.add(index);
-      }
-      const firstIndex = traumaSegment.indices[0] ?? turn.start;
-      const lastIndex = traumaSegment.indices[traumaSegment.indices.length - 1] ?? firstIndex;
-      const attachmentId = `trauma-process-${getStableMessagePart(messages[turn.start], `turn-${turn.start}`)}`;
-      const summary = createSyntheticProcessSummary(
-        messages,
-        turn,
-        turn.start,
-        traumaSegment.messages,
-        firstIndex,
-        lastIndex,
-        attachmentId,
-      );
-      const attachment: ProcessAttachment = {
-        id: attachmentId,
-        processSummary: summary,
-        processDetailMessages: traumaSegment.detailMessages,
-        startIndex: firstIndex,
-        endIndex: lastIndex,
-        inlineImages: collectToolResultImages(traumaSegment.messages),
-      };
-      const turnStartItem = itemsByIndex.get(turn.start);
-      if (turnStartItem) {
-        pushProcessAttachment(turnStartItem, 'after', attachment);
-      } else {
-        syntheticItems.push({
-          message: summary,
-          originalIndex: firstIndex - 0.1,
-          beforeRunAttachment: null,
-          afterRunAttachment: null,
-          beforeProcessAttachments: [],
-          afterProcessAttachments: [],
-        });
-      }
-      return;
-    }
-
-    const segments = collectCompletedProcessSegments(messages, turn);
-
     if (segments.length === 0) {
       if (turn.summary && hasAgentActivitySummaryDetails(turn.summary.message)) {
         items.push({
@@ -1190,11 +1181,11 @@ export function buildRenderableMessageItems(
     }
 
     for (const segment of segments) {
-      for (let index = segment.startIndex; index <= segment.endIndex; index += 1) {
+      for (const index of segment.indices) {
         collapsedIndices.add(index);
       }
 
-      const hostIndex = segment.previousHostIndex ?? segment.nextHostIndex ?? segment.endIndex;
+      const hostIndex = segment.nextHostIndex ?? segment.previousHostIndex ?? segment.endIndex;
       const summary = createSyntheticProcessSummary(
         messages,
         turn,
@@ -1267,77 +1258,26 @@ export function getLiveProcessGroups(
     return [];
   }
 
-  const traumaSegment = collectTraumaRunnerProcessMessages(messages, liveTurn);
-  if (traumaSegment) {
-    return [{
-      id: `live-trauma-process-${getStableMessagePart(messages[liveTurn.start], `turn-${liveTurn.start}`)}`,
-      afterOriginalIndex: liveTurn.start,
-      beforeOriginalIndex: null,
-      startIndex: traumaSegment.indices[0] ?? liveTurn.start,
-      endIndex: traumaSegment.indices[traumaSegment.indices.length - 1] ?? messages.length,
-      messages: traumaSegment.messages,
-      detailMessages: traumaSegment.detailMessages,
-      isRunning: Boolean(options.isAssistantWorking),
-    }];
-  }
+  const processIndices = collectTurnProcessIndices(messages, liveTurn);
+  if (processIndices.length === 0) return [];
 
-  const groups: Omit<LiveProcessGroup, 'isRunning'>[] = [];
-  let previousVisibleIndex = liveTurn.start;
-  let groupStartIndex = -1;
-  let groupMessages: ChatMessage[] = [];
-
-  const finishGroup = (beforeOriginalIndex: number | null) => {
-    if (groupMessages.length === 0 || previousVisibleIndex < 0) {
-      groupStartIndex = -1;
-      groupMessages = [];
-      return;
-    }
-
-    if (groupMessages.every((m) => m.isThinking)) {
-      groupStartIndex = -1;
-      groupMessages = [];
-      return;
-    }
-
-    const first = groupMessages[0];
-    const detail = groupMessages.filter(isExpandableProcessMessage);
-    const gid = getStableProcessSegmentId(messages, liveTurn, first, groupStartIndex);
-    groups.push({
-      id: gid,
-      afterOriginalIndex: previousVisibleIndex,
-      beforeOriginalIndex,
-      startIndex: groupStartIndex,
-      endIndex: beforeOriginalIndex ?? messages.length,
-      messages: groupMessages,
-      detailMessages: detail,
-    });
-    groupStartIndex = -1;
-    groupMessages = [];
-  };
-
-  for (let index = liveTurn.start; index < liveTurn.end; index += 1) {
-    const message = messages[index];
-    if (!message || message.isAgentActivity || message.isAgentActivitySummary) {
-      continue;
-    }
-
-    if (isProcessMessage(message)) {
-      if (groupMessages.length === 0) {
-        groupStartIndex = index;
-      }
-      groupMessages.push(message);
-      continue;
-    }
-
-    if (isEmptyAssistantShell(message)) {
-      continue;
-    }
-
-    finishGroup(index);
-    previousVisibleIndex = index;
-  }
-
-  finishGroup(null);
+  const groupMessages = processIndices
+    .map((index) => messages[index])
+    .filter((message): message is ChatMessage => Boolean(message));
+  const first = groupMessages[0];
+  const groupStartIndex = processIndices[0];
+  const finalAssistantIndex = findFinalAssistantIndex(messages, liveTurn);
+  const durationMs = getLiveTurnDurationMs(messages, liveTurn);
+  const groups: Omit<LiveProcessGroup, 'isRunning'>[] = [{
+    id: getStableProcessSegmentId(messages, liveTurn, first, groupStartIndex),
+    afterOriginalIndex: liveTurn.start,
+    beforeOriginalIndex: finalAssistantIndex >= 0 ? finalAssistantIndex : null,
+    startIndex: groupStartIndex,
+    endIndex: processIndices[processIndices.length - 1],
+    durationMs,
+    messages: groupMessages,
+    detailMessages: groupMessages,
+  }];
 
   const result = groups.map((group, index) => {
     const isLatestGroup = index === groups.length - 1;
@@ -1430,7 +1370,7 @@ export function formatCompletedProcessTitle(
 ): string {
   const messages = Array.isArray(messageOrMessages) ? messageOrMessages : [messageOrMessages];
   if (hasTraumaRunnerSteps(messages)) {
-    return '本轮推演完成';
+    return '';
   }
 
   const counts = Array.isArray(messageOrMessages)
@@ -1495,12 +1435,6 @@ export function formatCompletedProcessTitle(
       defaultValue: `Used ${counts.otherToolCount} ${counts.otherToolCount === 1 ? 'tool' : 'tools'}`,
     }));
   }
-  if (counts.toolErrorCount > 0) {
-    labels.push(t('process.live.errors', {
-      count: counts.toolErrorCount,
-      defaultValue: `${counts.toolErrorCount} ${counts.toolErrorCount === 1 ? 'error' : 'errors'}`,
-    }));
-  }
 
   return labels.join(' ');
 }
@@ -1520,6 +1454,12 @@ export function getRunningProcessTitle(
   }
 
   const kind = getProcessToolKind(latestMessage);
+  if (kind === 'thinking') {
+    return t('process.events.thinking', { defaultValue: 'Thinking process' });
+  }
+  if (kind === 'narration') {
+    return t('process.events.modelNarration', { defaultValue: 'Model process note' });
+  }
   const target = getDisplayTarget(getToolTarget(latestMessage));
   if (kind === 'edit') {
     return target
@@ -1547,10 +1487,115 @@ export function getRunningProcessTitle(
   if (kind === 'compact') {
     return t('working.compacting', { defaultValue: 'Compacting context...' });
   }
-  if (kind === 'thinking') {
-    return t('working.thinking', { defaultValue: 'thinking' });
-  }
   return latestMessage.title || latestMessage.content || latestMessage.toolName || t('working.processing', { defaultValue: 'Processing' });
+}
+
+export function getProcessEventStep(
+  message: ChatMessage,
+  t: TFunction<'chat'>,
+  options: ProcessStepOptions = {},
+): ProcessTraceStep {
+  const kind = getProcessToolKind(message);
+  const hasError = hasToolError(message);
+  const clean = (value: string | undefined) => {
+    if (options.sanitizeForUserId === undefined || options.sanitizeForUserId === null) {
+      return value;
+    }
+    return value === undefined ? value : sanitizePathsClient(value, options.sanitizeForUserId);
+  };
+
+  const toolLabel = kind === 'edit'
+    ? t('process.events.edit', { defaultValue: 'Edit file' })
+    : kind === 'read'
+      ? t('process.events.read', { defaultValue: 'Read file' })
+      : kind === 'search'
+        ? t('process.events.search', { defaultValue: 'Search' })
+        : kind === 'command'
+          ? t('process.events.command', { defaultValue: 'Run command' })
+          : kind === 'subagent'
+            ? t('process.events.subagent', { defaultValue: 'Subtask progress' })
+            : t('process.events.toolCall', { defaultValue: 'Tool call' });
+
+  if (hasError) {
+    const [failedToolStep] = message.isToolUse
+      ? buildProcessToolSteps([message], options)
+      : [];
+    return {
+      id: message.id || message.toolId,
+      // Keep the collapsed row neutral. The original error text is rendered
+      // inside the expanded details below.
+      title: toolLabel,
+      target: clean(failedToolStep?.target),
+      detail: clean(failedToolStep?.detail || message.toolName || undefined),
+      resultDetail: clean(failedToolStep?.resultDetail),
+      state: 'completed',
+      phase: 'tool',
+      toolName: message.toolName,
+    };
+  }
+
+  if (kind === 'thinking') {
+    return {
+      id: message.id || message.toolId,
+      title: t('process.events.thinking', { defaultValue: 'Thinking process' }),
+      state: message.isStreaming ? 'running' : 'completed',
+      phase: 'thinking',
+    };
+  }
+
+  if (kind === 'narration') {
+    return {
+      id: message.id || message.toolId,
+      title: t('process.events.modelNarration', { defaultValue: 'Model process note' }),
+      state: message.isStreaming ? 'running' : 'completed',
+      phase: 'generation',
+    };
+  }
+
+  if (message.isCompactBoundary) {
+    return {
+      id: message.id || message.toolId,
+      title: t('process.events.contextCompaction', { defaultValue: 'Context preparation' }),
+      state: 'completed',
+      phase: 'compact',
+    };
+  }
+
+  if (message.isToolUse || message.type === 'tool') {
+    const [toolStep] = buildProcessToolSteps([message], options);
+    if (toolStep) {
+      const hasImages = Array.isArray(message.toolResult?.images)
+        && message.toolResult.images.length > 0;
+      return {
+        ...toolStep,
+        title: hasImages
+          ? t('process.events.toolImage', { defaultValue: 'Tool returned image' })
+          : toolLabel,
+        target: clean(toolStep.target),
+        context: clean(toolStep.context),
+        detail: undefined,
+        resultDetail: clean(toolStep.resultDetail),
+      };
+    }
+  }
+
+  if (message.isTaskNotification || message.isSubagentContainer) {
+    return {
+      id: message.id || message.toolId,
+      title: t('process.events.subagent', { defaultValue: 'Subtask progress' }),
+      state: 'completed',
+      phase: 'subtask',
+      toolName: message.toolName,
+    };
+  }
+
+  return {
+    id: message.id || message.toolId,
+    title: t('process.events.processUpdate', { defaultValue: 'Process update' }),
+    state: 'completed',
+    phase: message.phase || 'tool',
+    toolName: message.toolName,
+  };
 }
 
 export function getLiveProcessGroupStep(
@@ -1571,9 +1616,13 @@ export function getLiveProcessGroupStep(
     };
   }
 
+  const duration = formatProcessDuration(group.durationMs);
   const title = group.isRunning
     ? getRunningProcessTitle(group, t)
-    : formatCompletedProcessTitle(group.messages, t);
+    : t('process.summary.turnProcessed', {
+        duration,
+        defaultValue: `Turn process: ${duration}`,
+      });
   const latestMessage = group.messages[group.messages.length - 1];
   const kind = latestMessage ? getProcessToolKind(latestMessage) : 'tool';
   const traumaMeta = latestMessage ? getTraumaRunnerStepMeta(latestMessage) : null;
@@ -1682,44 +1731,18 @@ export function processSummaryToTrace(
 ): {
   label: string;
   collapsedDetail: string;
-  statusLabel: string;
   status: string;
-  metrics: ProcessTraceMetric[];
   steps: ProcessTraceStep[];
 } {
   const rawStatus = String(message.state || 'completed');
   const duration = formatProcessDuration(
     typeof message.durationMs === 'number' ? message.durationMs : 0,
   );
-  const label = formatCompletedProcessTitle(message, t) ||
-    t('process.summary.processed', {
-      duration,
-      defaultValue: `Processed ${duration}`,
-    });
-  const toolCalls = numberField(message, 'toolCallCount');
-  const searches = numberField(message, 'ragSearchCount');
-  const errors = numberField(message, 'toolErrorCount');
-  const status = rawStatus === 'failed' && errors > 0 ? 'completed' : rawStatus;
-  const metrics: ProcessTraceMetric[] = [
-    toolCalls > 0
-      ? {
-          key: 'toolCalls',
-          label: t('process.metrics.toolCalls', { count: toolCalls, defaultValue: '{{count}} tool calls' }),
-        }
-      : null,
-    searches > 0
-      ? {
-          key: 'searches',
-          label: t('process.metrics.searches', { count: searches, defaultValue: '{{count}} searches' }),
-        }
-      : null,
-    errors > 0
-      ? {
-          key: 'errors',
-          label: t('process.metrics.errors', { count: errors, defaultValue: '{{count}} errors' }),
-        }
-      : null,
-  ].filter((metric): metric is ProcessTraceMetric => Boolean(metric));
+  const label = t('process.summary.turnProcessed', {
+    duration,
+    defaultValue: `Turn process: ${duration}`,
+  });
+  const status = rawStatus === 'failed' ? 'completed' : rawStatus;
   const steps = Array.isArray(message.keySteps)
     ? message.keySteps
         .filter((step): step is Record<string, unknown> => Boolean(step) && typeof step === 'object')
@@ -1741,13 +1764,7 @@ export function processSummaryToTrace(
   return {
     label,
     collapsedDetail: '',
-    statusLabel: status === 'failed'
-      ? t('process.summary.failed', { defaultValue: 'Process failed' })
-      : status === 'cancelled'
-        ? t('process.summary.cancelled', { defaultValue: 'Process stopped' })
-        : t('process.summary.completed', { defaultValue: 'Process completed' }),
     status,
-    metrics,
     steps,
   };
 }

@@ -396,7 +396,44 @@ function convertNormalizedMessages(
       if (msg.toolId && !msg.toolResult) {
         const queue = toolResultQueues.get(msg.toolId);
         const next = queue?.shift();
-        if (next) toolResultMap.set(msg.toolId, next);
+        if (next) {
+          const relatedResults = [next];
+          // A tool may persist large or multimodal supplemental content as
+          // separate tool_result WebMessages. They share the same tool id
+          // and turn id, so merge their images into the primary result before
+          // the tool row is converted. This keeps media inside the process
+          // step instead of leaving it as an orphan transport row.
+          while (queue?.[0] && (
+            queue[0].turnId === next.turnId
+            && queue[0].kind === 'tool_result'
+            && queue[0].toolId === next.toolId
+          )) {
+            relatedResults.push(queue.shift()!);
+          }
+          const mergedResult = relatedResults.slice(1).reduce<NormalizedMessage>(
+            (merged, result) => ({
+              ...merged,
+              ...(result.toolResultImages && result.toolResultImages.length > 0
+                ? {
+                    toolResultImages: [
+                      ...(merged.toolResultImages ?? []),
+                      ...result.toolResultImages,
+                    ],
+                  }
+                : {}),
+              ...(result.images && result.images.length > 0
+                ? {
+                    images: [
+                      ...(merged.images ?? []),
+                      ...result.images,
+                    ],
+                  }
+                : {}),
+            }),
+            next,
+          );
+          toolResultMap.set(msg.toolId, mergedResult);
+        }
         else toolResultMap.delete(msg.toolId);
       }
       const result = convertSingleMessage(msg, toolResultMap, subagentLinks);

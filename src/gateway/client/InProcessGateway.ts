@@ -2288,7 +2288,10 @@ function mapAgentEventForTurn(event: AgentEvent, runId: string): GatewayEvent[] 
       // appears on session reload via the persisted canonical message — and
       // it ends up in the "user" bubble because the wire role for tool
       // results is `user`. See `projectToolResults`.
-      const images = event.result.content.flatMap((item) =>
+      const images = [
+        ...event.result.content,
+        ...(event.result.supplementalMessages ?? []).flatMap((message) => message.content),
+      ].flatMap((item) =>
         item.type === "image"
           ? [{
               mimeType: item.mimeType,

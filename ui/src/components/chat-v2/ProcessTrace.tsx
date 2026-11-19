@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Activity,
   AlertCircle,
@@ -6,6 +7,8 @@ import {
   ChevronDown,
   ChevronRight,
   Loader2,
+  Maximize2,
+  Minimize2,
   Pencil,
   Search,
   Terminal,
@@ -14,11 +17,6 @@ import {
 } from 'lucide-react';
 import { AgentTimeline } from './AgentTimeline';
 import { getToolDisplayName } from '../chat/tools/configs/toolConfigs';
-
-export type ProcessTraceMetric = {
-  key: string;
-  label: string;
-};
 
 export type ProcessTraceStep = {
   id?: string;
@@ -39,15 +37,14 @@ export type ProcessTraceStep = {
 type ProcessTraceProps = {
   label: string;
   collapsedDetail?: string;
-  statusLabel?: string;
   status?: string;
-  metrics?: ProcessTraceMetric[];
   steps?: ProcessTraceStep[];
   children?: ReactNode;
   defaultExpanded?: boolean;
   expanded?: boolean;
   onExpandedChange?: (expanded: boolean) => void;
   live?: boolean;
+  showIcon?: boolean;
   className?: string;
 };
 
@@ -65,6 +62,92 @@ export function ProcessRunHeader({
       className={`mb-3 border-b border-neutral-200/70 pb-1.5 text-[14px] leading-relaxed text-neutral-500 dark:border-neutral-800/80 dark:text-neutral-400 ${className}`}
     >
       <span className="tabular-nums">{label}</span>
+    </div>
+  );
+}
+
+export function ProcessRunPanel({
+  label,
+  children,
+  defaultExpanded = false,
+  expanded: controlledExpanded,
+  onExpandedChange,
+  className = '',
+}: {
+  label: string;
+  children?: ReactNode;
+  defaultExpanded?: boolean;
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
+  className?: string;
+}) {
+  const { t } = useTranslation('chat');
+  const [uncontrolledExpanded, setUncontrolledExpanded] = useState(defaultExpanded);
+  const [isTall, setIsTall] = useState(false);
+  const expanded = controlledExpanded ?? uncontrolledExpanded;
+  const hasDetails = Boolean(children);
+  const setExpanded = (nextExpanded: boolean | ((value: boolean) => boolean)) => {
+    const resolvedExpanded = typeof nextExpanded === 'function'
+      ? nextExpanded(expanded)
+      : nextExpanded;
+    if (controlledExpanded === undefined) {
+      setUncontrolledExpanded(resolvedExpanded);
+    }
+    onExpandedChange?.(resolvedExpanded);
+  };
+  const processWindowHeightClass = isTall ? 'max-h-[560px]' : 'max-h-[280px]';
+  const resizeLabel = isTall
+    ? t('process.collapseWindow', { defaultValue: 'Restore process window' })
+    : t('process.expandWindow', { defaultValue: 'Expand process window' });
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={`process-run-panel mb-3 border-b border-neutral-200/70 pb-1.5 text-[14px] leading-relaxed text-neutral-500 dark:border-neutral-800/80 dark:text-neutral-400 ${className}`}
+    >
+      <div className="flex min-w-0 items-start justify-between gap-2">
+        <button
+          type="button"
+          disabled={!hasDetails}
+          aria-expanded={hasDetails ? expanded : undefined}
+          onClick={() => {
+            if (hasDetails) {
+              setExpanded((value) => !value);
+            }
+          }}
+          className="group inline-flex min-w-0 flex-1 items-center gap-2 text-left tabular-nums transition hover:text-neutral-700 disabled:cursor-default disabled:hover:text-neutral-500 dark:hover:text-neutral-300 dark:disabled:hover:text-neutral-400"
+        >
+          <span className="min-w-0 truncate">{label}</span>
+          {hasDetails ? (
+            expanded ? (
+              <ChevronDown className="h-4 w-4 shrink-0 text-neutral-400 transition group-hover:text-neutral-500 dark:text-neutral-500 dark:group-hover:text-neutral-300" strokeWidth={1.8} />
+            ) : (
+              <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400 transition group-hover:text-neutral-500 dark:text-neutral-500 dark:group-hover:text-neutral-300" strokeWidth={1.8} />
+            )
+          ) : null}
+        </button>
+        {hasDetails && expanded ? (
+          <button
+            type="button"
+            aria-label={resizeLabel}
+            title={resizeLabel}
+            onClick={() => setIsTall((value) => !value)}
+            className="group shrink-0 rounded p-0.5 text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/60 dark:text-neutral-500 dark:hover:bg-neutral-800 dark:hover:text-neutral-300"
+          >
+            {isTall ? (
+              <Minimize2 className="h-4 w-4" strokeWidth={1.8} />
+            ) : (
+              <Maximize2 className="h-4 w-4" strokeWidth={1.8} />
+            )}
+          </button>
+        ) : null}
+      </div>
+      {expanded && hasDetails ? (
+        <div className={`mt-2 max-w-full space-y-1.5 overflow-y-auto pl-3 ${processWindowHeightClass}`}>
+          {children}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -103,7 +186,8 @@ export function ProcessLiveStatus({
   const title = step.title || (step.toolName ? getToolDisplayName(step.toolName) : '处理中');
   const isRunning = step.state !== 'failed' && step.state !== 'completed' && step.state !== 'cancelled';
   const hasStepList = steps.length > 0;
-  const hasDetails = Boolean(children) || hasStepList;
+  const hasStepMetadata = Boolean(step.target || step.detail || step.resultDetail);
+  const hasDetails = Boolean(children) || hasStepList || hasStepMetadata;
   const statusContent = (
     <>
       <Icon
@@ -114,11 +198,6 @@ export function ProcessLiveStatus({
       />
       <div className="min-w-0">
         <div className="truncate">{title}</div>
-        {step.detail ? (
-          <div className="pd-process-detail truncate text-[12px] leading-5 text-neutral-400/80 dark:text-neutral-500/80">
-            {step.detail}
-          </div>
-        ) : null}
       </div>
       {hasDetails ? (
         expanded ? (
@@ -163,6 +242,7 @@ export function ProcessLiveStatus({
               ))
             )
           ) : null}
+          {hasStepMetadata ? <ProcessTraceMetadata step={step} /> : null}
           {children}
         </div>
       ) : null}
@@ -249,18 +329,29 @@ function ProcessTraceLine({ step }: { step: ProcessTraceStep }) {
   );
 }
 
+function ProcessTraceMetadata({ step }: { step: ProcessTraceStep }) {
+  return (
+    <div className="space-y-0.5 text-[12px] leading-5 text-neutral-400/80 dark:text-neutral-500/80">
+      {step.target ? <div className="break-all">{step.target}</div> : null}
+      {step.detail && step.detail !== step.target ? <div className="break-all">{step.detail}</div> : null}
+      {step.resultDetail && step.resultDetail !== step.target && step.resultDetail !== step.detail ? (
+        <div className="break-all">{step.resultDetail}</div>
+      ) : null}
+    </div>
+  );
+}
+
 export function ProcessTrace({
   label,
   collapsedDetail,
-  statusLabel,
   status = 'completed',
-  metrics = [],
   steps = [],
   children,
   defaultExpanded = false,
   expanded: controlledExpanded,
   onExpandedChange,
   live = false,
+  showIcon = true,
   className = '',
 }: ProcessTraceProps) {
   const [uncontrolledExpanded, setUncontrolledExpanded] = useState(defaultExpanded);
@@ -299,12 +390,14 @@ export function ProcessTrace({
           isRunning ? 'animate-pulse' : ''
         }`}
       >
-        <SummaryIcon
-          className={`h-3.5 w-3.5 shrink-0 ${getStepIconClass(summaryIconStep)} ${
-            SummaryIcon === Loader2 && isRunning ? 'animate-spin' : ''
-          }`}
-          strokeWidth={1.8}
-        />
+        {showIcon ? (
+          <SummaryIcon
+            className={`h-3.5 w-3.5 shrink-0 ${getStepIconClass(summaryIconStep)} ${
+              SummaryIcon === Loader2 && isRunning ? 'animate-spin' : ''
+            }`}
+            strokeWidth={1.8}
+          />
+        ) : null}
         <span className="min-w-0 truncate tabular-nums">{label}</span>
         {visibleCollapsedDetail ? (
           <span className="pd-process-detail min-w-0 shrink truncate text-neutral-400/75 dark:text-neutral-500/75">
@@ -332,38 +425,6 @@ export function ProcessTrace({
           {children ? <div className="space-y-1.5 pt-0.5">{children}</div> : null}
         </div>
       ) : null}
-    </div>
-  );
-}
-
-export function StreamingThinkingPreview({
-  content,
-  maxLines = 10,
-}: {
-  content: string;
-  maxLines?: number;
-}) {
-  const lines = content.split('\n');
-  const visibleLines = lines.slice(-maxLines);
-  const hasOverflow = lines.length > maxLines;
-
-  return (
-    <div
-      className="relative mt-1 overflow-hidden px-3 py-2 font-mono text-xs leading-relaxed text-neutral-500 dark:text-neutral-400"
-      style={
-        hasOverflow
-          ? {
-              maskImage: 'linear-gradient(to bottom, transparent 0%, black 25%)',
-              WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 25%)',
-            }
-          : undefined
-      }
-    >
-      {visibleLines.map((line, i) => (
-        <div key={i} className="whitespace-pre-wrap break-words">
-          {line || '\u00A0'}
-        </div>
-      ))}
     </div>
   );
 }

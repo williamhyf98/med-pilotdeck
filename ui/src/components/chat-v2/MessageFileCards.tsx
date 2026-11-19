@@ -43,6 +43,21 @@ type MessageFileCardProps = {
 
 const extensionOf = (name: string) => name.split('.').pop()?.toLowerCase() || '';
 
+const artifactPriority = (artifact: ChatFileArtifact): number => {
+  switch (extensionOf(artifact.name)) {
+    case 'docx':
+      return 0;
+    case 'pdf':
+      return 1;
+    case 'pptx':
+      return 2;
+    case 'xlsx':
+      return 3;
+    default:
+      return 4;
+  }
+};
+
 function fileVisual(file: CardFile) {
   if (file.kind === 'directory') {
     return { Icon: FolderOpen, className: 'bg-amber-50 text-amber-700 dark:bg-amber-950/70 dark:text-amber-300' };
@@ -237,7 +252,10 @@ export function AgentFileArtifactGroup({
   const groups = useMemo(() => {
     const unique = new Map<string, ChatFileArtifact>();
     for (const artifact of artifacts) unique.set(artifact.path, artifact);
-    const values = [...unique.values()];
+    const values = [...unique.values()]
+      .map((artifact, index) => ({ artifact, index }))
+      .sort((a, b) => artifactPriority(a.artifact) - artifactPriority(b.artifact) || a.index - b.index)
+      .map(({ artifact }) => artifact);
     return {
       values,
       visible: expanded ? values : values.slice(0, 3),

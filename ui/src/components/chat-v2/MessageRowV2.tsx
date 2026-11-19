@@ -25,16 +25,16 @@ import ImageLightbox, { type LightboxImage } from '../chat/view/subcomponents/Im
 import { Markdown } from '../chat/view/subcomponents/Markdown';
 import { formatUsageLimitText } from '../chat/utils/chatFormatting';
 import { extractCitationsFromContent } from '../chat/utils/citationDetails';
-import { ProcessTrace } from './ProcessTrace';
+import { ProcessLiveStatus, ProcessRunPanel } from './ProcessTrace';
 import { getStorageUserId } from '../../utils/safeStorage';
 import { sanitizeUserIdFor } from '../../utils/pathSanitization';
 import {
   buildProcessToolSteps,
-  formatCompletedProcessTitle,
-  hasTraumaRunnerSteps,
+  getProcessEventStep,
   processSummaryToTrace,
   type ProcessAttachment,
 } from './processGrouping';
+import { formatProcessDuration } from './processTraceUtils';
 import SubagentCard from './SubagentCard';
 import DocumentReferenceChip from './DocumentReferenceChip';
 import { AgentFileArtifactGroup, UserAttachmentCards } from './MessageFileCards';
@@ -230,6 +230,8 @@ function MessageRowV2({
         isProcessExpanded={isProcessExpanded}
         onProcessExpandedChange={onProcessExpandedChange}
         defaultExpanded={defaultProcessExpanded}
+        selectedProject={selectedProject}
+        onFileOpen={onFileOpen}
         t={t}
       />
     );
@@ -242,6 +244,8 @@ function MessageRowV2({
       isProcessExpanded={isProcessExpanded}
       onProcessExpandedChange={onProcessExpandedChange}
       defaultExpanded={defaultProcessExpanded}
+      selectedProject={selectedProject}
+      onFileOpen={onFileOpen}
       t={t}
     />
   );
@@ -768,6 +772,9 @@ function ProcessSummaryRow({
   message,
   processKey,
   detailMessages = [],
+  children,
+  selectedProject,
+  onFileOpen,
   isProcessExpanded,
   onProcessExpandedChange,
   defaultExpanded = false,
@@ -776,6 +783,9 @@ function ProcessSummaryRow({
   message: ChatMessage;
   processKey?: string;
   detailMessages?: ChatMessage[];
+  children?: ReactNode;
+  selectedProject?: Project | null;
+  onFileOpen?: (filePath: string, diffInfo?: unknown) => void;
   isProcessExpanded?: (processKey: string, defaultExpanded?: boolean) => boolean;
   onProcessExpandedChange?: (processKey: string, expanded: boolean) => void;
   defaultExpanded?: boolean;
@@ -787,31 +797,46 @@ function ProcessSummaryRow({
     () => (detailMessages.length > 0 ? buildProcessToolSteps(detailMessages, { sanitizeForUserId }) : trace.steps),
     [detailMessages, trace.steps, sanitizeForUserId],
   );
-  const label = useMemo(
-    () => (detailMessages.length > 0 && hasTraumaRunnerSteps(detailMessages)
-      ? formatCompletedProcessTitle(detailMessages, t)
-      : trace.label),
-    [detailMessages, t, trace.label],
-  );
   const resolvedProcessKey = processKey || message.id || message.runId || message.activityId;
   const expanded = resolvedProcessKey
     ? isProcessExpanded?.(resolvedProcessKey, defaultExpanded)
     : undefined;
+  const stepRows = toolSteps.length > 0
+    ? toolSteps.map((step, index) => {
+        const eventKey = `${resolvedProcessKey || 'process-summary'}:${step.id || index}:summary`;
+        return (
+          <ProcessLiveStatus
+            key={eventKey}
+            step={step}
+            compact
+            expanded={isProcessExpanded?.(eventKey, false)}
+            onExpandedChange={isProcessExpanded && onProcessExpandedChange
+              ? (nextExpanded) => onProcessExpandedChange(eventKey, nextExpanded)
+              : undefined}
+          />
+        );
+      })
+    : null;
 
   return (
-	    <ProcessTrace
-	      label={label}
-      collapsedDetail={trace.collapsedDetail}
-      statusLabel={trace.statusLabel}
-      status={trace.status}
-      metrics={trace.metrics}
-      steps={toolSteps}
+    <ProcessRunPanel
+      label={trace.label}
       defaultExpanded={defaultExpanded}
       expanded={expanded}
       onExpandedChange={resolvedProcessKey
         ? (nextExpanded) => onProcessExpandedChange?.(resolvedProcessKey, nextExpanded)
         : undefined}
-    />
+    >
+      {stepRows}
+      {children}
+      {detailMessages.length > 0 ? (
+        <ProcessDetailContent
+          messages={detailMessages}
+          selectedProject={selectedProject ?? null}
+          onFileOpen={onFileOpen}
+        />
+      ) : null}
+    </ProcessRunPanel>
   );
 }
 
@@ -820,43 +845,191 @@ function ProcessAttachmentRow({
   isProcessExpanded,
   onProcessExpandedChange,
   defaultExpanded = false,
+  selectedProject,
+  onFileOpen,
   t,
 }: {
   attachment: ProcessAttachment;
   isProcessExpanded?: (processKey: string, defaultExpanded?: boolean) => boolean;
   onProcessExpandedChange?: (processKey: string, expanded: boolean) => void;
   defaultExpanded?: boolean;
+  selectedProject: Project | null;
+  onFileOpen?: (filePath: string, diffInfo?: unknown) => void;
   t: TFunction<'chat'>;
 }) {
-  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  const lightboxImages: LightboxImage[] = useMemo(
-    () =>
-      attachment.inlineImages.map((image) => ({
-        data: image.data,
-        name: image.name,
-        mimeType: image.mimeType,
-      })),
-    [attachment.inlineImages],
-  );
+  const trace = processSummaryToTrace(attachment.processSummary, t);
+  const sanitizeForUserId = sanitizeUserIdFor(getStorageUserId());
+  const panelKey = `${attachment.id}:panel`;
+  const expanded = isProcessExpanded?.(panelKey, defaultExpanded);
 
   return (
-    <div className="flex min-w-0 flex-col items-start gap-2">
-      <ProcessSummaryRow
-        message={attachment.processSummary}
-        processKey={attachment.id}
-        detailMessages={attachment.processDetailMessages}
-        isProcessExpanded={isProcessExpanded}
-        onProcessExpandedChange={onProcessExpandedChange}
+    <div className="flex min-w-0 flex-col gap-2">
+      <ProcessRunPanel
+        label={t('process.summary.turnProcessed', {
+          duration: formatProcessDuration(
+            typeof attachment.processSummary.durationMs === 'number'
+              ? attachment.processSummary.durationMs
+              : 0,
+          ),
+          defaultValue: trace.label,
+        })}
         defaultExpanded={defaultExpanded}
-        t={t}
-      />
-      {lightboxImages.length > 0 ? (
+        expanded={expanded}
+        onExpandedChange={(nextExpanded) => onProcessExpandedChange?.(panelKey, nextExpanded)}
+      >
+        <ProcessEventRows
+          messages={attachment.processDetailMessages}
+          processKey={attachment.id}
+          selectedProject={selectedProject}
+          onFileOpen={onFileOpen}
+          isProcessExpanded={isProcessExpanded}
+          onProcessExpandedChange={onProcessExpandedChange}
+          defaultExpanded={false}
+          sanitizeForUserId={sanitizeForUserId}
+        />
+      </ProcessRunPanel>
+    </div>
+  );
+}
+
+export function ProcessEventRows({
+  messages,
+  processKey,
+  selectedProject,
+  onFileOpen,
+  isProcessExpanded,
+  onProcessExpandedChange,
+  defaultExpanded = false,
+  sanitizeForUserId,
+}: {
+  messages: ChatMessage[];
+  processKey: string;
+  selectedProject: Project | null;
+  onFileOpen?: (filePath: string, diffInfo?: unknown) => void;
+  isProcessExpanded?: (processKey: string, defaultExpanded?: boolean) => boolean;
+  onProcessExpandedChange?: (processKey: string, expanded: boolean) => void;
+  defaultExpanded?: boolean;
+  sanitizeForUserId?: string | number | null;
+}) {
+  const { t } = useTranslation('chat');
+
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      {messages.map((message, index) => {
+        const baseStep = getProcessEventStep(message, t, { sanitizeForUserId });
+        // Preserve an expanded row while streamed content grows. A completed
+        // or failed result gets a fresh key and therefore returns collapsed.
+        const eventKey = `${processKey}:${message.id || message.toolId || index}:${baseStep.state || 'completed'}`;
+        const expanded = isProcessExpanded?.(eventKey, defaultExpanded);
+
+        return (
+          <ProcessLiveStatus
+            key={eventKey}
+            step={baseStep}
+            compact
+            expanded={expanded}
+            onExpandedChange={isProcessExpanded && onProcessExpandedChange
+              ? (nextExpanded) => onProcessExpandedChange(eventKey, nextExpanded)
+              : undefined}
+          >
+            <ProcessDetailContent
+              messages={[message]}
+              selectedProject={selectedProject}
+              onFileOpen={onFileOpen}
+            />
+          </ProcessLiveStatus>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Renders the parts of a process trace that are not represented by the tool
+ * timeline: model narration, thinking, retry messages, and raw error details.
+ * It is mounted inside the collapsible trace, so these contents stay hidden
+ * until the user opens the process section.
+ */
+export function ProcessDetailContent({
+  messages,
+  selectedProject,
+  onFileOpen,
+}: {
+  messages: ChatMessage[];
+  selectedProject: Project | null;
+  onFileOpen?: (filePath: string, diffInfo?: unknown) => void;
+}) {
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const detailMessages = useMemo(
+    () => messages.filter((message) => {
+      if (message.isAgentActivity || message.isAgentActivitySummary) return false;
+      if (message.isToolUse) return true;
+      return Boolean(
+        message.type === 'assistant' ||
+        message.type === 'error' ||
+        message.isTaskNotification ||
+        message.isSubagentContainer,
+      );
+    }),
+    [messages],
+  );
+  const images = useMemo<LightboxImage[]>(
+    () => messages.flatMap((message) => (
+      Array.isArray(message.toolResult?.images)
+        ? message.toolResult.images
+            .filter((image) => image && typeof image.data === 'string' && image.data.length > 0)
+            .map((image) => ({
+              data: image.data as string,
+              name: typeof image.name === 'string' ? image.name : undefined,
+              mimeType: typeof image.mimeType === 'string' ? image.mimeType : undefined,
+            }))
+        : []
+    )),
+    [messages],
+  );
+
+  if (detailMessages.length === 0 && images.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-2 border-l border-neutral-200/80 pl-3 dark:border-neutral-700/70">
+      {detailMessages.map((message, index) => {
+        const isError = message.type === 'error' || Boolean(message.toolResult?.isError);
+        const content = message.isToolUse
+          ? String(message.toolResult?.content || '')
+          : String(message.content || '');
+        if (!content.trim()) return null;
+
+        return (
+          <div
+            key={`${message.id || message.toolId || 'process-detail'}-${index}`}
+            className={`min-w-0 text-[13px] leading-relaxed ${
+              isError
+                ? 'text-amber-700 dark:text-amber-300'
+                : message.isThinking
+                  ? 'text-neutral-400 dark:text-neutral-500'
+                  : 'text-neutral-500 dark:text-neutral-400'
+            }`}
+            role={isError ? 'alert' : undefined}
+          >
+            <Markdown
+              className="prose prose-sm max-w-none break-words dark:prose-invert prose-p:my-1 prose-pre:my-2"
+              projectName={selectedProject?.name}
+              onFileOpen={onFileOpen}
+            >
+              {formatUsageLimitText(content)}
+            </Markdown>
+          </div>
+        );
+      })}
+      {images.length > 0 ? (
         <div className="flex max-w-full flex-wrap gap-2">
-          {lightboxImages.map((image, idx) => (
+          {images.map((image, index) => (
             <button
               type="button"
-              key={`${attachment.inlineImages[idx].toolId || 'tool-image'}-${idx}`}
-              onClick={() => setLightboxIndex(idx)}
+              key={`${image.name || 'process-image'}-${index}`}
+              onClick={() => setLightboxIndex(index)}
               className="block overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm transition hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-900"
               aria-label={image.name ? `Preview ${image.name}` : 'Preview image'}
             >
@@ -870,9 +1043,9 @@ function ProcessAttachmentRow({
           ))}
         </div>
       ) : null}
-      {lightboxIndex !== null && lightboxImages.length > 0 ? (
+      {lightboxIndex !== null ? (
         <ImageLightbox
-          images={lightboxImages}
+          images={images}
           startIndex={lightboxIndex}
           onClose={() => setLightboxIndex(null)}
         />

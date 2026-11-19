@@ -90,12 +90,28 @@
   "process": {
     "summary": {
       "processed": "Processed {{duration}}",
+      "turnProcessed": "Turn process: {{duration}}",
       "completed": "Process completed",
       "failed": "Process failed",
       "cancelled": "Process stopped"
     },
+    "expandWindow": "Expand process window",
+    "collapseWindow": "Restore process window",
     "waitingForModel": "Waiting for model",
     "step": "Step",
+    "events": {
+      "thinking": "Thinking process",
+      "modelNarration": "Model process note",
+      "contextCompaction": "Context preparation",
+      "toolCall": "Tool call",
+      "subagent": "Subtask progress",
+      "processUpdate": "Process update",
+      "edit": "Edit file",
+      "read": "Read file",
+      "search": "Search",
+      "command": "Run command",
+      "toolImage": "Tool returned image"
+    },
     "metrics": {
       "toolCalls": "{{count}} tool calls",
       "searches": "{{count}} searches",
