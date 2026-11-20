@@ -1390,12 +1390,16 @@ function readPlanData(raw: unknown): Record<string, unknown> | undefined {
   const data = (raw as { data?: unknown }).data;
   if (!data || typeof data !== "object") return undefined;
   const d = data as Record<string, unknown>;
-  if (typeof d.planFilePath !== "string") return undefined;
-  return {
-    planFilePath: d.planFilePath,
-    planTitle: d.planTitle,
-    planSummary: d.planSummary,
-  };
+  const isInteractiveResult = (
+    Array.isArray(d.questions)
+    || Array.isArray(d.answers)
+    || (d.answers && typeof d.answers === "object")
+    || typeof d.plan === "string"
+    || typeof d.action === "string"
+    || typeof d.feedback === "string"
+  );
+  if (!isInteractiveResult && typeof d.planFilePath !== "string") return undefined;
+  return { ...d };
 }
 
 function readSearchToolData(raw: unknown): Record<string, unknown> | undefined {

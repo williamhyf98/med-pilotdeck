@@ -291,6 +291,9 @@ function mapWebMessageToNormalized(message, sessionId) {
             planTitle: planPayload.planTitle,
             planSummary: planPayload.planSummary,
         } : {}),
+        ...(planPayload.questions || planPayload.answers || planPayload.plan || planPayload.action
+          ? { toolUseResult: planPayload }
+          : {}),
         ...(searchPayload ? { toolUseResult: searchPayload } : {}),
       });
     }

@@ -1887,6 +1887,7 @@ export function useChatComposerState({
             type: 'elicitation-response',
             requestId,
             sessionId: pending?.sessionId,
+            provider: 'pilotdeck',
             answer,
           });
           return;
@@ -1903,14 +1904,24 @@ export function useChatComposerState({
         });
       });
 
-      setPendingPermissionRequests((previous) => {
-        const next = previous.filter((request) => !validIds.includes(request.requestId));
-        if (next.length === 0) {
-          setClaudeStatus(null);
-          setPilotDeckStatus(null);
-        }
-        return next;
+      // Elicitation panels stay mounted until the server confirms delivery.
+      // This matters when the socket is reconnecting: removing the panel
+      // here would make an unsent answer look successful and the active-turn
+      // replay would bring the original question back later.
+      const hasNonElicitationRequest = validIds.some((requestId) => {
+        const pending = pendingPermissionRequests.find((request) => request.requestId === requestId);
+        return !pending?.isElicitation;
       });
+      if (hasNonElicitationRequest) {
+        setPendingPermissionRequests((previous) => {
+          const next = previous.filter((request) => !validIds.includes(request.requestId));
+          if (next.length === 0) {
+            setClaudeStatus(null);
+            setPilotDeckStatus(null);
+          }
+          return next;
+        });
+      }
     },
     [
       pendingPermissionRequests,

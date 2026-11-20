@@ -58,7 +58,14 @@ function normalizeAnswers(value: unknown): Record<string, string> {
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>)
       .filter(([key]) => key.trim())
-      .map(([key, answer]) => [key, typeof answer === 'string' ? answer : String(answer ?? '')]),
+      .map(([key, answer]) => [
+        key,
+        Array.isArray(answer)
+          ? answer.map((item) => String(item)).join(', ')
+          : typeof answer === 'string'
+            ? answer
+            : String(answer ?? ''),
+      ]),
   );
 }
 

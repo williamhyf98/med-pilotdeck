@@ -110,7 +110,9 @@
       "read": "读取文件",
       "search": "搜索内容",
       "command": "执行命令",
-      "toolImage": "工具返回图片"
+      "toolImage": "工具返回图片",
+      "userQuestion": "用户提问",
+      "planReview": "计划确认"
     },
     "metrics": {
       "toolCalls": "{{count}} 次工具调用",

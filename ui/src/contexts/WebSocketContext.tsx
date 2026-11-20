@@ -52,6 +52,9 @@ export function getQueuedMessageKey(message: any): string | null {
   if (message?.type === 'check-session-status' && typeof message.sessionId === 'string' && message.sessionId.trim()) {
     return `check-session-status:${message.sessionId.trim()}`;
   }
+  if (message?.type === 'elicitation-response' && typeof message.requestId === 'string' && message.requestId.trim()) {
+    return `elicitation-response:${message.requestId.trim()}`;
+  }
   return null;
 }
 

@@ -6,6 +6,7 @@ import { Button } from '../../../../ui/button';
 import { Input } from '../../../../ui/input';
 import { cn } from '../../../../../lib/utils.js';
 import { isImeEnterEvent } from '../../../../../utils/ime';
+import { QuestionAnswerContent } from '../ContentRenderers/QuestionAnswerContent';
 
 function normalizeOption(option: unknown) {
   if (!option || typeof option !== 'object') return null;
@@ -43,6 +44,7 @@ function normalizeQuestions(value: unknown): Question[] {
 export const AskUserQuestionPanel: React.FC<PermissionPanelProps> = ({
   request,
   onDecision,
+  readOnly = false,
 }) => {
   const input = request.input as { questions?: unknown } | undefined;
   const questions = normalizeQuestions(input?.questions);
@@ -170,6 +172,25 @@ export const AskUserQuestionPanel: React.FC<PermissionPanelProps> = ({
       return;
     }
   }, [currentStep, questions, toggleOption, toggleOther, handleSubmit, handleSkip]);
+
+  if (readOnly) {
+    return (
+      <div className="w-full overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+        <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+          <HelpCircle className="h-4 w-4 flex-shrink-0 text-muted-foreground" strokeWidth={1.75} />
+          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+            已回答的提问
+          </span>
+        </div>
+        <div className="px-4 py-3">
+          <QuestionAnswerContent
+            questions={questions}
+            answers={(input as { answers?: unknown } | undefined)?.answers}
+          />
+        </div>
+      </div>
+    );
+  }
 
   if (questions.length === 0) return null;
 

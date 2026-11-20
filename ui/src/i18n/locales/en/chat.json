@@ -110,7 +110,9 @@
       "read": "Read file",
       "search": "Search",
       "command": "Run command",
-      "toolImage": "Tool returned image"
+      "toolImage": "Tool returned image",
+      "userQuestion": "User question",
+      "planReview": "Plan review"
     },
     "metrics": {
       "toolCalls": "{{count}} tool calls",

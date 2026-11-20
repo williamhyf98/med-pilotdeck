@@ -600,6 +600,10 @@ function isUserVisibleTool(message: ChatMessage): boolean {
   return USER_VISIBLE_TOOL_NAMES.has(toolName);
 }
 
+function isCompletedUserVisibleTool(message: ChatMessage): boolean {
+  return isUserVisibleTool(message) && Boolean(message.toolResult);
+}
+
 export function isProcessMessage(message: ChatMessage): boolean {
   if (message.isAgentActivity || message.isAgentActivitySummary) {
     return false;
@@ -610,9 +614,10 @@ export function isProcessMessage(message: ChatMessage): boolean {
   if (message.isSubagentContainer) {
     return false;
   }
-  if (message.isInteractivePrompt || isUserVisibleTool(message) || isPermissionToolError(message)) {
+  if (message.isInteractivePrompt || isPermissionToolError(message)) {
     return false;
   }
+  if (isUserVisibleTool(message)) return isCompletedUserVisibleTool(message);
   return Boolean(
     message.isToolUse ||
       message.isTaskNotification ||
@@ -713,9 +718,10 @@ function isProcessCandidate(
   if (message.isAgentActivity || message.isAgentActivitySummary) return false;
   if (isEmptyAssistantShell(message)) return false;
   if (message.isInterruptedNotice) return false;
-  if (message.isInteractivePrompt || isUserVisibleTool(message) || isPermissionToolError(message)) {
+  if (message.isInteractivePrompt || isPermissionToolError(message)) {
     return false;
   }
+  if (isUserVisibleTool(message) && !isCompletedUserVisibleTool(message)) return false;
   if (message.type === 'error') {
     return hasAssociatedProcess;
   }
@@ -1534,6 +1540,19 @@ export function getProcessEventStep(
     };
   }
 
+  if (isCompletedUserVisibleTool(message)) {
+    const normalizedToolName = String(message.toolName || '').toLowerCase();
+    return {
+      id: message.id || message.toolId,
+      title: normalizedToolName.includes('plan')
+        ? t('process.events.planReview', { defaultValue: 'Plan review' })
+        : t('process.events.userQuestion', { defaultValue: 'User question' }),
+      state: 'completed',
+      phase: 'permission',
+      toolName: message.toolName,
+    };
+  }
+
   if (kind === 'thinking') {
     return {
       id: message.id || message.toolId,
@@ -1688,7 +1707,10 @@ function buildProcessToolStepsRaw(messages: ChatMessage[]): ProcessTraceStep[] {
     const resultDetail = traumaMeta ? formatTraumaRunnerResultDetail(traumaMeta) : getToolStepResultDetail(message);
     const command = getToolInputString(message, 'command');
     const description = getToolInputString(message, 'description');
-    const title = traumaMeta
+    const normalizedToolName = toolName.toLowerCase();
+    const title = isCompletedUserVisibleTool(message)
+      ? normalizedToolName.includes('plan') ? 'Plan review' : 'User question'
+      : traumaMeta
       ? traumaMeta.title || toolName
       : kind === 'command' && description ? description : toolName;
 
@@ -1711,6 +1733,8 @@ function buildProcessToolStepsRaw(messages: ChatMessage[]): ProcessTraceStep[] {
 	              ? 'write'
 	              : kind === 'read'
 	                ? 'read'
+	                  : isCompletedUserVisibleTool(message)
+	                    ? 'permission'
 	                : 'tool'),
 	    });
   }

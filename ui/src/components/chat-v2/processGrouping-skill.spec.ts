@@ -16,6 +16,42 @@ function toolMessage(toolName: string, toolInput: unknown) {
 }
 
 describe('buildProcessToolSteps skill target', () => {
+  it('includes completed user interactions as process steps', () => {
+    const steps = buildProcessToolSteps([{
+      id: 'm-question',
+      type: 'assistant',
+      content: '',
+      timestamp: new Date().toISOString(),
+      isToolUse: true,
+      toolName: 'AskUserQuestion',
+      toolInput: JSON.stringify({
+        questions: [{
+          question: 'What next?',
+          header: 'Next',
+          options: [{ label: 'Continue' }, { label: 'Stop' }],
+        }],
+      }),
+      toolId: 't-question',
+      toolResult: {
+        content: 'answered',
+        isError: false,
+        toolUseResult: {
+          questions: [{
+            question: 'What next?',
+            header: 'Next',
+            options: [{ label: 'Continue' }, { label: 'Stop' }],
+          }],
+          answers: { 'What next?': 'Continue' },
+        },
+      },
+    } as any]);
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0]?.title).toBe('User question');
+    expect(steps[0]?.phase).toBe('permission');
+    expect(steps[0]?.state).toBe('completed');
+  });
+
   it('shows the skill name for read_skill tool steps', () => {
     const steps = buildProcessToolSteps([
       toolMessage('read_skill', JSON.stringify({ skillName: 'med-tools:med-case-report' })),

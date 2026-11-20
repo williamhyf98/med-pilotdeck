@@ -100,7 +100,17 @@ export interface NormalizedMessage {
   toolName?: string;
   toolInput?: unknown;
   toolId?: string;
-  toolResult?: { content: string; isError: boolean; toolUseResult?: unknown } | null;
+  toolResult?: {
+    content: string;
+    isError: boolean;
+    toolUseResult?: unknown;
+    planFilePath?: string;
+    planTitle?: string;
+    planSummary?: string;
+    errorCode?: string;
+    resultPath?: string;
+    toolResultImages?: Array<{ data: string; mimeType?: string; name?: string }>;
+  } | null;
   /**
    * Inline image payloads attached to a `tool_result` frame (e.g. `read_file`
    * on a PNG). Object shape with `data` (data URL) and optional `mimeType` —

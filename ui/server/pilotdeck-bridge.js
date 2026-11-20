@@ -726,8 +726,9 @@ export function gatewayEventToFrames(event, sessionId, provider) {
                               })),
                           }
                         : {}),
-                    ...(event.toolName === 'exit_plan_mode' && event.data?.planFilePath
+                    ...(event.toolName === 'exit_plan_mode' && event.data
                         ? {
+                              toolUseResult: event.data,
                               planFilePath: event.data.planFilePath,
                               planTitle: event.data.planTitle,
                               planSummary: event.data.planSummary,
@@ -2680,9 +2681,16 @@ export function registerAlwaysOnNotificationForwarding(clients, forwardToSession
     });
 }
 
-export async function elicitationRespondViaGateway(requestId, answer) {
+export async function elicitationRespondViaGateway(requestId, answer, sessionId) {
     return withUserGateway(async (gw) => {
-        for (const state of userSessionStates()) {
+        const states = userSessionStates();
+        const orderedStates = typeof sessionId === 'string' && sessionId.trim()
+            ? [
+                ...states.filter((state) => state.sessionKey === sessionId),
+                ...states.filter((state) => state.sessionKey !== sessionId),
+            ]
+            : states;
+        for (const state of orderedStates) {
             try {
                 const result = await gw.respondElicitation({
                     sessionKey: state.sessionKey,

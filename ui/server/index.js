@@ -3011,9 +3011,19 @@ function handleChatConnection(ws, request) {
                 });
             } else if (data.type === 'elicitation-response') {
                 if (data.requestId) {
-                    await elicitationRespondViaGateway(data.requestId, data.answer);
+                    const delivered = await elicitationRespondViaGateway(
+                        data.requestId,
+                        data.answer,
+                        data.sessionId,
+                    );
+                    ws.send(JSON.stringify({
+                        type: 'elicitation-response-result',
+                        requestId: data.requestId,
+                        sessionId: data.sessionId || null,
+                        delivered,
+                    }));
                     const resolvedSessionId = normalizeSessionId(data.sessionId);
-                    if (resolvedSessionId) {
+                    if (delivered && resolvedSessionId) {
                         broadcastToSessionWatchers(
                             resolvedSessionId,
                             createNormalizedMessage({

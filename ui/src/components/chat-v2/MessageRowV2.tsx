@@ -17,6 +17,7 @@ import {
 import type {
   ChatAttachment,
   ChatMessage,
+  PendingPermissionRequest,
   PilotDeckPermissionSuggestion,
   SessionPermissionGrantResult,
 } from '../chat/types/types';
@@ -38,6 +39,7 @@ import { formatProcessDuration } from './processTraceUtils';
 import SubagentCard from './SubagentCard';
 import DocumentReferenceChip from './DocumentReferenceChip';
 import { AgentFileArtifactGroup, UserAttachmentCards } from './MessageFileCards';
+import { AskUserQuestionPanel, ExitPlanModePanel } from '../chat/tools/components/InteractiveRenderers';
 
 type DiffLine = { type: string; content: string; lineNum: number };
 
@@ -995,6 +997,20 @@ export function ProcessDetailContent({
   return (
     <div className="space-y-2 border-l border-neutral-200/80 pl-3 dark:border-neutral-700/70">
       {detailMessages.map((message, index) => {
+        const interaction = getCompletedInteractionRequest(message);
+        if (interaction) {
+          const Panel = interaction.toolName.toLowerCase().includes('plan')
+            ? ExitPlanModePanel
+            : AskUserQuestionPanel;
+          return (
+            <Panel
+              key={`${message.id || message.toolId || 'interaction'}-${index}`}
+              request={interaction}
+              onDecision={() => undefined}
+              readOnly
+            />
+          );
+        }
         const isError = message.type === 'error' || Boolean(message.toolResult?.isError);
         const content = message.isToolUse
           ? String(message.toolResult?.content || '')
@@ -1052,4 +1068,42 @@ export function ProcessDetailContent({
       ) : null}
     </div>
   );
+}
+
+function getCompletedInteractionRequest(message: ChatMessage): PendingPermissionRequest | null {
+  if (!message.isToolUse || !message.toolResult) return null;
+  const toolName = String(message.toolName || '');
+  const normalizedToolName = toolName.toLowerCase();
+  const isQuestion = normalizedToolName.includes('askuserquestion')
+    || normalizedToolName.includes('ask_user_question');
+  const isPlan = normalizedToolName.includes('exitplanmode')
+    || normalizedToolName.includes('exit_plan_mode');
+  if (!isQuestion && !isPlan) return null;
+
+  const parseRecord = (value: unknown): Record<string, unknown> => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+          ? parsed as Record<string, unknown>
+          : {};
+      } catch {
+        return {};
+      }
+    }
+    return {};
+  };
+
+  const input = parseRecord(message.toolInput);
+  const result = parseRecord(message.toolResult.toolUseResult);
+  return {
+    requestId: message.toolId || message.id || `completed-${Date.now()}`,
+    toolName: isPlan ? 'ExitPlanModeV2' : 'AskUserQuestion',
+    input: { ...input, ...result },
+    sessionId: message.turnId || message.runId || null,
+    isElicitation: true,
+  };
 }

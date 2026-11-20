@@ -415,7 +415,7 @@ describe('processGrouping', () => {
     expect(userItem?.beforeProcessAttachments).toHaveLength(0);
   });
 
-  it('does not hide user-visible prompts, plan exits, permissions, or errors', () => {
+  it('keeps completed user interactions in the process trace while retaining permission errors', () => {
     const permissionError = {
       content: 'Permission required',
       isError: true,
@@ -439,13 +439,27 @@ describe('processGrouping', () => {
 
     expect(items.map((item) => item.message.id)).toEqual([
       'u1',
-      'ask-1',
-      'plan-1',
       'denied-1',
       'a1',
     ]);
     expect(processAttachments(items.find((item) => item.message.id === 'u1'))[0]?.processDetailMessages.map((message) => message.id))
-      .toEqual(['error-1']);
+      .toEqual(['ask-1', 'plan-1', 'error-1']);
+  });
+
+  it('keeps an unanswered user interaction outside the completed process trace', () => {
+    const messages = [
+      user('u1'),
+      {
+        ...tool('ask-1', 'AskUserQuestion', { questions: [{ question: 'Continue?', options: [] }] }, 100),
+        toolResult: undefined,
+      },
+      assistant('a1', 'Waiting on you.', 200),
+    ];
+
+    const items = buildRenderableMessageItems(messages);
+
+    expect(items.map((item) => item.message.id)).toEqual(['u1', 'ask-1', 'a1']);
+    expect(processAttachments(items.find((item) => item.message.id === 'u1'))).toHaveLength(0);
   });
 
   it('folds an in-progress tool error into the process row before a final answer exists', () => {

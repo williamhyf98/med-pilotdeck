@@ -67,6 +67,7 @@ export const ExitPlanModePanel: React.FC<PermissionPanelProps> = ({
   request,
   onDecision,
   onPlanExecutionApproved,
+  readOnly = false,
 }) => {
   const { t } = useTranslation('chat');
   const [feedback, setFeedback] = useState('');
@@ -75,6 +76,62 @@ export const ExitPlanModePanel: React.FC<PermissionPanelProps> = ({
     const extracted = extractPlanMarkdown(request.input);
     return extracted || t('plan.exitMode.syncingPlan');
   }, [request.input, t]);
+
+  const completedInput = request.input && typeof request.input === 'object'
+    ? request.input as Record<string, unknown>
+    : {};
+  const completedAction = typeof completedInput.action === 'string'
+    ? completedInput.action
+    : '';
+  const completedFeedback = typeof completedInput.feedback === 'string'
+    ? completedInput.feedback
+    : '';
+
+  if (readOnly) {
+    const actionLabel = completedAction === 'execute_plan'
+      ? '开始执行计划'
+      : completedAction === 'continue_planning'
+        ? '继续完善计划'
+        : completedAction === 'cancelled'
+          ? '取消计划'
+          : '已完成回答';
+    return (
+      <div className="overflow-hidden rounded-2xl border border-blue-200 bg-white shadow-sm dark:border-blue-900/70 dark:bg-neutral-900">
+        <div className="border-b border-blue-100 bg-blue-50/70 px-4 py-3 dark:border-blue-900/70 dark:bg-blue-950/25">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
+              <ClipboardList className="h-4 w-4" strokeWidth={2} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-neutral-950 dark:text-neutral-50">
+                {t('plan.exitMode.header')}
+              </div>
+              <div className="mt-0.5 text-xs text-neutral-600 dark:text-neutral-400">
+                {t('plan.exitMode.subtitle')}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="max-h-[50vh] overflow-y-auto px-4 py-3">
+          <MarkdownContent
+            content={plan}
+            className="prose prose-sm max-w-none text-neutral-800 dark:prose-invert dark:text-neutral-200"
+          />
+        </div>
+        <div className="border-t border-neutral-100 bg-neutral-50/70 px-4 py-3 dark:border-neutral-800 dark:bg-neutral-950/40">
+          <div className="text-xs font-medium text-neutral-600 dark:text-neutral-400">用户选择</div>
+          <div className="mt-2 inline-flex items-center rounded-lg bg-blue-100 px-2.5 py-1.5 text-xs font-medium text-blue-800 dark:bg-blue-900/40 dark:text-blue-200">
+            {actionLabel}
+          </div>
+          {completedFeedback ? (
+            <div className="mt-3 whitespace-pre-wrap rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
+              {completedFeedback}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
 
   const handleExecute = () => {
     onPlanExecutionApproved?.();

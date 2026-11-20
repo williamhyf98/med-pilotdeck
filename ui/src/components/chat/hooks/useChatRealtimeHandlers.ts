@@ -43,6 +43,7 @@ type LatestChatMessage = {
   resultText?: string;
   isError?: boolean;
   success?: boolean;
+  delivered?: boolean;
   reason?: string;
   provider?: string;
   content?: string;
@@ -893,6 +894,24 @@ export function useChatRealtimeHandlers({
       case 'permission_cancelled': {
         if (msg.requestId) {
           setPendingPermissionRequests((prev) => prev.filter((r: PendingPermissionRequest) => r.requestId !== msg.requestId));
+        }
+        break;
+      }
+
+      case 'elicitation-response-result': {
+        if (msg.requestId && msg.delivered === true) {
+          // Keep the panel when delivery failed. This lets the user retry
+          // while the WebSocket reconnect queue or the active turn recovers.
+          setPendingPermissionRequests((prev) => {
+            const next = prev.filter(
+              (r: PendingPermissionRequest) => r.requestId !== msg.requestId,
+            );
+            if (next.length === 0) {
+              setClaudeStatus(null);
+              setPilotDeckStatus(null);
+            }
+            return next;
+          });
         }
         break;
       }

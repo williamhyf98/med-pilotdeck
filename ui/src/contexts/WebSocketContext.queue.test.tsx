@@ -39,6 +39,28 @@ describe('WebSocket disconnected send queue', () => {
     }]);
   });
 
+  it('dedupes elicitation answers by requestId so a reconnect sends one answer', () => {
+    const queue: any[] = [];
+
+    enqueueDisconnectedMessage(queue, {
+      type: 'elicitation-response',
+      requestId: 'question-1',
+      answer: { type: 'answered', answers: { 'What next?': 'A' } },
+    });
+    enqueueDisconnectedMessage(queue, {
+      type: 'elicitation-response',
+      requestId: 'question-1',
+      answer: { type: 'answered', answers: { 'What next?': 'B' } },
+    });
+
+    expect(getQueuedMessageKey({
+      type: 'elicitation-response',
+      requestId: 'question-1',
+    })).toBe('elicitation-response:question-1');
+    expect(queue).toHaveLength(1);
+    expect(queue[0]?.answer?.answers?.['What next?']).toBe('B');
+  });
+
   it('does not make unsafe control messages queueable', () => {
     expect(getQueuedMessageKey({ type: 'abort-session', sessionId: 'session-1' })).toBeNull();
     expect(getQueuedMessageKey({ type: 'permission-response', sessionId: 'session-1' })).toBeNull();

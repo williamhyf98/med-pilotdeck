@@ -8,6 +8,7 @@ export interface PermissionPanelProps {
     decision: { allow?: boolean; message?: string; updatedInput?: unknown },
   ) => void;
   onPlanExecutionApproved?: () => void;
+  readOnly?: boolean;
 }
 
 const registry: Record<string, ComponentType<PermissionPanelProps>> = {};
