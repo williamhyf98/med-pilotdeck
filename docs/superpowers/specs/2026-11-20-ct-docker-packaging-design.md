@@ -556,3 +556,20 @@ node12
 - 真实去标识化 CT 完成一次 RADAR 和一次 DeepChest 推理；
 - RADAR/DeepChest 的 `/health` 与实际推理入口一致，不再出现“健康但推理不可用”；
 - 旧服务在新容器验证通过前保持可回滚。
+
+## 14. RADAR 首轮执行记录（2026-11-23）
+
+- node12 已成功构建：
+  - `med-abd-pelvis-ct-gateway:dev`，约 515MB；
+  - `med-abd-pelvis-ct-inference:dev`，约 15.6GB。
+- inference 使用 node12 已验证的 `torch 2.7.1+cu126` 作为 named build context，避免 PyTorch CDN 长时间不稳定；镜像内 `torch/monai/transformers` 导入正常。
+- Compose 使用静态内部网络 `172.30.250.0/24`，规避 node12 自定义 Docker DNS 对服务名解析不稳定的问题。
+- gateway 依赖 inference 的 `service_healthy`；健康检查要求 inference `ready=true`、gateway `ok=true`。
+- 使用 `Slicer_CTAAbdomenPanoramix.nii.gz` 完成真实 smoke：
+  - HTTP 200；
+  - 1 个病例；
+  - 146 个评分全部有效；
+  - 无 failed cases；
+  - CSV 下载接口返回 200。
+- 测试容器、临时网络和测试卷已清理；镜像保留在 node12。
+- node12 现有 RADAR/DeepChest 业务进程未被停止或修改。

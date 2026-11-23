@@ -264,7 +264,7 @@ __pycache__/
 在 node12 上运行：
 
 ```bash
-docker buildx build --platform linux/amd64 \
+docker buildx build --network=host --platform linux/amd64 \
   --load \
   -f deploy/ct/abd-pelvis-ct/gateway/Dockerfile \
   -t med-abd-pelvis-ct-gateway:dev \
@@ -344,9 +344,10 @@ tqdm>=4.65
 在 node12 上运行：
 
 ```bash
-docker buildx build --platform linux/amd64 \
+docker buildx build --network=host --platform linux/amd64 \
   --load \
   -f deploy/ct/abd-pelvis-ct/inference/Dockerfile \
+  --build-context hostpkgs=/usr/local/lib/python3.10/dist-packages \
   -t med-abd-pelvis-ct-inference:dev \
   deploy/ct/abd-pelvis-ct/inference
 ```
@@ -503,3 +504,13 @@ git commit -m "docs(ct): record abd-pelvis-ct radar smoke and migration"
 - 将 `med_radar_*` 工具名、`RADAR_*` 配置名和源码模块名进一步中性化；
 - DeepChest 的 gateway/inference 拆包沿用同一模式；
 - 将 CT Compose 接入 `pilotdeck` 的 `MED_SPECIALIZED_CT_ENABLED=1` 配置。
+
+## 执行记录（2026-11-23）
+
+- Task 1 staging：40 个文件、约 1.98GB，SHA256 全部通过；未包含 handoff、venv、密钥、证书、notices 或缓存。
+- Task 2 Compose：使用静态内部网络，服务名不再依赖运行时 DNS。
+- Task 3 gateway：镜像约 515MB，不含模型，`app`/`radar_inference` 导入通过。
+- Task 4 inference：镜像约 15.6GB，torch `2.7.1+cu126`、monai `1.5.0`、模型文件通过；模型在 GPU 3 上实际加载并返回 `ready:true`。
+- Task 5 构建：node12 原生 `linux/amd64` 构建完成。
+- Task 6 smoke：真实腹部 CT 上传返回 200，146/146 评分有效，无失败病例；CSV 下载返回 200。
+- 临时容器、网络、测试卷已清理；测试镜像保留。

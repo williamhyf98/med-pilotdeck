@@ -1,0 +1,10 @@
+models/
+handoff/
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.key
+*.pem
+*.crt
+.DS_Store

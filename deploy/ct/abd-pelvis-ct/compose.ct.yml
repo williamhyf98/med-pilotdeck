@@ -1,0 +1,78 @@
+services:
+  abd-pelvis-ct-inference:
+    image: med-abd-pelvis-ct-inference:${ABD_PELVIS_CT_TAG:-dev}
+    profiles: ["ct"]
+    build:
+      context: ./inference
+      dockerfile: Dockerfile
+    environment:
+      ABD_PELVIS_CT_GPU: ${ABD_PELVIS_CT_GPU:-0}
+      ABD_PELVIS_CT_DEVICE: ${ABD_PELVIS_CT_DEVICE:-cuda:0}
+      ABD_PELVIS_CT_INFERENCE_WORK_ROOT: /var/lib/abd-pelvis-ct/inference
+    ports:
+      - "127.0.0.1:18221:18221"
+    networks:
+      default:
+        ipv4_address: 172.30.250.10
+    volumes:
+      - abd-pelvis-ct-inference-work:/var/lib/abd-pelvis-ct/inference
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ABD_PELVIS_CT_GPU:-0}"]
+              capabilities: [gpu]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python3 -c \"import json, urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:18221/health', timeout=5)); assert d.get('ready') is True\"",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+    restart: unless-stopped
+
+  abd-pelvis-ct-gateway:
+    image: med-abd-pelvis-ct-gateway:${ABD_PELVIS_CT_TAG:-dev}
+    profiles: ["ct"]
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    environment:
+      ABD_PELVIS_CT_INFERENCE_API_BASE: http://172.30.250.10:18221
+      ABD_PELVIS_CT_GATEWAY_WORK_ROOT: /var/lib/abd-pelvis-ct/gateway
+    ports:
+      - "127.0.0.1:18120:18120"
+    volumes:
+      - abd-pelvis-ct-gateway-work:/var/lib/abd-pelvis-ct/gateway
+    depends_on:
+      abd-pelvis-ct-inference:
+        condition: service_healthy
+    networks:
+      default:
+        ipv4_address: 172.30.250.11
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import json, urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:18120/health', timeout=5)); assert d.get('ok') is True\"",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+networks:
+  default:
+    name: abd-pelvis-ct-net
+    ipam:
+      config:
+        - subnet: 172.30.250.0/24
+
+volumes:
+  abd-pelvis-ct-inference-work:
+  abd-pelvis-ct-gateway-work:
