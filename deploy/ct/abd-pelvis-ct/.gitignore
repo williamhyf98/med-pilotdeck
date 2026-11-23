@@ -1,0 +1,12 @@
+inference/models/
+inference/**/*.pth
+inference/**/*.bin
+inference/**/*.safetensors
+**/.runtime/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/.DS_Store
+**/*.key
+**/*.pem
+**/*.crt

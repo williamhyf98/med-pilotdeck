@@ -1,0 +1,206 @@
+{
+  "name": "abd-pelvis-ct",
+  "source": "node12:/local_data/huojianfan/radar-gpu-poc",
+  "files": [
+    {
+      "path": "gateway/app.py",
+      "bytes": 18018,
+      "sha256": "d14ada329e17eb36fc0106c6438ac54062bea142bc1abe4f8c7efd3b6b15b4d9"
+    },
+    {
+      "path": "gateway/radar_inference.py",
+      "bytes": 17735,
+      "sha256": "a0a6673c0b6826dda6e16310d1741a47ed81dcdf6d825b7c74c344a802986cf2"
+    },
+    {
+      "path": "gateway/requirements.txt",
+      "bytes": 227,
+      "sha256": "5786dc7aade6fd71c7fc7ac1f0d2d23a470c6b758fb3c578d3e1be7f489d33c1"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/calc_metrics_merlin_testset.py",
+      "bytes": 2566,
+      "sha256": "5a97ea3c4297793f56723a2ae62d80e703897891055fdd70f8d6e232c45e43e5"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/architectures/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/architectures/resnet.py",
+      "bytes": 15854,
+      "sha256": "09a724dc7ab15207b1904511780da92203deeedcb553c93ab522089ef0faff18"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/architectures/resnet_vl.py",
+      "bytes": 6616,
+      "sha256": "5cbf8c2d03efce15d5c1b33d6aa181add824c22f6bb40c05f86e5fdd84cdab7e"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/architectures/unet.py",
+      "bytes": 12848,
+      "sha256": "807d9081eda118ced76d8f96e7673975e563dcceb93e33f3c2543ab2dd42de08"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/architectures/unet_lightdecoder.py",
+      "bytes": 12867,
+      "sha256": "09b7a667a9853f4b908d059fe65403770d962db12ed90772da0dc166d405f00b"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/architectures/vgg.py",
+      "bytes": 3677,
+      "sha256": "3e097e451d578cf06ea49ecc063852aa3a3b1407137139663d82f7bf0e9f88d3"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/building_blocks/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/building_blocks/helper.py",
+      "bytes": 8122,
+      "sha256": "7da3ed8d2b0c743d9a2bf03153740a21bb4174694c6970e34b2a9691fcb00ed0"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/building_blocks/plain_conv_encoder.py",
+      "bytes": 4917,
+      "sha256": "c1af990f1a613c8594234fbc185eb70da2e2b545ea7c933711e91618da2943c4"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/building_blocks/regularization.py",
+      "bytes": 4067,
+      "sha256": "bc7c48fa3d63f90eaf319e48effce6a35c6c0ac10a482cf8a6035b1b7ea25b95"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/building_blocks/residual.py",
+      "bytes": 19169,
+      "sha256": "ade78badec55344163dc9751a2843cab4a7c0d1bc0382591d1e09af72cef28b6"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/building_blocks/residual_encoders.py",
+      "bytes": 8174,
+      "sha256": "b5aa93127049e92e2915dbfe9b3d7fe130142764baf97b0bdef4cc97293cd02c"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/building_blocks/simple_conv_blocks.py",
+      "bytes": 6733,
+      "sha256": "02a7c21bca3c0acc20923a10970f14e853510f32a1f7ea2ef068cf636559ba2e"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/building_blocks/unet_decoder.py",
+      "bytes": 7329,
+      "sha256": "5eec090b199daf154c8e0ab3d64c45a1b1621f5aac68c6dea6a7203b0ddcc999"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/building_blocks/unet_decoder_light.py",
+      "bytes": 7327,
+      "sha256": "99ec3ead99b8475efe17a040e6b783d2b339ee0002bbaad13fe2461c90ee43e9"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/building_blocks/unet_residual_decoder.py",
+      "bytes": 7550,
+      "sha256": "fa58585ceda5aad362e7adda73efd8e95eabacd30d484e9c83ad62beb4b04db1"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/initialization/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/initialization/weight_init.py",
+      "bytes": 1536,
+      "sha256": "147cbf3e74779c225127ef9cecf67d24360c35081e56782f8a3441804f61bb37"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/med.py",
+      "bytes": 57443,
+      "sha256": "705a00a90d111d06f2f02dd4ee166a1de8e43dc0b4aa8311bee64f6865a16410"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/dynamic_network_architectures/vision_branch.py",
+      "bytes": 7317,
+      "sha256": "438323a96567f3e183207945c3722df43a674cd1c4e2486e35e29efa2ecd0af2"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/inference_demo.py",
+      "bytes": 36032,
+      "sha256": "a326b68c9de599f502b06b9a94fc69cd93211cb81189e538d1c3d5fb6893b8e5"
+    },
+    {
+      "path": "inference/damo-radar/RADAR_inference/inference_merlin_testset.py",
+      "bytes": 26250,
+      "sha256": "dd9f577c11b954657b45bdc798d2961f406ba40274760c11c172f6bebe1eae41"
+    },
+    {
+      "path": "inference/damo-radar/ckpt/infer_text_embedding_merlin.pt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "inference/damo-radar/ckpt/infer_text_embedding_radar.pt",
+      "bytes": 346348,
+      "sha256": "0ac960b0300c2ba10526e3bf500cd0c879fe5d9d15b9c49c17c34f0fc40e6cbe"
+    },
+    {
+      "path": "inference/damo-radar/requirements.txt",
+      "bytes": 418,
+      "sha256": "c63234e9b72c2532388f6eb3a42a2b75a9d56b5ee7644cf7d3623ae3d8e1ee73"
+    },
+    {
+      "path": "inference/gpu_api.py",
+      "bytes": 6262,
+      "sha256": "4eab190f2d7c8b331521c098e1e2c00d642577411b6bcb2a4d27029aabf5c9a3"
+    },
+    {
+      "path": "inference/models/bert-base-chinese/config.json",
+      "bytes": 656,
+      "sha256": "35881a186f11f4d1860c7cfc7c9c5bfc004cc8734cbf162746113ca94bdbb629"
+    },
+    {
+      "path": "inference/models/bert-base-chinese/config_decoder.json",
+      "bytes": 711,
+      "sha256": "d7b77554b4c76020446ce2f6c9f05df03d64995d918328544ea5dbe857792298"
+    },
+    {
+      "path": "inference/models/bert-base-chinese/pytorch_model.bin",
+      "bytes": 411577189,
+      "sha256": "8a693db616eaf647ed2bfe531e1fa446637358fc108a8bf04e8d4db17e837ee9"
+    },
+    {
+      "path": "inference/models/bert-base-chinese/tokenizer.json",
+      "bytes": 268943,
+      "sha256": "55c5edcfb8936895e019b2d8f97dcb547734f25b29f95009155f4c8c15649aae"
+    },
+    {
+      "path": "inference/models/bert-base-chinese/tokenizer_config.json",
+      "bytes": 49,
+      "sha256": "0f6d13e6f4da6f9e24f22ada6bc3be571123d858d7c0c05a8a7cd55a9c23c2e8"
+    },
+    {
+      "path": "inference/models/bert-base-chinese/vocab.txt",
+      "bytes": 109540,
+      "sha256": "45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c"
+    },
+    {
+      "path": "inference/models/checkpoint_radar_pretrain.pth",
+      "bytes": 1566049482,
+      "sha256": "5e8b1b50b92162fcafcf8231e51ffbe9d1be2be52ccff4f967e4beb71e4499f4"
+    },
+    {
+      "path": "inference/radar_inference.py",
+      "bytes": 17735,
+      "sha256": "a0a6673c0b6826dda6e16310d1741a47ed81dcdf6d825b7c74c344a802986cf2"
+    },
+    {
+      "path": "inference/requirements-gpu.txt",
+      "bytes": 227,
+      "sha256": "5786dc7aade6fd71c7fc7ac1f0d2d23a470c6b758fb3c578d3e1be7f489d33c1"
+    }
+  ]
+}
