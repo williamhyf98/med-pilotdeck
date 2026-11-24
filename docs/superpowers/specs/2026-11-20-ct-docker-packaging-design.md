@@ -573,3 +573,16 @@ node12
   - CSV 下载接口返回 200。
 - 测试容器、临时网络和测试卷已清理；镜像保留在 node12。
 - node12 现有 RADAR/DeepChest 业务进程未被停止或修改。
+
+## 15. 主系统接入（2026-11-24）
+
+- 端口发布改为可配置：`ABD_PELVIS_CT_GATEWAY_PUBLISH_HOST/PORT`、`ABD_PELVIS_CT_INFERENCE_PUBLISH_HOST/PORT`；
+  主系统在别的机器时把网关发布到内网 IP，`MED_RADAR_API_BASE` 保持 `http://10.31.112.13:18120` 不变。
+- GPU 选择统一由 Compose 的 `device_ids` 负责（`ABD_PELVIS_CT_GPU` 是宿主序号，
+  容器内一律 `cuda:0`）；entrypoint 不再改写 `CUDA_VISIBLE_DEVICES`。
+- Compose v2 会向上层目录寻找 compose 文件，所有命令必须带
+  `-f deploy/ct/abd-pelvis-ct/compose.ct.yml`。
+- 旧 `radar-cpu-gateway.service` 已 `disable`，其推断后端 `18221` 此前已不可用；
+  unit 文件保留用于回滚。
+- 真实链路验证通过：MCP `med_radar_status` / `med_radar_analyze_ct` 在 Docker 后端上返回
+  `ok:true`、1 例、0 failed，CSV 正常落盘。

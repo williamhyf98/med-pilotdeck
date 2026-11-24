@@ -510,7 +510,47 @@ git commit -m "docs(ct): record abd-pelvis-ct radar smoke and migration"
 - Task 1 staging：40 个文件、约 1.98GB，SHA256 全部通过；未包含 handoff、venv、密钥、证书、notices 或缓存。
 - Task 2 Compose：使用静态内部网络，服务名不再依赖运行时 DNS。
 - Task 3 gateway：镜像约 515MB，不含模型，`app`/`radar_inference` 导入通过。
-- Task 4 inference：镜像约 15.6GB，torch `2.7.1+cu126`、monai `1.5.0`、模型文件通过；模型在 GPU 3 上实际加载并返回 `ready:true`。
+- Task 4 inference：镜像约 15.6GB，torch `2.7.1+cu126`、monai `1.5.0`、模型文件通过；模型实际加载并返回 `ready:true`。
 - Task 5 构建：node12 原生 `linux/amd64` 构建完成。
 - Task 6 smoke：真实腹部 CT 上传返回 200，146/146 评分有效，无失败病例；CSV 下载返回 200。
 - 临时容器、网络、测试卷已清理；测试镜像保留。
+
+## 主系统接入与切换（2026-11-24）
+
+目标：让 `med-pilotdeck` 通过原有的 `MED_RADAR_API_BASE=http://10.31.112.13:18120`
+直接使用 Docker 版服务，不再依赖宿主 `radar-cpu-gateway.service`。
+
+### 发现的问题
+
+1. `docker compose up` 在 `deploy/ct/abd-pelvis-ct/` 下执行时会向上找到仓库根目录的
+   `docker-compose.yml`，误构建主系统镜像。**必须显式 `-f deploy/ct/abd-pelvis-ct/compose.ct.yml`。**
+2. `inference/entrypoint.sh` 原来把宿主 GPU 序号写进容器内 `CUDA_VISIBLE_DEVICES`，
+   与 Compose 的 `device_ids` 形成双重映射，容器内反而看不到任何 GPU
+   （`/health` 返回 `ready:false`、`A CUDA device is required`）。已删除该行。
+3. 旧 systemd 网关虽然 `/health` 报 `ready:true`，但其依赖的 `127.0.0.1:18221`
+   推断服务实际未监听，属于“假健康”。
+
+### 切换步骤
+
+```bash
+# 1) 停用旧的宿主网关（unit 文件保留，可随时回滚）
+sudo systemctl disable --now radar-cpu-gateway.service
+
+# 2) 启动 Docker 版；对外发布 10.31.112.13:18120 供主系统访问
+cd /local_data/huojianfan/med-pilotdeck
+ABD_PELVIS_CT_GPU=3 \
+ABD_PELVIS_CT_GATEWAY_PUBLISH_HOST=10.31.112.13 \
+docker compose -f deploy/ct/abd-pelvis-ct/compose.ct.yml --profile ct up -d
+```
+
+回滚：`docker compose ... down` 后 `sudo systemctl enable --now radar-cpu-gateway.service`。
+
+### 验证结果
+
+- `GET http://10.31.112.13:18120/health` → `ok:true`、`ready:true`、
+  `inference_api_base=http://172.30.250.10:18221`（证明走的是容器网络）。
+- `plugins/med-tools` 客户端 `run_radar_analysis()` 真实上传 36MB NIfTI：
+  `ok:true`、`status:completed`、1 例、无 failed case，CSV 落盘。
+- MCP 层（`python -m server` + JSON-RPC）验证：工具已注册，
+  `med_radar_status` 与 `med_radar_analyze_ct` 均成功返回。
+- 容器 `restart: unless-stopped`，Docker 已 `enabled`，node12 重启后自动恢复。
