@@ -503,7 +503,7 @@ git commit -m "docs(ct): record abd-pelvis-ct radar smoke and migration"
 - 用真实 CT 验证后移除 Dataset298、`model.safetensors`、`biovil_image_resnet50`；
 - 将 `med_radar_*` 工具名、`RADAR_*` 配置名和源码模块名进一步中性化；
 - DeepChest 的 gateway/inference 拆包沿用同一模式；
-- 将 CT Compose 接入 `pilotdeck` 的 `MED_SPECIALIZED_CT_ENABLED=1` 配置。
+- ~~将 CT Compose 接入 `pilotdeck` 的 `MED_SPECIALIZED_CT_ENABLED=1` 配置~~（2026-11-24 已完成，见下节）。
 
 ## 执行记录（2026-11-23）
 
