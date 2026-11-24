@@ -10,7 +10,7 @@ services:
       ABD_PELVIS_CT_DEVICE: ${ABD_PELVIS_CT_DEVICE:-cuda:0}
       ABD_PELVIS_CT_INFERENCE_WORK_ROOT: /var/lib/abd-pelvis-ct/inference
     ports:
-      - "127.0.0.1:18221:18221"
+      - "${ABD_PELVIS_CT_INFERENCE_PUBLISH_HOST:-127.0.0.1}:${ABD_PELVIS_CT_INFERENCE_PUBLISH_PORT:-18221}:18221"
     networks:
       default:
         ipv4_address: 172.30.250.10
@@ -45,7 +45,7 @@ services:
       ABD_PELVIS_CT_INFERENCE_API_BASE: http://172.30.250.10:18221
       ABD_PELVIS_CT_GATEWAY_WORK_ROOT: /var/lib/abd-pelvis-ct/gateway
     ports:
-      - "127.0.0.1:18120:18120"
+      - "${ABD_PELVIS_CT_GATEWAY_PUBLISH_HOST:-127.0.0.1}:${ABD_PELVIS_CT_GATEWAY_PUBLISH_PORT:-18120}:18120"
     volumes:
       - abd-pelvis-ct-gateway-work:/var/lib/abd-pelvis-ct/gateway
     depends_on:
