@@ -6,7 +6,6 @@ services:
       context: ./inference
       dockerfile: Dockerfile
     environment:
-      ABD_PELVIS_CT_GPU: ${ABD_PELVIS_CT_GPU:-0}
       ABD_PELVIS_CT_DEVICE: ${ABD_PELVIS_CT_DEVICE:-cuda:0}
       ABD_PELVIS_CT_INFERENCE_WORK_ROOT: /var/lib/abd-pelvis-ct/inference
     ports:
