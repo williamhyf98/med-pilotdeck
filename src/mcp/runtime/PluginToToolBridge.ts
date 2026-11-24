@@ -276,6 +276,7 @@ const PROJECT_PATH_MEDICAL_TOOLS = new Set([
   "med_dicom_route",
   "med_image_route",
   "med_parse_medical",
+  "med_radar_analyze_ct",
 ]);
 
 function isPathInside(root: string, candidate: string): boolean {
@@ -398,9 +399,9 @@ const MEDICAL_ACTIVITY_DEFINITIONS: Record<string, MedicalActivityDefinition> = 
     failedTitle: "医学附件解析失败",
   },
   med_radar_status: {
-    startTitle: "正在检查 RADAR 服务",
+    startTitle: "正在检查腹盆CT分析服务",
     startDetail: "确认模型和 CUDA 运行状态",
-    failedTitle: "RADAR 服务检查失败",
+    failedTitle: "腹盆CT分析服务检查失败",
   },
   med_deepchest_status: {
     startTitle: "正在检查 DeepChest 服务", startDetail: "检查运行环境和任务队列", failedTitle: "DeepChest 服务检查失败",
@@ -412,9 +413,9 @@ const MEDICAL_ACTIVITY_DEFINITIONS: Record<string, MedicalActivityDefinition> = 
     startTitle: "正在查询胸部 CT 分析进度", startDetail: "等待分割、特征提取和中文分析", failedTitle: "DeepChest 查询失败",
   },
   med_radar_analyze_ct: {
-    startTitle: "正在准备 RADAR CT 输入",
+    startTitle: "正在准备腹盆CT分析输入",
     startDetail: "检查三维影像并准备推理",
-    failedTitle: "RADAR 分析失败",
+    failedTitle: "腹盆CT分析失败",
   },
 };
 
@@ -433,8 +434,8 @@ function medicalProgressStage(
   const stage = message.slice(MEDICAL_PROGRESS_PREFIX.length).trim();
   const stages: Record<string, Record<string, { title: string; detail?: string }>> = {
     med_radar_analyze_ct: {
-      inference: { title: "正在执行 RADAR 推理", detail: "远程模型正在分析三维 CT" },
-      artifacts: { title: "正在整理 RADAR 结果", detail: "保存评分和可复核产物" },
+      inference: { title: "正在执行腹盆CT分析", detail: "远程模型正在分析三维 CT" },
+      artifacts: { title: "正在整理腹盆CT分析结果", detail: "保存评分和可复核产物" },
     },
   };
   return stages[toolName]?.[stage];
@@ -500,7 +501,7 @@ function medicalCompletion(
   if (toolName === "med_radar_status") {
     const ready = data.ready === true;
     return {
-      title: ready ? "RADAR 服务可用" : "RADAR 服务未就绪",
+      title: ready ? "腹盆CT分析服务可用" : "腹盆CT分析服务未就绪",
       detail: ready ? "模型与运行环境检查通过" : "请根据最终提示检查服务配置",
       state: ready ? "completed" : "failed",
       ...(!ready ? { severity: "error" as const } : {}),
@@ -512,7 +513,7 @@ function medicalCompletion(
   const selectedCases = typeof transfer.selected_cases === "number" ? transfer.selected_cases : 0;
   const ok = data.ok === true || data.status === "ready" || data.status === "completed";
   return {
-    title: ok ? "RADAR 分析完成" : "RADAR 分析未完成",
+    title: ok ? "腹盆CT分析完成" : "腹盆CT分析未完成",
     detail: ok ? `已完成 ${selectedCases || 1} 个 CT 检查并生成评分产物` : "请根据最终提示检查输入或服务状态",
     state: ok ? "completed" : "failed",
     ...(!ok ? { severity: "error" as const } : {}),
@@ -626,8 +627,8 @@ function extractMedicalArtifactFiles(
   if (!artifacts || typeof artifacts !== "object" || Array.isArray(artifacts)) return [];
   const record = artifacts as Record<string, unknown>;
   const definitions = [
-    ["scores_csv", "text/csv", "RADAR 评分 CSV"],
-    ["summary_json", "application/json", "RADAR 摘要 JSON"],
+    ["scores_csv", "text/csv", "腹盆CT分析评分 CSV"],
+    ["summary_json", "application/json", "腹盆CT分析摘要 JSON"],
   ] as const;
   return definitions.flatMap(([key, mimeType, description]) => {
     const filePath = record[key];

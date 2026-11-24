@@ -199,7 +199,7 @@ describe('MessagesPaneV2 render behavior', () => {
         {
           id: 'answer-final-only',
           type: 'assistant',
-          content: 'The artifact exists and the CSV is in the correct format.\n\nRADAR 分析已完成。以下按技能规定结构报告：\n\n最终结果：未发现明确异常。',
+          content: 'The artifact exists and the CSV is in the correct format.\n\n腹盆CT分析已完成。以下按技能规定结构报告：\n\n最终结果：未发现明确异常。',
           timestamp: '2026-09-20T08:00:04.000Z',
         },
       ],
@@ -253,11 +253,11 @@ describe('MessagesPaneV2 render behavior', () => {
       ],
     });
 
-    expect(screen.getByText(/Completed: RADAR CT/)).toBeTruthy();
+    expect(screen.getByText(/Completed: 腹盆CT分析/)).toBeTruthy();
     expect(screen.queryByText(/inspect the RADAR output/)).toBeNull();
     expect(screen.queryByText('正在读取中间结果')).toBeNull();
-    fireEvent.click(screen.getByText(/Completed: RADAR CT/));
-    expect(screen.getByText('RADAR CT 分析')).toBeTruthy();
+    fireEvent.click(screen.getByText(/Completed: 腹盆CT分析/));
+    expect(screen.getByText('腹盆CT分析')).toBeTruthy();
   });
 
   it('shows sanitized medical activity while the raw process trace is hidden', () => {
@@ -302,7 +302,7 @@ describe('MessagesPaneV2 render behavior', () => {
         {
           id: 'error-final-only',
           type: 'error',
-          content: 'RADAR 服务暂时不可用',
+          content: '腹盆CT分析服务暂时不可用',
           timestamp: '2026-09-20T08:02:01.000Z',
         },
         {
@@ -315,7 +315,7 @@ describe('MessagesPaneV2 render behavior', () => {
       ],
     });
 
-    expect(screen.getByText('RADAR 服务暂时不可用')).toBeTruthy();
+    expect(screen.getByText('腹盆CT分析服务暂时不可用')).toBeTruthy();
     expect(screen.getByText('请选择要分析的序列')).toBeTruthy();
   });
 
@@ -1489,8 +1489,101 @@ describe('MessagesPaneV2 render behavior', () => {
 
     expect(errorButtons[0].getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByText('FailedTool.tsx')).toBeTruthy();
-    expect(screen.getAllByText(/InputValidationError/).length).toBeGreaterThan(0);
+    const errorSummary = screen.getByText('工具错误').closest('summary');
+    expect(errorSummary).not.toBeNull();
+    const errorDetails = errorSummary?.closest('details');
+    expect(errorDetails?.open).toBe(false);
+    fireEvent.click(errorSummary as HTMLElement);
+    expect(errorDetails?.open).toBe(true);
+    expect(errorDetails?.textContent).toContain('missing file_path');
+    expect(errorDetails?.textContent).not.toContain('InputValidationError');
     expect(container.querySelector('.border-l-red-500')).toBeNull();
+  });
+
+  it('keeps recovered runtime errors inside the completed turn process, not beside the final answer', () => {
+    const now = new Date().toISOString();
+    renderPane({
+      messages: [
+        { id: 'u-1', type: 'user', content: '整理评分表', timestamp: now },
+        {
+          id: 'failed-bash',
+          type: 'assistant',
+          content: '',
+          timestamp: now,
+          isToolUse: true,
+          toolName: 'bash',
+          toolId: 'failed-bash',
+          toolInput: '{"command":"analysis.sh run"}',
+          toolResult: {
+            content: 'TOOL_ERROR[tool_execution_failed] permission mode: bypassPermissions. ANALYSIS_GUARD_DENIED: writing outside exports/',
+            isError: true,
+            errorCode: 'tool_execution_failed',
+          },
+        },
+        { id: 'a-1', type: 'assistant', content: '评分表已生成。', timestamp: now },
+      ],
+    });
+
+    expect(screen.getByText('评分表已生成。')).toBeTruthy();
+    expect(screen.queryByText(/ANALYSIS_GUARD_DENIED/)).toBeNull();
+    const panel = screen.getByRole('button', { name: /^Turn process: / });
+    fireEvent.click(panel);
+    const step = screen.getByRole('button', { name: 'Run command' });
+    expect(step.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(step);
+    const errorSummary = screen.getByText('工具错误').closest('summary');
+    expect(errorSummary).not.toBeNull();
+    const errorDetails = errorSummary?.closest('details');
+    expect(errorDetails?.open).toBe(false);
+    fireEvent.click(errorSummary as HTMLElement);
+    expect(errorDetails?.open).toBe(true);
+    expect(errorDetails?.textContent).toContain('ANALYSIS_GUARD_DENIED');
+  });
+
+  it('renders the original tool error window inside a failed tool call after a successful retry', () => {
+    const now = new Date().toISOString();
+    renderPane({
+      messages: [
+        { id: 'u-1', type: 'user', content: '分析 CT', timestamp: now },
+        {
+          id: 'failed-ct',
+          type: 'assistant',
+          content: '',
+          timestamp: now,
+          isToolUse: true,
+          toolName: 'mcp__med-tools__med_radar_analyze_ct',
+          toolId: 'failed-ct',
+          toolResult: {
+            content: 'Access denied: file outside workspace',
+            isError: true,
+            errorCode: 'tool_execution_failed',
+          },
+        },
+        {
+          id: 'retried-ct',
+          type: 'assistant',
+          content: '',
+          timestamp: now,
+          isToolUse: true,
+          toolName: 'mcp__med-tools__med_radar_analyze_ct',
+          toolId: 'retried-ct',
+          toolResult: { content: 'Analysis completed', isError: false },
+        },
+        { id: 'a-1', type: 'assistant', content: '分析已完成。', timestamp: now },
+      ],
+    });
+
+    expect(screen.getByText('分析已完成。')).toBeTruthy();
+    expect(screen.queryByText('工具错误')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^Turn process: / }));
+    const steps = screen.getAllByRole('button', { name: 'Tool call' });
+    expect(steps).toHaveLength(2);
+    fireEvent.click(steps[0]);
+    const errorSummary = screen.getByText('工具错误').closest('summary');
+    const errorDetails = errorSummary?.closest('details');
+    expect(errorDetails?.open).toBe(false);
+    fireEvent.click(errorSummary as HTMLElement);
+    expect(errorDetails?.textContent).toContain('Access denied: file outside workspace');
   });
 
   it('shows a waiting status below an in-progress web_fetch in plan mode', () => {

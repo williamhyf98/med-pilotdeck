@@ -126,6 +126,29 @@ test("运行期护栏拦住动态越界与起进程", { skip: SKIP }, async () =
   });
 });
 
+test("xlsxwriter can use a private workspace temp directory without weakening the write guard", { skip: SKIP }, async (t) => {
+  const probe = spawnSync(PYTHON, ["-I", "-c", "import xlsxwriter"], { encoding: "utf8" });
+  if (probe.status !== 0) return t.skip("xlsxwriter is not installed in the selected Python runtime");
+  await withWorkspace(async ({ workspace }) => {
+    const script = await putScript(workspace, "xlsx-temp", `
+import os
+import tempfile
+import xlsxwriter
+
+out = os.environ["PILOTDECK_ANALYSIS_OUT"]
+assert tempfile.gettempdir().startswith(os.path.join(os.environ["PILOTDECK_ANALYSIS_ROOT"], "scratch"))
+book = xlsxwriter.Workbook(os.path.join(out, "tables", "result.xlsx"))
+sheet = book.add_worksheet("scores")
+sheet.write(0, 0, "146")
+book.close()
+`);
+    const result = runAnalysis(workspace, ["--script", script, "--out", "exports/analysis/xlsx-temp"]);
+    assert.equal(result.status, 0, result.text);
+    assert.equal(result.json?.status, "ok");
+    assert.equal(existsSync(join(workspace, "exports/analysis/xlsx-temp/tables/result.xlsx")), true);
+  });
+});
+
 function index(label) {
   return Buffer.from(label).toString("hex").slice(0, 10);
 }

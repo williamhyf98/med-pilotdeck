@@ -32,12 +32,12 @@ DeepChest 暂不可用。工具返回 disabled 时不得重试。
 
 路由边界：
 
-- 腹部/盆腔 CT 的 RADAR、146 项 finding 或 RADAR 分数 → `med-radar-ct`。
+- 腹部/盆腔 CT 的腹盆CT分析、146 项 finding 或腹盆CT分析分数 → `abd-pelvis-ct`。
 - 完整胸部 CT → 执行本 Skill 的完整 DeepChest/CT-CLIP/3DMedAgent 流程。
 - 完整头颈、脊柱、四肢等 CT DICOM → 直接使用 `med-medical` 的 `med_parse_medical`；不进入 DeepChest 兼容性检查，不得声称已完成有效的 3DMedAgent 推理。
 - 非 CT、单帧/不完整 CT、部位未知或混合目录、PDF、图片或报告附件解读 → `med-medical`。
-- 用户明确要求 DeepChest 与 RADAR 联合分析时，分别加载并运行两个 Skill；两套证据、分数、产物和限制必须按来源分开，不能互相覆盖。
-- 完整 CT 只运行路由选中的一个专用流程，不同时运行 DeepChest 和 RADAR。
+- 用户明确要求 DeepChest 与腹盆CT分析联合分析时，分别加载并运行两个 Skill；两套证据、分数、产物和限制必须按来源分开，不能互相覆盖。
+- 完整 CT 只运行路由选中的一个专用流程，不同时运行 DeepChest 和腹盆CT分析。
 
 ## 固定路径与入口
 
@@ -106,11 +106,11 @@ DeepChest 暂不可用。工具返回 disabled 时不得重试。
 
 中文报告必须区分：流程是否跑通、数据和证据是否可用、医学语义是否正确。输出至少说明数据/产物质量、模型证据、缺失项和结论边界；不要把模型输出写成确诊、排除或治疗决定。最终结论仅供辅助分析，须由有资质的医学人员结合原始影像、病史和正式报告复核。
 
-联合分析时，DeepChest 结果只放在 DeepChest / CT-CLIP / 3DMedAgent 小节；RADAR 结果只放在 RADAR score / CSV / JSON 小节。不要把 RADAR 分数写入 `facts_memory.lesion_memory`，也不要把胸部 evidence 当作 RADAR 的腹部输入依据。
+联合分析时，DeepChest 结果只放在 DeepChest / CT-CLIP / 3DMedAgent 小节；腹盆CT分析结果只放在腹盆CT分析分数 / CSV / JSON 小节。不要把腹盆CT分析分数写入 `facts_memory.lesion_memory`，也不要把胸部 evidence 当作腹盆CT分析的腹部输入依据。
 
 ## 失败与安全边界
 
 - 服务不可达、模型文件缺失或产物不完整时，报告实际错误和缺失项，优先退回本地 dry-run 或结果分析，不编造模型输出。
 - 不主动上传原始 CT、mask、切片图像或患者元数据到未获授权的服务。
 - 近似 airway/pleura mask、缺失报告、缺失 CT-CLIP 分支和不完整标注都必须单独列为限制。
-- 本 Skill 不是 `med-radar-ct` 的替代品；RADAR 仍只用于其定义的腹部 CT 域。
+- 本 Skill 不是 `abd-pelvis-ct` 的替代品；腹盆CT分析仍只用于其定义的腹部/盆腔 CT 域。

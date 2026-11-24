@@ -828,7 +828,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   agent: '任务',
   web_search: '网页搜索',
   web_fetch: '网页抓取',
-  med_radar_analyze_ct: 'RADAR CT 分析',
+  med_radar_analyze_ct: '腹盆CT分析',
   med_parse_medical: '医疗附件解析',
   med_image_route: '医学影像分诊',
   med_dicom_route: 'DICOM 文件路由',

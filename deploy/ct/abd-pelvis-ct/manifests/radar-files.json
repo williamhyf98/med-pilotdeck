@@ -4,13 +4,13 @@
   "files": [
     {
       "path": "gateway/app.py",
-      "bytes": 18018,
-      "sha256": "d14ada329e17eb36fc0106c6438ac54062bea142bc1abe4f8c7efd3b6b15b4d9"
+      "bytes": 18105,
+      "sha256": "8052d7d44a236b6c1309e776ecbc59969972b251baa3e803db48e802ab63f722"
     },
     {
       "path": "gateway/radar_inference.py",
-      "bytes": 17735,
-      "sha256": "a0a6673c0b6826dda6e16310d1741a47ed81dcdf6d825b7c74c344a802986cf2"
+      "bytes": 17847,
+      "sha256": "8d97b4ea009f576df9d5fbf9a3fec540f1e21d96aff4e859ebc92d1eecec5e11"
     },
     {
       "path": "gateway/requirements.txt",
@@ -129,8 +129,8 @@
     },
     {
       "path": "inference/damo-radar/RADAR_inference/inference_demo.py",
-      "bytes": 36032,
-      "sha256": "a326b68c9de599f502b06b9a94fc69cd93211cb81189e538d1c3d5fb6893b8e5"
+      "bytes": 36034,
+      "sha256": "b96fbd0b2f1af471fc945f4b61f10d44113cdab12782750468b52a7b7dbc82f0"
     },
     {
       "path": "inference/damo-radar/RADAR_inference/inference_merlin_testset.py",
@@ -154,8 +154,8 @@
     },
     {
       "path": "inference/gpu_api.py",
-      "bytes": 6262,
-      "sha256": "4eab190f2d7c8b331521c098e1e2c00d642577411b6bcb2a4d27029aabf5c9a3"
+      "bytes": 6292,
+      "sha256": "e419a6896613328c74289c8fa21ad6ee1fb092c71101e7cf3c4f0150508c5d2c"
     },
     {
       "path": "inference/models/bert-base-chinese/config.json",
@@ -194,13 +194,13 @@
     },
     {
       "path": "inference/radar_inference.py",
-      "bytes": 17735,
-      "sha256": "a0a6673c0b6826dda6e16310d1741a47ed81dcdf6d825b7c74c344a802986cf2"
+      "bytes": 17847,
+      "sha256": "8d97b4ea009f576df9d5fbf9a3fec540f1e21d96aff4e859ebc92d1eecec5e11"
     },
     {
       "path": "inference/requirements-gpu.txt",
-      "bytes": 227,
-      "sha256": "5786dc7aade6fd71c7fc7ac1f0d2d23a470c6b758fb3c578d3e1be7f489d33c1"
+      "bytes": 229,
+      "sha256": "cc93e094a85b42e4157c8a7ecdcd4718f1754544a0b2a6fa0bbe4c427f318c1f"
     }
   ]
 }

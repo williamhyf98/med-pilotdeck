@@ -5,7 +5,7 @@ description: 解析通用医学附件（包括非腹部/盆腔及非胸部的 DI
 
 # 医疗多源解析（med-tools）
 
-RADAR 和 DeepChest 由 `MED_SPECIALIZED_CT_ENABLED` 控制。关闭时不得调用
+腹盆CT分析和 DeepChest 由 `MED_SPECIALIZED_CT_ENABLED` 控制。关闭时不得调用
 `med_radar_*` 或 `med_deepchest_*`；完整 CT 使用本 Skill 的通用医学解析。
 能力开启时，其他部位的完整 CT DICOM 也直接使用本 Skill。
 此时对 DICOM 可在本 Skill 下调用 `med_image_route` 和 `med_parse_medical`，

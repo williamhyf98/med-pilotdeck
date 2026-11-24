@@ -7,7 +7,7 @@ PilotDeck（包括 gateway 和 med-tools MCP 子进程），刷新浏览器。
 关闭时：
 
 - 技能库、聊天推荐、agent 技能目录和 `read_skill` 不提供
-  `med-radar-ct`、`med-deepchest-3dmedagent`、`med-dicom-router`。
+  `abd-pelvis-ct`、`med-deepchest-3dmedagent`、`med-dicom-router`。
   用户或项目目录中的同名副本同样隐藏，文件不删除。
 - MCP 工具发现和 agent 工具列表不提供 `med_radar_*`、`med_deepchest_*`；
   旧会话发出的专用调用仍由执行门禁阻止，健康检查不探测 RADAR。

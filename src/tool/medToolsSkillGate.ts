@@ -13,7 +13,7 @@ const ANY_MEDICAL_SKILL = [
   "med-trauma-assist",
   "med-trauma-stage-plan",
   "med-case-report",
-  "med-radar-ct",
+  "abd-pelvis-ct",
   "med-deepchest-3dmedagent",
   "med-dicom-router",
 ] as const;
@@ -35,7 +35,7 @@ const MED_TOOLS_SKILL_REQUIREMENTS: Readonly<
   },
   "mcp__med-tools__med_image_route": {
     loadSkill: "med-dicom-router",
-    acceptedSkills: ["med-dicom-router", "med-medical", "med-radar-ct", "med-deepchest-3dmedagent"],
+    acceptedSkills: ["med-dicom-router", "med-medical", "abd-pelvis-ct", "med-deepchest-3dmedagent"],
   },
   "mcp__med-tools__med_parse_medical": {
     loadSkill: "med-medical",
@@ -54,12 +54,12 @@ const MED_TOOLS_SKILL_REQUIREMENTS: Readonly<
     acceptedSkills: ["med-trauma-stage-plan"],
   },
   "mcp__med-tools__med_radar_analyze_ct": {
-    loadSkill: "med-radar-ct",
-    acceptedSkills: ["med-radar-ct"],
+    loadSkill: "abd-pelvis-ct",
+    acceptedSkills: ["abd-pelvis-ct"],
   },
   "mcp__med-tools__med_radar_status": {
-    loadSkill: "med-radar-ct",
-    acceptedSkills: ["med-radar-ct"],
+    loadSkill: "abd-pelvis-ct",
+    acceptedSkills: ["abd-pelvis-ct"],
   },
   "mcp__med-tools__med_tools_health": {
     loadSkill: "med-medical",

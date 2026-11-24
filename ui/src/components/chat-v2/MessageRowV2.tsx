@@ -24,6 +24,7 @@ import type {
 import MessageComponent from '../chat/view/subcomponents/MessageComponent';
 import ImageLightbox, { type LightboxImage } from '../chat/view/subcomponents/ImageLightbox';
 import { Markdown } from '../chat/view/subcomponents/Markdown';
+import { CollapsibleDisplay } from '../chat/tools/components';
 import { formatUsageLimitText } from '../chat/utils/chatFormatting';
 import { extractCitationsFromContent } from '../chat/utils/citationDetails';
 import { ProcessLiveStatus, ProcessRunPanel } from './ProcessTrace';
@@ -961,6 +962,7 @@ export function ProcessDetailContent({
   selectedProject: Project | null;
   onFileOpen?: (filePath: string, diffInfo?: unknown) => void;
 }) {
+  const { t } = useTranslation('chat');
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const detailMessages = useMemo(
     () => messages.filter((message) => {
@@ -1016,6 +1018,30 @@ export function ProcessDetailContent({
           ? String(message.toolResult?.content || '')
           : String(message.content || '');
         if (!content.trim()) return null;
+
+        if (message.isToolUse && message.toolResult?.isError) {
+          const errorContent = content.includes('<tool_use_error>')
+            ? content.replace(/<\/?tool_use_error>/g, '').replace(/^InputValidationError:\s*/i, '').trim()
+            : content;
+          return (
+            <CollapsibleDisplay
+              key={`${message.id || message.toolId || 'tool-error'}-${index}`}
+              toolName={message.toolName || 'UnknownTool'}
+              title={t('toolUseError.title', { defaultValue: '工具错误' })}
+              defaultOpen={false}
+              toolCategory="default"
+              autoExpandable={false}
+            >
+              <Markdown
+                className="prose prose-sm max-w-none break-words dark:prose-invert"
+                projectName={selectedProject?.name}
+                onFileOpen={onFileOpen}
+              >
+                {errorContent}
+              </Markdown>
+            </CollapsibleDisplay>
+          );
+        }
 
         return (
           <div

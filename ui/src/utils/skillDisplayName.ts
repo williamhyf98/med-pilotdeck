@@ -25,7 +25,7 @@ const SKILL_DISPLAY_NAMES: Record<string, string> = {
   'med-trauma-assist': '战创伤知识问答',
   'med-trauma-stage-plan': '战创伤分阶段救治方案',
   'med-dicom-router': '医学影像路由',
-  'med-radar-ct': '腹部CT分析',
+  'abd-pelvis-ct': '腹盆CT分析',
   'med-deepchest-3dmedagent': '胸部CT分析',
   'meeting-recorder-assistant': '会议录音与纪要',
   'minimax-pdf': '精美 PDF 制作',

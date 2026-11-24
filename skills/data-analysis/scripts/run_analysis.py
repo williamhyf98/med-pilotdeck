@@ -25,6 +25,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -621,20 +622,22 @@ def run(args: argparse.Namespace) -> int:
     }
     timed_out = False
     try:
-        completed = subprocess.run(
-            [
-                sys.executable, "-I", "-B",
-                "-c", GUARD_BOOTSTRAP.format(dir=str(SCRIPT_DIR)),
-                str(script),
-            ],
-            cwd=str(script.parent),
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=args.timeout,
-            start_new_session=True,
-            preexec_fn=_limits(args.mem_mb, args.timeout + 1),
-        )
+        with tempfile.TemporaryDirectory(prefix=".analysis-tmp-", dir=root / "scratch") as temp_dir:
+            env["TMPDIR"] = temp_dir
+            completed = subprocess.run(
+                [
+                    sys.executable, "-I", "-B",
+                    "-c", GUARD_BOOTSTRAP.format(dir=str(SCRIPT_DIR)),
+                    str(script),
+                ],
+                cwd=str(script.parent),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=args.timeout,
+                start_new_session=True,
+                preexec_fn=_limits(args.mem_mb, args.timeout + 1),
+            )
         exit_code = completed.returncode
         stdout, stderr = completed.stdout, completed.stderr
     except subprocess.TimeoutExpired as expired:

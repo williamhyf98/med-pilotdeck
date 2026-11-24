@@ -173,9 +173,9 @@
       "expectAssistantContains": ["【病例综合摘要】", "【建议诊断方向】", "【不确定性声明】"]
     },
     {
-      "id": "med-radar-ct",
+      "id": "abd-pelvis-ct",
       "kind": "medical",
-      "skill": "med-radar-ct",
+      "skill": "abd-pelvis-ct",
       "tier": 2,
       "timeoutMs": 240000,
       "attachments": [

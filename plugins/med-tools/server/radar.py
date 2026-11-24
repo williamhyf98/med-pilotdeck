@@ -1,4 +1,4 @@
-"""HTTP client for the persistent DAMO RADAR service on the GPU node."""
+"""HTTP client for the persistent abdomen/pelvis CT analysis service."""
 
 from __future__ import annotations
 
@@ -80,10 +80,10 @@ def _tls_verification(cfg: Dict[str, Any]) -> ssl.SSLContext | bool:
         return True
     ca_bundle = str(cfg.get("ca_bundle") or "")
     if not ca_bundle:
-        raise ValueError("MED_RADAR_CA_BUNDLE is required for HTTPS")
+        raise ValueError("HTTPS 腹盆CT分析服务需要配置 CA 证书")
     ca_path = Path(ca_bundle).expanduser().resolve()
     if not ca_path.is_file():
-        raise ValueError(f"RADAR CA certificate does not exist: {ca_path}")
+        raise ValueError(f"腹盆CT分析 CA 证书不存在: {ca_path}")
     return ssl.create_default_context(cafile=str(ca_path))
 
 
@@ -114,7 +114,7 @@ def radar_status(validate_runtime: bool = False) -> Dict[str, Any]:
         "api_base": cfg["api_base"],
         "remote": remote,
         "error": error,
-        "scope": "RADAR is trained primarily for contrast-enhanced abdominal CT.",
+        "scope": "腹盆CT分析主要面向增强腹部/盆腔 CT。",
     }
 
 
@@ -130,13 +130,13 @@ def _output_dir_for(input_path: Path, call_id: str) -> Path:
         None,
     )
     if project_root is not None:
-        base = project_root / "exports" / "radar"
+        base = project_root / "exports" / "abd-pelvis-ct"
     else:
         override = os.environ.get("MED_RADAR_OUTPUT_DIR", "").strip()
         base = (
             Path(override).expanduser().resolve()
             if override
-            else input_path.parent / "derived" / "radar"
+            else input_path.parent / "derived" / "abd-pelvis-ct"
         )
     raw_name = input_path.name.removesuffix(".gz").removesuffix(".nii") or "study"
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", raw_name).strip("-._") or "study"
@@ -174,7 +174,7 @@ def _validate_multiframe_ct_file(path: Path) -> Dict[str, Any]:
             )
         except Exception as exc:  # noqa: BLE001
             raise ValueError(
-                f"Single-file RADAR input is not a readable DICOM: {type(first_error).__name__}"
+                f"单文件腹盆CT分析输入不是可读取的 DICOM：{type(first_error).__name__}"
             ) from exc
 
     modality = str(getattr(dataset, "Modality", "")).strip().upper()
@@ -187,12 +187,12 @@ def _validate_multiframe_ct_file(path: Path) -> Dict[str, Any]:
 
     if modality != "CT":
         raise ValueError(
-            f"Single-file RADAR DICOM input must use Modality=CT, got {modality or 'UNKNOWN'}"
+            f"单文件腹盆CT分析 DICOM 输入的 Modality 必须为 CT，当前为 {modality or 'UNKNOWN'}"
         )
     if frame_count < 3:
         raise ValueError(
-            "Single-file RADAR DICOM input must contain at least 3 frames; "
-            "a standalone CT slice is not a 3D volume"
+            "单文件腹盆CT分析 DICOM 输入必须至少包含 3 个帧；"
+            "单张 CT 切片不是三维体数据"
         )
     if rows <= 0 or columns <= 0:
         raise ValueError("Multi-frame DICOM CT has invalid Rows/Columns metadata")
@@ -298,14 +298,14 @@ def _response_error(response: Any) -> str:
 def _artifact_download_url(api_base: str, artifact_url: str) -> str:
     parsed = urlsplit(artifact_url)
     if parsed.scheme or parsed.netloc or parsed.query or parsed.fragment:
-        raise ValueError("RADAR returned a non-local artifact URL")
+        raise ValueError("腹盆CT分析返回了非本地产物地址")
     if not re.fullmatch(r"/v1/artifacts/[0-9a-f]{32}/scores\.csv", parsed.path):
-        raise ValueError("RADAR returned an invalid artifact path")
+        raise ValueError("腹盆CT分析返回了无效的产物路径")
     target = urljoin(f"{api_base}/", parsed.path.lstrip("/"))
     base_parts = urlsplit(api_base)
     target_parts = urlsplit(target)
     if (target_parts.scheme, target_parts.netloc) != (base_parts.scheme, base_parts.netloc):
-        raise ValueError("RADAR artifact URL is not same-origin")
+        raise ValueError("腹盆CT分析产物地址不是同源地址")
     return target
 
 
@@ -354,7 +354,7 @@ def run_radar_analysis(
     if total_bytes > cfg["max_upload_bytes"]:
         return _error_payload(
             "unsupported",
-            f"Selected input is {total_bytes} bytes, above MED_RADAR_MAX_UPLOAD_BYTES={cfg['max_upload_bytes']}.",
+            f"待分析输入大小为 {total_bytes} 字节，超过当前允许的上传上限 {cfg['max_upload_bytes']} 字节。",
         )
 
     output_dir = _output_dir_for(input_path, call_id)
@@ -408,18 +408,18 @@ def run_radar_analysis(
                 )
             payload = response.json()
             if not isinstance(payload, dict):
-                raise ValueError("RADAR returned a non-object JSON response")
+                raise ValueError("腹盆CT分析返回的不是对象 JSON")
             artifact_url = str(
                 ((payload.get("artifacts") or {}).get("scores_csv_url")) or ""
             )
             if not artifact_url:
-                raise ValueError("RADAR response did not include scores_csv_url")
+                raise ValueError("腹盆CT分析响应中缺少 scores_csv_url")
             artifact_response = client.get(
                 _artifact_download_url(cfg["api_base"], artifact_url),
                 headers=_headers(cfg),
             )
             artifact_response.raise_for_status()
-            local_csv = output_dir / "RADAR_infer_results_remote.csv"
+            local_csv = output_dir / "abd-pelvis-ct_scores.csv"
             csv_temp = output_dir / ".scores.csv.tmp"
             csv_temp.write_bytes(artifact_response.content)
             csv_temp.replace(local_csv)
@@ -427,13 +427,13 @@ def run_radar_analysis(
     except httpx.TimeoutException as exc:
         return _error_payload(
             "timeout",
-            f"RADAR request exceeded {cfg['timeout_seconds']} seconds: {exc}",
+            f"腹盆CT分析请求超过 {cfg['timeout_seconds']} 秒：{exc}",
             api_base=cfg["api_base"],
         )
     except (httpx.HTTPError, OSError, ValueError, json.JSONDecodeError) as exc:
         return _error_payload(
             "error",
-            f"Remote RADAR request failed: {type(exc).__name__}: {exc}",
+            f"远程腹盆CT分析请求失败：{type(exc).__name__}: {exc}",
             api_base=cfg["api_base"],
         )
     finally:
@@ -442,7 +442,7 @@ def run_radar_analysis(
         if not succeeded:
             shutil.rmtree(output_dir, ignore_errors=True)
 
-    summary_path = output_dir / "radar_summary.json"
+    summary_path = output_dir / "abd-pelvis-ct_summary.json"
     payload["tool"] = "med_radar_analyze_ct"
     payload["generation_owner"] = "pilotdeck"
     payload["agent_continue"] = True

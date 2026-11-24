@@ -38,7 +38,7 @@ const DEFAULT_PORTS: Readonly<Record<NetworkServiceProtocol, number>> = {
 
 const SERVICE_ENVIRONMENT = [
   { id: "service.rag", name: "RAG 服务", purpose: "医学知识检索", keys: ["MED_RAG_SERVICE_API_BASE", "MED_RAG_SERVICE_ENDPOINT", "MED_RAG_SERVICE_HEALTH_ENDPOINT"], defaults: ["http://127.0.0.1:18080"] },
-  { id: "service.radar", name: "RADAR 服务", purpose: "腹部 CT 分析", keys: ["MED_RADAR_API_BASE"], defaults: ["https://127.0.0.1:18120"] },
+  { id: "service.radar", name: "腹盆CT分析服务", purpose: "腹盆 CT 分析", keys: ["MED_RADAR_API_BASE"], defaults: ["https://127.0.0.1:18120"] },
   { id: "service.deepchest", name: "DeepChest 服务", purpose: "胸部 CT 分析", keys: ["MED_DEEPCHEST_API_BASE"] },
   { id: "service.vlm", name: "医学视觉模型", purpose: "医学影像解析", keys: ["MED_VLM_API_BASE", "MED_VLM_FALLBACK_API_BASE"] },
   { id: "service.embedding", name: "Embedding 服务", purpose: "向量化和本地检索", keys: ["MED_EMBEDDING_API_BASE", "MED_EMBEDDING_ENDPOINT"] },

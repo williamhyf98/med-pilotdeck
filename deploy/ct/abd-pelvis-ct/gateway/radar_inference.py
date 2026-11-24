@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run official DAMO RADAR inference and write a compact machine-readable summary."""
+"""Run abdomen/pelvis CT inference and write a compact machine-readable summary."""
 
 from __future__ import annotations
 
@@ -81,12 +81,12 @@ def validate_nifti_header(source: Path) -> dict[str, Any]:
     decoded_bytes = voxel_count * max(dtype.itemsize, 4)
     if voxel_count > MAX_NIFTI_VOXELS:
         raise ValueError(
-            f"NIfTI voxel count exceeds RADAR_MAX_NIFTI_VOXELS: "
+            "NIfTI voxel count exceeds the configured volume limit: "
             f"{source.name} has {voxel_count}"
         )
     if decoded_bytes > MAX_NIFTI_DECODED_BYTES:
         raise ValueError(
-            f"NIfTI decoded size exceeds RADAR_MAX_NIFTI_DECODED_BYTES: "
+            "NIfTI decoded size exceeds the configured decoded-size limit: "
             f"{source.name} needs at least {decoded_bytes} bytes"
         )
     if affine.shape != (4, 4) or not np.isfinite(affine).all():
@@ -97,7 +97,7 @@ def validate_nifti_header(source: Path) -> dict[str, Any]:
     if len(spacing) != 3 or any(not math.isfinite(value) or value <= 0 for value in spacing):
         raise ValueError(f"NIfTI voxel spacing must be finite and positive: {source.name}")
 
-    # The upstream RADAR loader derives spacing from affine diagonal entries and
+    # The upstream loader derives spacing from affine diagonal entries and
     # does not apply an orientation transform. Reject permutations/obliquity that
     # it would otherwise turn into zero or misleading resampling dimensions.
     diagonal = np.diag(spatial_affine)
@@ -107,7 +107,7 @@ def validate_nifti_header(source: Path) -> dict[str, Any]:
         np.abs(off_axis) > max(1e-5, axis_scale * 1e-3)
     ):
         raise ValueError(
-            f"NIfTI affine must be axis-aligned for the RADAR preprocessing pipeline: {source.name}"
+            f"NIfTI affine must be axis-aligned for the abdomen/pelvis CT preprocessing pipeline: {source.name}"
         )
 
     model_spacing = tuple(float(abs(value)) for value in diagonal)
@@ -118,7 +118,7 @@ def validate_nifti_header(source: Path) -> dict[str, Any]:
     )
     if any(value <= 0 for value in target_shape):
         raise ValueError(
-            f"NIfTI spacing produces an empty RADAR resampling dimension: {source.name}"
+            f"NIfTI spacing produces an empty abdomen/pelvis CT resampling dimension: {source.name}"
         )
     resampled_voxels = math.prod(target_shape)
     resampled_bytes = resampled_voxels * 4
@@ -127,17 +127,17 @@ def validate_nifti_header(source: Path) -> dict[str, Any]:
     )
     if resampled_voxels > MAX_RADAR_RESAMPLED_VOXELS:
         raise ValueError(
-            f"RADAR resampled voxel count exceeds RADAR_MAX_RESAMPLED_VOXELS: "
+            f"abdomen/pelvis CT resampled voxel count exceeds the configured limit: "
             f"{source.name} would produce {resampled_voxels}"
         )
     if resampled_bytes > MAX_RADAR_RESAMPLED_BYTES:
         raise ValueError(
-            f"RADAR resampled size exceeds RADAR_MAX_RESAMPLED_BYTES: "
+            f"abdomen/pelvis CT resampled size exceeds the configured limit: "
             f"{source.name} needs at least {resampled_bytes} bytes"
         )
     if gpu_working_bytes > MAX_RADAR_GPU_WORKING_BYTES:
         raise ValueError(
-            f"RADAR mask working set exceeds RADAR_MAX_GPU_WORKING_BYTES: "
+            f"abdomen/pelvis CT mask working set exceeds the configured limit: "
             f"{source.name} needs at least {gpu_working_bytes} bytes"
         )
 
@@ -168,7 +168,7 @@ def stage_nifti(source: Path, staging: Path, index: int) -> Path:
 
 
 def stage_multiframe_dicom(source: Path, staging: Path, index: int) -> dict[str, Any]:
-    """Convert one multi-frame CT DICOM into the NIfTI volume RADAR consumes."""
+    """Convert one multi-frame CT DICOM into the NIfTI volume used for analysis."""
     import SimpleITK as sitk
 
     reader = sitk.ImageFileReader()
@@ -185,12 +185,12 @@ def stage_multiframe_dicom(source: Path, staging: Path, index: int) -> dict[str,
     )
     if modality != "CT":
         raise ValueError(
-            f"Single-file RADAR DICOM input must use Modality=CT, got {modality or 'UNKNOWN'}"
+            f"Single-file abdomen/pelvis CT DICOM input must use Modality=CT, got {modality or 'UNKNOWN'}"
         )
     size = tuple(int(value) for value in reader.GetSize())
     if reader.GetDimension() != 3 or len(size) != 3 or size[2] < 3:
         raise ValueError(
-            "Single-file RADAR DICOM input must contain a 3D multi-frame CT volume "
+            "Single-file abdomen/pelvis CT DICOM input must contain a 3D multi-frame CT volume "
             "with at least 3 frames"
         )
 
@@ -270,7 +270,7 @@ def stage_inputs(input_path: Path, staging: Path, max_cases: int) -> list[dict[s
             or total_resampled_bytes > MAX_RADAR_RESAMPLED_BYTES
         ):
             raise ValueError(
-                "Selected NIfTI volumes exceed the configured aggregate RADAR resampling budget"
+                "Selected NIfTI volumes exceed the configured aggregate abdomen/pelvis CT resampling budget"
             )
         validated.append((source, metadata))
     for source, metadata in validated:
@@ -309,7 +309,7 @@ def stage_inputs(input_path: Path, staging: Path, max_cases: int) -> list[dict[s
     if not manifest:
         raise ValueError(
             "No NIfTI volume or readable DICOM series was found. "
-            "RADAR requires a 3D CT volume, not a standalone 2D image."
+            "腹盆CT分析需要三维 CT 体数据，不能使用单张二维图像。"
         )
     return manifest
 
@@ -335,7 +335,7 @@ def summarize_csv(
     with csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         if not reader.fieldnames or len(reader.fieldnames) < 2:
-            raise ValueError(f"RADAR CSV has no finding columns: {csv_path}")
+            raise ValueError(f"腹盆CT分析 CSV 没有 finding 列：{csv_path}")
         filename_key = reader.fieldnames[0]
         for row in reader:
             filename = str(row.get(filename_key) or "")
@@ -413,23 +413,23 @@ def main() -> None:
 
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA was requested but is not available in the RADAR runtime.")
+        raise RuntimeError("已请求 CUDA，但腹盆CT分析运行环境中不可用。")
 
     save_tag = "pilotdeck"
     initialized = initialize(device)
     inference(initialized, str(staging), str(output_dir), save_tag, device, 0)
-    csv_path = output_dir / f"RADAR_infer_results_{save_tag}.csv"
+    csv_path = output_dir / f"abd-pelvis-ct_scores_{save_tag}.csv"
     summary = {
         "ok": True,
         "status": "completed",
-        "model": "DAMO RADAR",
+        "model": "abd-pelvis-ct",
         "device": str(device),
         "input": str(input_path),
         "study_context": args.study_context.strip(),
         "training_domain": "primarily contrast-enhanced abdominal CT",
         "domain_flags": domain_flags(args.study_context),
         "warnings": [
-            "RADAR scores are uncalibrated model signals, not clinical probabilities or diagnoses.",
+            "腹盆CT分析分数是未经校准的模型信号，不是临床概率或诊断结果。",
             "A low score does not establish absence, and a high score requires image-level and clinical review.",
             "Use outside contrast-enhanced abdominal CT is subject to domain shift.",
         ],

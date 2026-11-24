@@ -353,6 +353,23 @@ describe('processGrouping', () => {
     expect(attachment?.processSummary.commandCount).toBe(1);
   });
 
+  it('does not treat a runtime failure mentioning permission mode and guard denial as an actionable permission prompt', () => {
+    const messages = [
+      user('u1'),
+      tool('bash-failed', 'bash', { command: 'analysis.sh run' }, 100, {
+        content: 'TOOL_ERROR[tool_execution_failed] permission mode: bypassPermissions. ANALYSIS_GUARD_DENIED: writing outside exports/',
+        isError: true,
+        errorCode: 'tool_execution_failed',
+      }),
+      assistant('a1', '结果已重新生成。', 200),
+    ];
+
+    const items = buildRenderableMessageItems(messages);
+    expect(items.map((item) => item.message.id)).toEqual(['u1', 'a1']);
+    expect(processAttachments(items.find((item) => item.message.id === 'u1'))[0]?.processDetailMessages.map((message) => message.id))
+      .toEqual(['bash-failed']);
+  });
+
   it('combines completed process output into one group after the user message', () => {
     const messages = [
       user('u1'),

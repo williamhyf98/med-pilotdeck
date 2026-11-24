@@ -141,7 +141,7 @@ export default function SkillRecommendBar({
           onClick={() => {
             onUseSkill(
               t('skillRecommend.insertTemplate', {
-                name: recommendation.name,
+                name: skillDisplayName(recommendation),
                 defaultValue: '（使用「{{name}}」技能）',
               }) as string,
             );

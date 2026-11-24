@@ -42,7 +42,7 @@ PRESENTATION = PRESENTATION_TERMINAL
 VALID_CONTINUATION_MODES = frozenset({"terminal", "material"})
 
 SPECIALIZED_CT_GUIDANCE = (
-    "For a complete abdominal/pelvic CT route, load med-radar-ct and call "
+    "For a complete abdominal/pelvic CT route, load abd-pelvis-ct and call "
     "med_radar_analyze_ct. For a complete chest CT, load med-deepchest-3dmedagent "
     "and use med_deepchest_status, med_deepchest_submit, then med_deepchest_job "
     "until completion. For all other DICOM, load med-medical and call "
@@ -61,7 +61,7 @@ def _disabled_specialized_tool(tool: str) -> str:
             "status": "disabled",
             "disabled": True,
             "tool": tool,
-            "reason": "RADAR and DeepChest are disabled because MED_SPECIALIZED_CT_ENABLED is not 1",
+            "reason": "腹盆CT分析和 DeepChest 已关闭，因为 MED_SPECIALIZED_CT_ENABLED 不是 1",
         },
         ensure_ascii=False,
     )
@@ -681,7 +681,7 @@ def med_tools_health() -> str:
 
 @_specialized_ct_tool()
 def med_radar_status(validate_runtime: bool = False) -> str:
-    """Check whether the configured DAMO RADAR analysis service is ready.
+    """Check whether the configured abdomen/pelvis CT analysis service is ready.
 
     Args:
         validate_runtime: Allow a longer health-probe timeout. The remote response
@@ -708,12 +708,12 @@ async def med_radar_analyze_ct(
     max_cases: int = 4,
     study_context: str = "",
 ) -> str:
-    """Submit 3D CT volumes to the configured RADAR service and return scores.
+    """Submit 3D CT volumes to the configured abdomen/pelvis CT analysis service and return scores.
 
     Accepts a .nii/.nii.gz file, a single multi-frame 3D CT DICOM, a directory
     containing NIfTI volumes, or a DICOM CT series directory. Single-frame
-    DICOM images are rejected. RADAR is primarily trained on contrast-enhanced
-    abdominal CT. Its scores are not calibrated clinical probabilities and do
+    DICOM images are rejected. The service is primarily trained on
+    contrast-enhanced abdominal/pelvic CT. Its scores are not calibrated clinical probabilities and do
     not establish either presence or absence of disease.
 
     Args:

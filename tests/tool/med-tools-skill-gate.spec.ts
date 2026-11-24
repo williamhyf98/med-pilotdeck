@@ -73,7 +73,7 @@ function createRuntime(toolName: string): {
     "med-trauma-assist",
     "med-trauma-stage-plan",
     "med-case-report",
-    "med-radar-ct",
+    "abd-pelvis-ct",
     "med-deepchest-3dmedagent",
     "med-dicom-router",
   ].map((name) => ({
@@ -126,14 +126,14 @@ test("every med-tools MCP tool has a skill-gate mapping", () => {
   assert.equal(getMedToolsSkillRequirement("mcp__other__tool"), undefined);
 });
 
-test("RADAR tools require the med-radar-ct skill", () => {
+test("RADAR tools require the abd-pelvis-ct skill", () => {
   for (const toolName of [
     "mcp__med-tools__med_radar_analyze_ct",
     "mcp__med-tools__med_radar_status",
   ]) {
     assert.deepEqual(getMedToolsSkillRequirement(toolName), {
-      loadSkill: "med-radar-ct",
-      acceptedSkills: ["med-radar-ct"],
+      loadSkill: "abd-pelvis-ct",
+      acceptedSkills: ["abd-pelvis-ct"],
     });
   }
 });
@@ -194,7 +194,7 @@ test("image route uses med-medical while specialized CT skills are hidden", () =
   });
   assert.deepEqual(
     getMedToolsSkillRequirement("mcp__med-tools__med_radar_analyze_ct")?.acceptedSkills,
-    ["med-radar-ct"],
+    ["abd-pelvis-ct"],
   );
 });
 

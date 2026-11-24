@@ -1,6 +1,6 @@
 /** Deployment policy shared by discovery, skill loading, and execution. */
 const SPECIALIZED_CT_SKILLS = new Set([
-  "med-radar-ct",
+  "abd-pelvis-ct",
   "med-deepchest-3dmedagent",
   "med-dicom-router",
 ]);

@@ -1,4 +1,4 @@
-"""Persistent HTTP service for DAMO RADAR inference on a dedicated GPU node."""
+"""Persistent HTTP service for abdomen/pelvis CT analysis on a dedicated GPU node."""
 
 from __future__ import annotations
 
@@ -118,7 +118,7 @@ class RadarRuntime:
                 self.device,
                 0,
             )
-            csv_path = output_dir / "RADAR_infer_results_remote.csv"
+            csv_path = output_dir / "abd-pelvis-ct_scores_remote.csv"
             cases = summarize_csv(csv_path, manifest, top_k, threshold)
         finally:
             if torch.cuda.is_available():
@@ -129,19 +129,19 @@ class RadarRuntime:
             item for item in manifest if str(item.get("staged_file") or "") not in completed
         ]
         if not cases:
-            raise RuntimeError("RADAR produced no result rows for the staged CT volumes")
+            raise RuntimeError("腹盆CT分析没有为暂存的 CT 体数据生成结果")
         return {
             "ok": True,
             "status": "partial" if missing else "completed",
-            "model": "DAMO RADAR",
+            "model": "abd-pelvis-ct",
             "device": str(self.device),
             "study_context": study_context,
             "training_domain": "primarily contrast-enhanced abdominal CT",
             "domain_flags": domain_flags(study_context),
             "warnings": [
-                "RADAR scores are uncalibrated model signals, not clinical probabilities or diagnoses.",
-                "A low score does not establish absence, and a high score requires image-level and clinical review.",
-                "Use outside contrast-enhanced abdominal CT is subject to domain shift.",
+                "腹盆CT分析分数是未经校准的模型信号，不是临床概率或诊断结果。",
+                "低分不能证明不存在异常，高分需要结合原始影像和临床情况复核。",
+                "用于非增强腹部/盆腔 CT 或其他部位时可能存在域偏移。",
             ],
             "cases": cases,
             "failed_cases": missing,
@@ -184,7 +184,7 @@ class RadarGuardMiddleware:
         if runtime.lock.locked():
             await JSONResponse(
                 status_code=429,
-                content={"detail": "RADAR is processing another request"},
+                content={"detail": "腹盆CT分析正在处理其他请求"},
             )(scope, receive, send)
             return
         await runtime.lock.acquire()
@@ -271,7 +271,7 @@ async def lifespan(_app: FastAPI):
                 await task
 
 
-app = FastAPI(title="DAMO RADAR Service", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="abd-pelvis-ct service", version="1.0.0", lifespan=lifespan)
 app.add_middleware(RadarGuardMiddleware)
 
 
@@ -320,7 +320,7 @@ async def health(request: Request) -> dict[str, Any]:
     details: dict[str, Any] = {
         "ok": runtime.loaded,
         "ready": runtime.loaded,
-        "model": "DAMO RADAR",
+        "model": "abd-pelvis-ct",
         "device": DEVICE,
         "busy": runtime.lock.locked(),
         "load_error": runtime.load_error,
@@ -382,7 +382,7 @@ async def analyze(
         result["artifacts"] = {
             "scores_csv_url": f"/v1/artifacts/{request_id}/scores.csv",
         }
-        (output_dir / "radar_summary.json").write_text(
+        (output_dir / "abd-pelvis-ct_summary.json").write_text(
             json.dumps(result, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
@@ -410,13 +410,13 @@ async def scores_csv(request: Request, request_id: str) -> FileResponse:
     if not re_full_request_id(request_id):
         raise HTTPException(status_code=400, detail="invalid request id")
     request_dir = WORK_ROOT / request_id
-    path = request_dir / "output" / "RADAR_infer_results_remote.csv"
+    path = request_dir / "output" / "abd-pelvis-ct_scores.csv"
     if not path.is_file():
         raise HTTPException(status_code=404, detail="scores not found")
     return FileResponse(
         path,
         media_type="text/csv",
-        filename="RADAR_infer_results_remote.csv",
+        filename="abd-pelvis-ct_scores.csv",
         background=BackgroundTask(_remove_path, request_dir),
     )
 

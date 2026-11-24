@@ -1,7 +1,7 @@
 {
   "name": "med-tools",
   "version": "0.6.0",
-  "description": "Medical MCP tools: local DICOM routing, parse + G9 reports, remote RADAR abdominal CT analysis, DeepChest workflow, war-trauma RAG Q&A, and six-stage care plans; Skills drive routing (no registered agent profile)",
+  "description": "Medical MCP tools: local DICOM routing, parse + G9 reports, remote abdomen/pelvis CT analysis, DeepChest workflow, war-trauma RAG Q&A, and six-stage care plans; Skills drive routing (no registered agent profile)",
   "skills": "skills",
   "agents": [],
   "mcpServers": {

@@ -21,7 +21,7 @@ SPECIALIZED_CT_ENABLED_ENV = "MED_SPECIALIZED_CT_ENABLED"
 
 
 def specialized_ct_enabled() -> bool:
-    """Return whether RADAR/DeepChest routing is explicitly enabled."""
+    """Return whether specialized CT routing is explicitly enabled."""
     return os.environ.get(SPECIALIZED_CT_ENABLED_ENV, "") == "1"
 
 _REGION_KEYWORDS: Dict[str, Tuple[str, ...]] = {
@@ -418,16 +418,16 @@ def route_dicom(path: str | Path, *, max_files: int = 512) -> Dict[str, Any]:
     if payload["modality"] == "CT" and complete_ct:
         if not specialized_ct_enabled():
             payload["warnings"].append(
-                "RADAR 和 DeepChest 专用流程当前暂时关闭，已回退到 med-medical。"
+                "腹盆CT分析和 DeepChest 专用流程当前暂时关闭，已回退到 med-medical。"
             )
             if region in {"unknown", "mixed"}:
                 payload["warnings"].append("检查部位不确定；通用解析时注明此限制。")
             payload["next_action"] = (
-                "使用 med-medical 进行本地医学附件解析；当前不调用 RADAR 或 DeepChest。"
+                "使用 med-medical 进行本地医学附件解析；当前不调用腹盆CT分析或 DeepChest。"
             )
         elif region in {"abdomen", "pelvis", "abdomen_pelvis"}:
-            payload["candidate_skills"] = ["med-radar-ct", "med-medical"]
-            payload["recommended_skill"] = "med-radar-ct"
+            payload["candidate_skills"] = ["abd-pelvis-ct", "med-medical"]
+            payload["recommended_skill"] = "abd-pelvis-ct"
             payload["recommended_tool"] = "mcp__med-tools__med_radar_analyze_ct"
             payload["requires_main_agent_synthesis"] = True
             payload["route_mode"] = "radar"
@@ -435,11 +435,11 @@ def route_dicom(path: str | Path, *, max_files: int = 512) -> Dict[str, Any]:
             payload["authorization_required"] = False
             if payload["contrast_hint"] != "contrast":
                 payload["domain_flags"].append(
-                    "未确认增强期；RADAR 主要面向增强腹部 CT，结果必须按域外或阶段未知信号复核。"
+                    "未确认增强期；腹盆CT分析主要面向增强腹部/盆腔 CT，结果必须按域外或阶段未知信号复核。"
                 )
             payload["next_action"] = (
-                "加载 med-radar-ct 并调用 med_radar_analyze_ct；"
-                "完成后由主智能体结合 RADAR 结果回答用户原始问题。"
+                "加载 abd-pelvis-ct 并调用 med_radar_analyze_ct；"
+                "完成后由主智能体结合腹盆CT分析结果回答用户原始问题。"
             )
         elif region == "chest":
             payload["candidate_skills"] = ["med-deepchest-3dmedagent", "med-medical"]
@@ -455,18 +455,18 @@ def route_dicom(path: str | Path, *, max_files: int = 512) -> Dict[str, Any]:
             )
         elif region not in {"unknown", "mixed"}:
             payload["next_action"] = (
-                "该部位 DICOM 不适用 RADAR 或 DeepChest；"
+                "该部位 DICOM 不适用腹盆CT分析或 DeepChest；"
                 "加载 med-medical 并调用 med_parse_medical 进行通用解析。"
             )
         else:
             payload["warnings"].append(
-                "检查部位不确定；不能安全选择 RADAR 或 DeepChest，"
+                "检查部位不确定；不能安全选择腹盆CT分析或 DeepChest，"
                 "先使用 med-medical 做通用解析并注明此限制。"
             )
             payload["next_action"] = "加载 med-medical 并调用 med_parse_medical；不要提交专用 CT 模型。"
     else:
         if payload["modality"] != "CT":
-            payload["warnings"].append("当前附件不是单一 CT；不调用 RADAR 或 DeepChest 专用流程。")
+            payload["warnings"].append("当前附件不是单一 CT；不调用腹盆CT分析或 DeepChest 专用流程。")
         elif not complete_ct:
             payload["warnings"].append("当前 CT 不是已确认的完整三维序列；不调用专用 CT 流程。")
         if region == "unknown" or region == "mixed":
@@ -617,10 +617,10 @@ def route_image(
                     result["next_action"] = "DeepChest 仅支持完整胸部 CT；加载 med-medical 并调用 med_parse_medical。"
                 result["status"] = "degraded"
             return result
-        if requested_model.strip().lower() == "radar" and specialized_ct_enabled() and result["recommended_skill"] != "med-radar-ct":
-            result["warnings"].append("该 DICOM 检查不属于完整腹部/盆腔 CT，不能提交给 RADAR。")
+        if requested_model.strip().lower() == "radar" and specialized_ct_enabled() and result["recommended_skill"] != "abd-pelvis-ct":
+            result["warnings"].append("该 DICOM 检查不属于完整腹部/盆腔 CT，不能提交给腹盆CT分析。")
             if result["recommended_skill"] == "med-medical":
-                result["next_action"] = "加载 med-medical 并调用 med_parse_medical；不提交给 RADAR。"
+                result["next_action"] = "加载 med-medical 并调用 med_parse_medical；不提交给腹盆CT分析。"
             result["status"] = "degraded"
         return result
 
@@ -667,7 +667,7 @@ def route_image(
     if modality != "CT":
         if modality:
             result["route_mode"] = "incompatible"
-            result["next_action"] = "已确认不是 CT，不能提交给 RADAR 或 DeepChest。"
+            result["next_action"] = "已确认不是 CT，不能提交给腹盆CT分析或 DeepChest。"
         else:
             result["required_context"].append("modality")
             if not model and not region:
@@ -691,21 +691,21 @@ def route_image(
             int(shape[2] * spacing[2] / 5),
         ) <= 0:
             result["route_mode"] = "incompatible"
-            result["warnings"].append("RADAR 不支持当前 NIfTI 的轴置换、斜切几何或重采样后的空维度。")
+            result["warnings"].append("腹盆CT分析不支持当前 NIfTI 的轴置换、斜切几何或重采样后的空维度。")
             result["next_action"] = "请提供经校验、与轴对齐且具有足够切片的 CT 体数据。"
             return result
         result.update(
-            candidate_skills=["med-radar-ct"],
-            recommended_skill="med-radar-ct",
+            candidate_skills=["abd-pelvis-ct"],
+            recommended_skill="abd-pelvis-ct",
             recommended_tool="mcp__med-tools__med_radar_analyze_ct",
             route_mode="radar",
             specialized_support="full" if region in {"abdomen", "pelvis", "abdomen_pelvis"} else "domain-unverified",
             requires_main_agent_synthesis=True,
-            next_action="加载 med-radar-ct，检查服务后提交该 NIfTI；按适用范围解释结果。",
+            next_action="加载 abd-pelvis-ct，检查服务后提交该 NIfTI；按适用范围解释结果。",
         )
         if region not in {"abdomen", "pelvis", "abdomen_pelvis"}:
-            result["domain_flags"].append("检查部位不是已确认的腹部/盆腔 CT；RADAR 结果存在域偏移风险。")
-        result["domain_flags"].append("NIfTI 无法确认增强期；RADAR 结果需结合原始检查信息复核。")
+            result["domain_flags"].append("检查部位不是已确认的腹部/盆腔 CT；腹盆CT分析结果存在域偏移风险。")
+        result["domain_flags"].append("NIfTI 无法确认增强期；腹盆CT分析结果需结合原始检查信息复核。")
     elif region == "chest":
         if (
             min(volume_info["shape"]) < 16

@@ -220,7 +220,7 @@ class DicomRouterTests(unittest.TestCase):
             with patch.dict("os.environ", {"MED_SPECIALIZED_CT_ENABLED": "1"}):
                 result = route_dicom(root)
 
-        self.assertEqual(result["recommended_skill"], "med-radar-ct")
+        self.assertEqual(result["recommended_skill"], "abd-pelvis-ct")
         self.assertEqual(result["recommended_tool"], "mcp__med-tools__med_radar_analyze_ct")
 
     def test_other_complete_ct_dicom_uses_general_parser_when_enabled(self) -> None:
@@ -300,7 +300,7 @@ class ImageRouterTests(unittest.TestCase):
             self.volume(path)
             with patch.dict("os.environ", {"MED_SPECIALIZED_CT_ENABLED": "1"}):
                 result = route_image(path, modality="CT", body_region="abdomen")
-        self.assertEqual(result["recommended_skill"], "med-radar-ct")
+            self.assertEqual(result["recommended_skill"], "abd-pelvis-ct")
         self.assertEqual(result["recommended_tool"], "mcp__med-tools__med_radar_analyze_ct")
         self.assertEqual(result["volumes"][0]["shape"], [24, 24, 24])
         json.dumps(result)
@@ -365,7 +365,7 @@ class ImageRouterTests(unittest.TestCase):
             with patch.dict("os.environ", {"MED_SPECIALIZED_CT_ENABLED": "1"}):
                 result = route_image(root, requested_model="deepchest")
         self.assertEqual(result["route_mode"], "radar")
-        self.assertEqual(result["recommended_skill"], "med-radar-ct")
+        self.assertEqual(result["recommended_skill"], "abd-pelvis-ct")
         self.assertEqual(result["recommended_tool"], "mcp__med-tools__med_radar_analyze_ct")
         self.assertTrue(any("不能提交给 DeepChest" in warning for warning in result["warnings"]))
 
@@ -535,7 +535,7 @@ class ImageRouterTests(unittest.TestCase):
             with patch.dict("os.environ", {"MED_SPECIALIZED_CT_ENABLED": "1"}):
                 result = route_image(root)
         self.assertEqual(result["tool"], "med_image_route")
-        self.assertEqual(result["recommended_skill"], "med-radar-ct")
+        self.assertEqual(result["recommended_skill"], "abd-pelvis-ct")
 
 
 if __name__ == "__main__":

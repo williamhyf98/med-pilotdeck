@@ -571,27 +571,18 @@ function isPermissionToolError(message: ChatMessage): boolean {
   const errorCode = typeof message.toolResult.errorCode === 'string'
     ? message.toolResult.errorCode
     : '';
-  if (
-    errorCode === 'permission_denied' ||
-    errorCode === 'permission_required' ||
-    errorCode === 'permission_cancelled'
-  ) {
-    return true;
+  if (errorCode) {
+    return (
+      errorCode === 'permission_denied' ||
+      errorCode === 'permission_required' ||
+      errorCode === 'permission_cancelled'
+    );
   }
 
   const content = typeof message.toolResult.content === 'string'
     ? message.toolResult.content
     : '';
-  const lower = content.toLowerCase();
-  return (
-    lower.includes('permission') &&
-    (
-      lower.includes('denied') ||
-      lower.includes('not allowed') ||
-      lower.includes('requires') ||
-      lower.includes('grant')
-    )
-  );
+  return /\bpermission (?:denied|required|cancelled)\b/i.test(content);
 }
 
 function isUserVisibleTool(message: ChatMessage): boolean {
@@ -1533,7 +1524,7 @@ export function getProcessEventStep(
       title: toolLabel,
       target: clean(failedToolStep?.target),
       detail: clean(failedToolStep?.detail || message.toolName || undefined),
-      resultDetail: clean(failedToolStep?.resultDetail),
+      resultDetail: undefined,
       state: 'completed',
       phase: 'tool',
       toolName: message.toolName,

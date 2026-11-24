@@ -420,7 +420,7 @@ def evaluate(pad_func, model, img_dir, save_dir, save_tag, device, num_workers):
     )
     text_feat_dict = {key: value.to(device) for key, value in text_feat_dict.items()}
     organ_feat_dict = {}
-    save_path = os.path.join(save_dir, f'RADAR_infer_results_{save_tag}.csv')
+    save_path = os.path.join(save_dir, f'abd-pelvis-ct_scores_{save_tag}.csv')
     os.makedirs(save_dir, exist_ok=True)
     
     for i, (image, test_items, meta_info) in enumerate(tqdm(dataloader, desc='推理')):
@@ -611,7 +611,7 @@ def inference(initialize_returns, img_dir, save_dir, save_tag, device, num_worke
     print('\n--> 开始推理。')
     pad_func, model = initialize_returns
     evaluate(pad_func, model, img_dir, save_dir, save_tag, device, num_workers)
-    csv_file = os.path.join(save_dir, f'RADAR_infer_results_{save_tag}.csv')
+    csv_file = os.path.join(save_dir, f'abd-pelvis-ct_scores_{save_tag}.csv')
     print(f'评估完成，结果 CSV 已保存到 {csv_file}。')
     
 

@@ -34,7 +34,7 @@ Wire names in chat: `mcp__med-tools__<tool>`.
   │                     ├─ DICOM 非 CT / 不完整 / 其他部位 / 不确定 → med-medical
   │                     ├─ NIfTI 非 CT / 信息不足 → 补充信息或说明不可处理
   │                     ├─ 完整胸部 CT → med-deepchest-3dmedagent
-  │                     └─ 腹部/盆腔完整 CT → med-radar-ct → RADAR → 主智能体按用户问题回答
+  │                     └─ 腹部/盆腔完整 CT → abd-pelvis-ct → RADAR → 主智能体按用户问题回答
   │
   ├─【解读附件】── Skill med-medical
   │                  └─ med_parse_medical(continuation_mode=terminal)
@@ -47,7 +47,7 @@ Wire names in chat: `mcp__med-tools__<tool>`.
   │                  ├─ (可选) med_parse_medical(continuation_mode=material) 并入可见伤情
   │                  └─ med_trauma_stage_plan → care_plan 流式展示，本轮可继续导出
   │
-  ├─【RADAR 腹部 CT 分析】── Skill med-radar-ct
+  ├─【RADAR 腹部 CT 分析】── Skill abd-pelvis-ct
   │                  ├─ med_radar_status（按需检查运行环境）
   │                  └─ med_radar_analyze_ct → 结构化异常评分 + CSV
   │
@@ -67,7 +67,7 @@ Skills:
 - `med-trauma-assist` — RAG 知识点问答；非正式五段方案
 - `med-trauma-stage-plan` — 六阶段正式方案；先 parse 时用 `material`；`care_plan` 流式展示后本轮可继续
 - `med-case-report` — 固定 9 段模版病例报告；附件解析必须用 `material`，解析后继续写报告/HTML
-- `med-radar-ct` — node12 RADAR 三维 CT 推理；只把分数当作需复核的模型信号
+- `abd-pelvis-ct` — node12 RADAR 三维 CT 推理；只把分数当作需复核的模型信号
 - `med-deepchest-3dmedagent` — 上传病例使用任务服务，配置 `MED_DEEPCHEST_API_BASE`；当前内网 HTTP 部署免 CA 和 key，跨网络边界应使用 HTTPS。服务端使用 `MED_DEEPCHEST_ROOT` 工作区生成本次病例证据和中文分析。shell/smoke20 仅用于明确要求的实验验证。
 - `med-dicom-router` — 本地只读 DICOM/NIfTI 预检和 Skill 路由；不会解码像素、调用模型或上传 node12
 
@@ -87,7 +87,7 @@ Skills:
 - `med_parse_medical` → `med-medical`；已加载 `med-case-report` 或 `med-trauma-stage-plan` 时也可使用。
 - `med_trauma_rag_query` / `med_trauma_rag_status` → `med-trauma-assist`。
 - `med_trauma_stage_plan` → `med-trauma-stage-plan`。
-- `med_radar_analyze_ct` / `med_radar_status` → `med-radar-ct`。
+- `med_radar_analyze_ct` / `med_radar_status` → `abd-pelvis-ct`。
 - `med_tools_health` → 任一医学 Skill；未加载时默认补 `med-medical`。
 
 门禁只保证模型先读完整操作手册；阶段合法性、输入路径等不可省略的参数仍由 MCP 工具自身校验。
@@ -175,7 +175,7 @@ node12 /local_data/huojianfan/radar-gpu-poc/
 The client sends no key unless one is explicitly configured. The GPU API only
 listens on loopback and requires no key in the current deployment.
 Raw scores and a JSON summary are kept in a unique directory under
-`derived/radar/<study>-<hash>/<request-uuid>/`; the MCP response contains only bounded
+`derived/abd-pelvis-ct/<study>-<hash>/<request-uuid>/`; the MCP response contains only bounded
 ranked results. RADAR was trained primarily on contrast-enhanced abdominal CT. Scores
 are not calibrated probabilities or diagnoses, low scores do not exclude disease, and
 out-of-domain studies must be labeled as such.
@@ -290,7 +290,7 @@ Restart PilotDeck (or reload plugins) after changing `plugin.json` env.
 | `MED_RADAR_CA_BUNDLE` | `$PILOT_HOME/certs/med-radar-ca.crt` | Trusted node12 service certificate |
 | `MED_RADAR_TIMEOUT_SECONDS` | `840` | Upload + inference + download timeout (30-3600 seconds) |
 | `MED_RADAR_MAX_UPLOAD_BYTES` | `8589934592` | Maximum selected input bytes before upload |
-| `MED_RADAR_OUTPUT_DIR` | `$PILOT_HOME/artifacts/radar` in `plugin.json` | Central artifact root on node36; direct clients otherwise use `<input-parent>/derived/radar` |
+| `MED_RADAR_OUTPUT_DIR` | `$PILOT_HOME/artifacts/abd-pelvis-ct` in `plugin.json` | Central artifact root on node36; direct clients otherwise use `<input-parent>/derived/abd-pelvis-ct` |
 
 `med_trauma_rag_query` hits the remote med-rag service (`POST /retrieve`, evidence
 only — generation stays with the PilotDeck main model) and falls back to the

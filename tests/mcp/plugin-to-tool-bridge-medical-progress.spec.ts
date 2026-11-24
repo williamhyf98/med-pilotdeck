@@ -193,9 +193,28 @@ test("medical tools resolve project-relative and uploaded basenames inside inbox
   assert.deepEqual(receivedPaths, [realpathSync(dicomPath), realpathSync(dicomPath)]);
 });
 
+test("RADAR resolves a project-relative inbox path before calling the MCP server", async (t) => {
+  const projectRoot = mkdtempSync(join(tmpdir(), "pilotdeck-radar-path-"));
+  t.after(() => rmSync(projectRoot, { recursive: true, force: true }));
+  const uploadDir = join(projectRoot, "inbox", "upload-1");
+  mkdirSync(uploadDir, { recursive: true });
+  const scanPath = join(uploadDir, "scan.nii.gz");
+  writeFileSync(scanPath, "fixture");
+
+  let receivedPath: string | undefined;
+  const runtime = runtimeFor("med_radar_analyze_ct", async (_name: string, input: any) => {
+    receivedPath = input.path;
+    return { content: [{ type: "text", text: JSON.stringify({ ok: true, status: "completed" }) }] };
+  });
+  const [definition] = await createMcpToolDefinitionsFromRuntime(runtime as any);
+  await definition.execute({ path: "inbox/upload-1/scan.nii.gz" }, { ...context([]), cwd: projectRoot });
+
+  assert.equal(receivedPath, realpathSync(scanPath));
+});
+
 test("RADAR result paths are exposed as file artifacts", async () => {
-  const scoresCsv = "/workspace/exports/radar/request/scores.csv";
-  const summaryJson = "/workspace/exports/radar/request/summary.json";
+  const scoresCsv = "/workspace/exports/abd-pelvis-ct/request/scores.csv";
+  const summaryJson = "/workspace/exports/abd-pelvis-ct/request/summary.json";
   const runtime = runtimeFor("med_radar_analyze_ct", async () => ({
     content: [{
       type: "text",
@@ -219,13 +238,13 @@ test("RADAR result paths are exposed as file artifacts", async () => {
       type: "file",
       path: scoresCsv,
       mimeType: "text/csv",
-      description: "RADAR 评分 CSV",
+      description: "腹盆CT分析评分 CSV",
     },
     {
       type: "file",
       path: summaryJson,
       mimeType: "application/json",
-      description: "RADAR 摘要 JSON",
+      description: "腹盆CT分析摘要 JSON",
     },
   ]);
 });

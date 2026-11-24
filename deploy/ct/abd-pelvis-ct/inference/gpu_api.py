@@ -1,4 +1,4 @@
-"""Dedicated resident RADAR model API. Accepts staged NIfTI volumes, returns raw CSV.
+"""Dedicated resident abdomen/pelvis CT model API. Accepts staged NIfTI volumes, returns raw CSV.
 
 The existing app.py owns uploads, DICOM conversion, case mapping and summaries.
 Run one worker only, on a GPU host, with private loopback access.
@@ -43,7 +43,7 @@ async def lifespan(_app: FastAPI):
     global ready, load_error, initialized, device, api_key
     api_key = Path(KEY_FILE).read_text(encoding="utf-8").strip() if KEY_FILE else ""
     if KEY_FILE and not api_key:
-        raise RuntimeError("RADAR inference API key is empty")
+        raise RuntimeError("腹盆CT分析推理 API key 为空")
     WORK_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.environ["MODEL_ROOT"] = str(MODEL_ROOT)
     os.environ["CONFIGS_ROOT"] = str(MODEL_ROOT)
@@ -70,7 +70,7 @@ async def lifespan(_app: FastAPI):
         initialized = None
 
 
-app = FastAPI(title="RADAR model inference API", lifespan=lifespan, docs_url=None)
+app = FastAPI(title="abd-pelvis-ct model inference API", lifespan=lifespan, docs_url=None)
 
 
 @app.middleware("http")
@@ -96,7 +96,7 @@ async def health():
         "load_error": load_error,
         "device": str(device),
         "busy": lock.locked(),
-        "model": "DAMO RADAR",
+        "model": "abd-pelvis-ct",
     }
 
 
@@ -129,9 +129,9 @@ def run_inference(staging: Path, output: Path) -> bytes:
         validate_nifti_header(volume)
     output.mkdir()
     inference(initialized, str(staging), str(output), "remote", device, 0)
-    csv = output / "RADAR_infer_results_remote.csv"
+    csv = output / "abd-pelvis-ct_scores_remote.csv"
     if not csv.is_file():
-        raise RuntimeError("RADAR did not produce a CSV")
+        raise RuntimeError("腹盆CT分析没有生成 CSV")
     return csv.read_bytes()
 
 
